@@ -11,7 +11,6 @@ using allstarr.Core.Playlists.Sources;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
-using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Playlists;
@@ -171,7 +170,6 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     private readonly TrackMatchDecisionEngine _matcher;
     private readonly ITrackMatchRepository _trackMatches;
     private readonly IPlatformClock _clock;
-    private readonly IApplicationCache _cache;
 
     public PlaylistOrchestrationService(
         IDbContextFactory<AllstarrDbContext> factory,
@@ -180,10 +178,9 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         PlaylistMaterializationPlanner planner,
         TrackMatchDecisionEngine matcher,
         ITrackMatchRepository trackMatches,
-        IPlatformClock clock,
-        IApplicationCache cache) =>
-        (_factory, _source, _targets, _planner, _matcher, _trackMatches, _clock, _cache) =
-        (factory, source, targets, planner, matcher, trackMatches, clock, cache);
+        IPlatformClock clock) =>
+        (_factory, _source, _targets, _planner, _matcher, _trackMatches, _clock) =
+        (factory, source, targets, planner, matcher, trackMatches, clock);
 
     public async Task<PlaylistOrchestrationResult> RunAsync(
         ProtocolExecutionContext execution,
@@ -367,7 +364,6 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         published.PublishedAt = _clock.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        await _cache.DeleteAsync(CacheKeyBuilder.BuildAdminPlaylistSummaryKey());
     }
 
     private async Task<PlaylistSourceSnapshotRecord> CollectAndPersistAsync(

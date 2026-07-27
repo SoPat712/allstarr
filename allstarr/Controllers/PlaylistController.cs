@@ -9,7 +9,6 @@ using allstarr.Services.Admin;
 using allstarr.Services;
 using allstarr.Filters;
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
 using allstarr.Core.Settings;
 using allstarr.Core.Jobs;
 using allstarr.Core.Matching;
@@ -26,99 +25,44 @@ public class PlaylistController : ControllerBase
     private readonly ILogger<PlaylistController> _logger;
     private readonly JellyfinSettings _jellyfinSettings;
     private readonly SpotifyImportSettings _spotifyImportSettings;
-    private readonly IApplicationCache _cache;
     private readonly HttpClient _jellyfinHttpClient;
     private readonly AdminHelperService _helperService;
     private readonly IServiceProvider _serviceProvider;
-    private readonly IConfiguration _configuration;
     private const int PlaylistSummarySchemaVersion = 10;
 
     public PlaylistController(
         ILogger<PlaylistController> logger,
         IOptions<JellyfinSettings> jellyfinSettings,
         IOptions<SpotifyImportSettings> spotifyImportSettings,
-        IApplicationCache cache,
         IHttpClientFactory httpClientFactory,
-        IConfiguration configuration,
         AdminHelperService helperService,
         IServiceProvider serviceProvider)
     {
         _logger = logger;
         _jellyfinSettings = jellyfinSettings.Value;
         _spotifyImportSettings = spotifyImportSettings.Value;
-        _cache = cache;
         _jellyfinHttpClient = httpClientFactory.CreateClient();
-        _configuration = configuration;
         _helperService = helperService;
         _serviceProvider = serviceProvider;
     }
 
     [HttpGet("playlists")]
-    public async Task<IActionResult> GetPlaylists([FromQuery] bool refresh = false)
+    public async Task<IActionResult> GetPlaylists()
     {
-        var playlistSummaryKey = CacheKeyBuilder.BuildAdminPlaylistSummaryKey();
         // Version 3 owns playlist configuration in the tenant's durable settings.
         // Reading the store directly also avoids waiting for the in-memory projector.
         var configuredPlaylists = await GetConfiguredPlaylistsAsync();
 
-        // Check the shared cache first unless refresh is requested.
-        if (!refresh)
-        {
-            try
-            {
-                var cachedJson = await _cache.GetStringAsync(playlistSummaryKey);
-                if (!string.IsNullOrWhiteSpace(cachedJson))
-                {
-                    using var cachedDocument = JsonDocument.Parse(cachedJson);
-                    var cachedNames = cachedDocument.RootElement.TryGetProperty("playlists", out var cachedPlaylists) &&
-                                      cachedPlaylists.ValueKind == JsonValueKind.Array
-                        ? cachedPlaylists.EnumerateArray()
-                            .Select(item => item.TryGetProperty("name", out var name) ? name.GetString() : null)
-                            .Where(name => !string.IsNullOrWhiteSpace(name))
-                            .ToHashSet(StringComparer.OrdinalIgnoreCase)
-                        : [];
-                    var currentSummaryShape = cachedDocument.RootElement.TryGetProperty("schemaVersion", out var cachedSchemaVersion) &&
-                                              cachedSchemaVersion.GetInt32() == PlaylistSummarySchemaVersion &&
-                                              cachedPlaylists.ValueKind == JsonValueKind.Array &&
-                                              cachedPlaylists.EnumerateArray().All(item =>
-                                                  item.TryGetProperty("artworkUrl", out _) &&
-                                                  item.TryGetProperty("artworkSource", out _) &&
-                                                  item.TryGetProperty("matchedTracks", out _) &&
-                                                  item.TryGetProperty("providerBreakdown", out _) &&
-                                                  item.TryGetProperty("syncStatus", out _));
-                    currentSummaryShape = currentSummaryShape &&
-                                          cachedDocument.RootElement.TryGetProperty("inventory", out _);
-                    if (currentSummaryShape &&
-                        cachedNames.Count == configuredPlaylists.Count &&
-                        configuredPlaylists.All(item => cachedNames.Contains(item.Name)))
-                    {
-                        var cachedData = JsonSerializer.Deserialize<Dictionary<string, object>>(cachedJson);
-                        _logger.LogDebug("Returning cached playlist summary");
-                        return Ok(cachedData);
-                    }
-                    _logger.LogDebug("Playlist configuration changed after the summary was cached; rebuilding it");
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to read cached playlist summary");
-            }
-        }
-        else if (refresh)
-        {
-            await _cache.DeleteAsync(playlistSummaryKey);
-            _logger.LogDebug("Force refresh requested for playlist summary");
-        }
-
         var playlists = new List<object>();
-
-        var targetBackend = (_configuration.GetValue<string>("Backend:Type") ?? "Jellyfin")
-            .Trim()
-            .ToLowerInvariant();
 
         foreach (var config in configuredPlaylists)
         {
             var durable = await ReadDurablePlaylistAsync(config.Name);
+            var total = durable?.TotalCount ?? 0;
+            var local = durable?.LocalCount ?? 0;
+            var external = durable?.ExternalCount ?? 0;
+            var missing = durable?.MissingCount ?? 0;
+            var playable = durable?.PlayableCount ?? 0;
             var playlistInfo = new Dictionary<string, object?>
             {
                 ["name"] = config.Name,
@@ -126,81 +70,48 @@ public class PlaylistController : ControllerBase
                 ["jellyfinId"] = config.JellyfinId,
                 ["localTracksPosition"] = config.LocalTracksPosition.ToString(),
                 ["syncSchedule"] = config.SyncSchedule ?? "0 8 * * *",
-                ["trackCount"] = durable?.Entries.Count ?? 0,
-                ["localTracks"] = durable?.LocalCount ?? 0,
-                ["externalTracks"] = durable?.ExternalCount ?? 0,
-                ["unmatchedTracks"] = durable?.MissingCount ?? 0,
+                ["trackCount"] = total,
+                ["localTracks"] = local,
+                ["externalTracks"] = external,
+                ["externalMatched"] = external,
+                ["externalMissing"] = missing,
+                ["externalTotal"] = external + missing,
+                ["unmatchedTracks"] = missing,
+                ["totalInJellyfin"] = playable,
+                ["totalPlayable"] = playable,
                 ["unknownDurationTracks"] = durable?.UnknownDurationCount ?? 0,
                 ["lastFetched"] = durable?.RetrievedAt,
                 ["lastSuccessfulSyncAt"] = durable?.CompletedAt,
                 ["cacheAge"] = null as string,
                 ["artworkUrl"] = DurableArtworkUrl(durable),
-                ["providerBreakdown"] = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+                ["providerBreakdown"] = durable?.RouteCounts
+                    .Where(item => !item.Key.Equals("unresolved", StringComparison.OrdinalIgnoreCase))
+                    .ToDictionary(item => item.Key, item => item.Value, StringComparer.OrdinalIgnoreCase)
+                    ?? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
                 ["sourceProvider"] = durable?.SourceProviderId ?? "spotify",
                 ["durationMs"] = durable?.DurationMilliseconds,
                 ["materializationVerification"] = MaterializationVerification(durable)
             };
 
-            try
+            playlistInfo["artworkSource"] = durable?.ArtworkReferenceKey != null
+                ? "playlist"
+                : "target";
+            if (durable?.RetrievedAt is { } fetchedAt)
             {
-                playlistInfo["artworkSource"] = durable?.ArtworkReferenceKey != null
-                    ? "playlist"
-                    : "target";
-                if (durable?.RetrievedAt is { } fetchedAt)
-                {
-                    var age = DateTimeOffset.UtcNow - fetchedAt;
-                    playlistInfo["cacheAge"] = age.TotalHours < 1
-                        ? $"{age.TotalMinutes:F0}m"
-                        : $"{age.TotalHours:F1}h";
-                }
-
-                var providerBreakdown = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                if (durable?.LocalCount > 0) providerBreakdown[targetBackend] = durable.LocalCount;
-                foreach (var group in durable?.Entries
-                             .Where(item => item.RouteKind == "external" && item.RouteProviderId != null)
-                             .GroupBy(item => item.RouteProviderId!, StringComparer.OrdinalIgnoreCase) ?? [])
-                    providerBreakdown[group.Key] = group.Count();
-                var coverage = new PlaylistCoverage(
-                    durable?.LocalCount ?? 0,
-                    durable?.ExternalCount ?? 0,
-                    durable?.MissingCount ?? 0,
-                    providerBreakdown);
-                ApplyPlaylistStats(playlistInfo, coverage.Local, coverage.External, coverage.Missing);
-                playlistInfo["providerBreakdown"] = coverage.ProviderBreakdown;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to build playlist summary for {Playlist}", config.Name);
+                var age = DateTimeOffset.UtcNow - fetchedAt;
+                playlistInfo["cacheAge"] = age.TotalHours < 1
+                    ? $"{age.TotalMinutes:F0}m"
+                    : $"{age.TotalHours:F1}h";
             }
 
-            EnrichPlaylistSummary(playlistInfo, config.SyncSchedule);
+            EnrichPlaylistSummary(playlistInfo, config.SyncSchedule, total, playable);
             playlists.Add(playlistInfo);
         }
 
         var inventory = await GetPlaylistInventoryAsync(configuredPlaylists);
 
-        var response = new { schemaVersion = PlaylistSummarySchemaVersion, playlists, inventory };
-
-        // Cache the reconstructable summary for five minutes.
-        try
-        {
-            var json = JsonSerializer.Serialize(response, new JsonSerializerOptions { WriteIndented = false });
-            await _cache.SetStringAsync(playlistSummaryKey, json);
-            _logger.LogDebug("Saved playlist summary to shared cache");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to save playlist summary cache");
-        }
-
-        return Ok(response);
+        return Ok(new { schemaVersion = PlaylistSummarySchemaVersion, playlists, inventory });
     }
-
-    private sealed record PlaylistCoverage(
-        int Local,
-        int External,
-        int Missing,
-        Dictionary<string, int> ProviderBreakdown);
 
     private Task<DurablePlaylistProjection?> ReadDurablePlaylistAsync(string playlistName)
     {
@@ -307,36 +218,13 @@ public class PlaylistController : ControllerBase
         }
     }
 
-    private static void ApplyPlaylistStats(
-        Dictionary<string, object?> playlistInfo,
-        int local,
-        int external,
-        int missing)
-    {
-        var coverage = PlaylistCoverageMath.Normalize(
-            ReadSummaryInt(playlistInfo, "trackCount"),
-            local,
-            external,
-            missing);
-        playlistInfo["localTracks"] = coverage.Local;
-        playlistInfo["externalTracks"] = coverage.External;
-        playlistInfo["externalMatched"] = coverage.External;
-        playlistInfo["externalMissing"] = coverage.Missing;
-        playlistInfo["unmatchedTracks"] = coverage.Missing;
-        playlistInfo["externalTotal"] = coverage.External + coverage.Missing;
-        playlistInfo["totalInJellyfin"] = coverage.Playable;
-        playlistInfo["totalPlayable"] = coverage.Playable;
-    }
-
     private static void EnrichPlaylistSummary(
         Dictionary<string, object?> playlistInfo,
-        string? syncSchedule)
+        string? syncSchedule,
+        int trackCount,
+        int playableCount)
     {
-        var trackCount = ReadSummaryInt(playlistInfo, "trackCount");
-        var matchedTracks = Math.Clamp(
-            ReadSummaryInt(playlistInfo, "totalPlayable"),
-            0,
-            trackCount);
+        var matchedTracks = Math.Clamp(playableCount, 0, trackCount);
         var unmatchedTracks = Math.Max(0, trackCount - matchedTracks);
         var matchPercent = trackCount > 0
             ? Math.Round(matchedTracks * 100d / trackCount, 1)
@@ -381,23 +269,6 @@ public class PlaylistController : ControllerBase
             ? sourceRefresh
             : null;
         playlistInfo["nextSyncAt"] = nextSyncAt;
-    }
-
-    private static int ReadSummaryInt(Dictionary<string, object?> values, string key)
-    {
-        if (!values.TryGetValue(key, out var value) || value == null)
-        {
-            return 0;
-        }
-
-        return value switch
-        {
-            int number => number,
-            long number => checked((int)number),
-            JsonElement { ValueKind: JsonValueKind.Number } element when element.TryGetInt32(out var number) => number,
-            _ when int.TryParse(value.ToString(), out var number) => number,
-            _ => 0
-        };
     }
 
     /// <summary>
@@ -472,7 +343,7 @@ public class PlaylistController : ControllerBase
                 searchQuery = local ? null : $"{track.Title} {track.Artists.FirstOrDefault()}"
             };
         }).ToArray();
-        var matched = playlist.LocalCount + playlist.ExternalCount;
+        var matched = playlist.PlayableCount;
         return Ok(new
         {
             name = playlist.Name,
@@ -958,7 +829,6 @@ public class PlaylistController : ControllerBase
             HttpContext.RequestAborted);
 
         _spotifyImportSettings.Playlists = playlists.ToList();
-        await _cache.DeleteAsync(CacheKeyBuilder.BuildAdminPlaylistSummaryKey());
         return Ok(new { message = "Playlist configuration updated.", changeVersion = result.ChangeVersion });
     }
 

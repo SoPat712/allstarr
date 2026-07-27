@@ -5,31 +5,30 @@ public sealed class CacheIslandRegressionContractTests
     private readonly string _repositoryRoot = FindRepositoryRoot();
 
     [Fact]
-    public void PlaylistSummary_UsesSharedApplicationCacheInsteadOfPrivateFile()
+    public void PlaylistSummary_UsesDurableProjectionWithoutCachedViewModel()
     {
         var controller = File.ReadAllText(Path.Combine(
             _repositoryRoot,
             "allstarr",
             "Controllers",
             "PlaylistController.cs"));
-        var mapping = File.ReadAllText(Path.Combine(
+        var orchestration = File.ReadAllText(Path.Combine(
             _repositoryRoot,
             "allstarr",
             "Core",
-            "Matching",
-            "TrackMatchCommandService.cs"));
-        var helper = File.ReadAllText(Path.Combine(
+            "Playlists",
+            "PlaylistOrchestrationService.cs"));
+        var keys = File.ReadAllText(Path.Combine(
             _repositoryRoot,
             "allstarr",
             "Services",
-            "Admin",
-            "AdminHelperService.cs"));
+            "Common",
+            "CacheKeyBuilder.cs"));
 
-        Assert.Contains("BuildAdminPlaylistSummaryKey", controller, StringComparison.Ordinal);
-        Assert.Contains("SetStringAsync(playlistSummaryKey", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("admin_playlists_summary.json", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("admin_playlists_summary.json", mapping, StringComparison.Ordinal);
-        Assert.DoesNotContain("admin_playlists_summary.json", helper, StringComparison.Ordinal);
+        Assert.Contains("DurablePlaylistProjectionReader", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildAdminPlaylistSummaryKey", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildAdminPlaylistSummaryKey", orchestration, StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildAdminPlaylistSummaryKey", keys, StringComparison.Ordinal);
     }
 
     [Fact]

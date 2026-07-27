@@ -9,8 +9,6 @@ namespace allstarr.Services.Common;
 /// </summary>
 public static class CacheKeyBuilder
 {
-    public static string BuildAdminPlaylistSummaryKey() => "admin:playlists:summary:v6";
-
     public static string BuildPlaybackMetadataKey(string provider, string itemId) =>
         $"playback:metadata:{Normalize(provider)}:{Normalize(itemId)}";
 

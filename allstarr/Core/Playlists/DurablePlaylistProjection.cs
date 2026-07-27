@@ -51,9 +51,9 @@ public sealed record DurablePlaylistProjection(
     public long? Generation { get; init; }
     public int MaterializedCount { get; init; }
     public int TotalCount => Entries.Count;
-    public int LocalCount => Entries.Count(item => item.BackendItemId != null);
+    public int LocalCount => Entries.Count(item => item.RouteKind == "local");
     public int ExternalCount => Entries.Count(item => item.RouteKind == "external");
-    public int MissingCount => Entries.Count(item => item.RouteKind == "unmatched");
+    public int MissingCount => TotalCount - LocalCount - ExternalCount;
     public int MatchedCount => Entries.Count(item =>
         item.MatchState is TrackMatchState.Accepted or TrackMatchState.Pinned);
     public int ReviewCount => Entries.Count(item =>
