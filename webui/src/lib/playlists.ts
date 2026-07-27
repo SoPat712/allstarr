@@ -76,6 +76,7 @@ export function formatDuration(milliseconds?: number | null) {
 }
 
 export function providerColor(providerId: string) {
+  if (providerId === "unresolved") return "var(--color-danger)";
   let hash = 0;
   for (const character of providerId) hash = (hash * 31 + character.codePointAt(0)!) >>> 0;
   return `hsl(${hash % 360} 72% 58%)`;

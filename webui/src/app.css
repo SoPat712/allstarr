@@ -1234,6 +1234,21 @@
     white-space: nowrap;
   }
 
+  .playlist-title-line {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.8rem;
+  }
+
+  .playlist-title-line > strong {
+    flex: none;
+  }
+
+  .playlist-metrics {
+    margin-top: 0.18rem;
+  }
+
   .playlist-copy small,
   .playlist-numbers small,
   .track-identity small,
@@ -1275,8 +1290,8 @@
   }
 
   .provider-mark img {
-    width: 72%;
-    height: 72%;
+    width: 78%;
+    height: 78%;
     object-fit: contain;
   }
 

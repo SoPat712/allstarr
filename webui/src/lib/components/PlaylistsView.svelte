@@ -310,13 +310,18 @@
           >
             <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
             <span class="playlist-copy">
-              <strong>{playlist.name}</strong>
-              <small class="route-pair">
-                <ProviderMark id={playlist.sourceProviderId} definition={provider(playlist.sourceProviderId)} />
-                <span>{providerName(playlist.sourceProviderId)}</span>
-                <span aria-hidden="true">→</span>
-                <ProviderMark id={playlist.targetProtocol} definition={provider(playlist.targetProtocol)} />
-                <span>{providerName(playlist.targetProtocol)}</span>
+              <span class="playlist-title-line">
+                <strong>{playlist.name}</strong>
+                <small class="route-pair">
+                  <ProviderMark id={playlist.sourceProviderId} definition={provider(playlist.sourceProviderId)} />
+                  <span>{providerName(playlist.sourceProviderId)}</span>
+                  <span aria-hidden="true">→</span>
+                  <ProviderMark id={playlist.targetProtocol} definition={provider(playlist.targetProtocol)} />
+                  <span>{providerName(playlist.targetProtocol)}</span>
+                </small>
+              </span>
+              <small class="playlist-metrics">
+                {playlist.matchedCount} matched · {playlist.metrics.review} review · {playlist.materializedCount} materialized
               </small>
               <CoverageBar
                 routes={playlist.routeCoverage}

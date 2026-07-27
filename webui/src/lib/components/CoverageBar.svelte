@@ -16,6 +16,12 @@
   } = $props();
 
   const width = (count: number) => total ? Math.round((count / total) * 100) : 0;
+  const playable = () => Math.max(0, total - unresolved);
+  const routed = () => routes
+    .filter((route) => route.providerId !== "unresolved")
+    .reduce((sum, route) => sum + route.count, 0);
+  const routeWidth = (count: number) =>
+    width(count * Math.min(1, playable() / Math.max(1, routed())));
 </script>
 
 <span
@@ -26,7 +32,7 @@
   {#each routes.filter((route) => route.providerId !== "unresolved") as route}
     <span
       title={`${providerName(route.providerId)}: ${route.count}`}
-      style={`width:${width(route.count)}%;--route-color:${providerColor(route.providerId)}`}
+      style={`width:${routeWidth(route.count)}%;--route-color:${providerColor(route.providerId)}`}
     ></span>
   {/each}
   {#if unresolved}
