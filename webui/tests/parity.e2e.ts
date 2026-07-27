@@ -173,7 +173,12 @@ const responses: Record<string, unknown> = {
       enabled: true, available: true, state: "ready",
     }],
     actions: {
-      canRun: true, canGenerate: true, latestRunId: "run-1", latestRunState: "succeeded",
+      canRun: true, canGenerate: true, latestRunId: "run-1", latestRunState: "running",
+      latestJobId: "job-1", attemptCount: 1, failureCount: 0, maxAttempts: 5,
+      canCancel: true, progress: {
+        stage: "recommendation.provider", message: "Searching Lumen Audio.",
+        completed: 1, total: 2, provider: "lumen-audio", track: "Future Song",
+      },
     },
     candidates: [{
       id: "candidate-1", trackKey: "track-1", title: "Future Song", artist: "Artist",
@@ -381,9 +386,11 @@ for (const viewport of viewports) {
       await page.getByLabel("Library scope").fill("music");
       await page.getByRole("button", { name: "Open library" }).click();
       await expect(page.getByLabel("Loading Intelligence")).toBeVisible();
-      await expect(page.getByText("Future Song")).toBeVisible();
+      await expect(page.getByText("Future Song", { exact: true })).toBeVisible();
       await expect(page.getByText("Morning discovery")).toBeVisible();
       await expect(page.getByText("Private similarity source. · ready")).toBeVisible();
+      await expect(page.getByText("Searching Lumen Audio.")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Cancel refresh" })).toBeInViewport();
       await expect(page.getByRole("button", { name: "Refresh recommendations" })).toBeInViewport();
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);

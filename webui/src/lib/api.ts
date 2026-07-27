@@ -564,6 +564,20 @@ export type IntelligenceState = {
     canGenerate: boolean;
     latestRunId?: string | null;
     latestRunState?: string | null;
+    latestJobId?: string | null;
+    attemptCount?: number | null;
+    failureCount?: number | null;
+    maxAttempts?: number | null;
+    canCancel?: boolean;
+    progress?: {
+      stage: string;
+      message: string;
+      completed?: number | null;
+      total?: number | null;
+      provider?: string | null;
+      playlist?: string | null;
+      track?: string | null;
+    } | null;
   };
   candidates: Array<{
     id: string;

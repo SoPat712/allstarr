@@ -40,6 +40,15 @@ public sealed class IntelligenceController(
                 item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
                 item.BackendInstanceId == scope.BackendInstanceId && item.LibraryScopeId == scope.LibraryScopeId)
                 .OrderByDescending(item => item.CreatedAt).FirstOrDefaultAsync(cancellationToken);
+            var latestJob = latestRun == null ? null : await db.Jobs.AsNoTracking().SingleOrDefaultAsync(item =>
+                item.Id == latestRun.JobId && item.TenantId == scope.TenantId &&
+                item.OwnerUserId == scope.OwnerUserId && item.LibraryScopeId == scope.LibraryScopeId,
+                cancellationToken);
+            var latestProgress = latestJob == null ? null : await db.AuditEvents.AsNoTracking()
+                .Where(item => item.Category == "job-progress" &&
+                    item.CorrelationId == latestJob.CorrelationId)
+                .OrderByDescending(item => item.CreatedAt).Select(item => item.DetailsJson)
+                .FirstOrDefaultAsync(cancellationToken);
             var candidates = latestRun == null ? [] : await db.RecommendationCandidates.AsNoTracking()
                 .Where(item => item.RunId == latestRun.Id && item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId)
                 .OrderBy(item => item.Position).Take(100).ToListAsync(cancellationToken);
@@ -116,7 +125,16 @@ public sealed class IntelligenceController(
                     canRun = policy?.Enabled == true && enabledProviders.Any(id => readinessById.TryGetValue(id, out var item) && item.State == RecommendationProviderReadinessState.Ready),
                     canGenerate = latestRun?.State == RecommendationRunState.Succeeded,
                     latestRunId = latestRun?.Id,
-                    latestRunState = latestRun?.State.ToString().ToLowerInvariant()
+                    latestRunState = latestJob?.State.ToString().ToLowerInvariant() ??
+                        latestRun?.State.ToString().ToLowerInvariant(),
+                    latestJobId = latestJob?.Id,
+                    latestJob?.AttemptCount,
+                    latestJob?.FailureCount,
+                    latestJob?.MaxAttempts,
+                    canCancel = latestJob?.State is DurableJobState.Pending or DurableJobState.RetryScheduled
+                        or DurableJobState.Running,
+                    progress = latestProgress == null ? (JsonElement?)null :
+                        JsonSerializer.Deserialize<JsonElement>(latestProgress)
                 },
                 candidates = candidates.Select(item =>
                 {

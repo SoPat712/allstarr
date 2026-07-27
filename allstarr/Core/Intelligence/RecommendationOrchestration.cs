@@ -171,12 +171,22 @@ public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbCont
         if (run.State == RecommendationRunState.Succeeded) return await EnsureScheduledSetAsync(db, run, snapshot.Automation, cancellationToken);
         var scope = new IntelligenceScope(run.TenantId, run.OwnerUserId, run.Protocol, run.BackendInstanceId, run.LibraryScopeId);
         var policy = await IntelligencePolicyService.Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken); if (policy?.Enabled != true) { run.State = RecommendationRunState.Cancelled; run.CompletedAt = clock.UtcNow; await db.SaveChangesAsync(cancellationToken); return DurableJobCompletion.Cancelled(); }
-        var enabled = snapshot.EnabledProviders.ToHashSet(StringComparer.Ordinal); run.State = RecommendationRunState.Running; run.UpdatedAt = clock.UtcNow; run.Revision++; await db.SaveChangesAsync(cancellationToken);
+        var enabled = snapshot.EnabledProviders.ToHashSet(StringComparer.Ordinal);
+        var selectedProviders = providers.Where(item => enabled.Contains(item.Id))
+            .OrderBy(item => item.Id, StringComparer.Ordinal).ToArray();
+        run.State = RecommendationRunState.Running; run.CompletedAt = null; run.ErrorCode = null;
+        run.UpdatedAt = clock.UtcNow; run.Revision++; await db.SaveChangesAsync(cancellationToken);
+        await execution.ReportProgressAsync(new("recommendation.profile",
+            "Building the retained listening profile.", 0, selectedProviders.Length), cancellationToken);
         var profile = await profiles.BuildAsync(scope, cancellationToken); var seeds = JsonSerializer.Deserialize<string[]>(run.SeedTrackKeysJson) ?? [];
         if (seeds.Length == 0) seeds = profile.TopTrackKeys.ToArray();
         var results = new List<RecommendationCandidate>();
-        foreach (var provider in providers.Where(x => enabled.Contains(x.Id)))
+        for (var providerIndex = 0; providerIndex < selectedProviders.Length; providerIndex++)
         {
+            var provider = selectedProviders[providerIndex];
+            await execution.ReportProgressAsync(new("recommendation.provider",
+                $"Searching {provider.Id}.", providerIndex, selectedProviders.Length,
+                Provider: provider.Id), cancellationToken);
             RecommendationProviderResult outcome; try { outcome = await provider.RecommendAsync(new(scope, run.Id, profile, seeds, run.Limit, run.IdempotencyKey, true, cancellationToken)); }
             catch (OperationCanceledException)
             {
@@ -185,8 +195,18 @@ public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbCont
                 await db.SaveChangesAsync(CancellationToken.None);
                 return DurableJobCompletion.Cancelled();
             }
-            catch { return DurableJobCompletion.Retry("recommendation_provider_temporary_failure", "A recommendation provider temporarily failed."); }
-            if (outcome.State == RecommendationProviderState.Succeeded) results.AddRange(outcome.Candidates);
+            catch
+            {
+                run.State = RecommendationRunState.Failed; run.ErrorCode = "recommendation_provider_temporary_failure";
+                run.CompletedAt = clock.UtcNow; run.UpdatedAt = clock.UtcNow; run.Revision++;
+                await db.SaveChangesAsync(CancellationToken.None);
+                return DurableJobCompletion.Retry("recommendation_provider_temporary_failure", "A recommendation provider temporarily failed.");
+            }
+            if (outcome.State == RecommendationProviderState.Succeeded)
+                results.AddRange(outcome.Candidates.Take(run.Limit * 4));
+            await execution.ReportProgressAsync(new("recommendation.provider",
+                $"Finished {provider.Id}.", providerIndex + 1, selectedProviders.Length,
+                Provider: provider.Id), cancellationToken);
         }
         var excludedTrackKeys = await db.RecommendationFeedback.AsNoTracking().Where(item =>
                 item.TenantId == run.TenantId && item.OwnerUserId == run.OwnerUserId &&
@@ -201,11 +221,15 @@ public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbCont
         var ordered = deduplicated.Where(item => !excluded.Contains(item.TrackKey)).Take(run.Limit)
             .Concat(deduplicated.Where(item => excluded.Contains(item.TrackKey)).Take(Math.Min(100, run.Limit))
                 .Select(item => item with { Exclusions = ["user-feedback"] })).ToArray();
+        await execution.ReportProgressAsync(new("recommendation.rank",
+            $"Ranking {ordered.Length} candidate tracks.", 0, ordered.Length), cancellationToken);
         ordered = await ResolveProvenanceAsync(db, run, ordered, cancellationToken);
         db.RecommendationCandidates.RemoveRange(db.RecommendationCandidates.Where(x => x.RunId == run.Id));
         for (var i = 0; i < ordered.Length; i++) db.RecommendationCandidates.Add(new() { Id = Guid.CreateVersion7(), RunId = run.Id, TenantId = run.TenantId, OwnerUserId = run.OwnerUserId, Position = i, TrackKey = ordered[i].TrackKey, Score = ordered[i].Score, Source = ordered[i].Source, SignalsJson = JsonSerializer.Serialize(ordered[i].Signals), IdentityJson = JsonSerializer.Serialize(ordered[i].Identity), CanonicalRecordingId = ordered[i].CanonicalRecordingId, ProviderAccountId = ordered[i].ProviderAccountId, SourceRevision = ordered[i].SourceRevision ?? $"run:{run.Id:N}", ExclusionsJson = JsonSerializer.Serialize(ordered[i].Exclusions), CreatedAt = clock.UtcNow, Revision = 1 });
         run.State = RecommendationRunState.Succeeded; run.CompletedAt = clock.UtcNow; run.UpdatedAt = clock.UtcNow; run.Revision++;
         await db.SaveChangesAsync(cancellationToken);
+        await execution.ReportProgressAsync(new("recommendation.complete",
+            $"Saved {ordered.Length} recommendation tracks.", ordered.Length, ordered.Length), cancellationToken);
         return await EnsureScheduledSetAsync(db, run, snapshot.Automation, cancellationToken);
     }
     private async Task<DurableJobCompletion> EnsureScheduledSetAsync(AllstarrDbContext db,
@@ -340,6 +364,8 @@ public sealed class GeneratedSetMaterializationJobHandler(IDbContextFactory<Alls
         var candidates = entries.Select(x => new RecommendationCandidate(x.TrackKey, x.Score, x.Source,
             JsonSerializer.Deserialize<RecommendationSignal[]>(x.ExplanationJson) ?? [],
             JsonSerializer.Deserialize<RecommendationTrackIdentity>(x.IdentityJson))).ToArray();
+        await execution.ReportProgressAsync(new("playlist.materialize",
+            $"Creating {set.Name}.", 0, candidates.Length, Playlist: set.Name), cancellationToken);
         GeneratedSetMaterializationResult result;
         try
         {
@@ -352,7 +378,7 @@ public sealed class GeneratedSetMaterializationJobHandler(IDbContextFactory<Alls
             set.UpdatedAt = Now; set.Revision++; await db.SaveChangesAsync(CancellationToken.None);
             return DurableJobCompletion.Cancelled();
         }
-        if (result.Succeeded) { set.MaterializationState = GeneratedSetMaterializationState.Succeeded; set.BackendPlaylistId = result.BackendPlaylistId; set.TargetRevision = result.TargetRevision; set.MaterializedAt = Now; set.UpdatedAt = Now; set.Revision++; await db.SaveChangesAsync(cancellationToken); return DurableJobCompletion.Success(); }
+        if (result.Succeeded) { set.MaterializationState = GeneratedSetMaterializationState.Succeeded; set.BackendPlaylistId = result.BackendPlaylistId; set.TargetRevision = result.TargetRevision; set.MaterializedAt = Now; set.UpdatedAt = Now; set.Revision++; await db.SaveChangesAsync(cancellationToken); await execution.ReportProgressAsync(new("playlist.materialize", $"Created {set.Name}.", candidates.Length, candidates.Length, Playlist: set.Name), cancellationToken); return DurableJobCompletion.Success(); }
         set.MaterializationState = GeneratedSetMaterializationState.Failed; set.LastErrorCode = result.SafeErrorCode ?? "generated_set_failed"; set.UpdatedAt = Now; set.Revision++; await db.SaveChangesAsync(cancellationToken);
         return result.Retryable ? DurableJobCompletion.Retry(result.SafeErrorCode ?? "generated_set_retry", "Generated playlist materialization will retry.")
             : DurableJobCompletion.Failure(result.SafeErrorCode ?? "generated_set_failed", "Generated playlist materialization failed.");

@@ -146,6 +146,7 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
                 ScopeKey = $"{_tenant:N}:{_user:N}",
                 TenantId = _tenant,
                 OwnerUserId = _user,
+                LibraryScopeId = "music",
                 Type = "recommendation.generate",
                 PayloadJson = "{}",
                 PolicySnapshotJson = "{}",
@@ -157,6 +158,18 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
                 AvailableAt = DateTimeOffset.UtcNow,
                 CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = DateTimeOffset.UtcNow
+            });
+            db.AuditEvents.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = _tenant,
+                ActorUserId = _user,
+                Category = "job-progress",
+                Action = "recommendation.rank",
+                Outcome = "running",
+                CorrelationId = "test",
+                DetailsJson = """{"stage":"recommendation.rank","message":"Ranking tracks.","completed":1,"total":2}""",
+                CreatedAt = DateTimeOffset.UtcNow
             });
             db.RecommendationRuns.Add(new()
             {
@@ -228,6 +241,7 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
         Assert.Contains("lastfm:fixture", json, StringComparison.Ordinal);
         Assert.Contains("Recommended song", json, StringComparison.Ordinal);
         Assert.Contains("\"latestRunState\":\"succeeded\"", json, StringComparison.Ordinal);
+        Assert.Contains("Ranking tracks.", json, StringComparison.Ordinal);
         Assert.DoesNotContain("TenantId", json, StringComparison.Ordinal);
         var feedback = Assert.IsType<OkObjectResult>(await Controller().SetFeedback(
             Guid.Parse("33333333-3333-3333-3333-333333333333"), new()

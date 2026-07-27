@@ -63,8 +63,14 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         var claim = await _jobs.ClaimNextAsync("intelligence-restart", ["recommendation.generate"]); Assert.NotNull(claim);
         var handler = new RecommendationRunJobHandler(_factory, [new FixtureProvider()],
             new ListeningProfileService(_factory, _clock), _clock);
-        var completion = await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default);
+        var progress = new List<DurableJobProgressUpdate>();
+        var completion = await handler.ExecuteAsync(new(claim!, EmptyServices.Instance)
+        {
+            ReportProgressAsync = (update, _) => { progress.Add(update); return Task.FromResult(true); }
+        }, default);
         await _jobs.CompleteAsync(claim!, completion); Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
+        Assert.Equal(["recommendation.profile", "recommendation.provider", "recommendation.provider",
+            "recommendation.rank", "recommendation.complete"], progress.Select(item => item.Stage));
         await using var db = await _factory.CreateDbContextAsync(); var candidate = Assert.Single(await db.RecommendationCandidates.ToListAsync());
         Assert.Equal("track-1", candidate.TrackKey); Assert.Contains("shared-genre", candidate.SignalsJson, StringComparison.Ordinal);
         Assert.Equal(Guid.Parse("11111111-1111-1111-1111-111111111111"), candidate.CanonicalRecordingId);
@@ -270,6 +276,33 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TransientProviderFailureUsesDurableRetryAndThenCompletes()
+    {
+        await _policies.SetAsync(_scope, new(true, 30, ["play"], ["flaky"]));
+        await new RecommendationRunService(_factory, _jobs, _clock).EnqueueAsync(
+            _scope, [], 10, "retry-run");
+        var provider = new FailOnceProvider();
+        var handler = new RecommendationRunJobHandler(_factory, [provider],
+            new ListeningProfileService(_factory, _clock), _clock);
+        var firstClaim = await _jobs.ClaimNextAsync("retry-worker", ["recommendation.generate"]);
+        var first = await handler.ExecuteAsync(new(firstClaim!, EmptyServices.Instance), default);
+        await _jobs.CompleteAsync(firstClaim!, first);
+        Assert.Equal(DurableJobCompletionKind.Retry, first.Kind);
+        await using (var failed = await _factory.CreateDbContextAsync())
+            Assert.Equal(RecommendationRunState.Failed,
+                (await failed.RecommendationRuns.SingleAsync()).State);
+
+        _clock.UtcNow = _clock.UtcNow.AddMinutes(1);
+        var retryClaim = await _jobs.ClaimNextAsync("retry-worker", ["recommendation.generate"]);
+        var retry = await handler.ExecuteAsync(new(retryClaim!, EmptyServices.Instance), default);
+        await _jobs.CompleteAsync(retryClaim!, retry);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, retry.Kind);
+        await using var completed = await _factory.CreateDbContextAsync();
+        Assert.Equal(RecommendationRunState.Succeeded,
+            (await completed.RecommendationRuns.SingleAsync()).State);
+    }
+
+    [Fact]
     public async Task EmptySeedRunUsesWeightedExactScopeListeningHabits()
     {
         await _policies.SetAsync(_scope, new(true, 30, ["favorite", "skip"], ["capture"]));
@@ -314,6 +347,17 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         public string Id => "capture"; public IReadOnlyList<string> Seeds { get; private set; } = [];
         public Task<RecommendationProviderResult> RecommendAsync(RecommendationRequest request)
         { Seeds = request.SeedTrackKeys; return Task.FromResult(new RecommendationProviderResult(RecommendationProviderState.Succeeded, [])); }
+    }
+    private sealed class FailOnceProvider : IRecommendationProvider
+    {
+        private bool _failed;
+        public string Id => "flaky";
+        public Task<RecommendationProviderResult> RecommendAsync(RecommendationRequest request)
+        {
+            if (!_failed) { _failed = true; throw new HttpRequestException(); }
+            return Task.FromResult(new RecommendationProviderResult(
+                RecommendationProviderState.Succeeded, []));
+        }
     }
     private sealed class Clock(DateTimeOffset now) : IPlatformClock { public DateTimeOffset UtcNow { get; set; } = now; }
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
