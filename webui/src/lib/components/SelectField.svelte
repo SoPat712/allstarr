@@ -42,7 +42,9 @@
   >
     <Select.Trigger class={`select-trigger ${className}`.trim()} aria-label={label}>
       <Select.Value {placeholder} />
-      <span class="select-chevron" aria-hidden="true">⌄</span>
+      <svg class="select-chevron" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="m6 9 6 6 6-6"></path>
+      </svg>
     </Select.Trigger>
     <Select.Portal>
       <Select.Content class="select-content" sideOffset={6}>

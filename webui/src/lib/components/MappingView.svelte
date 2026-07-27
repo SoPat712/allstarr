@@ -283,12 +283,6 @@
           <span>Library scope</span>
           <input bind:value={libraryScopeId} placeholder="All libraries" />
         </label>
-        <div class="filter-field"><span>Status</span><SelectField bind:value={stateFilter} label="Status" onchange={() => { page = 1; void load(); }} options={[
-          { value: "attention", label: "Needs attention" }, { value: "", label: "All tracks" },
-          { value: "matched", label: "Matched" }, { value: "suggested", label: "Suggested / High likelihood" },
-          { value: "ambiguous", label: "Ambiguous" }, { value: "unresolved", label: "Unresolved" },
-          { value: "rejected", label: "Rejected" },
-        ]} /></div>
         <div class="filter-field"><span>Confidence</span><SelectField bind:value={sort} label="Confidence" onchange={() => { page = 1; void load(); }} options={[
           { value: "", label: "Default order" }, { value: "confidence_desc", label: "Highest first" },
           { value: "confidence_asc", label: "Lowest first" },

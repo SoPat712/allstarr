@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Dialog, DropdownMenu, Popover } from "bits-ui";
+  import { Dialog, Popover } from "bits-ui";
   import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
+  import ColumnResizeHandle from "$lib/components/ColumnResizeHandle.svelte";
   import CoverageBar from "$lib/components/CoverageBar.svelte";
   import MatchDialog from "$lib/components/MatchDialog.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
@@ -59,6 +60,8 @@
   let matchOpen = $state(false);
   let selectedMatch = $state<MatchReviewItem | null>(null);
   let matchLoading = $state("");
+  let trackColumnWidth = $state(0);
+  let routeColumnWidth = $state(0);
 
   const visiblePlaylists = $derived(filterPlaylists(playlists, query, stateFilter, sort));
   const pageCount = $derived(Math.max(1, Math.ceil(visiblePlaylists.length / 20)));
@@ -401,40 +404,31 @@
               <ProviderMark id={details.targetProtocol} definition={provider(details.targetProtocol)} />
               <span>{providerName(details.targetProtocol)}</span>
             </div>
-            <CoverageBar
-              routes={details.routeCoverage}
-              total={details.trackCount}
-              unresolved={details.unresolvedCount}
-              {providerName}
-            />
           </div>
           <Dialog.Close class="icon-button playlist-dialog-close" aria-label="Close playlist details">×</Dialog.Close>
           <div class="playlist-actions" aria-label="Playlist actions">
-            <button disabled={Boolean(action) || !selected.enabled} type="button" onclick={() => void run("sync")}>Sync</button>
-            <button disabled={Boolean(action) || !selected.enabled} type="button" onclick={() => void run("rematch")}>Rematch</button>
-            <button disabled={Boolean(action)} type="button" onclick={() => void refreshSources([selected.id])}>Refresh</button>
-            <DropdownMenu.Root>
-              <DropdownMenu.Trigger class="menu-trigger" aria-label="Additional playlist operations">•••</DropdownMenu.Trigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
-                  <DropdownMenu.Item
-                    class="bits-menu-item"
-                    disabled={Boolean(action)}
-                    onSelect={() => void run("toggle")}
-                  >
-                    {selected.enabled ? "Pause playlist" : "Resume playlist"}
-                  </DropdownMenu.Item>
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
+            <button class="button-secondary" disabled={Boolean(action) || !selected.enabled} type="button" onclick={() => void run("sync")}>Sync</button>
+            <button class="button-secondary" disabled={Boolean(action) || !selected.enabled} type="button" onclick={() => void run("rematch")}>Rematch</button>
+            <button class="button-secondary" disabled={Boolean(action)} type="button" onclick={() => void refreshSources([selected.id])}>Refresh</button>
+            <button class="button-secondary" disabled={Boolean(action)} type="button" onclick={() => void run("toggle")}>{selected.enabled ? "Pause" : "Resume"}</button>
           </div>
         </header>
 
+        <div class="playlist-detail-coverage">
+          <CoverageBar
+            routes={details.routeCoverage}
+            total={details.trackCount}
+            unresolved={details.unresolvedCount}
+            {providerName}
+          />
+        </div>
+
         <div class="playlist-stat-grid">
-          <div><strong>{details.localCount}</strong><small>{providerName(details.targetProtocol)}</small></div>
-          <div><strong>{details.externalCount}</strong><small>External routes</small></div>
-          <div class:attention={details.unresolvedCount > 0}><strong>{details.unresolvedCount}</strong><small>Unresolved</small></div>
-          <div><strong>{relativeTime(details.completedAt)}</strong><small>Last sync</small></div>
+          <div><strong>{details.localCount}</strong><small>Local</small></div>
+          <div><strong>{details.externalCount}</strong><small>External</small></div>
+          <div class:attention={details.unresolvedCount > 0}><strong>{details.unresolvedCount}</strong><small>Unmatched</small></div>
+          <div><strong>{relativeTime(details.retrievedAt)}</strong><small>Source refreshed</small></div>
+          <div><strong>{relativeTime(details.completedAt)}</strong><small>Last synced</small></div>
         </div>
 
         {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
@@ -456,10 +450,16 @@
           ]} />
         </div>
 
-        <div class="track-table" aria-label={`${details.name} tracks`}>
+        <div
+          class="track-table"
+          aria-label={`${details.name} tracks`}
+          style={`--track-name-width:${trackColumnWidth ? `${trackColumnWidth}px` : "1fr"};--track-route-width:${routeColumnWidth ? `${routeColumnWidth}px` : "0.55fr"}`}
+        >
           <div class="track-head">
-            <span>#</span><span>Track</span>
-            <span>Route</span><span>Time</span>
+            <span>#</span>
+            <span class="track-column-heading">Track<ColumnResizeHandle bind:value={trackColumnWidth} label="track" min={220} max={520} /></span>
+            <span class="track-column-heading">Route<ColumnResizeHandle bind:value={routeColumnWidth} label="route" min={120} max={300} /></span>
+            <span>Time</span>
             <span><span class="sr-only">Details</span></span>
           </div>
           <div class="track-scroll">

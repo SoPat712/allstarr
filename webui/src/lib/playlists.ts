@@ -96,6 +96,10 @@ export function providerColor(providerId: string) {
   return `hsl(${hash % 360} 72% 58%)`;
 }
 
+export function resizedColumnWidth(start: number, delta: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, start + delta));
+}
+
 export function orderPlaylistSources(
   accounts: PlaylistSourceAccount[],
   providerOrder: string[],

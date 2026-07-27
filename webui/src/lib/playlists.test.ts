@@ -6,6 +6,7 @@ import {
   formatDuration,
   orderPlaylistSources,
   providerColor,
+  resizedColumnWidth,
 } from "./playlists";
 
 const playlist = (values: Partial<PlaylistLink>): PlaylistLink => ({
@@ -32,6 +33,12 @@ describe("playlist presentation", () => {
     expect(providerColor("unmatched")).toBe("var(--color-ink-muted)");
     expect(providerColor("jellyfin")).toBe("#8b65fb");
     expect(providerColor("apple-download")).toBe("#fa243c");
+  });
+
+  it("keeps resized columns within their usable bounds", () => {
+    expect(resizedColumnWidth(300, -200, 220, 520)).toBe(220);
+    expect(resizedColumnWidth(300, 400, 220, 520)).toBe(520);
+    expect(resizedColumnWidth(300, 40, 220, 520)).toBe(340);
   });
 
   it("filters and orders summaries by canonical coverage", () => {
