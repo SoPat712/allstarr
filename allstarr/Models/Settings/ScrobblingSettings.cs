@@ -47,12 +47,6 @@ public class LastFmSettings
     public static string LegacyJellyfinPluginApiKey => DecodeBase64(LegacyJellyfinPluginApiKeyBase64);
     public static string LegacyJellyfinPluginSharedSecret => DecodeBase64(LegacyJellyfinPluginSharedSecretBase64);
 
-    [Obsolete("Use LegacyJellyfinPluginApiKey. The shared Jellyfin plugin key is suspended by Last.fm.")]
-    public static string DefaultApiKey => LegacyJellyfinPluginApiKey;
-
-    [Obsolete("Use LegacyJellyfinPluginSharedSecret.")]
-    public static string DefaultSharedSecret => LegacyJellyfinPluginSharedSecret;
-
     public static bool IsLegacyJellyfinPluginApiKey(string? apiKey) =>
         !string.IsNullOrEmpty(apiKey) &&
         string.Equals(apiKey, LegacyJellyfinPluginApiKey, StringComparison.OrdinalIgnoreCase);

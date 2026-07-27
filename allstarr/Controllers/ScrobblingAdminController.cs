@@ -239,34 +239,6 @@ public class ScrobblingAdminController : ControllerBase
     }
 
     /// <summary>
-    /// DEPRECATED: OAuth method - use /authenticate instead for simpler username/password auth.
-    /// Step 1: Get Last.fm authentication URL for user to authorize the app.
-    /// </summary>
-    [HttpGet("lastfm/auth-url")]
-    public IActionResult GetLastFmAuthUrl()
-    {
-        return BadRequest(new
-        {
-            error = "OAuth authentication is deprecated. Use POST /lastfm/authenticate with username and password instead.",
-            hint = "This is simpler and doesn't require a callback URL."
-        });
-    }
-
-    /// <summary>
-    /// DEPRECATED: OAuth method - use /authenticate instead.
-    /// Step 2: Exchange Last.fm auth token for session key.
-    /// </summary>
-    [HttpPost("lastfm/get-session")]
-    public IActionResult GetLastFmSession([FromBody] GetSessionRequest request)
-    {
-        return BadRequest(new
-        {
-            error = "OAuth authentication is deprecated. Use POST /lastfm/authenticate with username and password instead.",
-            hint = "This is simpler and doesn't require a callback URL."
-        });
-    }
-
-    /// <summary>
     /// Test Last.fm connection with current configuration.
     /// </summary>
     [HttpPost("lastfm/test")]
@@ -705,11 +677,6 @@ public class ScrobblingAdminController : ControllerBase
             sb.Append(b.ToString("X2"));
         }
         return sb.ToString();
-    }
-
-    public class GetSessionRequest
-    {
-        public required string Token { get; set; }
     }
 
     public class ValidateTokenRequest
