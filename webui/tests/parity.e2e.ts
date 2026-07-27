@@ -455,8 +455,20 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
     }),
   }));
   let activationRequests = 0;
-  await page.route("**/packages/new/activate", (route) => {
+  let releaseActivation = () => {};
+  const activationResponse = new Promise<void>((resolve) => {
+    releaseActivation = resolve;
+  });
+  await page.route("**/packages/new/activate", async (route) => {
     activationRequests++;
+    if (activationRequests === 1) {
+      await activationResponse;
+      return route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Runtime failed to start." }),
+      });
+    }
     return route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
@@ -485,7 +497,13 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
   await expect(activation).toBeVisible();
   expect(activationRequests).toBe(0);
   await activation.getByRole("button", { name: "Activate extension" }).click();
+  await expect(activation.getByRole("button", { name: "Activating…" })).toBeDisabled();
   await expect.poll(() => activationRequests).toBe(1);
+  releaseActivation();
+  await expect(activation.getByRole("alert")).toHaveText("Runtime failed to start.");
+  await activation.getByRole("button", { name: "Activate extension" }).click();
+  await expect(activation).toBeHidden();
+  expect(activationRequests).toBe(2);
 });
 
 test("extension updates stay beside the shared management menu", async ({ page }) => {
