@@ -50,7 +50,7 @@
   let page = $state(1);
   let addOpen = $state(false);
   let operationJobId = $state("");
-  let sourceRefreshProgress = $state("");
+  let bulkProgress = $state("");
 
   const visiblePlaylists = $derived(filterPlaylists(playlists, query, stateFilter, sort));
   const pageCount = $derived(Math.max(1, Math.ceil(visiblePlaylists.length / 20)));
@@ -169,7 +169,7 @@
     feedback = "";
     let failed = 0;
     for (const [index, id] of ids.entries()) {
-      sourceRefreshProgress = `${index + 1}/${ids.length}`;
+      bulkProgress = `${index + 1}/${ids.length}`;
       try {
         await playlistLinks.refresh(id);
       } catch {
@@ -179,7 +179,27 @@
     feedback = failed
       ? `${ids.length - failed} playlists refreshed; ${failed} failed.`
       : `${ids.length} playlists refreshed.`;
-    sourceRefreshProgress = "";
+    bulkProgress = "";
+    action = "";
+    await refresh();
+  }
+
+  async function rematchAll() {
+    if (action || refreshing || !playlists.length) return;
+    action = "rematch-all";
+    feedback = "";
+    let queued = 0;
+    let failed = 0;
+    for (const [index, playlist] of playlists.entries()) {
+      bulkProgress = `${index + 1}/${playlists.length}`;
+      try {
+        if ((await playlistLinks.run(playlist.id)).created) queued++;
+      } catch {
+        failed++;
+      }
+    }
+    feedback = `${queued} rematches queued${failed ? `; ${failed} failed` : ""}.`;
+    bulkProgress = "";
     action = "";
     await refresh();
   }
@@ -242,9 +262,17 @@
             class="button-secondary"
             disabled={Boolean(action) || refreshing}
             type="button"
+            onclick={() => void rematchAll()}
+          >
+            {action === "rematch-all" ? `Queueing ${bulkProgress}` : "Rematch all"}
+          </button>
+          <button
+            class="button-secondary"
+            disabled={Boolean(action) || refreshing}
+            type="button"
             onclick={() => void refreshSources()}
           >
-            {action === "refresh-sources" ? `Refreshing ${sourceRefreshProgress}` : "Refresh playlists"}
+            {action === "refresh-sources" ? `Refreshing ${bulkProgress}` : "Refresh playlists"}
           </button>
         </div>
       </header>

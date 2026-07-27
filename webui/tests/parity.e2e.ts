@@ -1142,6 +1142,11 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await page.getByRole("button", { name: "Refresh playlists" }).click();
   await refresh;
   await expect(page.getByText("1 playlists refreshed.")).toBeVisible();
+  const rematchAll = page.waitForRequest((item) =>
+    item.method() === "POST" && item.url().endsWith("/api/admin/playlist-links/playlist-link/run"));
+  await page.getByRole("button", { name: "Rematch all" }).click();
+  await rematchAll;
+  await expect(page.getByText("1 rematches queued.")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.playlist-row [title="Lumen Audio: 1"]')).toBeVisible();
   await expect(page.locator('.playlist-row [title="Unresolved: 1"]')).toBeVisible();
