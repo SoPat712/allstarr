@@ -10,6 +10,7 @@
     type ProviderDefinition,
   } from "$lib/api";
   import MatchDialog from "$lib/components/MatchDialog.svelte";
+  import ArtworkSimilarity from "$lib/components/ArtworkSimilarity.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
@@ -339,7 +340,7 @@
                   <span>
                     <small>Current match</small>
                     <strong>{target?.title || "No playable match"}</strong>
-                    <em>{target?.detail || "Review candidates"}</em>
+                    <em>{target ? `${providerName(target.providerId)} · ${target.detail}` : "Review candidates"}</em>
                   </span>
                 </span>
               </div>
@@ -356,6 +357,9 @@
                   {#each scoreComponents(candidate) as [name, value]}
                     <span>{name.replaceAll("_", " ")} {percent(value)}</span>
                   {/each}
+                {/if}
+                {#if match.sourceArtworkUrl && match.candidateArtworkUrl}
+                  <ArtworkSimilarity source={match.sourceArtworkUrl} candidate={match.candidateArtworkUrl} />
                 {/if}
                 <details>
                   <summary>Technical details</summary>
