@@ -1,6 +1,7 @@
 using allstarr.Core.Operations;
 using allstarr.Services.Common;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Text.Json.Nodes;
 
 namespace allstarr.Tests;
 
@@ -95,6 +96,21 @@ public sealed class FileMediaApplicationCacheTests : IAsyncLifetime
 
         Assert.Equal(3, await _cache.CleanupAsync());
         Assert.Empty(Directory.GetFiles(_root, "*", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task Cleanup_RemovesEntriesWithoutTtl()
+    {
+        const string key = "artwork:payload:v1:no-ttl";
+        await _cache.SetStringAsync(key, "value");
+        var metadataPath = Assert.Single(Directory.GetFiles(_root, "*.json", SearchOption.AllDirectories));
+        var metadata = JsonNode.Parse(await File.ReadAllTextAsync(metadataPath))!.AsObject();
+        metadata["expiresAt"] = null;
+        await File.WriteAllTextAsync(metadataPath, metadata.ToJsonString());
+
+        Assert.Equal(1, (await _cache.PreviewCleanupAsync()).NoExpiryEntries);
+        Assert.Equal(1, await _cache.CleanupAsync());
+        Assert.Null(await _cache.GetStringAsync(key));
     }
 
     public Task DisposeAsync()

@@ -104,7 +104,8 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
                 Value = "orphan",
                 PayloadBytes = 6,
                 CreatedAt = _clock.UtcNow,
-                UpdatedAt = _clock.UtcNow
+                UpdatedAt = _clock.UtcNow,
+                ExpiresAt = _clock.UtcNow.AddHours(1)
             });
             database.ApplicationCacheEntries.Add(new ApplicationCacheEntryRecord
             {
@@ -113,7 +114,8 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
                 Value = "unknown",
                 PayloadBytes = 7,
                 CreatedAt = _clock.UtcNow,
-                UpdatedAt = _clock.UtcNow
+                UpdatedAt = _clock.UtcNow,
+                ExpiresAt = _clock.UtcNow.AddHours(1)
             });
             database.ApplicationCacheEntries.Add(new ApplicationCacheEntryRecord
             {
@@ -122,24 +124,89 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
                 Value = "{broken",
                 PayloadBytes = 7,
                 CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow,
+                ExpiresAt = _clock.UtcNow.AddHours(1)
+            });
+            database.ApplicationCacheEntries.Add(new ApplicationCacheEntryRecord
+            {
+                Key = "search:v2:no-expiry",
+                Category = ApplicationCacheCategory.SearchResults.ToString(),
+                Value = "immortal",
+                PayloadBytes = 8,
+                CreatedAt = _clock.UtcNow,
                 UpdatedAt = _clock.UtcNow
             });
             await database.SaveChangesAsync();
         }
 
         var preview = await _cache.PreviewMaintenanceAsync();
-        Assert.Equal(5, preview.ScannedEntries);
+        Assert.Equal(6, preview.ScannedEntries);
         Assert.False(preview.ScanLimitReached);
         Assert.Equal(1, preview.ExpiredEntries);
         Assert.Equal(3, preview.UnknownOwnerEntries);
-        Assert.Equal(27, preview.ReclaimableBytes);
+        Assert.Equal(1, preview.NoExpiryEntries);
+        Assert.Equal(35, preview.ReclaimableBytes);
 
         Assert.Equal(1, await _cache.CleanupExpiredAsync());
-        Assert.Equal(3, await _cache.CleanupInvalidOwnershipAsync());
+        Assert.Equal(4, await _cache.CleanupInvalidOwnershipAsync());
         Assert.Equal("live", await _cache.GetStringAsync("search:v2:live"));
 
         await using var remaining = await _factory.CreateDbContextAsync();
         Assert.Single(await remaining.ApplicationCacheEntries.ToListAsync());
+    }
+
+    [Fact]
+    public async Task MaintenanceRemovesStaleProviderAccountScopes()
+    {
+        var tenantId = Guid.CreateVersion7();
+        var userId = Guid.CreateVersion7();
+        var accountId = Guid.CreateVersion7();
+        await using (var database = await _factory.CreateDbContextAsync())
+        {
+            database.AddRange(
+                new TenantRecord
+                {
+                    Id = tenantId,
+                    Slug = "cache-scope",
+                    Name = "Cache scope",
+                    CreatedAt = _clock.UtcNow
+                },
+                new PlatformUserRecord
+                {
+                    Id = userId,
+                    TenantId = tenantId,
+                    DisplayName = "Cache scope",
+                    Status = PlatformUserStatus.Active,
+                    CreatedAt = _clock.UtcNow,
+                    UpdatedAt = _clock.UtcNow
+                },
+                new ProviderAccountRecord
+                {
+                    Id = accountId,
+                    TenantId = tenantId,
+                    OwnerUserId = userId,
+                    ProviderId = "spotify",
+                    DisplayName = "Cache scope",
+                    Scope = ProviderAccountScope.User,
+                    Enabled = true,
+                    Revision = 2,
+                    CreatedAt = _clock.UtcNow,
+                    UpdatedAt = _clock.UtcNow
+                });
+            await database.SaveChangesAsync();
+        }
+
+        var current = CacheKeyBuilder.BuildProviderPlaylistDiscoveryKey(
+            tenantId, userId, accountId, 2, "spotify", null, null, 100);
+        var stale = CacheKeyBuilder.BuildProviderPlaylistDiscoveryKey(
+            tenantId, userId, accountId, 1, "spotify", null, null, 100);
+        Assert.True(await _cache.SetStringAsync(current, "current"));
+        Assert.True(await _cache.SetStringAsync(stale, "stale"));
+
+        Assert.Equal(1, (await _cache.PreviewMaintenanceAsync()).StaleAuthorizationScopeEntries);
+        Assert.Equal(1, await _cache.CleanupInvalidOwnershipAsync());
+        Assert.Equal("current", await _cache.GetStringAsync(current));
+        Assert.Null(await _cache.GetStringAsync(stale));
     }
 
     [Fact]

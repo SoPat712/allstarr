@@ -102,6 +102,9 @@
       <div><dt>Decoded artwork limit</dt><dd>{(snapshot?.artworkLimits.maximumDecodedPixels ?? 0).toLocaleString()} pixels</dd></div>
       <div><dt>Cleanup cadence</dt><dd>{duration(preview?.media.cleanupIntervalSeconds ?? 0)}</dd></div>
       <div><dt>Expired</dt><dd>{(preview?.metadata.expiredEntries ?? 0) + (preview?.media.expiredEntries ?? 0)}</dd></div>
+      <div><dt>No TTL</dt><dd>{(preview?.metadata.noExpiryEntries ?? 0) + (preview?.media.noExpiryEntries ?? 0)}</dd></div>
+      <div><dt>Stale account scopes</dt><dd>{preview?.metadata.staleAuthorizationScopeEntries ?? 0}</dd></div>
+      <div><dt>Obsolete revisions</dt><dd>{preview?.metadata.supersededEntries ?? 0}</dd></div>
       <div><dt>Orphan / malformed</dt><dd>{(preview?.metadata.unknownOwnerEntries ?? 0) + (preview?.media.orphanedMetadataFiles ?? 0) + (preview?.media.orphanedPayloadFiles ?? 0) + (preview?.media.malformedMetadataFiles ?? 0) + (preview?.unreferencedArtworkPayloads ?? 0)}</dd></div>
       <div><dt>Over quota</dt><dd>{(preview?.metadata.overQuotaEntries ?? 0) + (preview?.media.overQuotaEntries ?? 0)}</dd></div>
       <div><dt>Extension storage</dt><dd>{bytes(snapshot?.extensionStorage.payloadBytes)} / {bytes(snapshot?.extensionStorage.maximumBytes)}</dd></div>

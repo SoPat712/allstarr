@@ -331,6 +331,8 @@ export type CacheMaintenancePreview = {
     expiredEntries: number;
     unknownOwnerEntries: number;
     disabledCategoryEntries: number;
+    noExpiryEntries: number;
+    staleAuthorizationScopeEntries: number;
     supersededEntries: number;
     overQuotaEntries: number;
     reclaimableBytes: number;
@@ -343,6 +345,7 @@ export type CacheMaintenancePreview = {
     orphanedMetadataFiles: number;
     orphanedPayloadFiles: number;
     expiredEntries: number;
+    noExpiryEntries: number;
     overQuotaEntries: number;
     reclaimableBytes: number;
     cleanupIntervalSeconds: number;

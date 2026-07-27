@@ -73,6 +73,8 @@ public sealed record DatabaseCacheMaintenancePreview(
     int ExpiredEntries,
     int UnknownOwnerEntries,
     int DisabledCategoryEntries,
+    int NoExpiryEntries,
+    int StaleAuthorizationScopeEntries,
     int SupersededEntries,
     int OverQuotaEntries,
     long ReclaimableBytes,

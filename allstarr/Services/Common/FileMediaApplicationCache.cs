@@ -50,6 +50,7 @@ public sealed record FileMediaCacheMaintenancePreview(
     int OrphanedMetadataFiles,
     int OrphanedPayloadFiles,
     int ExpiredEntries,
+    int NoExpiryEntries,
     int OverQuotaEntries,
     long ReclaimableBytes,
     int CleanupIntervalSeconds,
@@ -250,12 +251,13 @@ public sealed class FileMediaApplicationCache : IApplicationCache, IDisposable
             Directory.CreateDirectory(paths.Directory);
             await WritePayloadAsync(paths.Payload, value);
             var now = _clock.UtcNow;
+            var effectiveExpiry = expiry ?? ApplicationCachePolicyRegistry.Resolve(key).FreshFor;
             await WriteMetadataAsync(
                 paths.Metadata,
                 new MediaEntryMetadata(
                     key,
                     payloadBytes,
-                    expiry.HasValue ? now.Add(expiry.Value) : null,
+                    now.Add(effectiveExpiry),
                     now));
             Interlocked.Add(ref _evictions, await TrimToQuotaAsync());
             Interlocked.Increment(ref _writes);
@@ -404,7 +406,7 @@ public sealed class FileMediaApplicationCache : IApplicationCache, IDisposable
             var deleted = CleanupOrphanedFiles();
             foreach (var metadata in ReadAllMetadata())
             {
-                if (metadata.ExpiresAt is null || metadata.ExpiresAt > _clock.UtcNow)
+                if (metadata.ExpiresAt is not null && metadata.ExpiresAt > _clock.UtcNow)
                 {
                     continue;
                 }
@@ -441,7 +443,7 @@ public sealed class FileMediaApplicationCache : IApplicationCache, IDisposable
             if (!Directory.Exists(_options.RootPath))
             {
                 return new FileMediaCacheMaintenancePreview(
-                    0, false, 0, 0, 0, 0, 0, 0, 0,
+                    0, false, 0, 0, 0, 0, 0, 0, 0, 0,
                     Math.Max(60, (int)CleanupInterval.TotalSeconds),
                     LastCleanupAt(),
                     Volatile.Read(ref _lastCleanupDeletedEntries),
@@ -468,6 +470,7 @@ public sealed class FileMediaApplicationCache : IApplicationCache, IDisposable
             var malformedMetadata = 0;
             var orphanedMetadata = 0;
             var expiredEntries = 0;
+            var noExpiryEntries = 0;
             long reclaimableBytes = temporary.Sum(FileLength);
             var validEntries = new List<MediaEntryMetadata>();
 
@@ -513,6 +516,13 @@ public sealed class FileMediaApplicationCache : IApplicationCache, IDisposable
                     continue;
                 }
 
+                if (metadata.ExpiresAt is null)
+                {
+                    noExpiryEntries++;
+                    reclaimableBytes += FileLength(metadataPath) + FileLength(payloadPath);
+                    continue;
+                }
+
                 validEntries.Add(metadata);
             }
 
@@ -547,6 +557,7 @@ public sealed class FileMediaApplicationCache : IApplicationCache, IDisposable
                 orphanedMetadata,
                 orphanedPayloads,
                 expiredEntries,
+                noExpiryEntries,
                 overQuotaEntries,
                 Math.Max(0, reclaimableBytes),
                 Math.Max(60, (int)CleanupInterval.TotalSeconds),

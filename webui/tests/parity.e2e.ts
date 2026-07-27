@@ -165,8 +165,8 @@ const responses: Record<string, unknown> = {
     capturedAt: "2026-01-01",
   },
   "/api/admin/cache/maintenance/preview": {
-    metadata: { scannedEntries: 2, scanLimitReached: false, expiredEntries: 1, unknownOwnerEntries: 0, disabledCategoryEntries: 0, supersededEntries: 0, overQuotaEntries: 0, reclaimableBytes: 1024 },
-    media: { scannedFiles: 2, scanLimitReached: false, temporaryFiles: 0, malformedMetadataFiles: 0, orphanedMetadataFiles: 0, orphanedPayloadFiles: 0, expiredEntries: 0, overQuotaEntries: 0, reclaimableBytes: 0, cleanupIntervalSeconds: 900, lastCleanupAt: "2026-01-01", lastCleanupDeletedEntries: 1 },
+    metadata: { scannedEntries: 2, scanLimitReached: false, expiredEntries: 1, unknownOwnerEntries: 0, disabledCategoryEntries: 0, noExpiryEntries: 0, staleAuthorizationScopeEntries: 0, supersededEntries: 0, overQuotaEntries: 0, reclaimableBytes: 1024 },
+    media: { scannedFiles: 2, scanLimitReached: false, temporaryFiles: 0, malformedMetadataFiles: 0, orphanedMetadataFiles: 0, orphanedPayloadFiles: 0, expiredEntries: 0, noExpiryEntries: 0, overQuotaEntries: 0, reclaimableBytes: 0, cleanupIntervalSeconds: 900, lastCleanupAt: "2026-01-01", lastCleanupDeletedEntries: 1 },
     unreferencedArtworkPayloads: 1, unreferencedArtworkBytes: 4096,
     artworkReferenceScanLimitReached: false,
   },
@@ -1027,6 +1027,8 @@ test("Maintenance reports cache budgets and confirms category purge", async ({ p
 
   await expect(card.getByText("Hot RAM hit / miss")).toBeVisible();
   await expect(card.getByText("Upstream avoided")).toBeVisible();
+  await card.getByText("Limits and cleanup preview").click();
+  await expect(card.getByText("Stale account scopes")).toBeVisible();
   await card.getByText("Category budgets").click();
   await expect(card.getByText(/media-assets/)).toBeVisible();
   await card.getByRole("button", { name: "Purge", exact: true }).click();

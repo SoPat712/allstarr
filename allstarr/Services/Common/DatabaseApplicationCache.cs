@@ -202,7 +202,8 @@ public sealed class DatabaseApplicationCache(
         }
 
         var now = clock.UtcNow;
-        DateTimeOffset? expiresAt = expiry.HasValue ? now.Add(expiry.Value) : null;
+        var effectiveExpiry = expiry ?? ApplicationCachePolicyRegistry.Resolve(key, _settings).FreshFor;
+        var expiresAt = now.Add(effectiveExpiry);
         var category = ApplicationCachePolicyRegistry.Classify(key).ToString();
 
         try
@@ -474,6 +475,7 @@ public sealed class DatabaseApplicationCache(
                 .Take(take + 1)
                 .ToArrayAsync(cancellationToken);
             var scanned = rows.Take(take).ToArray();
+            var accounts = await ReadAccountScopesAsync(database, scanned, cancellationToken);
             var expired = scanned.Where(item =>
                 item.ExpiresAt is not null && item.ExpiresAt <= clock.UtcNow).ToArray();
             var unknown = scanned.Where(HasUnknownOwner).ToArray();
@@ -482,12 +484,19 @@ public sealed class DatabaseApplicationCache(
                 !ApplicationCachePolicyRegistry.IsEnabled(
                     Enum.Parse<ApplicationCacheCategory>(item.Category, ignoreCase: true),
                     _settings)).ToArray();
+            var noExpiry = scanned.Where(item => item.ExpiresAt is null).ToArray();
+            var staleScopes = scanned.Where(item =>
+                !HasUnknownOwner(item) &&
+                HasStaleAuthorizationScope(item.Key, accounts)).ToArray();
             var superseded = FindSupersededArtworkDescriptors(
-                scanned.Except(expired).Except(unknown).Except(disabled)).ToArray();
+                scanned.Except(expired).Except(unknown).Except(disabled)
+                    .Except(noExpiry).Except(staleScopes)).ToArray();
             var active = scanned
                 .Except(expired)
                 .Except(unknown)
                 .Except(disabled)
+                .Except(noExpiry)
+                .Except(staleScopes)
                 .Except(superseded)
                 .ToArray();
             var overQuota = new List<ApplicationCacheEntryRecord>();
@@ -514,6 +523,8 @@ public sealed class DatabaseApplicationCache(
             var reclaimable = expired
                 .Concat(unknown)
                 .Concat(disabled)
+                .Concat(noExpiry)
+                .Concat(staleScopes)
                 .Concat(superseded)
                 .Concat(overQuota)
                 .DistinctBy(item => item.Key)
@@ -524,6 +535,8 @@ public sealed class DatabaseApplicationCache(
                 expired.Length,
                 unknown.Length,
                 disabled.Length,
+                noExpiry.Length,
+                staleScopes.Length,
                 superseded.Length,
                 overQuota.Count,
                 reclaimable,
@@ -533,7 +546,7 @@ public sealed class DatabaseApplicationCache(
         {
             logger.LogWarning(exception, "Database cache maintenance preview failed");
             return new DatabaseCacheMaintenancePreview(
-                0, false, 0, 0, 0, 0, 0, 0, clock.UtcNow);
+                0, false, 0, 0, 0, 0, 0, 0, 0, 0, clock.UtcNow);
         }
     }
 
@@ -551,9 +564,12 @@ public sealed class DatabaseApplicationCache(
                 .ThenBy(item => item.Key)
                 .Take(take)
                 .ToArrayAsync(cancellationToken);
+            var accounts = await ReadAccountScopesAsync(database, candidates, cancellationToken);
             var keys = candidates
                 .Where(item =>
                     HasUnknownOwner(item) ||
+                    item.ExpiresAt is null ||
+                    HasStaleAuthorizationScope(item.Key, accounts) ||
                     !ApplicationCachePolicyRegistry.IsEnabled(
                         Enum.Parse<ApplicationCacheCategory>(item.Category, ignoreCase: true),
                         _settings))
@@ -783,6 +799,73 @@ public sealed class DatabaseApplicationCache(
         expectedCategory != category ||
         (CacheKeyBuilder.IsMediaAssetDescriptorKey(item.Key) &&
          ReadArtworkPayloadKey(item.Value) == null);
+
+    private static async Task<IReadOnlyDictionary<Guid, CacheAccountScope>> ReadAccountScopesAsync(
+        AllstarrDbContext database,
+        IEnumerable<ApplicationCacheEntryRecord> entries,
+        CancellationToken cancellationToken)
+    {
+        var ids = entries
+            .Select(item => ReadScopedAccountId(item.Key))
+            .Where(item => item.HasValue)
+            .Select(item => item!.Value)
+            .Distinct()
+            .ToArray();
+        return ids.Length == 0
+            ? new Dictionary<Guid, CacheAccountScope>()
+            : await database.ProviderAccounts
+                .AsNoTracking()
+                .Where(item => ids.Contains(item.Id))
+                .ToDictionaryAsync(
+                    item => item.Id,
+                    item => new CacheAccountScope(
+                        item.TenantId,
+                        item.OwnerUserId,
+                        item.ProviderId,
+                        item.Revision,
+                        item.Enabled),
+                    cancellationToken);
+    }
+
+    private static Guid? ReadScopedAccountId(string key)
+    {
+        var parts = key.Split(':');
+        var account = parts.Length switch
+        {
+            9 when key.StartsWith("playlist:discovery:v2:", StringComparison.Ordinal) => parts[5],
+            11 when CacheKeyBuilder.IsMediaAssetDescriptorKey(key) => parts[5],
+            _ => null
+        };
+        return Guid.TryParseExact(account, "N", out var id) ? id : null;
+    }
+
+    private static bool HasStaleAuthorizationScope(
+        string key,
+        IReadOnlyDictionary<Guid, CacheAccountScope> accounts)
+    {
+        var accountId = ReadScopedAccountId(key);
+        if (!accountId.HasValue) return false;
+        if (!accounts.TryGetValue(accountId.Value, out var account) || !account.Enabled) return true;
+
+        var parts = key.Split(':');
+        var provider = parts.Length == 9 ? parts[7] : parts[6];
+        if (!parts[3].Equals(account.TenantId?.ToString("N") ?? "global", StringComparison.Ordinal) ||
+            !parts[4].Equals(account.OwnerUserId?.ToString("N") ?? "shared", StringComparison.Ordinal) ||
+            !provider.Equals(account.ProviderId, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return parts.Length == 9 &&
+               (!long.TryParse(parts[6], out var revision) || revision != account.Revision);
+    }
+
+    private sealed record CacheAccountScope(
+        Guid? TenantId,
+        Guid? OwnerUserId,
+        string ProviderId,
+        long Revision,
+        bool Enabled);
 
     private static string? ReadArtworkPayloadKey(string value)
     {
