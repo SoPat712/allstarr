@@ -167,22 +167,6 @@
     await refresh();
   }
 
-  function openTrackReview(track: PlaylistDetails["tracks"][number]) {
-    location.hash = `/library/mappings?search=${encodeURIComponent(track.title)}&review=${encodeURIComponent(track.externalSnapshotId)}`;
-  }
-
-  function trackRowClick(event: MouseEvent, track: PlaylistDetails["tracks"][number]) {
-    if ((event.target as Element).closest("button, a, [role=menu]")) return;
-    openTrackReview(track);
-  }
-
-  function trackRowKey(event: KeyboardEvent, track: PlaylistDetails["tracks"][number]) {
-    if ((event.target as Element).closest("button, a, [role=menu]")) return;
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    openTrackReview(track);
-  }
-
   onMount(() => {
     selectedId = initialId;
     void refresh();
@@ -423,14 +407,12 @@
           </div>
           <div class="track-scroll">
             {#each visibleTracks as track}
-              <div
-                class="track-row"
-                role="button"
-                tabindex="0"
-                aria-label={`Open mapping details for ${track.title}`}
-                onclick={(event) => trackRowClick(event, track)}
-                onkeydown={(event) => trackRowKey(event, track)}
-              >
+              <div class="track-row">
+                <a
+                  class="track-row-link"
+                  aria-label={`Open mapping details for ${track.title}`}
+                  href={`#/library/mappings?search=${encodeURIComponent(track.title)}&review=${encodeURIComponent(track.externalSnapshotId)}`}
+                ></a>
                 <span class="track-index">{track.position}</span>
                 <span class="track-identity">
                   <span class="media-art track-art">

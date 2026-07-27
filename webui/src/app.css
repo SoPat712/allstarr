@@ -1378,23 +1378,32 @@
   }
 
   .track-row {
+    position: relative;
     min-height: 3.7rem;
     border-bottom: 1px solid var(--color-edge);
     padding: 0.35rem 0;
   }
 
-  .track-row[role="button"] {
+  .track-row-link {
+    position: absolute;
+    z-index: 1;
+    inset: 0;
     cursor: pointer;
   }
 
-  .track-row:hover,
-  .track-row:focus-visible {
+  .track-row:has(.track-row-link:hover),
+  .track-row:has(.track-row-link:focus-visible) {
     background: rgb(255 255 255 / 3%);
   }
 
-  .track-row:focus-visible {
+  .track-row-link:focus-visible {
     outline: 2px solid var(--color-signal);
     outline-offset: -2px;
+  }
+
+  .track-menu {
+    position: relative;
+    z-index: 2;
   }
 
   @media (min-width: 761px) {

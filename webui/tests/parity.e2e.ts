@@ -726,7 +726,12 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await expect(dialog.getByRole("button", { name: "Refresh" })).toBeInViewport();
   await page.setViewportSize({ width: 1280, height: 800 });
   await expect.poll(async () => (await dialog.boundingBox())?.width ?? 0).toBeGreaterThan(900);
-  await dialog.getByRole("button", { name: "Open mapping details for Test song" }).click();
+  await dialog.getByRole("button", { name: "Technical details for Test song" }).click();
+  await expect(page).toHaveURL(/#\/library\/playlists$/);
+  await expect(page.getByRole("menu").getByRole("link", { name: "Review match" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await dialog.getByRole("link", { name: "Open mapping details for Test song" }).focus();
+  await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/#\/library\/mappings\?search=Test%20song&review=snapshot$/);
   await expect(page.getByRole("dialog", { name: "Test song" })).toBeVisible();
 });
