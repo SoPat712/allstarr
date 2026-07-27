@@ -966,7 +966,12 @@ test("Playlist operations show durable progress and confirm cancellation", async
       contentType: "application/json",
       body: JSON.stringify({
         ...fixture,
-        jobs: fixture.jobs.map((job) => ({ ...job, state: cancelled ? "Succeeded" : "Running" })),
+        jobs: fixture.jobs.map((job) => ({
+          ...job,
+          state: cancelled ? "Succeeded" : "Deferred",
+          deferralCount: 1,
+          availableAt: "2099-01-01T12:00:00Z",
+        })),
       }),
     });
   });
@@ -995,6 +1000,8 @@ test("Playlist operations show durable progress and confirm cancellation", async
   await expect(dialog.getByText("Rematch queued.")).toBeVisible();
   await expect(dialog.locator("summary").getByText("Matching Test song")).toBeVisible();
   await expect(dialog.getByText("1/2")).toBeVisible();
+  await expect(dialog.getByText("Wait until")).toBeVisible();
+  await expect(dialog.getByText("Deferrals")).toBeVisible();
   await dialog.getByRole("button", { name: "Cancel operation" }).click();
   const confirmation = page.getByRole("alertdialog", { name: "Cancel this operation?" });
   await expect(confirmation).toBeVisible();

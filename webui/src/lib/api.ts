@@ -66,6 +66,7 @@ export type Job = {
   attemptCount?: number;
   failureCount?: number;
   deferralCount?: number;
+  availableAt?: string;
   cancellationRequestedAt?: string | null;
   lastErrorCode?: string | null;
   lastErrorMessage?: string | null;

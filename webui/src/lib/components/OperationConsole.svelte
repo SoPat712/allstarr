@@ -111,6 +111,7 @@
         {#if (job.attemptCount ?? 0) > 1}<span><small>Retries</small><strong>{(job.attemptCount ?? 1) - 1}</strong></span>{/if}
         {#if job.failureCount}<span><small>Failures</small><strong>{job.failureCount}</strong></span>{/if}
         {#if job.deferralCount}<span><small>Deferrals</small><strong>{job.deferralCount}</strong></span>{/if}
+        {#if job.state === "Deferred" && job.availableAt}<span><small>Wait until</small><strong><time datetime={job.availableAt}>{new Date(job.availableAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</time></strong></span>{/if}
       </div>
       {#if job.lastErrorMessage}<p class="notice-error">{job.lastErrorMessage}</p>{/if}
       <ol>
