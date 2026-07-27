@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { AlertDialog, DropdownMenu } from "bits-ui";
+  import { DropdownMenu } from "bits-ui";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import {
     home,
     matchReview,
@@ -426,23 +427,13 @@
     onReject={(match) => confirm("reject", match)}
   />
 
-  <AlertDialog.Root bind:open={destructiveOpen}>
-    <AlertDialog.Portal>
-      <AlertDialog.Overlay class="dialog-overlay" />
-      <AlertDialog.Content class="confirm-dialog">
-        <AlertDialog.Title>{destructive?.kind === "clear" ? "Clear manual review?" : "Reject this candidate?"}</AlertDialog.Title>
-        <AlertDialog.Description>
-          {destructive?.kind === "clear"
-            ? "The durable manual decision will be revoked and automatic matching will become authoritative again."
-            : "The current candidate will be recorded as rejected. You can rematch it later."}
-        </AlertDialog.Description>
-        <footer>
-          <AlertDialog.Cancel class="button-secondary">Cancel</AlertDialog.Cancel>
-          <AlertDialog.Action class="button-danger" onclick={() => void applyDestructive()}>
-            {destructive?.kind === "clear" ? "Clear review" : "Reject candidate"}
-          </AlertDialog.Action>
-        </footer>
-      </AlertDialog.Content>
-    </AlertDialog.Portal>
-  </AlertDialog.Root>
+  <ConfirmDialog
+    bind:open={destructiveOpen}
+    title={destructive?.kind === "clear" ? "Clear manual review?" : "Reject this candidate?"}
+    description={destructive?.kind === "clear"
+      ? "The durable manual decision will be revoked and automatic matching will become authoritative again."
+      : "The current candidate will be recorded as rejected. You can rematch it later."}
+    confirmLabel={destructive?.kind === "clear" ? "Clear review" : "Reject candidate"}
+    onConfirm={applyDestructive}
+  />
 {/if}

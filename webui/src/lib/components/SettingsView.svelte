@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { AlertDialog } from "bits-ui";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import {
     home,
     settings,
@@ -338,14 +338,11 @@
     {/if}
   </section>
 
-  <AlertDialog.Root bind:open={purgeOpen}>
-    <AlertDialog.Portal>
-      <AlertDialog.Overlay class="dialog-overlay" />
-      <AlertDialog.Content class="confirm-dialog">
-        <AlertDialog.Title>Purge the application cache?</AlertDialog.Title>
-        <AlertDialog.Description>Disposable metadata and media payloads will be removed. PostgreSQL business state, accounts, mappings, playlists, and kept audio are not affected.</AlertDialog.Description>
-        <footer><AlertDialog.Cancel class="button-secondary">Cancel</AlertDialog.Cancel><AlertDialog.Action class="button-danger" onclick={() => void purge()}>Purge cache</AlertDialog.Action></footer>
-      </AlertDialog.Content>
-    </AlertDialog.Portal>
-  </AlertDialog.Root>
+  <ConfirmDialog
+    bind:open={purgeOpen}
+    title="Purge the application cache?"
+    description="Disposable metadata and media payloads will be removed. PostgreSQL business state, accounts, mappings, playlists, and kept audio are not affected."
+    confirmLabel="Purge cache"
+    onConfirm={purge}
+  />
 {/if}

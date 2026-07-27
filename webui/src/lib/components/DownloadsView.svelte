@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { AlertDialog } from "bits-ui";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import {
     downloads,
     home,
@@ -263,23 +263,13 @@
     {/if}
   </section>
 
-  <AlertDialog.Root bind:open={confirmOpen}>
-    <AlertDialog.Portal>
-      <AlertDialog.Overlay class="dialog-overlay" />
-      <AlertDialog.Content class="confirm-dialog">
-        <AlertDialog.Title>{removal?.kind === "all" ? `Remove all ${label.toLowerCase()} tracks?` : "Remove this track?"}</AlertDialog.Title>
-        <AlertDialog.Description>
-          {removal?.kind === "all"
-            ? `This deletes every ${label.toLowerCase()} audio file and its lyrics sidecar.`
-            : "This deletes the managed audio file and its lyrics sidecar. This cannot be undone."}
-        </AlertDialog.Description>
-        <footer>
-          <AlertDialog.Cancel class="button-secondary">Cancel</AlertDialog.Cancel>
-          <AlertDialog.Action class="button-danger" onclick={() => void remove()}>
-            {removal?.kind === "all" ? "Remove all" : "Remove track"}
-          </AlertDialog.Action>
-        </footer>
-      </AlertDialog.Content>
-    </AlertDialog.Portal>
-  </AlertDialog.Root>
+  <ConfirmDialog
+    bind:open={confirmOpen}
+    title={removal?.kind === "all" ? `Remove all ${label.toLowerCase()} tracks?` : "Remove this track?"}
+    description={removal?.kind === "all"
+      ? `This deletes every ${label.toLowerCase()} audio file and its lyrics sidecar.`
+      : "This deletes the managed audio file and its lyrics sidecar. This cannot be undone."}
+    confirmLabel={removal?.kind === "all" ? "Remove all" : "Remove track"}
+    onConfirm={remove}
+  />
 {/if}

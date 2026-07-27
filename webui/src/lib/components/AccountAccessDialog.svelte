@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { AlertDialog, Dialog } from "bits-ui";
+  import { Dialog } from "bits-ui";
   import { sources, type ProviderAccount } from "$lib/api";
   import { audienceLabel } from "$lib/sources";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
 
   let {
     open = $bindable(false),
@@ -133,21 +134,14 @@
   </Dialog.Portal>
 </Dialog.Root>
 
-<AlertDialog.Root bind:open={confirmOpen}>
-  <AlertDialog.Portal>
-    <AlertDialog.Overlay class="dialog-overlay" />
-    <AlertDialog.Content class="confirm-dialog">
-      <AlertDialog.Title>Share this connection with {expansion === "library" ? "a library" : "everyone"}?</AlertDialog.Title>
-      <AlertDialog.Description>
-        {expansion === "library"
-          ? `Every user with access to library ${libraryScopeId} may use this account's supported Source capabilities.`
-          : "Every Allstarr user will be allowed to use this account for its supported Source capabilities."}
-        Credentials remain hidden.
-      </AlertDialog.Description>
-      <footer>
-        <AlertDialog.Cancel class="button-secondary">Keep current access</AlertDialog.Cancel>
-        <AlertDialog.Action class="button-danger" onclick={() => void save()}>Share with {expansion === "library" ? "library" : "everyone"}</AlertDialog.Action>
-      </footer>
-    </AlertDialog.Content>
-  </AlertDialog.Portal>
-</AlertDialog.Root>
+<ConfirmDialog
+  bind:open={confirmOpen}
+  title={`Share this connection with ${expansion === "library" ? "a library" : "everyone"}?`}
+  description={`${expansion === "library"
+    ? `Every user with access to library ${libraryScopeId} may use this account's supported Source capabilities.`
+    : "Every Allstarr user will be allowed to use this account for its supported Source capabilities."} Credentials remain hidden.`}
+  confirmLabel={`Share with ${expansion === "library" ? "library" : "everyone"}`}
+  cancelLabel="Keep current access"
+  disabled={saving}
+  onConfirm={save}
+/>

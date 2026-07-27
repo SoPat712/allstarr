@@ -1020,6 +1020,11 @@ test("Profile artwork is stable in full, slim, and mobile navigation", async ({ 
     await expect(avatar).toBeVisible();
     await expect(avatar.locator("img")).toBeVisible();
     await expect.poll(async () => (await avatar.boundingBox())?.width ?? 0).toBe(40);
+    if (width === 390) {
+      await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Settings" })).toBeHidden();
+      await expect(avatar).toHaveAttribute("href", "#/settings");
+      await expect.poll(async () => (await page.locator(".sidebar").boundingBox())?.height ?? 0).toBeLessThan(80);
+    }
   }
 
   await page.route("**/api/admin/auth/me/avatar?user=user", (route) => route.fulfill({ status: 404 }));

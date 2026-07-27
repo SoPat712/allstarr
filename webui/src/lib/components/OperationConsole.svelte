@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { AlertDialog } from "bits-ui";
   import { home, type JobResponse } from "$lib/api";
   import { compactProgress, progressDetails } from "$lib/jobs";
   import { liveUpdates } from "$lib/live-updates.svelte";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
 
   let {
     playlistName,
@@ -125,17 +125,13 @@
     </div>
   </details>
 
-  <AlertDialog.Root bind:open={cancelOpen}>
-    <AlertDialog.Portal>
-      <AlertDialog.Overlay class="dialog-overlay" />
-      <AlertDialog.Content class="confirm-dialog">
-        <AlertDialog.Title>Cancel this operation?</AlertDialog.Title>
-        <AlertDialog.Description>Completed durable work remains recorded. The worker will stop at its next safe cancellation point.</AlertDialog.Description>
-        <footer>
-          <AlertDialog.Cancel class="button-secondary">Keep running</AlertDialog.Cancel>
-          <AlertDialog.Action class="button-danger" disabled={cancelling} onclick={() => void cancel()}>Cancel operation</AlertDialog.Action>
-        </footer>
-      </AlertDialog.Content>
-    </AlertDialog.Portal>
-  </AlertDialog.Root>
+  <ConfirmDialog
+    bind:open={cancelOpen}
+    title="Cancel this operation?"
+    description="Completed durable work remains recorded. The worker will stop at its next safe cancellation point."
+    confirmLabel="Cancel operation"
+    cancelLabel="Keep running"
+    disabled={cancelling}
+    onConfirm={cancel}
+  />
 {/if}

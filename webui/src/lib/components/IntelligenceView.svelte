@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AlertDialog } from "bits-ui";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { home, intelligence, type IntelligenceScope, type IntelligenceState } from "$lib/api";
 
   let protocol = $state("jellyfin");
@@ -198,13 +198,14 @@
   {/if}
 </section>
 
-<AlertDialog.Root bind:open={purgeOpen}>
-  <AlertDialog.Portal><AlertDialog.Overlay class="dialog-overlay" /><AlertDialog.Content class="confirm-dialog">
-    <AlertDialog.Title>Clear this library’s Intelligence data?</AlertDialog.Title>
-    <AlertDialog.Description>Retained signals, profiles, recommendations, feedback, and generated sets for this exact scope will be removed.</AlertDialog.Description>
-    <footer><AlertDialog.Cancel class="button-secondary">Keep my data</AlertDialog.Cancel><AlertDialog.Action class="button-danger" onclick={() => void perform("purge", () => intelligence.purge(scope))}>Turn off and clear</AlertDialog.Action></footer>
-  </AlertDialog.Content></AlertDialog.Portal>
-</AlertDialog.Root>
+<ConfirmDialog
+  bind:open={purgeOpen}
+  title="Clear this library’s Intelligence data?"
+  description="Retained signals, profiles, recommendations, feedback, and generated sets for this exact scope will be removed."
+  confirmLabel="Turn off and clear"
+  cancelLabel="Keep my data"
+  onConfirm={() => perform("purge", () => intelligence.purge(scope))}
+/>
 
 <style>
   .intelligence-view{display:grid;gap:1.25rem}.route-heading{display:flex;align-items:end;justify-content:space-between;gap:1rem}.route-heading h2{margin:.25rem 0;font-family:var(--font-display);font-size:clamp(1.5rem,3vw,2.2rem)}.route-heading p:last-child,.muted{color:var(--color-ink-muted)}.heading-actions{display:flex;align-items:center;gap:.75rem}.scope-card{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;align-items:end;gap:1rem;padding:1rem}.field select{min-height:3rem;border:1px solid var(--color-edge);border-radius:.8rem;background:var(--color-panel-raised);color:var(--color-ink);padding:0 .9rem}.run-progress{display:grid;grid-template-columns:minmax(0,1fr) minmax(10rem,.5fr) auto;align-items:center;gap:1rem;padding:1rem}.run-progress p{margin:0}.run-progress small{display:block;color:var(--color-ink-muted)}.run-progress progress{width:100%;accent-color:var(--color-signal)}.intelligence-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(18rem,.8fr);gap:1rem}.recommendations,.profile-card,.generated-card,.privacy-card{padding:1.15rem}.recommendations>header,.privacy-card>header{display:flex;align-items:center;justify-content:space-between}.recommendations h3,.profile-card h3,.generated-card h3,.privacy-card h3{margin:.2rem 0 1rem}.recommendation-list{display:grid;margin:0;padding:0;list-style:none}.recommendation-list>li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.85rem;align-items:center;border-top:1px solid var(--color-edge);padding:.9rem 0}.track-art{display:grid;width:3rem;height:3rem;place-items:center;overflow:hidden;border-radius:.7rem;background:var(--color-panel-raised);color:var(--color-signal)}.track-art img{width:100%;height:100%;object-fit:cover}.track-copy{min-width:0}.track-copy>strong,.track-copy>small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.track-copy small,summary{color:var(--color-ink-muted);font-size:.75rem}.track-copy details{margin-top:.35rem}.track-copy ul{margin:.4rem 0 0;padding-left:1.1rem;color:var(--color-ink-muted);font-size:.78rem}.track-actions{display:flex;align-items:center;gap:.35rem}.track-actions button{border:1px solid var(--color-edge);border-radius:.55rem;background:transparent;color:var(--color-ink-muted);padding:.35rem .5rem;cursor:pointer}.score{color:var(--color-signal);font-size:.75rem;font-weight:800}.side-stack{display:grid;align-content:start;gap:1rem}.profile-card label,.generated-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.7rem 0}.profile-card meter{width:55%;accent-color:var(--color-signal)}.generated-row span:first-child strong,.generated-row span:first-child small{display:block}.generated-row small{color:var(--color-ink-muted)}.generate-form{display:grid;gap:.75rem;margin-top:1rem}.privacy-card{grid-column:1/-1}.privacy-card form{display:grid;grid-template-columns:minmax(14rem,.6fr) 1fr 1fr;gap:1rem}.toggle-line{display:flex;gap:.75rem}.toggle-line span>*{display:block}.toggle-line small,fieldset small{color:var(--color-ink-muted)}fieldset{display:grid;align-content:start;gap:.55rem;border:0;margin:0;padding:0}fieldset legend{margin-bottom:.55rem;font-weight:750}fieldset label{display:flex;gap:.5rem}.unavailable{opacity:.5}.privacy-card footer{grid-column:1/-1;display:flex;justify-content:space-between;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { AlertDialog, DropdownMenu } from "bits-ui";
+  import { DropdownMenu } from "bits-ui";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import {
     home,
     sources,
@@ -384,19 +385,11 @@
   <ConnectSourceDialog bind:open={configureOpen} {providers} {administrator} account={selectedAccount} onSaved={completed} />
   <AccountAccessDialog bind:open={accessOpen} account={selectedAccount} users={audienceUsers} onSaved={completed} />
 
-  <AlertDialog.Root bind:open={removeOpen}>
-    <AlertDialog.Portal>
-      <AlertDialog.Overlay class="dialog-overlay" />
-      <AlertDialog.Content class="confirm-dialog">
-        <AlertDialog.Title>Remove this Source connection?</AlertDialog.Title>
-        <AlertDialog.Description>
-          The encrypted credential is revoked and this account can no longer route provider requests. Audit history remains.
-        </AlertDialog.Description>
-        <footer>
-          <AlertDialog.Cancel class="button-secondary">Cancel</AlertDialog.Cancel>
-          <AlertDialog.Action class="button-danger" onclick={() => void remove()}>Remove connection</AlertDialog.Action>
-        </footer>
-      </AlertDialog.Content>
-    </AlertDialog.Portal>
-  </AlertDialog.Root>
+  <ConfirmDialog
+    bind:open={removeOpen}
+    title="Remove this Source connection?"
+    description="The encrypted credential is revoked and this account can no longer route provider requests. Audit history remains."
+    confirmLabel="Remove connection"
+    onConfirm={remove}
+  />
 {/if}

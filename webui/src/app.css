@@ -308,6 +308,7 @@
     background: var(--color-panel-raised);
     color: var(--color-signal);
     font-weight: 800;
+    text-decoration: none;
   }
 
   .avatar img {
@@ -837,6 +838,10 @@
     grid-template-columns: repeat(5, 1fr);
     gap: 0.2rem;
     margin: 0;
+  }
+
+  .sidebar nav a:nth-child(6) {
+    display: none;
   }
 
   .sidebar nav a {

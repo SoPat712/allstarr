@@ -260,7 +260,7 @@
       </nav>
 
       <div class="profile">
-        <div class="avatar">
+        <a class="avatar" href="#/settings" aria-label={`Settings for ${session.user?.name ?? "current user"}`}>
           {#if session.user?.avatarUrl && !avatarFailed}
             <img
               src={session.user.avatarUrl}
@@ -272,7 +272,7 @@
           {:else}
             <span>{initials}</span>
           {/if}
-        </div>
+        </a>
         <div class="min-w-0">
           <strong>{session.user?.name}</strong>
           <small>{session.backend}</small>
