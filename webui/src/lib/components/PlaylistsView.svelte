@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { DropdownMenu } from "bits-ui";
+  import { Dialog, DropdownMenu } from "bits-ui";
   import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import {
@@ -26,6 +26,7 @@
   let playlists = $state<PlaylistLink[]>([]);
   let providers = $state<ProviderDefinition[]>([]);
   let details = $state<PlaylistDetails | null>(null);
+  let detailOpen = $state(false);
   let selectedId = $state("");
   let query = $state("");
   let stateFilter = $state<"all" | "ready" | "attention" | "paused">("all");
@@ -86,6 +87,7 @@
   async function loadDetails(id: string) {
     selectedId = id;
     details = null;
+    detailOpen = true;
     detailLoading = true;
     const request = ++detailRequest;
     try {
@@ -115,10 +117,8 @@
           : "Playlists are unavailable.";
     } else {
       playlists = linksResult.value.playlistLinks;
-      const nextId = playlists.some((playlist) => playlist.id === selectedId)
-        ? selectedId
-        : (playlists[0]?.id ?? "");
-      if (nextId) await loadDetails(nextId);
+      const nextId = playlists.some((playlist) => playlist.id === selectedId) ? selectedId : "";
+      if (nextId && (detailOpen || initialId === nextId)) await loadDetails(nextId);
       else {
         selectedId = "";
         details = null;
@@ -165,6 +165,22 @@
   async function playlistAdded(message: string) {
     feedback = message;
     await refresh();
+  }
+
+  function openTrackReview(track: PlaylistDetails["tracks"][number]) {
+    location.hash = `/library/mappings?search=${encodeURIComponent(track.title)}&review=${encodeURIComponent(track.externalSnapshotId)}`;
+  }
+
+  function trackRowClick(event: MouseEvent, track: PlaylistDetails["tracks"][number]) {
+    if ((event.target as Element).closest("button, a, [role=menu]")) return;
+    openTrackReview(track);
+  }
+
+  function trackRowKey(event: KeyboardEvent, track: PlaylistDetails["tracks"][number]) {
+    if ((event.target as Element).closest("button, a, [role=menu]")) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    openTrackReview(track);
   }
 
   onMount(() => {
@@ -301,7 +317,10 @@
       {/if}
     </article>
 
-    <article class="panel playlist-detail">
+    <Dialog.Root bind:open={detailOpen}>
+      <Dialog.Portal>
+        <Dialog.Overlay class="dialog-overlay" />
+        <Dialog.Content class="panel playlist-detail playlist-detail-dialog">
       {#if detailLoading}
         <div class="detail-loading" aria-busy="true">Loading playlist tracks…</div>
       {:else if details && selected}
@@ -311,7 +330,7 @@
           </span>
           <div class="playlist-hero-copy">
             <p class="eyebrow">{providerName(details.sourceProviderId)} playlist</p>
-            <h2>{details.name}</h2>
+            <Dialog.Title>{details.name}</Dialog.Title>
             <p>
               {details.trackCount} tracks · {formatDuration(details.durationMs)}
               {#if details.unknownDurationCount} · {details.unknownDurationCount} unknown duration{/if}
@@ -332,6 +351,7 @@
               {/each}
             </div>
           </div>
+          <Dialog.Close class="icon-button playlist-dialog-close" aria-label="Close playlist details">×</Dialog.Close>
           <div class="playlist-actions" aria-label="Playlist actions">
             <button disabled={Boolean(action) || !selected.enabled} type="button" onclick={() => void run("sync")}>Sync</button>
             <button disabled={Boolean(action) || !selected.enabled} type="button" onclick={() => void run("rematch")}>Rematch</button>
@@ -387,28 +407,35 @@
           </label>
         </div>
 
-        <div class="track-table" role="table" aria-label={`${details.name} tracks`}>
-          <div class="track-head" role="row">
-            <span role="columnheader">#</span><span role="columnheader">Track</span>
-            <span role="columnheader">Route</span><span role="columnheader">Time</span>
-            <span role="columnheader"><span class="sr-only">Details</span></span>
+        <div class="track-table" aria-label={`${details.name} tracks`}>
+          <div class="track-head">
+            <span>#</span><span>Track</span>
+            <span>Route</span><span>Time</span>
+            <span><span class="sr-only">Details</span></span>
           </div>
           <div class="track-scroll">
             {#each visibleTracks as track}
-              <div class="track-row" role="row">
-                <span class="track-index" role="cell">{track.position}</span>
-                <span class="track-identity" role="cell">
+              <div
+                class="track-row"
+                role="button"
+                tabindex="0"
+                aria-label={`Open mapping details for ${track.title}`}
+                onclick={(event) => trackRowClick(event, track)}
+                onkeydown={(event) => trackRowKey(event, track)}
+              >
+                <span class="track-index">{track.position}</span>
+                <span class="track-identity">
                   <span class="media-art track-art">
                     {#if track.artworkUrl}<img src={track.artworkUrl} alt="" loading="lazy" />{:else}<span aria-hidden="true">♪</span>{/if}
                   </span>
                   <span><strong>{track.title}</strong><small>{track.artists.join(", ") || "Unknown artist"}{track.album ? ` · ${track.album}` : ""}</small></span>
                 </span>
-                <span class="route-cell" role="cell">
+                <span class="route-cell">
                   <i style={`--route-color:${providerColor(track.routeProviderId ?? track.routeKind)}`}></i>
                   <span><strong>{providerName(track.routeProviderId ?? (track.routeKind === "local" ? details.targetProtocol : null))}</strong><small>{track.routeKind}</small></span>
                 </span>
-                <span class="track-duration" role="cell">{formatDuration(track.durationMs)}</span>
-                <span class="track-menu" role="cell">
+                <span class="track-duration">{formatDuration(track.durationMs)}</span>
+                <span class="track-menu">
                   <DropdownMenu.Root>
                     <DropdownMenu.Trigger class="track-menu-trigger" aria-label={`Technical details for ${track.title}`}>•••</DropdownMenu.Trigger>
                     <DropdownMenu.Portal>
@@ -438,7 +465,9 @@
       {:else}
         <div class="compact-empty"><strong>Select a playlist to inspect its tracks</strong></div>
       {/if}
-    </article>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   </section>
 {/if}
 

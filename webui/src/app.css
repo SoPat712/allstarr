@@ -790,7 +790,7 @@
   .playlist-layout {
     display: grid;
     min-height: 0;
-    grid-template-columns: minmax(18rem, 22rem) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 1rem;
   }
 
@@ -799,6 +799,24 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+  }
+
+  .playlist-detail-dialog {
+    position: fixed;
+    z-index: 41;
+    top: 50%;
+    left: 50%;
+    width: min(calc(100% - 2rem), 72rem);
+    max-height: min(92vh, 58rem);
+    overflow: auto;
+    box-shadow: 0 2rem 8rem rgb(0 0 0 / 55%);
+    transform: translate(-50%, -50%);
+  }
+
+  .playlist-dialog-close {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
   }
 
   .playlist-toolbar,
@@ -821,7 +839,8 @@
   }
 
   .playlist-toolbar h2,
-  .playlist-hero h2 {
+  .playlist-hero h2,
+  .playlist-hero [data-dialog-title] {
     margin: 0.15rem 0 0;
     font-family: var(--font-display);
     font-size: 1.15rem;
@@ -989,6 +1008,7 @@
 
   .playlist-hero {
     align-items: flex-start;
+    padding-right: 3.5rem;
   }
 
   .hero-art {
@@ -1036,13 +1056,15 @@
   }
 
   .playlist-actions {
-    display: flex;
+    display: grid;
+    width: 7.5rem;
     align-items: center;
     gap: 0.35rem;
   }
 
   .playlist-actions > button,
   .playlist-actions .menu-trigger {
+    width: 100%;
     min-height: 2.35rem;
     border: 1px solid var(--color-edge);
     border-radius: 0.65rem;
@@ -1140,8 +1162,26 @@
     padding: 0.35rem 0;
   }
 
-  .track-row:hover {
+  .track-row[role="button"] {
+    cursor: pointer;
+  }
+
+  .track-row:hover,
+  .track-row:focus-visible {
     background: rgb(255 255 255 / 3%);
+  }
+
+  .track-row:focus-visible {
+    outline: 2px solid var(--color-signal);
+    outline-offset: -2px;
+  }
+
+  @media (min-width: 761px) {
+    .track-head > span:not(:first-child),
+    .track-row > span:not(:first-child) {
+      border-left: 1px solid var(--color-edge);
+      padding-left: 0.75rem;
+    }
   }
 
   .track-index,
@@ -1331,6 +1371,7 @@
 
   .playlist-actions {
     width: 100%;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .playlist-actions > button {

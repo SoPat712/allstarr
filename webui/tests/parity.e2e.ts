@@ -45,7 +45,15 @@ const responses: Record<string, unknown> = {
   "/api/admin/jobs?limit=100": { jobs: [] },
   "/api/admin/ui/activity?limit=8": { items: [], hasMore: false },
   "/api/admin/ui/provider-summaries": { providers: [] },
-  "/api/admin/playlist-links": { playlistLinks: [] },
+  "/api/admin/playlist-links": {
+    playlistLinks: [{
+      id: "playlist-link", enabled: true, name: "Test playlist",
+      sourceProviderId: "lumen-audio", targetProtocol: "jellyfin",
+      materializationMode: "reconcile", revision: 1, trackCount: 1,
+      matchedCount: 0, unmatchedCount: 0, playableCount: 1, materializedCount: 1,
+      metrics: { total: 1, matched: 0, unresolved: 0, review: 1, rejected: 0, playable: 1, materialized: 1 },
+    }],
+  },
   "/api/admin/playlist-sources": {
     accounts: [
       { id: "qobuz", providerId: "qobuz", displayName: "Qobuz", accessLabel: "Personal account" },
@@ -157,6 +165,19 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
         }],
         stats: { total: 1, matched: 0, accepted: 0, unresolved: 0, suggested: 1, review: 1, rejected: 0, attention: 1 },
         pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
+      };
+    if (url.pathname === "/api/admin/playlist-links/playlist-link")
+      body = {
+        id: "playlist-link", snapshotId: "playlist-snapshot", snapshotVersion: 1,
+        name: "Test playlist", sourceProviderId: "lumen-audio", targetProtocol: "jellyfin",
+        retrievedAt: "2026-01-01", completedAt: "2026-01-01", trackCount: 1,
+        localCount: 0, externalCount: 1, unresolvedCount: 0, durationMs: 180_000,
+        unknownDurationCount: 0, tracks: [{
+          position: 1, externalSnapshotId: "snapshot", title: "Test song",
+          artists: ["Artist"], album: "Album", isrc: "US-AAA-26-00001",
+          durationMs: 180_000, routeKind: "external", routeProviderId: "lumen-audio",
+          matchState: "suggested", providerRoutes: [{ providerId: "lumen-audio", externalId: "provider-track", pinned: false }],
+        }],
       };
     if (url.pathname.includes("/api/admin/playlist-sources/") && url.pathname.endsWith("/playlists"))
       body = {
@@ -443,4 +464,21 @@ test("Suggested mappings sort by confidence and deep links open review", async (
   await request;
   await page.getByRole("button", { name: /Suggested.*High likelihood/ }).click();
   await expect(page.getByRole("button", { name: "Accept" })).toBeVisible();
+});
+
+test("Playlist details use a responsive dialog and track rows open mapping review", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+  await page.goto("#/library/playlists");
+  await page.getByRole("button", { name: /Test playlist/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Test playlist" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Sync" })).toBeInViewport();
+  await expect(dialog.getByRole("button", { name: "Rematch" })).toBeInViewport();
+  await expect(dialog.getByRole("button", { name: "Refresh" })).toBeInViewport();
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect.poll(async () => (await dialog.boundingBox())?.width ?? 0).toBeGreaterThan(900);
+  await dialog.getByRole("button", { name: "Open mapping details for Test song" }).click();
+  await expect(page).toHaveURL(/#\/library\/mappings\?search=Test%20song&review=snapshot$/);
+  await expect(page.getByRole("dialog", { name: "Test song" })).toBeVisible();
 });
