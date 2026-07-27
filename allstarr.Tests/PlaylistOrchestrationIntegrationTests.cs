@@ -689,8 +689,14 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Durable_job_is_single_owner_and_projection_survives_connection_restart()
+    public async Task Concurrent_rematch_through_durable_job_survives_connection_restart()
     {
+        await using (var setup = await _factory.CreateDbContextAsync())
+        {
+            var local = await setup.LibraryTracks.SingleAsync(item => item.Id == _trackOne);
+            local.CanonicalRecordingId = _canonical;
+            await setup.SaveChangesAsync();
+        }
         _source.Snapshot = Snapshot(
             "revision-job-restart",
             Entry(0, "entry-job-restart", "source-1", "One"));
@@ -727,6 +733,24 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
 
         Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
         Assert.Equal(1, _target.WriteCalls);
+        Guid snapshotId;
+        await using (var beforeRestart = await _factory.CreateDbContextAsync())
+        {
+            snapshotId = await beforeRestart.ExternalMetadataSnapshots
+                .Select(item => item.Id)
+                .SingleAsync();
+        }
+        var actor = new TrackMatchActor(_tenant, _user, false);
+        var rematches = await Task.WhenAll(Enumerable.Range(0, 8).Select(index =>
+            _trackMatches.RematchSnapshotAsync(
+                actor,
+                snapshotId,
+                $"job-rematch-{index}")));
+        Assert.All(rematches, result =>
+        {
+            Assert.True(result.Succeeded);
+            Assert.Equal(2, result.DecisionVersion);
+        });
         NpgsqlConnection.ClearAllPools();
 
         var restartedFactory = new DbFactory(_database.Options);
@@ -740,7 +764,12 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         Assert.Equal("local", Assert.Single(projection.Entries).RouteKind);
 
         await using var db = await restartedFactory.CreateDbContextAsync();
-        Assert.Single(await db.TrackMatches.ToListAsync());
+        var decisions = await db.TrackMatches
+            .OrderBy(item => item.DecisionVersion)
+            .ToListAsync();
+        Assert.Equal([1, 2], decisions.Select(item => item.DecisionVersion));
+        Assert.All(decisions, item => Assert.Equal(_canonical, item.CanonicalRecordingId));
+        Assert.Single(await db.CanonicalRecordings.ToListAsync());
         Assert.Single(await db.PlaylistSyncRuns.ToListAsync());
         Assert.Equal(
             DurableJobState.Succeeded,
