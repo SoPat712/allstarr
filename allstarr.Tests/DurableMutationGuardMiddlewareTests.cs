@@ -1,6 +1,7 @@
 using allstarr.Core.Storage;
 using allstarr.Middleware;
 using Microsoft.AspNetCore.Http;
+using System.Text.Json;
 
 namespace allstarr.Tests;
 
@@ -32,6 +33,14 @@ public sealed class DurableMutationGuardMiddlewareTests
         Assert.Contains("Postgres", body, StringComparison.Ordinal);
         Assert.Contains("database_unavailable", body, StringComparison.Ordinal);
         Assert.DoesNotContain("ConnectionString", body, StringComparison.OrdinalIgnoreCase);
+        using var problem = JsonDocument.Parse(body);
+        Assert.Equal("Unavailable", problem.RootElement.GetProperty("readiness").GetString());
+        Assert.Equal("POST /api/admin/config", problem.RootElement.GetProperty("affectedOperation").GetString());
+        Assert.True(problem.RootElement.GetProperty("retry").GetProperty("automatic").GetBoolean());
+        Assert.Contains(
+            "Restore PostgreSQL connectivity",
+            problem.RootElement.GetProperty("recoveryAction").GetString(),
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -151,6 +160,32 @@ public sealed class DurableMutationGuardMiddlewareTests
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
     }
 
+    [Fact]
+    public async Task Mutation_ImmediatelyResumesWhenForcedProbeRecovers()
+    {
+        var nextCalled = false;
+        var middleware = new DurableMutationGuardMiddleware(_ =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        });
+        var options = Options("Postgres");
+        var state = new DurableStorageState(options);
+        state.Set(DurableStorageReadiness.Unavailable, errorCode: "database_unavailable");
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Post;
+        context.Request.Path = "/api/admin/config";
+        var probe = new StubStorageProbe(
+            state,
+            onForcedCheck: () => state.Set(DurableStorageReadiness.Ready, "current-schema"));
+
+        await middleware.InvokeAsync(context, options, state, probe);
+
+        Assert.True(nextCalled);
+        Assert.Equal(0, probe.CheckCount);
+        Assert.Equal(1, probe.ForcedCheckCount);
+    }
+
     private static DurableStorageOptions Options(string provider) => new()
     {
         Provider = provider,
@@ -159,15 +194,25 @@ public sealed class DurableMutationGuardMiddlewareTests
 
     private sealed class StubStorageProbe(
         DurableStorageState state,
-        Action? onCheck = null) : IDurableStorageRuntimeProbe
+        Action? onCheck = null,
+        Action? onForcedCheck = null) : IDurableStorageRuntimeProbe
     {
         public int CheckCount { get; private set; }
+        public int ForcedCheckCount { get; private set; }
 
         public Task<DurableStorageSnapshot> CheckAsync(
             CancellationToken cancellationToken = default)
         {
             CheckCount++;
             onCheck?.Invoke();
+            return Task.FromResult(state.GetSnapshot());
+        }
+
+        public Task<DurableStorageSnapshot> CheckNowAsync(
+            CancellationToken cancellationToken = default)
+        {
+            ForcedCheckCount++;
+            (onForcedCheck ?? onCheck)?.Invoke();
             return Task.FromResult(state.GetSnapshot());
         }
     }

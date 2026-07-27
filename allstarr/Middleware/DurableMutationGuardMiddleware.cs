@@ -60,8 +60,9 @@ public sealed class DurableMutationGuardMiddleware
             return;
         }
 
-        await storageProbe.CheckAsync(context.RequestAborted);
-        var snapshot = storageState.GetSnapshot();
+        var snapshot = storageState.GetSnapshot().Readiness == DurableStorageReadiness.Ready
+            ? await storageProbe.CheckAsync(context.RequestAborted)
+            : await storageProbe.CheckNowAsync(context.RequestAborted);
         if (snapshot.Readiness == DurableStorageReadiness.Ready)
         {
             await _next(context);
@@ -70,7 +71,8 @@ public sealed class DurableMutationGuardMiddleware
 
         context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
         context.Response.ContentType = "application/problem+json";
-        context.Response.Headers.RetryAfter = "10";
+        var retrySeconds = Math.Clamp(options.RuntimeProbeIntervalSeconds, 1, 60);
+        context.Response.Headers.RetryAfter = retrySeconds.ToString();
         await context.Response.WriteAsync(JsonSerializer.Serialize(new
         {
             type = "https://allstarr.local/problems/durable-storage-unavailable",
@@ -78,9 +80,30 @@ public sealed class DurableMutationGuardMiddleware
             status = StatusCodes.Status503ServiceUnavailable,
             code = snapshot.ErrorCode ?? "durable_storage_not_ready",
             storageProvider = snapshot.Provider.ToString(),
+            readiness = snapshot.Readiness.ToString(),
+            snapshot.SchemaVersion,
+            snapshot.CheckedAt,
+            retry = new
+            {
+                automatic = true,
+                afterSeconds = retrySeconds,
+                nextProbeAt = snapshot.CheckedAt.AddSeconds(retrySeconds)
+            },
+            affectedOperation = $"{context.Request.Method} {context.Request.Path}",
+            recoveryAction = RecoveryAction(snapshot),
             detail = "State-changing work is paused until the selected durable database is ready."
         }));
     }
+
+    private static string RecoveryAction(DurableStorageSnapshot snapshot) =>
+        snapshot.Readiness switch
+        {
+            DurableStorageReadiness.Initializing =>
+                "Wait for PostgreSQL initialization; Allstarr will retry automatically.",
+            DurableStorageReadiness.SchemaIncompatible =>
+                "Run the supported PostgreSQL migrations, then retry; Allstarr will detect recovery automatically.",
+            _ => "Restore PostgreSQL connectivity, then retry; Allstarr will probe it immediately."
+        };
 
     private static bool IsReadOnly(HttpRequest request)
     {

@@ -6,6 +6,9 @@ namespace allstarr.Core.Storage;
 public interface IDurableStorageRuntimeProbe
 {
     Task<DurableStorageSnapshot> CheckAsync(CancellationToken cancellationToken = default);
+
+    Task<DurableStorageSnapshot> CheckNowAsync(CancellationToken cancellationToken = default) =>
+        CheckAsync(cancellationToken);
 }
 
 public sealed class DurableStorageRuntimeProbe : IDurableStorageRuntimeProbe, IDisposable
@@ -42,9 +45,19 @@ public sealed class DurableStorageRuntimeProbe : IDurableStorageRuntimeProbe, ID
     }
 
     public async Task<DurableStorageSnapshot> CheckAsync(
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        await CheckAsync(force: false, cancellationToken);
+
+    public async Task<DurableStorageSnapshot> CheckNowAsync(
+        CancellationToken cancellationToken = default) =>
+        await CheckAsync(force: true, cancellationToken);
+
+    private async Task<DurableStorageSnapshot> CheckAsync(
+        bool force,
+        CancellationToken cancellationToken)
     {
-        if (_clock.UtcNow.UtcTicks < Volatile.Read(ref _nextProbeAtUtcTicks))
+        if (!force &&
+            _clock.UtcNow.UtcTicks < Volatile.Read(ref _nextProbeAtUtcTicks))
         {
             return _state.GetSnapshot();
         }
@@ -53,7 +66,8 @@ public sealed class DurableStorageRuntimeProbe : IDurableStorageRuntimeProbe, ID
         try
         {
             var now = _clock.UtcNow;
-            if (now.UtcTicks < Volatile.Read(ref _nextProbeAtUtcTicks))
+            if (!force &&
+                now.UtcTicks < Volatile.Read(ref _nextProbeAtUtcTicks))
             {
                 return _state.GetSnapshot();
             }

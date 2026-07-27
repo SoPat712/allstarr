@@ -46,6 +46,25 @@ public sealed class DurableStorageRuntimeProbeTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ForcedProbeBypassesCadence()
+    {
+        var options = RuntimeOptions();
+        var state = new DurableStorageState(options);
+        var factory = new CountingDbContextFactory(_database.Options);
+        using var probe = new DurableStorageRuntimeProbe(
+            factory,
+            options,
+            state,
+            _clock,
+            NullLogger<DurableStorageRuntimeProbe>.Instance);
+
+        await probe.CheckAsync();
+        await probe.CheckNowAsync();
+
+        Assert.Equal(2, factory.CreateCount);
+    }
+
+    [Fact]
     public async Task ProbeMarksRuntimeSchemaDriftUnready()
     {
         var options = RuntimeOptions();
