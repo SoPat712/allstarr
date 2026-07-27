@@ -91,8 +91,21 @@ const responses: Record<string, unknown> = {
       }),
     }],
   },
-  "/api/admin/ui/activity?limit=8": { items: [], hasMore: false },
-  "/api/admin/ui/provider-summaries": { providers: [] },
+  "/api/admin/ui/activity?limit=8": {
+    items: [{
+      id: "activity", kind: "playlist", source: "lumen-audio",
+      label: "playlist check", state: "succeeded", detail: "66 ms",
+      occurredAt: "2026-01-01",
+    }],
+    hasMore: false,
+  },
+  "/api/admin/ui/provider-summaries": {
+    providers: [{
+      providerId: "lumen-audio", connectedAccountName: "Legacy .env import",
+      enabledAccountCount: 1, capabilityTotal: 2, healthyCapabilityCount: 2,
+      failedCapabilityCount: 0, lastCheckedAt: "2026-01-01",
+    }],
+  },
   "/api/admin/playlist-links": {
     playlistLinks: [{
       id: "playlist-link", enabled: true, name: "Test playlist",
@@ -123,7 +136,7 @@ const responses: Record<string, unknown> = {
   },
   "/api/admin/media-targets": {
     targets: [{
-      id: "target", protocol: "jellyfin", backendInstanceId: "main",
+      id: "22222222-2222-2222-2222-222222222222", protocol: "jellyfin", backendInstanceId: "main",
       libraryScopeId: "music", displayName: "Jellyfin Music",
     }],
   },
@@ -252,7 +265,8 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
       return;
     }
     let body = responses[`${url.pathname}${url.search}`] ?? responses[url.pathname];
-    if (url.pathname === "/api/admin/ui/activity") body = { items: [], hasMore: false };
+    if (url.pathname === "/api/admin/ui/activity" && url.searchParams.get("limit") !== "8")
+      body = { items: [], hasMore: false };
     if (url.pathname === "/api/admin/downloads")
       body = {
         storage: url.searchParams.get("storage"),
@@ -310,8 +324,21 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
         }],
         nextCursor: url.searchParams.has("cursor") ? null : "next",
       };
+    if (url.pathname.includes("/api/admin/media-targets/") && url.pathname.endsWith("/playlists"))
+      body = {
+        items: [{
+          id: "jellyfin-playlist", name: "Road trip", description: "Existing Jellyfin playlist",
+          trackCount: 18, artworkUrl: "/missing-target-playlist-art", writable: true,
+        }],
+        nextCursor: null,
+      };
     if (url.pathname === "/api/admin/playlist-links" && route.request().method() === "POST")
       body = { id: "new-playlist" };
+    if (url.pathname.endsWith("/schedules") && route.request().method() === "POST")
+      body = {
+        id: "schedule", cronExpression: "0 3 * * *", timeZoneId: "America/New_York",
+        overlapPolicy: "skip", misfirePolicy: "runOnce", enabled: true, revision: 1,
+      };
     if (url.pathname.endsWith("/refresh") && route.request().method() === "POST")
       body = { snapshot: { snapshotId: "playlist-snapshot" }, preview: {} };
     if (url.pathname.endsWith("/run") && route.request().method() === "POST")
@@ -579,11 +606,16 @@ test("Home stays inside runtime and request budgets", async ({ page }) => {
   await expect(page.getByLabel("Loading Home")).toBeHidden();
   await expect(page.getByText("Managed", { exact: true })).toBeVisible();
   await expect(page.getByText("Unmanaged", { exact: true })).toBeVisible();
+  await expect(page.getByText("Legacy .env import")).toHaveCount(0);
+  await expect(page.locator(".provider-line strong", { hasText: "Lumen Audio" })).toBeVisible();
+  await expect(page.getByText("Playlist Check", { exact: true })).toBeVisible();
+  await expect(page.locator(".provider-line .provider-mark")).toBeVisible();
+  await expect(page.locator(".activity-line .activity-artwork")).toHaveText("≡");
 
   const apiRequests = requests.filter((path) => path.startsWith("/api/admin/"));
   const jsRequests = requests.filter((path) => path.endsWith(".js"));
   expect(apiRequests.length).toBeLessThanOrEqual(14); // Lit Home baseline.
-  expect(jsRequests.length).toBeLessThanOrEqual(13); // Shell, Home, and one shared primitive.
+  expect(jsRequests.length).toBeLessThanOrEqual(14); // Shell, Home, and shared icon primitives.
 
   await page.evaluate(() => {
     const metrics = window.__allstarrMetrics;
@@ -610,6 +642,19 @@ test("Home stays inside runtime and request budgets", async ({ page }) => {
   expect(metrics.inp).toBeLessThanOrEqual(200);
   expect(metrics.cls).toBeLessThanOrEqual(0.1);
   expect(metrics.navigation).toBeLessThanOrEqual(100);
+});
+
+test("Slim sidebar centers navigation and profile controls", async ({ page }) => {
+  await page.setViewportSize({ width: 835, height: 762 });
+  await mockApi(page);
+  await page.goto("#/");
+  const sidebar = await page.locator(".sidebar").boundingBox();
+  const home = await page.getByRole("link", { name: "Home", exact: true }).boundingBox();
+  const profile = await page.getByRole("link", { name: "Settings for Tester" }).boundingBox();
+  expect(sidebar && home && profile).toBeTruthy();
+  const center = (box: NonNullable<typeof sidebar>) => box.x + box.width / 2;
+  expect(Math.abs(center(home!) - center(sidebar!))).toBeLessThanOrEqual(1);
+  expect(Math.abs(center(profile!) - center(sidebar!))).toBeLessThanOrEqual(1);
 });
 
 test("Legacy Library links open their current shared views", async ({ page }) => {
@@ -762,16 +807,19 @@ test("extension updates stay beside the shared management menu", async ({ page }
   await expect(page.getByRole("button", { name: "Remove" })).toBeDisabled();
 });
 
-test("Add playlist prioritizes local and configured Sources on mobile", async ({ page }) => {
+test("Add playlist links a Jellyfin playlist before its Source on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
   await page.goto("#/library/playlists");
   await page.getByRole("button", { name: "Add playlist" }).click();
-  const dialog = page.getByRole("dialog", { name: "Add playlist" });
+  const dialog = page.getByRole("dialog", { name: "Link a playlist" });
   await expect(dialog).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await page.getByRole("button", { name: "Add playlist" }).click();
+  await expect(dialog.getByRole("radio", { name: /Road trip/ })).toBeVisible();
+  await dialog.getByRole("radio", { name: /Road trip/ }).check();
+  await dialog.getByRole("button", { name: "Continue" }).click();
   const sourceGroups = dialog.locator(".playlist-source-groups legend");
   await expect(sourceGroups).toHaveCount(5);
   expect(await sourceGroups.allTextContents()).toEqual([
@@ -782,11 +830,23 @@ test("Add playlist prioritizes local and configured Sources on mobile", async ({
   await dialog.getByRole("button", { name: "Load more" }).click();
   await expect(dialog.getByRole("radio", { name: /Second Mix/ })).toBeVisible();
   await dialog.getByRole("radio", { name: /Source Mix/ }).check();
-  await expect(dialog.getByRole("button", { name: "Add playlist" })).toBeInViewport();
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await dialog.getByRole("button", { name: "Automatic sync" }).click();
+  await page.getByRole("option", { name: "Daily at 3:00 AM" }).click();
+  await expect(dialog.getByRole("button", { name: "Link playlist" })).toBeInViewport();
   const create = page.waitForRequest((request) =>
     request.method() === "POST" && request.url().endsWith("/api/admin/playlist-links"));
-  await dialog.getByRole("button", { name: "Add playlist" }).click();
-  expect((await create).postDataJSON().libraryScopeId).toBe("music");
+  const scheduled = page.waitForRequest((request) =>
+    request.method() === "POST" && request.url().endsWith("/schedules"));
+  await dialog.getByRole("button", { name: "Link playlist" }).click();
+  const input = (await create).postDataJSON();
+  expect(input).toMatchObject({
+    libraryScopeId: "music",
+    targetPlaylistId: "jellyfin-playlist",
+    sourcePlaylistId: "playlist",
+    mode: "materialized",
+  });
+  expect((await scheduled).postDataJSON().cronExpression).toBe("0 3 * * *");
   await expect(dialog).toBeHidden();
 });
 

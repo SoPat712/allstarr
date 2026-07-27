@@ -523,6 +523,15 @@ export type MediaTarget = {
   credentialReferenceId?: string | null;
 };
 
+export type TargetPlaylist = {
+  id: string;
+  name: string;
+  description?: string | null;
+  trackCount?: number | null;
+  artworkUrl?: string | null;
+  writable: boolean;
+};
+
 export type MatchCandidate = {
   libraryTrackId?: string | null;
   backendItemId?: string | null;
@@ -1173,6 +1182,14 @@ export const playlistLinks = {
     );
   },
   targets: () => json<{ targets: MediaTarget[] }>("/api/admin/media-targets"),
+  targetPlaylists: (targetId: string, query = "", cursor = "") => {
+    const params = new URLSearchParams({ limit: "100" });
+    if (query) params.set("query", query);
+    if (cursor) params.set("cursor", cursor);
+    return json<{ items: TargetPlaylist[]; nextCursor?: string | null }>(
+      `/api/admin/media-targets/${encodeURIComponent(targetId)}/playlists?${params}`,
+    );
+  },
   create: (input: {
     providerAccountId: string;
     sourceProviderId: string;
@@ -1181,20 +1198,29 @@ export const playlistLinks = {
     targetProtocol: string;
     targetBackendInstanceId: string;
     targetCredentialReferenceId?: string | null;
+    targetPlaylistId: string;
+    mode: "materialized" | "hybrid";
+    materializationMode: "reconcile" | "recreate";
+    mirrorStaleEntries: boolean;
+    preserveManualEntries: boolean;
+    syncName: boolean;
+    syncDescription: boolean;
+    syncArtwork: boolean;
   }) => json<{ id: string }>("/api/admin/playlist-links", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      ...input,
-      mode: "virtual",
-      materializationMode: "reconcile",
-      targetPlaylistId: null,
-      mirrorStaleEntries: false,
-      preserveManualEntries: true,
-      syncName: true,
-      syncDescription: true,
-      syncArtwork: true,
-    }),
+    body: JSON.stringify(input),
+  }),
+  createSchedule: (id: string, input: {
+    cronExpression: string;
+    timeZoneId: string;
+    overlapPolicy: "skip" | "queue";
+    misfirePolicy: "skip" | "runOnce";
+    enabled?: boolean;
+  }) => json(`/api/admin/playlist-links/${encodeURIComponent(id)}/schedules`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
   }),
 };
 

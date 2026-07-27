@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { home, playlistLinks } from "$lib/api";
+  import { activityIcon, humanize } from "$lib/activity";
+  import ProviderMark from "$lib/components/ProviderMark.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import { summarizeHome, type HomeSnapshot } from "$lib/home";
   import { liveUpdates } from "$lib/live-updates.svelte";
@@ -102,6 +104,16 @@
     return providerDefinition(providerId)?.name ?? providerId;
   }
 
+  function accountName(providerId: string, displayName?: string | null) {
+    return displayName?.startsWith("Legacy .env import")
+      ? providerName(providerId)
+      : displayName || providerName(providerId);
+  }
+
+  function activityDetail(value: string) {
+    return /[_-]/.test(value) ? humanize(value) : value;
+  }
+
   onMount(() => {
     void refresh();
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
@@ -195,21 +207,16 @@
         <div class="provider-list">
           {#each snapshot.providers.slice(0, 6) as provider}
             <div class="provider-line">
-              <span class="provider-artwork">
-                {#if providerDefinition(provider.providerId)?.logoUrl}
-                  <img
-                    src={providerDefinition(provider.providerId)?.logoUrl ?? ""}
-                    alt=""
-                    onerror={(event) => {
-                      (event.currentTarget as HTMLImageElement).hidden = true;
-                    }}
-                  />
-                {/if}
-                <span>{provider.providerId[0]?.toUpperCase()}</span>
-              </span>
+              <ProviderMark
+                id={provider.providerId}
+                definition={providerDefinition(provider.providerId)}
+              />
               <span>
-                <strong>{provider.connectedAccountName || providerName(provider.providerId)}</strong>
-                <small>{provider.enabledAccountCount} connected account{provider.enabledAccountCount === 1 ? "" : "s"}</small>
+                <strong>{accountName(provider.providerId, provider.connectedAccountName)}</strong>
+                <small>
+                  {provider.enabledAccountCount} connected account{provider.enabledAccountCount === 1 ? "" : "s"}
+                  {provider.connectedAccountName?.startsWith("Legacy .env import") ? " · Imported" : ""}
+                </small>
               </span>
               <span class:attention={provider.failedCapabilityCount > 0} class="provider-result">
                 {provider.capabilityTotal
@@ -242,10 +249,14 @@
         <div class="activity-list">
           {#each snapshot.activity as item}
             <a href="#/activity" class="activity-line">
-              <span class:failed={["failed", "degraded", "unavailable"].includes(item.state.toLowerCase())}></span>
+              <span
+                class="activity-artwork"
+                class:failed={["failed", "degraded", "unavailable"].includes(item.state.toLowerCase())}
+                aria-hidden="true"
+              >{activityIcon(item.kind)}</span>
               <span>
-                <strong>{item.label}</strong>
-                <small>{providerName(item.source)} · {item.detail}</small>
+                <strong>{humanize(item.label)}</strong>
+                <small>{providerName(item.source)} · {activityDetail(item.detail)}</small>
               </span>
               <time datetime={item.occurredAt}>{relativeTime(item.occurredAt)}</time>
             </a>
