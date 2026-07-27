@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
+using SkiaSharp;
 
 namespace allstarr.Services.Common;
 
@@ -59,7 +60,7 @@ public sealed class MediaAssetResolver(
         var pending = _inflight.GetOrAdd(
             descriptorKey,
             _ => new Lazy<Task<ResolvedMediaAsset?>>(
-                () => FetchAsync(descriptorKey, fetch, maximumBytes, cancellationToken),
+                () => FetchAsync(identity, descriptorKey, fetch, maximumBytes, cancellationToken),
                 LazyThreadSafetyMode.ExecutionAndPublication));
         try
         {
@@ -87,6 +88,7 @@ public sealed class MediaAssetResolver(
     }
 
     private async Task<ResolvedMediaAsset?> FetchAsync(
+        MediaAssetIdentity identity,
         string descriptorKey,
         Func<CancellationToken, Task<MediaAssetSource?>> fetch,
         int maximumBytes,
@@ -99,17 +101,23 @@ public sealed class MediaAssetResolver(
                 bytes.Length > maximumBytes ||
                 !source.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
                 return null;
-            var sha256 = Convert.ToHexStringLower(SHA256.HashData(bytes));
-            var payloadKey = CacheKeyBuilder.BuildMediaAssetPayloadKey(sha256);
             var policy = ApplicationCachePolicyRegistry.Resolve(ApplicationCacheCategory.Artwork);
-            if (!await cache.SetAsync(payloadKey, new MediaAssetPayload(bytes), policy.FreshFor))
-                return new(bytes, source.ContentType, sha256, source.ETag, source.LastModified, false);
+            if (!await StorePayloadAsync(bytes, policy))
+                return Asset(source, false);
+
+            var selected = CreateVariant(source, identity, maximumBytes);
+            var sha256 = Convert.ToHexStringLower(SHA256.HashData(selected.Bytes));
+            var payloadKey = CacheKeyBuilder.BuildMediaAssetPayloadKey(sha256);
+            if (!bytes.AsSpan().SequenceEqual(selected.Bytes) &&
+                !await StorePayloadAsync(selected.Bytes, policy))
+                return Asset(selected, false);
             await cache.SetAsync(
                 descriptorKey,
                 new MediaAssetDescriptor(
-                    payloadKey, sha256, source.ContentType, bytes.Length, source.ETag, source.LastModified),
+                    payloadKey, sha256, selected.ContentType, selected.Bytes.Length,
+                    source.ETag, source.LastModified),
                 policy.FreshFor);
-            return new(bytes, source.ContentType, sha256, source.ETag, source.LastModified, false);
+            return Asset(selected, false);
         }
         catch (OperationCanceledException)
         {
@@ -122,6 +130,71 @@ public sealed class MediaAssetResolver(
             return null;
         }
     }
+
+    private async Task<bool> StorePayloadAsync(
+        byte[] bytes,
+        ApplicationCacheCategoryPolicy policy)
+    {
+        var key = CacheKeyBuilder.BuildMediaAssetPayloadKey(
+            Convert.ToHexStringLower(SHA256.HashData(bytes)));
+        return await cache.SetAsync(key, new MediaAssetPayload(bytes), policy.FreshFor);
+    }
+
+    private MediaAssetSource CreateVariant(
+        MediaAssetSource source,
+        MediaAssetIdentity identity,
+        int maximumBytes)
+    {
+        if (identity.Width is null && identity.Height is null) return source;
+        try
+        {
+            using var data = SKData.CreateCopy(source.Bytes);
+            using var codec = SKCodec.Create(data);
+            var info = codec?.Info;
+            if (info is not { Width: > 0, Height: > 0 } ||
+                (long)info.Value.Width * info.Value.Height > 16_000_000)
+                return source;
+            var scale = Math.Min(
+                identity.Width.HasValue ? identity.Width.Value / (double)info.Value.Width : 1,
+                identity.Height.HasValue ? identity.Height.Value / (double)info.Value.Height : 1);
+            if (scale >= 1) return source;
+            var width = Math.Max(1, (int)Math.Round(info.Value.Width * scale));
+            var height = Math.Max(1, (int)Math.Round(info.Value.Height * scale));
+            using var original = SKBitmap.Decode(codec);
+            using var resized = new SKBitmap(new SKImageInfo(
+                width, height, original.ColorType, original.AlphaType));
+            if (!original.ScalePixels(
+                    resized,
+                    new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear)))
+                return source;
+            using var image = SKImage.FromBitmap(resized);
+            var format = original.AlphaType == SKAlphaType.Opaque
+                ? SKEncodedImageFormat.Jpeg
+                : SKEncodedImageFormat.Png;
+            using var encoded = image.Encode(format, 85);
+            var bytes = encoded?.ToArray();
+            return bytes is not { Length: > 0 } || bytes.Length > maximumBytes
+                ? source
+                : new(bytes, format == SKEncodedImageFormat.Png ? "image/png" : "image/jpeg",
+                    source.ETag, source.LastModified);
+        }
+        catch (Exception exception)
+        {
+            logger.LogDebug(exception,
+                "Unable to create {Width}x{Height} media variant",
+                identity.Width, identity.Height);
+            return source;
+        }
+    }
+
+    private static ResolvedMediaAsset Asset(MediaAssetSource source, bool fromCache) =>
+        new(
+            source.Bytes,
+            source.ContentType,
+            Convert.ToHexStringLower(SHA256.HashData(source.Bytes)),
+            source.ETag,
+            source.LastModified,
+            fromCache);
 
     private static void Validate(MediaAssetIdentity identity, int maximumBytes)
     {

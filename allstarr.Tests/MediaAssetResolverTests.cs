@@ -1,5 +1,6 @@
 using allstarr.Services.Common;
 using Microsoft.Extensions.Logging.Abstractions;
+using SkiaSharp;
 
 namespace allstarr.Tests;
 
@@ -68,6 +69,34 @@ public sealed class MediaAssetResolverTests
         Assert.Single(cache.GetKeysByPattern("artwork:payload:v1:*"));
         Assert.DoesNotContain(cache.GetKeysByPattern("*"), key =>
             key.Contains("user-avatar-id", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RequestedDimensionsCreateLazyVariantAndKeepOriginal()
+    {
+        using var bitmap = new SKBitmap(new SKImageInfo(
+            8, 4, SKColorType.Rgba8888, SKAlphaType.Opaque));
+        bitmap.Erase(SKColors.Red);
+        using var image = SKImage.FromBitmap(bitmap);
+        using var encoded = image.Encode(SKEncodedImageFormat.Png, 100);
+        var original = encoded.ToArray();
+        var cache = new TestMemoryApplicationCache();
+        var resolver = new MediaAssetResolver(cache, NullLogger<MediaAssetResolver>.Instance);
+        var identity = Identity(Guid.CreateVersion7()) with { Width = 2 };
+
+        var result = await resolver.ResolveAsync(
+            identity,
+            _ => Task.FromResult<MediaAssetSource?>(new(original, "image/png")),
+            1024 * 1024);
+        var cached = await resolver.ResolveAsync(
+            identity, _ => throw new InvalidOperationException(), 1024 * 1024);
+
+        using var resized = SKBitmap.Decode(result!.Bytes);
+        Assert.Equal(2, resized.Width);
+        Assert.Equal(1, resized.Height);
+        Assert.Equal("image/jpeg", result.ContentType);
+        Assert.True(cached!.FromCache);
+        Assert.Equal(2, cache.GetKeysByPattern("artwork:payload:v1:*").Count());
     }
 
     private static MediaAssetIdentity Identity(Guid userId) => new(

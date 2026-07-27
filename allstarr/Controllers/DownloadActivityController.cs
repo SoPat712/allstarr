@@ -63,7 +63,8 @@ public class DownloadActivityController : ControllerBase
                 null,
                 ResolvePlaybackProvider(normalizedItemId),
                 "track",
-                normalizedItemId),
+                normalizedItemId,
+                Width: 96),
             async token =>
             {
                 foreach (var resolver in _metadataResolvers)

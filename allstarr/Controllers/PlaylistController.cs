@@ -228,6 +228,8 @@ public class PlaylistController : ControllerBase
             : $"/api/admin/playlist-sources/{playlist.ProviderAccountId}/playlists/" +
               $"{Uri.EscapeDataString(playlist.SourcePlaylistId)}/artwork";
 
+    private static string TrackArtworkUrl(string itemId) =>
+        $"/api/admin/downloads/artwork/{Uri.EscapeDataString(itemId)}";
 
     private static void IncrementProviderCount(Dictionary<string, int> counts, string provider)
     {
@@ -435,9 +437,12 @@ public class PlaylistController : ControllerBase
         var tracks = playlist.Entries.Select((track, index) =>
         {
             var local = track.RouteKind == "local";
-            var artwork = local && playlist.TargetProtocol == "jellyfin"
-                ? $"/Items/{Uri.EscapeDataString(track.BackendItemId!)}/Images/Primary"
-                : null;
+            var artwork = local
+                ? TrackArtworkUrl(track.BackendItemId!)
+                : track.RouteKind == "external" &&
+                  !string.IsNullOrWhiteSpace(track.RouteProviderId)
+                    ? TrackArtworkUrl($"ext-{track.RouteProviderId}-song-{track.ExternalId}")
+                    : null;
             return (object)new
             {
                 position = index + 1,

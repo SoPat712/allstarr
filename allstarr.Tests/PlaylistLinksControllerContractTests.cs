@@ -91,6 +91,7 @@ public sealed class PlaylistLinksControllerContractTests
         Assert.Contains("session.IsAdministrator", source, StringComparison.Ordinal);
         Assert.Contains("Response.Headers.RetryAfter", source, StringComparison.Ordinal);
         Assert.Contains("retryAfterSeconds", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("value.Artwork?.PublicUri", source, StringComparison.Ordinal);
         Assert.Equal(2, source.Split("new MediaAssetIdentity(", StringSplitOptions.None).Length - 1);
     }
 

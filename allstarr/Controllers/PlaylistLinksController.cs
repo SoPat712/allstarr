@@ -270,7 +270,8 @@ public sealed class PlaylistLinksController(
                     providerId,
                     "playlist",
                     playlistId,
-                    revision),
+                    revision,
+                    Width: 512),
                 async token =>
                 {
                     var outcome = await candidate.Implementation.ResolveArtworkAsync(
@@ -419,7 +420,8 @@ public sealed class PlaylistLinksController(
                     protocol,
                     "playlist",
                     $"{identity.BackendInstanceId}:{backendPlaylistId}",
-                    artworkReference),
+                    artworkReference,
+                    Width: 512),
                 async token =>
                 {
                     var result = await targetResolver.Resolve(protocol).ReadArtworkAsync(
@@ -925,10 +927,9 @@ public sealed class PlaylistLinksController(
         trackCount = value.TrackCount,
         sourceRevision = value.SourceRevision,
         sourceETag = value.SourceETag,
-        artworkUrl = value.Artwork?.PublicUri?.ToString() ??
-                     (value.Artwork?.ResourceId == null
-                         ? null
-                         : $"/api/admin/playlist-sources/{accountId}/playlists/{Uri.EscapeDataString(value.Id.Value)}/artwork?revision={Uri.EscapeDataString(value.Artwork.Revision ?? value.SourceRevision)}"),
+        artworkUrl = value.Artwork == null
+            ? null
+            : $"/api/admin/playlist-sources/{accountId}/playlists/{Uri.EscapeDataString(value.Id.Value)}/artwork?revision={Uri.EscapeDataString(value.Artwork.Revision ?? value.SourceRevision)}",
         artworkReference = value.Artwork?.ResourceId == null ? null : new
         {
             providerId = value.Artwork.ResourceId.ProviderId,

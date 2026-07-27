@@ -30,6 +30,8 @@ public sealed class PlaylistControllerDurableSettingsContractTests
         Assert.Contains("[\"providerBreakdown\"]", Source, StringComparison.Ordinal);
         Assert.Contains("[\"nextSyncAt\"]", Source, StringComparison.Ordinal);
         Assert.Contains("ReadDurablePlaylistAsync", Source, StringComparison.Ordinal);
+        Assert.Contains("TrackArtworkUrl(track.BackendItemId!)", Source, StringComparison.Ordinal);
+        Assert.DoesNotContain("/Images/Primary", Source, StringComparison.Ordinal);
         Assert.DoesNotContain("MatchMaterializedItems(sourceTracks, materializedItems)", Source, StringComparison.Ordinal);
         Assert.Contains("currentSummaryShape", Source, StringComparison.Ordinal);
         Assert.Contains("PlaylistSummarySchemaVersion", Source, StringComparison.Ordinal);
