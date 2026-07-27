@@ -18,6 +18,7 @@
     outcomeClass,
   } from "$lib/activity";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import SearchField from "$lib/components/SearchField.svelte";
   import { formatDuration } from "$lib/playlists";
   import { liveUpdates } from "$lib/live-updates.svelte";
 
@@ -204,10 +205,7 @@
     </header>
 
     <form class="playlist-filters event-log-filters" onsubmit={(event) => event.preventDefault()}>
-      <label>
-        <span>Search</span>
-        <input bind:value={query} type="search" placeholder="Event, track, provider, or correlation" />
-      </label>
+      <SearchField bind:value={query} label="Search" placeholder="Event, track, provider, or correlation" />
       <label>
         <span>Category</span>
         <select bind:value={kind}>

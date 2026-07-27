@@ -6,6 +6,7 @@
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import OperationConsole from "$lib/components/OperationConsole.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import SearchField from "$lib/components/SearchField.svelte";
   import {
     home,
     playlistLinks,
@@ -222,10 +223,7 @@
       </header>
 
       <div class="playlist-filters">
-        <label>
-          <span class="sr-only">Filter playlists</span>
-          <input bind:value={query} type="search" placeholder="Filter playlists" />
-        </label>
+        <SearchField bind:value={query} label="Filter playlists" placeholder="Filter playlists" hiddenLabel />
         <label>
           <span class="sr-only">Playlist status</span>
           <select bind:value={stateFilter}>
@@ -362,10 +360,7 @@
         />
 
         <div class="track-toolbar">
-          <label>
-            <span class="sr-only">Filter tracks</span>
-            <input bind:value={trackQuery} type="search" placeholder="Filter tracks" />
-          </label>
+          <SearchField bind:value={trackQuery} label="Filter tracks" placeholder="Filter tracks" hiddenLabel />
           <label>
             <span class="sr-only">Track route</span>
             <select bind:value={routeFilter}>

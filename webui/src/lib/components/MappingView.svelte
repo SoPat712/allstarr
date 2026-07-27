@@ -11,6 +11,7 @@
   } from "$lib/api";
   import MatchDialog from "$lib/components/MatchDialog.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import SearchField from "$lib/components/SearchField.svelte";
   import {
     currentTarget,
     isAttention,
@@ -276,10 +277,7 @@
       </div>
 
       <form class="playlist-filters mapping-filters" onsubmit={(event) => { event.preventDefault(); submitFilters(); }}>
-        <label>
-          <span>Search</span>
-          <input bind:value={searchInput} type="search" placeholder="Title, artist, album, or provider" />
-        </label>
+        <SearchField bind:value={searchInput} label="Search" placeholder="Title, artist, album, or provider" />
         <label>
           <span>Library scope</span>
           <input bind:value={libraryScopeId} placeholder="All libraries" />

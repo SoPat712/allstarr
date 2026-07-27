@@ -698,6 +698,37 @@ test("Suggested mappings sort by confidence and deep links open review", async (
   await expect(page.getByRole("button", { name: "Accept" })).toBeVisible();
 });
 
+test("Shared search fields reserve icon space", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+
+  for (const [route, label] of [
+    ["#/library/playlists", "Filter playlists"],
+    ["#/library/mappings", "Search"],
+    ["#/library/cached", "Filter cached tracks"],
+    ["#/activity", "Search"],
+  ] as const) {
+    await page.goto(route);
+    const input = page.getByRole("searchbox", { name: label });
+    await expect(input).toBeVisible();
+    const spacing = await input.evaluate((element) => {
+      const inputBounds = element.getBoundingClientRect();
+      const iconBounds = element.previousElementSibling!.getBoundingClientRect();
+      return {
+        iconRight: iconBounds.right,
+        textStart: inputBounds.left + Number.parseFloat(getComputedStyle(element).paddingLeft),
+      };
+    });
+    expect(spacing.iconRight).toBeLessThanOrEqual(spacing.textStart);
+  }
+
+  await page.goto("#/library/playlists");
+  await page.getByRole("button", { name: "Add playlist" }).click();
+  const dialog = page.getByRole("dialog", { name: "Add playlist" });
+  await dialog.getByRole("radio", { name: /Spotify/ }).check();
+  await expect(dialog.getByRole("searchbox", { name: "Search this Source" })).toBeVisible();
+});
+
 test("Event log groups matching work and preserves actionable history", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);

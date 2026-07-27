@@ -986,6 +986,28 @@
     font-size: 0.72rem;
   }
 
+  .search-input {
+    position: relative;
+    display: block;
+  }
+
+  .search-input svg {
+    position: absolute;
+    z-index: 1;
+    top: 50%;
+    left: 0.7rem;
+    width: 0.85rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    transform: translateY(-50%);
+    pointer-events: none;
+  }
+
+  .search-field input {
+    padding-inline: 2rem 1.8rem;
+  }
+
   .playlist-rows {
     max-height: calc(100vh - 14.5rem);
     overflow: auto;

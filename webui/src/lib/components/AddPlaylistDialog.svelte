@@ -8,6 +8,7 @@
     type ProviderDefinition,
   } from "$lib/api";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import SearchField from "$lib/components/SearchField.svelte";
   import { orderPlaylistSources } from "$lib/playlists";
 
   let {
@@ -172,7 +173,7 @@
 
           {#if accountId}
             <form class="playlist-add-search" onsubmit={(event) => { event.preventDefault(); void browse(); }}>
-              <label class="field"><span>Search this Source</span><input bind:value={query} type="search" placeholder="Playlist name" /></label>
+              <SearchField class="field" bind:value={query} label="Search this Source" placeholder="Playlist name" />
               <button class="button-secondary" type="submit" disabled={loading}>Search</button>
             </form>
             <fieldset class="audience-options playlist-add-list">

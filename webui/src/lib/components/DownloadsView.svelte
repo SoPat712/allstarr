@@ -9,6 +9,7 @@
     type ProviderDefinition,
   } from "$lib/api";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import SearchField from "$lib/components/SearchField.svelte";
   import {
     filterDownloads,
     qualityDetails,
@@ -180,10 +181,7 @@
     </header>
 
     <div class="playlist-filters downloads-filters">
-      <label>
-        <span class="sr-only">Filter {label.toLowerCase()} tracks</span>
-        <input bind:value={query} type="search" placeholder="Track, artist, album, or provider" />
-      </label>
+      <SearchField bind:value={query} label={`Filter ${label.toLowerCase()} tracks`} placeholder="Track, artist, album, or provider" hiddenLabel />
       <label>
         <span class="sr-only">Provider</span>
         <select bind:value={providerFilter}>
