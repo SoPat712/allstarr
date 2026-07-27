@@ -22,6 +22,14 @@
   let confirmOpen = $state(false);
   let saving = $state(false);
   let error = $state("");
+  const expansion = $derived(
+    account && audience === "global" && account.scope !== "Global"
+      ? "everyone"
+      : account && audience === "library" &&
+          account.scope !== "Library" && account.scope !== "Global"
+        ? "library"
+        : "",
+  );
 
   $effect(() => {
     const revision = account ? `${account.id}:${account.revision}` : "";
@@ -42,7 +50,7 @@
 
   function submit() {
     if (!account || saving) return;
-    if (account.scope !== "Global" && audience === "global") {
+    if (expansion) {
       confirmOpen = true;
       return;
     }
@@ -129,13 +137,16 @@
   <AlertDialog.Portal>
     <AlertDialog.Overlay class="dialog-overlay" />
     <AlertDialog.Content class="confirm-dialog">
-      <AlertDialog.Title>Share this connection with everyone?</AlertDialog.Title>
+      <AlertDialog.Title>Share this connection with {expansion === "library" ? "a library" : "everyone"}?</AlertDialog.Title>
       <AlertDialog.Description>
-        Every Allstarr user will be allowed to use this account for its supported Source capabilities. Credentials remain hidden.
+        {expansion === "library"
+          ? `Every user with access to library ${libraryScopeId} may use this account's supported Source capabilities.`
+          : "Every Allstarr user will be allowed to use this account for its supported Source capabilities."}
+        Credentials remain hidden.
       </AlertDialog.Description>
       <footer>
         <AlertDialog.Cancel class="button-secondary">Keep current access</AlertDialog.Cancel>
-        <AlertDialog.Action class="button-danger" onclick={() => void save()}>Share with everyone</AlertDialog.Action>
+        <AlertDialog.Action class="button-danger" onclick={() => void save()}>Share with {expansion === "library" ? "library" : "everyone"}</AlertDialog.Action>
       </footer>
     </AlertDialog.Content>
   </AlertDialog.Portal>

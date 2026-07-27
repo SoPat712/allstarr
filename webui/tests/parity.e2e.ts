@@ -313,6 +313,14 @@ for (const viewport of viewports) {
       await expect(access).toBeHidden();
 
       await page.getByRole("button", { name: "Audience Only Tester" }).click();
+      await page.getByRole("radio", { name: "One library" }).check();
+      await page.getByLabel("Library ID").fill("music");
+      await page.getByRole("button", { name: "Save access" }).click();
+      const libraryShare = page.getByRole("alertdialog", {
+        name: "Share this connection with a library?",
+      });
+      await expect(libraryShare).toBeVisible();
+      await libraryShare.getByRole("button", { name: "Keep current access" }).click();
       await page.getByRole("radio", { name: "Everyone" }).check();
       await page.getByRole("button", { name: "Save access" }).click();
       await expect(page.getByRole("alertdialog", { name: "Share this connection with everyone?" })).toBeVisible();
