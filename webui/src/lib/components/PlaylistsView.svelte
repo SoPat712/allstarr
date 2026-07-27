@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import { Dialog, DropdownMenu } from "bits-ui";
   import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
+  import CoverageBar from "$lib/components/CoverageBar.svelte";
+  import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import OperationConsole from "$lib/components/OperationConsole.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import {
@@ -64,10 +66,6 @@
 
   function providerName(providerId?: string | null) {
     return providerId ? (provider(providerId)?.name ?? providerId) : "Unresolved";
-  }
-
-  function percent(part: number, total: number) {
-    return total ? Math.round((part / total) * 100) : 0;
   }
 
   function relativeTime(value?: string | null) {
@@ -256,13 +254,7 @@
             type="button"
             onclick={() => void loadDetails(playlist.id)}
           >
-            <span class="media-art playlist-art">
-              {#if playlist.artworkUrl}
-                <img src={playlist.artworkUrl} alt="" loading="lazy" />
-              {:else}
-                <span aria-hidden="true">♫</span>
-              {/if}
-            </span>
+            <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
             <span class="playlist-copy">
               <strong>{playlist.name}</strong>
               <small class="route-pair">
@@ -272,14 +264,13 @@
                 <ProviderMark id={playlist.targetProtocol} definition={provider(playlist.targetProtocol)} />
                 <span>{providerName(playlist.targetProtocol)}</span>
               </small>
-              <span class="coverage-track" aria-label={`${percent(playlist.playableCount, playlist.trackCount)} percent playable`}>
-                {#each playlist.routeCoverage as route}
-                  <span
-                    title={`${providerName(route.providerId)}: ${route.count}`}
-                    style={`width:${percent(route.count, playlist.trackCount)}%;--route-color:${providerColor(route.providerId)}`}
-                  ></span>
-                {/each}
-              </span>
+              <CoverageBar
+                routes={playlist.routeCoverage}
+                total={playlist.trackCount}
+                unresolved={playlist.unmatchedCount}
+                {providerName}
+                compact
+              />
             </span>
             <span class="playlist-numbers">
               <strong>{playlist.playableCount}/{playlist.trackCount}</strong>
@@ -312,9 +303,7 @@
         <div class="detail-loading" aria-busy="true">Loading playlist tracks…</div>
       {:else if details && selected}
         <header class="playlist-hero">
-          <span class="media-art hero-art">
-            {#if details.artworkUrl}<img src={details.artworkUrl} alt="" />{:else}<span aria-hidden="true">♫</span>{/if}
-          </span>
+          <MediaArtwork class="hero-art" url={details.artworkUrl} fallback="♫" loading="eager" />
           <div class="playlist-hero-copy">
             <p class="eyebrow">{providerName(details.sourceProviderId)} playlist</p>
             <Dialog.Title>{details.name}</Dialog.Title>
@@ -329,14 +318,12 @@
               <ProviderMark id={details.targetProtocol} definition={provider(details.targetProtocol)} />
               <span>{providerName(details.targetProtocol)}</span>
             </div>
-            <div class="coverage-stack" aria-label={`${percent(details.trackCount - details.unresolvedCount, details.trackCount)} percent playable`}>
-              {#each details.routeCoverage as route}
-                <span
-                  title={`${providerName(route.providerId)}: ${route.count}`}
-                  style={`width:${percent(route.count, details.trackCount)}%;--route-color:${providerColor(route.providerId)}`}
-                ></span>
-              {/each}
-            </div>
+            <CoverageBar
+              routes={details.routeCoverage}
+              total={details.trackCount}
+              unresolved={details.unresolvedCount}
+              {providerName}
+            />
           </div>
           <Dialog.Close class="icon-button playlist-dialog-close" aria-label="Close playlist details">×</Dialog.Close>
           <div class="playlist-actions" aria-label="Playlist actions">
@@ -415,9 +402,7 @@
                 ></a>
                 <span class="track-index">{track.position}</span>
                 <span class="track-identity">
-                  <span class="media-art track-art">
-                    {#if track.artworkUrl}<img src={track.artworkUrl} alt="" loading="lazy" />{:else}<span aria-hidden="true">♪</span>{/if}
-                  </span>
+                  <MediaArtwork class="track-art" url={track.artworkUrl} />
                   <span><strong>{track.title}</strong><small>{track.artists.join(", ") || "Unknown artist"}{track.album ? ` · ${track.album}` : ""}</small></span>
                 </span>
                 <span class="route-cell">

@@ -1109,16 +1109,22 @@
     color: var(--color-danger) !important;
   }
 
-  .coverage-track {
+  .coverage-bar {
     display: flex;
-    height: 0.22rem;
+    height: 0.28rem;
     overflow: hidden;
+    margin-top: 0.6rem;
     border-radius: 999px;
     background: rgb(255 255 255 / 8%);
   }
 
-  .coverage-track > span {
-    height: 100%;
+  .coverage-bar.compact {
+    height: 0.22rem;
+    margin-top: 0;
+  }
+
+  .coverage-bar > span {
+    min-width: 0.15rem;
     background: var(--route-color);
   }
 
@@ -1155,20 +1161,6 @@
     margin-top: 0.55rem;
     color: var(--color-ink-muted);
     font-size: 0.65rem;
-  }
-
-  .coverage-stack {
-    display: flex;
-    height: 0.28rem;
-    overflow: hidden;
-    margin-top: 0.6rem;
-    border-radius: 999px;
-    background: rgb(255 255 255 / 8%);
-  }
-
-  .coverage-stack > span {
-    min-width: 0.15rem;
-    background: var(--route-color);
   }
 
   .playlist-actions {
