@@ -28,7 +28,7 @@ public class AppleMusicMetadataService : IConcreteMetadataService
 
     public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
-        if (!TryEndpoint($"api/search?q={Uri.EscapeDataString(query)}&type=song&limit={limit}", out var url)) return [];
+        if (!TryEndpoint($"api/search?q={Uri.EscapeDataString(query)}&type=song&limit={Math.Clamp(limit, 1, 100)}", out var url)) return [];
         try
         {
             var results = await _httpClient.GetFromJsonAsync<List<GamdlSongResult>>(url, cancellationToken);
@@ -37,7 +37,7 @@ public class AppleMusicMetadataService : IConcreteMetadataService
 
             return results.Select(r => new Song
             {
-                Id = $"ext-applemusic-song-{r.Id}",
+                Id = $"ext-apple-download-song-{r.Id}",
                 Title = r.Title,
                 Artist = r.Artist,
                 Artists = new List<string> { r.Artist },
@@ -47,7 +47,7 @@ public class AppleMusicMetadataService : IConcreteMetadataService
                 CoverArtUrl = r.CoverUrl,
                 CoverArtUrlLarge = r.CoverUrl,
                 Isrc = r.Isrc,
-                ExternalProvider = "applemusic",
+                ExternalProvider = "apple-download",
                 ExternalId = r.Id,
                 IsLocal = false
             }).ToList();
@@ -89,7 +89,7 @@ public class AppleMusicMetadataService : IConcreteMetadataService
 
     public async Task<Song?> GetSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
-        if (externalProvider != "applemusic" ||
+        if (externalProvider is not ("applemusic" or "apple-download") ||
             !TryEndpoint($"api/song/{Uri.EscapeDataString(externalId)}", out var url)) return null;
 
         try
@@ -100,7 +100,7 @@ public class AppleMusicMetadataService : IConcreteMetadataService
 
             return new Song
             {
-                Id = $"ext-applemusic-song-{r.Id}",
+                Id = $"ext-apple-download-song-{r.Id}",
                 Title = r.Title,
                 Artist = r.Artist,
                 Artists = new List<string> { r.Artist },
@@ -115,7 +115,7 @@ public class AppleMusicMetadataService : IConcreteMetadataService
                 Copyright = r.Copyright,
                 Composer = r.Composer,
                 Genre = r.Genre,
-                ExternalProvider = "applemusic",
+                ExternalProvider = "apple-download",
                 ExternalId = r.Id,
                 IsLocal = false
             };
