@@ -523,3 +523,21 @@ test("Segmented navigation and match tabs support arrow keys", async ({ page }) 
   await page.keyboard.press("ArrowRight");
   await expect(dialog.getByRole("tab", { name: "Playable providers" })).toHaveAttribute("data-state", "active");
 });
+
+test("Sidebar uses an edge expander and deterministic slim breakpoint", async ({ page }) => {
+  await mockApi(page);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("#/");
+  const shell = page.locator(".app-shell");
+  const expander = page.getByRole("button", { name: "Collapse sidebar" });
+  await expect(expander).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("link")).toHaveCount(5);
+  await expander.click();
+  await expect(shell).toHaveClass(/slim/);
+  await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
+  await expect.poll(async () => (await page.locator(".sidebar").boundingBox())?.width ?? 0).toBe(80);
+
+  await page.setViewportSize({ width: 850, height: 800 });
+  await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeHidden();
+  await expect.poll(async () => (await page.locator(".sidebar").boundingBox())?.width ?? 0).toBe(80);
+});

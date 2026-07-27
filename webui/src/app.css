@@ -160,6 +160,7 @@
     display: grid;
     min-height: 100vh;
     grid-template-columns: 15.5rem minmax(0, 1fr);
+    transition: grid-template-columns 160ms ease;
   }
 
   .sidebar {
@@ -172,6 +173,58 @@
     background: rgb(11 13 18 / 88%);
     padding: 1.25rem;
     backdrop-filter: blur(1.2rem);
+  }
+
+  .sidebar-expander {
+    position: absolute;
+    top: 4.25rem;
+    right: -0.9rem;
+    display: grid;
+    width: 1.8rem;
+    height: 1.8rem;
+    place-items: center;
+    border: 1px solid var(--color-edge);
+    border-radius: 50%;
+    background: var(--color-panel-raised);
+    color: var(--color-ink-muted);
+    cursor: pointer;
+    transition: transform 160ms ease;
+  }
+
+  .app-shell.slim {
+    grid-template-columns: 5rem minmax(0, 1fr);
+  }
+
+  .app-shell.slim .sidebar {
+    padding: 1rem 0.65rem;
+  }
+
+  .app-shell.slim .brand {
+    justify-content: center;
+  }
+
+  .app-shell.slim .brand > span:last-child,
+  .app-shell.slim .profile > div:nth-child(2) {
+    display: none;
+  }
+
+  .app-shell.slim .sidebar nav a {
+    justify-content: center;
+    padding: 0;
+    font-size: 0;
+  }
+
+  .app-shell.slim .sidebar nav a span {
+    font-size: 1rem;
+  }
+
+  .app-shell.slim .profile {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .app-shell.slim .sidebar-expander {
+    transform: rotate(180deg);
   }
 
   .brand {
@@ -728,6 +781,10 @@
     grid-template-columns: 1fr;
     justify-items: center;
   }
+
+  .sidebar-expander {
+    display: none;
+  }
 }
 
 @media (max-width: 760px) {
@@ -751,6 +808,10 @@
     border-right: 0;
     padding: 0.55rem max(0.55rem, env(safe-area-inset-right))
       max(0.55rem, env(safe-area-inset-bottom)) max(0.55rem, env(safe-area-inset-left));
+  }
+
+  .sidebar-expander {
+    display: none;
   }
 
   .brand {

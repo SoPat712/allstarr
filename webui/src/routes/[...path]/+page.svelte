@@ -26,6 +26,7 @@
   let password = $state("");
   let rememberMe = $state(true);
   let avatarFailed = $state(false);
+  let sidebarSlim = $state(false);
   let ActiveView = $state<Component<any>>();
   let loadedRoute = $state("");
   let viewError = $state("");
@@ -181,7 +182,7 @@
     </section>
   </main>
 {:else}
-  <div class="app-shell">
+  <div class="app-shell" class:slim={sidebarSlim}>
     <aside class="sidebar">
       <a class="brand" href="#/" aria-label="Allstarr home">
         <span class="brand-mark">A</span>
@@ -190,6 +191,13 @@
           <small>beta {__APP_VERSION__}</small>
         </span>
       </a>
+      <button
+        class="sidebar-expander"
+        type="button"
+        aria-label={sidebarSlim ? "Expand sidebar" : "Collapse sidebar"}
+        aria-expanded={!sidebarSlim}
+        onclick={() => sidebarSlim = !sidebarSlim}
+      >‹</button>
 
       <nav aria-label="Primary">
         {#each destinations as destination}
