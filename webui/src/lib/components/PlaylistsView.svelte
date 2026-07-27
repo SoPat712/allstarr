@@ -420,6 +420,10 @@
                           {#each track.providerRoutes as route}
                             <small>{providerName(route.providerId)} · {route.externalId}{route.pinned ? " · pinned" : ""}</small>
                           {/each}
+                          <a
+                            class="button-secondary"
+                            href={`#/library/mappings?search=${encodeURIComponent(track.title)}&review=${encodeURIComponent(track.externalSnapshotId)}`}
+                          >Review match</a>
                         </div>
                       </DropdownMenu.Content>
                     </DropdownMenu.Portal>

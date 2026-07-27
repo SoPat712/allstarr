@@ -62,6 +62,12 @@
     return provider(providerId)?.name ?? providerId;
   }
 
+  function candidateArtwork(backendItemId?: string | null) {
+    return backendItemId
+      ? `/api/admin/downloads/artwork/${encodeURIComponent(backendItemId)}`
+      : "";
+  }
+
   function switchMode(mode: "local" | "provider") {
     targetMode = mode;
     results = [];
@@ -144,6 +150,18 @@
           <Dialog.Close class="icon-button" aria-label="Close match dialog">×</Dialog.Close>
         </header>
 
+        <section class="mapping-source">
+          <span class="media-art mapping-art">
+            {#if match.sourceArtworkUrl}<img src={match.sourceArtworkUrl} alt="" />{:else}<ProviderMark id={match.providerId} definition={provider(match.providerId)} />{/if}
+          </span>
+          <div>
+            <small>Source track</small>
+            <strong>{match.title || "Unknown track"}</strong>
+            <span>{match.artist || "Unknown artist"}{match.album ? ` · ${match.album}` : ""}</span>
+            <span>{formatDuration(match.durationMilliseconds)}{match.isrc ? ` · ISRC ${match.isrc}` : ""}</span>
+          </div>
+        </section>
+
         <section class="automatic-candidates">
           <div class="dialog-section-heading">
             <div><strong>Automatic candidates</strong><small>Same scores used by automatic matching</small></div>
@@ -153,9 +171,16 @@
             <div class="candidate-list">
               {#each match.candidates.slice(0, 5) as candidate}
                 <article class="candidate-card">
-                  <div>
+                  <span class="media-art mapping-art">
+                    {#if candidateArtwork(candidate.backendItemId)}<img src={candidateArtwork(candidate.backendItemId)} alt="" loading="lazy" />{:else}<span aria-hidden="true">♪</span>{/if}
+                  </span>
+                  <div class="candidate-copy">
                     <strong>{candidate.title || candidate.backendItemId || "Indexed track"}</strong>
                     <small>{candidate.artist || "Unknown artist"}{candidate.album ? ` · ${candidate.album}` : ""}</small>
+                    <small>{formatDuration(candidate.durationMilliseconds)}{candidate.candidateIsrc ? ` · ISRC ${candidate.candidateIsrc}` : ""}</small>
+                    {#each Object.entries(candidate.providerTrackIds ?? {}) as [providerId, externalId]}
+                      <small>{providerName(providerId)} · {externalId}</small>
+                    {/each}
                   </div>
                   <span class="candidate-confidence">{percent(candidate.confidence)}</span>
                   <div class="score-components">

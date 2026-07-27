@@ -1417,7 +1417,7 @@
 
   .mapping-metrics {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     border-bottom: 1px solid var(--color-edge);
   }
 
@@ -1479,7 +1479,7 @@
   }
 
   .mapping-filters {
-    grid-template-columns: minmax(12rem, 1fr) minmax(9rem, 0.55fr) auto auto;
+    grid-template-columns: minmax(12rem, 1fr) minmax(9rem, 0.55fr) auto auto auto;
     align-items: end;
   }
 
@@ -1540,7 +1540,8 @@
     gap: 0.65rem;
   }
 
-  .mapping-source > span:last-child {
+  .mapping-source > span:last-child,
+  .mapping-source > div {
     display: grid;
     min-width: 0;
     gap: 0.18rem;
@@ -1559,6 +1560,11 @@
     font-size: 0.63rem;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .mapping-source > div > span {
+    color: var(--color-ink-muted);
+    font-size: 0.63rem;
   }
 
   .mapping-art {
@@ -1850,6 +1856,11 @@
     padding: 0.9rem 1rem;
   }
 
+  .match-dialog > .mapping-source {
+    border-bottom: 1px solid var(--color-edge);
+    padding: 0.9rem 1rem;
+  }
+
   .dialog-section-heading {
     display: flex;
     align-items: center;
@@ -1889,7 +1900,7 @@
 
   .candidate-card {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
     align-items: center;
     gap: 0.65rem;
     border: 1px solid var(--color-edge);
@@ -1898,24 +1909,24 @@
     padding: 0.65rem;
   }
 
-  .candidate-card > div:first-child {
+  .candidate-copy {
     display: grid;
     min-width: 0;
     gap: 0.15rem;
   }
 
-  .candidate-card > div:first-child strong,
-  .candidate-card > div:first-child small {
+  .candidate-copy strong,
+  .candidate-copy small {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .candidate-card > div:first-child strong {
+  .candidate-copy strong {
     font-size: 0.72rem;
   }
 
-  .candidate-card > div:first-child small {
+  .candidate-copy small {
     color: var(--color-ink-muted);
     font-size: 0.6rem;
   }
@@ -1927,6 +1938,8 @@
   }
 
   .candidate-card > button {
+    grid-column: 4;
+    grid-row: 1;
     min-height: 2.1rem;
     border: 1px solid var(--color-edge);
     border-radius: 0.55rem;
@@ -2161,7 +2174,7 @@
     border-bottom: 1px solid var(--color-edge);
   }
 
-  .mapping-metrics .metric-card:nth-child(2) {
+  .mapping-metrics .metric-card:nth-child(even) {
     border-right: 0;
   }
 
@@ -2225,11 +2238,12 @@
   }
 
   .candidate-card {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr) auto;
   }
 
   .candidate-card > button {
     grid-column: 1 / -1;
+    grid-row: auto;
   }
 
   .target-results > button {

@@ -198,6 +198,7 @@ public sealed class TrackMatchesController(
         [FromQuery] string? libraryScopeId = null,
         [FromQuery] string? state = null,
         [FromQuery] string? search = null,
+        [FromQuery] string? sort = null,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50,
         CancellationToken cancellationToken = default)
@@ -209,6 +210,8 @@ public sealed class TrackMatchesController(
             !state.Equals("matched", StringComparison.OrdinalIgnoreCase) &&
             !Enum.TryParse<TrackMatchState>(state, true, out _))
             return BadRequest(new { error = "State is not a valid match state" });
+        if (sort is not (null or "" or "confidence_desc" or "confidence_asc"))
+            return BadRequest(new { error = "Sort is not supported" });
 
         var tenantId = session!.TenantId!.Value;
         var userId = session.AllstarrUserId!.Value;
@@ -260,7 +263,13 @@ public sealed class TrackMatchesController(
                 return Row(snapshot, decision, manual, sourceIdentity, library, libraryByCanonical, identities);
             })
             .ToArray();
-        var rows = allRows.Where(row => MatchesStateFilter(row.State, state)).ToArray();
+        var filteredRows = allRows.Where(row => MatchesStateFilter(row.State, state));
+        var rows = sort switch
+        {
+            "confidence_desc" => filteredRows.OrderByDescending(row => row.Confidence).ToArray(),
+            "confidence_asc" => filteredRows.OrderBy(row => row.Confidence).ToArray(),
+            _ => filteredRows.ToArray()
+        };
         var total = rows.Length;
         var items = rows.Skip((page - 1) * pageSize).Take(pageSize).Select(row => row.Value).ToArray();
         return Ok(new
@@ -272,6 +281,7 @@ public sealed class TrackMatchesController(
                 matched = allRows.Count(item => item.State is TrackMatchState.Accepted or TrackMatchState.Pinned),
                 accepted = allRows.Count(item => item.State is TrackMatchState.Accepted or TrackMatchState.Pinned),
                 unresolved = allRows.Count(item => item.State == TrackMatchState.Unresolved),
+                suggested = allRows.Count(item => item.State == TrackMatchState.Suggested),
                 review = allRows.Count(item => item.State is TrackMatchState.Suggested or TrackMatchState.Ambiguous),
                 rejected = allRows.Count(item => item.State == TrackMatchState.Rejected),
                 attention = allRows.Count(item => item.State is TrackMatchState.Unresolved or
@@ -570,7 +580,7 @@ public sealed class TrackMatchesController(
             decidedAt = decision?.DecidedAt,
             reviewedAt = manual?.CreatedAt
         };
-        return new(state, $"{metadata.Title} {metadata.Artist} {metadata.Album} {snapshot.ProviderId} {track?.Title} {track?.Artist}", value);
+        return new(state, decision?.Confidence, $"{metadata.Title} {metadata.Artist} {metadata.Album} {snapshot.ProviderId} {track?.Title} {track?.Artist}", value);
     }
 
     private static (string? Title, string? Artist, string? Album, string? ArtworkUrl, string? Isrc, long? DurationMilliseconds) Metadata(string json)
@@ -692,5 +702,5 @@ public sealed class TrackMatchesController(
         session = found; return true;
     }
 
-    private sealed record MatchRow(TrackMatchState State, string SearchText, object Value);
+    private sealed record MatchRow(TrackMatchState State, double? Confidence, string SearchText, object Value);
 }

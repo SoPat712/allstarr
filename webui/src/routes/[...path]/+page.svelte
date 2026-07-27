@@ -45,7 +45,10 @@
       : route === "/library/playlists"
         ? { initialId: routeQuery.get("playlist") ?? "" }
         : route === "/library/mappings"
-          ? { initialSearch: routeQuery.get("search") ?? "" }
+          ? {
+              initialSearch: routeQuery.get("search") ?? "",
+              initialReview: routeQuery.get("review") ?? "",
+            }
           : route === "/library/cached"
             ? { storage: "cache" }
             : route === "/library/kept"

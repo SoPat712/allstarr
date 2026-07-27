@@ -420,6 +420,7 @@ export type MatchReviewResponse = {
     matched: number;
     accepted: number;
     unresolved: number;
+    suggested: number;
     review: number;
     rejected: number;
     attention: number;
@@ -836,6 +837,7 @@ export const matchReview = {
     pageSize?: number;
     search?: string;
     state?: string;
+    sort?: string;
     libraryScopeId?: string;
   }) => {
     const query = new URLSearchParams();

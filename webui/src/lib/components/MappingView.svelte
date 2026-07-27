@@ -14,12 +14,14 @@
     currentTarget,
     isAttention,
     percent,
+    scoreComponents,
   } from "$lib/mappings";
+  import { formatDuration } from "$lib/playlists";
   import { liveUpdates } from "$lib/live-updates.svelte";
 
   type DestructiveAction = { kind: "reject" | "clear"; match: MatchReviewItem };
 
-  let { initialSearch = "" }: { initialSearch?: string } = $props();
+  let { initialSearch = "", initialReview = "" }: { initialSearch?: string; initialReview?: string } = $props();
 
   let data = $state<MatchReviewResponse | null>(null);
   let providers = $state<ProviderDefinition[]>([]);
@@ -28,6 +30,7 @@
   let searchInput = $state("");
   let search = $state("");
   let libraryScopeId = $state("");
+  let sort = $state("");
   let page = $state(1);
   let loading = $state(true);
   let refreshing = $state(false);
@@ -38,6 +41,7 @@
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   let dialogOpen = $state(false);
+  let initialReviewOpened = $state(false);
   let selected = $state<MatchReviewItem | null>(null);
   let destructiveOpen = $state(false);
   let destructive = $state<DestructiveAction | null>(null);
@@ -74,8 +78,16 @@
         pageSize: 50,
         search,
         state: stateFilter,
+        sort,
         libraryScopeId,
       });
+      if (initialReview && !initialReviewOpened) {
+        const requested = data.matches.find((item) => item.externalSnapshotId === initialReview);
+        if (requested) {
+          initialReviewOpened = true;
+          openMatch(requested);
+        }
+      }
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Match review is unavailable.";
     } finally {
@@ -134,6 +146,25 @@
       await load();
     } catch (cause) {
       feedback = cause instanceof Error ? cause.message : "Rematch failed.";
+    } finally {
+      action = "";
+    }
+  }
+
+  async function accept(match: MatchReviewItem) {
+    const candidate = match.candidates.find((item) => item.libraryTrackId);
+    if (!candidate?.libraryTrackId || action) return openMatch(match);
+    action = match.externalSnapshotId;
+    try {
+      await matchReview.resolve(match.externalSnapshotId, {
+        targetType: "local",
+        libraryTrackId: candidate.libraryTrackId,
+        reason: "Accepted highest-confidence automatic candidate",
+      });
+      feedback = "Highest-confidence candidate accepted.";
+      await load();
+    } catch (cause) {
+      feedback = cause instanceof Error ? cause.message : "The candidate could not be accepted.";
     } finally {
       action = "";
     }
@@ -226,6 +257,9 @@
         <button class="metric-card attention-card" aria-pressed={stateFilter === "attention"} onclick={() => setState("attention")}>
           <span>Needs attention</span><strong>{data.stats.attention}</strong>
         </button>
+        <button class="metric-card" aria-pressed={stateFilter === "suggested"} onclick={() => setState("suggested")}>
+          <span>Suggested / High likelihood</span><strong>{data.stats.suggested}</strong>
+        </button>
         <button class="metric-card" aria-pressed={stateFilter === "matched"} onclick={() => setState("matched")}>
           <span>Matched</span><strong>{data.stats.matched}</strong>
         </button>
@@ -249,9 +283,17 @@
             <option value="attention">Needs attention</option>
             <option value="">All tracks</option>
             <option value="matched">Matched</option>
-            <option value="suggested">Suggested</option>
+            <option value="suggested">Suggested / High likelihood</option>
             <option value="ambiguous">Ambiguous</option>
             <option value="rejected">Rejected</option>
+          </select>
+        </label>
+        <label>
+          <span>Confidence</span>
+          <select bind:value={sort} onchange={() => { page = 1; void load(); }}>
+            <option value="">Default order</option>
+            <option value="confidence_desc">Highest first</option>
+            <option value="confidence_asc">Lowest first</option>
           </select>
         </label>
         <button class="button-primary" type="submit">Apply</button>
@@ -262,6 +304,7 @@
       <div class="mapping-rows">
         {#each data.matches as match}
           {@const target = currentTarget(match)}
+          {@const candidate = match.candidates[0]}
           <article class:needs-attention={isAttention(match.state)} class="mapping-row">
             <div class="mapping-track-copy">
               <div class="mapping-source">
@@ -274,7 +317,7 @@
                 </span>
                 <span>
                   <strong>{match.title || "Unknown track"}</strong>
-                  <small>{match.artist || "Unknown artist"}{match.album ? ` · ${match.album}` : ""}</small>
+                  <small>{match.artist || "Unknown artist"}{match.album ? ` · ${match.album}` : ""} · {formatDuration(match.durationMilliseconds)}{match.isrc ? ` · ${match.isrc}` : ""}</small>
                 </span>
               </div>
 
@@ -286,11 +329,15 @@
                 <span class="mapping-arrow" aria-hidden="true">→</span>
                 <span class:unresolved={!target} class="mapping-route-node">
                   {#if target}
-                    <ProviderMark
-                      id={target.providerId === "local" ? backend.toLowerCase() : target.providerId}
-                      definition={provider(target.providerId)}
-                      label={providerName(target.providerId)}
-                    />
+                    {#if match.candidateArtworkUrl}
+                      <span class="media-art mapping-art"><img src={match.candidateArtworkUrl} alt="" loading="lazy" /></span>
+                    {:else}
+                      <ProviderMark
+                        id={target.providerId === "local" ? backend.toLowerCase() : target.providerId}
+                        definition={provider(target.providerId)}
+                        label={providerName(target.providerId)}
+                      />
+                    {/if}
                   {:else}
                     <span class="mapping-route-missing" aria-hidden="true">?</span>
                   {/if}
@@ -310,6 +357,11 @@
                 {#each [...match.reasons, ...match.warnings].slice(0, 3) as reason}
                   <span>{reason.replaceAll("_", " ")}</span>
                 {/each}
+                {#if candidate}
+                  {#each scoreComponents(candidate) as [name, value]}
+                    <span>{name.replaceAll("_", " ")} {percent(value)}</span>
+                  {/each}
+                {/if}
                 <details>
                   <summary>Technical details</summary>
                   <dl>
@@ -327,6 +379,9 @@
             </div>
 
             <div class="mapping-row-actions">
+              {#if match.candidates.some((candidate) => candidate.libraryTrackId)}
+                <button class="button-primary" type="button" disabled={action === match.externalSnapshotId} onclick={() => void accept(match)}>Accept</button>
+              {/if}
               <button class="button-primary" type="button" onclick={() => openMatch(match)}>Review match</button>
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger class="track-menu-trigger" aria-label={`More actions for ${match.title || "track"}`}>•••</DropdownMenu.Trigger>
