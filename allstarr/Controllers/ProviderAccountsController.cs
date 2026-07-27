@@ -73,9 +73,18 @@ public sealed partial class ProviderAccountsController : ControllerBase
             : await context.Users.AsNoTracking()
                 .Where(item => userIds.Contains(item.Id))
                 .ToDictionaryAsync(item => item.Id, item => item.DisplayName, cancellationToken);
+        var audienceUsers = CanManageAllAccounts(session)
+            ? await context.Users.AsNoTracking()
+                .Where(item => item.Status == PlatformUserStatus.Active &&
+                               item.TenantId == session.TenantId)
+                .OrderBy(item => item.DisplayName)
+                .Select(item => new { item.Id, item.DisplayName })
+                .ToListAsync(cancellationToken)
+            : [];
         return Ok(new
         {
             managementMode = _managementMode.ToString(),
+            audienceUsers,
             accounts = accounts.Select(account => AccountResponse(
                 account,
                 account.SecretReferenceId.HasValue &&
@@ -378,9 +387,28 @@ public sealed partial class ProviderAccountsController : ControllerBase
         if (request.ExpectedRevision.HasValue && request.ExpectedRevision.Value != account.Revision)
             return Conflict(new { error = "The provider account changed. Reload and try again." });
 
+        PlatformUserRecord? owner = null;
+        if (scope == ProviderAccountScope.User)
+        {
+            var ownerUserId = request.OwnerUserId ?? session.AllstarrUserId;
+            var tenantId = account.TenantId ?? session.TenantId;
+            owner = ownerUserId.HasValue
+                ? await context.Users.AsNoTracking().SingleOrDefaultAsync(
+                    item => item.Id == ownerUserId && item.TenantId == tenantId &&
+                            item.Status == PlatformUserStatus.Active,
+                    cancellationToken)
+                : null;
+            if (owner == null) return BadRequest(new { error = "Choose an active user for this audience." });
+        }
+
         account.Scope = scope;
-        account.TenantId = scope == ProviderAccountScope.Global ? null : session.TenantId;
-        account.OwnerUserId = scope == ProviderAccountScope.User ? session.AllstarrUserId : null;
+        account.TenantId = scope switch
+        {
+            ProviderAccountScope.Global => null,
+            ProviderAccountScope.User => owner!.TenantId,
+            _ => account.TenantId ?? session.TenantId
+        };
+        account.OwnerUserId = owner?.Id;
         account.LibraryScopeId = scope == ProviderAccountScope.Library ? libraryScopeId : null;
         account.UpdatedAt = DateTimeOffset.UtcNow;
         account.Revision++;
@@ -389,11 +417,12 @@ public sealed partial class ProviderAccountsController : ControllerBase
             accountId = account.Id,
             account.ProviderId,
             audience = scope.ToString(),
+            account.OwnerUserId,
             account.LibraryScopeId
         });
         await context.SaveChangesAsync(cancellationToken);
         await InvalidateAccountCacheAsync(account.Id);
-        return Ok(AccountResponse(account, null, scope == ProviderAccountScope.User ? session.UserName : null));
+        return Ok(AccountResponse(account, null, owner?.DisplayName));
     }
 
     private async Task<int> InvalidateAccountCacheAsync(Guid accountId) =>
@@ -695,6 +724,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
     public sealed class UpdateProviderAccountAudienceRequest
     {
         public string Scope { get; set; } = nameof(ProviderAccountScope.User);
+        public Guid? OwnerUserId { get; set; }
         public string? LibraryScopeId { get; set; }
         public long? ExpectedRevision { get; set; }
     }

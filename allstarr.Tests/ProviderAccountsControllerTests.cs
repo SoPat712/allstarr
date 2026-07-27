@@ -364,6 +364,29 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         Assert.Empty(await verification.ProviderAccounts.ToListAsync());
     }
 
+    [Fact]
+    public async Task AdministratorCanAssignAccountToOneActiveUser()
+    {
+        var account = await CreateUserAccount(_userId, "deezer", "Shared connection");
+        var result = Assert.IsType<OkObjectResult>(await Controller(
+            Session(_userId, administrator: true)).UpdateAudience(
+            account.Id,
+            new ProviderAccountsController.UpdateProviderAccountAudienceRequest
+            {
+                Scope = "User",
+                OwnerUserId = _otherUserId,
+                ExpectedRevision = account.Revision
+            }));
+
+        using var response = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+        Assert.Equal(_otherUserId, response.RootElement.GetProperty("OwnerUserId").GetGuid());
+        Assert.Equal("User two", response.RootElement.GetProperty("ownerDisplayName").GetString());
+        await using var context = await _factory.CreateDbContextAsync();
+        var saved = await context.ProviderAccounts.SingleAsync(item => item.Id == account.Id);
+        Assert.Equal(_otherUserId, saved.OwnerUserId);
+        Assert.Equal(_userId, saved.CreatedByUserId);
+    }
+
     private ProviderAccountsController Controller(
         AdminAuthSession session,
         ProviderAccountManagementMode mode = ProviderAccountManagementMode.Hybrid)

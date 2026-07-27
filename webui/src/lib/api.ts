@@ -196,6 +196,8 @@ export type ProviderAccount = {
   scope: "Global" | "User" | "Library";
   ownerUserId?: string | null;
   ownerDisplayName?: string | null;
+  createdByUserId?: string | null;
+  creatorDisplayName?: string | null;
   libraryScopeId?: string | null;
   enabled: boolean;
   revision: number;
@@ -481,7 +483,11 @@ export const home = {
 
 export const sources = {
   accounts: () =>
-    json<{ managementMode: string; accounts: ProviderAccount[] }>("/api/admin/provider-accounts"),
+    json<{
+      managementMode: string;
+      audienceUsers: { id: string; displayName: string }[];
+      accounts: ProviderAccount[];
+    }>("/api/admin/provider-accounts"),
   health: () => json<ProviderHealth[]>("/api/admin/providers/status"),
   cts: () =>
     json<{ measurements: CtsMeasurement[] }>("/api/admin/provider-diagnostics/deep-stream/latest"),
@@ -515,11 +521,16 @@ export const sources = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ secret }),
     }),
-  setAudience: (account: ProviderAccount, scope: string, libraryScopeId?: string | null) =>
+  setAudience: (
+    account: ProviderAccount,
+    scope: string,
+    ownerUserId?: string | null,
+    libraryScopeId?: string | null,
+  ) =>
     json<ProviderAccount>(`/api/admin/provider-accounts/${account.id}/audience`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scope, libraryScopeId, expectedRevision: account.revision }),
+      body: JSON.stringify({ scope, ownerUserId, libraryScopeId, expectedRevision: account.revision }),
     }),
   remove: (id: string) =>
     json<void>(`/api/admin/provider-accounts/${id}`, { method: "DELETE" }),

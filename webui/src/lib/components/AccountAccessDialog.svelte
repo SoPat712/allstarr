@@ -6,31 +6,43 @@
   let {
     open = $bindable(false),
     account,
+    users,
     onSaved,
   }: {
     open: boolean;
     account: ProviderAccount | null;
+    users: { id: string; displayName: string }[];
     onSaved: (message: string) => void | Promise<void>;
   } = $props();
 
-  let preparedId = $state("");
-  let scope = $state<ProviderAccount["scope"]>("User");
+  let preparedRevision = $state("");
+  let audience = $state<"owner" | "user" | "global" | "library">("owner");
+  let ownerUserId = $state("");
   let libraryScopeId = $state("");
   let confirmOpen = $state(false);
   let saving = $state(false);
   let error = $state("");
 
   $effect(() => {
-    if (!open || !account || preparedId === account.id) return;
-    preparedId = account.id;
-    scope = account.scope;
+    const revision = account ? `${account.id}:${account.revision}` : "";
+    if (!open || !account || preparedRevision === revision) return;
+    preparedRevision = revision;
+    audience = account.scope === "Global"
+      ? "global"
+      : account.scope === "Library"
+        ? "library"
+        : account.ownerUserId && account.createdByUserId &&
+            account.ownerUserId !== account.createdByUserId
+          ? "user"
+          : "owner";
+    ownerUserId = account.ownerUserId ?? account.createdByUserId ?? users[0]?.id ?? "";
     libraryScopeId = account.libraryScopeId ?? "";
     error = "";
   });
 
   function submit() {
     if (!account || saving) return;
-    if (account.scope !== "Global" && scope === "Global") {
+    if (account.scope !== "Global" && audience === "global") {
       confirmOpen = true;
       return;
     }
@@ -42,10 +54,17 @@
     saving = true;
     error = "";
     try {
-      await sources.setAudience(account, scope, scope === "Library" ? libraryScopeId : null);
+      const scope = audience === "global" ? "Global" : audience === "library" ? "Library" : "User";
+      const owner = audience === "owner"
+        ? account.createdByUserId ?? account.ownerUserId
+        : audience === "user"
+          ? ownerUserId
+          : null;
+      await sources.setAudience(account, scope, owner, scope === "Library" ? libraryScopeId : null);
       confirmOpen = false;
       open = false;
-      await onSaved(`Access changed to ${scope === "Global" ? "Everyone" : scope === "Library" ? `Library ${libraryScopeId}` : "Only me"}.`);
+      const selected = users.find((user) => user.id === owner);
+      await onSaved(`Access changed to ${scope === "Global" ? "Everyone" : scope === "Library" ? `Library ${libraryScopeId}` : selected?.displayName ?? account.creatorDisplayName ?? "the owner"}.`);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Access could not be updated.";
     } finally {
@@ -70,20 +89,28 @@
         <form onsubmit={(event) => { event.preventDefault(); submit(); }}>
           <fieldset class="audience-options">
             <legend>Who can use this source connection?</legend>
-            <label class:active={scope === "User"}>
-              <input bind:group={scope} type="radio" value="User" />
-              <span><strong>Only me</strong><small>Only your linked Allstarr user can route through this account.</small></span>
+            <label class:active={audience === "owner"}>
+              <input bind:group={audience} type="radio" value="owner" />
+              <span><strong>Connection owner</strong><small>{account.creatorDisplayName || account.ownerDisplayName || "The user who connected it"} can use this account.</small></span>
             </label>
-            <label class:active={scope === "Global"}>
-              <input bind:group={scope} type="radio" value="Global" />
+            <label class:active={audience === "user"}>
+              <input bind:group={audience} type="radio" value="user" disabled={!users.length} />
+              <span><strong>One user</strong><small>{users.length ? "Choose one active Allstarr user without exposing credentials." : "No active users are available."}</small></span>
+            </label>
+            <label class:active={audience === "global"}>
+              <input bind:group={audience} type="radio" value="global" />
               <span><strong>Everyone</strong><small>Every user may route supported Source capabilities through this account.</small></span>
             </label>
-            <label class:active={scope === "Library"}>
-              <input bind:group={scope} type="radio" value="Library" />
+            <label class:active={audience === "library"}>
+              <input bind:group={audience} type="radio" value="library" />
               <span><strong>One library</strong><small>Only requests in the named backend library may use this account.</small></span>
             </label>
           </fieldset>
-          {#if scope === "Library"}
+          {#if audience === "user"}
+            <label class="field"><span>Allstarr user</span><select bind:value={ownerUserId} required>
+              {#each users as user}<option value={user.id}>{user.displayName}</option>{/each}
+            </select></label>
+          {:else if audience === "library"}
             <label class="field"><span>Library ID</span><input bind:value={libraryScopeId} required /></label>
           {/if}
           <p class="credential-safety">Credentials stay encrypted and are never shown when access changes.</p>

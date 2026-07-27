@@ -48,9 +48,15 @@ const responses: Record<string, unknown> = {
   "/api/admin/playlist-links": { playlistLinks: [] },
   "/api/admin/provider-accounts": {
     managementMode: "ApplicationManaged",
+    audienceUsers: [
+      { id: "user", displayName: "Tester" },
+      { id: "listener", displayName: "Listener" },
+    ],
     accounts: [{
       id: "account", providerId: "lumen-audio", displayName: "Lumen account",
       sourceDisplayName: "Lumen Audio", scope: "User", enabled: true, revision: 1,
+      ownerUserId: "user", ownerDisplayName: "Tester", createdByUserId: "user",
+      creatorDisplayName: "Tester",
       secret: { configured: true, revoked: false }, createdAt: "2026-01-01", updatedAt: "2026-01-01",
     }],
   },
@@ -126,6 +132,11 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
         stats: { total: 1, matched: 0, accepted: 0, unresolved: 0, review: 1, rejected: 0, attention: 1 },
         pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
       };
+    if (url.pathname.endsWith("/audience") && route.request().method() === "PUT") {
+      const input = route.request().postDataJSON();
+      const account = (responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[] }).accounts[0];
+      body = { ...account, scope: input.scope, ownerUserId: input.ownerUserId, revision: 2 };
+    }
     await route.fulfill({
       status: body === undefined ? 404 : 200,
       contentType: "application/json",
@@ -211,9 +222,18 @@ for (const viewport of viewports) {
       await expect(page.getByRole("dialog", { name: "Connect a Source" })).toBeVisible();
       await expect(page.getByRole("button", { name: "Save and test" })).toBeInViewport();
       await page.getByRole("button", { name: "Close source connection dialog" }).click();
-      await page.getByRole("button", { name: "Audience Only me" }).click();
-      await expect(page.getByRole("dialog", { name: "Lumen Audio" })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Save access" })).toBeInViewport();
+      await page.getByRole("button", { name: "Audience Only Tester" }).click();
+      const access = page.getByRole("dialog", { name: "Lumen Audio" });
+      await expect(access).toBeVisible();
+      await access.getByRole("radio", { name: "One user" }).check();
+      await access.getByRole("combobox").selectOption("listener");
+      await access.getByRole("button", { name: "Save access" }).click();
+      await expect(access).toBeHidden();
+
+      await page.getByRole("button", { name: "Audience Only Tester" }).click();
+      await page.getByRole("radio", { name: "Everyone" }).check();
+      await page.getByRole("button", { name: "Save access" }).click();
+      await expect(page.getByRole("alertdialog", { name: "Share this connection with everyone?" })).toBeVisible();
     });
 
     test("Match and removal dialogs remain usable", async ({ page }) => {

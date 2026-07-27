@@ -29,6 +29,7 @@
 
   let schema = $state<UiSchema | null>(null);
   let accounts = $state<ProviderAccount[]>([]);
+  let audienceUsers = $state<{ id: string; displayName: string }[]>([]);
   let health = $state<ProviderHealth[]>([]);
   let summaries = $state<ProviderSummary[]>([]);
   let measurements = $state<CtsMeasurement[]>([]);
@@ -97,8 +98,13 @@
     const results = await Promise.allSettled(requests);
     if (results[0].status === "fulfilled") schema = results[0].value as UiSchema;
     if (results[1].status === "fulfilled") {
-      const response = results[1].value as { managementMode: string; accounts: ProviderAccount[] };
+      const response = results[1].value as {
+        managementMode: string;
+        audienceUsers?: { id: string; displayName: string }[];
+        accounts: ProviderAccount[];
+      };
       accounts = response.accounts;
+      audienceUsers = response.audienceUsers ?? [];
       managementMode = response.managementMode;
     } else if (!administrator) {
       managementMode = schema?.providerAccountManagementMode ?? "AdminManaged";
@@ -374,7 +380,7 @@
 
   <ConnectSourceDialog bind:open={connectOpen} {providers} {administrator} onSaved={completed} />
   <ConnectSourceDialog bind:open={configureOpen} {providers} {administrator} account={selectedAccount} onSaved={completed} />
-  <AccountAccessDialog bind:open={accessOpen} account={selectedAccount} onSaved={completed} />
+  <AccountAccessDialog bind:open={accessOpen} account={selectedAccount} users={audienceUsers} onSaved={completed} />
 
   <AlertDialog.Root bind:open={removeOpen}>
     <AlertDialog.Portal>
