@@ -435,7 +435,15 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 item.ProviderRevision == collected.SourceRevision &&
                 item.PayloadSha256 == playlistPayloadHash)
             .OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(cancellationToken);
-        if (existing != null) return existing;
+        if (existing != null && await db.PlaylistSourceEntries.AsNoTracking()
+                .Where(item => item.PlaylistSourceSnapshotId == existing.Id)
+                .AllAsync(item => db.ExternalMetadataSnapshots.Any(external =>
+                    external.Id == item.ExternalMetadataSnapshotId &&
+                    external.OwnerUserId == link.OwnerUserId &&
+                    external.LibraryScopeId == link.LibraryScopeId &&
+                    external.BackendInstanceId == link.TargetBackendInstanceId &&
+                    external.Protocol == link.TargetProtocol), cancellationToken))
+            return existing;
         var version = (await db.PlaylistSourceSnapshots.Where(item =>
                 item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id)
             .MaxAsync(item => (int?)item.SnapshotVersion, cancellationToken) ?? 0) + 1;
