@@ -78,6 +78,35 @@ public sealed class DurationProjectionContractTests
         Assert.Equal(196_456, document.RootElement.GetProperty("durationMilliseconds").GetInt64());
     }
 
+    [Fact]
+    public void MappingRow_AllowsMissingOptionalCandidateEvidence()
+    {
+        var candidateId = Guid.CreateVersion7();
+        var row = typeof(TrackMatchesController).GetMethod(
+            "Row",
+            BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null,
+        [
+            new ExternalMetadataSnapshotRecord
+            {
+                Id = Guid.CreateVersion7(),
+                ProviderId = "spotify",
+                PayloadJson = """{"Title":"Track","Artists":["Artist"]}"""
+            },
+            new TrackMatchRecord
+            {
+                State = TrackMatchState.Suggested,
+                CandidateResultsJson = $$"""[{"LibraryTrackId":"{{candidateId}}","AlbumEvidence":null,"DurationDeltaMilliseconds":null}]"""
+            },
+            null,
+            null,
+            new Dictionary<Guid, LibraryTrackRecord>(),
+            new Dictionary<Guid, LibraryTrackRecord>(),
+            new Dictionary<Guid, ProviderTrackIdentityRecord[]>()
+        ])!;
+
+        Assert.Single(Value(row).GetProperty("candidates").EnumerateArray());
+    }
+
     private static JsonElement Value(object row)
     {
         var value = row.GetType().GetProperty("Value")!.GetValue(row);

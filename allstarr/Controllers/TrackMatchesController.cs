@@ -696,7 +696,8 @@ public sealed class TrackMatchesController(
             : null;
 
     private static double? Number(JsonElement root, string name) => root.ValueKind == JsonValueKind.Object &&
-        root.TryGetProperty(name, out var value) && value.TryGetDouble(out var number) ? number : null;
+        root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number &&
+        value.TryGetDouble(out var number) ? number : null;
 
     private bool TrySession(out AdminAuthSession? session, out IActionResult? error)
     {
