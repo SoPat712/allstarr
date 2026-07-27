@@ -14,6 +14,7 @@
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
+  import SelectField from "$lib/components/SelectField.svelte";
   import {
     currentTarget,
     isAttention,
@@ -281,26 +282,16 @@
           <span>Library scope</span>
           <input bind:value={libraryScopeId} placeholder="All libraries" />
         </label>
-        <label>
-          <span>Status</span>
-          <select bind:value={stateFilter} onchange={() => { page = 1; void load(); }}>
-            <option value="attention">Needs attention</option>
-            <option value="">All tracks</option>
-            <option value="matched">Matched</option>
-            <option value="suggested">Suggested / High likelihood</option>
-            <option value="ambiguous">Ambiguous</option>
-            <option value="unresolved">Unresolved</option>
-            <option value="rejected">Rejected</option>
-          </select>
-        </label>
-        <label>
-          <span>Confidence</span>
-          <select bind:value={sort} onchange={() => { page = 1; void load(); }}>
-            <option value="">Default order</option>
-            <option value="confidence_desc">Highest first</option>
-            <option value="confidence_asc">Lowest first</option>
-          </select>
-        </label>
+        <div class="filter-field"><span>Status</span><SelectField bind:value={stateFilter} label="Status" onchange={() => { page = 1; void load(); }} options={[
+          { value: "attention", label: "Needs attention" }, { value: "", label: "All tracks" },
+          { value: "matched", label: "Matched" }, { value: "suggested", label: "Suggested / High likelihood" },
+          { value: "ambiguous", label: "Ambiguous" }, { value: "unresolved", label: "Unresolved" },
+          { value: "rejected", label: "Rejected" },
+        ]} /></div>
+        <div class="filter-field"><span>Confidence</span><SelectField bind:value={sort} label="Confidence" onchange={() => { page = 1; void load(); }} options={[
+          { value: "", label: "Default order" }, { value: "confidence_desc", label: "Highest first" },
+          { value: "confidence_asc", label: "Lowest first" },
+        ]} /></div>
         <button class="button-primary" type="submit">Apply</button>
       </form>
 

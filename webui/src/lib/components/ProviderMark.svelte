@@ -8,11 +8,22 @@
     label = definition?.name ?? id,
   }: { id: string; definition?: ProviderDefinition; label?: string } = $props();
   let failed = $state(false);
+  const icon = $derived(
+    definition?.icon && definition.icon !== "extension"
+      ? definition.icon
+      : label.toLowerCase().replace(/[^a-z0-9]/g, ""),
+  );
+  const source = $derived(definition?.logoUrl || `/images/providers/${encodeURIComponent(icon || id.toLowerCase())}.svg`);
+
+  $effect(() => {
+    source;
+    failed = false;
+  });
 </script>
 
 <span class="provider-mark" style={`--route-color:${providerColor(id)}`} title={label}>
   {#if !failed}
-    <img src={definition?.logoUrl || `/images/providers/${definition?.icon || encodeURIComponent(id.toLowerCase())}.svg`} alt="" onerror={() => { failed = true; }} />
+    <img src={source} alt="" onerror={() => { failed = true; }} />
   {:else}
     <span aria-hidden="true">{label[0]?.toUpperCase() ?? "?"}</span>
   {/if}

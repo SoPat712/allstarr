@@ -11,6 +11,7 @@
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
+  import SelectField from "$lib/components/SelectField.svelte";
   import {
     filterDownloads,
     qualityDetails,
@@ -180,23 +181,15 @@
 
     <div class="playlist-filters downloads-filters">
       <SearchField bind:value={query} label={`Filter ${label.toLowerCase()} tracks`} placeholder="Track, artist, album, or provider" hiddenLabel />
-      <label>
-        <span class="sr-only">Provider</span>
-        <select bind:value={providerFilter}>
-          <option value="">All providers</option>
-          {#each availableProviders as value}<option value={value}>{providerName(value)}</option>{/each}
-        </select>
-      </label>
-      <label>
-        <span class="sr-only">Sort tracks</span>
-        <select bind:value={sort}>
-          <option value="track">Track</option>
-          <option value="provider">Provider</option>
-          <option value="quality">Quality</option>
-          <option value="size">Size</option>
-          <option value="updated">Newest</option>
-        </select>
-      </label>
+      <SelectField bind:value={providerFilter} label="Provider" options={[
+        { value: "", label: "All providers" },
+        ...availableProviders.map((value) => ({ value, label: providerName(value) })),
+      ]} />
+      <SelectField bind:value={sort} label="Sort tracks" options={[
+        { value: "track", label: "Track" }, { value: "provider", label: "Provider" },
+        { value: "quality", label: "Quality" }, { value: "size", label: "Size" },
+        { value: "updated", label: "Newest" },
+      ]} />
     </div>
 
     {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}

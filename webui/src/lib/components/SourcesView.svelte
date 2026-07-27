@@ -16,7 +16,7 @@
   import AccountAccessDialog from "$lib/components/AccountAccessDialog.svelte";
   import ConnectSourceDialog from "$lib/components/ConnectSourceDialog.svelte";
   import ConnectivityBars from "$lib/components/ConnectivityBars.svelte";
-  import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import {
     accountSettings,
@@ -266,7 +266,7 @@
           <article class="source-card" data-state={state}>
             <header>
               <div class="source-identity">
-                <span class="media-art provider-art"><ProviderMark id={item.id} definition={item} /></span>
+                <ProviderArtwork id={item.id} definition={item} />
                 <span><strong>{item.name}</strong><small>{item.description || item.notes?.join(" · ") || "Provider capability Source"}</small></span>
               </div>
               <span class={`status-pill ${state}`}>{humanize(state)}</span>
@@ -317,7 +317,7 @@
           <article class="connection-card">
             <header>
               <div class="source-identity">
-                <span class="media-art provider-art"><ProviderMark id={account.providerId} definition={definition} /></span>
+                <ProviderArtwork id={account.providerId} definition={definition} />
                 <span>
                   <strong>{account.sourceDisplayName || account.displayName}</strong>
                   <small>{definition?.name ?? account.providerId} connection · Connected by {account.creatorDisplayName || account.ownerDisplayName || "unknown user"}</small>

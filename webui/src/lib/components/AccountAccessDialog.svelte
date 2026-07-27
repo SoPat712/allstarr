@@ -3,6 +3,7 @@
   import { sources, type ProviderAccount } from "$lib/api";
   import { audienceLabel } from "$lib/sources";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import SelectField from "$lib/components/SelectField.svelte";
 
   let {
     open = $bindable(false),
@@ -116,9 +117,7 @@
             </label>
           </fieldset>
           {#if audience === "user"}
-            <label class="field"><span>Allstarr user</span><select bind:value={ownerUserId} required>
-              {#each users as user}<option value={user.id}>{user.displayName}</option>{/each}
-            </select></label>
+            <label class="field"><span>Allstarr user</span><SelectField bind:value={ownerUserId} label="Allstarr user" options={users.map((user) => ({ value: user.id, label: user.displayName }))} required /></label>
           {:else if audience === "library"}
             <label class="field"><span>Library ID</span><input bind:value={libraryScopeId} required /></label>
           {/if}

@@ -8,6 +8,7 @@
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
+  import SelectField from "$lib/components/SelectField.svelte";
   import {
     home,
     playlistLinks,
@@ -280,24 +281,14 @@
 
       <div class="playlist-filters">
         <SearchField bind:value={query} label="Filter playlists" placeholder="Filter playlists" hiddenLabel />
-        <label>
-          <span class="sr-only">Playlist status</span>
-          <select bind:value={stateFilter}>
-            <option value="all">All states</option>
-            <option value="ready">Ready</option>
-            <option value="attention">Needs attention</option>
-            <option value="paused">Paused</option>
-          </select>
-        </label>
-        <label>
-          <span class="sr-only">Sort playlists</span>
-          <select bind:value={sort}>
-            <option value="name">Name</option>
-            <option value="tracks">Tracks</option>
-            <option value="coverage">Coverage</option>
-            <option value="updated">Updated</option>
-          </select>
-        </label>
+        <SelectField bind:value={stateFilter} label="Playlist status" options={[
+          { value: "all", label: "All states" }, { value: "ready", label: "Ready" },
+          { value: "attention", label: "Needs attention" }, { value: "paused", label: "Paused" },
+        ]} />
+        <SelectField bind:value={sort} label="Sort playlists" options={[
+          { value: "name", label: "Name" }, { value: "tracks", label: "Tracks" },
+          { value: "coverage", label: "Coverage" }, { value: "updated", label: "Updated" },
+        ]} />
       </div>
 
       <div class="playlist-rows" aria-label="Playlists">
@@ -422,24 +413,14 @@
 
         <div class="track-toolbar">
           <SearchField bind:value={trackQuery} label="Filter tracks" placeholder="Filter tracks" hiddenLabel />
-          <label>
-            <span class="sr-only">Track route</span>
-            <select bind:value={routeFilter}>
-              <option value="all">All routes</option>
-              <option value="local">{providerName(details.targetProtocol)}</option>
-              <option value="external">External</option>
-              <option value="unmatched">Unresolved</option>
-            </select>
-          </label>
-          <label>
-            <span class="sr-only">Sort tracks</span>
-            <select bind:value={trackSort}>
-              <option value="position">Playlist order</option>
-              <option value="title">Title</option>
-              <option value="duration">Duration</option>
-              <option value="route">Route</option>
-            </select>
-          </label>
+          <SelectField bind:value={routeFilter} label="Track route" options={[
+            { value: "all", label: "All routes" }, { value: "local", label: providerName(details.targetProtocol) },
+            { value: "external", label: "External" }, { value: "unmatched", label: "Unresolved" },
+          ]} />
+          <SelectField bind:value={trackSort} label="Sort tracks" options={[
+            { value: "position", label: "Playlist order" }, { value: "title", label: "Title" },
+            { value: "duration", label: "Duration" }, { value: "route", label: "Route" },
+          ]} />
         </div>
 
         <div class="track-table" aria-label={`${details.name} tracks`}>

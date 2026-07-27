@@ -10,13 +10,14 @@
     type PriorityGroup,
     type UiSchema,
   } from "$lib/api";
-  import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
   import EnvMigrationCard from "$lib/components/EnvMigrationCard.svelte";
   import ExtensionsView from "$lib/components/ExtensionsView.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SelectiveTransferCard from "$lib/components/SelectiveTransferCard.svelte";
   import CacheDiagnosticsCard from "$lib/components/CacheDiagnosticsCard.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
+  import SelectField from "$lib/components/SelectField.svelte";
   import { audienceLabel, humanize } from "$lib/sources";
   import { fieldValue, move, routingOrder } from "$lib/settings";
   import { liveUpdates } from "$lib/live-updates.svelte";
@@ -236,9 +237,12 @@
                   {#if field.readOnly || field.ownership === "deployment"}
                     <output>{String(fieldValue(config, field))}</output>
                   {:else if field.type === "select"}
-                    <select name={field.key}>
-                      {#each field.options ?? [] as option}<option value={option} selected={fieldValue(config, field) === option}>{option}</option>{/each}
-                    </select>
+                    <SelectField
+                      name={field.key}
+                      label={field.label}
+                      value={String(fieldValue(config, field))}
+                      options={field.options ?? []}
+                    />
                   {:else if field.type === "toggle"}
                     <input name={field.key} type="checkbox" checked={Boolean(fieldValue(config, field))} />
                   {:else}
@@ -273,7 +277,7 @@
           <div>
             {#each accounts as account}
               <article>
-                <ProviderMark id={account.providerId} definition={provider(account.providerId)} />
+                <ProviderArtwork id={account.providerId} definition={provider(account.providerId)} />
                 <span><strong>{account.sourceDisplayName || account.displayName}</strong><small>{audienceLabel(account)} · {account.enabled ? "Enabled" : "Disabled"}</small></span>
                 <span class={`status-pill ${account.secret.configured && !account.secret.revoked ? "healthy" : "needs_config"}`}>
                   {account.secret.configured && !account.secret.revoked ? "Stored" : "Setup needed"}
@@ -295,7 +299,7 @@
               <ol>
                 {#if group.pinnedProvider}
                   <li class="pinned">
-                    <span class="media-art provider-art"><ProviderMark id={group.pinnedProvider.id} label={group.pinnedProvider.name} /></span>
+                    <ProviderArtwork id={group.pinnedProvider.id} label={group.pinnedProvider.name} />
                     <span><strong>{group.pinnedProvider.name}</strong><small>{group.pinnedProvider.reason}</small></span>
                     <span class="status-pill healthy">Local · fixed</span>
                   </li>
@@ -310,7 +314,7 @@
                     ondrop={() => dropProvider(group, index)}
                     ondragend={() => { dragging = null; }}
                   >
-                    <span class="media-art provider-art"><ProviderMark id={providerId} definition={definition} /></span>
+                    <ProviderArtwork id={providerId} definition={definition} />
                     <span><strong>{definition?.name ?? humanize(providerId)}</strong><small>{definition?.categories?.map(humanize).join(" · ") || "Provider Source"}</small></span>
                     <span class="routing-actions">
                       <button type="button" aria-label={`Move ${definition?.name ?? providerId} up`} disabled={index === 0} onclick={() => moveProvider(group, index, -1)}>↑</button>

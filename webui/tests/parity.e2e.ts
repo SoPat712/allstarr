@@ -420,6 +420,9 @@ for (const viewport of viewports) {
       await mockApi(page);
       await page.goto("#/settings/general");
       await expect(page.getByText("Public URL", { exact: true }).locator("..").getByText("Deployment-owned")).toBeVisible();
+      await page.getByRole("button", { name: "Theme", exact: true }).click();
+      await expect(page.getByRole("option", { name: "Dark" })).toBeVisible();
+      await page.keyboard.press("Escape");
       await page.goto("#/settings/accounts");
       await expect(page.getByRole("link", { name: "Open Sources" })).toBeInViewport();
       await page.goto("#/settings/routing");
@@ -431,6 +434,8 @@ for (const viewport of viewports) {
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.goto("#/settings/extensions");
+      await expect(page.locator(".extension-row .badge")).toContainText(["Metadata", "Streaming"]);
+      await expect(page.locator(".segmented-tab-count").first()).toHaveCSS("border-style", "solid");
       await page.getByRole("tab", { name: /Available/ }).click();
       await expect(page.getByText("Available packages", { exact: true })).toBeVisible();
       await page.getByRole("tab", { name: /Registries/ }).click();
@@ -491,7 +496,8 @@ for (const viewport of viewports) {
       const access = page.getByRole("dialog", { name: "Lumen Audio" });
       await expect(access).toBeVisible();
       await access.getByRole("radio", { name: "One user" }).check();
-      await access.getByRole("combobox").selectOption("listener");
+      await access.getByRole("button", { name: "Allstarr user" }).click();
+      await page.getByRole("option", { name: "Listener" }).click();
       await access.getByRole("button", { name: "Save access" }).click();
       await expect(access).toBeHidden();
 
@@ -788,12 +794,14 @@ test("Suggested mappings sort by confidence and deep links open review", async (
   const request = page.waitForRequest((item) =>
     item.url().includes("/api/admin/track-matches") &&
     new URL(item.url()).searchParams.get("sort") === "confidence_desc");
-  await page.getByLabel("Confidence").selectOption("confidence_desc");
+  await page.getByRole("button", { name: "Confidence" }).click();
+  await page.getByRole("option", { name: "Highest first" }).click();
   await request;
   const unresolved = page.waitForRequest((item) =>
     item.url().includes("/api/admin/track-matches") &&
     new URL(item.url()).searchParams.get("state") === "unresolved");
-  await page.getByLabel("Status").selectOption("unresolved");
+  await page.getByRole("button", { name: "Status" }).click();
+  await page.getByRole("option", { name: "Unresolved" }).click();
   await unresolved;
   await page.getByRole("button", { name: /Suggested.*High likelihood/ }).click();
   await expect(page.getByRole("button", { name: "Accept" })).toBeVisible();
@@ -1025,7 +1033,8 @@ test("Maintenance validates before selective import and reports applied rows", a
 
   await expect(card.getByRole("button", { name: "Import validated archive" })).toHaveCount(0);
   await card.locator('input[type="file"]').setInputFiles(archive);
-  await card.getByLabel("Import behavior").selectOption("Merge");
+  await card.getByRole("button", { name: "Import behavior" }).click();
+  await page.getByRole("option", { name: "Merge compatible rows" }).click();
   await card.getByRole("button", { name: "Validate archive" }).click();
   await card.getByRole("button", { name: "Cancel" }).click();
   await expect(card.getByText("State transfer cancelled.")).toBeVisible();
@@ -1263,7 +1272,7 @@ test("Profile artwork is stable in full, slim, and mobile navigation", async ({ 
     const avatar = page.locator(".profile .avatar");
     await expect(avatar).toBeVisible();
     await expect(avatar.locator("img")).toBeVisible();
-    await expect.poll(async () => (await avatar.boundingBox())?.width ?? 0).toBe(40);
+    await expect.poll(async () => (await avatar.boundingBox())?.width ?? 0).toBe(36);
     if (width === 850) {
       await page.getByRole("button", { name: "Collapse sidebar" }).click();
       await expect(page.locator(".app-shell")).toHaveClass(/slim/);
@@ -1283,7 +1292,7 @@ test("Profile artwork is stable in full, slim, and mobile navigation", async ({ 
   await page.route("**/api/admin/auth/me/avatar?user=user", (route) => route.fulfill({ status: 404 }));
   await page.reload();
   await expect(page.locator(".profile .avatar span")).toHaveText("T");
-  await expect.poll(async () => (await page.locator(".profile .avatar").boundingBox())?.width ?? 0).toBe(40);
+  await expect.poll(async () => (await page.locator(".profile .avatar").boundingBox())?.width ?? 0).toBe(36);
 });
 
 test("Segmented navigation and match tabs support arrow keys", async ({ page }) => {

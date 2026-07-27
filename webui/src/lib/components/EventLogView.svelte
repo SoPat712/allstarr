@@ -21,6 +21,7 @@
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
+  import SelectField from "$lib/components/SelectField.svelte";
   import { formatDuration } from "$lib/playlists";
   import { liveUpdates } from "$lib/live-updates.svelte";
 
@@ -205,34 +206,18 @@
 
     <form class="playlist-filters event-log-filters" onsubmit={(event) => event.preventDefault()}>
       <SearchField bind:value={query} label="Search" placeholder="Event, track, provider, or correlation" />
-      <label>
-        <span>Category</span>
-        <select bind:value={kind}>
-          <option value="">All categories</option>
-          {#each kinds as value}<option value={value}>{humanize(value)}</option>{/each}
-        </select>
-      </label>
-      <label>
-        <span>Outcome</span>
-        <select bind:value={outcome}>
-          <option value="">All outcomes</option>
-          {#each outcomes as value}<option value={value}>{humanize(value)}</option>{/each}
-        </select>
-      </label>
-      <label>
-        <span>Provider</span>
-        <select bind:value={providerFilter}>
-          <option value="">All providers</option>
-          {#each eventProviders as value}<option value={value}>{providerName(value)}</option>{/each}
-        </select>
-      </label>
-      <label>
-        <span>Severity</span>
-        <select bind:value={severity}>
-          <option value="">All severities</option>
-          {#each severities as value}<option value={value}>{humanize(value)}</option>{/each}
-        </select>
-      </label>
+      <div class="filter-field"><span>Category</span><SelectField bind:value={kind} label="Category" options={[
+        { value: "", label: "All categories" }, ...kinds.map((value) => ({ value, label: humanize(value) })),
+      ]} /></div>
+      <div class="filter-field"><span>Outcome</span><SelectField bind:value={outcome} label="Outcome" options={[
+        { value: "", label: "All outcomes" }, ...outcomes.map((value) => ({ value, label: humanize(value) })),
+      ]} /></div>
+      <div class="filter-field"><span>Provider</span><SelectField bind:value={providerFilter} label="Provider" options={[
+        { value: "", label: "All providers" }, ...eventProviders.map((value) => ({ value, label: providerName(value) })),
+      ]} /></div>
+      <div class="filter-field"><span>Severity</span><SelectField bind:value={severity} label="Severity" options={[
+        { value: "", label: "All severities" }, ...severities.map((value) => ({ value, label: humanize(value) })),
+      ]} /></div>
     </form>
 
     <div class="event-log-count">

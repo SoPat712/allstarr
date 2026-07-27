@@ -2,6 +2,7 @@
   import { Dialog } from "bits-ui";
   import { sources, type ProviderAccount, type ProviderDefinition } from "$lib/api";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import SelectField from "$lib/components/SelectField.svelte";
   import { accountSettings, secretFromForm } from "$lib/sources";
 
   let {
@@ -98,18 +99,16 @@
               <span>Source</span>
               <span class="provider-select">
                 <ProviderMark id={selected.id} definition={selected} />
-                <select bind:value={providerId}>
-                  {#each choices as provider}<option value={provider.id}>{provider.name}</option>{/each}
-                </select>
+                <SelectField bind:value={providerId} label="Source" options={choices.map((provider) => ({ value: provider.id, label: provider.name }))} />
               </span>
             </label>
             <label class="field"><span>Connection name</span><input name="displayName" placeholder={`My ${selected.name} connection`} /></label>
             <label class="field">
               <span>Who can use it?</span>
-              <select name="scope">
-                <option value="User">Only me</option>
-                {#if administrator}<option value="Global">Everyone</option><option value="Library">One library</option>{/if}
-              </select>
+              <SelectField name="scope" label="Who can use it?" value="User" options={[
+                { value: "User", label: "Only me" },
+                ...(administrator ? [{ value: "Global", label: "Everyone" }, { value: "Library", label: "One library" }] : []),
+              ]} />
             </label>
             {#if administrator}<label class="field"><span>Library ID (only for one library)</span><input name="libraryScopeId" /></label>{/if}
           {/if}
@@ -119,9 +118,7 @@
               <label class="field" class:wide={accountSettings(selected).length === 1}>
                 <span>{field.label}</span>
                 {#if field.type === "select"}
-                  <select name={field.key} required={field.required}>
-                    {#each field.options ?? [] as option}<option value={option}>{option}</option>{/each}
-                  </select>
+                  <SelectField name={field.key} label={field.label} value={field.options?.[0] ?? ""} options={field.options ?? []} required={field.required} />
                 {:else if field.type === "toggle"}
                   <input name={field.key} type="checkbox" />
                 {:else}

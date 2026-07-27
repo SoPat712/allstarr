@@ -9,6 +9,7 @@
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
+  import SelectField from "$lib/components/SelectField.svelte";
   import { percent, playableProviders, scoreComponents } from "$lib/mappings";
   import { formatDuration } from "$lib/playlists";
 
@@ -217,15 +218,10 @@
 
         <form class="target-search" onsubmit={(event) => { event.preventDefault(); void search(); }}>
           {#if targetMode === "provider"}
-            <label>
-              <span>Provider</span>
-              <select bind:value={providerFilter}>
-                <option value="">All playable providers</option>
-                {#each providerOptions as option}
-                  <option value={option.id}>{option.name}</option>
-                {/each}
-              </select>
-            </label>
+            <div class="filter-field"><span>Provider</span><SelectField bind:value={providerFilter} label="Provider" options={[
+              { value: "", label: "All playable providers" },
+              ...providerOptions.map((option) => ({ value: option.id, label: option.name })),
+            ]} /></div>
           {/if}
           <label class="grow">
             <span>Artist and track</span>

@@ -6,6 +6,7 @@
     type SelectiveTransferPreview,
     type SelectiveTransferReport,
   } from "$lib/api";
+  import SelectField from "$lib/components/SelectField.svelte";
 
   const maximumBytes = 128 * 1024 * 1024;
   const categories: Array<{ key: keyof SelectiveTransferOptions; label: string }> = [
@@ -170,14 +171,13 @@
   {#if file}
     <div class="transfer-file-summary">
       <span><strong>{file.name}</strong><small>{(file.size / 1024 / 1024).toFixed(1)} MiB of 128 MiB</small></span>
-      <label>
+      <div class="filter-field">
         <span>Import behavior</span>
-        <select bind:value={mode} disabled={Boolean(busy)} onchange={resetPreview}>
-          <option value="Conflict">Require empty target</option>
-          <option value="Merge">Merge compatible rows</option>
-          <option value="Replace">Replace selected categories</option>
-        </select>
-      </label>
+        <SelectField bind:value={mode} label="Import behavior" disabled={Boolean(busy)} onchange={resetPreview} options={[
+          { value: "Conflict", label: "Require empty target" }, { value: "Merge", label: "Merge compatible rows" },
+          { value: "Replace", label: "Replace selected categories" },
+        ]} />
+      </div>
       <button class="button-primary" type="button" disabled={!selectedCount || Boolean(busy)} onclick={() => void previewState()}>
         {busy === "preview" ? "Validating…" : "Validate archive"}
       </button>

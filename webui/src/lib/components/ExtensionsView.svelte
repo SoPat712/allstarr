@@ -9,9 +9,11 @@
     type ExtensionRegistry,
     type ExtensionStoreItem,
   } from "$lib/api";
-  import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import Badge from "$lib/components/Badge.svelte";
+  import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
+  import SelectField from "$lib/components/SelectField.svelte";
   import { availablePackages, currentPackages, valueChanges } from "$lib/extensions";
   import { humanize } from "$lib/sources";
 
@@ -269,8 +271,8 @@
         {#each installed as item}
           {@const update = updateFor(item)}
           <article class="panel extension-row">
-            <span class="media-art provider-art"><ProviderMark id={item.extensionId} definition={definition(item)} /></span>
-            <div class="extension-copy"><span><strong>{item.displayName}</strong><small>v{item.version}{item.author ? ` · ${item.author}` : ""}</small></span><p>{item.description || "No description supplied."}</p><div>{#each item.capabilities ?? [] as capability}<span class="chip">{humanize(capability)}</span>{/each}</div></div>
+            <ProviderArtwork id={item.extensionId} definition={definition(item)} />
+            <div class="extension-copy"><span><strong>{item.displayName}</strong><small>v{item.version}{item.author ? ` · ${item.author}` : ""}</small></span><p>{item.description || "No description supplied."}</p><div>{#each item.capabilities ?? [] as capability}<Badge>{humanize(capability)}</Badge>{/each}</div></div>
             <span class={`status-pill ${item.active ? "healthy" : item.state === "failed" ? "degraded" : "suggested"}`}>{humanize(item.state)}</span>
             <div class="extension-actions">
               {#if update}<button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => void stage(update)}>{action === `install:${update.id}` ? "Verifying…" : "Update"}</button>{/if}
@@ -302,7 +304,7 @@
         <div>
           {#each available as item}
             <article>
-              <span class="media-art provider-art"><ProviderMark id={item.id} definition={definition(item)} /></span>
+              <ProviderArtwork id={item.id} definition={definition(item)} />
               <span><strong>{item.displayName}</strong><small>v{item.version}{item.author ? ` · ${item.author}` : ""}</small><p>{item.description || "No description supplied."}</p></span>
               <button class="button-primary" type="button" disabled={!item.sha256 || Boolean(action)} onclick={() => void stage(item)}>{action === `install:${item.id}` ? "Verifying…" : installed.some((entry) => entry.extensionId.toLowerCase() === item.id.toLowerCase()) ? "Review update" : "Install"}</button>
             </article>
@@ -344,7 +346,7 @@
       <form class="settings-fields" onsubmit={(event) => void stageDirect(event)}>
         <label class="setting-field"><span><strong>Package URL</strong></span><input name="downloadUrl" type="url" required pattern="https://.*" autocomplete="off" /></label>
         <label class="setting-field"><span><strong>SHA-256 checksum</strong></span><input name="sha256" required minlength="64" maxlength="64" pattern="[A-Fa-f0-9]{64}" autocomplete="off" spellcheck="false" /></label>
-        <label class="setting-field"><span><strong>Registry attribution</strong></span><select name="registryId"><option value="">Direct package</option>{#each registries.filter((item) => item.enabled) as item}<option value={item.id}>{item.name}</option>{/each}</select></label>
+        <label class="setting-field"><span><strong>Registry attribution</strong></span><SelectField name="registryId" label="Registry attribution" value="" options={[{ value: "", label: "Direct package" }, ...registries.filter((item) => item.enabled).map((item) => ({ value: item.id, label: item.name }))]} /></label>
         <footer><Dialog.Close class="button-secondary">Cancel</Dialog.Close><button class="button-primary" type="submit" disabled={Boolean(action)}>{action === "install:" ? "Verifying…" : "Verify package"}</button></footer>
       </form>
     </Dialog.Content></Dialog.Portal>
