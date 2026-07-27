@@ -128,7 +128,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "normalized-v4";
+    public const string AlgorithmVersion = "normalized-v5";
 
     private readonly TrackMatchPolicy _policy;
 
@@ -302,22 +302,45 @@ public sealed class TrackMatchDecisionEngine
 
         var title = Similarity(source.Title, candidate.Title);
         var artist = ArtistSimilarity(source.Artist, candidate.Artist);
-        var album = Similarity(source.Album, candidate.Album);
-        var albumArtist = Similarity(source.AlbumArtist, candidate.AlbumArtist);
-        var duration = DurationScore(source.DurationMilliseconds, candidate.DurationMilliseconds);
+        var album = ComparableSimilarity(source.Album, candidate.Album);
+        var albumArtist = ComparableSimilarity(source.AlbumArtist, candidate.AlbumArtist);
+        var duration = source.DurationMilliseconds.HasValue && candidate.DurationMilliseconds.HasValue
+            ? (double?)DurationScore(source.DurationMilliseconds, candidate.DurationMilliseconds)
+            : null;
+        var components = new Dictionary<string, double>
+        {
+            ["title"] = Math.Round(title, 4),
+            ["artist"] = Math.Round(artist, 4)
+        };
         AddReason(reasons, "title", title);
         AddReason(reasons, "artist", artist);
-        AddReason(reasons, "album", album);
-        AddReason(reasons, "album_artist", albumArtist);
-        if (duration > 0)
+        var weightedScore = (title * 0.42) + (artist * 0.30);
+        var totalWeight = 0.72;
+        if (album.HasValue)
         {
-            reasons.Add(duration >= 0.9 ? "duration_close" : "duration_partial");
+            components["album"] = Math.Round(album.Value, 4);
+            AddReason(reasons, "album", album.Value);
+        }
+        if (albumArtist.HasValue)
+        {
+            components["albumArtist"] = Math.Round(albumArtist.Value, 4);
+            AddReason(reasons, "album_artist", albumArtist.Value);
+        }
+        if (duration.HasValue)
+        {
+            components["duration"] = Math.Round(duration.Value, 4);
+            weightedScore += duration.Value * 0.16;
+            totalWeight += 0.16;
+            reasons.Add(duration.Value >= 0.9 ? "duration_close" : "duration_partial");
         }
 
-        var confidence = (title * 0.42) +
-                         (artist * 0.30) +
-                         (Math.Max(album, albumArtist) * 0.12) +
-                         (duration * 0.16);
+        var confidence = weightedScore / totalWeight;
+        if (album.HasValue || albumArtist.HasValue)
+        {
+            var withAlbum = (weightedScore + (Math.Max(album ?? 0, albumArtist ?? 0) * 0.12)) /
+                            (totalWeight + 0.12);
+            confidence = Math.Max(confidence, withAlbum);
+        }
         if (title >= 0.98 && artist >= 0.88 && duration >= 0.9)
             confidence = Math.Max(confidence, 0.9);
         if (!FuzzyMatcher.SemanticVersionTags(source.Title)
@@ -334,15 +357,7 @@ public sealed class TrackMatchDecisionEngine
             warnings.Add("explicit_flag_mismatch");
         }
 
-        return Score(source, candidate, Math.Round(confidence, 4), reasons, warnings,
-            new Dictionary<string, double>
-            {
-                ["title"] = Math.Round(title, 4),
-                ["artist"] = Math.Round(artist, 4),
-                ["album"] = Math.Round(album, 4),
-                ["albumArtist"] = Math.Round(albumArtist, 4),
-                ["duration"] = Math.Round(duration, 4)
-            });
+        return Score(source, candidate, Math.Round(confidence, 4), reasons, warnings, components);
     }
 
     private static bool TryGetProviderTrackId(
@@ -397,6 +412,11 @@ public sealed class TrackMatchDecisionEngine
         string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)
             ? 0
             : FuzzyMatcher.CalculateSimilarityAggressive(left, right) / 100d;
+
+    private static double? ComparableSimilarity(string? left, string? right) =>
+        string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)
+            ? null
+            : Similarity(left, right);
 
     private static double ArtistSimilarity(string? left, string? right)
     {
@@ -538,11 +558,21 @@ public sealed class TrackMatchDecisionEngine
         FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(source.Title)),
         FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(candidate.Title)),
         ArtistSimilarity(source.Artist, candidate.Artist),
-        Math.Max(Similarity(source.Album, candidate.Album),
-            Similarity(source.AlbumArtist, candidate.AlbumArtist)),
+        AlbumEvidence(source, candidate),
         source.DurationMilliseconds.HasValue && candidate.DurationMilliseconds.HasValue
             ? Math.Abs(source.DurationMilliseconds.Value - candidate.DurationMilliseconds.Value)
             : null);
+
+    private static double? AlbumEvidence(
+        ExternalTrackMatchSnapshot source,
+        LocalTrackMatchCandidate candidate)
+    {
+        var album = ComparableSimilarity(source.Album, candidate.Album);
+        var albumArtist = ComparableSimilarity(source.AlbumArtist, candidate.AlbumArtist);
+        return album.HasValue || albumArtist.HasValue
+            ? Math.Max(album ?? 0, albumArtist ?? 0)
+            : null;
+    }
 
     private TrackMatchDecision Result(
         TrackMatchReviewState state,

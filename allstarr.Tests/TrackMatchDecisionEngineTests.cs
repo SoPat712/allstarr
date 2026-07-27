@@ -294,6 +294,58 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         Assert.Equal(candidate.LibraryTrackId, decision.SelectedLibraryTrackId);
     }
 
+    [Fact]
+    public void Missing_optional_metadata_is_neutral_and_not_reported_as_zero()
+    {
+        var scope = Scope();
+        var decision = new TrackMatchDecisionEngine().Decide(
+            scope,
+            Source() with
+            {
+                Album = "You'll Be Alright, Kid (Chapter 1)",
+                AlbumArtist = null,
+                DurationMilliseconds = null
+            },
+            [Candidate(scope) with
+            {
+                Album = null,
+                AlbumArtist = null,
+                DurationMilliseconds = null
+            }]);
+
+        var score = Assert.Single(decision.Candidates);
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(1, score.Confidence);
+        Assert.Equal(["artist", "title"], score.Components!.Keys.Order());
+        Assert.Null(score.AlbumEvidence);
+    }
+
+    [Fact]
+    public void Album_mismatch_cannot_reduce_exact_core_identity()
+    {
+        var scope = Scope();
+        var decision = new TrackMatchDecisionEngine().Decide(
+            scope,
+            Source() with
+            {
+                Album = "You'll Be Alright, Kid (Chapter 1)",
+                AlbumArtist = null,
+                DurationMilliseconds = 186_964
+            },
+            [Candidate(scope) with
+            {
+                Album = "Ordinary",
+                AlbumArtist = "Alex Warren",
+                DurationMilliseconds = 186_964
+            }]);
+
+        var score = Assert.Single(decision.Candidates);
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(1, score.Confidence);
+        Assert.Contains("album", score.Components!.Keys);
+        Assert.DoesNotContain("albumArtist", score.Components.Keys);
+    }
+
     [Theory]
     [InlineData("A Song (Live)", "A Song")]
     [InlineData("A Song", "A Song (Acoustic)")]
