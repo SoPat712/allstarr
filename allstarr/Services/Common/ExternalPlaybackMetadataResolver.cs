@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using allstarr.Core.Operations;
 
 namespace allstarr.Services.Common;
 
@@ -6,6 +7,7 @@ public sealed class ExternalPlaybackMetadataResolver(
     IMusicMetadataService metadataService,
     IApplicationCache cache,
     IHttpClientFactory httpClientFactory,
+    IPlatformClock clock,
     ILogger<ExternalPlaybackMetadataResolver> logger) : IPlaybackMetadataResolver
 {
     private const int MaximumArtworkBytes = 5 * 1024 * 1024;
@@ -21,14 +23,32 @@ public sealed class ExternalPlaybackMetadataResolver(
         var cacheKey = CacheKeyBuilder.BuildPlaybackMetadataKey(identity.Value.Provider, identity.Value.ExternalId);
         var negativeKey = CacheKeyBuilder.BuildPlaybackMetadataNegativeKey(
             identity.Value.Provider, identity.Value.ExternalId);
-        if (await cache.ExistsAsync(negativeKey)) return null;
         var cached = await cache.GetAsync<PlaybackMetadataCacheEntry>(cacheKey);
-        if (cached != null) return cached.Metadata;
+        if (cached != null)
+        {
+            if (cached.FreshUntil <= clock.UtcNow)
+            {
+                _ = RefreshStaleAsync(identity.Value, cacheKey, negativeKey);
+            }
 
+            return cached.Metadata;
+        }
+        if (await cache.ExistsAsync(negativeKey)) return null;
+
+        return await ResolveCoalescedAsync(
+            identity.Value, cacheKey, negativeKey, cancellationToken);
+    }
+
+    private async Task<PlaybackTrackMetadata?> ResolveCoalescedAsync(
+        (string Provider, string ExternalId) identity,
+        string cacheKey,
+        string negativeKey,
+        CancellationToken cancellationToken)
+    {
         var pending = _inflight.GetOrAdd(
             cacheKey,
             _ => new Lazy<Task<PlaybackTrackMetadata?>>(
-                () => ResolveUncachedAsync(identity.Value, cacheKey, negativeKey, cancellationToken),
+                () => ResolveUncachedAsync(identity, cacheKey, negativeKey, cancellationToken),
                 LazyThreadSafetyMode.ExecutionAndPublication));
         try
         {
@@ -77,9 +97,25 @@ public sealed class ExternalPlaybackMetadataResolver(
         }
         await cache.SetAsync(
             cacheKey,
-            new PlaybackMetadataCacheEntry(metadata),
-            MetadataCacheDuration);
+            new PlaybackMetadataCacheEntry(metadata, clock.UtcNow.Add(MetadataCacheDuration)),
+            MetadataCacheDuration +
+            ApplicationCachePolicyRegistry.Resolve(ApplicationCacheCategory.CanonicalMetadata).StaleFor);
         return metadata;
+    }
+
+    private async Task RefreshStaleAsync(
+        (string Provider, string ExternalId) identity,
+        string cacheKey,
+        string negativeKey)
+    {
+        try
+        {
+            await ResolveCoalescedAsync(identity, cacheKey, negativeKey, CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            logger.LogDebug(exception, "Stale playback metadata refresh failed for {CacheKey}", cacheKey);
+        }
     }
 
     public async Task<PlaybackArtwork?> ResolveArtworkAsync(
@@ -136,5 +172,7 @@ public sealed class ExternalPlaybackMetadataResolver(
             : null;
     }
 
-    private sealed record PlaybackMetadataCacheEntry(PlaybackTrackMetadata Metadata);
+    private sealed record PlaybackMetadataCacheEntry(
+        PlaybackTrackMetadata Metadata,
+        DateTimeOffset FreshUntil);
 }

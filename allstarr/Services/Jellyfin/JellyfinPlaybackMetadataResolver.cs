@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Collections.Concurrent;
 using allstarr.Models.Settings;
+using allstarr.Core.Operations;
 using allstarr.Services.Common;
 using Microsoft.Extensions.Options;
 
@@ -17,6 +18,7 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
     private readonly JellyfinSettings _settings;
     private readonly ILogger<JellyfinPlaybackMetadataResolver> _logger;
     private readonly IApplicationCache _cache;
+    private readonly IPlatformClock _clock;
     private readonly ConcurrentDictionary<string, Lazy<Task<PlaybackTrackMetadata?>>> _inflight =
         new(StringComparer.Ordinal);
 
@@ -24,11 +26,13 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
         IHttpClientFactory httpClientFactory,
         IOptions<JellyfinSettings> settings,
         IApplicationCache cache,
+        IPlatformClock clock,
         ILogger<JellyfinPlaybackMetadataResolver> logger)
     {
         _httpClient = httpClientFactory.CreateClient(JellyfinProxyService.HttpClientName);
         _settings = settings.Value;
         _cache = cache;
+        _clock = clock;
         _logger = logger;
     }
 
@@ -45,10 +49,28 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
 
         var cacheKey = CacheKeyBuilder.BuildPlaybackMetadataKey("jellyfin", itemId);
         var negativeKey = CacheKeyBuilder.BuildPlaybackMetadataNegativeKey("jellyfin", itemId);
-        if (await _cache.ExistsAsync(negativeKey)) return null;
         var cached = await _cache.GetAsync<MetadataCacheEntry>(cacheKey);
-        if (cached != null) return cached.Metadata;
+        if (cached != null)
+        {
+            if (cached.FreshUntil <= _clock.UtcNow)
+            {
+                _ = RefreshStaleAsync(itemId, cacheKey, negativeKey);
+            }
 
+            return cached.Metadata;
+        }
+        if (await _cache.ExistsAsync(negativeKey)) return null;
+
+        return await ResolveCoalescedAsync(
+            itemId, cacheKey, negativeKey, cancellationToken);
+    }
+
+    private async Task<PlaybackTrackMetadata?> ResolveCoalescedAsync(
+        string itemId,
+        string cacheKey,
+        string negativeKey,
+        CancellationToken cancellationToken)
+    {
         var pending = _inflight.GetOrAdd(
             cacheKey,
             _ => new Lazy<Task<PlaybackTrackMetadata?>>(
@@ -105,9 +127,25 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
         }
         await _cache.SetAsync(
             cacheKey,
-            new MetadataCacheEntry(metadata),
-            MetadataCacheDuration);
+            new MetadataCacheEntry(metadata, _clock.UtcNow.Add(MetadataCacheDuration)),
+            MetadataCacheDuration +
+            ApplicationCachePolicyRegistry.Resolve(ApplicationCacheCategory.CanonicalMetadata).StaleFor);
         return metadata;
+    }
+
+    private async Task RefreshStaleAsync(
+        string itemId,
+        string cacheKey,
+        string negativeKey)
+    {
+        try
+        {
+            await ResolveCoalescedAsync(itemId, cacheKey, negativeKey, CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogDebug(exception, "Stale Jellyfin metadata refresh failed for {ItemId}", itemId);
+        }
     }
 
     public async Task<PlaybackArtwork?> ResolveArtworkAsync(
@@ -212,6 +250,8 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
             .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
     }
 
-    private sealed record MetadataCacheEntry(PlaybackTrackMetadata Metadata);
+    private sealed record MetadataCacheEntry(
+        PlaybackTrackMetadata Metadata,
+        DateTimeOffset FreshUntil);
 
 }

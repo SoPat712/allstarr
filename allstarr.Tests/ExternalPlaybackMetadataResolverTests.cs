@@ -1,4 +1,5 @@
 using allstarr.Models.Domain;
+using allstarr.Core.Operations;
 using allstarr.Services;
 using allstarr.Services.Common;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -25,6 +26,7 @@ public sealed class ExternalPlaybackMetadataResolverTests
             service.Object,
             new TestMemoryApplicationCache(),
             new StubHttpClientFactory(new HttpClient()),
+            new SystemPlatformClock(),
             NullLogger<ExternalPlaybackMetadataResolver>.Instance);
 
         var result = await resolver.ResolveAsync("ext-apple-download-song-1573475841", CancellationToken.None);
@@ -45,6 +47,7 @@ public sealed class ExternalPlaybackMetadataResolverTests
             service.Object,
             new TestMemoryApplicationCache(),
             new StubHttpClientFactory(new HttpClient(new StubHandler())),
+            new SystemPlatformClock(),
             NullLogger<ExternalPlaybackMetadataResolver>.Instance);
 
         var result = await resolver.ResolveArtworkAsync(
@@ -66,6 +69,7 @@ public sealed class ExternalPlaybackMetadataResolverTests
             service.Object,
             cache,
             new StubHttpClientFactory(new HttpClient()),
+            new SystemPlatformClock(),
             NullLogger<ExternalPlaybackMetadataResolver>.Instance);
 
         Assert.Null(await resolver.ResolveAsync("ext-deezer-song-404", CancellationToken.None));
@@ -91,6 +95,7 @@ public sealed class ExternalPlaybackMetadataResolverTests
             service.Object,
             new TestMemoryApplicationCache(),
             new StubHttpClientFactory(new HttpClient()),
+            new SystemPlatformClock(),
             NullLogger<ExternalPlaybackMetadataResolver>.Instance);
 
         var first = resolver.ResolveAsync("ext-deezer-song-42", CancellationToken.None);
@@ -102,6 +107,46 @@ public sealed class ExternalPlaybackMetadataResolverTests
         service.Verify(
             item => item.GetSongAsync("deezer", "42", It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task StaleMetadataReturnsWhileOneRefreshRuns()
+    {
+        var clock = new TestClock(
+            new DateTimeOffset(2026, 7, 26, 12, 0, 0, TimeSpan.Zero));
+        var refreshStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var refreshRelease = new TaskCompletionSource<Song?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        var service = new Mock<IMusicMetadataService>();
+        service.Setup(item => item.GetSongAsync("deezer", "42", It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                if (Interlocked.Increment(ref calls) == 1)
+                    return Task.FromResult<Song?>(new Song { Title = "Stale", Artist = "Artist" });
+                refreshStarted.TrySetResult();
+                return refreshRelease.Task;
+            });
+        var resolver = new ExternalPlaybackMetadataResolver(
+            service.Object,
+            new TestMemoryApplicationCache(),
+            new StubHttpClientFactory(new HttpClient()),
+            clock,
+            NullLogger<ExternalPlaybackMetadataResolver>.Instance);
+        Assert.Equal(
+            "Stale",
+            (await resolver.ResolveAsync("ext-deezer-song-42", CancellationToken.None))!.Title);
+        clock.UtcNow = clock.UtcNow.AddMinutes(11);
+
+        var stale = await resolver.ResolveAsync(
+            "ext-deezer-song-42",
+            CancellationToken.None);
+        await refreshStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.Equal("Stale", stale!.Title);
+        Assert.Equal(2, calls);
+        refreshRelease.SetResult(new Song { Title = "Fresh", Artist = "Artist" });
     }
 
     private sealed class StubHttpClientFactory(HttpClient client) : IHttpClientFactory
@@ -121,5 +166,10 @@ public sealed class ExternalPlaybackMetadataResolverTests
                     Headers = { ContentType = new("image/png") }
                 }
             });
+    }
+
+    private sealed class TestClock(DateTimeOffset now) : IPlatformClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = now;
     }
 }

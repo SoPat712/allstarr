@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using allstarr.Models.Settings;
+using allstarr.Core.Operations;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -111,6 +112,7 @@ public sealed class JellyfinPlaybackMetadataResolverTests
                 UserId = "user-1"
             }),
             cache,
+            new SystemPlatformClock(),
             NullLogger<JellyfinPlaybackMetadataResolver>.Instance);
     }
 
