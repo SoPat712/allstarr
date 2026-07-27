@@ -41,6 +41,8 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
         }
 
         var cacheKey = CacheKeyBuilder.BuildPlaybackMetadataKey("jellyfin", itemId);
+        var negativeKey = CacheKeyBuilder.BuildPlaybackMetadataNegativeKey("jellyfin", itemId);
+        if (await _cache.ExistsAsync(negativeKey)) return null;
         var cached = await _cache.GetAsync<MetadataCacheEntry>(cacheKey);
         if (cached != null) return cached.Metadata;
 
@@ -72,10 +74,15 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
             _logger.LogDebug(ex, "Unable to resolve Jellyfin playback metadata for item {ItemId}", itemId);
         }
 
+        if (metadata == null)
+        {
+            await _cache.SetStringAsync(negativeKey, "1", FailureCacheDuration);
+            return null;
+        }
         await _cache.SetAsync(
             cacheKey,
             new MetadataCacheEntry(metadata),
-            metadata == null ? FailureCacheDuration : MetadataCacheDuration);
+            MetadataCacheDuration);
         return metadata;
     }
 
@@ -181,6 +188,6 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
             .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
     }
 
-    private sealed record MetadataCacheEntry(PlaybackTrackMetadata? Metadata);
+    private sealed record MetadataCacheEntry(PlaybackTrackMetadata Metadata);
 
 }

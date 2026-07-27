@@ -185,7 +185,7 @@ public class PlaylistController : ControllerBase
         try
         {
             var json = JsonSerializer.Serialize(response, new JsonSerializerOptions { WriteIndented = false });
-            await _cache.SetStringAsync(playlistSummaryKey, json, TimeSpan.FromMinutes(5));
+            await _cache.SetStringAsync(playlistSummaryKey, json);
             _logger.LogDebug("Saved playlist summary to shared cache");
         }
         catch (Exception ex)

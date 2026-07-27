@@ -14,6 +14,9 @@ public static class CacheKeyBuilder
     public static string BuildPlaybackMetadataKey(string provider, string itemId) =>
         $"playback:metadata:{Normalize(provider)}:{Normalize(itemId)}";
 
+    public static string BuildPlaybackMetadataNegativeKey(string provider, string itemId) =>
+        $"negative:playback:metadata:{Normalize(provider)}:{Normalize(itemId)}";
+
     public static string BuildJellyfinItemTypeKey(string itemId) =>
         $"jellyfin:item-type:{Normalize(itemId)}";
 

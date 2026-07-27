@@ -15,6 +15,9 @@ public sealed class ExternalPlaybackMetadataResolver(
         var identity = ParseTrackIdentity(itemId);
         if (identity == null) return null;
         var cacheKey = CacheKeyBuilder.BuildPlaybackMetadataKey(identity.Value.Provider, identity.Value.ExternalId);
+        var negativeKey = CacheKeyBuilder.BuildPlaybackMetadataNegativeKey(
+            identity.Value.Provider, identity.Value.ExternalId);
+        if (await cache.ExistsAsync(negativeKey)) return null;
         var cached = await cache.GetAsync<PlaybackMetadataCacheEntry>(cacheKey);
         if (cached != null) return cached.Metadata;
 
@@ -38,10 +41,15 @@ public sealed class ExternalPlaybackMetadataResolver(
             logger.LogDebug(ex, "Unable to resolve external playback metadata for {ItemId}", itemId);
         }
 
+        if (metadata == null)
+        {
+            await cache.SetStringAsync(negativeKey, "1", FailureCacheDuration);
+            return null;
+        }
         await cache.SetAsync(
             cacheKey,
             new PlaybackMetadataCacheEntry(metadata),
-            metadata == null ? FailureCacheDuration : MetadataCacheDuration);
+            MetadataCacheDuration);
         return metadata;
     }
 
@@ -99,5 +107,5 @@ public sealed class ExternalPlaybackMetadataResolver(
             : null;
     }
 
-    private sealed record PlaybackMetadataCacheEntry(PlaybackTrackMetadata? Metadata);
+    private sealed record PlaybackMetadataCacheEntry(PlaybackTrackMetadata Metadata);
 }

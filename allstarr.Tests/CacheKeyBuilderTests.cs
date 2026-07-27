@@ -124,4 +124,15 @@ public class CacheKeyBuilderTests
             ApplicationCacheCategory.PlaylistDiscovery,
             ApplicationCachePolicyRegistry.Classify(key));
     }
+
+    [Fact]
+    public void PlaybackMissKeys_UseTheNegativeResultPolicy()
+    {
+        var key = CacheKeyBuilder.BuildPlaybackMetadataNegativeKey("jellyfin", "track-1");
+
+        Assert.Equal("negative:playback:metadata:jellyfin:track-1", key);
+        Assert.Equal(
+            ApplicationCacheCategory.NegativeResult,
+            ApplicationCachePolicyRegistry.Classify(key));
+    }
 }

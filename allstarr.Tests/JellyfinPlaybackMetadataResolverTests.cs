@@ -82,6 +82,21 @@ public sealed class JellyfinPlaybackMetadataResolverTests
         Assert.Equal([1, 2, 3, 4], artwork.Content);
     }
 
+    [Fact]
+    public async Task ResolveAsync_CachesMissesSeparatelyFromMetadata()
+    {
+        var requestCount = 0;
+        var resolver = CreateResolver(_ =>
+        {
+            requestCount++;
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        Assert.Null(await resolver.ResolveAsync("missing", CancellationToken.None));
+        Assert.Null(await resolver.ResolveAsync("missing", CancellationToken.None));
+        Assert.Equal(1, requestCount);
+    }
+
     private static JellyfinPlaybackMetadataResolver CreateResolver(
         Func<HttpRequestMessage, HttpResponseMessage> responder)
     {

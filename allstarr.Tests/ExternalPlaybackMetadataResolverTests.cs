@@ -55,6 +55,30 @@ public sealed class ExternalPlaybackMetadataResolverTests
         Assert.Equal([1, 2, 3], result.Content);
     }
 
+    [Fact]
+    public async Task MetadataMissesUseTheNegativeCache()
+    {
+        var service = new Mock<IMusicMetadataService>();
+        service.Setup(item => item.GetSongAsync("deezer", "404", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Song?)null);
+        var cache = new TestMemoryApplicationCache();
+        var resolver = new ExternalPlaybackMetadataResolver(
+            service.Object,
+            cache,
+            new StubHttpClientFactory(new HttpClient()),
+            NullLogger<ExternalPlaybackMetadataResolver>.Instance);
+
+        Assert.Null(await resolver.ResolveAsync("ext-deezer-song-404", CancellationToken.None));
+        Assert.Null(await resolver.ResolveAsync("ext-deezer-song-404", CancellationToken.None));
+
+        service.Verify(
+            item => item.GetSongAsync("deezer", "404", It.IsAny<CancellationToken>()),
+            Times.Once);
+        Assert.Contains(
+            CacheKeyBuilder.BuildPlaybackMetadataNegativeKey("deezer", "404"),
+            cache.GetKeysByPattern("negative:*"));
+    }
+
     private sealed class StubHttpClientFactory(HttpClient client) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => client;
