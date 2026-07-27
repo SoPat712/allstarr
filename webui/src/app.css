@@ -1452,41 +1452,29 @@
 }
 
 @layer components {
-  .library-tabs {
+  .segmented-tabs {
     position: relative;
     display: grid;
-    width: 28rem;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(var(--tab-count), minmax(0, 1fr));
     border: 1px solid var(--color-edge);
     border-radius: 0.8rem;
     background: var(--color-panel);
     padding: 0.2rem;
   }
 
-  .library-tab-indicator {
+  .segmented-tab-indicator {
     position: absolute;
     top: 0.2rem;
     bottom: 0.2rem;
     left: 0.2rem;
-    width: calc(25% - 0.1rem);
+    width: calc((100% - 0.4rem) / var(--tab-count));
     border-radius: 0.58rem;
     background: var(--color-signal-muted);
+    transform: translateX(calc(var(--tab-index) * 100%));
     transition: transform 160ms ease;
   }
 
-  .library-tab-indicator.mappings {
-    transform: translateX(100%);
-  }
-
-  .library-tab-indicator.cached {
-    transform: translateX(200%);
-  }
-
-  .library-tab-indicator.kept {
-    transform: translateX(300%);
-  }
-
-  .library-tabs a {
+  .segmented-tabs a {
     z-index: 1;
     display: grid;
     min-height: 2.4rem;
@@ -1497,8 +1485,12 @@
     text-decoration: none;
   }
 
-  .library-tabs a[aria-current="page"] {
+  .segmented-tabs a[aria-selected="true"] {
     color: var(--color-signal);
+  }
+
+  .library-tabs {
+    width: 28rem;
   }
 
   .mapping-page {
@@ -3584,58 +3576,13 @@
   }
 
   .settings-tabs {
-    position: relative;
-    display: grid;
     width: min(100%, 46rem);
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    border: 1px solid var(--color-edge);
-    border-radius: 0.8rem;
-    background: var(--color-panel);
-    padding: 0.2rem;
-  }
-
-  .settings-tab-indicator {
-    position: absolute;
-    z-index: 0;
-    top: 0.2rem;
-    bottom: 0.2rem;
-    left: 0.2rem;
-    width: calc(20% - 0.08rem);
-    border-radius: 0.58rem;
-    background: var(--color-signal-muted);
-    transition: transform 160ms ease;
-  }
-
-  .settings-tab-indicator.accounts {
-    transform: translateX(100%);
-  }
-
-  .settings-tab-indicator.routing {
-    transform: translateX(200%);
-  }
-
-  .settings-tab-indicator.extensions {
-    transform: translateX(300%);
-  }
-
-  .settings-tab-indicator.maintenance {
-    transform: translateX(400%);
   }
 
   .settings-tabs a {
-    z-index: 1;
-    display: grid;
     min-height: 2.6rem;
-    place-items: center;
-    color: var(--color-ink-muted);
     font-size: 0.64rem;
-    font-weight: 750;
     text-align: center;
-    text-decoration: none;
-  }
-
-  .settings-tabs a[aria-current="page"] {
-    color: var(--color-signal);
   }
 
   .settings-intro {

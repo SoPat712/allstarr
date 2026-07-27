@@ -320,7 +320,7 @@ for (const viewport of viewports) {
       await page.emulateMedia({ reducedMotion: "reduce" });
       await mockApi(page);
       await page.goto("#/settings/extensions");
-      await expect.poll(() => page.locator(".settings-tab-indicator").evaluate((element) =>
+      await expect.poll(() => page.locator(".segmented-tab-indicator").evaluate((element) =>
         Number.parseFloat(getComputedStyle(element).transitionDuration))).toBeLessThanOrEqual(0.01);
       await page.getByRole("button", { name: "Install extension" }).click();
       const dialog = page.getByRole("dialog", { name: "Install extension" });
@@ -507,4 +507,19 @@ test("Profile artwork is stable in full, slim, and mobile navigation", async ({ 
   await page.reload();
   await expect(page.locator(".profile .avatar span")).toHaveText("T");
   await expect.poll(async () => (await page.locator(".profile .avatar").boundingBox())?.width ?? 0).toBe(40);
+});
+
+test("Segmented navigation and match tabs support arrow keys", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("#/library/playlists");
+  await page.getByRole("tab", { name: "Playlists" }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page).toHaveURL(/#\/library\/mappings$/);
+  await expect(page.getByRole("tab", { name: "Mappings" })).toHaveAttribute("aria-selected", "true");
+
+  await page.getByRole("button", { name: "Review match" }).click();
+  const dialog = page.getByRole("dialog", { name: "Test song" });
+  await dialog.getByRole("tab", { name: "Local library" }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(dialog.getByRole("tab", { name: "Playable providers" })).toHaveAttribute("data-state", "active");
 });

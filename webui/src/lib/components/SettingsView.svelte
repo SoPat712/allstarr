@@ -12,6 +12,7 @@
   } from "$lib/api";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import ExtensionsView from "$lib/components/ExtensionsView.svelte";
+  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import { audienceLabel, humanize } from "$lib/sources";
   import { fieldValue, move, routingOrder } from "$lib/settings";
   import { liveUpdates } from "$lib/live-updates.svelte";
@@ -19,11 +20,11 @@
   let { section = "general" }: { section?: string } = $props();
 
   const tabs = [
-    ["general", "General"],
-    ["accounts", "Accounts"],
-    ["routing", "Provider routing"],
-    ["extensions", "Extensions"],
-    ["maintenance", "Maintenance"],
+    { id: "general", label: "General", href: "#/settings/general" },
+    { id: "accounts", label: "Accounts", href: "#/settings/accounts" },
+    { id: "routing", label: "Provider routing", href: "#/settings/routing" },
+    { id: "extensions", label: "Extensions", href: "#/settings/extensions" },
+    { id: "maintenance", label: "Maintenance", href: "#/settings/maintenance" },
   ] as const;
 
   let schema = $state<UiSchema | null>(null);
@@ -42,7 +43,7 @@
   let purgeOpen = $state(false);
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const active = $derived(tabs.some(([id]) => id === section) ? section : "general");
+  const active = $derived(tabs.some((item) => item.id === section) ? section : "general");
   const generalSections = $derived((schema?.configSections ?? [])
     .filter((item) => item.id !== "spotify-import"));
   const routingSections = $derived((schema?.configSections ?? [])
@@ -178,12 +179,7 @@
   </section>
 {:else}
   <section class="settings-workspace" aria-busy={refreshing}>
-    <nav class="settings-tabs" aria-label="Settings sections">
-      <span class={`settings-tab-indicator ${active}`} aria-hidden="true"></span>
-      {#each tabs as [id, label]}
-        <a href={`#/settings/${id}`} aria-current={active === id ? "page" : undefined}>{label}</a>
-      {/each}
-    </nav>
+    <SegmentedNav items={tabs} {active} label="Settings sections" class="settings-tabs" />
 
     {#if error}
       <div class="degraded-banner" role="status">

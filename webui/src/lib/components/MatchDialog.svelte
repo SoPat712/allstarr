@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Dialog } from "bits-ui";
+  import { Dialog, Tabs } from "bits-ui";
   import {
     matchReview,
     type MatchReviewItem,
@@ -204,11 +204,17 @@
           {/if}
         </section>
 
-        <div class="match-target-tabs" role="tablist" aria-label="Candidate source">
-          <span class:provider={targetMode === "provider"} aria-hidden="true"></span>
-          <button role="tab" aria-selected={targetMode === "local"} type="button" onclick={() => switchMode("local")}>Local library</button>
-          <button role="tab" aria-selected={targetMode === "provider"} type="button" onclick={() => switchMode("provider")}>Playable providers</button>
-        </div>
+        <Tabs.Root
+          value={targetMode}
+          loop
+          onValueChange={(value) => switchMode(value as "local" | "provider")}
+        >
+          <Tabs.List class="match-target-tabs" aria-label="Candidate source">
+            <span class:provider={targetMode === "provider"} aria-hidden="true"></span>
+            <Tabs.Trigger value="local">Local library</Tabs.Trigger>
+            <Tabs.Trigger value="provider">Playable providers</Tabs.Trigger>
+          </Tabs.List>
+        </Tabs.Root>
 
         <form class="target-search" onsubmit={(event) => { event.preventDefault(); void search(); }}>
           {#if targetMode === "provider"}

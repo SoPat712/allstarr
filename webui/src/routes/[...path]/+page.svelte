@@ -3,6 +3,7 @@
   import { page } from "$app/state";
   import { auth, type Session } from "$lib/api";
   import { liveUpdates } from "$lib/live-updates.svelte";
+  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
 
   const destinations = [
     { href: "#/", label: "Home", icon: "⌂" },
@@ -10,6 +11,12 @@
     { href: "#/sources", label: "Sources", icon: "◎" },
     { href: "#/activity", label: "Activity", icon: "↗" },
     { href: "#/settings", label: "Settings", icon: "⚙" },
+  ];
+  const librarySections = [
+    { id: "playlists", label: "Playlists", href: "#/library/playlists" },
+    { id: "mappings", label: "Mappings", href: "#/library/mappings" },
+    { id: "cached", label: "Cached", href: "#/library/cached" },
+    { id: "kept", label: "Kept", href: "#/library/kept" },
   ];
 
   let session = $state<Session | null>(null);
@@ -224,16 +231,12 @@
         <div class="workspace-title">
           <h1>{activeDestination.label}</h1>
           {#if route.startsWith("/library/")}
-            <nav class="library-tabs" aria-label="Library sections">
-              <span
-                class={`library-tab-indicator ${route.split("/").at(-1)}`}
-                aria-hidden="true"
-              ></span>
-              <a href="#/library/playlists" aria-current={route === "/library/playlists" ? "page" : undefined}>Playlists</a>
-              <a href="#/library/mappings" aria-current={route === "/library/mappings" ? "page" : undefined}>Mappings</a>
-              <a href="#/library/cached" aria-current={route === "/library/cached" ? "page" : undefined}>Cached</a>
-              <a href="#/library/kept" aria-current={route === "/library/kept" ? "page" : undefined}>Kept</a>
-            </nav>
+            <SegmentedNav
+              items={librarySections}
+              active={route.split("/").at(-1) ?? "playlists"}
+              label="Library sections"
+              class="library-tabs"
+            />
           {/if}
         </div>
         <div class="live-state" data-state={liveUpdates.state.status}>
