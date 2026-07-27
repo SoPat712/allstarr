@@ -19,26 +19,39 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
     private HybridApplicationCache _cache = null!;
     private BoundedHotApplicationCache _hot = null!;
     private FileMediaApplicationCache _media = null!;
+    private TestClock _clock = null!;
 
     public async Task InitializeAsync()
     {
         _database = await PostgresTestDatabase.CreateAsync();
         var factory = new TestFactory(_database.Options);
-        var clock = new TestClock(
+        _clock = new TestClock(
             new DateTimeOffset(2026, 7, 24, 12, 0, 0, TimeSpan.Zero));
         var database = new DatabaseApplicationCache(
             factory,
-            clock,
+            _clock,
             NullLogger<DatabaseApplicationCache>.Instance);
         _hot = new BoundedHotApplicationCache(database);
         _media = new FileMediaApplicationCache(
             new FileMediaCacheOptions(_mediaPath),
-            clock,
+            _clock,
             NullLogger<FileMediaApplicationCache>.Instance);
         _cache = new HybridApplicationCache(_hot, _media);
 
         await using var context = await factory.CreateDbContextAsync();
         await context.Database.MigrateAsync();
+    }
+
+    [Fact]
+    public async Task CategoryPolicySuppliesDefaultExpiry()
+    {
+        const string key = "playlist:discovery:v1:fixture";
+        Assert.True(await _cache.SetStringAsync(key, "{}"));
+
+        await using var context = new AllstarrDbContext(_database.Options);
+        var entry = await context.Set<ApplicationCacheEntryRecord>().SingleAsync(item => item.Key == key);
+        Assert.Equal(ApplicationCacheCategory.PlaylistDiscovery.ToString(), entry.Category);
+        Assert.Equal(_clock.UtcNow.AddMinutes(5), entry.ExpiresAt);
     }
 
     [Fact]

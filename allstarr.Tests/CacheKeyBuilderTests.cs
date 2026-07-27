@@ -71,6 +71,16 @@ public class CacheKeyBuilderTests
 
         Assert.Equal("genre:Track:Artist", CacheKeyBuilder.BuildGenreEnrichmentKey("Track", "Artist"));
         Assert.Equal("genre:Track:Artist", CacheKeyBuilder.BuildGenreEnrichmentKey("Track:Artist"));
+        Assert.Equal(
+            ApplicationCacheCategory.CanonicalMetadata,
+            ApplicationCachePolicyRegistry.Classify(CacheKeyBuilder.BuildAlbumKey("qobuz", "42")));
+        Assert.Equal(
+            ApplicationCacheCategory.CanonicalMetadata,
+            ApplicationCachePolicyRegistry.Classify(CacheKeyBuilder.BuildArtistKey("qobuz", "7")));
+        Assert.Equal(
+            ApplicationCacheCategory.CanonicalMetadata,
+            ApplicationCachePolicyRegistry.Classify(
+                CacheKeyBuilder.BuildProviderPlaylistArtworkDescriptorKey("spotify", "mix", "rev")));
     }
 
     [Fact]
@@ -93,5 +103,25 @@ public class CacheKeyBuilderTests
         Assert.EndsWith(":deezer", translationKey, StringComparison.Ordinal);
         Assert.DoesNotContain("example.com", translationKey, StringComparison.Ordinal);
         Assert.DoesNotContain("secret", translationKey, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PlaylistDiscoveryKeys_AreScopedHashedProviderResponses()
+    {
+        var tenantId = Guid.CreateVersion7();
+        var userId = Guid.CreateVersion7();
+        var accountId = Guid.CreateVersion7();
+        var key = CacheKeyBuilder.BuildProviderPlaylistDiscoveryKey(
+            tenantId, userId, accountId, 7, "spotify", "private mix", "signed-cursor", 100);
+        var otherUserKey = CacheKeyBuilder.BuildProviderPlaylistDiscoveryKey(
+            tenantId, Guid.CreateVersion7(), accountId, 7, "spotify", "private mix", "signed-cursor", 100);
+
+        Assert.StartsWith("playlist:discovery:v1:", key, StringComparison.Ordinal);
+        Assert.DoesNotContain("private mix", key, StringComparison.Ordinal);
+        Assert.DoesNotContain("signed-cursor", key, StringComparison.Ordinal);
+        Assert.NotEqual(key, otherUserKey);
+        Assert.Equal(
+            ApplicationCacheCategory.PlaylistDiscovery,
+            ApplicationCachePolicyRegistry.Classify(key));
     }
 }

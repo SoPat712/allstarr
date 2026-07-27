@@ -750,12 +750,12 @@ public sealed class HybridApplicationCache(
 
     public Task<bool> SetStringAsync(string key, string value, TimeSpan? expiry = null) =>
         IsCategoryEnabled(key)
-            ? Target(key).SetStringAsync(key, value, expiry)
+            ? Target(key).SetStringAsync(key, value, EffectiveExpiry(key, expiry))
             : Task.FromResult(false);
 
     public Task<bool> SetAsync<T>(string key, T value, TimeSpan? expiry = null) where T : class =>
         IsCategoryEnabled(key)
-            ? Target(key).SetAsync(key, value, expiry)
+            ? Target(key).SetAsync(key, value, EffectiveExpiry(key, expiry))
             : Task.FromResult(false);
 
     public Task<bool> DeleteAsync(string key) =>
@@ -830,6 +830,9 @@ public sealed class HybridApplicationCache(
 
     private bool IsCategoryEnabled(string key) =>
         ApplicationCachePolicyRegistry.IsEnabled(key, _settings);
+
+    private TimeSpan EffectiveExpiry(string key, TimeSpan? expiry) =>
+        expiry ?? ApplicationCachePolicyRegistry.Resolve(key, _settings).FreshFor;
 }
 
 public sealed class FileMediaApplicationCacheCleanupService(

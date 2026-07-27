@@ -5,6 +5,7 @@ namespace allstarr.Services.Common;
 public enum ApplicationCacheCategory
 {
     SearchResults,
+    PlaylistDiscovery,
     DerivedProjection,
     CanonicalMetadata,
     ProviderResponse,
@@ -66,12 +67,18 @@ public static class ApplicationCachePolicyRegistry
         if (StartsWithAny(
                 key,
                 "media:descriptor:",
+                "playlist:artwork-descriptor:",
                 "musicbrainz:",
                 "genre:",
                 "playback:metadata:"))
             return ApplicationCacheCategory.CanonicalMetadata;
+        if (key.Contains(":album:", StringComparison.OrdinalIgnoreCase) ||
+            key.Contains(":artist:", StringComparison.OrdinalIgnoreCase))
+            return ApplicationCacheCategory.CanonicalMetadata;
         if (key.StartsWith("search:", StringComparison.OrdinalIgnoreCase))
             return ApplicationCacheCategory.SearchResults;
+        if (key.StartsWith("playlist:discovery:", StringComparison.OrdinalIgnoreCase))
+            return ApplicationCacheCategory.PlaylistDiscovery;
 
         return ApplicationCacheCategory.ProviderResponse;
     }
@@ -106,6 +113,10 @@ public static class ApplicationCachePolicyRegistry
                 category, "provider-search", ApplicationCacheStorageTier.Metadata,
                 settings.SearchResultsTTL, TimeSpan.Zero, 16 * Megabyte, 10_000,
                 ApplicationCacheWarmingRule.None, "query-or-account-revision"),
+            ApplicationCacheCategory.PlaylistDiscovery => new(
+                category, "playlist-discovery", ApplicationCacheStorageTier.Metadata,
+                TimeSpan.FromMinutes(5), TimeSpan.Zero, 16 * Megabyte, 10_000,
+                ApplicationCacheWarmingRule.VisibleOrSelected, "provider-account-or-source-revision"),
             ApplicationCacheCategory.DerivedProjection => new(
                 category, "admin-read-model", ApplicationCacheStorageTier.Metadata,
                 TimeSpan.FromMinutes(5), TimeSpan.Zero, 16 * Megabyte, 10_000,

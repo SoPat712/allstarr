@@ -33,6 +33,29 @@ public static class CacheKeyBuilder
         string? revision) =>
         $"playlist:artwork-descriptor:{Normalize(provider)}:{Normalize(playlistId)}:{Normalize(revision)}";
 
+    public static string BuildProviderPlaylistDiscoveryKey(
+        Guid? tenantId,
+        Guid? userId,
+        Guid accountId,
+        long accountRevision,
+        string providerId,
+        string? query,
+        string? cursor,
+        int limit)
+    {
+        var scope = string.Join('\u001f',
+            tenantId?.ToString("N"),
+            userId?.ToString("N"),
+            accountId.ToString("N"),
+            accountRevision,
+            Normalize(providerId),
+            query?.Trim(),
+            cursor?.Trim(),
+            limit);
+        return $"playlist:discovery:v1:{Convert.ToHexStringLower(
+            SHA256.HashData(Encoding.UTF8.GetBytes(scope)))}";
+    }
+
     public static string BuildMediaAssetDescriptorKey(MediaAssetIdentity identity)
     {
         var scope = string.Join('\u001f',

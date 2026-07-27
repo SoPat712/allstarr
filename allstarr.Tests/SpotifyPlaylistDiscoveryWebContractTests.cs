@@ -12,7 +12,8 @@ public sealed class SpotifyPlaylistDiscoveryWebContractTests
     {
         Assert.Contains("[FromQuery] int limit = 100", controller, StringComparison.Ordinal);
         Assert.Contains("const int maximumPages = 40", controller, StringComparison.Ordinal);
-        Assert.Contains("seenPlaylistIds.Add(item.Id.Value)", controller, StringComparison.Ordinal);
+        Assert.Contains("seenPlaylistIds.Add(item.Id)", controller, StringComparison.Ordinal);
+        Assert.Contains("BuildProviderPlaylistDiscoveryKey", controller, StringComparison.Ordinal);
         Assert.Contains("requestedCursor != null || !page.IsPartial", controller, StringComparison.Ordinal);
         Assert.Contains("currentCursor = nextCursor", controller, StringComparison.Ordinal);
     }

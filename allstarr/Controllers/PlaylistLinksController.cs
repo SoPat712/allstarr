@@ -33,6 +33,7 @@ public sealed class PlaylistLinksController(
     IProviderRouter providerRouter,
     IBackendPlaylistTargetResolver targetResolver,
     IMediaAssetResolver mediaAssets,
+    IApplicationCache applicationCache,
     IPlatformClock clock,
     ProviderPolicyOptions providerPolicy) : ControllerBase
 {
@@ -161,7 +162,7 @@ public sealed class PlaylistLinksController(
 
             var requestedCursor = cursor;
             var currentCursor = cursor;
-            var items = new List<ProviderPlaylistSummary>();
+            var items = new List<PlaylistDiscoveryItemCacheEntry>();
             var seenPlaylistIds = new HashSet<string>(StringComparer.Ordinal);
             string? nextCursor = null;
             string? snapshotVersion = null;
@@ -171,47 +172,61 @@ public sealed class PlaylistLinksController(
             for (var pageNumber = 0; pageNumber < maximumPages; pageNumber++)
             {
                 var pageRequest = new ProviderPageRequest(limit, currentCursor);
-                var outcome = string.IsNullOrWhiteSpace(query)
-                    ? await candidate.Implementation.GetUserPlaylistsAsync(
-                        candidate.Context,
-                        new ProviderUserPlaylistsRequest(pageRequest))
-                    : await candidate.Implementation.SearchPlaylistsAsync(
-                        candidate.Context,
-                        new ProviderPlaylistSearchRequest(query.Trim(), pageRequest));
-                if (!outcome.IsSuccess)
+                var cacheKey = CacheKeyBuilder.BuildProviderPlaylistDiscoveryKey(
+                    session.TenantId,
+                    session.AllstarrUserId,
+                    account.Id,
+                    account.Revision,
+                    providerId,
+                    query,
+                    currentCursor,
+                    limit);
+                var page = await applicationCache.GetAsync<PlaylistDiscoveryPageCacheEntry>(cacheKey);
+                if (page == null)
                 {
-                    var failure = outcome.Error!;
-                    var status = failure.Kind switch
+                    var outcome = string.IsNullOrWhiteSpace(query)
+                        ? await candidate.Implementation.GetUserPlaylistsAsync(
+                            candidate.Context,
+                            new ProviderUserPlaylistsRequest(pageRequest))
+                        : await candidate.Implementation.SearchPlaylistsAsync(
+                            candidate.Context,
+                            new ProviderPlaylistSearchRequest(query.Trim(), pageRequest));
+                    if (!outcome.IsSuccess)
                     {
-                        ProviderErrorKind.AccountNeedsConfiguration => StatusCodes.Status409Conflict,
-                        ProviderErrorKind.AccountNeedsReauthentication or ProviderErrorKind.Unauthorized => StatusCodes.Status401Unauthorized,
-                        ProviderErrorKind.Forbidden => StatusCodes.Status403Forbidden,
-                        ProviderErrorKind.RateLimited => StatusCodes.Status429TooManyRequests,
-                        ProviderErrorKind.NotFound => StatusCodes.Status404NotFound,
-                        _ => StatusCodes.Status502BadGateway
-                    };
-                    var retryAfterSeconds = failure.RetryAfter is { } retryAfter
-                        ? Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds))
-                        : (int?)null;
-                    if (status == StatusCodes.Status429TooManyRequests && retryAfterSeconds.HasValue)
-                    {
-                        Response.Headers.RetryAfter = retryAfterSeconds.Value.ToString(
-                            System.Globalization.CultureInfo.InvariantCulture);
+                        var failure = outcome.Error!;
+                        var status = failure.Kind switch
+                        {
+                            ProviderErrorKind.AccountNeedsConfiguration => StatusCodes.Status409Conflict,
+                            ProviderErrorKind.AccountNeedsReauthentication or ProviderErrorKind.Unauthorized => StatusCodes.Status401Unauthorized,
+                            ProviderErrorKind.Forbidden => StatusCodes.Status403Forbidden,
+                            ProviderErrorKind.RateLimited => StatusCodes.Status429TooManyRequests,
+                            ProviderErrorKind.NotFound => StatusCodes.Status404NotFound,
+                            _ => StatusCodes.Status502BadGateway
+                        };
+                        var retryAfterSeconds = failure.RetryAfter is { } retryAfter
+                            ? Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds))
+                            : (int?)null;
+                        if (status == StatusCodes.Status429TooManyRequests && retryAfterSeconds.HasValue)
+                        {
+                            Response.Headers.RetryAfter = retryAfterSeconds.Value.ToString(
+                                System.Globalization.CultureInfo.InvariantCulture);
+                        }
+                        return StatusCode(status, new
+                        {
+                            error = failure.SafeMessage,
+                            reasonCode = failure.Code,
+                            providerId,
+                            accountId = account.Id,
+                            retryAfterSeconds
+                        });
                     }
-                    return StatusCode(status, new
-                    {
-                        error = failure.SafeMessage,
-                        reasonCode = failure.Code,
-                        providerId,
-                        accountId = account.Id,
-                        retryAfterSeconds
-                    });
+                    page = ToDiscoveryCacheEntry(outcome.RequireValue());
+                    await applicationCache.SetAsync(cacheKey, page);
                 }
 
-                var page = outcome.RequireValue();
                 foreach (var item in page.Items)
                 {
-                    if (seenPlaylistIds.Add(item.Id.Value))
+                    if (seenPlaylistIds.Add(item.Id))
                     {
                         items.Add(item);
                     }
@@ -916,25 +931,45 @@ public sealed class PlaylistLinksController(
         "subsonic" or "navidrome" or "opensubsonic" => "subsonic",
         _ => throw new UnauthorizedAccessException("Unsupported media target protocol")
     };
-    private static object ToPlaylistSummaryDto(ProviderPlaylistSummary value, Guid accountId) => new
+    private static PlaylistDiscoveryPageCacheEntry ToDiscoveryCacheEntry(
+        ProviderPage<ProviderPlaylistSummary> page) => new(
+        page.Items.Select(value => new PlaylistDiscoveryItemCacheEntry(
+            value.Id.Value,
+            value.Id.ProviderId,
+            value.Id.Catalog,
+            value.Name,
+            value.Description,
+            value.Owner.DisplayName ?? value.Owner.ProviderUserId,
+            value.TrackCount,
+            value.SourceRevision,
+            value.SourceETag,
+            value.Artwork != null,
+            value.Artwork?.ResourceId?.ProviderId,
+            value.Artwork?.ResourceId?.Value,
+            value.Artwork?.Revision)).ToArray(),
+        page.NextCursor,
+        page.IsPartial,
+        page.SnapshotVersion);
+
+    private static object ToPlaylistSummaryDto(PlaylistDiscoveryItemCacheEntry value, Guid accountId) => new
     {
-        id = value.Id.Value,
-        providerId = value.Id.ProviderId,
-        catalog = value.Id.Catalog,
+        id = value.Id,
+        providerId = value.ProviderId,
+        catalog = value.Catalog,
         name = value.Name,
         description = value.Description,
-        owner = value.Owner.DisplayName ?? value.Owner.ProviderUserId,
+        owner = value.Owner,
         trackCount = value.TrackCount,
         sourceRevision = value.SourceRevision,
         sourceETag = value.SourceETag,
-        artworkUrl = value.Artwork == null
+        artworkUrl = !value.HasArtwork
             ? null
-            : $"/api/admin/playlist-sources/{accountId}/playlists/{Uri.EscapeDataString(value.Id.Value)}/artwork?revision={Uri.EscapeDataString(value.Artwork.Revision ?? value.SourceRevision)}",
-        artworkReference = value.Artwork?.ResourceId == null ? null : new
+            : $"/api/admin/playlist-sources/{accountId}/playlists/{Uri.EscapeDataString(value.Id)}/artwork?revision={Uri.EscapeDataString(value.ArtworkRevision ?? value.SourceRevision)}",
+        artworkReference = value.ArtworkResourceId == null ? null : new
         {
-            providerId = value.Artwork.ResourceId.ProviderId,
-            id = value.Artwork.ResourceId.Value,
-            revision = value.Artwork.Revision
+            providerId = value.ArtworkProviderId,
+            id = value.ArtworkResourceId,
+            revision = value.ArtworkRevision
         }
     };
     private static string Required(string? value, string name) => !string.IsNullOrWhiteSpace(value) ? value.Trim() : throw new ArgumentException($"{name} is required");
@@ -1080,6 +1115,25 @@ public sealed class PlaylistLinksController(
         int? SnapshotVersion,
         Guid? RunId,
         long? Generation);
+    private sealed record PlaylistDiscoveryPageCacheEntry(
+        IReadOnlyList<PlaylistDiscoveryItemCacheEntry> Items,
+        string? NextCursor,
+        bool IsPartial,
+        string? SnapshotVersion);
+    private sealed record PlaylistDiscoveryItemCacheEntry(
+        string Id,
+        string ProviderId,
+        string? Catalog,
+        string Name,
+        string? Description,
+        string Owner,
+        int? TrackCount,
+        string SourceRevision,
+        string? SourceETag,
+        bool HasArtwork,
+        string? ArtworkProviderId,
+        string? ArtworkResourceId,
+        string? ArtworkRevision);
     private static object ToScheduleDto(JobScheduleRecord value) => new { id = value.Id, cronExpression = value.CronExpression, timeZoneId = value.TimeZoneId, overlapPolicy = value.OverlapPolicy.ToString().ToLowerInvariant(), misfirePolicy = LowerCamel(value.MisfirePolicy.ToString()), enabled = value.Enabled, nextRunAt = value.NextRunAt, revision = value.Revision };
     private static object ToPreviewDto(PlaylistPreview value) => new { linkId = value.LinkId, snapshotId = value.SnapshotId, name = value.Name, description = value.Description, artworkReferenceKey = value.ArtworkReferenceKey, entries = value.Entries.Select(item => new { position = item.Position, externalSnapshotId = item.ExternalSnapshotId, state = item.State.ToString().ToLowerInvariant(), libraryTrackId = item.LibraryTrackId, @override = item.Override?.ToString().ToLowerInvariant() }) };
     private static object ToCredentialDto(SecretReferenceInfo value) => new { referenceId = value.Id, targetProtocol = "subsonic", purpose = value.Purpose, activeVersion = value.ActiveVersion, updatedAt = value.UpdatedAt };
