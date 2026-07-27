@@ -79,7 +79,7 @@ export function providerColor(providerId: string) {
   const colors: Record<string, string> = {
     unresolved: "var(--color-ink-muted)",
     unmatched: "var(--color-ink-muted)",
-    jellyfin: "#aa5cc3",
+    jellyfin: "#8b65fb",
     spotify: "#1ed760",
     applemusic: "#fa243c",
     "apple-music": "#fa243c",

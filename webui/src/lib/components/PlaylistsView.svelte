@@ -17,6 +17,7 @@
     type ProviderDefinition,
   } from "$lib/api";
   import {
+    coverage,
     filterPlaylists,
     filterTracks,
     formatDuration,
@@ -293,6 +294,7 @@
 
       <div class="playlist-rows" aria-label="Playlists">
         {#each pagePlaylists as playlist}
+          {@const playablePercent = Math.round(coverage(playlist) * 100)}
           <button
             class:active={playlist.id === selectedId}
             class="playlist-row"
@@ -312,7 +314,9 @@
                 </small>
               </span>
               <small class="playlist-metrics">
-                {playlist.matchedCount} matched · {playlist.metrics.review} review · {playlist.materializedCount} materialized
+                <span>{playlist.matchedCount} matched</span>
+                <span>{playlist.metrics.review} to review</span>
+                <span>{playlist.materializedCount} materialized</span>
               </small>
               <CoverageBar
                 routes={playlist.routeCoverage}
@@ -322,8 +326,12 @@
                 compact
               />
             </span>
-            <span class="playlist-numbers">
-              <strong>{playlist.playableCount}/{playlist.trackCount}</strong>
+            <span class="playlist-summary">
+              <span class="playlist-coverage">
+                <strong>{playablePercent}%</strong>
+                <small>playable</small>
+              </span>
+              <small>{playlist.playableCount} of {playlist.trackCount} tracks</small>
               <small class:attention={playlist.unmatchedCount > 0}>
                 {playlist.enabled ? `${playlist.unmatchedCount} unresolved` : "Paused"}
               </small>
