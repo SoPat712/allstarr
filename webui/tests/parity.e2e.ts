@@ -219,7 +219,7 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
           sizeFormatted: "1000 KiB", lastModified: "2026-01-01", codec: "FLAC",
           bitrateKbps: 900, sampleRateHz: 44_100, bitDepth: 16, channels: 2,
           durationMilliseconds: 180_000, quality: "Lossless", provider: "lumen-audio",
-          externalId: "track-1",
+          externalId: "track-1", artworkUrl: "/missing-download-art",
         }],
         totalSize: 1_024_000, totalSizeFormatted: "1000 KiB", count: 1,
       };
@@ -796,6 +796,7 @@ test("Cached and Kept keep media facts and actions readable on mobile", async ({
   await mockApi(page);
   await page.goto("#/library/cached");
   const cached = page.locator(".download-row");
+  await expect(cached.locator(".download-art .provider-mark")).toBeVisible();
   await expect(cached.getByText("FLAC · 900 kbps · 16-bit · 44.1 kHz · 2 ch")).toBeVisible();
   await expect(cached.getByRole("cell", { name: "Size 1000 KiB" })).toBeVisible();
   await expect(cached.getByRole("cell", { name: /^Updated / })).toBeVisible();

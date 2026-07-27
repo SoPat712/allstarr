@@ -3027,8 +3027,14 @@
   }
 
   .download-art {
+    position: relative;
     width: 2.75rem;
     height: 2.75rem;
+  }
+
+  .download-art > img {
+    position: absolute;
+    inset: 0;
   }
 
   .download-provider .provider-mark {

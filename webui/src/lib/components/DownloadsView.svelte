@@ -218,8 +218,9 @@
             <div class="download-row" role="row">
               <span class="download-track" role="cell">
                 <span class="media-art download-art">
-                  {#if file.artworkUrl}<img src={file.artworkUrl} alt="" loading="lazy" />{:else}
-                    <ProviderMark id={file.provider || "file"} definition={provider(file.provider)} label={providerName(file.provider)} />
+                  <ProviderMark id={file.provider || "file"} definition={provider(file.provider)} label={providerName(file.provider)} />
+                  {#if file.artworkUrl}
+                    <img src={file.artworkUrl} alt="" loading="lazy" onerror={(event) => event.currentTarget.remove()} />
                   {/if}
                 </span>
                 <span>
