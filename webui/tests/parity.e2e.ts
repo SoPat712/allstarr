@@ -682,6 +682,7 @@ test("Suggested mappings sort by confidence and deep links open review", async (
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("ISRC US-AAA-26-00001")).toHaveCount(2);
   await expect(dialog.getByText("Lumen Audio · provider-track")).toBeVisible();
+  await expect(dialog.locator(".candidate-card .mapping-art > span")).toBeVisible();
   await dialog.getByRole("button", { name: "Close match dialog" }).click();
 
   const request = page.waitForRequest((item) =>

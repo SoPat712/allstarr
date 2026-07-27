@@ -10,6 +10,7 @@
     type ProviderDefinition,
   } from "$lib/api";
   import MatchDialog from "$lib/components/MatchDialog.svelte";
+  import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import {
@@ -336,7 +337,7 @@
                 <span class:unresolved={!target} class="mapping-route-node">
                   {#if target}
                     {#if match.candidateArtworkUrl}
-                      <span class="media-art mapping-art"><img src={match.candidateArtworkUrl} alt="" loading="lazy" /></span>
+                      <MediaArtwork class="mapping-art" url={match.candidateArtworkUrl} />
                     {:else}
                       <ProviderMark
                         id={target.providerId === "local" ? backend.toLowerCase() : target.providerId}

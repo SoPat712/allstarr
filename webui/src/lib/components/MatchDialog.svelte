@@ -6,6 +6,7 @@
     type MatchTarget,
     type ProviderDefinition,
   } from "$lib/api";
+  import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import { percent, playableProviders, scoreComponents } from "$lib/mappings";
@@ -172,9 +173,7 @@
             <div class="candidate-list">
               {#each match.candidates.slice(0, 5) as candidate}
                 <article class="candidate-card">
-                  <span class="media-art mapping-art">
-                    {#if candidateArtwork(candidate.backendItemId)}<img src={candidateArtwork(candidate.backendItemId)} alt="" loading="lazy" />{:else}<span aria-hidden="true">♪</span>{/if}
-                  </span>
+                  <MediaArtwork class="mapping-art" url={candidateArtwork(candidate.backendItemId)} />
                   <div class="candidate-copy">
                     <strong>{candidate.title || candidate.backendItemId || "Indexed track"}</strong>
                     <small>{candidate.artist || "Unknown artist"}{candidate.album ? ` · ${candidate.album}` : ""}</small>
