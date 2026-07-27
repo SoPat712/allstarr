@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { Dialog, DropdownMenu } from "bits-ui";
   import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
+  import OperationConsole from "$lib/components/OperationConsole.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import {
     home,
@@ -45,6 +46,7 @@
   let detailRequest = 0;
   let page = $state(1);
   let addOpen = $state(false);
+  let operationJobId = $state("");
 
   const visiblePlaylists = $derived(filterPlaylists(playlists, query, stateFilter, sort));
   const pageCount = $derived(Math.max(1, Math.ceil(visiblePlaylists.length / 20)));
@@ -146,6 +148,7 @@
       if (name === "sync") {
         if (!details) return;
         const result = await playlistLinks.sync(selected.id, details.snapshotId);
+        operationJobId = result.jobId;
         feedback = result.created ? "Sync queued." : "Sync is already queued.";
       } else if (name === "rematch") {
         await playlistLinks.rematch(selected.id);
@@ -381,6 +384,11 @@
         </div>
 
         {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
+        <OperationConsole
+          playlistName={details.name}
+          requestedJobId={operationJobId}
+          onTerminal={refresh}
+        />
 
         <div class="track-toolbar">
           <label>

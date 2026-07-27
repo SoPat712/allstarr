@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -1025,8 +1026,15 @@ public sealed class PlaylistMaterializationJobHandler(
             item.TenantId == context.Claim.TenantId && item.OwnerUserId == context.Claim.OwnerUserId, cancellationToken);
         if (link == null) return DurableJobCompletion.Failure("playlist_link_unavailable", "The playlist link is unavailable.");
         if (!link.Enabled) return DurableJobCompletion.Success();
+        var playlistName = await db.PlaylistSourceSnapshots.AsNoTracking()
+            .Where(item => item.PlaylistLinkId == link.Id)
+            .OrderByDescending(item => item.SnapshotVersion)
+            .Select(item => item.Name)
+            .FirstOrDefaultAsync(cancellationToken) ?? link.SourcePlaylistId;
+        var started = Stopwatch.GetTimestamp();
         await context.ReportProgressAsync(
-            new("playlist.prepare", "Preparing playlist synchronization."), cancellationToken);
+            new("playlist.prepare", "Preparing playlist synchronization.",
+                Provider: link.SourceProviderId, Playlist: playlistName), cancellationToken);
         var identity = await db.BackendIdentities.AsNoTracking().FirstOrDefaultAsync(item => item.TenantId == link.TenantId &&
             item.UserId == link.OwnerUserId && item.BackendType == link.TargetProtocol &&
             item.BackendInstanceId == link.TargetBackendInstanceId, cancellationToken);
@@ -1040,7 +1048,8 @@ public sealed class PlaylistMaterializationJobHandler(
         try
         {
             await context.ReportProgressAsync(
-                new("playlist.match", "Matching and materializing playlist tracks."), cancellationToken);
+                new("playlist.match", "Matching and materializing playlist tracks.",
+                    Provider: link.SourceProviderId, Playlist: playlistName), cancellationToken);
             var result = await orchestration.RunAsync(execution,
                 new PlaylistOrchestrationRequest(link.Id, payload.Generation, payload.SourceSnapshotId,
                     context.Claim.JobId, link.ScheduleId), cancellationToken);
@@ -1049,7 +1058,9 @@ public sealed class PlaylistMaterializationJobHandler(
             await context.ReportProgressAsync(
                 new(retry ? "playlist.retry" : "playlist.complete",
                     retry ? "Playlist synchronization requires retry." : "Playlist synchronization completed.",
-                    completed, completed), cancellationToken);
+                    completed, completed, link.TargetProtocol, playlistName,
+                    ThroughputPerSecond: completed / Math.Max(
+                        Stopwatch.GetElapsedTime(started).TotalSeconds, .001)), cancellationToken);
             return retry
                 ? DurableJobCompletion.Retry(result.ErrorCode ?? "playlist_materialization_failed", "Playlist materialization did not complete.")
                 : DurableJobCompletion.Success();

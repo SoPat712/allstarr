@@ -45,7 +45,23 @@ const responses: Record<string, unknown> = {
   "/api/admin/ui/schema": schema,
   "/api/admin/status": { version: "test", backendType: "Jellyfin" },
   "/api/admin/playlists": { playlists: [], inventory: { managed: 0, unmanaged: 0 } },
-  "/api/admin/jobs?limit=100": { jobs: [] },
+  "/api/admin/jobs?limit=100": {
+    jobs: [{
+      id: "11111111-1111-1111-1111-111111111111", type: "playlist.materialize",
+      state: "Running", attemptCount: 1, failureCount: 0, deferralCount: 0,
+      cancellationRequestedAt: null, lastErrorCode: null, lastErrorMessage: null,
+      updatedAt: "2026-01-01",
+    }],
+    progress: [{
+      id: "progress", jobId: "11111111-1111-1111-1111-111111111111",
+      action: "playlist.match", outcome: "running", createdAt: "2026-01-01",
+      detailsJson: JSON.stringify({
+        stage: "playlist.match", message: "Matching Test song", completed: 1, total: 2,
+        provider: "lumen-audio", playlist: "Test playlist", track: "Test song",
+        throughputPerSecond: 1.5,
+      }),
+    }],
+  },
   "/api/admin/ui/activity?limit=8": { items: [], hasMore: false },
   "/api/admin/ui/provider-summaries": { providers: [] },
   "/api/admin/playlist-links": {
@@ -194,6 +210,8 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
       };
     if (url.pathname === "/api/admin/playlist-links" && route.request().method() === "POST")
       body = { id: "new-playlist" };
+    if (url.pathname.endsWith("/cancel") && route.request().method() === "POST")
+      body = { jobId: "11111111-1111-1111-1111-111111111111", state: "CancellationRequested" };
     if (url.pathname.endsWith("/audience") && route.request().method() === "PUT") {
       const input = route.request().postDataJSON();
       const account = (responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[] }).accounts[0];
@@ -484,6 +502,23 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await dialog.getByRole("button", { name: "Open mapping details for Test song" }).click();
   await expect(page).toHaveURL(/#\/library\/mappings\?search=Test%20song&review=snapshot$/);
   await expect(page.getByRole("dialog", { name: "Test song" })).toBeVisible();
+});
+
+test("Playlist operations show durable progress and confirm cancellation", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+  await page.goto("#/library/playlists");
+  await page.getByRole("button", { name: /Test playlist/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Test playlist" });
+  await expect(dialog.locator("summary").getByText("Matching Test song")).toBeVisible();
+  await expect(dialog.getByText("1/2")).toBeVisible();
+  await dialog.getByRole("button", { name: "Cancel operation" }).click();
+  const confirmation = page.getByRole("alertdialog", { name: "Cancel this operation?" });
+  await expect(confirmation).toBeVisible();
+  const request = page.waitForRequest((item) =>
+    item.method() === "POST" && item.url().endsWith("/api/admin/jobs/11111111-1111-1111-1111-111111111111/cancel"));
+  await confirmation.getByRole("button", { name: "Cancel operation" }).click();
+  await request;
 });
 
 test("Profile artwork is stable in full, slim, and mobile navigation", async ({ page }) => {

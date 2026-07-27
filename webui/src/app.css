@@ -1236,6 +1236,117 @@
     font-size: 0.7rem;
   }
 
+  .operation-console {
+    border-bottom: 1px solid var(--color-edge);
+    background: rgb(255 255 255 / 2%);
+  }
+
+  .operation-console summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-height: 3.25rem;
+    cursor: pointer;
+    padding: 0.6rem 1rem;
+    list-style: none;
+  }
+
+  .operation-console summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .operation-console summary > span:first-child {
+    display: grid;
+    min-width: 0;
+    gap: 0.15rem;
+  }
+
+  .operation-console summary strong,
+  .operation-console summary small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .operation-console summary strong {
+    font-size: 0.72rem;
+    text-transform: capitalize;
+  }
+
+  .operation-console summary small,
+  .operation-facts small,
+  .operation-console li small {
+    color: var(--color-ink-muted);
+    font-size: 0.62rem;
+  }
+
+  .operation-console-body {
+    display: grid;
+    gap: 0.75rem;
+    border-top: 1px solid var(--color-edge);
+    padding: 0.75rem 1rem 1rem;
+  }
+
+  .operation-progress {
+    height: 0.3rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--color-panel-raised);
+  }
+
+  .operation-progress span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--color-signal);
+  }
+
+  .operation-facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+    gap: 0.45rem;
+  }
+
+  .operation-facts > span {
+    display: grid;
+    min-width: 0;
+    gap: 0.1rem;
+  }
+
+  .operation-facts strong {
+    overflow: hidden;
+    font-size: 0.68rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .operation-console ol {
+    display: grid;
+    max-height: 9rem;
+    overflow: auto;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .operation-console li {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border-top: 1px solid var(--color-edge);
+    padding: 0.4rem 0;
+    font-size: 0.68rem;
+  }
+
+  .operation-console li span {
+    min-width: 0;
+  }
+
+  .operation-console-body > button {
+    justify-self: start;
+  }
+
   .track-table {
     min-width: 0;
   }

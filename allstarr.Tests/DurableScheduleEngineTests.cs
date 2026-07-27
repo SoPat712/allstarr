@@ -213,6 +213,9 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
         Assert.Equal(_schedule, orchestration.Request.ScheduleId);
         Assert.Equal(["playlist.prepare", "playlist.match", "playlist.complete"],
             progress.Select(item => item.Stage));
+        Assert.All(progress, item => Assert.NotNull(item.Playlist));
+        Assert.Equal("fixture", progress[0].Provider);
+        Assert.Equal("jellyfin", progress[^1].Provider);
         Assert.Null(progress[^1].Completed);
         Assert.Null(progress[^1].Total);
     }

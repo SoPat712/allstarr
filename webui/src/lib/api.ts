@@ -43,8 +43,25 @@ export type Job = {
   id: string;
   type: string;
   state: string;
+  attemptCount?: number;
+  failureCount?: number;
+  deferralCount?: number;
+  cancellationRequestedAt?: string | null;
+  lastErrorCode?: string | null;
+  lastErrorMessage?: string | null;
   updatedAt: string;
 };
+
+export type JobProgress = {
+  id: string;
+  jobId?: string | null;
+  action: string;
+  outcome: string;
+  detailsJson: string;
+  createdAt: string;
+};
+
+export type JobResponse = { jobs: Job[]; progress: JobProgress[] };
 
 export type ActivityItem = {
   id: string;
@@ -503,7 +520,11 @@ export const home = {
     json<UiSchema>("/api/admin/ui/schema"),
   status: () => json<RuntimeStatus>("/api/admin/status"),
   playlists: () => json<PlaylistResponse>("/api/admin/playlists"),
-  jobs: () => json<{ jobs: Job[] }>("/api/admin/jobs?limit=100"),
+  jobs: () => json<JobResponse>("/api/admin/jobs?limit=100"),
+  cancelJob: (id: string) =>
+    json<{ jobId: string; state: string }>(`/api/admin/jobs/${encodeURIComponent(id)}/cancel`, {
+      method: "POST",
+    }),
   activity: () => json<ActivityResponse>("/api/admin/ui/activity?limit=8"),
   providers: () => json<{ providers: ProviderSummary[] }>("/api/admin/ui/provider-summaries"),
 };
