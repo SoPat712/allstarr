@@ -319,6 +319,32 @@ export type PlaylistDetails = {
   tracks: PlaylistTrack[];
 };
 
+export type PlaylistSourceAccount = {
+  id: string;
+  providerId: string;
+  displayName: string;
+  ownerDisplayName?: string | null;
+  libraryScopeId?: string | null;
+  accessLabel: string;
+};
+
+export type PlaylistDiscoveryItem = {
+  id: string;
+  providerId: string;
+  name: string;
+  owner?: string | null;
+  trackCount?: number | null;
+  artworkUrl?: string | null;
+};
+
+export type MediaTarget = {
+  id: string;
+  protocol: "jellyfin" | "subsonic";
+  backendInstanceId: string;
+  displayName: string;
+  credentialReferenceId?: string | null;
+};
+
 export type MatchCandidate = {
   libraryTrackId?: string | null;
   backendItemId?: string | null;
@@ -765,6 +791,43 @@ export const playlistLinks = {
         body: JSON.stringify({ expectedRevision, enabled }),
       },
     ),
+  sources: () => json<{
+    accounts: PlaylistSourceAccount[];
+    blockedAccounts: PlaylistSourceAccount[];
+    providers: Array<{ id: string; displayName: string }>;
+  }>("/api/admin/playlist-sources"),
+  sourcePlaylists: (accountId: string, query = "", cursor = "") => {
+    const params = new URLSearchParams({ limit: "100" });
+    if (query) params.set("query", query);
+    if (cursor) params.set("cursor", cursor);
+    return json<{ items: PlaylistDiscoveryItem[]; nextCursor?: string | null }>(
+      `/api/admin/playlist-sources/${encodeURIComponent(accountId)}/playlists?${params}`,
+    );
+  },
+  targets: () => json<{ targets: MediaTarget[] }>("/api/admin/media-targets"),
+  create: (input: {
+    providerAccountId: string;
+    sourceProviderId: string;
+    sourcePlaylistId: string;
+    libraryScopeId: string;
+    targetProtocol: string;
+    targetBackendInstanceId: string;
+    targetCredentialReferenceId?: string | null;
+  }) => json<{ id: string }>("/api/admin/playlist-links", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...input,
+      mode: "virtual",
+      materializationMode: "reconcile",
+      targetPlaylistId: null,
+      mirrorStaleEntries: false,
+      preserveManualEntries: true,
+      syncName: true,
+      syncDescription: true,
+      syncArtwork: true,
+    }),
+  }),
 };
 
 export const matchReview = {

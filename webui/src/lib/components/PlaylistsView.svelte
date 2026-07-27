@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { DropdownMenu } from "bits-ui";
+  import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import {
     home,
@@ -42,6 +43,7 @@
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
   let detailRequest = 0;
   let page = $state(1);
+  let addOpen = $state(false);
 
   const visiblePlaylists = $derived(filterPlaylists(playlists, query, stateFilter, sort));
   const pageCount = $derived(Math.max(1, Math.ceil(visiblePlaylists.length / 20)));
@@ -160,6 +162,11 @@
     }
   }
 
+  async function playlistAdded(message: string) {
+    feedback = message;
+    await refresh();
+  }
+
   onMount(() => {
     selectedId = initialId;
     void refresh();
@@ -192,7 +199,7 @@
     <p class="eyebrow">Library playlists</p>
     <h2>No managed playlists yet.</h2>
     <p>Add a playlist from an installed Source. Its matches, routes, and sync state will appear here.</p>
-    <a class="button-primary empty-action" href="#/sources">Open Sources</a>
+    <button class="button-primary empty-action" type="button" onclick={() => addOpen = true}>Add playlist</button>
   </section>
 {:else}
   {#if degraded}
@@ -210,7 +217,10 @@
           <p class="eyebrow">Managed playlists</p>
           <h2>{playlists.length} linked</h2>
         </div>
-        <button class="icon-button" type="button" onclick={() => void refresh()} aria-label="Refresh playlists">↻</button>
+        <div class="playlist-toolbar-actions">
+          <button class="button-primary" type="button" onclick={() => addOpen = true}>Add playlist</button>
+          <button class="icon-button" type="button" onclick={() => void refresh()} aria-label="Refresh playlists">↻</button>
+        </div>
       </header>
 
       <div class="playlist-filters">
@@ -427,3 +437,5 @@
     </article>
   </section>
 {/if}
+
+<AddPlaylistDialog bind:open={addOpen} {providers} onSaved={playlistAdded} />

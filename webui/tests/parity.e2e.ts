@@ -46,6 +46,29 @@ const responses: Record<string, unknown> = {
   "/api/admin/ui/activity?limit=8": { items: [], hasMore: false },
   "/api/admin/ui/provider-summaries": { providers: [] },
   "/api/admin/playlist-links": { playlistLinks: [] },
+  "/api/admin/playlist-sources": {
+    accounts: [
+      { id: "qobuz", providerId: "qobuz", displayName: "Qobuz", accessLabel: "Personal account" },
+      { id: "spotify", providerId: "spotify", displayName: "Spotify", ownerDisplayName: "Tester", accessLabel: "Personal account" },
+      { id: "lumen", providerId: "lumen-audio", displayName: "Lumen", accessLabel: "Personal account" },
+      { id: "subsonic", providerId: "subsonic", displayName: "Subsonic", accessLabel: "Library-shared account" },
+      { id: "jellyfin", providerId: "jellyfin", displayName: "Jellyfin", accessLabel: "Library-shared account" },
+    ],
+    blockedAccounts: [],
+    providers: [
+      { id: "jellyfin", displayName: "Jellyfin" },
+      { id: "subsonic", displayName: "Subsonic" },
+      { id: "lumen-audio", displayName: "Lumen Audio" },
+      { id: "qobuz", displayName: "Qobuz" },
+      { id: "spotify", displayName: "Spotify" },
+    ],
+  },
+  "/api/admin/media-targets": {
+    targets: [{
+      id: "target", protocol: "jellyfin", backendInstanceId: "main",
+      displayName: "Jellyfin Music",
+    }],
+  },
   "/api/admin/provider-accounts": {
     managementMode: "ApplicationManaged",
     audienceUsers: [
@@ -132,6 +155,18 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
         stats: { total: 1, matched: 0, accepted: 0, unresolved: 0, review: 1, rejected: 0, attention: 1 },
         pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
       };
+    if (url.pathname.includes("/api/admin/playlist-sources/") && url.pathname.endsWith("/playlists"))
+      body = {
+        items: [{
+          id: url.searchParams.has("cursor") ? "playlist-2" : "playlist",
+          providerId: url.pathname.split("/")[4],
+          name: url.searchParams.has("cursor") ? "Second Mix" : "Source Mix",
+          owner: "Tester", trackCount: 24,
+        }],
+        nextCursor: url.searchParams.has("cursor") ? null : "next",
+      };
+    if (url.pathname === "/api/admin/playlist-links" && route.request().method() === "POST")
+      body = { id: "new-playlist" };
     if (url.pathname.endsWith("/audience") && route.request().method() === "PUT") {
       const input = route.request().postDataJSON();
       const account = (responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[] }).accounts[0];
@@ -363,4 +398,28 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
   await expect(review.getByText("New access", { exact: false })).toBeVisible();
   await expect(review.getByText("Removed access", { exact: false })).toBeVisible();
   await expect(review.getByRole("button", { name: "Approve and enable" })).toBeInViewport();
+});
+
+test("Add playlist prioritizes local and configured Sources on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+  await page.goto("#/library/playlists");
+  await page.getByRole("button", { name: "Add playlist" }).click();
+  const dialog = page.getByRole("dialog", { name: "Add playlist" });
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await page.getByRole("button", { name: "Add playlist" }).click();
+  const sourceGroups = dialog.locator(".playlist-source-groups legend");
+  await expect(sourceGroups).toHaveCount(5);
+  expect(await sourceGroups.allTextContents()).toEqual([
+    "Jellyfin", "Subsonic", "Spotify", "Lumen Audio", "Qobuz",
+  ]);
+  await dialog.getByRole("radio", { name: /Spotify/ }).check();
+  await dialog.getByRole("button", { name: "Load more" }).click();
+  await expect(dialog.getByRole("radio", { name: /Second Mix/ })).toBeVisible();
+  await dialog.getByRole("radio", { name: /Source Mix/ }).check();
+  await expect(dialog.getByRole("button", { name: "Add playlist" })).toBeInViewport();
+  await dialog.getByRole("button", { name: "Add playlist" }).click();
+  await expect(dialog).toBeHidden();
 });

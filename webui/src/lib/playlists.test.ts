@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { PlaylistLink, PlaylistTrack } from "./api";
+import type { PlaylistLink, PlaylistSourceAccount, PlaylistTrack } from "./api";
 import {
   filterPlaylists,
   filterTracks,
   formatDuration,
+  orderPlaylistSources,
   providerColor,
   summarizeRoutes,
 } from "./playlists";
@@ -55,6 +56,18 @@ describe("playlist presentation", () => {
     expect(summarizeRoutes(tracks, "local-provider")).toEqual([
       { providerId: "external", count: 1 },
       { providerId: "local-provider", count: 1 },
+    ]);
+  });
+
+  it("orders local targets, Spotify, then configured playlist Sources", () => {
+    const source = (providerId: string): PlaylistSourceAccount => ({
+      id: providerId, providerId, displayName: providerId, accessLabel: "Personal account",
+    });
+    expect(orderPlaylistSources(
+      ["qobuz", "spotify", "extension", "subsonic", "jellyfin"].map(source),
+      ["extension", "qobuz", "spotify"],
+    ).map((item) => item.providerId)).toEqual([
+      "jellyfin", "subsonic", "spotify", "extension", "qobuz",
     ]);
   });
 });

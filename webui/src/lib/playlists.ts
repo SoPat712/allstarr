@@ -1,4 +1,4 @@
-import type { PlaylistLink, PlaylistTrack } from "./api";
+import type { PlaylistLink, PlaylistSourceAccount, PlaylistTrack } from "./api";
 
 export type PlaylistSort = "name" | "tracks" | "coverage" | "updated";
 export type TrackSort = "position" | "title" | "duration" | "route";
@@ -94,4 +94,19 @@ export function summarizeRoutes(tracks: PlaylistTrack[], targetProtocol: string)
     counts.set(providerId, (counts.get(providerId) ?? 0) + 1);
   }
   return [...counts].map(([providerId, count]) => ({ providerId, count }));
+}
+
+export function orderPlaylistSources(
+  accounts: PlaylistSourceAccount[],
+  providerOrder: string[],
+) {
+  const providers = new Map(providerOrder.map((id, index) => [id.toLowerCase(), index]));
+  const rank = (id: string) =>
+    ["jellyfin", "subsonic"].includes(id.toLowerCase()) ? 0 :
+      id.toLowerCase() === "spotify" ? 1 : 2;
+  return accounts.toSorted((left, right) =>
+    rank(left.providerId) - rank(right.providerId) ||
+    (providers.get(left.providerId.toLowerCase()) ?? Number.MAX_SAFE_INTEGER) -
+      (providers.get(right.providerId.toLowerCase()) ?? Number.MAX_SAFE_INTEGER) ||
+    left.displayName.localeCompare(right.displayName));
 }
