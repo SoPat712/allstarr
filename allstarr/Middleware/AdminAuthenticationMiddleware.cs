@@ -94,6 +94,12 @@ public class AdminAuthenticationMiddleware
             return true;
         }
 
+        if (HttpMethods.IsGet(method) &&
+            path.Equals("/api/admin/updates/stream", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
         if (IsProviderAccountSelfServiceRoute(path, method))
         {
             return true;

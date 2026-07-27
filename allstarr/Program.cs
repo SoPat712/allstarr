@@ -330,6 +330,7 @@ builder.Services.AddScoped<allstarr.Filters.AdminPortFilter>();
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminHelperService>();
 builder.Services.AddSingleton<allstarr.Services.Admin.IAdminAuthSessionStore, allstarr.Services.Admin.EfAdminAuthSessionStore>();
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminAuthSessionService>();
+builder.Services.AddSingleton<allstarr.Services.Admin.AdminUpdateFeed>();
 
 // Configuration - register both settings, active one determined by backend type
 builder.Services.Configure<SubsonicSettings>(

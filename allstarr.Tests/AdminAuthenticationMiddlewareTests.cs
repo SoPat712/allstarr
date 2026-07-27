@@ -151,6 +151,7 @@ public class AdminAuthenticationMiddlewareTests
     [InlineData("/api/admin/intelligence/runs", "POST")]
     [InlineData("/api/admin/intelligence/generated-sets", "POST")]
     [InlineData("/api/admin/intelligence/data", "DELETE")]
+    [InlineData("/api/admin/updates/stream", "GET")]
     public async Task InvokeAsync_NonAdminUser_OwnJobRoutesPassToControllerScopeChecks(
         string path,
         string method)

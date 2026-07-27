@@ -281,6 +281,8 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.HasIndex(item => new { item.Id, item.TenantId, item.OwnerUserId }).IsUnique()
                 .HasDatabaseName("UX_durable_job_owner_lineage");
             entity.HasIndex(item => new { item.State, item.AvailableAt, item.Priority });
+            entity.HasIndex(item => new { item.TenantId, item.UpdatedAt, item.Id })
+                .HasDatabaseName("IX_durable_job_updates");
             entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<PlatformUserRecord>().WithMany()
@@ -319,6 +321,8 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.Property(item => item.LastErrorMessage).HasMaxLength(1000);
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new { item.State, item.AvailableAt });
+            entity.HasIndex(item => new { item.TenantId, item.UpdatedAt, item.Id })
+                .HasDatabaseName("IX_outbox_updates");
             entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
@@ -340,6 +344,8 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
                 item.Capability,
                 item.ObservedAt
             }).HasDatabaseName("IX_provider_health_account_capability_observed");
+            entity.HasIndex(item => new { item.TenantId, item.ObservedAt, item.Id })
+                .HasDatabaseName("IX_provider_health_updates");
             entity.HasOne<ProviderAccountRecord>().WithMany()
                 .HasForeignKey(item => item.ProviderAccountId)
                 .OnDelete(DeleteBehavior.Cascade);
@@ -492,7 +498,8 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.Property(item => item.Outcome).HasMaxLength(100).IsRequired();
             entity.Property(item => item.CorrelationId).HasMaxLength(100).IsRequired();
             entity.Property(item => item.DetailsJson).IsRequired();
-            entity.HasIndex(item => new { item.TenantId, item.CreatedAt });
+            entity.HasIndex(item => new { item.TenantId, item.CreatedAt, item.Id })
+                .HasDatabaseName("IX_audit_event_updates");
             entity.HasIndex(item => item.CorrelationId);
             entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)
                 .OnDelete(DeleteBehavior.Restrict);
