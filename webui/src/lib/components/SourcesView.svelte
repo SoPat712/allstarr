@@ -117,7 +117,7 @@
         measurements = (results[4].value as { measurements: CtsMeasurement[] }).measurements;
     }
     const failed = results.filter((result) => result.status === "rejected");
-    if (failed.length && (administrator || !schema))
+    if (failed.length)
       error = failed[0].reason instanceof Error ? failed[0].reason.message : "Source state is unavailable.";
     loading = false;
     refreshing = false;
@@ -311,11 +311,13 @@
                 <DropdownMenu.Trigger class="icon-button" aria-label={`Actions for ${account.displayName}`}>•••</DropdownMenu.Trigger>
                 <DropdownMenu.Portal>
                   <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
-                    <DropdownMenu.Item onclick={() => configure(account)}>Configure</DropdownMenu.Item>
-                    {#if administrator}<DropdownMenu.Item onclick={() => manageAccess(account)}>Manage access</DropdownMenu.Item>{/if}
-                    <DropdownMenu.Item onclick={() => void toggle(account)}>{account.enabled ? "Disable" : "Enable"}</DropdownMenu.Item>
+                    <DropdownMenu.Item class="bits-menu-item" onSelect={() => void toggle(account)}>
+                      {account.enabled ? "Disable" : "Enable"}
+                    </DropdownMenu.Item>
                     <DropdownMenu.Separator />
-                    <DropdownMenu.Item class="danger-item" onclick={() => { removal = account; removeOpen = true; }}>Remove</DropdownMenu.Item>
+                    <DropdownMenu.Item class="bits-menu-item danger-item" onSelect={() => { removal = account; removeOpen = true; }}>
+                      Remove
+                    </DropdownMenu.Item>
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>

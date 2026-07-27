@@ -639,6 +639,40 @@ test("Cached and Kept keep media facts and actions readable on mobile", async ({
   await expect(page.getByRole("alertdialog", { name: "Remove this track?" })).toBeVisible();
 });
 
+test("Sources keep primary actions visible and report scoped degradation", async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+  await page.goto("#/sources");
+  await expect(page.getByRole("button", { name: "Audience Only Tester" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Configure" })).toBeVisible();
+  await page.getByRole("button", { name: "Actions for Lumen account" }).click();
+  const menu = page.getByRole("menu");
+  await expect(menu.getByRole("menuitem", { name: "Configure" })).toHaveCount(0);
+  await expect(menu.getByRole("menuitem", { name: "Manage access" })).toHaveCount(0);
+  await expect(menu.locator(".bits-menu-item")).toHaveCount(2);
+  await expect(menu.getByRole("menuitem", { name: "Disable" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Remove" })).toBeVisible();
+
+  const listener = await context.newPage();
+  await mockApi(listener);
+  await listener.route("**/api/admin/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      authenticated: true, backend: "Jellyfin",
+      user: { id: "listener", name: "Listener", isAdministrator: false },
+    }),
+  }));
+  await listener.route("**/api/admin/provider-accounts", (route) => route.fulfill({
+    status: 503,
+    contentType: "application/json",
+    body: JSON.stringify({ error: "Account scope unavailable" }),
+  }));
+  await listener.goto("#/sources");
+  await expect(listener.getByText("Source readiness may be stale.")).toBeVisible();
+  await expect(listener.getByText("Connections are administrator-managed")).toBeVisible();
+});
+
 test("Playlist details use a responsive dialog and track rows open mapping review", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);

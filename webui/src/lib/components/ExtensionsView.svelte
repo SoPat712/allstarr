@@ -270,11 +270,11 @@
                 <DropdownMenu.Trigger class="button-secondary">Manage extension</DropdownMenu.Trigger>
                 <DropdownMenu.Portal>
                   <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
-                    {#if item.active}<DropdownMenu.Item disabled={Boolean(action)} onclick={() => void run(item.id, () => extensions.disable(item), "Extension disabled.")}>Disable</DropdownMenu.Item>{/if}
-                    {#if item.active && item.previousPackageId}<DropdownMenu.Item disabled={Boolean(action)} onclick={() => void run(item.id, () => extensions.rollback(item), "Previous extension version restored.")}>Rollback</DropdownMenu.Item>{/if}
-                    {#if ["active", "disabled"].includes(item.state.toLowerCase())}<DropdownMenu.Item disabled={Boolean(action)} onclick={() => void run(item.id, () => extensions.revokePermissions(item), "Permissions revoked. Review is required before re-enabling.")}>Review access</DropdownMenu.Item>{/if}
+                    {#if item.active}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run(item.id, () => extensions.disable(item), "Extension disabled.")}>Disable</DropdownMenu.Item>{/if}
+                    {#if item.active && item.previousPackageId}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run(item.id, () => extensions.rollback(item), "Previous extension version restored.")}>Rollback</DropdownMenu.Item>{/if}
+                    {#if ["active", "disabled"].includes(item.state.toLowerCase())}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run(item.id, () => extensions.revokePermissions(item), "Permissions revoked. Review is required before re-enabling.")}>Review access</DropdownMenu.Item>{/if}
                     <DropdownMenu.Separator />
-                    <DropdownMenu.Item class="danger-item" onclick={() => confirmRemoval(item)}>Uninstall</DropdownMenu.Item>
+                    <DropdownMenu.Item class="bits-menu-item danger-item" onSelect={() => confirmRemoval(item)}>Uninstall</DropdownMenu.Item>
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
