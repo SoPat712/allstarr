@@ -168,6 +168,7 @@ public sealed class HostCompositionTests
         var result = Assert.IsType<OkObjectResult>(controller.GetSchema());
         var schema = Assert.IsType<AdminUiSchemaResponse>(result.Value);
         var provider = Assert.Single(schema.Providers, item => item.Id == "fixture-extension");
+        Assert.Equal("Fixture provider", provider.Description);
         Assert.Contains("metadata", provider.Categories);
     }
 

@@ -112,6 +112,9 @@ public sealed class AdminUiProvider
     [JsonPropertyName("name")]
     public string Name { get; set; } = string.Empty;
 
+    [JsonPropertyName("description")]
+    public string? Description { get; set; }
+
     [JsonPropertyName("icon")]
     public string Icon { get; set; } = string.Empty;
 

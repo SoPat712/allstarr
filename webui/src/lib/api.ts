@@ -93,20 +93,119 @@ export type ProviderSummary = {
   healthyCapabilityCount: number;
   failedCapabilityCount: number;
   lastCheckedAt?: string | null;
+  successRate?: number | null;
+  p95LatencyMilliseconds?: number | null;
+  lastFailureCode?: string | null;
+};
+
+export type ProviderSetting = {
+  key: string;
+  label: string;
+  type: string;
+  sensitive?: boolean;
+  required?: boolean;
+  options?: string[];
+  helpText?: string | null;
+  defaultValueJson?: string | null;
+};
+
+export type ProviderRuntimeCapability = {
+  id: string;
+  configuration?: string;
+  supported?: boolean;
+  health?: string;
+  ready: boolean;
+  canAttempt: boolean;
+  canTest?: boolean;
+  testedAt?: string | null;
+  reasonCode?: string | null;
 };
 
 export type ProviderDefinition = {
   id: string;
   name: string;
+  description?: string | null;
   logoUrl?: string | null;
   categories?: string[];
   status?: string;
-  runtimeCapabilities?: Array<{
-    id: string;
-    ready: boolean;
-    canAttempt: boolean;
+  notes?: string[];
+  accountSettings?: ProviderSetting[];
+  runtimeCapabilities?: ProviderRuntimeCapability[];
+  connectionKind?: string | null;
+  audience?: string | null;
+  implementationOrigin?: string | null;
+  routeId?: string | null;
+  capabilityRoutes?: Array<{
+    routeId?: string;
+    name?: string;
+    origin?: string;
+    capabilities: string[];
   }>;
-  capabilityRoutes?: Array<{ capabilities: string[] }>;
+};
+
+export type UiSchema = {
+  activeBackend: string;
+  providerAccountManagementMode?: string;
+  providers: ProviderDefinition[];
+};
+
+export type ProviderAccount = {
+  id: string;
+  providerId: string;
+  displayName: string;
+  sourceDisplayName?: string | null;
+  scope: "Global" | "User" | "Library";
+  ownerUserId?: string | null;
+  ownerDisplayName?: string | null;
+  libraryScopeId?: string | null;
+  enabled: boolean;
+  revision: number;
+  secret: {
+    configured: boolean;
+    version?: number | null;
+    updatedAt?: string | null;
+    revoked: boolean;
+  };
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ProviderHealth = {
+  provider: string;
+  providerAccountId: string;
+  providerAccountName: string;
+  capability: string;
+  accountScope: string;
+  supported: boolean;
+  enabled: boolean;
+  configuration: string;
+  health: string;
+  ready: boolean;
+  canAttempt: boolean;
+  testedAt?: string | null;
+  reasonCode?: string | null;
+  canTest: boolean;
+};
+
+export type ConnectivityResult = {
+  success?: boolean;
+  healthy?: boolean;
+  health?: string;
+  latencyMs?: number;
+  bars?: number;
+  metric?: string;
+  testedAt?: string;
+  reasonCode?: string | null;
+};
+
+export type CtsMeasurement = {
+  providerAccountId: string;
+  providerId: string;
+  health: string;
+  latencyMs: number;
+  bars: number;
+  testedAt: string;
+  failureCode?: string | null;
 };
 
 export type PlaylistLinkMetrics = {
@@ -333,12 +432,80 @@ export const auth = {
 
 export const home = {
   schema: () =>
-    json<{ activeBackend: string; providers: ProviderDefinition[] }>("/api/admin/ui/schema"),
+    json<UiSchema>("/api/admin/ui/schema"),
   status: () => json<RuntimeStatus>("/api/admin/status"),
   playlists: () => json<PlaylistResponse>("/api/admin/playlists"),
   jobs: () => json<{ jobs: Job[] }>("/api/admin/jobs?limit=100"),
   activity: () => json<ActivityResponse>("/api/admin/ui/activity?limit=8"),
   providers: () => json<{ providers: ProviderSummary[] }>("/api/admin/ui/provider-summaries"),
+};
+
+export const sources = {
+  accounts: () =>
+    json<{ managementMode: string; accounts: ProviderAccount[] }>("/api/admin/provider-accounts"),
+  health: () => json<ProviderHealth[]>("/api/admin/providers/status"),
+  cts: () =>
+    json<{ measurements: CtsMeasurement[] }>("/api/admin/provider-diagnostics/deep-stream/latest"),
+  create: (input: {
+    providerId: string;
+    displayName: string;
+    scope: string;
+    libraryScopeId?: string | null;
+    enabled: boolean;
+    secret: Record<string, unknown>;
+  }) => json<ProviderAccount>("/api/admin/provider-accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  }),
+  authenticateLastFm: (accountId: string, username: string, password: string) =>
+    json<{ success: boolean }>("/api/admin/scrobbling/lastfm/authenticate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accountId, username, password }),
+    }),
+  setEnabled: (account: ProviderAccount, enabled: boolean) =>
+    json<ProviderAccount>(`/api/admin/provider-accounts/${account.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled, expectedRevision: account.revision }),
+    }),
+  replaceSecret: (account: ProviderAccount, secret: Record<string, unknown>) =>
+    json<{ accountId: string }>(`/api/admin/provider-accounts/${account.id}/secret`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ secret }),
+    }),
+  setAudience: (account: ProviderAccount, scope: string, libraryScopeId?: string | null) =>
+    json<ProviderAccount>(`/api/admin/provider-accounts/${account.id}/audience`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope, libraryScopeId, expectedRevision: account.revision }),
+    }),
+  remove: (id: string) =>
+    json<void>(`/api/admin/provider-accounts/${id}`, { method: "DELETE" }),
+  test: (account: ProviderAccount, capability?: string) =>
+    json<ConnectivityResult>(
+      `/api/admin/providers/test/${encodeURIComponent(account.providerId)}${capability ? `/${encodeURIComponent(capability)}` : ""}?accountId=${encodeURIComponent(account.id)}`,
+      { method: "POST" },
+    ),
+  deepStream: (account: ProviderAccount, quality = 0) =>
+    json<ConnectivityResult & {
+      clickToStreamMilliseconds?: number;
+      firstByteMilliseconds?: number;
+      sampleBytes?: number;
+      throughputKbps?: number;
+      cacheState?: string;
+      trackLabel?: string;
+    }>("/api/admin/provider-diagnostics/deep-stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        providerId: account.providerId,
+        providerAccountId: account.id,
+        quality,
+      }),
+    }),
 };
 
 export const eventLog = {

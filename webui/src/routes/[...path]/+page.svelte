@@ -7,6 +7,7 @@
   import HomeView from "$lib/components/HomeView.svelte";
   import MappingView from "$lib/components/MappingView.svelte";
   import PlaylistsView from "$lib/components/PlaylistsView.svelte";
+  import SourcesView from "$lib/components/SourcesView.svelte";
   import { liveUpdates } from "$lib/live-updates.svelte";
 
   const destinations = [
@@ -199,6 +200,8 @@
         <DownloadsView storage="kept" />
       {:else if route === "/activity"}
         <EventLogView />
+      {:else if route === "/sources"}
+        <SourcesView administrator={session.user?.isAdministrator ?? false} />
       {:else}
         <section class="panel empty-state">
           <span class="empty-orbit" aria-hidden="true">✦</span>

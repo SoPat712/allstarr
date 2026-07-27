@@ -74,8 +74,12 @@ public class AdminUiController : ControllerBase
                 {
                     Id = item.Id,
                     Name = item.Name,
+                    Description = item.Description,
                     Icon = item.Icon,
                     LogoUrl = item.LogoUrl,
+                    Status = item.Status,
+                    Categories = item.Categories,
+                    Notes = item.Notes,
                     AccountSettings = item.AccountSettings,
                     ConnectionKind = item.ConnectionKind,
                     Audience = item.Audience,
@@ -867,11 +871,11 @@ public class AdminUiController : ControllerBase
         var runtimeStatuses = _providerStatusManager.GetAllStatuses();
         if (_providerRegistry != null)
         {
-            foreach (var item in _providerRegistry.Providers
-                         .Where(item => item.Origin == ProviderOrigin.Extension))
+            foreach (var item in _providerRegistry.Providers)
             {
                 var categories = item.Capabilities
-                    .Where(capability => capability.HasUsableImplementation)
+                    .Where(capability =>
+                        capability.SupportState != ProviderCapabilitySupportState.Unavailable)
                     .Select(capability => capability.Capability.ToString().ToLowerInvariant())
                     .Distinct(StringComparer.Ordinal)
                     .ToList();
@@ -896,15 +900,18 @@ public class AdminUiController : ControllerBase
                 }).ToList();
                 var route = new AdminUiProviderCapabilityRoute
                 {
-                    RouteId = $"extension:{item.Id}",
-                    Name = $"{item.DisplayName} · Extension SDK {item.SdkVersion}",
-                    Origin = "extension",
+                    RouteId = $"{item.Origin.ToString().ToLowerInvariant()}:{item.Id}",
+                    Name = item.Origin == ProviderOrigin.Extension
+                        ? $"{item.DisplayName} · Extension SDK {item.SdkVersion}"
+                        : item.DisplayName,
+                    Origin = item.Origin.ToString().ToLowerInvariant(),
                     Capabilities = categories
                 };
                 var existing = providers.SingleOrDefault(provider =>
                     provider.Id.Equals(item.Id, StringComparison.Ordinal));
                 if (existing != null)
                 {
+                    existing.Description ??= item.Description;
                     existing.Categories = existing.Categories
                         .Concat(categories)
                         .Distinct(StringComparer.Ordinal)
@@ -914,7 +921,11 @@ public class AdminUiController : ControllerBase
                         .GroupBy(setting => setting.Key, StringComparer.Ordinal)
                         .Select(group => group.First())
                         .ToList();
-                    existing.CapabilityRoutes.Add(route);
+                    if (existing.CapabilityRoutes.All(existingRoute =>
+                            existingRoute.RouteId != route.RouteId))
+                    {
+                        existing.CapabilityRoutes.Add(route);
+                    }
                     continue;
                 }
 
@@ -922,13 +933,20 @@ public class AdminUiController : ControllerBase
                 {
                     Id = item.Id,
                     Name = item.DisplayName,
+                    Description = item.Description,
                     Icon = "extension",
-                    LogoUrl = item.Branding == null ? null : $"/api/admin/extensions/providers/{Uri.EscapeDataString(item.Id)}/icon",
+                    LogoUrl = item.Origin == ProviderOrigin.Extension && item.Branding != null
+                        ? $"/api/admin/extensions/providers/{Uri.EscapeDataString(item.Id)}/icon"
+                        : null,
                     Status = "unknown",
                     Categories = categories,
-                    Notes = [$"Extension SDK {item.SdkVersion}"],
-                    ConnectionKind = "extension",
-                    ImplementationOrigin = "extension",
+                    Notes = item.Origin == ProviderOrigin.Extension
+                        ? [$"Extension SDK {item.SdkVersion}"]
+                        : [],
+                    ConnectionKind = item.Origin == ProviderOrigin.Extension
+                        ? "extension"
+                        : "built_in",
+                    ImplementationOrigin = item.Origin.ToString().ToLowerInvariant(),
                     RouteId = route.RouteId,
                     AccountSettings = accountSettings,
                     CapabilityRoutes = [route]
