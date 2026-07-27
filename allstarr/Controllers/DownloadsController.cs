@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using allstarr.Core.Capabilities;
 using allstarr.Filters;
 using allstarr.Services.Admin;
 using allstarr.Services.Lyrics;
@@ -14,21 +15,24 @@ public class DownloadsController : ControllerBase
 {
     private static readonly string[] AudioExtensions = [".flac", ".mp3", ".m4a", ".aac", ".opus", ".ogg"];
     private static readonly Regex ProviderSuffix = new(
-        @"\s+\[(?<provider>[a-zA-Z0-9_]+)-(?<id>[^\]]+)\]$",
+        @"\s+\[(?<reference>[^\]]+)\]$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly ILogger<DownloadsController> _logger;
     private readonly IConfiguration _configuration;
     private readonly IKeptLyricsSidecarService? _keptLyricsSidecarService;
+    private readonly IProviderRegistry? _providerRegistry;
 
     public DownloadsController(
         ILogger<DownloadsController> logger,
         IConfiguration configuration,
-        IKeptLyricsSidecarService? keptLyricsSidecarService = null)
+        IKeptLyricsSidecarService? keptLyricsSidecarService = null,
+        IProviderRegistry? providerRegistry = null)
     {
         _logger = logger;
         _configuration = configuration;
         _keptLyricsSidecarService = keptLyricsSidecarService;
+        _providerRegistry = providerRegistry;
     }
 
     [HttpGet("downloads")]
@@ -269,7 +273,7 @@ public class DownloadsController : ControllerBase
             ? Directory.GetFiles(root, "*.*", SearchOption.AllDirectories).Where(IsSupportedAudioFile)
             : [];
 
-    private static ManagedDownloadFile Describe(string filePath, StorageRoot root)
+    private ManagedDownloadFile Describe(string filePath, StorageRoot root)
     {
         var info = new FileInfo(filePath);
         var relativePath = Path.GetRelativePath(root.Path, filePath);
@@ -339,14 +343,25 @@ public class DownloadsController : ControllerBase
             durationMilliseconds,
             quality,
             identity.Provider,
-            identity.ExternalId);
+            identity.ExternalId,
+            identity.Provider == null || identity.ExternalId == null
+                ? null
+                : $"/api/admin/downloads/artwork/{Uri.EscapeDataString(
+                    $"ext-{identity.Provider}-song-{identity.ExternalId}")}");
     }
 
-    private static (string? Provider, string? ExternalId) ParseProviderIdentity(string stem)
+    private (string? Provider, string? ExternalId) ParseProviderIdentity(string stem)
     {
         var match = ProviderSuffix.Match(stem);
-        return match.Success
-            ? (match.Groups["provider"].Value.ToLowerInvariant(), match.Groups["id"].Value)
+        if (!match.Success) return (null, null);
+        var reference = match.Groups["reference"].Value;
+        var provider = _providerRegistry?.Providers
+            .Select(item => item.Id)
+            .OrderByDescending(item => item.Length)
+            .FirstOrDefault(item => reference.StartsWith($"{item}-", StringComparison.OrdinalIgnoreCase));
+        var separator = provider?.Length ?? reference.IndexOf('-');
+        return separator > 0 && separator < reference.Length - 1
+            ? (provider ?? reference[..separator].ToLowerInvariant(), reference[(separator + 1)..])
             : (null, null);
     }
 
@@ -499,5 +514,6 @@ public class DownloadsController : ControllerBase
         long? DurationMilliseconds,
         string Quality,
         string? Provider,
-        string? ExternalId);
+        string? ExternalId,
+        string? ArtworkUrl);
 }

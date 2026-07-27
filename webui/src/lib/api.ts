@@ -274,6 +274,36 @@ export type MatchTarget = {
   isrc?: string | null;
 };
 
+export type ManagedDownload = {
+  path: string;
+  storage: string;
+  artist: string;
+  album: string;
+  title: string;
+  fileName: string;
+  size: number;
+  sizeFormatted: string;
+  lastModified: string;
+  codec: string;
+  bitrateKbps?: number | null;
+  sampleRateHz?: number | null;
+  bitDepth?: number | null;
+  channels?: number | null;
+  durationMilliseconds?: number | null;
+  quality: string;
+  provider?: string | null;
+  externalId?: string | null;
+  artworkUrl?: string | null;
+};
+
+export type DownloadsResponse = {
+  storage: string;
+  files: ManagedDownload[];
+  totalSize: number;
+  totalSizeFormatted: string;
+  count: number;
+};
+
 async function json<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
     cache: "no-store",
@@ -318,6 +348,28 @@ export const eventLog = {
     if (params.beforeId) query.set("beforeId", params.beforeId);
     return json<ActivityResponse>(`/api/admin/ui/activity?${query}`);
   },
+};
+
+export const downloads = {
+  list: (storage: "cache" | "kept") =>
+    json<DownloadsResponse>(`/api/admin/downloads?storage=${storage}`),
+  keep: (path: string) =>
+    json<{ success: boolean }>(
+      `/api/admin/downloads/promote?path=${encodeURIComponent(path)}`,
+      { method: "POST" },
+    ),
+  remove: (path: string, storage: "cache" | "kept") =>
+    json<{ success: boolean }>(
+      `/api/admin/downloads?path=${encodeURIComponent(path)}&storage=${storage}`,
+      { method: "DELETE" },
+    ),
+  removeAll: (storage: "cache" | "kept") =>
+    json<{ success: boolean; deletedCount: number }>(
+      `/api/admin/downloads/all?storage=${storage}`,
+      { method: "DELETE" },
+    ),
+  fileUrl: (path: string, storage: "cache" | "kept") =>
+    `/api/admin/downloads/file?path=${encodeURIComponent(path)}&storage=${storage}`,
 };
 
 export const playlistLinks = {

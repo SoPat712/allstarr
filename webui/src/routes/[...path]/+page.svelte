@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { page } from "$app/state";
   import { auth, type Session } from "$lib/api";
+  import DownloadsView from "$lib/components/DownloadsView.svelte";
   import EventLogView from "$lib/components/EventLogView.svelte";
   import HomeView from "$lib/components/HomeView.svelte";
   import MappingView from "$lib/components/MappingView.svelte";
@@ -170,12 +171,13 @@
           {#if route.startsWith("/library/")}
             <nav class="library-tabs" aria-label="Library sections">
               <span
-                class="library-tab-indicator"
-                class:mappings={route === "/library/mappings"}
+                class={`library-tab-indicator ${route.split("/").at(-1)}`}
                 aria-hidden="true"
               ></span>
               <a href="#/library/playlists" aria-current={route === "/library/playlists" ? "page" : undefined}>Playlists</a>
               <a href="#/library/mappings" aria-current={route === "/library/mappings" ? "page" : undefined}>Mappings</a>
+              <a href="#/library/cached" aria-current={route === "/library/cached" ? "page" : undefined}>Cached</a>
+              <a href="#/library/kept" aria-current={route === "/library/kept" ? "page" : undefined}>Kept</a>
             </nav>
           {/if}
         </div>
@@ -191,6 +193,10 @@
         <PlaylistsView initialId={routeQuery.get("playlist") ?? ""} />
       {:else if route === "/library/mappings"}
         <MappingView initialSearch={routeQuery.get("search") ?? ""} />
+      {:else if route === "/library/cached"}
+        <DownloadsView storage="cache" />
+      {:else if route === "/library/kept"}
+        <DownloadsView storage="kept" />
       {:else if route === "/activity"}
         <EventLogView />
       {:else}
