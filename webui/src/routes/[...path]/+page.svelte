@@ -3,12 +3,13 @@
   import { page } from "$app/state";
   import { auth, type Session } from "$lib/api";
   import HomeView from "$lib/components/HomeView.svelte";
+  import MappingView from "$lib/components/MappingView.svelte";
   import PlaylistsView from "$lib/components/PlaylistsView.svelte";
   import { liveUpdates } from "$lib/live-updates.svelte";
 
   const destinations = [
     { href: "#/", label: "Home", icon: "⌂" },
-    { href: "#/library/playlists", label: "Library", icon: "♫" },
+    { href: "#/library/playlists", prefix: "/library/", label: "Library", icon: "♫" },
     { href: "#/sources", label: "Sources", icon: "◎" },
     { href: "#/activity", label: "Activity", icon: "↗" },
     { href: "#/settings", label: "Settings", icon: "⚙" },
@@ -25,7 +26,7 @@
   const route = $derived(`/${page.params.path ?? ""}`);
   const activeDestination = $derived(
     destinations.find((item) =>
-      item.href === "#/" ? route === "/" : route.startsWith(item.href.slice(1)),
+      item.href === "#/" ? route === "/" : route.startsWith(item.prefix ?? item.href.slice(1)),
     ) ?? destinations[0],
   );
   const initials = $derived(
@@ -162,9 +163,19 @@
 
     <main class="workspace">
       <header class="workspace-header">
-        <div>
-          <p class="eyebrow">Workspace</p>
+        <div class="workspace-title">
           <h1>{activeDestination.label}</h1>
+          {#if route.startsWith("/library/")}
+            <nav class="library-tabs" aria-label="Library sections">
+              <span
+                class="library-tab-indicator"
+                class:mappings={route === "/library/mappings"}
+                aria-hidden="true"
+              ></span>
+              <a href="#/library/playlists" aria-current={route === "/library/playlists" ? "page" : undefined}>Playlists</a>
+              <a href="#/library/mappings" aria-current={route === "/library/mappings" ? "page" : undefined}>Mappings</a>
+            </nav>
+          {/if}
         </div>
         <div class="live-state" data-state={liveUpdates.state.status}>
           <span aria-hidden="true"></span>
@@ -176,6 +187,8 @@
         <HomeView administrator={session.user?.isAdministrator ?? false} />
       {:else if route === "/library/playlists"}
         <PlaylistsView />
+      {:else if route === "/library/mappings"}
+        <MappingView />
       {:else}
         <section class="panel empty-state">
           <span class="empty-orbit" aria-hidden="true">✦</span>

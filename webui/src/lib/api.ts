@@ -69,6 +69,14 @@ export type ProviderDefinition = {
   id: string;
   name: string;
   logoUrl?: string | null;
+  categories?: string[];
+  status?: string;
+  runtimeCapabilities?: Array<{
+    id: string;
+    ready: boolean;
+    canAttempt: boolean;
+  }>;
+  capabilityRoutes?: Array<{ capabilities: string[] }>;
 };
 
 export type PlaylistLinkMetrics = {
@@ -141,6 +149,101 @@ export type PlaylistDetails = {
   tracks: PlaylistTrack[];
 };
 
+export type MatchCandidate = {
+  libraryTrackId?: string | null;
+  backendItemId?: string | null;
+  confidence?: number | null;
+  title?: string | null;
+  artist?: string | null;
+  album?: string | null;
+  durationMilliseconds?: number | null;
+  sourceIsrc?: string | null;
+  candidateIsrc?: string | null;
+  artistOverlap?: number | null;
+  albumEvidence?: number | null;
+  durationDeltaMilliseconds?: number | null;
+  providerTrackIds?: Record<string, string> | null;
+  components?: Record<string, number> | null;
+  reasons?: string[] | null;
+  warnings?: string[] | null;
+};
+
+export type MatchReviewItem = {
+  externalSnapshotId: string;
+  providerId: string;
+  providerAccountId?: string | null;
+  libraryScopeId: string;
+  state: string;
+  decisionSource: string;
+  confidence?: number | null;
+  threshold?: number | null;
+  decisionVersion?: number | null;
+  algorithmVersion?: string | null;
+  policyVersion?: string | null;
+  sourceSnapshotVersion?: number | null;
+  libraryIndexRevision?: number | null;
+  canonicalRecordingId?: string | null;
+  libraryTrackId?: string | null;
+  overrideId?: string | null;
+  overrideRevision?: number | null;
+  title?: string | null;
+  artist?: string | null;
+  album?: string | null;
+  artworkUrl?: string | null;
+  sourceArtworkUrl?: string | null;
+  candidateArtworkUrl?: string | null;
+  isrc?: string | null;
+  durationMilliseconds?: number | null;
+  localTrack?: {
+    id: string;
+    backendItemId: string;
+    title: string;
+    artist?: string | null;
+    album?: string | null;
+    durationMilliseconds?: number | null;
+    artworkUrl?: string | null;
+    providerIds?: Record<string, string>;
+  } | null;
+  providerIdentities: Array<{
+    providerId: string;
+    externalId: string;
+    scope: string;
+    verification: string;
+  }>;
+  candidates: MatchCandidate[];
+  reasons: string[];
+  warnings: string[];
+  decidedAt?: string | null;
+  reviewedAt?: string | null;
+};
+
+export type MatchReviewResponse = {
+  matches: MatchReviewItem[];
+  stats: {
+    total: number;
+    matched: number;
+    accepted: number;
+    unresolved: number;
+    review: number;
+    rejected: number;
+    attention: number;
+  };
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
+};
+
+export type MatchTarget = {
+  id: string;
+  backendItemId?: string | null;
+  externalId?: string | null;
+  externalProvider?: string | null;
+  title: string;
+  artist?: string | null;
+  album?: string | null;
+  artworkUrl?: string | null;
+  durationMilliseconds?: number | null;
+  isrc?: string | null;
+};
+
 async function json<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
     cache: "no-store",
@@ -153,6 +256,7 @@ async function json<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T>
     throw new Error(body?.error || `${response.status} ${response.statusText}`);
   }
 
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
@@ -168,7 +272,8 @@ export const auth = {
 };
 
 export const home = {
-  schema: () => json<{ providers: ProviderDefinition[] }>("/api/admin/ui/schema"),
+  schema: () =>
+    json<{ activeBackend: string; providers: ProviderDefinition[] }>("/api/admin/ui/schema"),
   status: () => json<RuntimeStatus>("/api/admin/status"),
   playlists: () => json<PlaylistResponse>("/api/admin/playlists"),
   jobs: () => json<{ jobs: Job[] }>("/api/admin/jobs?limit=100"),
@@ -197,5 +302,57 @@ export const playlistLinks = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ expectedRevision, enabled }),
       },
+    ),
+};
+
+export const matchReview = {
+  list: (params: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    state?: string;
+    libraryScopeId?: string;
+  }) => {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== "") query.set(key, String(value));
+    }
+    return json<MatchReviewResponse>(`/api/admin/track-matches?${query}`);
+  },
+  searchLocal: (query: string, libraryScopeId: string) =>
+    json<{ tracks: MatchTarget[] }>(
+      `/api/admin/track-matches/targets/local?query=${encodeURIComponent(query)}&libraryScopeId=${encodeURIComponent(libraryScopeId)}`,
+    ),
+  searchProviders: (query: string, libraryScopeId: string, provider = "") => {
+    const params = new URLSearchParams({ query, libraryScopeId, limit: "50" });
+    if (provider) params.set("provider", provider);
+    return json<{ tracks: MatchTarget[]; providers: string[] }>(
+      `/api/admin/track-matches/targets/provider?${params}`,
+    );
+  },
+  resolve: (
+    externalSnapshotId: string,
+    target:
+      | { targetType: "local"; libraryTrackId: string; reason: string }
+      | { targetType: "provider"; externalProvider: string; externalId: string; reason: string }
+      | { targetType: "reject"; reason: string },
+  ) =>
+    json<{ success: boolean }>(
+      `/api/admin/track-matches/${encodeURIComponent(externalSnapshotId)}/resolve`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(target),
+      },
+    ),
+  rematch: (externalSnapshotId: string) =>
+    json<{ rematched: boolean; state: string }>(
+      `/api/admin/track-matches/${encodeURIComponent(externalSnapshotId)}/rematch`,
+      { method: "POST" },
+    ),
+  clear: (overrideId: string, expectedRevision: number) =>
+    json<void>(
+      `/api/admin/playlist-links/matches/overrides/${encodeURIComponent(overrideId)}?expectedRevision=${expectedRevision}`,
+      { method: "DELETE" },
     ),
 };

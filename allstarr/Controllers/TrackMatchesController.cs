@@ -4,12 +4,10 @@ using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
 using allstarr.Core.Matching;
+using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Filters;
-using allstarr.Models.Spotify;
-using allstarr.Services;
 using allstarr.Services.Admin;
-using allstarr.Services.Spotify;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -24,7 +22,8 @@ namespace allstarr.Controllers;
 [ServiceFilter(typeof(AdminPortFilter))]
 public sealed class TrackMatchesController(
     ITrackMatchRepository trackMatchCommands,
-    IEnumerable<IConcreteMetadataService> metadataServices) : ControllerBase
+    IProtocolProviderGateway providerGateway,
+    AdminProtocolExecutionContextFactory protocolContexts) : ControllerBase
 {
     public sealed record ResolveTrackMatchRequest(
         string TargetType,
@@ -320,23 +319,48 @@ public sealed class TrackMatchesController(
     [HttpGet("targets/provider")]
     public async Task<IActionResult> SearchProviderTargets(
         [FromQuery] string query,
-        [FromQuery] string provider,
+        [FromQuery] string? provider = null,
+        [FromQuery] string? libraryScopeId = null,
         [FromQuery] int limit = 20,
         CancellationToken cancellationToken = default)
     {
-        if (!TrySession(out _, out var error)) return error!;
+        if (!TrySession(out var session, out var error)) return error!;
         query = query?.Trim() ?? string.Empty;
         provider = provider?.Trim() ?? string.Empty;
         if (query.Length < 2) return BadRequest(new { error = "Enter at least two characters" });
-        if (provider.Length is < 2 or > 128) return BadRequest(new { error = "Select a playback provider" });
+        if (provider.Length > 128) return BadRequest(new { error = "The playback provider is invalid" });
         limit = Math.Clamp(limit, 1, 50);
 
-        var songs = await PerProviderTrackMatcher.SearchPlayableAsync(
-            metadataServices,
-            provider,
-            query,
-            limit,
-            cancellationToken);
+        var playableProviders = providerGateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
+            .Concat(providerGateway.GetProviderOrder(ProviderCapabilityKind.Download))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (provider.Length > 0 &&
+            !playableProviders.Contains(provider, StringComparer.OrdinalIgnoreCase))
+            return BadRequest(new { error = "The selected provider is not an installed playback provider" });
+        if (playableProviders.Length == 0)
+            return Ok(new { tracks = Array.Empty<object>(), providers = playableProviders });
+
+        ProtocolExecutionContext execution;
+        try
+        {
+            execution = await protocolContexts.CreateAsync(
+                session!, libraryScopeId, HttpContext.TraceIdentifier, cancellationToken);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return StatusCode(403, new { error = "The linked backend identity is unavailable" });
+        }
+        var fetchLimit = provider.Length == 0
+            ? limit
+            : Math.Min(200, limit * playableProviders.Length);
+        var songs = (await providerGateway.SearchAsync(execution, query, fetchLimit, 0, 0)).Songs
+            .Where(song => !string.IsNullOrWhiteSpace(song.ExternalProvider) &&
+                           playableProviders.Contains(song.ExternalProvider, StringComparer.OrdinalIgnoreCase) &&
+                           (provider.Length == 0 ||
+                            provider.Equals(song.ExternalProvider, StringComparison.OrdinalIgnoreCase)))
+            .Take(limit)
+            .ToArray();
         return Ok(new
         {
             tracks = songs.Select(song => new
@@ -353,7 +377,8 @@ public sealed class TrackMatchesController(
                     : ExternalArtworkUrl(song.ExternalProvider ?? provider, song.ExternalId!),
                 durationMilliseconds = song.Duration * 1000,
                 song.Isrc
-            })
+            }),
+            providers = playableProviders
         });
     }
 
@@ -436,15 +461,6 @@ public sealed class TrackMatchesController(
 
     private static string Hash(string value) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
-
-    private static TrackMetadata ToTrackMetadata(
-        (string? Title, string? Artist, string? Album, string? ArtworkUrl, string? Isrc) value) => new()
-        {
-            Title = value.Title,
-            Artist = value.Artist,
-            Album = value.Album,
-            ArtworkUrl = value.ArtworkUrl
-        };
 
     private static MatchRow Row(ExternalMetadataSnapshotRecord snapshot, TrackMatchRecord? decision,
         ManualTrackOverrideRecord? manual, ProviderTrackIdentityRecord? sourceIdentity,

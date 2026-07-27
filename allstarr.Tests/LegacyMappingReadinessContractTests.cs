@@ -42,6 +42,19 @@ public sealed class LegacyMappingReadinessContractTests
     }
 
     [Fact]
+    public void InteractiveProviderSearch_UsesTheTypedExtensionAwareGateway()
+    {
+        var controller = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Controllers", "TrackMatchesController.cs"));
+
+        Assert.Contains("IProtocolProviderGateway", controller, StringComparison.Ordinal);
+        Assert.Contains("ProviderCapabilityKind.Streaming", controller, StringComparison.Ordinal);
+        Assert.Contains("ProviderCapabilityKind.Download", controller, StringComparison.Ordinal);
+        Assert.Contains("providerGateway.SearchAsync", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("PerProviderTrackMatcher.SearchPlayableAsync", controller, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PlaylistSources_AreProjectedIntoTheDurableIdentityGraph()
     {
         var orchestration = File.ReadAllText(FindRepositoryFile(

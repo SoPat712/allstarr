@@ -36,7 +36,8 @@ public sealed class PlaylistLinksController(
     IMediaAssetResolver mediaAssets,
     IApplicationCache applicationCache,
     IPlatformClock clock,
-    ProviderPolicyOptions providerPolicy) : ControllerBase
+    ProviderPolicyOptions providerPolicy,
+    AdminProtocolExecutionContextFactory protocolContexts) : ControllerBase
 {
     private const string SubsonicCredentialPurpose = "playlist-backend:subsonic";
 
@@ -798,21 +799,8 @@ public sealed class PlaylistLinksController(
     }
 
     private async Task<ProtocolExecutionContext> CreateExecutionAsync(AdminAuthSession session, string? libraryScopeId, CancellationToken cancellationToken)
-    {
-        var tenantId = session.TenantId!.Value; var userId = session.AllstarrUserId!.Value;
-        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var backendType = session.BackendType.Trim().ToLowerInvariant();
-        var identity = await db.BackendIdentities.AsNoTracking().Where(item => item.TenantId == tenantId && item.UserId == userId && item.BackendType == backendType && item.PrincipalId == session.UserId)
-            .OrderByDescending(item => item.LastSeenAt).FirstOrDefaultAsync(cancellationToken)
-            ?? throw new UnauthorizedAccessException("The linked backend identity is unavailable.");
-        var protocol = backendType == "jellyfin" ? ProtocolKind.Jellyfin : backendType is "subsonic" or "navidrome" or "opensubsonic" ? ProtocolKind.Subsonic : throw new UnauthorizedAccessException("Unsupported backend identity.");
-        var principal = new AllstarrPrincipal(tenantId, userId, protocol.ToString().ToLowerInvariant(), identity.BackendInstanceId,
-            identity.PrincipalId, session.UserName, session.IsAdministrator);
-        return new ProtocolExecutionContext(protocol, identity.BackendInstanceId, identity.PrincipalId, principal,
-            HttpContext.TraceIdentifier.Length <= 100 ? HttpContext.TraceIdentifier : HttpContext.TraceIdentifier[..100],
-            clock.UtcNow.AddMinutes(5), cancellationToken,
-            libraryScopeId: string.IsNullOrWhiteSpace(libraryScopeId) ? null : libraryScopeId.Trim());
-    }
+        => await protocolContexts.CreateAsync(
+            session, libraryScopeId, HttpContext.TraceIdentifier, cancellationToken);
 
     private async Task<PlaylistLinkRecord> LoadScopedLink(AdminAuthSession session, Guid id, CancellationToken cancellationToken)
     {
