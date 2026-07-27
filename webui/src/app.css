@@ -789,7 +789,8 @@
 }
 
 @media (max-width: 760px) {
-  .app-shell {
+  .app-shell,
+  .app-shell.slim {
     grid-template-columns: 1fr;
     padding-bottom: 5rem;
   }

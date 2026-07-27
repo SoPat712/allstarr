@@ -1060,7 +1060,7 @@ test("Sidebar uses an edge expander and deterministic slim breakpoint", async ({
   const shell = page.locator(".app-shell");
   const expander = page.getByRole("button", { name: "Collapse sidebar" });
   await expect(expander).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("link")).toHaveCount(5);
+  await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("link")).toHaveCount(6);
   await expander.click();
   await expect(shell).toHaveClass(/slim/);
   await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
@@ -1069,4 +1069,9 @@ test("Sidebar uses an edge expander and deterministic slim breakpoint", async ({
   await page.setViewportSize({ width: 850, height: 800 });
   await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeHidden();
   await expect.poll(async () => (await page.locator(".sidebar").boundingBox())?.width ?? 0).toBe(80);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("link")).toHaveCount(5);
+  await expect.poll(() => page.evaluate(() =>
+    document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
