@@ -802,6 +802,42 @@ public class ConfigController : ControllerBase
         }
     }
 
+    [HttpPost("config/migration/reset")]
+    public async Task<IActionResult> ResetEnvMigration(
+        [FromBody] ResetLegacyEnvMigrationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var adminCheck = RequireAdministratorForSensitiveOperation("env migration reset");
+        if (adminCheck != null)
+        {
+            return adminCheck;
+        }
+
+        try
+        {
+            var service = HttpContext.RequestServices.GetRequiredService<LegacyEnvMigrationService>();
+            await service.ResetPreviewAsync(
+                request.PreviewToken ?? string.Empty,
+                CreateMigrationActor(),
+                cancellationToken);
+            return NoContent();
+        }
+        catch (LegacyEnvMigrationException ex) when (ex.Code == "preview_owner_mismatch")
+        {
+            return StatusCode(
+                StatusCodes.Status403Forbidden,
+                new { error = ex.Message, code = ex.Code });
+        }
+        catch (LegacyEnvMigrationException ex) when (ex.Code == "preview_applied")
+        {
+            return Conflict(new { error = ex.Message, code = ex.Code });
+        }
+        catch (LegacyEnvMigrationException ex)
+        {
+            return BadRequest(new { error = ex.Message, code = ex.Code });
+        }
+    }
+
     private AdminAuthSession? GetAdminSession() =>
         HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value)
             ? value as AdminAuthSession
@@ -822,6 +858,11 @@ public class ConfigController : ControllerBase
         public string? PreviewToken { get; set; }
         public string? Revision { get; set; }
         public bool Confirmed { get; set; }
+    }
+
+    public sealed class ResetLegacyEnvMigrationRequest
+    {
+        public string? PreviewToken { get; set; }
     }
 
     private string? GetAuthenticatedUserId()

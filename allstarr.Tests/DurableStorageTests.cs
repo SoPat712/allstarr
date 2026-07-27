@@ -1,3 +1,4 @@
+using allstarr.Core.Configuration;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -142,6 +143,56 @@ public sealed class DurableStorageTests : IAsyncLifetime
         Assert.True(await ColumnExists(context, "durable_jobs", "RequestFingerprint"));
         Assert.True(await ColumnExists(context, "outbox_messages", "MaxAttempts"));
         Assert.True(await ColumnExists(context, "backups", "RestoreStatus"));
+    }
+
+    [Fact]
+    public async Task OnboardingMigration_BackfillsExistingBackendIdentity()
+    {
+        await using var context = await Factory().CreateDbContextAsync();
+        var migrator = context.GetService<IMigrator>();
+        await migrator.MigrateAsync("20260726205440_VerifyPlaylistMaterialization");
+        var tenantId = Guid.CreateVersion7();
+        var userId = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        context.Tenants.Add(new TenantRecord
+        {
+            Id = tenantId,
+            Slug = "onboarding-upgrade",
+            Name = "Onboarding upgrade",
+            CreatedAt = now
+        });
+        context.Users.Add(new PlatformUserRecord
+        {
+            Id = userId,
+            TenantId = tenantId,
+            DisplayName = "Existing user",
+            Status = PlatformUserStatus.Active,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        context.BackendIdentities.Add(new BackendIdentityRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            UserId = userId,
+            BackendType = "jellyfin",
+            BackendInstanceId = "primary",
+            PrincipalId = "existing-user",
+            CreatedAt = now,
+            LastSeenAt = now
+        });
+        await context.SaveChangesAsync();
+
+        await migrator.MigrateAsync();
+
+        var state = await context.OnboardingStates.SingleAsync();
+        Assert.Equal(OnboardingStateService.SchemaVersion, state.SchemaVersion);
+        Assert.Equal("schema-backfill", state.CompletionSource);
+        Assert.NotNull(state.CompletedAt);
+        Assert.Contains(
+            OnboardingStateService.BackendIdentityStep,
+            state.CompletedStepsJson,
+            StringComparison.Ordinal);
     }
 
     [Fact]

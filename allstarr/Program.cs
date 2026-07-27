@@ -59,6 +59,7 @@ builder.Services.AddDurableStorage(
 builder.Services.AddDurableRuntimeSettings();
 builder.Services.AddEncryptedSecretStore(builder.Configuration);
 builder.Services.AddSingleton<allstarr.Core.Configuration.LegacyEnvMigrationService>();
+builder.Services.AddSingleton<allstarr.Core.Configuration.OnboardingStateService>();
 if (isStorageOperatorCommand)
 {
     Environment.ExitCode = await StorageOperatorCommand.RunAsync(

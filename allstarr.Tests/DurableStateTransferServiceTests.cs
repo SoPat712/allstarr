@@ -762,6 +762,19 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             UpdatedAt = now,
             Revision = 2
         });
+        context.OnboardingStates.Add(new OnboardingStateRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            UserId = userId,
+            SchemaVersion = OnboardingStateService.SchemaVersion,
+            CompletedStepsJson = """["backend-identity"]""",
+            CompletionSource = "transfer-fixture",
+            CompletedAt = now,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Revision = 1
+        });
         var migrationAuditId = Guid.CreateVersion7();
         const string migrationSource = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         var migrationResult = new LegacyEnvMigrationApplyResult(
@@ -815,6 +828,9 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         var runtimeSetting = await target.TenantRuntimeSettings.SingleAsync();
         Assert.Equal("Cache:LyricsDays", runtimeSetting.Key);
         Assert.Equal(2, runtimeSetting.Revision);
+        var onboarding = await target.OnboardingStates.SingleAsync();
+        Assert.Equal(OnboardingStateService.SchemaVersion, onboarding.SchemaVersion);
+        Assert.NotNull(onboarding.CompletedAt);
         var legacyImport = await target.LegacyEnvImports.SingleAsync();
         Assert.Equal("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", legacyImport.SourceSha256);
         Assert.Equal((await target.AuditEvents.SingleAsync()).Id, legacyImport.AuditEventId);
@@ -1849,6 +1865,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
     [Theory]
     [InlineData("canonical-recordings.json")]
     [InlineData("provider-track-identities.json")]
+    [InlineData("onboarding-states.json")]
     public async Task LoadArtifact_RejectsMissingTrackIdentityArchiveEntries(string entryName)
     {
         var artifact = await _service.ExportAsync(

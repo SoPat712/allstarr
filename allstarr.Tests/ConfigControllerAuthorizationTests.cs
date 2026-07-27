@@ -212,6 +212,11 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             Revision = "revision",
             Confirmed = true
         }));
+        AssertForbidden(await controller.ResetEnvMigration(
+            new ConfigController.ResetLegacyEnvMigrationRequest
+            {
+                PreviewToken = "token"
+            }));
     }
 
     [Fact]

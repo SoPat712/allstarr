@@ -1,5 +1,4 @@
 using allstarr.Core.Configuration;
-using allstarr.Core.Settings;
 using allstarr.Filters;
 using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Mvc;
@@ -10,84 +9,91 @@ namespace allstarr.Controllers;
 [Route("api/admin/onboarding")]
 [ServiceFilter(typeof(AdminPortFilter))]
 public sealed class OnboardingController(
-    IDurableRuntimeSettings settings,
+    OnboardingStateService onboarding,
     LegacyEnvMigrationService legacyMigration) : ControllerBase
 {
-    private const string CompletionKey = "WebUi:SetupCompleted";
-
     [HttpGet("status")]
     public async Task<IActionResult> GetStatus(CancellationToken cancellationToken = default)
     {
-        if (!TryGetAdminTenant(out _, out var tenantId, out var error))
+        if (!TryGetAdminScope(out _, out var tenantId, out var userId, out var error))
         {
             return error!;
         }
 
-        var completion = await settings.GetAsync(tenantId, CompletionKey, cancellationToken);
-        var migration = await legacyMigration.GetStatusAsync(tenantId, cancellationToken);
-        return Ok(CreateResponse(completion, migration, alreadyCompleted: false));
+        return Ok(await CreateResponseAsync(
+            await onboarding.GetAsync(tenantId, userId, cancellationToken),
+            tenantId,
+            alreadyCompleted: false,
+            cancellationToken));
     }
 
     [HttpPost("complete")]
     public async Task<IActionResult> Complete(CancellationToken cancellationToken = default)
     {
-        if (!TryGetAdminTenant(out var session, out var tenantId, out var error))
+        if (!TryGetAdminScope(out var session, out var tenantId, out var userId, out var error))
         {
             return error!;
         }
 
-        var current = await settings.GetAsync(tenantId, CompletionKey, cancellationToken);
-        var alreadyCompleted = current.Value is true;
-        if (!alreadyCompleted)
+        var current = await onboarding.GetAsync(tenantId, userId, cancellationToken);
+        try
         {
-            try
-            {
-                var result = await settings.ApplyBatchAsync(
-                    tenantId,
-                    [new RuntimeSettingWrite(
-                        CompletionKey,
-                        "true",
-                        current.Origin == RuntimeSettingOrigin.Durable ? current.Revision : null)],
-                    "webui-onboarding",
-                    session.AllstarrUserId,
-                    cancellationToken);
-                current = result.Settings.Single();
-            }
-            catch (RuntimeSettingConflictException)
-            {
-                // A second tab may have completed setup at the same time. Treat that race as
-                // an idempotent success only when the authoritative value is now complete.
-                current = await settings.GetAsync(tenantId, CompletionKey, cancellationToken);
-                if (current.Value is not true)
-                {
-                    return Conflict(new
-                    {
-                        error = "Onboarding state changed. Refresh and try again.",
-                        code = "onboarding_state_conflict"
-                    });
-                }
-
-                alreadyCompleted = true;
-            }
+            var completed = await onboarding.CompleteAsync(
+                tenantId,
+                userId,
+                $"onboarding:{session.SessionId}",
+                cancellationToken);
+            return Ok(await CreateResponseAsync(
+                completed,
+                tenantId,
+                current.Completed,
+                cancellationToken));
         }
-
-        var migration = await legacyMigration.GetStatusAsync(tenantId, cancellationToken);
-        return Ok(CreateResponse(current, migration, alreadyCompleted));
+        catch (OnboardingStateException exception)
+        {
+            return Conflict(new { error = exception.Message, code = exception.Code });
+        }
     }
 
-    private static object CreateResponse(
-        EffectiveRuntimeSetting completion,
-        LegacyEnvMigrationStatus migration,
-        bool alreadyCompleted)
+    [HttpPost("reopen")]
+    public async Task<IActionResult> Reopen(CancellationToken cancellationToken = default)
     {
-        var completed = completion.Value is true;
+        if (!TryGetAdminScope(out var session, out var tenantId, out var userId, out var error))
+        {
+            return error!;
+        }
+
+        var state = await onboarding.ReopenAsync(
+            tenantId,
+            userId,
+            $"onboarding:{session.SessionId}",
+            cancellationToken);
+        return Ok(await CreateResponseAsync(
+            state,
+            tenantId,
+            alreadyCompleted: false,
+            cancellationToken));
+    }
+
+    private async Task<object> CreateResponseAsync(
+        OnboardingStateSnapshot state,
+        Guid tenantId,
+        bool alreadyCompleted,
+        CancellationToken cancellationToken)
+    {
+        var migration = await legacyMigration.GetStatusAsync(tenantId, cancellationToken);
         return new
         {
-            completed,
-            completedAt = completed && completion.Origin == RuntimeSettingOrigin.Durable
-                ? completion.UpdatedAt
-                : null,
-            completion.Revision,
+            completed = state.Completed,
+            setupOpen = state.SetupOpen,
+            shouldRedirectToSetup = state.ShouldRedirectToSetup,
+            schemaVersion = state.SchemaVersion,
+            completedSteps = state.CompletedSteps,
+            completionSource = state.CompletionSource,
+            completedAt = state.CompletedAt,
+            reopenedAt = state.ReopenedAt,
+            revision = state.Revision,
+            recoveryNotices = state.RecoveryNotices,
             alreadyCompleted,
             migration = new
             {
@@ -99,13 +105,15 @@ public sealed class OnboardingController(
         };
     }
 
-    private bool TryGetAdminTenant(
+    private bool TryGetAdminScope(
         out AdminAuthSession session,
         out Guid tenantId,
+        out Guid userId,
         out IActionResult? error)
     {
         session = null!;
         tenantId = Guid.Empty;
+        userId = Guid.Empty;
         error = null;
         if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
             value is not AdminAuthSession current)
@@ -116,22 +124,26 @@ public sealed class OnboardingController(
 
         if (!current.IsAdministrator)
         {
-            error = StatusCode(StatusCodes.Status403Forbidden, new { error = "Administrator access required" });
+            error = StatusCode(
+                StatusCodes.Status403Forbidden,
+                new { error = "Administrator access required" });
             return false;
         }
 
-        if (current.TenantId is not { } linkedTenantId)
+        if (current.TenantId is not { } linkedTenantId ||
+            current.AllstarrUserId is not { } linkedUserId)
         {
             error = Conflict(new
             {
-                error = "The administrator session is not linked to an Allstarr tenant.",
-                code = "tenant_required"
+                error = "The administrator session is not linked to an Allstarr tenant and user.",
+                code = "user_required"
             });
             return false;
         }
 
         session = current;
         tenantId = linkedTenantId;
+        userId = linkedUserId;
         return true;
     }
 }

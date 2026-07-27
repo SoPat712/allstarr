@@ -14,6 +14,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
     public DbSet<TenantRecord> Tenants => Set<TenantRecord>();
     public DbSet<PlatformUserRecord> Users => Set<PlatformUserRecord>();
     public DbSet<BackendIdentityRecord> BackendIdentities => Set<BackendIdentityRecord>();
+    public DbSet<OnboardingStateRecord> OnboardingStates => Set<OnboardingStateRecord>();
     public DbSet<AdminAuthSessionRecord> AdminAuthSessions => Set<AdminAuthSessionRecord>();
     public DbSet<ProviderAccountRecord> ProviderAccounts => Set<ProviderAccountRecord>();
     public DbSet<SecretReferenceRecord> SecretReferences => Set<SecretReferenceRecord>();
@@ -75,6 +76,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureTenant(modelBuilder);
+        ConfigureOnboarding(modelBuilder);
         ConfigureAdminAuthSessions(modelBuilder);
         ConfigureProviderAccounts(modelBuilder);
         ConfigureSecrets(modelBuilder);
@@ -147,6 +149,25 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<PlatformUserRecord>().WithMany().HasForeignKey(item => item.UserId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+    }
+
+    private static void ConfigureOnboarding(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<OnboardingStateRecord>(entity =>
+        {
+            entity.ToTable("onboarding_states");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Id).ValueGeneratedNever();
+            entity.Property(item => item.SchemaVersion).HasMaxLength(100).IsRequired();
+            entity.Property(item => item.CompletedStepsJson).IsRequired();
+            entity.Property(item => item.CompletionSource).HasMaxLength(100).IsRequired();
+            entity.Property(item => item.Revision).IsConcurrencyToken();
+            entity.HasIndex(item => new { item.TenantId, item.UserId }).IsUnique();
+            entity.HasOne<PlatformUserRecord>().WithMany()
+                .HasForeignKey(item => new { item.TenantId, item.UserId })
+                .HasPrincipalKey(item => new { item.TenantId, item.Id })
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 

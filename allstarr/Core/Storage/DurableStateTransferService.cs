@@ -26,7 +26,7 @@ public sealed record DurableStateTransferArtifact(
 
 public sealed class DurableStateTransferService
 {
-    private const int CurrentFormatVersion = 1;
+    private const int CurrentFormatVersion = 2;
     private const long MaximumManifestBytes = 64 * 1024;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -42,6 +42,7 @@ public sealed class DurableStateTransferService
         "tenant-runtime-settings.json",
         "users.json",
         "backend-identities.json",
+        "onboarding-states.json",
         "secret-references.json",
         "secret-versions.json",
         "provider-accounts.json",
@@ -162,6 +163,7 @@ public sealed class DurableStateTransferService
             await WriteEntryAsync(archive, "tenant-runtime-settings.json", await context.TenantRuntimeSettings.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "users.json", await context.Users.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "backend-identities.json", await context.BackendIdentities.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
+            await WriteEntryAsync(archive, "onboarding-states.json", await context.OnboardingStates.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "secret-references.json", await context.SecretReferences.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "secret-versions.json", await context.SecretVersions.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "provider-accounts.json", await context.ProviderAccounts.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
@@ -301,6 +303,7 @@ public sealed class DurableStateTransferService
             await context.TenantRuntimeSettings.AnyAsync(cancellationToken) ||
             await context.Users.AnyAsync(cancellationToken) ||
             await context.BackendIdentities.AnyAsync(cancellationToken) ||
+            await context.OnboardingStates.AnyAsync(cancellationToken) ||
             await context.ProviderAccounts.AnyAsync(cancellationToken) ||
             await context.CanonicalRecordings.AnyAsync(cancellationToken) ||
             await context.ProviderTrackIdentities.AnyAsync(cancellationToken) ||
@@ -357,6 +360,7 @@ public sealed class DurableStateTransferService
         var tenants = await ReadEntryAsync<TenantRecord>(archive, "tenants.json", cancellationToken);
         var runtimeSettings = await ReadEntryAsync<TenantRuntimeSettingRecord>(archive, "tenant-runtime-settings.json", cancellationToken);
         var users = await ReadEntryAsync<PlatformUserRecord>(archive, "users.json", cancellationToken);
+        var onboardingStates = await ReadEntryAsync<OnboardingStateRecord>(archive, "onboarding-states.json", cancellationToken);
         var providerAccounts = await ReadEntryAsync<ProviderAccountRecord>(archive, "provider-accounts.json", cancellationToken);
         var secretReferences = await ReadEntryAsync<SecretReferenceRecord>(archive, "secret-references.json", cancellationToken);
         var canonicalRecordings = await ReadEntryAsync<CanonicalRecordingRecord>(archive, "canonical-recordings.json", cancellationToken);
@@ -394,6 +398,7 @@ public sealed class DurableStateTransferService
             canonicalRecordings,
             providerTrackIdentities);
         ValidateRuntimeSettingsArchive(tenants, users, runtimeSettings);
+        ValidateOnboardingArchive(tenants, users, onboardingStates);
         ValidateProviderRouteArchive(
             tenants,
             users,
@@ -412,6 +417,7 @@ public sealed class DurableStateTransferService
         await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
         context.Tenants.AddRange(tenants);
         context.Users.AddRange(users);
+        context.OnboardingStates.AddRange(onboardingStates);
         context.TenantRuntimeSettings.AddRange(runtimeSettings);
         context.SecretReferences.AddRange(secretReferences);
         context.SecretVersions.AddRange(await ReadEntryAsync<SecretVersionRecord>(archive, "secret-versions.json", cancellationToken));
@@ -465,6 +471,50 @@ public sealed class DurableStateTransferService
         context.PlaylistTargetMemberships.AddRange(await ReadEntryAsync<PlaylistTargetMembershipRecord>(archive, "playlist-target-memberships.json", cancellationToken));
         await context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    private static void ValidateOnboardingArchive(
+        IReadOnlyCollection<TenantRecord> tenants,
+        IReadOnlyCollection<PlatformUserRecord> users,
+        IReadOnlyCollection<OnboardingStateRecord> states)
+    {
+        var tenantIds = tenants.Select(item => item.Id).ToHashSet();
+        var usersById = users.ToDictionary(item => item.Id);
+        var ids = new HashSet<Guid>();
+        var scopes = new HashSet<(Guid TenantId, Guid UserId)>();
+        foreach (var state in states)
+        {
+            string[]? steps = null;
+            try
+            {
+                steps = JsonSerializer.Deserialize<string[]>(
+                    state.CompletedStepsJson,
+                    JsonOptions);
+            }
+            catch (JsonException)
+            {
+            }
+
+            if (state.Id == Guid.Empty ||
+                !ids.Add(state.Id) ||
+                !tenantIds.Contains(state.TenantId) ||
+                !usersById.TryGetValue(state.UserId, out var user) ||
+                user.TenantId != state.TenantId ||
+                !scopes.Add((state.TenantId, state.UserId)) ||
+                state.SchemaVersion != OnboardingStateService.SchemaVersion ||
+                !IsRequiredText(state.CompletionSource, 100) ||
+                steps == null ||
+                steps.Length != steps.Distinct(StringComparer.Ordinal).Count() ||
+                steps.Any(step => step is not OnboardingStateService.BackendIdentityStep and
+                    not OnboardingStateService.LegacyEnvironmentStep) ||
+                state.CreatedAt == default ||
+                state.UpdatedAt < state.CreatedAt ||
+                state.Revision < 1)
+            {
+                throw new BackupVerificationException(
+                    "State transfer contains malformed or cross-tenant onboarding state.");
+            }
+        }
     }
 
     private static void ValidateRuntimeSettingsArchive(

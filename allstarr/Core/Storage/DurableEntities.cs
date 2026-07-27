@@ -94,6 +94,21 @@ public sealed class BackendIdentityRecord
     public DateTimeOffset LastSeenAt { get; set; }
 }
 
+public sealed class OnboardingStateRecord
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid UserId { get; set; }
+    public string SchemaVersion { get; set; } = string.Empty;
+    public string CompletedStepsJson { get; set; } = "[]";
+    public string CompletionSource { get; set; } = string.Empty;
+    public DateTimeOffset? CompletedAt { get; set; }
+    public DateTimeOffset? ReopenedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+    public long Revision { get; set; }
+}
+
 public sealed class AdminAuthSessionRecord
 {
     public string Id { get; set; } = string.Empty;

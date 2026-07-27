@@ -398,6 +398,12 @@ public sealed class LegacyEnvMigrationService
         await state.Gate.WaitAsync(cancellationToken);
         try
         {
+            if (state.Reset)
+            {
+                throw new LegacyEnvMigrationException(
+                    "preview_invalid",
+                    "The migration preview was reset. Create a new preview.");
+            }
             if (state.Result != null)
             {
                 return state.Result with { AlreadyApplied = true };
@@ -684,6 +690,17 @@ public sealed class LegacyEnvMigrationService
                 }
 
                 var appliedAt = _clock.UtcNow;
+                OnboardingStateRecord? onboardingState = null;
+                if (state.ActorUserId.HasValue)
+                {
+                    onboardingState = await OnboardingStateService.MarkLegacyImportAsync(
+                        db,
+                        state.TenantId.Value,
+                        state.ActorUserId.Value,
+                        identityPlan.Ready,
+                        appliedAt,
+                        cancellationToken);
+                }
                 var audit = new AuditEventRecord
                 {
                     Id = Guid.CreateVersion7(),
@@ -763,7 +780,14 @@ public sealed class LegacyEnvMigrationService
                         {
                             recordId = item.Id,
                             item.JobType
-                        })
+                        }),
+                        onboardingState = onboardingState == null
+                            ? null
+                            : new
+                            {
+                                recordId = onboardingState.Id,
+                                onboardingState.SchemaVersion
+                            }
                     }, JsonOptions),
                     AppliedAt = appliedAt
                 });
@@ -798,6 +822,49 @@ public sealed class LegacyEnvMigrationService
             {
                 ApplyGate.Release();
             }
+        }
+        finally
+        {
+            state.Gate.Release();
+        }
+    }
+
+    public async Task ResetPreviewAsync(
+        string previewToken,
+        LegacyEnvMigrationActor actor,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateActor(actor);
+        PurgeExpired();
+        if (string.IsNullOrWhiteSpace(previewToken) || previewToken.Length > 200 ||
+            !_previews.TryGetValue(HashToken(previewToken), out var state))
+        {
+            throw new LegacyEnvMigrationException(
+                "preview_invalid",
+                "The migration preview is invalid or expired.");
+        }
+        if (!FixedEquals(state.SessionId, actor.SessionId) ||
+            state.TenantId != actor.TenantId ||
+            state.ActorUserId != actor.ActorUserId)
+        {
+            throw new LegacyEnvMigrationException(
+                "preview_owner_mismatch",
+                "The preview belongs to a different administrator session.");
+        }
+
+        await state.Gate.WaitAsync(cancellationToken);
+        try
+        {
+            if (state.Result != null)
+            {
+                throw new LegacyEnvMigrationException(
+                    "preview_applied",
+                    "An applied migration receipt cannot be reset.");
+            }
+
+            state.Reset = true;
+            _previews.TryRemove(HashToken(previewToken), out _);
+            state.ClearPlaintext();
         }
         finally
         {
@@ -1306,6 +1373,7 @@ public sealed class LegacyEnvMigrationService
         public IReadOnlyList<LegacyProviderAccountPreview> ProviderAccounts { get; } = providerAccounts;
         public SemaphoreSlim Gate { get; } = new(1, 1);
         public LegacyEnvMigrationApplyResult? Result { get; set; }
+        public bool Reset { get; set; }
 
         public void ClearPlaintext() =>
             Document = new LegacyEnvDocument(Document.SourceSha256, [], []);

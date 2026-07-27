@@ -171,6 +171,14 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         Assert.Single(provenance.RootElement.GetProperty("backendIdentities").EnumerateArray());
         Assert.Single(provenance.RootElement.GetProperty("playlistLinks").EnumerateArray());
         Assert.Single(provenance.RootElement.GetProperty("schedules").EnumerateArray());
+        Assert.Equal(
+            (await db.OnboardingStates.SingleAsync()).Id,
+            provenance.RootElement.GetProperty("onboardingState")
+                .GetProperty("recordId").GetGuid());
+        var onboarding = await db.OnboardingStates.SingleAsync();
+        Assert.NotNull(onboarding.CompletedAt);
+        Assert.Contains(OnboardingStateService.BackendIdentityStep, onboarding.CompletedStepsJson);
+        Assert.Contains(OnboardingStateService.LegacyEnvironmentStep, onboarding.CompletedStepsJson);
 
         var revised = await service.PreviewAsync(Source("""
             BACKEND_TYPE=Jellyfin
@@ -377,6 +385,42 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         var revision = await Assert.ThrowsAsync<LegacyEnvMigrationException>(() =>
             service.ApplyAsync(preview.PreviewToken, new string('0', 64), true, Actor()));
         Assert.Equal("revision_mismatch", revision.Code);
+    }
+
+    [Fact]
+    public async Task Reset_DiscardsOnlyOwnedUnappliedPreview()
+    {
+        var service = CreateService();
+        var preview = await service.PreviewAsync(
+            Source("CACHE_LYRICS_DAYS=30"),
+            Actor());
+
+        var ownerError = await Assert.ThrowsAsync<LegacyEnvMigrationException>(() =>
+            service.ResetPreviewAsync(
+                preview.PreviewToken,
+                Actor() with { SessionId = "other-session" }));
+        Assert.Equal("preview_owner_mismatch", ownerError.Code);
+
+        await service.ResetPreviewAsync(preview.PreviewToken, Actor());
+        var reset = await Assert.ThrowsAsync<LegacyEnvMigrationException>(() =>
+            service.ApplyAsync(
+                preview.PreviewToken,
+                preview.Revision,
+                true,
+                Actor()));
+        Assert.Equal("preview_invalid", reset.Code);
+
+        var appliedPreview = await service.PreviewAsync(
+            Source("CACHE_LYRICS_DAYS=31"),
+            Actor());
+        await service.ApplyAsync(
+            appliedPreview.PreviewToken,
+            appliedPreview.Revision,
+            true,
+            Actor());
+        var applied = await Assert.ThrowsAsync<LegacyEnvMigrationException>(() =>
+            service.ResetPreviewAsync(appliedPreview.PreviewToken, Actor()));
+        Assert.Equal("preview_applied", applied.Code);
     }
 
     [Fact]

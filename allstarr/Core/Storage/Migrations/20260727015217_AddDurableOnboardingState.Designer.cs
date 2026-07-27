@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using allstarr.Core.Storage;
 
@@ -10,9 +11,11 @@ using allstarr.Core.Storage;
 namespace allstarr.Core.Storage.Migrations
 {
     [DbContext(typeof(AllstarrDbContext))]
-    partial class AllstarrDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260727015217_AddDurableOnboardingState")]
+    partial class AddDurableOnboardingState
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.9");
