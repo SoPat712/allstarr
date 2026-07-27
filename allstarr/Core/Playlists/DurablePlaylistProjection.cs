@@ -321,7 +321,7 @@ public sealed class DurablePlaylistProjectionReader(
             local?.DurationMilliseconds.HasValue == true
                 ? local.DurationRetrievedAt ?? local.IndexedAt
                 : metadata.DurationMilliseconds.HasValue ? external.RetrievedAt : null,
-            classification.State,
+            classification.ReviewState,
             backendItemId,
             routeKind,
             routeKind == "local" ? local!.Protocol : primaryRoute?.ProviderId,

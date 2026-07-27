@@ -590,14 +590,16 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         Assert.Equal(360_000, projection.DurationMilliseconds);
         Assert.Equal(["local", "external", "unmatched"],
             projection.Entries.Select(item => item.RouteKind));
+        Assert.Equal(TrackMatchState.Accepted, projection.Entries[1].MatchState);
         Assert.Equal("qobuz", projection.Entries[1].RouteProviderId);
         Assert.Equal(["qobuz", "deezer"],
             projection.Entries[1].ProviderRoutes.Select(item => item.ProviderId));
         var virtualPlaylist = await new PlaylistVirtualizationService(
-                _factory, _trackMatches, gateway.Object)
+                _factory, new DurablePlaylistProjectionReader(_factory, gateway.Object))
             .ReadAsync(Context(), PlaylistVirtualizationService.CreateProtocolId(_link));
+        Assert.Equal(projection.PlayableCount, virtualPlaylist!.Tracks.Count);
         Assert.Equal("ext-qobuz-song-qobuz-external",
-            virtualPlaylist!.Tracks.Single(item => item.SourcePosition == 1).BackendItemId);
+            virtualPlaylist.Tracks.Single(item => item.SourcePosition == 1).BackendItemId);
     }
 
     [Fact]

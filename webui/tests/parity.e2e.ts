@@ -247,6 +247,7 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
         artworkUrl: "/missing-playlist-art",
         retrievedAt: "2026-01-01", completedAt: "2026-01-01", trackCount: 2,
         localCount: 0, externalCount: 1, unresolvedCount: 1, durationMs: 180_000,
+        matchedCount: 0, reviewCount: 1, rejectedCount: 0, playableCount: 1,
         routeCoverage: [{ providerId: "lumen-audio", count: 1 }],
         unknownDurationCount: 0, tracks: [{
           position: 1, externalSnapshotId: "snapshot", title: "Test song",

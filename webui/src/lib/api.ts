@@ -377,6 +377,10 @@ export type PlaylistDetails = {
   localCount: number;
   externalCount: number;
   unresolvedCount: number;
+  matchedCount: number;
+  reviewCount: number;
+  rejectedCount: number;
+  playableCount: number;
   routeCoverage: Array<{ providerId: string; count: number }>;
   durationMs?: number | null;
   unknownDurationCount: number;

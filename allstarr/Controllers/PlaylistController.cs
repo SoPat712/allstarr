@@ -63,6 +63,7 @@ public class PlaylistController : ControllerBase
             var external = durable?.ExternalCount ?? 0;
             var missing = durable?.MissingCount ?? 0;
             var playable = durable?.PlayableCount ?? 0;
+            var matched = durable?.MatchedCount ?? 0;
             var playlistInfo = new Dictionary<string, object?>
             {
                 ["name"] = config.Name,
@@ -104,7 +105,7 @@ public class PlaylistController : ControllerBase
                     : $"{age.TotalHours:F1}h";
             }
 
-            EnrichPlaylistSummary(playlistInfo, config.SyncSchedule, total, playable);
+            EnrichPlaylistSummary(playlistInfo, config.SyncSchedule, total, matched);
             playlists.Add(playlistInfo);
         }
 
@@ -343,7 +344,7 @@ public class PlaylistController : ControllerBase
                 searchQuery = local ? null : $"{track.Title} {track.Artists.FirstOrDefault()}"
             };
         }).ToArray();
-        var matched = playlist.PlayableCount;
+        var matched = playlist.MatchedCount;
         return Ok(new
         {
             name = playlist.Name,
@@ -352,11 +353,13 @@ public class PlaylistController : ControllerBase
             artworkSource = playlist.ArtworkReferenceKey == null ? "target" : "playlist",
             sourceProvider = playlist.SourceProviderId,
             targetBackend = playlist.TargetProtocol,
-            totalPlayable = matched,
+            totalPlayable = playlist.PlayableCount,
             localTracks = playlist.LocalCount,
             externalTracks = playlist.ExternalCount,
             matchedTracks = matched,
             unmatchedTracks = playlist.MissingCount,
+            reviewTracks = playlist.ReviewCount,
+            rejectedTracks = playlist.RejectedCount,
             durationMs = playlist.DurationMilliseconds,
             unknownDurationTracks = playlist.UnknownDurationCount,
             syncSchedule,

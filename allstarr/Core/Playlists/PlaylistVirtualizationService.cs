@@ -1,5 +1,3 @@
-using System.Text.Json;
-using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
@@ -44,8 +42,7 @@ public interface IPlaylistVirtualizationService
 /// </summary>
 public sealed class PlaylistVirtualizationService(
     IDbContextFactory<AllstarrDbContext> contextFactory,
-    ITrackMatchRepository trackMatches,
-    IProtocolProviderGateway? providerGateway = null) : IPlaylistVirtualizationService
+    DurablePlaylistProjectionReader projections) : IPlaylistVirtualizationService
 {
     public const string IdPrefix = "allstarr-vpl-";
 
@@ -83,162 +80,48 @@ public sealed class PlaylistVirtualizationService(
             !requestedLibrary.Equals(link.LibraryScopeId, StringComparison.Ordinal))
             return null;
 
+        var projection = await projections.ReadByLinkIdAsync(
+            actor.TenantId, link.OwnerUserId, link.Id, cancellationToken);
+        if (projection == null) return null;
         var snapshot = await db.PlaylistSourceSnapshots.AsNoTracking()
+            .SingleAsync(item => item.Id == projection.SnapshotId, cancellationToken);
+        var backendIds = projection.Entries
+            .Where(item => item.RouteKind == "local" && item.BackendItemId != null)
+            .Select(item => item.BackendItemId!)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var libraryTracks = await db.LibraryTracks.AsNoTracking()
             .Where(item => item.TenantId == actor.TenantId &&
-                           item.PlaylistLinkId == link.Id &&
-                           item.PublishedAt.HasValue)
-            .OrderByDescending(item => item.SnapshotVersion)
-            .ThenByDescending(item => item.RetrievedAt)
-            .FirstOrDefaultAsync(cancellationToken);
-        if (snapshot == null) return null;
-
-        var entries = await db.PlaylistSourceEntries.AsNoTracking()
-            .Where(item => item.TenantId == actor.TenantId && item.PlaylistSourceSnapshotId == snapshot.Id)
-            .OrderBy(item => item.SourcePosition)
-            .ToListAsync(cancellationToken);
-        var externalIds = entries.Select(item => item.ExternalMetadataSnapshotId).Distinct().ToArray();
-        var resolution = await trackMatches.GetResolutionDataAsync(
-            new TrackMatchActor(
-                actor.TenantId,
-                actor.EffectiveUserId ?? link.OwnerUserId,
-                actor.Kind == ProviderActorKind.Administrator),
-            link.OwnerUserId,
-            link.LibraryScopeId,
-            externalIds,
-            cancellationToken);
-        var externalSnapshots = resolution.Snapshots.ToDictionary(item => item.Id);
-        var providerIdentities = resolution.ProviderIdentities.ToDictionary(item => item.Id);
-        var providerOrder = providerGateway?.GetProviderOrder(ProviderCapabilityKind.Streaming) ??
-                            resolution.ProviderIdentities.Select(item => item.ProviderId)
-                                .Distinct(StringComparer.Ordinal)
-                                .Order(StringComparer.Ordinal)
-                                .ToArray();
-        var overrides = resolution.ActiveOverrides.ToDictionary(item => item.ExternalSnapshotId);
-        var publishedMatchIds = entries
-            .Where(item => item.PublishedTrackMatchId.HasValue)
-            .Select(item => item.PublishedTrackMatchId!.Value)
-            .Distinct()
-            .ToArray();
-        var publishedMatches = await db.TrackMatches.AsNoTracking()
-            .Where(item => publishedMatchIds.Contains(item.Id))
-            .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var potentialLibraryIds = publishedMatches.Values
-            .Where(item => item.LibraryTrackId.HasValue)
-            .Select(item => item.LibraryTrackId!.Value)
-            .Concat(overrides.Values
-                .Where(item => item.LibraryTrackId.HasValue)
-                .Select(item => item.LibraryTrackId!.Value))
-            .Distinct()
-            .ToArray();
-        var libraryTracks = await db.LibraryTracks.AsNoTracking().Where(item =>
-                potentialLibraryIds.Contains(item.Id) && item.TenantId == actor.TenantId &&
-                item.OwnerUserId == link.OwnerUserId && item.LibraryScopeId == link.LibraryScopeId &&
-                item.BackendInstanceId == link.TargetBackendInstanceId &&
-                (context.Protocol == ProtocolKind.Jellyfin
-                    ? item.Protocol == "jellyfin"
-                    : item.Protocol == "subsonic" || item.Protocol == "opensubsonic" || item.Protocol == "navidrome"))
-            .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var playableLibraryTrackIds = libraryTracks.Keys.ToHashSet();
-
-        var selected = entries.Select(entry =>
-        {
-            overrides.TryGetValue(entry.ExternalMetadataSnapshotId, out var manual);
-            TrackMatchRecord? decision = null;
-            if (entry.PublishedTrackMatchId is { } matchId)
-                publishedMatches.TryGetValue(matchId, out decision);
-            ProviderTrackIdentityRecord? sourceIdentity = null;
-            if (externalSnapshots.TryGetValue(entry.ExternalMetadataSnapshotId, out var external) &&
-                external.ProviderTrackIdentityId is { } sourceIdentityId)
-                providerIdentities.TryGetValue(sourceIdentityId, out sourceIdentity);
-            var classification = TrackClassifier.Classify(
-                manual,
-                decision,
-                sourceIdentity,
-                resolution.ProviderIdentities,
-                providerOrder,
-                playableLibraryTrackIds);
-            ProviderTrackIdentityRecord? providerIdentity = null;
-            if (classification.RouteKind == TrackRouteKind.External)
-            {
-                var primary = classification.PrimaryProviderRoute;
-                if (primary != null)
-                    providerIdentity = resolution.ProviderIdentities.First(item =>
-                        item.ProviderId == primary.ProviderId &&
-                        item.ExternalId == primary.ExternalId);
-            }
-            return (Entry: entry, classification.State, TrackId: classification.LibraryTrackId, ProviderIdentity: providerIdentity);
-        }).Where(item => item.TrackId.HasValue || item.ProviderIdentity != null).ToList();
-
-        var tracks = selected
-            .Select(item =>
-            {
-                if (item.TrackId.HasValue && libraryTracks.TryGetValue(item.TrackId.Value, out var track))
-                    return new VirtualPlaylistTrack(item.Entry.SourcePosition, track.BackendItemId,
-                        track.Title, track.Artist, track.Album, track.AlbumArtist,
-                        track.DurationMilliseconds, track.CoverArtReference, item.State);
-
-                if (item.ProviderIdentity != null &&
-                    externalSnapshots.TryGetValue(item.Entry.ExternalMetadataSnapshotId, out var external))
-                    return ToProviderTrack(item.Entry.SourcePosition, item.ProviderIdentity, external, item.State);
-
-                return null;
-            })
+                           item.OwnerUserId == link.OwnerUserId &&
+                           item.LibraryScopeId == link.LibraryScopeId &&
+                           item.BackendInstanceId == link.TargetBackendInstanceId &&
+                           backendIds.Contains(item.BackendItemId))
+            .ToDictionaryAsync(item => item.BackendItemId, StringComparer.Ordinal, cancellationToken);
+        var tracks = projection.Entries
+            .Select(item => ToVirtualTrack(item, libraryTracks))
             .Where(item => item != null)
             .Select(item => item!)
             .ToList();
-        return new VirtualPlaylistReadModel(protocolId, link.Id, snapshot.Id, snapshot.Name,
-            snapshot.Description, snapshot.ArtworkReferenceKey, link.SourceProviderId,
+        return new VirtualPlaylistReadModel(protocolId, link.Id, projection.SnapshotId, projection.Name,
+            projection.Description, projection.ArtworkReferenceKey, link.SourceProviderId,
             snapshot.ProviderRevision, link.Mode, tracks);
     }
 
-    private static VirtualPlaylistTrack? ToProviderTrack(
-        int position,
-        ProviderTrackIdentityRecord identity,
-        ExternalMetadataSnapshotRecord snapshot,
-        TrackMatchState state)
+    private static VirtualPlaylistTrack? ToVirtualTrack(
+        DurablePlaylistEntryProjection entry,
+        IReadOnlyDictionary<string, LibraryTrackRecord> libraryTracks)
     {
-        try
-        {
-            using var document = JsonDocument.Parse(snapshot.PayloadJson);
-            var root = document.RootElement;
-            var title = Text(root, "Title") ?? Text(root, "title");
-            var artists = Array(root, "Artists");
-            if (artists.Count == 0) artists = Array(root, "artists");
-            var artist = artists.FirstOrDefault() ?? Text(root, "Artist") ?? Text(root, "artist");
-            if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(artist)) return null;
-            var durationMilliseconds = Number(root, "durationMilliseconds") ??
-                                       Number(root, "DurationMilliseconds") ??
-                                       (Number(root, "durationSeconds") ?? Number(root, "DurationSeconds")) * 1000d;
-            return new VirtualPlaylistTrack(
-                position,
-                $"ext-{identity.ProviderId}-song-{identity.ExternalId}",
-                title,
-                artist,
-                Text(root, "Album") ?? Text(root, "album"),
-                Text(root, "AlbumArtist") ?? Text(root, "albumArtist"),
-                durationMilliseconds.HasValue ? checked((long)Math.Round(durationMilliseconds.Value)) : null,
-                null,
-                state);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
+        if (entry.BackendItemId != null &&
+            libraryTracks.TryGetValue(entry.BackendItemId, out var local))
+            return new(entry.Position, local.BackendItemId, local.Title, local.Artist,
+                local.Album, local.AlbumArtist, local.DurationMilliseconds,
+                local.CoverArtReference, entry.MatchState ?? TrackMatchState.Unresolved);
+        var artist = entry.Artists.FirstOrDefault();
+        return entry.RouteKind == "external" && entry.RouteProviderId != null &&
+               !string.IsNullOrWhiteSpace(artist)
+            ? new(entry.Position, $"ext-{entry.RouteProviderId}-song-{entry.ExternalId}",
+                entry.Title, artist, entry.Album, null, entry.DurationMilliseconds, null,
+                entry.MatchState ?? TrackMatchState.Unresolved)
+            : null;
     }
-
-    private static string? Text(JsonElement root, string name) =>
-        root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : null;
-
-    private static IReadOnlyList<string> Array(JsonElement root, string name) =>
-        root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Array
-            ? value.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String)
-                .Select(item => item.GetString()).Where(item => !string.IsNullOrWhiteSpace(item)).Select(item => item!).ToArray()
-            : [];
-
-    private static double? Number(JsonElement root, string name) =>
-        root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number)
-            ? number
-            : null;
 }

@@ -1044,6 +1044,10 @@ public sealed class PlaylistLinksController(
         localCount = value.LocalCount,
         externalCount = value.ExternalCount,
         unresolvedCount = value.MissingCount,
+        matchedCount = value.MatchedCount,
+        reviewCount = value.ReviewCount,
+        rejectedCount = value.RejectedCount,
+        playableCount = value.PlayableCount,
         routeCoverage = value.RouteCounts.Select(item => new
         {
             providerId = item.Key,

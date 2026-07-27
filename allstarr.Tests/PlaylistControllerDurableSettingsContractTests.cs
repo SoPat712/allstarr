@@ -25,6 +25,8 @@ public sealed class PlaylistControllerDurableSettingsContractTests
         Assert.DoesNotContain("? \"track_fallback\"", Source, StringComparison.Ordinal);
         Assert.Contains("[\"matchedTracks\"]", Source, StringComparison.Ordinal);
         Assert.Contains("[\"unmatchedTracks\"]", Source, StringComparison.Ordinal);
+        Assert.Contains("durable?.MatchedCount", Source, StringComparison.Ordinal);
+        Assert.Contains("totalPlayable = playlist.PlayableCount", Source, StringComparison.Ordinal);
         Assert.Contains("[\"matchPercent\"]", Source, StringComparison.Ordinal);
         Assert.Contains("[\"syncStatus\"]", Source, StringComparison.Ordinal);
         Assert.Contains("[\"providerBreakdown\"]", Source, StringComparison.Ordinal);
@@ -33,7 +35,6 @@ public sealed class PlaylistControllerDurableSettingsContractTests
         Assert.Contains("TrackArtworkUrl(track.BackendItemId!)", Source, StringComparison.Ordinal);
         Assert.DoesNotContain("/Images/Primary", Source, StringComparison.Ordinal);
         Assert.DoesNotContain("MatchMaterializedItems(sourceTracks, materializedItems)", Source, StringComparison.Ordinal);
-        Assert.Contains("currentSummaryShape", Source, StringComparison.Ordinal);
         Assert.Contains("PlaylistSummarySchemaVersion", Source, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = PlaylistSummarySchemaVersion", Source, StringComparison.Ordinal);
         Assert.Contains("GetPlaylistInventoryAsync(configuredPlaylists)", Source, StringComparison.Ordinal);

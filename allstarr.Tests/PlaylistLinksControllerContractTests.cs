@@ -73,9 +73,13 @@ public sealed class PlaylistLinksControllerContractTests
     {
         var source = File.ReadAllText(FindRepositoryFile(
             "allstarr", "Controllers", "PlaylistLinksController.cs"));
+        var playback = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Core", "Playlists", "PlaylistVirtualizationService.cs"));
 
         Assert.Contains("projections.ReadByLinkIdsAsync", source, StringComparison.Ordinal);
         Assert.Contains("projections.ReadByLinkIdAsync", source, StringComparison.Ordinal);
+        Assert.Contains("projections.ReadByLinkIdAsync", playback, StringComparison.Ordinal);
+        Assert.DoesNotContain("TrackClassifier.Classify", playback, StringComparison.Ordinal);
         Assert.DoesNotContain("BuildMetrics(", source, StringComparison.Ordinal);
     }
 
