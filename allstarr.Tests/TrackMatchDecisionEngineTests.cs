@@ -269,6 +269,31 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         Assert.Equal(1, Assert.Single(decision.Candidates).Components!["title"]);
     }
 
+    [Fact]
+    public void Exact_title_primary_artist_and_duration_accept_single_album_variants()
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            Title = "rockstar",
+            Artist = "Post Malone, 21 Savage",
+            Album = "rockstar",
+            DurationMilliseconds = 218_320
+        };
+        var candidate = Candidate(scope) with
+        {
+            Title = "rockstar",
+            Artist = "Post Malone",
+            Album = "beerbongs & bentleys",
+            DurationMilliseconds = 218_146
+        };
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source, [candidate]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(candidate.LibraryTrackId, decision.SelectedLibraryTrackId);
+    }
+
     [Theory]
     [InlineData("A Song (Live)", "A Song")]
     [InlineData("A Song", "A Song (Acoustic)")]

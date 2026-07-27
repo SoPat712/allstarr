@@ -318,6 +318,8 @@ public sealed class TrackMatchDecisionEngine
                          (artist * 0.30) +
                          (Math.Max(album, albumArtist) * 0.12) +
                          (duration * 0.16);
+        if (title >= 0.98 && artist >= 0.88 && duration >= 0.9)
+            confidence = Math.Max(confidence, 0.9);
         if (!FuzzyMatcher.SemanticVersionTags(source.Title)
                 .SetEquals(FuzzyMatcher.SemanticVersionTags(candidate.Title)))
         {

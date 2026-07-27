@@ -105,6 +105,7 @@ public class FuzzyMatcherTests
     }
 
     [Theory]
+    [InlineData("Kesha", "Ke$ha")]
     [InlineData("PILLOWTALK", "PiLlOwT4lK")]
     [InlineData("PILLOWTALK", "P1ll0wtalk")]
     [InlineData("Heebiejeebies - Bonus", "Heebiejeebies")]
@@ -115,7 +116,7 @@ public class FuzzyMatcherTests
     [InlineData("Song Title [Bonus Track]", "Song Title")]
     [InlineData("[Bonus Track] Song Title", "Song Title")]
     [InlineData("Song Title (Album Version)", "Song Title")]
-    public void CalculateSimilarityAggressive_StripsTrailingReleaseDecorators(string source, string candidate)
+    public void CalculateSimilarityAggressive_NormalizesSafeDecoratorsAndStylization(string source, string candidate)
     {
         Assert.Equal(100, FuzzyMatcher.CalculateSimilarityAggressive(source, candidate));
     }

@@ -227,7 +227,7 @@ public static partial class FuzzyMatcher
         var normalized = text.ToLowerInvariant().Trim();
 
         normalized = RemoveDiacritics(normalized);
-        normalized = normalized.Replace('-', ' ').Replace('_', ' ');
+        normalized = normalized.Replace('$', 's').Replace('-', ' ').Replace('_', ' ');
 
         normalized = PunctuationRegex().Replace(normalized, "");
         // Collapse internal whitespace sequences to a single space, then trim edge whitespace
