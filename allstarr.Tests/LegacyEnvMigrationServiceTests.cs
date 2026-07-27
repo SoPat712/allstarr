@@ -6,6 +6,8 @@ using allstarr.Core.Operations;
 using allstarr.Core.Secrets;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
+using allstarr.Models.Settings;
+using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 
@@ -198,6 +200,28 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         Assert.Single(await db.PlaylistLinks.ToListAsync());
         Assert.Single(await db.JobSchedules.ToListAsync());
         Assert.Equal(2, await db.LegacyEnvImports.CountAsync());
+    }
+
+    [Fact]
+    public async Task Imported_backend_cannot_override_the_deployment_backend()
+    {
+        var service = CreateService(backend: BackendType.Jellyfin);
+        var preview = await service.PreviewAsync(Source("""
+            BACKEND_TYPE=Subsonic
+            ALLSTARR_BACKEND_INSTANCE_ID=primary
+            JELLYFIN_USER_ID=jellyfin-user-id
+            """), Actor());
+
+        var backend = Assert.Single(preview.Items, item => item.Key == "BACKEND_TYPE");
+        Assert.Equal("quarantine_deployment_backend", backend.Action);
+        Assert.Equal(1, preview.BackendIdentityCount);
+
+        await service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor());
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var identity = Assert.Single(await db.BackendIdentities.ToListAsync());
+        Assert.Equal("jellyfin", identity.BackendType);
+        Assert.Equal("jellyfin-user-id", identity.PrincipalId);
     }
 
     [Fact]
@@ -654,7 +678,9 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         await Assert.ThrowsAsync<DbUpdateException>(() => crossed.SaveChangesAsync());
     }
 
-    private LegacyEnvMigrationService CreateService(int maxSecretBytes = 65536)
+    private LegacyEnvMigrationService CreateService(
+        int maxSecretBytes = 65536,
+        BackendType backend = BackendType.Jellyfin)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -670,7 +696,18 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
             new FileSecretKeyRingProvider(options),
             options,
             clock);
-        return new LegacyEnvMigrationService(_factory, settings, secrets, clock);
+        return new LegacyEnvMigrationService(
+            _factory,
+            settings,
+            secrets,
+            clock,
+            new BackendSelectionAuthority(
+                backend,
+                backend.ToString(),
+                "test-deployment",
+                true,
+                false,
+                null));
     }
 
     private EncryptedSecretStore CreateSecretStore(int maxSecretBytes = 65536)

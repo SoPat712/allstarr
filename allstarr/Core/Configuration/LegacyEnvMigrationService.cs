@@ -9,6 +9,8 @@ using allstarr.Core.Jobs;
 using allstarr.Core.Secrets;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
+using allstarr.Models.Settings;
+using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Configuration;
@@ -101,6 +103,7 @@ public sealed class LegacyEnvMigrationService
     private readonly DurableRuntimeSettingsService _settings;
     private readonly EncryptedSecretStore _secrets;
     private readonly IPlatformClock _clock;
+    private readonly BackendSelectionAuthority _backendSelection;
     private readonly ConcurrentDictionary<string, PreviewState> _previews = new(StringComparer.Ordinal);
     private static readonly SemaphoreSlim ApplyGate = new(1, 1);
 
@@ -108,8 +111,20 @@ public sealed class LegacyEnvMigrationService
         IDbContextFactory<AllstarrDbContext> factory,
         DurableRuntimeSettingsService settings,
         EncryptedSecretStore secrets,
-        IPlatformClock clock) =>
-        (_factory, _settings, _secrets, _clock) = (factory, settings, secrets, clock);
+        IPlatformClock clock,
+        BackendSelectionAuthority? backendSelection = null) =>
+        (_factory, _settings, _secrets, _clock, _backendSelection) = (
+            factory,
+            settings,
+            secrets,
+            clock,
+            backendSelection ?? new(
+                BackendType.Jellyfin,
+                BackendType.Jellyfin.ToString(),
+                "test-default",
+                false,
+                false,
+                null));
 
     public async Task<LegacyEnvMigrationStatus> GetStatusAsync(
         Guid? tenantId,
@@ -196,7 +211,8 @@ public sealed class LegacyEnvMigrationService
         }
 
         var accountPreviews = BuildProviderPreviews(document, existingProviders, conflicts);
-        var identityPlan = BuildBackendIdentityPlan(document, actor, existingBackendIdentities);
+        var identityPlan = BuildBackendIdentityPlan(
+            document, actor, existingBackendIdentities, _backendSelection.Type);
         document = document with
         {
             Playlists = PlanPlaylists(
@@ -482,7 +498,8 @@ public sealed class LegacyEnvMigrationService
                             item.UserId == state.ActorUserId.Value)
                         .ToListAsync(cancellationToken)
                     : [];
-                var identityPlan = BuildBackendIdentityPlan(state.Document, actor, existingIdentities);
+                var identityPlan = BuildBackendIdentityPlan(
+                    state.Document, actor, existingIdentities, _backendSelection.Type);
                 var createdIdentities = new List<BackendIdentityRecord>();
                 if (identityPlan.Create)
                 {
@@ -1009,7 +1026,8 @@ public sealed class LegacyEnvMigrationService
     private static LegacyBackendIdentityPlan BuildBackendIdentityPlan(
         LegacyEnvDocument document,
         LegacyEnvMigrationActor actor,
-        IReadOnlyList<BackendIdentityRecord> existing)
+        IReadOnlyList<BackendIdentityRecord> existing,
+        BackendType deploymentBackend)
     {
         string? Value(params string[] keys) => document.Entries
             .Where(item => keys.Contains(item.Key, StringComparer.OrdinalIgnoreCase))
@@ -1017,19 +1035,17 @@ public sealed class LegacyEnvMigrationService
             .Select(item => item.Value.Trim())
             .FirstOrDefault(item => item.Length > 0);
 
-        var backendType = Value("BACKEND_TYPE", "Backend__Type")?.ToLowerInvariant();
+        var backendType = deploymentBackend.ToString().ToLowerInvariant();
         var instanceId = Value("ALLSTARR_BACKEND_INSTANCE_ID") ?? "primary";
-        if (backendType == null && existing.Count == 1)
+        if (existing.Count == 1 &&
+            existing[0].BackendType.Equals(backendType, StringComparison.OrdinalIgnoreCase))
         {
-            backendType = existing[0].BackendType;
             instanceId = existing[0].BackendInstanceId;
         }
 
-        var matching = backendType == null
-            ? null
-            : existing.SingleOrDefault(item =>
-                item.BackendType.Equals(backendType, StringComparison.OrdinalIgnoreCase) &&
-                item.BackendInstanceId.Equals(instanceId, StringComparison.Ordinal));
+        var matching = existing.SingleOrDefault(item =>
+            item.BackendType.Equals(backendType, StringComparison.OrdinalIgnoreCase) &&
+            item.BackendInstanceId.Equals(instanceId, StringComparison.Ordinal));
         var principalId = matching?.PrincipalId ??
                           (backendType == "jellyfin" ? Value("JELLYFIN_USER_ID") : null);
         var create = matching == null && actor.TenantId.HasValue && actor.ActorUserId.HasValue &&

@@ -1,8 +1,11 @@
 using allstarr.Services.Common;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 
 namespace allstarr.Tests;
 
+[Collection(nameof(EnvironmentVariableCollection))]
 public sealed class RuntimeEnvConfigurationTests : IDisposable
 {
     private readonly string _envFilePath = Path.Combine(
@@ -111,6 +114,44 @@ public sealed class RuntimeEnvConfigurationTests : IDisposable
         Assert.DoesNotContain("AppleDownload:BaseUrl", overrides);
     }
 
+    [Fact]
+    public void ResolveBackendSelection_reports_process_authority_and_dotenv_conflict()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"allstarr-backend-{Guid.NewGuid():N}");
+        var contentRoot = Path.Combine(root, "app");
+        Directory.CreateDirectory(contentRoot);
+        File.WriteAllText(Path.Combine(root, ".env"), "BACKEND_TYPE=Subsonic\n");
+        var priorNested = Environment.GetEnvironmentVariable("Backend__Type");
+        var priorFlat = Environment.GetEnvironmentVariable("BACKEND_TYPE");
+        try
+        {
+            Environment.SetEnvironmentVariable("Backend__Type", "Jellyfin");
+            Environment.SetEnvironmentVariable("BACKEND_TYPE", null);
+            var configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Backend:Type"] = "Jellyfin"
+                })
+                .Build();
+
+            var selection = RuntimeEnvConfiguration.ResolveBackendSelection(
+                configuration,
+                new HostEnvironment(contentRoot));
+
+            Assert.Equal("Jellyfin", selection.EffectiveValue);
+            Assert.Equal("process-environment", selection.Source);
+            Assert.True(selection.IsExplicitDeploymentValue);
+            Assert.True(selection.HasConflictingDotEnvValue);
+            Assert.Equal("Subsonic", selection.ConflictingDotEnvValue);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("Backend__Type", priorNested);
+            Environment.SetEnvironmentVariable("BACKEND_TYPE", priorFlat);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     public void Dispose()
     {
         if (File.Exists(_envFilePath))
@@ -118,4 +159,16 @@ public sealed class RuntimeEnvConfigurationTests : IDisposable
             File.Delete(_envFilePath);
         }
     }
+
+    private sealed class HostEnvironment(string contentRoot) : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = Environments.Development;
+        public string ApplicationName { get; set; } = "allstarr.Tests";
+        public string ContentRootPath { get; set; } = contentRoot;
+        public IFileProvider ContentRootFileProvider { get; set; } =
+            new PhysicalFileProvider(contentRoot);
+    }
 }
+
+[CollectionDefinition(nameof(EnvironmentVariableCollection), DisableParallelization = true)]
+public sealed class EnvironmentVariableCollection;
