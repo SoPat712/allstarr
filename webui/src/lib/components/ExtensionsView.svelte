@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { AlertDialog, Dialog } from "bits-ui";
+  import { AlertDialog, Dialog, DropdownMenu } from "bits-ui";
   import {
     extensions,
     type ExtensionLog,
@@ -39,7 +39,8 @@
   let confirmOpen = $state(false);
 
   const installed = $derived(currentPackages(packages));
-  const available = $derived(availablePackages(store, installed)
+  const catalog = $derived(availablePackages(store, installed));
+  const available = $derived(catalog
     .filter((item) => `${item.displayName} ${item.description ?? ""}`.toLowerCase().includes(search.toLowerCase())));
   const extensionTabs = $derived(tabs.map((id) => ({
     id,
@@ -64,6 +65,11 @@
       logoUrl: item.iconUrl,
       categories: "extensionId" in item ? item.capabilities : item.types,
     };
+  }
+
+  function updateFor(item: ExtensionPackage) {
+    return catalog.find((entry) =>
+      entry.id.toLowerCase() === item.extensionId.toLowerCase());
   }
 
   async function refresh() {
@@ -250,17 +256,28 @@
     {#if tab === "installed"}
       <div class="extension-list">
         {#each installed as item}
+          {@const update = updateFor(item)}
           <article class="panel extension-row">
             <ProviderMark id={item.extensionId} definition={definition(item)} />
             <div class="extension-copy"><span><strong>{item.displayName}</strong><small>v{item.version}{item.author ? ` · ${item.author}` : ""}</small></span><p>{item.description || "No description supplied."}</p><div>{#each item.capabilities ?? [] as capability}<span class="chip">{humanize(capability)}</span>{/each}</div></div>
             <span class={`status-pill ${item.active ? "healthy" : item.state === "failed" ? "degraded" : "suggested"}`}>{humanize(item.state)}</span>
             <div class="extension-actions">
+              {#if update}<button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => void stage(update)}>Update</button>{/if}
               {#if item.permissionReviewRequired}<button class="button-primary" type="button" onclick={() => void openReview(item)}>Review permissions</button>
               {:else if ["staged", "disabled"].includes(item.state.toLowerCase())}<button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => confirmActivation(item)}>Enable</button>
-              {:else if item.active}<button type="button" disabled={Boolean(action)} onclick={() => void run(item.id, () => extensions.disable(item), "Extension disabled.")}>Disable</button>{/if}
-              {#if item.active && item.previousPackageId}<button type="button" disabled={Boolean(action)} onclick={() => void run(item.id, () => extensions.rollback(item), "Previous extension version restored.")}>Rollback</button>{/if}
-              {#if ["active", "disabled"].includes(item.state.toLowerCase())}<button type="button" disabled={Boolean(action)} onclick={() => void run(item.id, () => extensions.revokePermissions(item), "Permissions revoked. Review is required before re-enabling.")}>Review access</button>{/if}
-              <button class="danger-text" type="button" onclick={() => confirmRemoval(item)}>Uninstall</button>
+              {/if}
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger class="button-secondary">Manage extension</DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
+                    {#if item.active}<DropdownMenu.Item disabled={Boolean(action)} onclick={() => void run(item.id, () => extensions.disable(item), "Extension disabled.")}>Disable</DropdownMenu.Item>{/if}
+                    {#if item.active && item.previousPackageId}<DropdownMenu.Item disabled={Boolean(action)} onclick={() => void run(item.id, () => extensions.rollback(item), "Previous extension version restored.")}>Rollback</DropdownMenu.Item>{/if}
+                    {#if ["active", "disabled"].includes(item.state.toLowerCase())}<DropdownMenu.Item disabled={Boolean(action)} onclick={() => void run(item.id, () => extensions.revokePermissions(item), "Permissions revoked. Review is required before re-enabling.")}>Review access</DropdownMenu.Item>{/if}
+                    <DropdownMenu.Separator />
+                    <DropdownMenu.Item class="danger-item" onclick={() => confirmRemoval(item)}>Uninstall</DropdownMenu.Item>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
             </div>
           </article>
         {:else}

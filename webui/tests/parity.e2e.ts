@@ -482,6 +482,40 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
   await expect.poll(() => activationRequests).toBe(1);
 });
 
+test("extension updates stay beside the shared management menu", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+  await page.route("**/api/admin/extensions/packages", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify([{
+      id: "old", extensionId: "lumen-audio", displayName: "Lumen Audio",
+      version: "1.0.0", lifecycle: "active", state: "active", active: true,
+      installed: true, permissionReviewRequired: false, capabilities: ["metadata"],
+      previousPackageId: "previous", stagedAt: "2026-01-01", revision: 1,
+    }]),
+  }));
+  await page.route("**/api/admin/extensions/store", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      items: [{
+        id: "lumen-audio", displayName: "Lumen Audio", version: "2.0.0",
+        downloadUrl: "https://example.test/lumen.zip", sha256: "a".repeat(64),
+        registryId: null, types: ["metadata", "streaming"],
+      }],
+      errors: [],
+    }),
+  }));
+
+  await page.goto("#/settings/extensions");
+  const actions = page.locator(".extension-actions");
+  await expect(actions.getByRole("button", { name: "Update" })).toBeInViewport();
+  await actions.getByRole("button", { name: "Manage extension" }).click();
+  await expect(page.getByRole("menuitem", { name: "Disable" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Rollback" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Review access" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Uninstall" })).toBeVisible();
+});
+
 test("Add playlist prioritizes local and configured Sources on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
