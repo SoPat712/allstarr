@@ -306,7 +306,10 @@
             <header>
               <div class="source-identity">
                 <ProviderMark id={account.providerId} definition={definition} />
-                <span><strong>{account.sourceDisplayName || account.displayName}</strong><small>{definition?.name ?? account.providerId} connection</small></span>
+                <span>
+                  <strong>{account.sourceDisplayName || account.displayName}</strong>
+                  <small>{definition?.name ?? account.providerId} connection · Connected by {account.creatorDisplayName || account.ownerDisplayName || "unknown user"}</small>
+                </span>
               </div>
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger class="icon-button" aria-label={`Actions for ${account.displayName}`}>•••</DropdownMenu.Trigger>

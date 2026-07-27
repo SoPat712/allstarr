@@ -818,6 +818,7 @@ test("Sources keep primary actions visible and report scoped degradation", async
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
   await page.goto("#/sources");
+  await expect(page.getByText("Lumen Audio connection · Connected by Tester")).toBeVisible();
   await expect(page.getByRole("button", { name: "Audience Only Tester" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Configure" })).toBeVisible();
   await page.getByRole("button", { name: "Actions for Lumen account" }).click();
