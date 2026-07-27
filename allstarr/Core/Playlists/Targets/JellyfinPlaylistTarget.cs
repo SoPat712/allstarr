@@ -241,18 +241,12 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
             var afterMembership = await ReadAsync(context, current.BackendPlaylistId, cancellationToken);
             if (!afterMembership.IsSuccess)
                 return ConvertFailure<BackendPlaylistWriteReceipt, BackendPlaylistSnapshot>(afterMembership, current.BackendPlaylistId);
-            var working = afterMembership.Value!.Members.ToList();
-            for (var index = 0; index < desired.Count; index++)
+            foreach (var movePlan in PlanMoves(afterMembership.Value!.Members, desired))
             {
-                var oldIndex = working.FindIndex(member => member.BackendItemId == desired[index]);
-                if (oldIndex == index) continue;
-                var member = working[oldIndex];
                 var move = await SendAsync(context, HttpMethod.Post,
-                    $"Playlists/{Escape(current.BackendPlaylistId)}/Items/{Escape(member.EntryId ?? member.BackendItemId)}/Move/{index}",
+                    $"Playlists/{Escape(current.BackendPlaylistId)}/Items/{Escape(movePlan.EntryId)}/Move/{movePlan.TargetIndex}",
                     JsonContent.Create(new { }), cancellationToken);
                 if (!move.IsSuccess) return ConvertFailure<BackendPlaylistWriteReceipt>(move, current.BackendPlaylistId);
-                working.RemoveAt(oldIndex);
-                working.Insert(index, member);
             }
 
             var metadata = await WriteMetadataAsync(context, current.BackendPlaylistId, request.Metadata, cancellationToken);
@@ -346,6 +340,53 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
             .Where(id => !requested.Contains(id))
             .Where(id => !request.RemoveStaleSyncOwnedItems || !syncOwned.Contains(id));
         return request.OrderedBackendItemIds.Concat(preserved).Distinct(StringComparer.Ordinal).ToArray();
+    }
+
+    internal static IReadOnlyList<(string EntryId, int TargetIndex)> PlanMoves(
+        IReadOnlyList<BackendPlaylistMember> current,
+        IReadOnlyList<string> desired)
+    {
+        if (desired.Count == 0)
+            return [];
+        var currentById = current
+            .Select((member, index) => (member, index))
+            .GroupBy(item => item.member.BackendItemId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+        var positions = desired.Select(item => currentById[item].index).ToArray();
+        var tails = new int[positions.Length];
+        var previous = Enumerable.Repeat(-1, positions.Length).ToArray();
+        var length = 0;
+        for (var index = 0; index < positions.Length; index++)
+        {
+            var low = 0;
+            var high = length;
+            while (low < high)
+            {
+                var middle = (low + high) / 2;
+                if (positions[tails[middle]] < positions[index]) low = middle + 1;
+                else high = middle;
+            }
+            if (low > 0) previous[index] = tails[low - 1];
+            tails[low] = index;
+            if (low == length) length++;
+        }
+
+        var kept = new bool[positions.Length];
+        for (var index = tails[length - 1]; index >= 0; index = previous[index])
+            kept[index] = true;
+        var lastKept = Array.LastIndexOf(kept, true);
+        var moveOrder = Enumerable.Range(0, lastKept)
+            .Where(index => !kept[index])
+            .Concat(Enumerable.Range(lastKept + 1, desired.Count - lastKept - 1)
+                .Where(index => !kept[index])
+                .Reverse());
+        return moveOrder
+            .Select(index =>
+            {
+                var member = currentById[desired[index]].member;
+                return (member.EntryId ?? member.BackendItemId, index);
+            })
+            .ToArray();
     }
 
     private static BackendPlaylistTargetResult<BackendPlaylistWriteReceipt> Success(

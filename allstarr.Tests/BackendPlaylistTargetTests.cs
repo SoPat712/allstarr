@@ -8,6 +8,39 @@ namespace allstarr.Tests;
 public sealed class BackendPlaylistTargetTests
 {
     [Fact]
+    public void Jellyfin_move_plan_is_minimal_and_handles_10000_items()
+    {
+        Verify(["b", "manual", "a", "c"], ["a", "b", "c", "manual"], 2);
+        Verify(["d", "c", "b", "a"], ["a", "b", "c", "d"], 3);
+        Verify(["c", "a", "b", "d"], ["a", "b", "c", "d"], 1);
+
+        var desired = Enumerable.Range(0, 10_000).Select(index => $"track-{index}").ToArray();
+        Verify(desired.Skip(1).Append(desired[0]).ToArray(), desired, 1);
+
+        static void Verify(
+            IReadOnlyList<string> currentIds,
+            IReadOnlyList<string> desiredIds,
+            int expectedMoves)
+        {
+            var current = currentIds
+            .Select(id => new BackendPlaylistMember(id, $"entry-{id}"))
+            .ToList();
+
+            var moves = JellyfinPlaylistTarget.PlanMoves(current, desiredIds);
+            Assert.Equal(expectedMoves, moves.Count);
+            foreach (var move in moves)
+            {
+                var moved = current.Single(item => item.EntryId == move.EntryId);
+                current.Remove(moved);
+                current.Insert(move.TargetIndex, moved);
+            }
+
+            Assert.Equal(desiredIds, current.Select(item => item.BackendItemId));
+            Assert.Empty(JellyfinPlaylistTarget.PlanMoves(current, desiredIds));
+        }
+    }
+
+    [Fact]
     public void Durable_context_contains_only_stable_references_and_request_deduplicates_tracks()
     {
         var context = new BackendPlaylistTargetContext("backend-a", "principal-a", "secret-ref-a");
