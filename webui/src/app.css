@@ -356,18 +356,19 @@
     display: flex;
     height: 100vh;
     flex-direction: column;
+    overflow: hidden;
     border-right: 1px solid var(--color-edge);
     background: rgb(11 13 18 / 88%);
-    padding: 1.25rem;
+    padding: 1.25rem 1rem;
     backdrop-filter: blur(1.2rem);
   }
 
   .sidebar-expander {
     position: absolute;
-    top: 1.35rem;
-    right: 0.85rem;
+    top: 4.35rem;
+    left: 1rem;
     display: grid;
-    width: 1.8rem;
+    width: var(--control-lg);
     height: 1.8rem;
     place-items: center;
     border: 0;
@@ -375,6 +376,9 @@
     background: transparent;
     color: var(--color-ink-muted);
     cursor: pointer;
+  }
+
+  .sidebar-expander span {
     transition: transform 160ms ease;
   }
 
@@ -383,47 +387,37 @@
   }
 
   .app-shell.slim .sidebar {
-    align-items: center;
-    padding: 1rem 0.65rem;
+    padding-inline: 1rem;
   }
 
   .app-shell.slim .brand {
-    justify-content: center;
+    width: var(--control-lg);
+    grid-template-columns: var(--control-lg) 0fr;
+    gap: 0;
   }
 
   .app-shell.slim .brand > span:last-child,
-  .app-shell.slim .profile > div:nth-child(2) {
-    display: none;
+  .app-shell.slim .profile > div:nth-child(2),
+  .app-shell.slim .nav-label {
+    width: 0;
+    opacity: 0;
+    transform: translateX(-0.25rem);
   }
 
   .app-shell.slim .sidebar nav a {
-    display: flex;
     width: var(--control-lg);
-    height: var(--control-lg);
-    min-height: 0;
-    align-items: center;
-    justify-content: center;
+    grid-template-columns: var(--control-lg) 0fr;
     gap: 0;
-    margin-inline: auto;
-    padding: 0;
-    font-size: 0;
   }
 
   .app-shell.slim .sidebar nav {
     width: var(--control-lg);
-    justify-items: center;
-    margin-inline: auto;
-  }
-
-  .app-shell.slim .sidebar nav a span {
-    font-size: 1rem;
-    margin-inline: auto;
   }
 
   .app-shell.slim .profile {
-    width: 100%;
-    grid-template-columns: 1fr;
-    justify-items: center;
+    width: var(--control-lg);
+    grid-template-columns: var(--control-lg) 0fr 0fr;
+    gap: 0;
   }
 
   .app-shell.slim .avatar {
@@ -435,22 +429,27 @@
   }
 
   .app-shell.slim .sidebar .icon-button {
-    margin-inline: auto;
+    width: 0;
+    overflow: hidden;
+    opacity: 0;
   }
 
-  .app-shell.slim .sidebar-expander {
-    top: 4.35rem;
-    right: auto;
-    left: 50%;
-    transform: translateX(-50%) rotate(180deg);
+  .app-shell.slim .sidebar-expander span {
+    transform: rotate(180deg);
   }
 
   .brand {
-    display: flex;
+    display: grid;
+    width: 100%;
+    grid-template-columns: var(--control-lg) minmax(0, 1fr);
     align-items: center;
-    gap: 0.8rem;
+    gap: 0.5rem;
     color: inherit;
     text-decoration: none;
+  }
+
+  .brand-mark {
+    justify-self: center;
   }
 
   .brand strong,
@@ -476,17 +475,18 @@
   .sidebar nav {
     display: grid;
     gap: 0.35rem;
-    margin-top: 2rem;
+    margin-top: 3rem;
   }
 
   .sidebar nav a {
-    display: flex;
+    display: grid;
+    width: 100%;
     min-height: var(--control-lg);
+    grid-template-columns: var(--control-lg) minmax(0, 1fr);
     align-items: center;
-    gap: 0.8rem;
+    gap: 0.5rem;
     border-radius: 0.8rem;
     color: var(--color-ink-muted);
-    padding: 0 0.85rem;
     text-decoration: none;
   }
 
@@ -500,13 +500,22 @@
     color: var(--color-signal);
   }
 
-  .sidebar nav a span {
+  .nav-icon {
     display: grid;
-    width: 1.5rem;
-    height: 1.5rem;
+    width: var(--control-lg);
+    height: var(--control-lg);
     place-items: center;
     line-height: 0;
     text-align: center;
+  }
+
+  .nav-label,
+  .brand > span:last-child,
+  .profile > div:nth-child(2),
+  .icon-button {
+    min-width: 0;
+    transition: width 160ms ease, opacity 120ms ease, transform 160ms ease;
+    white-space: nowrap;
   }
 
   .ui-icon {
@@ -516,9 +525,9 @@
   .profile {
     display: grid;
     min-width: 0;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: var(--control-lg) minmax(0, 1fr) auto;
     align-items: center;
-    gap: 0.7rem;
+    gap: 0.5rem;
     margin-top: auto;
     border-top: 1px solid var(--color-edge);
     padding-top: 1rem;
@@ -546,6 +555,7 @@
     color: var(--color-signal);
     font-weight: 800;
     text-decoration: none;
+    justify-self: center;
   }
 
   .avatar img {
@@ -1049,6 +1059,7 @@
   }
 
   .sidebar nav a {
+    display: flex;
     min-width: 0;
     min-height: 3.4rem;
     flex-direction: column;
@@ -1060,9 +1071,22 @@
 
   .app-shell.slim .sidebar nav a {
     width: auto;
+    grid-template-columns: none;
     min-height: 3.4rem;
     padding: 0.2rem;
     font-size: 0.65rem;
+  }
+
+  .sidebar .nav-label,
+  .app-shell.slim .sidebar .nav-label {
+    width: auto;
+    opacity: 1;
+    transform: none;
+  }
+
+  .nav-icon {
+    width: 1.5rem;
+    height: 1.5rem;
   }
 
   .workspace {
@@ -1246,6 +1270,7 @@
   }
 
   .playlist-row {
+    position: relative;
     display: grid;
     width: 100%;
     grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1256,7 +1281,7 @@
     background: transparent;
     color: inherit;
     cursor: pointer;
-    padding: 1rem 1.4rem;
+    padding: 1rem 1.4rem 1.35rem;
     text-align: left;
   }
 
@@ -1410,8 +1435,17 @@
   }
 
   .coverage-bar.compact {
-    height: 0.32rem;
+    height: 0.42rem;
     margin-top: 0;
+  }
+
+  .playlist-row > .coverage-bar {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    border-radius: 0;
   }
 
   .coverage-bar > span {

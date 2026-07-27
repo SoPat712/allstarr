@@ -273,7 +273,7 @@
         aria-label={sidebarSlim ? "Expand sidebar" : "Collapse sidebar"}
         aria-expanded={!sidebarSlim}
         onclick={() => sidebarSlim = !sidebarSlim}
-      >‹</button>
+      ><span aria-hidden="true">‹</span></button>
 
       <nav aria-label="Primary">
         {#each destinations as destination}
@@ -282,8 +282,8 @@
             class:active={activeDestination.href === destination.href}
             aria-current={activeDestination.href === destination.href ? "page" : undefined}
           >
-            <span><UiIcon name={destination.icon} /></span>
-            {destination.label}
+            <span class="nav-icon"><UiIcon name={destination.icon} /></span>
+            <span class="nav-label">{destination.label}</span>
           </a>
         {/each}
       </nav>

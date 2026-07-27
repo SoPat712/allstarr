@@ -318,13 +318,6 @@
                 <span>{playlist.metrics.review} to review</span>
                 <span>{playlist.materializedCount} materialized</span>
               </small>
-              <CoverageBar
-                routes={playlist.routeCoverage}
-                total={playlist.trackCount}
-                unresolved={playlist.unmatchedCount}
-                {providerName}
-                compact
-              />
             </span>
             <span class="playlist-summary">
               <span class="playlist-coverage">
@@ -336,6 +329,13 @@
                 {playlist.enabled ? `${playlist.unmatchedCount} unresolved` : "Paused"}
               </small>
             </span>
+            <CoverageBar
+              routes={playlist.routeCoverage}
+              total={playlist.trackCount}
+              unresolved={playlist.unmatchedCount}
+              {providerName}
+              compact
+            />
           </button>
         {:else}
           <div class="compact-empty">

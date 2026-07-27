@@ -1256,6 +1256,13 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   const coverage = page.locator(".playlist-row .coverage-bar > span");
   await expect(coverage.nth(0)).toHaveAttribute("style", /width:\s*50%/);
   await expect(coverage.nth(1)).toHaveAttribute("style", /width:\s*50%; --route-color:\s*var\(--color-ink-muted\)/);
+  const [playlistRow, playlistBar] = await Promise.all([
+    page.locator(".playlist-row").boundingBox(),
+    page.locator(".playlist-row .coverage-bar").boundingBox(),
+  ]);
+  expect(Math.abs((playlistRow!.y + playlistRow!.height) - (playlistBar!.y + playlistBar!.height)))
+    .toBeLessThanOrEqual(1);
+  expect(playlistBar!.height).toBeGreaterThanOrEqual(6);
   const rematchAll = page.waitForRequest((item) =>
     item.method() === "POST" && item.url().endsWith("/api/admin/playlist-links/playlist-link/run"));
   await page.getByRole("button", { name: "Rematch all" }).click();
@@ -1409,10 +1416,18 @@ test("Sidebar uses an integrated expander and deterministic slim breakpoint", as
   const expander = page.getByRole("button", { name: "Collapse sidebar" });
   await expect(expander).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("link")).toHaveCount(6);
+  const libraryIcon = page.getByRole("navigation", { name: "Primary" })
+    .getByRole("link", { name: "Library" }).locator("svg");
+  const expandedIcon = await libraryIcon.boundingBox();
   await expander.click();
   await expect(shell).toHaveClass(/slim/);
   await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
   await expect.poll(async () => (await page.locator(".sidebar").boundingBox())?.width ?? 0).toBe(80);
+  const collapsedIcon = await libraryIcon.boundingBox();
+  expect(Math.abs((expandedIcon!.x + expandedIcon!.width / 2) -
+    (collapsedIcon!.x + collapsedIcon!.width / 2))).toBeLessThanOrEqual(0.5);
+  await expect(page.getByRole("button", { name: "Expand sidebar" }).locator("span"))
+    .toHaveCSS("transform", "matrix(-1, 0, 0, -1, 0, 0)");
   const library = page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Library" });
   await expect.poll(async () => {
     const [link, icon] = await Promise.all([library.boundingBox(), library.locator("svg").boundingBox()]);
