@@ -20,7 +20,6 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.FileProviders;
-using Npgsql;
 
 namespace allstarr.Tests;
 
@@ -30,14 +29,8 @@ public sealed class PostgresStorageIntegrationTests
     [Trait("Category", "Postgres")]
     public async Task NativePostgresLineageConstraints_RejectCrossTenantFavoriteJob()
     {
-        var connectionString = Environment.GetEnvironmentVariable("ALLSTARR_TEST_POSTGRES");
-        if (string.IsNullOrWhiteSpace(connectionString)) return;
-
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseNpgsql(connectionString)
-            .Options;
-        await using var db = new AllstarrDbContext(options);
-        await db.Database.ExecuteSqlRawAsync("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public");
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var db = new AllstarrDbContext(database.Options);
         await db.Database.MigrateAsync();
 
         var now = DateTimeOffset.UtcNow;
@@ -90,14 +83,11 @@ public sealed class PostgresStorageIntegrationTests
     [Trait("Category", "Postgres")]
     public async Task NativePostgresHostOptions_SupportIdentityJobAndOutboxTransactions()
     {
-        var connectionString = Environment.GetEnvironmentVariable("ALLSTARR_TEST_POSTGRES");
-        if (string.IsNullOrWhiteSpace(connectionString)) return;
-
-        await using var services = BuildHostStorageServices(connectionString);
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var services = BuildHostStorageServices(database.ConnectionString);
         var factory = services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
         await using (var db = await factory.CreateDbContextAsync())
         {
-            await db.Database.ExecuteSqlRawAsync("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public");
             await db.Database.MigrateAsync();
         }
 
@@ -290,17 +280,12 @@ public sealed class PostgresStorageIntegrationTests
     [Trait("Category", "Postgres")]
     public async Task NativePostgresLegacyEnvMigration_AtomicallyAppliesAndDecryptsSharedAccount()
     {
-        var connectionString = Environment.GetEnvironmentVariable("ALLSTARR_TEST_POSTGRES");
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            return;
-        }
-
+        await using var database = await PostgresTestDatabase.CreateAsync();
         var root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try
         {
-            await using var hostServices = BuildHostStorageServices(connectionString);
+            await using var hostServices = BuildHostStorageServices(database.ConnectionString);
             var factory = hostServices.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
             await using (var strategyContext = await factory.CreateDbContextAsync())
             {
@@ -310,8 +295,6 @@ public sealed class PostgresStorageIntegrationTests
             var userId = Guid.CreateVersion7();
             await using (var db = await factory.CreateDbContextAsync())
             {
-                await db.Database.ExecuteSqlRawAsync(
-                    "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public");
                 await db.Database.MigrateAsync();
                 db.Tenants.Add(new TenantRecord
                 {
@@ -465,18 +448,8 @@ public sealed class PostgresStorageIntegrationTests
     [Trait("Category", "Postgres")]
     public async Task NativePostgresAdditiveMigrations_CanRollBackToFoundationAndReapply()
     {
-        var connectionString = Environment.GetEnvironmentVariable("ALLSTARR_TEST_POSTGRES");
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            return;
-        }
-
-        var dbOptions = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseNpgsql(connectionString)
-            .Options;
-        await using var context = new AllstarrDbContext(dbOptions);
-        await context.Database.ExecuteSqlRawAsync(
-            "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public");
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var context = new AllstarrDbContext(database.Options);
         var migrator = context.GetService<IMigrator>();
         await migrator.MigrateAsync();
 
@@ -511,16 +484,8 @@ public sealed class PostgresStorageIntegrationTests
     [Trait("Category", "Postgres")]
     public async Task NativePostgresMigrationLockAndDurableQueue_WorkAgainstSelectedDatabase()
     {
-        var connectionString = Environment.GetEnvironmentVariable("ALLSTARR_TEST_POSTGRES");
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            return;
-        }
-
-        var dbOptions = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseNpgsql(connectionString)
-            .Options;
-        var factory = new TestDbContextFactory(dbOptions);
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        var factory = new TestDbContextFactory(database.Options);
         await using (var reset = await factory.CreateDbContextAsync())
         {
             await reset.Database.ExecuteSqlRawAsync(
@@ -539,7 +504,7 @@ public sealed class PostgresStorageIntegrationTests
         var options = new DurableStorageOptions
         {
             Provider = "Postgres",
-            ConnectionString = connectionString,
+            ConnectionString = database.ConnectionString,
             AutoMigrate = true,
             ConnectionRetryCount = 0,
             BackupDirectory = Path.Combine(Path.GetTempPath(), "allstarr-postgres-backups")
@@ -634,16 +599,8 @@ public sealed class PostgresStorageIntegrationTests
     [Trait("Category", "Postgres")]
     public async Task NativePostgresCacheLoss_PreservesDurableWorkAndProgressAcrossCacheRestart()
     {
-        var connectionString = Environment.GetEnvironmentVariable("ALLSTARR_TEST_POSTGRES");
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            return;
-        }
-
-        var dbOptions = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseNpgsql(connectionString)
-            .Options;
-        var factory = new TestDbContextFactory(dbOptions);
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        var factory = new TestDbContextFactory(database.Options);
         await using (var reset = await factory.CreateDbContextAsync())
         {
             await reset.Database.ExecuteSqlRawAsync(
@@ -860,14 +817,8 @@ public sealed class PostgresStorageIntegrationTests
     [Trait("Category", "Postgres")]
     public async Task NativePostgresBackup_VerifiesAndRestoresIntoIsolatedDatabase()
     {
-        var connectionString = Environment.GetEnvironmentVariable("ALLSTARR_TEST_POSTGRES");
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            return;
-        }
-
-        var sourceBuilder = new NpgsqlConnectionStringBuilder(connectionString);
-        var targetDatabase = $"allstarr_restore_{Guid.NewGuid():N}";
+        await using var sourceDatabase = await PostgresTestDatabase.CreateAsync();
+        await using var targetDatabase = await PostgresTestDatabase.CreateAsync();
         var backupRoot = Path.Combine(
             Path.GetTempPath(),
             "allstarr-tests",
@@ -875,14 +826,9 @@ public sealed class PostgresStorageIntegrationTests
         Directory.CreateDirectory(backupRoot);
         try
         {
-            var dbOptions = new DbContextOptionsBuilder<AllstarrDbContext>()
-                .UseNpgsql(connectionString)
-                .Options;
-            var factory = new TestDbContextFactory(dbOptions);
+            var factory = new TestDbContextFactory(sourceDatabase.Options);
             await using (var reset = await factory.CreateDbContextAsync())
             {
-                await reset.Database.ExecuteSqlRawAsync(
-                    "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public");
                 await reset.Database.MigrateAsync();
                 reset.Jobs.Add(new DurableJobRecord
                 {
@@ -903,7 +849,7 @@ public sealed class PostgresStorageIntegrationTests
             var options = new DurableStorageOptions
             {
                 Provider = "Postgres",
-                ConnectionString = connectionString,
+                ConnectionString = sourceDatabase.ConnectionString,
                 BackupDirectory = backupRoot
             };
             var state = new DurableStorageState(options);
@@ -917,20 +863,15 @@ public sealed class PostgresStorageIntegrationTests
             var artifact = await service.CreateAsync();
             Assert.True(File.Exists(artifact.ArtifactPath));
             Assert.True(File.Exists(artifact.ManifestPath));
-            await CreateDatabase(sourceBuilder, targetDatabase);
-            var targetBuilder = new NpgsqlConnectionStringBuilder(connectionString)
-            {
-                Database = targetDatabase
-            };
 
             await service.RestorePostgresAsync(
                 artifact,
-                targetBuilder.ConnectionString,
+                targetDatabase.ConnectionString,
                 destructiveRestoreConfirmed: true,
-                isolatedTargetDatabaseConfirmation: targetDatabase);
+                isolatedTargetDatabaseConfirmation: targetDatabase.DatabaseName);
 
             var restoredOptions = new DbContextOptionsBuilder<AllstarrDbContext>()
-                .UseNpgsql(targetBuilder.ConnectionString)
+                .UseNpgsql(targetDatabase.ConnectionString)
                 .Options;
             await using var restored = new AllstarrDbContext(restoredOptions);
             var restoredJob = await restored.Jobs.AsNoTracking().SingleAsync();
@@ -939,7 +880,6 @@ public sealed class PostgresStorageIntegrationTests
         }
         finally
         {
-            await DropDatabase(sourceBuilder, targetDatabase);
             if (Directory.Exists(backupRoot))
             {
                 Directory.Delete(backupRoot, recursive: true);
@@ -1022,39 +962,6 @@ public sealed class PostgresStorageIntegrationTests
 
         return Convert.ToInt32(await command.ExecuteScalarAsync()) == 1;
     }
-
-    private static async Task CreateDatabase(
-        NpgsqlConnectionStringBuilder source,
-        string database)
-    {
-        var admin = new NpgsqlConnectionStringBuilder(source.ConnectionString)
-        {
-            Database = "postgres"
-        };
-        await using var connection = new NpgsqlConnection(admin.ConnectionString);
-        await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
-        command.CommandText = $"CREATE DATABASE {QuoteIdentifier(database)}";
-        await command.ExecuteNonQueryAsync();
-    }
-
-    private static async Task DropDatabase(
-        NpgsqlConnectionStringBuilder source,
-        string database)
-    {
-        var admin = new NpgsqlConnectionStringBuilder(source.ConnectionString)
-        {
-            Database = "postgres"
-        };
-        await using var connection = new NpgsqlConnection(admin.ConnectionString);
-        await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
-        command.CommandText = $"DROP DATABASE IF EXISTS {QuoteIdentifier(database)} WITH (FORCE)";
-        await command.ExecuteNonQueryAsync();
-    }
-
-    private static string QuoteIdentifier(string identifier) =>
-        '"' + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + '"';
 
     private sealed class TestDbContextFactory(DbContextOptions<AllstarrDbContext> options)
         : IDbContextFactory<AllstarrDbContext>

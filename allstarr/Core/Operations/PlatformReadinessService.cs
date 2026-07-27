@@ -81,6 +81,10 @@ public sealed class PlatformReadinessService
 
                 components.Add(new ReadinessComponent("secret-key-ring", "ready", true));
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch
             {
                 components.Add(new ReadinessComponent(

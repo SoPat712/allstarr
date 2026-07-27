@@ -372,6 +372,60 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ReadinessPreservesCallerCancellationFromSecretProbe()
+    {
+        var keyRingPath = Path.Combine(_root, "keyring.json");
+        await File.WriteAllTextAsync(keyRingPath, JsonSerializer.Serialize(new
+        {
+            activeKeyId = "active",
+            keys = new Dictionary<string, string>
+            {
+                ["active"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+            }
+        }));
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(keyRingPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Readiness(
+            new SidecarStatusCatalog(new SidecarHealthOptions()),
+            new ReadinessOptions { RequireSecretKeyRing = true },
+            keyRingPath: keyRingPath).CheckAsync(cancellation.Token));
+    }
+
+    [Fact]
+    public async Task SidecarProbePreservesCallerCancellation()
+    {
+        var options = new SidecarHealthOptions
+        {
+            Targets =
+            [
+                new SidecarProbeTarget
+                {
+                    Id = "blocking",
+                    ProviderId = "fixture",
+                    BaseUrl = "http://sidecar.test/"
+                }
+            ]
+        };
+        var monitor = new SidecarHealthMonitor(
+            new HandlerFactory(new BlockingHandler()),
+            options,
+            new SidecarStatusCatalog(options),
+            _health,
+            NullLogger<SidecarHealthMonitor>.Instance,
+            _clock);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => monitor.ProbeAllOnceAsync(cancellation.Token));
+    }
+
+    [Fact]
     public async Task RequiredDirectory_MustExistAndAcceptAWriteProbeWithoutExposingItsPath()
     {
         var existing = await Readiness(
@@ -404,11 +458,12 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
     private PlatformReadinessService Readiness(
         SidecarStatusCatalog catalog,
         ReadinessOptions options,
-        IDurableStorageRuntimeProbe? storageProbe = null)
+        IDurableStorageRuntimeProbe? storageProbe = null,
+        string? keyRingPath = null)
     {
         var secretOptions = new SecretStoreOptions
         {
-            KeyRingPath = Path.Combine(_root, "missing-keyring.json")
+            KeyRingPath = keyRingPath ?? Path.Combine(_root, "missing-keyring.json")
         };
         return new PlatformReadinessService(
             _storageState,
@@ -453,6 +508,17 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
     private sealed class HandlerFactory(HttpMessageHandler handler) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+    }
+
+    private sealed class BlockingHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }
     }
 
     private sealed class FakeClock(DateTimeOffset now) : IPlatformClock

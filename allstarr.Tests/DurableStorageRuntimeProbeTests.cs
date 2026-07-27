@@ -65,6 +65,24 @@ public sealed class DurableStorageRuntimeProbeTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ProbePreservesCallerCancellation()
+    {
+        var options = RuntimeOptions();
+        var state = new DurableStorageState(options);
+        using var probe = new DurableStorageRuntimeProbe(
+            new CountingDbContextFactory(_database.Options),
+            options,
+            state,
+            _clock,
+            NullLogger<DurableStorageRuntimeProbe>.Instance);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => probe.CheckAsync(cancellation.Token));
+    }
+
+    [Fact]
     public async Task ProbeMarksRuntimeSchemaDriftUnready()
     {
         var options = RuntimeOptions();

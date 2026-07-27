@@ -146,6 +146,54 @@ public sealed class DurableStorageTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ProbeCacheSnapshot_AppliesToFreshPostgres()
+    {
+        await using var context = await Factory().CreateDbContextAsync();
+
+        await context.Database.MigrateAsync();
+
+        Assert.Contains(
+            "20260724012448_ProbeCacheSnapshot",
+            await context.Database.GetAppliedMigrationsAsync());
+        Assert.Equal("boolean", await ColumnType(context, "playlist_links", "Enabled"));
+    }
+
+    [Fact]
+    public async Task ProbeCacheSnapshot_UpgradesLegacyIntegerEnabledColumn()
+    {
+        await using var context = await Factory().CreateDbContextAsync();
+        var migrator = context.GetService<IMigrator>();
+        await migrator.MigrateAsync("20260723233918_AddDownloadArtifactMediaFacts");
+        await context.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE playlist_links
+                ALTER COLUMN "Enabled" DROP DEFAULT,
+                ALTER COLUMN "Enabled" TYPE integer USING (CASE WHEN "Enabled" THEN 1 ELSE 0 END),
+                ALTER COLUMN "Enabled" SET DEFAULT 1
+            """);
+
+        await migrator.MigrateAsync();
+
+        Assert.Equal("boolean", await ColumnType(context, "playlist_links", "Enabled"));
+    }
+
+    [Fact]
+    public async Task SchemaCompatibility_RejectsCaseDivergentMigrationId()
+    {
+        await using var context = await Factory().CreateDbContextAsync();
+        await context.Database.MigrateAsync();
+        const string migration = "20260724012448_ProbeCacheSnapshot";
+        var divergent = migration.ToLowerInvariant();
+        await context.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE \"__EFMigrationsHistory\" SET \"MigrationId\" = {divergent} WHERE \"MigrationId\" = {migration}");
+
+        var compatibility = await DurableSchemaCompatibility.InspectAsync(context);
+
+        Assert.Equal(DurableSchemaCompatibilityStatus.UnsupportedVersion, compatibility.Status);
+        Assert.Contains(migration, compatibility.MissingMigrations);
+        Assert.Contains(divergent, compatibility.UnknownMigrations);
+    }
+
+    [Fact]
     public async Task OnboardingMigration_BackfillsExistingBackendIdentity()
     {
         await using var context = await Factory().CreateDbContextAsync();
@@ -260,6 +308,14 @@ public sealed class DurableStorageTests : IAsyncLifetime
         string column) =>
         await context.Database.SqlQuery<bool>(
             $"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = {table} AND column_name = {column}) AS \"Value\"")
+            .SingleAsync();
+
+    private static async Task<string> ColumnType(
+        AllstarrDbContext context,
+        string table,
+        string column) =>
+        await context.Database.SqlQuery<string>(
+            $"SELECT data_type AS \"Value\" FROM information_schema.columns WHERE table_schema = 'public' AND table_name = {table} AND column_name = {column}")
             .SingleAsync();
 
     public async Task DisposeAsync()
