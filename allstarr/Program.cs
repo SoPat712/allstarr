@@ -375,8 +375,7 @@ builder.Services.AddSingleton<HybridApplicationCache>();
 builder.Services.AddSingleton<IApplicationCache>(sp =>
     sp.GetRequiredService<HybridApplicationCache>());
 builder.Services.AddSingleton<IMediaAssetResolver, MediaAssetResolver>();
-builder.Services.AddHostedService<DatabaseApplicationCacheCleanupService>();
-builder.Services.AddHostedService<FileMediaApplicationCacheCleanupService>();
+builder.Services.AddHostedService<ApplicationCacheMaintenanceService>();
 builder.Services.AddSingleton<PlaylistPlayableSearchService>();
 builder.Services.AddSingleton<OdesliService>();
 builder.Services.AddSingleton<IDownloadedSongMappingStore, EfDownloadedSongMappingStore>();

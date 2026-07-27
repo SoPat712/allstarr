@@ -918,21 +918,26 @@ public sealed class HybridApplicationCache(
 
     private TimeSpan EffectiveExpiry(string key, TimeSpan? expiry) =>
         expiry ?? ApplicationCachePolicyRegistry.Resolve(key, _settings).FreshFor;
+
+    internal TimeSpan CleanupInterval => media.CleanupInterval;
 }
 
-public sealed class FileMediaApplicationCacheCleanupService(
-    FileMediaApplicationCache cache,
-    ILogger<FileMediaApplicationCacheCleanupService> logger) : BackgroundService
+public sealed class ApplicationCacheMaintenanceService(
+    HybridApplicationCache cache,
+    ILogger<ApplicationCacheMaintenanceService> logger) : BackgroundService
 {
+    public Task<int> RunOnceAsync(CancellationToken cancellationToken = default) =>
+        cache.CleanupAsync(cancellationToken);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(cache.CleanupInterval);
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            var deleted = await cache.CleanupAsync(stoppingToken);
+            var deleted = await RunOnceAsync(stoppingToken);
             if (deleted > 0)
             {
-                logger.LogDebug("Removed {Count} expired or over-quota media cache entries", deleted);
+                logger.LogDebug("Removed {Count} expired, orphaned, or over-quota cache entries", deleted);
             }
         }
     }

@@ -179,7 +179,10 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         Assert.Equal(1, preview.UnreferencedArtworkPayloads);
         Assert.False(preview.ArtworkReferenceScanLimitReached);
 
-        Assert.Equal(1, await _cache.CleanupAsync());
+        var maintenance = new ApplicationCacheMaintenanceService(
+            _cache,
+            NullLogger<ApplicationCacheMaintenanceService>.Instance);
+        Assert.Equal(1, await maintenance.RunOnceAsync());
         Assert.Equal("referenced", await _cache.GetStringAsync(referencedKey));
         Assert.Null(await _cache.GetStringAsync(orphanedKey));
     }

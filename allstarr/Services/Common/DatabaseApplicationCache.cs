@@ -809,37 +809,3 @@ public sealed class DatabaseApplicationCache(
             .Replace("*", "%", StringComparison.Ordinal)
             .Replace("?", "_", StringComparison.Ordinal);
 }
-
-public sealed class DatabaseApplicationCacheCleanupService(
-    DatabaseApplicationCache cache,
-    ILogger<DatabaseApplicationCacheCleanupService> logger) : BackgroundService
-{
-    private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(15);
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        using var timer = new PeriodicTimer(CleanupInterval);
-        while (await timer.WaitForNextTickAsync(stoppingToken))
-        {
-            await cache.FlushAccessesAsync(
-                DatabaseApplicationCache.DefaultCleanupBatchSize,
-                stoppingToken);
-            var deleted = await cache.CleanupExpiredAsync(
-                DatabaseApplicationCache.DefaultCleanupBatchSize,
-                stoppingToken);
-            deleted += await cache.CleanupInvalidOwnershipAsync(
-                DatabaseApplicationCache.DefaultCleanupBatchSize,
-                stoppingToken);
-            deleted += await cache.CleanupSupersededArtworkDescriptorsAsync(
-                DatabaseApplicationCache.DefaultCleanupBatchSize,
-                stoppingToken);
-            deleted += await cache.CleanupPolicyOverflowAsync(
-                DatabaseApplicationCache.DefaultCleanupBatchSize,
-                stoppingToken);
-            if (deleted > 0)
-            {
-                logger.LogDebug("Removed {Count} expired database cache entries", deleted);
-            }
-        }
-    }
-}
