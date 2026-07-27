@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Collections.Concurrent;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using allstarr.Models.Settings;
@@ -25,6 +26,7 @@ public sealed class DatabaseApplicationCache(
     private long _misses;
     private long _writes;
     private long _evictions;
+    private readonly ConcurrentDictionary<string, byte> _accessed = new(StringComparer.Ordinal);
     private readonly CacheSettings _settings = configuredSettings?.Value ?? new CacheSettings();
 
     public bool IsEnabled => true;
@@ -137,6 +139,7 @@ public sealed class DatabaseApplicationCache(
 
             if (entry.ExpiresAt is null || entry.ExpiresAt > clock.UtcNow)
             {
+                RecordAccess(key);
                 Interlocked.Increment(ref _hits);
                 return entry.Value;
             }
@@ -391,6 +394,49 @@ public sealed class DatabaseApplicationCache(
         catch (Exception exception)
         {
             logger.LogWarning(exception, "Database cache expiry cleanup failed");
+            return 0;
+        }
+    }
+
+    public void RecordAccess(string key)
+    {
+        if (IsValidKey(key))
+        {
+            _accessed[key] = 0;
+        }
+    }
+
+    public async Task<int> FlushAccessesAsync(
+        int batchSize = DefaultCleanupBatchSize,
+        CancellationToken cancellationToken = default)
+    {
+        var keys = _accessed.Keys
+            .Order(StringComparer.Ordinal)
+            .Take(Math.Clamp(batchSize, 1, DefaultCleanupBatchSize))
+            .ToArray();
+        if (keys.Length == 0)
+        {
+            return 0;
+        }
+
+        try
+        {
+            await using var database = await contextFactory.CreateDbContextAsync(cancellationToken);
+            var updated = await database.Set<ApplicationCacheEntryRecord>()
+                .Where(item => keys.Contains(item.Key))
+                .ExecuteUpdateAsync(
+                    setters => setters.SetProperty(item => item.UpdatedAt, clock.UtcNow),
+                    cancellationToken);
+            foreach (var key in keys)
+            {
+                _accessed.TryRemove(key, out _);
+            }
+
+            return updated;
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Database cache access flush failed");
             return 0;
         }
     }
@@ -769,6 +815,9 @@ public sealed class DatabaseApplicationCacheCleanupService(
         using var timer = new PeriodicTimer(CleanupInterval);
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
+            await cache.FlushAccessesAsync(
+                DatabaseApplicationCache.DefaultCleanupBatchSize,
+                stoppingToken);
             var deleted = await cache.CleanupExpiredAsync(
                 DatabaseApplicationCache.DefaultCleanupBatchSize,
                 stoppingToken);

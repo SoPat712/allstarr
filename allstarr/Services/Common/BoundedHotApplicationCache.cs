@@ -39,6 +39,7 @@ public sealed class BoundedHotApplicationCache : IApplicationCache, IDisposable
     {
         if (_memory.TryGetValue(key, out HotEntry? entry))
         {
+            _database.RecordAccess(key);
             Interlocked.Increment(ref _hits);
             return entry?.Value;
         }
@@ -160,6 +161,7 @@ public sealed class BoundedHotApplicationCache : IApplicationCache, IDisposable
     {
         _memory.Clear();
         Interlocked.Add(ref _evictions, ClearResidents());
+        await _database.FlushAccessesAsync(cancellationToken: cancellationToken);
         var deleted = await _database.CleanupExpiredAsync(
             cancellationToken: cancellationToken);
         deleted += await _database.CleanupInvalidOwnershipAsync(

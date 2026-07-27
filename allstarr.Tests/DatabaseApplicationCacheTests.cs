@@ -44,6 +44,23 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ReadsFlushOneSampledAccessTimestamp()
+    {
+        await _cache.SetStringAsync("search:touched", "value", TimeSpan.FromHours(1));
+        _clock.UtcNow = _clock.UtcNow.AddMinutes(5);
+
+        Assert.Equal("value", await _cache.GetStringAsync("search:touched"));
+        Assert.Equal("value", await _cache.GetStringAsync("search:touched"));
+        Assert.Equal(1, await _cache.FlushAccessesAsync());
+
+        await using var database = await _factory.CreateDbContextAsync();
+        Assert.Equal(
+            _clock.UtcNow,
+            (await database.ApplicationCacheEntries.SingleAsync()).UpdatedAt);
+        Assert.Equal(0, await _cache.FlushAccessesAsync());
+    }
+
+    [Fact]
     public async Task ExpiredEntry_IsAColdMissAndIsRemoved()
     {
         await _cache.SetStringAsync("playlist:artwork:1", "asset", TimeSpan.FromMinutes(1));
