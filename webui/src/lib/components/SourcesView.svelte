@@ -23,6 +23,7 @@
     audienceLabel,
     humanize,
     sourceMetrics,
+    sourceNeedsAccount,
     sourceStatus,
   } from "$lib/sources";
   import { liveUpdates } from "$lib/live-updates.svelte";
@@ -55,7 +56,8 @@
       const section = (item: ProviderDefinition) =>
         sourceStatus(item, accounts, health) === "disabled"
           ? 2
-          : providerAccounts(item.id).some((account) => account.enabled) ? 0 : 1;
+          : !sourceNeedsAccount(item) ||
+              providerAccounts(item.id).some((account) => account.enabled) ? 0 : 1;
       const order = { degraded: 0, needs_config: 1, partial_config: 1, available: 2, configured: 3, healthy: 4, disabled: 5 };
       return section(left) - section(right) ||
         (order[sourceStatus(left, accounts, health) as keyof typeof order] ?? 2) -
@@ -70,7 +72,8 @@
   const activeSourceCount = $derived(
     providers.filter((item) =>
       sourceStatus(item, accounts, health) !== "disabled" &&
-      providerAccounts(item.id).some((account) => account.enabled)).length,
+      (!sourceNeedsAccount(item) ||
+        providerAccounts(item.id).some((account) => account.enabled))).length,
   );
   const availableSourceCount = $derived(enabledSourceCount - activeSourceCount);
   const canManage = $derived(
@@ -270,7 +273,7 @@
           {@const connected = providerAccounts(item.id)}
           {#if availableSourceCount && index === activeSourceCount}
             <header class="source-section-heading">
-              <div><h3>Available Sources</h3><p>Built in or installed, but not connected to an account.</p></div>
+              <div><h3>Needs setup</h3><p>Sources that require an account before they can be used.</p></div>
               <span>{availableSourceCount}</span>
             </header>
           {:else if disabledSourceCount && index === enabledSourceCount}

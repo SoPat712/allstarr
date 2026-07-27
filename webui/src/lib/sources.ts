@@ -33,7 +33,7 @@ export function sourceStatus(
       ? "configured"
       : "needs_config";
   }
-  if (accountSettings(provider).some((field) => field.required)) return "needs_config";
+  if (sourceNeedsAccount(provider)) return "needs_config";
   return provider.status || "available";
 }
 
@@ -95,8 +95,11 @@ const builtInSettings: Record<string, ProviderSetting[]> = {
 export function accountSettings(provider: ProviderDefinition) {
   return provider.accountSettings?.length
     ? provider.accountSettings
-    : builtInSettings[provider.id] ?? [];
+    : provider.implementationOrigin === "extension" ? [] : builtInSettings[provider.id] ?? [];
 }
+
+export const sourceNeedsAccount = (provider: ProviderDefinition) =>
+  accountSettings(provider).some((field) => field.required);
 
 export function secretFromForm(provider: ProviderDefinition, data: FormData) {
   return Object.fromEntries(accountSettings(provider)

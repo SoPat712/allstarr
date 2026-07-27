@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderAccount, ProviderDefinition, ProviderHealth } from "./api";
-import { accountSettings, audienceLabel, sourceStatus } from "./sources";
+import { accountSettings, audienceLabel, sourceNeedsAccount, sourceStatus } from "./sources";
 
 const account = (scope: ProviderAccount["scope"] = "User"): ProviderAccount => ({
   id: "account-1",
@@ -52,5 +52,14 @@ describe("source presentation", () => {
       ...provider,
       accountSettings: [{ key: "token", label: "Token", type: "password" }],
     })).toEqual([{ key: "token", label: "Token", type: "password" }]);
+    const accountlessExtension: ProviderDefinition = {
+      id: "qobuz",
+      name: "Qobuz extension",
+      implementationOrigin: "extension",
+    };
+    expect(accountSettings(accountlessExtension)).toEqual([]);
+    expect(sourceNeedsAccount(accountlessExtension)).toBe(false);
+    expect(sourceStatus({ ...accountlessExtension, status: "available" }, [], []))
+      .toBe("available");
   });
 });
