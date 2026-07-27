@@ -336,7 +336,7 @@
 
   .workspace {
     min-width: 0;
-    padding: clamp(1.25rem, 4vw, 3.5rem);
+    padding: clamp(1rem, 2.25vw, 2rem);
   }
 
   .workspace-header {
@@ -344,7 +344,7 @@
     align-items: end;
     justify-content: space-between;
     gap: 1rem;
-    margin-bottom: 2rem;
+    margin-bottom: 1.25rem;
   }
 
   .workspace-header h1 {
@@ -433,14 +433,14 @@
   .metric-card {
     display: grid;
     min-width: 0;
-    min-height: 10.5rem;
+    min-height: 8.75rem;
     grid-template-columns: auto minmax(0, 1fr);
     align-content: start;
     gap: 0.9rem;
     border: 1px solid var(--color-edge);
     border-radius: 1.15rem;
     background: linear-gradient(145deg, rgb(24 30 40 / 88%), rgb(18 22 30 / 72%));
-    padding: 1.15rem;
+    padding: 1rem;
   }
 
   .metric-icon {
@@ -856,7 +856,7 @@
   }
 
   .workspace {
-    padding: 1.25rem;
+    padding: 1rem;
   }
 
   .workspace-header {

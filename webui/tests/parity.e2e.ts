@@ -358,6 +358,7 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
 
 const routes = [
   ["#/", "Home"],
+  ["#/library", "Library"],
   ["#/library/playlists", "Library"],
   ["#/library/mappings", "Library"],
   ["#/library/cached", "Library"],
@@ -592,6 +593,19 @@ test("Home stays inside runtime and request budgets", async ({ page }) => {
   expect(metrics.inp).toBeLessThanOrEqual(200);
   expect(metrics.cls).toBeLessThanOrEqual(0.1);
   expect(metrics.navigation).toBeLessThanOrEqual(100);
+});
+
+test("Legacy Library links open their current shared views", async ({ page }) => {
+  await mockApi(page);
+  for (const route of ["#/library", "#/library/link", "#/library/injected", "#/library/external"]) {
+    await page.goto(route);
+    await expect(page.getByText("Managed playlists", { exact: true })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Playlists" })).toHaveAttribute("aria-selected", "true");
+  }
+  for (const route of ["#/library/missing", "#/library/migration"]) {
+    await page.goto(route);
+    await expect(page.getByRole("tab", { name: "Mappings" })).toHaveAttribute("aria-selected", "true");
+  }
 });
 
 test("extension updates explain access changes on mobile", async ({ page }) => {

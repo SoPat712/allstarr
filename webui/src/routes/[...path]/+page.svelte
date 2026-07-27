@@ -38,7 +38,16 @@
   let viewError = $state("");
   let viewRequest = 0;
 
-  const route = $derived(`/${page.params.path ?? ""}`);
+  function currentRoute(path: string) {
+    if (path === "/home") return "/";
+    if (["/library", "/library/link", "/library/injected", "/library/external"].includes(path)) {
+      return "/library/playlists";
+    }
+    if (["/library/missing", "/library/migration"].includes(path)) return "/library/mappings";
+    return path;
+  }
+
+  const route = $derived(currentRoute(`/${page.params.path ?? ""}`));
   const routeQuery = $derived(new URLSearchParams(page.url.hash.split("?", 2)[1] ?? ""));
   const activeDestination = $derived(
     destinations.find((item) =>
