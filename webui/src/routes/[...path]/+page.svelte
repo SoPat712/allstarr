@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, type Component } from "svelte";
   import { page } from "$app/state";
-  import { auth, type Session } from "$lib/api";
+  import { auth, onboarding, type OnboardingState, type Session } from "$lib/api";
   import { liveUpdates } from "$lib/live-updates.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
 
@@ -26,6 +26,10 @@
   let password = $state("");
   let rememberMe = $state(true);
   let avatarFailed = $state(false);
+  let onboardingState = $state<OnboardingState | null>(null);
+  let onboardingOpen = $state(false);
+  let onboardingError = $state("");
+  let OnboardingDialog = $state<Component<any>>();
   let sidebarSlim = $state(false);
   let ActiveView = $state<Component<any>>();
   let loadedRoute = $state("");
@@ -67,9 +71,33 @@
                   ? {
                       section: route.split("/")[2] || "general",
                       administrator: session?.user?.isAdministrator ?? false,
+                      onOpenSetup: reopenSetup,
                     }
                   : {},
   );
+
+  async function loadOnboarding(current: Session) {
+    onboardingState = null;
+    onboardingError = "";
+    if (!current.user?.isAdministrator) return;
+    try {
+      onboardingState = await onboarding.status();
+      onboardingOpen = onboardingState.shouldRedirectToSetup || onboardingState.setupOpen;
+    } catch (cause) {
+      onboardingError = cause instanceof Error ? cause.message : "Setup status is unavailable.";
+    }
+  }
+
+  async function reopenSetup() {
+    if (!session?.user?.isAdministrator) return;
+    try {
+      onboardingState = await onboarding.reopen();
+      onboardingOpen = true;
+      onboardingError = "";
+    } catch (cause) {
+      onboardingError = cause instanceof Error ? cause.message : "Setup could not be reopened.";
+    }
+  }
 
   function viewLoader(path: string) {
     if (path === "/") return import("$lib/components/HomeView.svelte");
@@ -106,11 +134,22 @@
       });
   });
 
+  $effect(() => {
+    if (onboardingOpen && !OnboardingDialog) {
+      void import("$lib/components/OnboardingDialog.svelte").then(({ default: dialog }) => {
+        OnboardingDialog = dialog;
+      });
+    }
+  });
+
   onMount(() => {
     void (async () => {
       try {
         session = await auth.session();
-        if (session.authenticated) liveUpdates.connect();
+        if (session.authenticated) {
+          await loadOnboarding(session);
+          liveUpdates.connect();
+        }
       } catch (cause) {
         error = cause instanceof Error ? cause.message : "Allstarr is unavailable.";
       } finally {
@@ -127,6 +166,7 @@
       session = await auth.login(username, password, rememberMe);
       avatarFailed = false;
       password = "";
+      await loadOnboarding(session);
       liveUpdates.connect();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Sign in failed.";
@@ -136,6 +176,8 @@
   async function logout() {
     await auth.logout();
     liveUpdates.close();
+    onboardingState = null;
+    onboardingOpen = false;
     session = await auth.session();
   }
 </script>
@@ -256,6 +298,13 @@
         </div>
       </header>
 
+      {#if onboardingError || onboardingState?.recoveryNotices.includes("backend_identity_missing")}
+        <div class="degraded-banner" role="status">
+          <span aria-hidden="true">!</span>
+          <p><strong>Media server connection needs attention.</strong> {onboardingError || "The identity saved during setup is no longer available. Sign in again or review the backend connection."}</p>
+        </div>
+      {/if}
+
       {#if ActiveView && loadedRoute === route}
         <ActiveView {...activeProps} />
       {:else if viewError && loadedRoute === route}
@@ -282,4 +331,15 @@
       {/if}
     </main>
   </div>
+  {#if onboardingState && OnboardingDialog}
+    <OnboardingDialog
+      bind:open={onboardingOpen}
+      state={onboardingState}
+      onComplete={onboarding.complete}
+      onChanged={(next: OnboardingState) => {
+        onboardingState = next;
+        onboardingOpen = next.shouldRedirectToSetup || next.setupOpen;
+      }}
+    />
+  {/if}
 {/if}

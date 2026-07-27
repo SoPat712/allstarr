@@ -21,9 +21,11 @@
   let {
     section = "general",
     administrator,
+    onOpenSetup,
   }: {
     section?: string;
     administrator: boolean;
+    onOpenSetup: () => void | Promise<void>;
   } = $props();
 
   const tabs = [
@@ -323,6 +325,13 @@
             <header><div><strong>Playlist pipeline</strong><small>Source access and playable materialization</small></div></header>
             <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void run("playlists", settings.playlistProbe, "Playlist pipeline checked.")}>{action === "playlists" ? "Testing…" : "Test playlist readiness"}</button>
           </article>
+          {#if administrator}
+            <article class="panel maintenance-card">
+              <header><div><strong>Setup guide</strong><small>Durable account onboarding</small></div></header>
+              <p>Reopen setup without clearing browser data or changing runtime health.</p>
+              <button class="button-secondary" type="button" onclick={() => void onOpenSetup()}>Open setup guide</button>
+            </article>
+          {/if}
           {#if administrator}<EnvMigrationCard />{/if}
         </section>
       </div>

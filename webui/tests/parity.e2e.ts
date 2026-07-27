@@ -42,6 +42,27 @@ const responses: Record<string, unknown> = {
       avatarUrl: "/api/admin/auth/me/avatar?user=user",
     },
   },
+  "/api/admin/onboarding/status": {
+    completed: true, setupOpen: false, shouldRedirectToSetup: false,
+    schemaVersion: "onboarding-v1", completedSteps: ["backend-identity"],
+    completionSource: "setup-guide", completedAt: "2026-01-01", revision: 2,
+    recoveryNotices: [],
+    migration: { available: true, completed: false, firstRun: true },
+  },
+  "/api/admin/onboarding/complete": {
+    completed: true, setupOpen: false, shouldRedirectToSetup: false,
+    schemaVersion: "onboarding-v1", completedSteps: ["backend-identity"],
+    completionSource: "setup-guide", completedAt: "2026-01-01", revision: 2,
+    recoveryNotices: [],
+    migration: { available: true, completed: false, firstRun: true },
+  },
+  "/api/admin/onboarding/reopen": {
+    completed: false, setupOpen: true, shouldRedirectToSetup: false,
+    schemaVersion: "onboarding-v1", completedSteps: ["backend-identity"],
+    completionSource: "administrator", reopenedAt: "2026-01-01", revision: 3,
+    recoveryNotices: [],
+    migration: { available: true, completed: false, firstRun: true },
+  },
   "/api/admin/ui/schema": schema,
   "/api/admin/status": { version: "test", backendType: "Jellyfin" },
   "/api/admin/playlists": { playlists: [], inventory: { managed: 0, unmanaged: 0 } },
@@ -758,6 +779,79 @@ test("Maintenance previews, retries, and applies a legacy import on mobile", asy
   await card.getByRole("checkbox").check();
   await card.getByRole("button", { name: "Import preview" }).click();
   await expect(card.getByText("Legacy settings imported.")).toBeVisible();
+});
+
+test("Durable onboarding controls first setup and targeted recovery", async ({ page }) => {
+  await mockApi(page);
+  let completed = false;
+  let recovery = false;
+  let releaseStatus!: () => void;
+  const initialStatus = new Promise<void>((resolve) => { releaseStatus = resolve; });
+  let waitForInitialStatus = true;
+  await page.route("**/api/admin/onboarding/status", async (route) => {
+    if (waitForInitialStatus) {
+      waitForInitialStatus = false;
+      await initialStatus;
+    }
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        completed, setupOpen: false, shouldRedirectToSetup: !completed,
+        schemaVersion: "onboarding-v1",
+        completedSteps: completed ? ["backend-identity"] : [],
+        completionSource: completed ? "setup-guide" : "none",
+        completedAt: completed ? "2026-01-01" : null,
+        revision: completed ? 2 : 0,
+        recoveryNotices: recovery ? ["backend_identity_missing"] : [],
+        migration: { available: true, completed: false, firstRun: true },
+      }),
+    });
+  });
+  await page.route("**/api/admin/onboarding/complete", (route) => {
+    completed = true;
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        completed: true, setupOpen: false, shouldRedirectToSetup: false,
+        schemaVersion: "onboarding-v1", completedSteps: ["backend-identity"],
+        completionSource: "setup-guide", completedAt: "2026-01-01", revision: 2,
+        recoveryNotices: [],
+        migration: { available: true, completed: false, firstRun: true },
+      }),
+    });
+  });
+
+  const navigation = page.goto("#/");
+  await expect(page.getByText("Connecting to Allstarr…")).toBeVisible();
+  releaseStatus();
+  await navigation;
+  const setup = page.getByRole("dialog", { name: "Set up Allstarr" });
+  await expect(setup).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(setup).toBeVisible();
+  await setup.getByRole("button", { name: "Finish setup" }).click();
+  await expect(setup).toBeHidden();
+
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await expect(setup).toBeHidden();
+
+  recovery = true;
+  await page.reload();
+  await expect(page.getByText("Media server connection needs attention.")).toBeVisible();
+  await expect(setup).toBeHidden();
+});
+
+test("Administrators can reopen durable setup from Maintenance", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+  await page.goto("#/settings/maintenance");
+  await page.getByRole("button", { name: "Open setup guide" }).click();
+  const setup = page.getByRole("dialog", { name: "Set up Allstarr" });
+  await expect(setup).toBeVisible();
+  await expect(setup.getByRole("button", { name: "Finish setup" })).toBeInViewport();
+  await page.keyboard.press("Escape");
+  await expect(setup).toBeHidden();
 });
 
 test("Playlist details use a responsive dialog and track rows open mapping review", async ({ page }) => {

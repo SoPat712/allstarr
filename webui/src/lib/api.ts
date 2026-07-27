@@ -9,6 +9,26 @@ export type Session = {
   };
 };
 
+export type OnboardingState = {
+  completed: boolean;
+  setupOpen: boolean;
+  shouldRedirectToSetup: boolean;
+  schemaVersion: string;
+  completedSteps: string[];
+  completionSource: string;
+  completedAt?: string | null;
+  reopenedAt?: string | null;
+  revision: number;
+  recoveryNotices: string[];
+  alreadyCompleted?: boolean;
+  migration: {
+    available: boolean;
+    completed: boolean;
+    firstRun: boolean;
+    lastAppliedAt?: string | null;
+  };
+};
+
 export type RuntimeStatus = {
   version: string;
   backendType: string;
@@ -539,6 +559,12 @@ export const auth = {
       body: JSON.stringify({ username, password, rememberMe }),
     }),
   logout: () => json<{ success: boolean }>("/api/admin/auth/logout", { method: "POST" }),
+};
+
+export const onboarding = {
+  status: () => json<OnboardingState>("/api/admin/onboarding/status"),
+  complete: () => json<OnboardingState>("/api/admin/onboarding/complete", { method: "POST" }),
+  reopen: () => json<OnboardingState>("/api/admin/onboarding/reopen", { method: "POST" }),
 };
 
 export const home = {

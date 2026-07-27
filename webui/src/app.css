@@ -4192,6 +4192,42 @@
     color: var(--color-ink-muted);
   }
 
+  .onboarding-dialog {
+    width: min(38rem, calc(100vw - 2rem));
+  }
+
+  .setup-checklist {
+    display: grid;
+    overflow: hidden;
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-md);
+  }
+
+  .setup-checklist section {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    align-items: start;
+    gap: 0.75rem;
+    border-bottom: 1px solid var(--color-edge);
+    padding: 0.8rem;
+  }
+
+  .setup-checklist section:last-child {
+    border-bottom: 0;
+  }
+
+  .setup-checklist section > div {
+    display: grid;
+    gap: 0.2rem;
+  }
+
+  .setup-checklist p {
+    margin: 0;
+    color: var(--color-ink-muted);
+    font-size: 0.65rem;
+    line-height: 1.5;
+  }
+
   .maintenance-transfer {
     display: flex;
     align-items: center;
