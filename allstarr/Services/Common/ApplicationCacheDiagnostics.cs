@@ -34,6 +34,7 @@ public sealed record DatabaseCacheMaintenancePreview(
     int ExpiredEntries,
     int UnknownOwnerEntries,
     int DisabledCategoryEntries,
+    int SupersededEntries,
     int OverQuotaEntries,
     long ReclaimableBytes,
     DateTimeOffset CapturedAt);

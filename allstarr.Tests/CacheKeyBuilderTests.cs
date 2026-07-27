@@ -160,13 +160,13 @@ public class CacheKeyBuilderTests
             96));
 
         Assert.StartsWith(
-            $"media:descriptor:v2:{tenantId:N}:{userId:N}:{accountId:N}:spotify:playlist:",
+            $"media:descriptor:v3:{tenantId:N}:{userId:N}:{accountId:N}:spotify:playlist:",
             key,
             StringComparison.Ordinal);
         Assert.DoesNotContain("private-playlist-id", key, StringComparison.Ordinal);
         Assert.DoesNotContain("signed-revision", key, StringComparison.Ordinal);
         Assert.Equal(
-            $"media:descriptor:v2:*:*:{accountId:N}:*",
+            $"media:descriptor:v3:*:*:{accountId:N}:*",
             CacheKeyBuilder.BuildMediaAssetDescriptorAccountPattern(accountId));
     }
 }

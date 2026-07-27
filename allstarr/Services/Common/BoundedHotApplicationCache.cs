@@ -164,6 +164,8 @@ public sealed class BoundedHotApplicationCache : IApplicationCache, IDisposable
             cancellationToken: cancellationToken);
         deleted += await _database.CleanupInvalidOwnershipAsync(
             cancellationToken: cancellationToken);
+        deleted += await _database.CleanupSupersededArtworkDescriptorsAsync(
+            cancellationToken: cancellationToken);
         deleted += await _database.CleanupPolicyOverflowAsync(
             cancellationToken: cancellationToken);
         return deleted;

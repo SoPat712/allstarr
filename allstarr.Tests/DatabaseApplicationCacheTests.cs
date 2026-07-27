@@ -91,7 +91,7 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
             });
             database.ApplicationCacheEntries.Add(new ApplicationCacheEntryRecord
             {
-                Key = "media:descriptor:v2:global:shared:none:jellyfin:playlist:broken",
+                Key = "media:descriptor:v3:global:shared:none:jellyfin:playlist:resource:0x0:broken",
                 Category = ApplicationCacheCategory.CanonicalMetadata.ToString(),
                 Value = "{broken",
                 PayloadBytes = 7,
@@ -114,6 +114,24 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
 
         await using var remaining = await _factory.CreateDbContextAsync();
         Assert.Single(await remaining.ApplicationCacheEntries.ToListAsync());
+    }
+
+    [Fact]
+    public async Task MaintenanceRemovesOlderArtworkRevisionsDeterministically()
+    {
+        var first = CacheKeyBuilder.BuildMediaAssetDescriptorKey(new(
+            null, null, null, "jellyfin", "playlist", "playlist-1", "revision-1", 96, 96));
+        var second = CacheKeyBuilder.BuildMediaAssetDescriptorKey(new(
+            null, null, null, "jellyfin", "playlist", "playlist-1", "revision-2", 96, 96));
+        const string descriptor = """{"PayloadKey":"artwork:payload:v1:fixture"}""";
+        Assert.True(await _cache.SetStringAsync(first, descriptor, TimeSpan.FromHours(1)));
+        _clock.UtcNow = _clock.UtcNow.AddSeconds(1);
+        Assert.True(await _cache.SetStringAsync(second, descriptor, TimeSpan.FromHours(1)));
+
+        Assert.Equal(1, (await _cache.PreviewMaintenanceAsync()).SupersededEntries);
+        Assert.Equal(1, await _cache.CleanupSupersededArtworkDescriptorsAsync());
+        Assert.Null(await _cache.GetStringAsync(first));
+        Assert.Equal(descriptor, await _cache.GetStringAsync(second));
     }
 
     [Fact]

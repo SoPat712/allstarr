@@ -418,7 +418,14 @@ public sealed class DatabaseApplicationCache(
                 !ApplicationCachePolicyRegistry.IsEnabled(
                     Enum.Parse<ApplicationCacheCategory>(item.Category, ignoreCase: true),
                     _settings)).ToArray();
-            var active = scanned.Except(expired).Except(unknown).Except(disabled).ToArray();
+            var superseded = FindSupersededArtworkDescriptors(
+                scanned.Except(expired).Except(unknown).Except(disabled)).ToArray();
+            var active = scanned
+                .Except(expired)
+                .Except(unknown)
+                .Except(disabled)
+                .Except(superseded)
+                .ToArray();
             var overQuota = new List<ApplicationCacheEntryRecord>();
             foreach (var group in active.GroupBy(item =>
                          Enum.Parse<ApplicationCacheCategory>(item.Category, ignoreCase: true)))
@@ -443,6 +450,7 @@ public sealed class DatabaseApplicationCache(
             var reclaimable = expired
                 .Concat(unknown)
                 .Concat(disabled)
+                .Concat(superseded)
                 .Concat(overQuota)
                 .DistinctBy(item => item.Key)
                 .Sum(item => (long)item.PayloadBytes);
@@ -452,6 +460,7 @@ public sealed class DatabaseApplicationCache(
                 expired.Length,
                 unknown.Length,
                 disabled.Length,
+                superseded.Length,
                 overQuota.Count,
                 reclaimable,
                 clock.UtcNow);
@@ -460,7 +469,7 @@ public sealed class DatabaseApplicationCache(
         {
             logger.LogWarning(exception, "Database cache maintenance preview failed");
             return new DatabaseCacheMaintenancePreview(
-                0, false, 0, 0, 0, 0, 0, clock.UtcNow);
+                0, false, 0, 0, 0, 0, 0, 0, clock.UtcNow);
         }
     }
 
@@ -535,6 +544,45 @@ public sealed class DatabaseApplicationCache(
         {
             logger.LogWarning(exception, "Artwork payload reference scan failed");
             return new(new HashSet<string>(StringComparer.Ordinal), true);
+        }
+    }
+
+    public async Task<int> CleanupSupersededArtworkDescriptorsAsync(
+        int batchSize = DefaultCleanupBatchSize,
+        CancellationToken cancellationToken = default)
+    {
+        var take = Math.Clamp(batchSize, 1, DefaultCleanupBatchSize);
+        try
+        {
+            await using var database = await contextFactory.CreateDbContextAsync(cancellationToken);
+            var descriptors = await database.Set<ApplicationCacheEntryRecord>()
+                .AsNoTracking()
+                .Where(item =>
+                    item.Key.StartsWith("media:descriptor:v3:") &&
+                    (item.ExpiresAt == null || item.ExpiresAt > clock.UtcNow))
+                .OrderBy(item => item.UpdatedAt)
+                .ThenBy(item => item.Key)
+                .Take(10_000)
+                .ToArrayAsync(cancellationToken);
+            var keys = FindSupersededArtworkDescriptors(descriptors)
+                .Take(take)
+                .Select(item => item.Key)
+                .ToArray();
+            if (keys.Length == 0)
+            {
+                return 0;
+            }
+
+            var deleted = await database.Set<ApplicationCacheEntryRecord>()
+                .Where(item => keys.Contains(item.Key))
+                .ExecuteDeleteAsync(cancellationToken);
+            Interlocked.Add(ref _evictions, deleted);
+            return deleted;
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Superseded artwork descriptor cleanup failed");
+            return 0;
         }
     }
 
@@ -691,6 +739,16 @@ public sealed class DatabaseApplicationCache(
         return null;
     }
 
+    private static IEnumerable<ApplicationCacheEntryRecord> FindSupersededArtworkDescriptors(
+        IEnumerable<ApplicationCacheEntryRecord> entries) =>
+        entries
+            .Where(item => item.Key.StartsWith("media:descriptor:v3:", StringComparison.Ordinal))
+            .GroupBy(item => item.Key[..item.Key.LastIndexOf(':')], StringComparer.Ordinal)
+            .SelectMany(group => group
+                .OrderByDescending(item => item.UpdatedAt)
+                .ThenByDescending(item => item.Key, StringComparer.Ordinal)
+                .Skip(1));
+
     private static string ToLikePattern(string pattern) =>
         pattern
             .Replace("\\", "\\\\", StringComparison.Ordinal)
@@ -715,6 +773,9 @@ public sealed class DatabaseApplicationCacheCleanupService(
                 DatabaseApplicationCache.DefaultCleanupBatchSize,
                 stoppingToken);
             deleted += await cache.CleanupInvalidOwnershipAsync(
+                DatabaseApplicationCache.DefaultCleanupBatchSize,
+                stoppingToken);
+            deleted += await cache.CleanupSupersededArtworkDescriptorsAsync(
                 DatabaseApplicationCache.DefaultCleanupBatchSize,
                 stoppingToken);
             deleted += await cache.CleanupPolicyOverflowAsync(
