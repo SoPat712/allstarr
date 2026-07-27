@@ -7,10 +7,12 @@
   },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
+    "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "build": "vite build"
+    "build": "vite build",
+    "check:budgets": "node scripts/check-budgets.mjs"
   },
   "dependencies": {
     "bits-ui": "^2.18.1"

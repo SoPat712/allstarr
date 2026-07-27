@@ -1,5 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 
+declare global {
+  interface Window {
+    __allstarrMetrics: { cls: number; lcp: number; inp: number; navigation: number };
+  }
+}
+
 const viewports = [
   { width: 390, height: 844 },
   { width: 768, height: 1024 },
@@ -242,3 +248,59 @@ for (const viewport of viewports) {
     });
   });
 }
+
+test("Home stays inside runtime and request budgets", async ({ page }) => {
+  const requests: string[] = [];
+  page.on("request", (request) => requests.push(new URL(request.url()).pathname));
+  await page.addInitScript(() => {
+    const metrics = { cls: 0, lcp: 0, inp: 0, navigation: 0 };
+    Object.assign(window, { __allstarrMetrics: metrics });
+    new PerformanceObserver((list) => {
+      metrics.lcp = Math.max(metrics.lcp, ...list.getEntries().map((entry) => entry.startTime));
+    }).observe({ type: "largest-contentful-paint", buffered: true });
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (!(entry as PerformanceEntry & { hadRecentInput?: boolean }).hadRecentInput) {
+          metrics.cls += (entry as PerformanceEntry & { value: number }).value;
+        }
+      }
+    }).observe({ type: "layout-shift", buffered: true });
+    new PerformanceObserver((list) => {
+      metrics.inp = Math.max(metrics.inp, ...list.getEntries().map((entry) => entry.duration));
+    }).observe({ type: "event", buffered: true, durationThreshold: 16 } as PerformanceObserverInit);
+  });
+  await mockApi(page);
+  await page.goto("#/");
+  await expect(page.getByLabel("Loading Home")).toBeHidden();
+
+  const apiRequests = requests.filter((path) => path.startsWith("/api/admin/"));
+  const jsRequests = requests.filter((path) => path.endsWith(".js"));
+  expect(apiRequests.length).toBeLessThanOrEqual(14); // Lit Home baseline.
+  expect(jsRequests).toHaveLength(12); // Shell, error route, and active Home only.
+
+  await page.evaluate(() => {
+    const metrics = window.__allstarrMetrics;
+    const start = { value: 0 };
+    document.querySelector('a[href="#/library/playlists"]')?.addEventListener("click", () => {
+      start.value = performance.now();
+    }, { once: true });
+    new MutationObserver((_, observer) => {
+      if (document.querySelector("h1")?.textContent === "Library") {
+        metrics.navigation = performance.now() - start.value;
+        observer.disconnect();
+      }
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+  });
+  await page.getByRole("link", { name: "Library" }).first().click();
+  await expect.poll(() => page.evaluate(() =>
+    window.__allstarrMetrics.navigation,
+  )).toBeGreaterThan(0);
+
+  const metrics = await page.evaluate(() => window.__allstarrMetrics);
+  expect(metrics.lcp).toBeGreaterThan(0);
+  expect(metrics.inp).toBeGreaterThan(0);
+  expect(metrics.lcp).toBeLessThanOrEqual(2_500);
+  expect(metrics.inp).toBeLessThanOrEqual(200);
+  expect(metrics.cls).toBeLessThanOrEqual(0.1);
+  expect(metrics.navigation).toBeLessThanOrEqual(100);
+});

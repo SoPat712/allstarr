@@ -1,14 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, type Component } from "svelte";
   import { page } from "$app/state";
   import { auth, type Session } from "$lib/api";
-  import DownloadsView from "$lib/components/DownloadsView.svelte";
-  import EventLogView from "$lib/components/EventLogView.svelte";
-  import HomeView from "$lib/components/HomeView.svelte";
-  import MappingView from "$lib/components/MappingView.svelte";
-  import PlaylistsView from "$lib/components/PlaylistsView.svelte";
-  import SourcesView from "$lib/components/SourcesView.svelte";
-  import SettingsView from "$lib/components/SettingsView.svelte";
   import { liveUpdates } from "$lib/live-updates.svelte";
 
   const destinations = [
@@ -26,6 +19,10 @@
   let password = $state("");
   let rememberMe = $state(true);
   let avatarFailed = $state(false);
+  let ActiveView = $state<Component<any>>();
+  let loadedRoute = $state("");
+  let viewError = $state("");
+  let viewRequest = 0;
 
   const route = $derived(`/${page.params.path ?? ""}`);
   const routeQuery = $derived(new URLSearchParams(page.url.hash.split("?", 2)[1] ?? ""));
@@ -42,6 +39,58 @@
       .slice(0, 2)
       .toUpperCase() ?? "?",
   );
+  const activeProps = $derived(
+    route === "/"
+      ? { administrator: session?.user?.isAdministrator ?? false }
+      : route === "/library/playlists"
+        ? { initialId: routeQuery.get("playlist") ?? "" }
+        : route === "/library/mappings"
+          ? { initialSearch: routeQuery.get("search") ?? "" }
+          : route === "/library/cached"
+            ? { storage: "cache" }
+            : route === "/library/kept"
+              ? { storage: "kept" }
+              : route === "/sources"
+                ? { administrator: session?.user?.isAdministrator ?? false }
+                : route.startsWith("/settings")
+                  ? { section: route.split("/")[2] || "general" }
+                  : {},
+  );
+
+  function viewLoader(path: string) {
+    if (path === "/") return import("$lib/components/HomeView.svelte");
+    if (path === "/library/playlists") return import("$lib/components/PlaylistsView.svelte");
+    if (path === "/library/mappings") return import("$lib/components/MappingView.svelte");
+    if (path === "/library/cached" || path === "/library/kept") {
+      return import("$lib/components/DownloadsView.svelte");
+    }
+    if (path === "/activity") return import("$lib/components/EventLogView.svelte");
+    if (path === "/sources") return import("$lib/components/SourcesView.svelte");
+    if (path.startsWith("/settings")) return import("$lib/components/SettingsView.svelte");
+  }
+
+  $effect(() => {
+    const path = route;
+    const loader = viewLoader(path);
+    const request = ++viewRequest;
+    ActiveView = undefined;
+    loadedRoute = loader ? "" : path;
+    viewError = "";
+
+    void loader
+      ?.then(({ default: view }) => {
+        if (request === viewRequest) {
+          ActiveView = view;
+          loadedRoute = path;
+        }
+      })
+      .catch((cause) => {
+        if (request === viewRequest) {
+          viewError = cause instanceof Error ? cause.message : "This view could not be loaded.";
+          loadedRoute = path;
+        }
+      });
+  });
 
   onMount(() => {
     void (async () => {
@@ -189,22 +238,19 @@
         </div>
       </header>
 
-      {#if route === "/"}
-        <HomeView administrator={session.user?.isAdministrator ?? false} />
-      {:else if route === "/library/playlists"}
-        <PlaylistsView initialId={routeQuery.get("playlist") ?? ""} />
-      {:else if route === "/library/mappings"}
-        <MappingView initialSearch={routeQuery.get("search") ?? ""} />
-      {:else if route === "/library/cached"}
-        <DownloadsView storage="cache" />
-      {:else if route === "/library/kept"}
-        <DownloadsView storage="kept" />
-      {:else if route === "/activity"}
-        <EventLogView />
-      {:else if route === "/sources"}
-        <SourcesView administrator={session.user?.isAdministrator ?? false} />
-      {:else if route.startsWith("/settings")}
-        <SettingsView section={route.split("/")[2] || "general"} />
+      {#if ActiveView && loadedRoute === route}
+        <ActiveView {...activeProps} />
+      {:else if viewError && loadedRoute === route}
+        <section class="panel empty-state" role="alert">
+          <p class="eyebrow">View unavailable</p>
+          <h2>{activeDestination.label} could not be loaded.</h2>
+          <p>{viewError}</p>
+        </section>
+      {:else if viewLoader(route)}
+        <section class="panel skeleton-panel" aria-busy="true" aria-label={`Loading ${activeDestination.label}`}>
+          <div class="skeleton-line short"></div>
+          <div class="skeleton-card"></div>
+        </section>
       {:else}
         <section class="panel empty-state">
           <span class="empty-orbit" aria-hidden="true">✦</span>

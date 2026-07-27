@@ -119,6 +119,7 @@ jobs:
           npm run check
           npm test
           npm run build
+          npm run check:budgets
 
       - name: Test
         run: dotnet test --configuration Release --no-build --verbosity normal
