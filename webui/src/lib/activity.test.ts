@@ -66,5 +66,7 @@ describe("event log presentation", () => {
     expect(humanize("provider_health.failed")).toBe("Provider Health Failed");
     expect(activityLink({ ...item("1", "Song A"), sourceTitle: "Song A" }))
       .toBe("#/library/mappings?search=Song%20A");
+    expect(activityLink({ ...item("2", "Cached"), kind: "caching" }))
+      .toBe("#/library/cached");
   });
 });

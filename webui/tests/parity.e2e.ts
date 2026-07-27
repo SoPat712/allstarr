@@ -647,6 +647,7 @@ test("Event log groups matching work and preserves actionable history", async ({
           targetTitle: `Local Song ${index}`, confidenceLabel: "96%",
           sourceProviderTrackId: `provider-${index}`, backendItemId: `backend-${index}`,
           artworkUrl: `/artwork-${index}.jpg`,
+          technicalDetails: { titleSimilarity: "0.98" },
         }));
     return route.fulfill({
       status: 200,
@@ -671,8 +672,16 @@ test("Event log groups matching work and preserves actionable history", async ({
 
   await page.getByRole("button", { name: "Load earlier events" }).click();
   await expect(page.getByText("4 events retained in this view")).toBeVisible();
-  await page.locator(".event-log-group summary").first().click();
-  await expect(page.getByText("Technical details").first()).toBeVisible();
+  const group = page.locator(".event-log-group").first();
+  await group.locator(":scope > summary").focus();
+  await page.keyboard.press("Enter");
+  const technical = page.getByText("Technical details").first();
+  await expect(technical).toBeVisible();
+  await expect(page.getByText("Title Similarity").first()).toBeHidden();
+  await technical.click();
+  await expect(page.getByText("Title Similarity").first()).toBeVisible();
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(group).toHaveAttribute("open", "");
   await page.getByRole("link", { name: "Open related view" }).first().click();
   await expect(page).toHaveURL(/#\/library\/mappings\?search=Song%200$/);
 });

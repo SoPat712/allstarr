@@ -355,6 +355,15 @@ public class AdminUiController : ControllerBase
                 : libraryTrack?.CoverArtReference == null
                     ? null
                     : LocalArtworkUrl(libraryTrack.BackendItemId);
+            var technicalDetails = new Dictionary<string, string>
+            {
+                ["decisionId"] = item.Id.ToString("N"),
+                ["decisionVersion"] = item.DecisionVersion.ToString(),
+                ["policyVersion"] = item.PolicyVersion
+            };
+            foreach (var component in MatchScoreComponents(item.CandidateResultsJson, item.LibraryTrackId))
+                technicalDetails[$"score.{component.Key}"] = component.Value.ToString("0.###",
+                    System.Globalization.CultureInfo.InvariantCulture);
             return new AdminUiActivityItem(
                 item.Id.ToString("N"),
                 "matching",
@@ -380,12 +389,7 @@ public class AdminUiController : ControllerBase
                 SourceProviderTrackId: identity?.ExternalId,
                 BackendItemId: libraryTrack?.BackendItemId,
                 Action: "track-match.evaluate",
-                TechnicalDetails: new Dictionary<string, string>
-                {
-                    ["decisionId"] = item.Id.ToString("N"),
-                    ["decisionVersion"] = item.DecisionVersion.ToString(),
-                    ["policyVersion"] = item.PolicyVersion
-                });
+                TechnicalDetails: technicalDetails);
         }));
         activity.AddRange(audits.Select(AuditActivity));
         activity.AddRange(extensionLogs.Select(item => new AdminUiActivityItem(
@@ -458,6 +462,24 @@ public class AdminUiController : ControllerBase
         if (length >= 1024L * 1024L) return $"{length / (1024d * 1024d):0.##} MiB";
         if (length >= 1024L) return $"{length / 1024d:0.##} KiB";
         return $"{length} B";
+    }
+
+    private static IReadOnlyDictionary<string, double> MatchScoreComponents(
+        string json,
+        Guid? selectedLibraryTrackId)
+    {
+        try
+        {
+            var candidates = JsonSerializer.Deserialize<TrackMatchCandidateScore[]>(json);
+            return candidates?.FirstOrDefault(item =>
+                item.LibraryTrackId == selectedLibraryTrackId)?.Components ??
+                candidates?.FirstOrDefault()?.Components ??
+                new Dictionary<string, double>();
+        }
+        catch (JsonException)
+        {
+            return new Dictionary<string, double>();
+        }
     }
 
     private static AdminUiActivityItem AuditActivity(AuditEventRecord item)

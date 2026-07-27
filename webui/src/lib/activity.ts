@@ -129,6 +129,7 @@ export function activityIcon(kind: string) {
 export function activityLink(item: ActivityItem) {
   if (item.playlistLinkId)
     return `#/library/playlists?playlist=${encodeURIComponent(item.playlistLinkId)}`;
+  if (item.kind === "caching") return "#/library/cached";
   if (item.kind === "matching") {
     const search = item.sourceTitle || item.sourceProviderTrackId || item.detail;
     return `#/library/mappings?search=${encodeURIComponent(search)}`;
