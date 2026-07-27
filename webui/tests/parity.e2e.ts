@@ -242,7 +242,7 @@ const routes = [
 
 const stateRoutes = [
   ["#/", "Home", "Loading Home", "/api/admin/status", [
-    "/api/admin/ui/schema", "/api/admin/status", "/api/admin/playlists", "/api/admin/jobs",
+    "/api/admin/ui/schema", "/api/admin/status", "/api/admin/playlists", "/api/admin/playlist-links", "/api/admin/jobs",
     "/api/admin/ui/activity", "/api/admin/ui/provider-summaries",
   ]],
   ["#/library/playlists", "Library", "Loading playlists", "/api/admin/playlist-links", ["/api/admin/playlist-links"]],

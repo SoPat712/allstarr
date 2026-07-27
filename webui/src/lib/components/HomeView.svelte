@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { home } from "$lib/api";
+  import { home, playlistLinks } from "$lib/api";
   import { summarizeHome, type HomeSnapshot } from "$lib/home";
   import { liveUpdates } from "$lib/live-updates.svelte";
 
@@ -17,6 +17,7 @@
     snapshot !== null &&
       !snapshot.status &&
       !snapshot.playlists &&
+      !snapshot.playlistLinks &&
       !snapshot.jobs &&
       !snapshot.activity &&
       !snapshot.providers,
@@ -32,7 +33,8 @@
     const requests = [
       ["Provider catalog", home.schema()],
       ["Runtime status", home.status()],
-      ["Playlists", home.playlists()],
+      ["Playlist inventory", home.playlists()],
+      ["Managed playlists", playlistLinks.list()],
       ["Jobs", home.jobs()],
       ...(administrator
         ? [
@@ -53,7 +55,8 @@
 
       if (label === "Provider catalog") next.providerCatalog = (result.value as Awaited<ReturnType<typeof home.schema>>).providers;
       if (label === "Runtime status") next.status = result.value as Awaited<ReturnType<typeof home.status>>;
-      if (label === "Playlists") next.playlists = result.value as Awaited<ReturnType<typeof home.playlists>>;
+      if (label === "Playlist inventory") next.playlists = result.value as Awaited<ReturnType<typeof home.playlists>>;
+      if (label === "Managed playlists") next.playlistLinks = (result.value as Awaited<ReturnType<typeof playlistLinks.list>>).playlistLinks;
       if (label === "Jobs") next.jobs = (result.value as Awaited<ReturnType<typeof home.jobs>>).jobs;
       if (label === "Recent activity") next.activity = (result.value as Awaited<ReturnType<typeof home.activity>>).items;
       if (label === "Provider health") next.providers = (result.value as Awaited<ReturnType<typeof home.providers>>).providers;
