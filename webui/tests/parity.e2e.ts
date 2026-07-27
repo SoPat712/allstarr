@@ -324,3 +324,43 @@ test("Home stays inside runtime and request budgets", async ({ page }) => {
   expect(metrics.cls).toBeLessThanOrEqual(0.1);
   expect(metrics.navigation).toBeLessThanOrEqual(100);
 });
+
+test("extension updates explain access changes on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+  const basePackage = {
+    extensionId: "lumen-audio", displayName: "Lumen Audio", lifecycle: "disabled",
+    active: false, installed: true, permissionReviewRequired: false, capabilities: ["metadata"],
+    revision: 1,
+  };
+  await page.route("**/api/admin/extensions/packages", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify([
+      { ...basePackage, id: "old", version: "1.0.0", state: "disabled", stagedAt: "2026-01-01" },
+      {
+        ...basePackage, id: "new", version: "2.0.0", state: "reviewRequired",
+        previousPackageId: "old", permissionReviewRequired: true,
+        capabilities: ["metadata", "streaming"], stagedAt: "2026-02-01",
+      },
+    ]),
+  }));
+  const permission = (id: string, kind: string, value: string) => ({
+    id, permissionKind: kind, permissionValue: value, required: true, decision: "pending",
+  });
+  await page.route("**/packages/old/permissions", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify([permission("old-network", "network", "https://api.example.test/"), permission("old-cache", "cache", "metadata")]),
+  }));
+  await page.route("**/packages/new/permissions", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify([permission("new-network", "network", "https://api.example.test/"), permission("new-secret", "secret", "accountToken")]),
+  }));
+
+  await page.goto("#/settings/extensions");
+  await page.getByRole("button", { name: "Review permissions" }).click();
+  const review = page.getByRole("dialog", { name: "Review permissions" });
+  await expect(review.getByText("Update 1.0.0 → 2.0.0. Capability and permission changes are shown below.")).toBeVisible();
+  await expect(review.getByText("New access", { exact: false })).toBeVisible();
+  await expect(review.getByText("Removed access", { exact: false })).toBeVisible();
+  await expect(review.getByRole("button", { name: "Approve and enable" })).toBeInViewport();
+});

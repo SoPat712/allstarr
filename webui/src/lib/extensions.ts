@@ -34,3 +34,13 @@ export function availablePackages(store: ExtensionStoreItem[], installed: Extens
   return store.filter((item) => !versions.has(item.id.toLowerCase()) ||
     compareVersions(item.version, versions.get(item.id.toLowerCase())!) > 0);
 }
+
+export function valueChanges(current: string[], previous: string[]) {
+  const before = new Set(previous);
+  const after = new Set(current);
+  return [
+    ...current.map((value) => ({ value, change: before.has(value) ? "unchanged" : "added" })),
+    ...previous.filter((value) => !after.has(value))
+      .map((value) => ({ value, change: "removed" })),
+  ] as const;
+}

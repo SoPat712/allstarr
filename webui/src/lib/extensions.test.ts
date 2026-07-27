@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { availablePackages, compareVersions, currentPackages } from "./extensions";
+import { availablePackages, compareVersions, currentPackages, valueChanges } from "./extensions";
 import type { ExtensionPackage, ExtensionStoreItem } from "./api";
 
 const pkg = (overrides: Partial<ExtensionPackage> = {}): ExtensionPackage => ({
@@ -28,5 +28,13 @@ describe("extension catalog", () => {
       { id: "new", version: "1.0.0" },
     ] as ExtensionStoreItem[];
     expect(availablePackages(store, [pkg()]).map((item) => item.id)).toEqual(["new"]);
+  });
+
+  it("labels added, unchanged, and removed update access", () => {
+    expect(valueChanges(["network", "secret"], ["network", "cache"])).toEqual([
+      { value: "network", change: "unchanged" },
+      { value: "secret", change: "added" },
+      { value: "cache", change: "removed" },
+    ]);
   });
 });

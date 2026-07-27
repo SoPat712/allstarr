@@ -10,7 +10,7 @@
     type ExtensionStoreItem,
   } from "$lib/api";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
-  import { availablePackages, currentPackages } from "$lib/extensions";
+  import { availablePackages, currentPackages, valueChanges } from "$lib/extensions";
   import { humanize } from "$lib/sources";
 
   const tabs = ["installed", "available", "registries", "activity"] as const;
@@ -27,7 +27,9 @@
   let installOpen = $state(false);
   let reviewOpen = $state(false);
   let reviewPackage = $state<ExtensionPackage | null>(null);
+  let previousPackage = $state<ExtensionPackage | null>(null);
   let permissions = $state<ExtensionPermission[]>([]);
+  let previousPermissions = $state<ExtensionPermission[]>([]);
   let decisions = $state<Record<string, boolean>>({});
   let permissionConfirmed = $state(false);
   let removePackage = $state<ExtensionPackage | null>(null);
@@ -37,6 +39,14 @@
   const installed = $derived(currentPackages(packages));
   const available = $derived(availablePackages(store, installed)
     .filter((item) => `${item.displayName} ${item.description ?? ""}`.toLowerCase().includes(search.toLowerCase())));
+  const permissionChanges = $derived(valueChanges(
+    permissions.map((item) => `${item.permissionKind}:${item.permissionValue}`),
+    previousPermissions.map((item) => `${item.permissionKind}:${item.permissionValue}`),
+  ));
+  const capabilityChanges = $derived(valueChanges(
+    reviewPackage?.capabilities ?? [],
+    previousPackage?.capabilities ?? [],
+  ));
 
   function definition(item: ExtensionPackage | ExtensionStoreItem) {
     return {
@@ -110,7 +120,11 @@
 
   async function openReview(item: ExtensionPackage) {
     try {
-      permissions = await extensions.permissions(item.id);
+      previousPackage = packages.find((entry) => entry.id === item.previousPackageId) ?? null;
+      [permissions, previousPermissions] = await Promise.all([
+        extensions.permissions(item.id),
+        previousPackage ? extensions.permissions(previousPackage.id) : Promise.resolve([]),
+      ]);
       reviewPackage = item;
       decisions = {};
       permissionConfirmed = false;
@@ -118,6 +132,12 @@
     } catch (cause) {
       feedback = cause instanceof Error ? cause.message : "Permissions could not be loaded.";
     }
+  }
+
+  function permissionHelp(kind: string) {
+    if (kind.toLowerCase() === "network") return ["↗", "Can contact only this approved HTTPS origin."];
+    if (kind.toLowerCase() === "secret") return ["◆", "Can read this named encrypted account setting."];
+    return ["▣", "Can use this named, quota-limited extension cache."];
   }
 
   async function approve() {
@@ -283,9 +303,20 @@
   <Dialog.Root open={reviewOpen}>
     <Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog extension-review-dialog">
       <header class="dialog-heading"><div><Dialog.Title>Review permissions</Dialog.Title><Dialog.Description>{reviewPackage?.displayName} needs explicit access before its runtime can start.</Dialog.Description></div></header>
+      {#if previousPackage}
+        <p class="credential-safety">Update {previousPackage.version} → {reviewPackage?.version}. Capability and permission changes are shown below.</p>
+        <div class="source-capabilities" aria-label={`Capability changes from ${previousPackage.version} to ${reviewPackage?.version}`}>
+          {#each capabilityChanges as item}<span class:ready={item.change === "added"}>{item.change === "added" ? "+" : item.change === "removed" ? "−" : "="} {humanize(item.value)}</span>{/each}
+        </div>
+      {/if}
       <div class="extension-permissions">
         {#each permissions as item}
-          <article><span><strong>{humanize(item.permissionKind)}</strong><small>{item.permissionValue}</small>{#if item.required}<em>Required</em>{/if}</span><div role="group" aria-label={`Decision for ${item.permissionKind}`}><button class:button-primary={decisions[item.id] === true} type="button" onclick={() => { decisions = { ...decisions, [item.id]: true }; }}>Allow</button><button class:button-danger={decisions[item.id] === false} type="button" onclick={() => { decisions = { ...decisions, [item.id]: false }; }}>Deny</button></div></article>
+          {@const help = permissionHelp(item.permissionKind)}
+          {@const change = permissionChanges.find((entry) => entry.value === `${item.permissionKind}:${item.permissionValue}`)?.change}
+          <article><span><strong>{help[0]} {humanize(item.permissionKind)}</strong><small>{item.permissionValue} · {help[1]}</small><em>{change === "added" ? "New access" : previousPackage ? "Unchanged" : "New install"}{item.required ? " · Required" : ""}</em></span><div role="group" aria-label={`Decision for ${item.permissionKind}`}><button class:button-primary={decisions[item.id] === true} type="button" onclick={() => { decisions = { ...decisions, [item.id]: true }; }}>Allow</button><button class:button-danger={decisions[item.id] === false} type="button" onclick={() => { decisions = { ...decisions, [item.id]: false }; }}>Deny</button></div></article>
+        {/each}
+        {#each permissionChanges.filter((item) => item.change === "removed") as item}
+          <article><span><strong>− Removed access</strong><small>{item.value.replace(":", " · ")}</small><em>No longer requested</em></span></article>
         {/each}
       </div>
       <label class="permission-confirm"><input type="checkbox" bind:checked={permissionConfirmed} /><span>I understand the access requested by this extension.</span></label>
