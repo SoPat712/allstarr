@@ -19,6 +19,7 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <InternalsVisibleTo Include="allstarr.Tests" />
         <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
         <PackageReference Include="Cronos" Version="0.11.1" />
         <PackageReference Include="Jint" Version="4.11.0" />

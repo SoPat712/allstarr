@@ -69,14 +69,19 @@ public class MultiProviderMetadataService : IMusicMetadataService
             if (service == null) return new List<Song>();
             try
             {
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                timeout.CancelAfter(ProviderSearchTimeout);
-                return await service.SearchSongsAsync(query, limit, timeout.Token);
+                return await RunTimedAsync(
+                    token => service.SearchSongsAsync(query, limit, token),
+                    ProviderSearchTimeout,
+                    cancellationToken);
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            catch (TimeoutException)
             {
                 _logger.LogWarning("SearchSongsAsync timed out for provider: {Provider}", p);
                 return new List<Song>();
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -94,8 +99,10 @@ public class MultiProviderMetadataService : IMusicMetadataService
         {
             try
             {
-                var res = await Task.Run(() => ext.Search(query, limit), cancellationToken)
-                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
+                var res = await RunTimedAsync(
+                    _ => Task.Run(() => ext.Search(query, limit), cancellationToken),
+                    ProviderSearchTimeout,
+                    cancellationToken);
                 return res.Songs;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -139,8 +146,14 @@ public class MultiProviderMetadataService : IMusicMetadataService
             if (service == null) return null;
             try
             {
-                return await service.FindSongByIsrcAsync(isrc, cancellationToken)
-                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
+                return await RunTimedAsync(
+                    token => service.FindSongByIsrcAsync(isrc, token),
+                    ProviderSearchTimeout,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -156,9 +169,15 @@ public class MultiProviderMetadataService : IMusicMetadataService
         {
             try
             {
-                var result = await Task.Run(() => extension.Search($"isrc:{isrc}", 1), cancellationToken)
-                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
+                var result = await RunTimedAsync(
+                    _ => Task.Run(() => extension.Search($"isrc:{isrc}", 1), cancellationToken),
+                    ProviderSearchTimeout,
+                    cancellationToken);
                 return result.Songs.FirstOrDefault();
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -187,8 +206,10 @@ public class MultiProviderMetadataService : IMusicMetadataService
             if (service == null) return new List<Album>();
             try
             {
-                return await service.SearchAlbumsAsync(query, limit, cancellationToken)
-                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
+                return await RunTimedAsync(
+                    token => service.SearchAlbumsAsync(query, limit, token),
+                    ProviderSearchTimeout,
+                    cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -211,8 +232,10 @@ public class MultiProviderMetadataService : IMusicMetadataService
         {
             try
             {
-                var res = await Task.Run(() => ext.Search(query, limit), cancellationToken)
-                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
+                var res = await RunTimedAsync(
+                    _ => Task.Run(() => ext.Search(query, limit), cancellationToken),
+                    ProviderSearchTimeout,
+                    cancellationToken);
                 return res.Albums;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -248,8 +271,10 @@ public class MultiProviderMetadataService : IMusicMetadataService
             if (service == null) return new List<Artist>();
             try
             {
-                return await service.SearchArtistsAsync(query, limit, cancellationToken)
-                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
+                return await RunTimedAsync(
+                    token => service.SearchArtistsAsync(query, limit, token),
+                    ProviderSearchTimeout,
+                    cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -272,8 +297,10 @@ public class MultiProviderMetadataService : IMusicMetadataService
         {
             try
             {
-                var res = await Task.Run(() => ext.Search(query, limit), cancellationToken)
-                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
+                var res = await RunTimedAsync(
+                    _ => Task.Run(() => ext.Search(query, limit), cancellationToken),
+                    ProviderSearchTimeout,
+                    cancellationToken);
                 return res.Artists;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -309,8 +336,11 @@ public class MultiProviderMetadataService : IMusicMetadataService
             if (service == null) return null;
             try
             {
-                return await service.SearchAllAsync(query, songLimit, albumLimit, artistLimit, cancellationToken)
-                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
+                return await RunTimedAsync(
+                    token => service.SearchAllAsync(
+                        query, songLimit, albumLimit, artistLimit, token),
+                    ProviderSearchTimeout,
+                    cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -333,8 +363,10 @@ public class MultiProviderMetadataService : IMusicMetadataService
         {
             try
             {
-                return await Task.Run(() => ext.Search(query, songLimit), cancellationToken)
-                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
+                return await RunTimedAsync(
+                    _ => Task.Run(() => ext.Search(query, songLimit), cancellationToken),
+                    ProviderSearchTimeout,
+                    cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -398,7 +430,14 @@ public class MultiProviderMetadataService : IMusicMetadataService
             if (service == null) return null;
             try
             {
-                return await service.FindSongByIsrcAsync(isrc, cancellationToken);
+                return await RunTimedAsync(
+                    token => service.FindSongByIsrcAsync(isrc, token),
+                    ProviderSearchTimeout,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch
             {
@@ -411,8 +450,15 @@ public class MultiProviderMetadataService : IMusicMetadataService
         {
             try
             {
-                var res = await Task.Run(() => ext.Search($"isrc:{isrc}", 1), cancellationToken);
+                var res = await RunTimedAsync(
+                    _ => Task.Run(() => ext.Search($"isrc:{isrc}", 1), cancellationToken),
+                    ProviderSearchTimeout,
+                    cancellationToken);
                 return res.Songs.FirstOrDefault();
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch
             {
@@ -480,8 +526,14 @@ public class MultiProviderMetadataService : IMusicMetadataService
             if (service == null) return new List<ExternalPlaylist>();
             try
             {
-                return await service.SearchPlaylistsAsync(query, limit, cancellationToken)
-                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
+                return await RunTimedAsync(
+                    token => service.SearchPlaylistsAsync(query, limit, token),
+                    ProviderSearchTimeout,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -598,6 +650,33 @@ public class MultiProviderMetadataService : IMusicMetadataService
         finally
         {
             _fanOutGate.Release();
+        }
+    }
+
+    internal static async Task<T> RunTimedAsync<T>(
+        Func<CancellationToken, Task<T>> operation,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(timeout);
+        var task = operation(deadline.Token);
+        try
+        {
+            return await task.WaitAsync(deadline.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                await task;
+            }
+            catch
+            {
+                // The timed-out operation must drain before its concurrency permit is reused.
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new TimeoutException("The provider search deadline expired.");
         }
     }
 }
