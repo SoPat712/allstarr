@@ -815,12 +815,21 @@ public sealed class HybridApplicationCache(
 
     public Task<int> PurgeMediaAsync() => media.DeleteByPatternAsync("*");
 
-    public Task<FileMediaCacheMaintenancePreview> PreviewMediaCleanupAsync(
-        CancellationToken cancellationToken = default) =>
-        media.PreviewCleanupAsync(cancellationToken);
+    public async Task<ApplicationCacheMaintenancePreview> PreviewMaintenanceAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var metadataTask = metadata.PreviewDatabaseMaintenanceAsync(cancellationToken);
+        var mediaTask = media.PreviewCleanupAsync(cancellationToken);
+        await Task.WhenAll(metadataTask, mediaTask);
+        return new(
+            await metadataTask,
+            await mediaTask,
+            DateTimeOffset.UtcNow);
+    }
 
-    public Task<int> CleanupMediaAsync(CancellationToken cancellationToken = default) =>
-        media.CleanupAsync(cancellationToken);
+    public async Task<int> CleanupAsync(CancellationToken cancellationToken = default) =>
+        await metadata.CleanupDatabaseAsync(cancellationToken) +
+        await media.CleanupAsync(cancellationToken);
 
     public async Task<int> PurgeAllAsync() =>
         await PurgeMetadataAsync() + await PurgeMediaAsync();

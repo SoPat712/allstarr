@@ -148,6 +148,23 @@ public sealed class BoundedHotApplicationCache : IApplicationCache, IDisposable
         GetDatabaseCategoryUsageAsync(CancellationToken cancellationToken = default) =>
         _database.GetCategoryUsageAsync(cancellationToken);
 
+    public Task<DatabaseCacheMaintenancePreview> PreviewDatabaseMaintenanceAsync(
+        CancellationToken cancellationToken = default) =>
+        _database.PreviewMaintenanceAsync(cancellationToken: cancellationToken);
+
+    public async Task<int> CleanupDatabaseAsync(CancellationToken cancellationToken = default)
+    {
+        _memory.Clear();
+        Interlocked.Add(ref _evictions, ClearResidents());
+        var deleted = await _database.CleanupExpiredAsync(
+            cancellationToken: cancellationToken);
+        deleted += await _database.CleanupInvalidOwnershipAsync(
+            cancellationToken: cancellationToken);
+        deleted += await _database.CleanupPolicyOverflowAsync(
+            cancellationToken: cancellationToken);
+        return deleted;
+    }
+
     public ApplicationCacheTierUsage GetUsageSnapshot()
     {
         lock (_residentGate)

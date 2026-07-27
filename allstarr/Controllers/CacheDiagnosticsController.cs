@@ -51,7 +51,7 @@ public sealed class CacheDiagnosticsController(HybridApplicationCache cache) : C
             return error;
         }
 
-        return Ok(await cache.PreviewMediaCleanupAsync(cancellationToken));
+        return Ok(await cache.PreviewMaintenanceAsync(cancellationToken));
     }
 
     [HttpPost("maintenance")]
@@ -63,9 +63,9 @@ public sealed class CacheDiagnosticsController(HybridApplicationCache cache) : C
             return error;
         }
 
-        var before = await cache.PreviewMediaCleanupAsync(cancellationToken);
-        var deleted = await cache.CleanupMediaAsync(cancellationToken);
-        var after = await cache.PreviewMediaCleanupAsync(cancellationToken);
+        var before = await cache.PreviewMaintenanceAsync(cancellationToken);
+        var deleted = await cache.CleanupAsync(cancellationToken);
+        var after = await cache.PreviewMaintenanceAsync(cancellationToken);
         return Ok(new { deleted, before, after });
     }
 

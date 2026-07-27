@@ -123,6 +123,28 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         Assert.IsType<BadRequestObjectResult>(await controller.Purge("arbitrary:*"));
     }
 
+    [Fact]
+    public async Task MaintenancePreviewAndRunCoverMetadataAndMediaTiers()
+    {
+        Assert.True(await _cache.SetStringAsync(
+            "search:expired",
+            "metadata",
+            TimeSpan.FromMinutes(1)));
+        Assert.True(await _cache.SetStringAsync(
+            "image:expired",
+            "media",
+            TimeSpan.FromMinutes(1)));
+        _clock.UtcNow = _clock.UtcNow.AddMinutes(2);
+
+        var preview = await _cache.PreviewMaintenanceAsync();
+        Assert.Equal(1, preview.Metadata.ExpiredEntries);
+        Assert.Equal(1, preview.Media.ExpiredEntries);
+
+        Assert.Equal(2, await _cache.CleanupAsync());
+        Assert.Equal(0, (await _cache.PreviewMaintenanceAsync()).Metadata.ExpiredEntries);
+        Assert.Equal(0, (await _cache.PreviewMaintenanceAsync()).Media.ExpiredEntries);
+    }
+
     public async Task DisposeAsync()
     {
         _hot.Dispose();

@@ -28,6 +28,21 @@ public sealed record ApplicationCacheCategoryUsage(
     long EntryCount,
     long PayloadBytes);
 
+public sealed record DatabaseCacheMaintenancePreview(
+    int ScannedEntries,
+    bool ScanLimitReached,
+    int ExpiredEntries,
+    int UnknownOwnerEntries,
+    int DisabledCategoryEntries,
+    int OverQuotaEntries,
+    long ReclaimableBytes,
+    DateTimeOffset CapturedAt);
+
+public sealed record ApplicationCacheMaintenancePreview(
+    DatabaseCacheMaintenancePreview Metadata,
+    FileMediaCacheMaintenancePreview Media,
+    DateTimeOffset CapturedAt);
+
 public sealed record ApplicationCacheCategoryDiagnostics(
     string Category,
     string Owner,

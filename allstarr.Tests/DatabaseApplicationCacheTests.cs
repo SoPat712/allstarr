@@ -72,6 +72,42 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MaintenancePreview_ReportsAndCleanupRemovesOnlyDisposableEntries()
+    {
+        await _cache.SetStringAsync("search:live", "live", TimeSpan.FromHours(1));
+        await _cache.SetStringAsync("search:expired", "expired", TimeSpan.FromMinutes(1));
+        _clock.UtcNow = _clock.UtcNow.AddMinutes(2);
+
+        await using (var database = await _factory.CreateDbContextAsync())
+        {
+            database.ApplicationCacheEntries.Add(new ApplicationCacheEntryRecord
+            {
+                Key = "legacy:no-owner",
+                Category = "Legacy",
+                Value = "orphan",
+                PayloadBytes = 6,
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            });
+            await database.SaveChangesAsync();
+        }
+
+        var preview = await _cache.PreviewMaintenanceAsync();
+        Assert.Equal(3, preview.ScannedEntries);
+        Assert.False(preview.ScanLimitReached);
+        Assert.Equal(1, preview.ExpiredEntries);
+        Assert.Equal(1, preview.UnknownOwnerEntries);
+        Assert.Equal(13, preview.ReclaimableBytes);
+
+        Assert.Equal(1, await _cache.CleanupExpiredAsync());
+        Assert.Equal(1, await _cache.CleanupInvalidOwnershipAsync());
+        Assert.Equal("live", await _cache.GetStringAsync("search:live"));
+
+        await using var remaining = await _factory.CreateDbContextAsync();
+        Assert.Single(await remaining.ApplicationCacheEntries.ToListAsync());
+    }
+
+    [Fact]
     public async Task PatternOperations_UseRedisCompatibleWildcards()
     {
         await _cache.SetStringAsync("playlist:one", "1");

@@ -395,6 +395,115 @@ public sealed class DatabaseApplicationCache(
         }
     }
 
+    public async Task<DatabaseCacheMaintenancePreview> PreviewMaintenanceAsync(
+        int batchSize = DefaultCleanupBatchSize,
+        CancellationToken cancellationToken = default)
+    {
+        var take = Math.Clamp(batchSize, 1, DefaultCleanupBatchSize);
+        try
+        {
+            await using var database = await contextFactory.CreateDbContextAsync(cancellationToken);
+            var rows = await database.Set<ApplicationCacheEntryRecord>()
+                .AsNoTracking()
+                .OrderBy(item => item.UpdatedAt)
+                .ThenBy(item => item.Key)
+                .Take(take + 1)
+                .ToArrayAsync(cancellationToken);
+            var scanned = rows.Take(take).ToArray();
+            var expired = scanned.Where(item =>
+                item.ExpiresAt is not null && item.ExpiresAt <= clock.UtcNow).ToArray();
+            var unknown = scanned.Where(HasUnknownOwner).ToArray();
+            var disabled = scanned.Where(item =>
+                !HasUnknownOwner(item) &&
+                !ApplicationCachePolicyRegistry.IsEnabled(
+                    Enum.Parse<ApplicationCacheCategory>(item.Category, ignoreCase: true),
+                    _settings)).ToArray();
+            var active = scanned.Except(expired).Except(unknown).Except(disabled).ToArray();
+            var overQuota = new List<ApplicationCacheEntryRecord>();
+            foreach (var group in active.GroupBy(item =>
+                         Enum.Parse<ApplicationCacheCategory>(item.Category, ignoreCase: true)))
+            {
+                var policy = ApplicationCachePolicyRegistry.Resolve(group.Key, _settings);
+                var entries = group.OrderBy(item => item.UpdatedAt).ThenBy(item => item.Key).ToArray();
+                var count = entries.LongLength;
+                var bytes = entries.Sum(item => (long)item.PayloadBytes);
+                foreach (var entry in entries)
+                {
+                    if (count <= policy.MaximumEntries && bytes <= policy.MaximumBytes)
+                    {
+                        break;
+                    }
+
+                    overQuota.Add(entry);
+                    count--;
+                    bytes -= entry.PayloadBytes;
+                }
+            }
+
+            var reclaimable = expired
+                .Concat(unknown)
+                .Concat(disabled)
+                .Concat(overQuota)
+                .DistinctBy(item => item.Key)
+                .Sum(item => (long)item.PayloadBytes);
+            return new DatabaseCacheMaintenancePreview(
+                scanned.Length,
+                rows.Length > take,
+                expired.Length,
+                unknown.Length,
+                disabled.Length,
+                overQuota.Count,
+                reclaimable,
+                clock.UtcNow);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Database cache maintenance preview failed");
+            return new DatabaseCacheMaintenancePreview(
+                0, false, 0, 0, 0, 0, 0, clock.UtcNow);
+        }
+    }
+
+    public async Task<int> CleanupInvalidOwnershipAsync(
+        int batchSize = DefaultCleanupBatchSize,
+        CancellationToken cancellationToken = default)
+    {
+        var take = Math.Clamp(batchSize, 1, DefaultCleanupBatchSize);
+        try
+        {
+            await using var database = await contextFactory.CreateDbContextAsync(cancellationToken);
+            var candidates = await database.Set<ApplicationCacheEntryRecord>()
+                .AsNoTracking()
+                .OrderBy(item => item.UpdatedAt)
+                .ThenBy(item => item.Key)
+                .Take(take)
+                .ToArrayAsync(cancellationToken);
+            var keys = candidates
+                .Where(item =>
+                    HasUnknownOwner(item) ||
+                    !ApplicationCachePolicyRegistry.IsEnabled(
+                        Enum.Parse<ApplicationCacheCategory>(item.Category, ignoreCase: true),
+                        _settings))
+                .Select(item => item.Key)
+                .ToArray();
+            if (keys.Length == 0)
+            {
+                return 0;
+            }
+
+            var deleted = await database.Set<ApplicationCacheEntryRecord>()
+                .Where(item => keys.Contains(item.Key))
+                .ExecuteDeleteAsync(cancellationToken);
+            Interlocked.Add(ref _evictions, deleted);
+            return deleted;
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Database cache ownership cleanup failed");
+            return 0;
+        }
+    }
+
     public async Task<int> CleanupPolicyOverflowAsync(
         int batchSize = DefaultCleanupBatchSize,
         CancellationToken cancellationToken = default)
@@ -520,6 +629,12 @@ public sealed class DatabaseApplicationCache(
     private static bool IsValidKey(string key) =>
         !string.IsNullOrWhiteSpace(key) && key.Length <= MaximumKeyCharacters;
 
+    private static bool HasUnknownOwner(ApplicationCacheEntryRecord item) =>
+        !Enum.TryParse<ApplicationCacheCategory>(item.Category, ignoreCase: true, out var category) ||
+        !Enum.IsDefined(category) ||
+        ApplicationCachePolicyRegistry.Resolve(category).StorageTier != ApplicationCacheStorageTier.Metadata ||
+        ApplicationCachePolicyRegistry.Classify(item.Key) != category;
+
     private static string ToLikePattern(string pattern) =>
         pattern
             .Replace("\\", "\\\\", StringComparison.Ordinal)
@@ -541,6 +656,9 @@ public sealed class DatabaseApplicationCacheCleanupService(
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             var deleted = await cache.CleanupExpiredAsync(
+                DatabaseApplicationCache.DefaultCleanupBatchSize,
+                stoppingToken);
+            deleted += await cache.CleanupInvalidOwnershipAsync(
                 DatabaseApplicationCache.DefaultCleanupBatchSize,
                 stoppingToken);
             deleted += await cache.CleanupPolicyOverflowAsync(
