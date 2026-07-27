@@ -159,13 +159,15 @@ public sealed class DurableJobWorker : BackgroundService
         }
         catch (Exception ex)
         {
+            var failureDetail = SafeOperationalText.Sanitize(ex.Message, 300) ?? "No failure detail was provided.";
             _logger.LogWarning(
-                "Durable job {JobId} handler failed ({ExceptionType})",
+                "Durable job {JobId} handler failed ({FailureKind}): {FailureDetail}",
                 claim.JobId,
-                ex.GetType().Name);
+                ex.GetType().Name,
+                failureDetail);
             completion = DurableJobCompletion.Retry(
                 "handler_exception",
-                "The job handler failed and will be retried when policy allows.");
+                failureDetail);
         }
         finally
         {
