@@ -124,7 +124,7 @@ const responses: Record<string, unknown> = {
   "/api/admin/media-targets": {
     targets: [{
       id: "target", protocol: "jellyfin", backendInstanceId: "main",
-      displayName: "Jellyfin Music",
+      libraryScopeId: "music", displayName: "Jellyfin Music",
     }],
   },
   "/api/admin/provider-accounts": {
@@ -778,7 +778,10 @@ test("Add playlist prioritizes local and configured Sources on mobile", async ({
   await expect(dialog.getByRole("radio", { name: /Second Mix/ })).toBeVisible();
   await dialog.getByRole("radio", { name: /Source Mix/ }).check();
   await expect(dialog.getByRole("button", { name: "Add playlist" })).toBeInViewport();
+  const create = page.waitForRequest((request) =>
+    request.method() === "POST" && request.url().endsWith("/api/admin/playlist-links"));
   await dialog.getByRole("button", { name: "Add playlist" }).click();
+  expect((await create).postDataJSON().libraryScopeId).toBe("music");
   await expect(dialog).toBeHidden();
 });
 

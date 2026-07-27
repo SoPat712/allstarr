@@ -43,6 +43,7 @@
   const providerIds = $derived([...new Set(orderedAccounts.map((item) => item.providerId))]);
   const selectedAccount = $derived(accounts.find((item) => item.id === accountId));
   const selectedTarget = $derived(targets.find((item) => item.id === targetId));
+  const selectedLibraryScope = $derived(selectedAccount?.libraryScopeId || selectedTarget?.libraryScopeId);
 
   function definition(id: string) {
     return providers.find((item) => item.id.toLowerCase() === id.toLowerCase());
@@ -107,7 +108,7 @@
   }
 
   async function save() {
-    if (!selectedAccount || !selectedTarget || !playlistId || saving) return;
+    if (!selectedAccount || !selectedTarget || !selectedLibraryScope || !playlistId || saving) return;
     saving = true;
     error = "";
     try {
@@ -115,8 +116,7 @@
         providerAccountId: selectedAccount.id,
         sourceProviderId: selectedAccount.providerId,
         sourcePlaylistId: playlistId,
-        libraryScopeId: selectedAccount.libraryScopeId ||
-          `${selectedTarget.protocol}:${selectedTarget.backendInstanceId}`,
+        libraryScopeId: selectedLibraryScope,
         targetProtocol: selectedTarget.protocol,
         targetBackendInstanceId: selectedTarget.backendInstanceId,
         targetCredentialReferenceId: selectedTarget.credentialReferenceId,
@@ -193,7 +193,7 @@
       </div>
       <footer class="playlist-add-footer">
         <Dialog.Close class="button-secondary">Cancel</Dialog.Close>
-        <button class="button-primary" type="button" disabled={!playlistId || !targetId || saving} onclick={() => void save()}>{saving ? "Adding…" : "Add playlist"}</button>
+        <button class="button-primary" type="button" disabled={!playlistId || !targetId || !selectedLibraryScope || saving} onclick={() => void save()}>{saving ? "Adding…" : "Add playlist"}</button>
       </footer>
     </Dialog.Content>
   </Dialog.Portal>

@@ -345,6 +345,19 @@ public sealed class PlaylistLinksController(
                 .Where(item => item.TenantId == session.TenantId && item.UserId == session.AllstarrUserId)
                 .OrderByDescending(item => item.LastSeenAt)
                 .ToListAsync(cancellationToken);
+            var libraryScopes = await db.LibraryTracks.AsNoTracking()
+                .Where(item => item.TenantId == session.TenantId &&
+                               item.OwnerUserId == session.AllstarrUserId)
+                .GroupBy(item => new { item.BackendInstanceId, item.Protocol })
+                .Select(group => new
+                {
+                    group.Key.BackendInstanceId,
+                    group.Key.Protocol,
+                    LibraryScopeId = group.OrderByDescending(item => item.IndexedAt)
+                        .Select(item => item.LibraryScopeId)
+                        .First()
+                })
+                .ToListAsync(cancellationToken);
             var subsonicCredentialReferenceId = await db.SecretReferences.AsNoTracking()
                 .Where(item => item.TenantId == session.TenantId && item.Purpose == SubsonicCredentialPurpose && item.RevokedAt == null)
                 .OrderByDescending(item => item.UpdatedAt)
@@ -357,6 +370,9 @@ public sealed class PlaylistLinksController(
                     id = item.Id,
                     protocol = NormalizeTargetProtocol(item.BackendType),
                     backendInstanceId = item.BackendInstanceId,
+                    libraryScopeId = libraryScopes.FirstOrDefault(scope =>
+                        scope.BackendInstanceId == item.BackendInstanceId &&
+                        scope.Protocol == NormalizeTargetProtocol(item.BackendType))?.LibraryScopeId,
                     displayName = item.DisplayName ?? session.UserName,
                     principalId = item.PrincipalId,
                     credentialReferenceId = NormalizeTargetProtocol(item.BackendType) == "subsonic"

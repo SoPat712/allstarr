@@ -518,6 +518,7 @@ export type MediaTarget = {
   id: string;
   protocol: "jellyfin" | "subsonic";
   backendInstanceId: string;
+  libraryScopeId?: string | null;
   displayName: string;
   credentialReferenceId?: string | null;
 };
