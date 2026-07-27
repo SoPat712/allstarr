@@ -147,12 +147,13 @@
     try {
       if (name === "sync") {
         if (!details) return;
-        const result = await playlistLinks.sync(selected.id, details.snapshotId);
+        const result = await playlistLinks.run(selected.id, details.snapshotId);
         operationJobId = result.jobId;
         feedback = result.created ? "Sync queued." : "Sync is already queued.";
       } else if (name === "rematch") {
-        await playlistLinks.rematch(selected.id);
-        feedback = "Source refreshed and tracks rematched.";
+        const result = await playlistLinks.run(selected.id);
+        operationJobId = result.jobId;
+        feedback = result.created ? "Rematch queued." : "Rematch is already queued.";
       } else {
         await playlistLinks.setEnabled(selected.id, selected.revision, !selected.enabled);
         feedback = selected.enabled ? "Playlist paused." : "Playlist resumed.";

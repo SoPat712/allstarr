@@ -210,6 +210,8 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
       };
     if (url.pathname === "/api/admin/playlist-links" && route.request().method() === "POST")
       body = { id: "new-playlist" };
+    if (url.pathname.endsWith("/run") && route.request().method() === "POST")
+      body = { jobId: "11111111-1111-1111-1111-111111111111", created: true };
     if (url.pathname.endsWith("/cancel") && route.request().method() === "POST")
       body = { jobId: "11111111-1111-1111-1111-111111111111", state: "CancellationRequested" };
     if (url.pathname.endsWith("/audience") && route.request().method() === "PUT") {
@@ -510,6 +512,12 @@ test("Playlist operations show durable progress and confirm cancellation", async
   await page.goto("#/library/playlists");
   await page.getByRole("button", { name: /Test playlist/ }).click();
   const dialog = page.getByRole("dialog", { name: "Test playlist" });
+  const rematch = page.waitForRequest((item) =>
+    item.method() === "POST" && item.url().endsWith("/api/admin/playlist-links/playlist-link/run") &&
+    Object.keys(item.postDataJSON()).length === 0);
+  await dialog.getByRole("button", { name: "Rematch" }).click();
+  await rematch;
+  await expect(dialog.getByText("Rematch queued.")).toBeVisible();
   await expect(dialog.locator("summary").getByText("Matching Test song")).toBeVisible();
   await expect(dialog.getByText("1/2")).toBeVisible();
   await dialog.getByRole("button", { name: "Cancel operation" }).click();

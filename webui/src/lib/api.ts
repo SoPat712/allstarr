@@ -794,15 +794,11 @@ export const downloads = {
 export const playlistLinks = {
   list: () => json<{ playlistLinks: PlaylistLink[] }>("/api/admin/playlist-links"),
   details: (id: string) => json<PlaylistDetails>(`/api/admin/playlist-links/${encodeURIComponent(id)}`),
-  sync: (id: string, snapshotId: string) =>
+  run: (id: string, snapshotId?: string) =>
     json<{ jobId: string; created: boolean }>(`/api/admin/playlist-links/${encodeURIComponent(id)}/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ snapshotId }),
-    }),
-  rematch: (id: string) =>
-    json<{ preview: unknown }>(`/api/admin/playlist-links/${encodeURIComponent(id)}/refresh`, {
-      method: "POST",
+      body: JSON.stringify(snapshotId ? { snapshotId } : {}),
     }),
   setEnabled: (id: string, expectedRevision: number, enabled: boolean) =>
     json<{ id: string; enabled: boolean; revision: number }>(
