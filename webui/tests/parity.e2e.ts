@@ -21,6 +21,13 @@ const schema = {
       id: "lumen-audio", name: "Lumen Audio", categories: ["metadata", "streaming"],
       accountSettings: [{ key: "token", label: "Access token", type: "password", sensitive: true, required: true }],
     },
+    {
+      id: "apple-download", name: "Apple download", categories: ["metadata", "download"],
+      connectionKind: "operator_managed",
+      configSchema: [
+        { key: "APPLE_DOWNLOAD_URL", label: "External provider URL", type: "url", valuePath: "appleDownload.baseUrl" },
+      ],
+    },
   ],
   configSections: [
     {
@@ -156,8 +163,13 @@ const responses: Record<string, unknown> = {
   },
   "/api/admin/providers/status": [],
   "/api/admin/provider-diagnostics/deep-stream/latest": { measurements: [] },
+  "/api/admin/apple-download/status": {
+    state: "ready", ready: true, staged: true, daemon_running: true,
+    wrapper_healthy: true, logged_in: true, login_state: "authenticated", api_version: "2",
+  },
   "/api/admin/config": {
     general: { theme: "Dark" }, deployment: { url: "https://music.example.test" },
+    appleDownload: { baseUrl: "http://apple-download.test" },
     cache: { searchResultsMinutes: 1, mediaMaximumMegabytes: 512 },
     providers: { streamingOrder: "lumen-audio" },
   },
@@ -1011,6 +1023,21 @@ test("Cached and Kept keep media facts and actions readable on mobile", async ({
 test("Sources keep primary actions visible and report scoped degradation", async ({ page, context }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
+  let appleState = {
+    state: "needs_login", ready: false, staged: true, daemon_running: true,
+    wrapper_healthy: true, logged_in: false, login_state: "logged_out", api_version: "2",
+  };
+  await page.route("**/api/admin/apple-download/status", (route) => route.fulfill({
+    contentType: "application/json", body: JSON.stringify(appleState),
+  }));
+  await page.route("**/api/admin/apple-download/login", (route) => {
+    appleState = { ...appleState, state: "needs_login", login_state: "awaiting_2fa" };
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(appleState) });
+  });
+  await page.route("**/api/admin/apple-download/login/2fa", (route) => {
+    appleState = { ...appleState, state: "ready", ready: true, logged_in: true, login_state: "authenticated" };
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(appleState) });
+  });
   await page.route("**/api/admin/ui/schema", (route) => route.fulfill({
     status: 200,
     contentType: "application/json",
@@ -1026,6 +1053,18 @@ test("Sources keep primary actions visible and report scoped degradation", async
   await expect(page.getByText("Lumen Audio connection · Connected by Tester")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Disabled Sources" })).toBeVisible();
   await expect(page.getByTitle("Disabled Source")).toBeVisible();
+  const appleSource = page.locator(".source-card").filter({ hasText: "Apple download" });
+  await appleSource.getByRole("button", { name: "Manage" }).click();
+  const appleManager = page.getByRole("dialog", { name: "Apple download" });
+  await appleManager.getByLabel("Apple ID").fill("tester@example.test");
+  await appleManager.getByLabel("Password").fill("password");
+  await appleManager.getByRole("button", { name: "Start login" }).click();
+  await appleManager.getByLabel("2FA code").fill("123456");
+  await appleManager.getByRole("button", { name: "Submit 2FA" }).click();
+  await expect(appleManager.getByText("Apple download is ready")).toBeVisible();
+  await expect(appleManager.getByRole("link", { name: "Provider settings" }))
+    .toHaveAttribute("href", "#/settings/general?provider=provider-apple-download");
+  await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "Audience Only Tester" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Configure" })).toBeVisible();
   await page.getByRole("button", { name: "Actions for Lumen account" }).click();
@@ -1286,7 +1325,12 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await expect.poll(async () => (await dialog.boundingBox())?.width ?? 0).toBeGreaterThan(900);
   await dialog.getByRole("button", { name: "Technical details for Test song" }).click();
   await expect(page).toHaveURL(/#\/library\/playlists$/);
-  await expect(page.getByRole("menu").getByRole("link", { name: "Review match" })).toBeVisible();
+  const trackDetails = page.locator(".track-details-menu");
+  await expect(trackDetails.getByRole("link", { name: "Review match" })).toBeVisible();
+  await expect.poll(() => trackDetails.evaluate((panel) => {
+    const bounds = panel.getBoundingClientRect();
+    return panel.contains(document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + 8));
+  })).toBe(true);
   await page.keyboard.press("Escape");
   await dialog.getByRole("link", { name: "Open mapping details for Test song" }).focus();
   await page.keyboard.press("Enter");
@@ -1432,7 +1476,7 @@ test("Sidebar uses an integrated expander and deterministic slim breakpoint", as
   expect(Math.abs((expandedIcon!.x + expandedIcon!.width / 2) -
     (collapsedIcon!.x + collapsedIcon!.width / 2))).toBeLessThanOrEqual(0.5);
   await expect(page.getByRole("button", { name: "Expand sidebar" }).locator(".menu-icon"))
-    .toHaveCSS("transform", "matrix(-1, 0, 0, -1, 0, 0)");
+    .toHaveCSS("transform", "matrix(0, 1, -1, 0, 0, 0)");
   const library = page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Library" });
   await expect.poll(async () => {
     const [link, icon] = await Promise.all([library.boundingBox(), library.locator("svg").boundingBox()]);

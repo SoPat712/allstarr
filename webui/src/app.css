@@ -445,7 +445,7 @@
   }
 
   .app-shell.slim .menu-icon {
-    transform: rotate(180deg);
+    transform: rotate(90deg);
   }
 
   .brand {
@@ -1808,7 +1808,7 @@
   }
 
   .bits-menu {
-    z-index: 30;
+    z-index: 50;
     display: grid;
     min-width: 10rem;
     gap: 0.15rem;
@@ -4352,6 +4352,106 @@
 
   .source-dialog {
     width: min(calc(100% - 2rem), 38rem);
+  }
+
+  .apple-download-dialog {
+    width: min(calc(100% - 2rem), 46rem);
+  }
+
+  .apple-manager-body {
+    display: grid;
+    gap: 1rem;
+    padding: 1rem;
+  }
+
+  .apple-setup-progress {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.5rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .apple-setup-progress li {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.55rem;
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-md);
+    padding: 0.65rem;
+  }
+
+  .apple-setup-progress li > span:first-child {
+    display: grid;
+    width: 1.8rem;
+    height: 1.8rem;
+    flex: 0 0 1.8rem;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--color-panel-raised);
+    color: var(--color-ink-muted);
+    font-weight: 750;
+  }
+
+  .apple-setup-progress li > span:last-child {
+    display: grid;
+    min-width: 0;
+  }
+
+  .apple-setup-progress li small {
+    overflow: hidden;
+    color: var(--color-ink-muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .apple-setup-progress li.active {
+    border-color: var(--color-signal);
+  }
+
+  .apple-setup-progress li.complete > span:first-child {
+    color: var(--color-success);
+  }
+
+  .apple-manager-form,
+  .apple-host-action {
+    display: grid;
+    gap: 0.75rem;
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-md);
+    background: var(--color-panel-raised);
+    padding: 0.85rem;
+  }
+
+  .apple-manager-form .field {
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  .apple-manager-form input {
+    min-height: var(--control-md);
+  }
+
+  .apple-host-action p {
+    margin: 0;
+    color: var(--color-ink-muted);
+  }
+
+  .apple-host-action code {
+    overflow-x: auto;
+    border-radius: var(--radius-sm);
+    background: var(--background-50);
+    padding: 0.7rem;
+  }
+
+  .apple-manager-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    border-top: 1px solid var(--color-edge);
+    padding: 0.8rem 1rem;
   }
 
   .source-dialog > form {

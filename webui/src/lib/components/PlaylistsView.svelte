@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Dialog, DropdownMenu } from "bits-ui";
+  import { Dialog, DropdownMenu, Popover } from "bits-ui";
   import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
   import CoverageBar from "$lib/components/CoverageBar.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
@@ -456,10 +456,10 @@
                 </span>
                 <span class="track-duration">{formatDuration(track.durationMs)}</span>
                 <span class="track-menu">
-                  <DropdownMenu.Root>
-                    <DropdownMenu.Trigger class="track-menu-trigger" aria-label={`Technical details for ${track.title}`}>•••</DropdownMenu.Trigger>
-                    <DropdownMenu.Portal>
-                      <DropdownMenu.Content class="bits-menu track-details-menu" sideOffset={4} align="end">
+                  <Popover.Root>
+                    <Popover.Trigger class="track-menu-trigger" aria-label={`Technical details for ${track.title}`}>•••</Popover.Trigger>
+                    <Popover.Portal>
+                      <Popover.Content class="bits-menu track-details-menu" sideOffset={4} align="end">
                         <div class="track-technical">
                           <strong>{track.matchState ?? "unmatched"}</strong>
                           {#if track.isrc}<small>ISRC {track.isrc}</small>{/if}
@@ -472,9 +472,9 @@
                             href={`#/library/mappings?search=${encodeURIComponent(track.title)}&review=${encodeURIComponent(track.externalSnapshotId)}`}
                           >Review match</a>
                         </div>
-                      </DropdownMenu.Content>
-                    </DropdownMenu.Portal>
-                  </DropdownMenu.Root>
+                      </Popover.Content>
+                    </Popover.Portal>
+                  </Popover.Root>
                 </span>
               </div>
             {:else}

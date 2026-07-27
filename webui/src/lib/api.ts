@@ -168,6 +168,7 @@ export type ProviderDefinition = {
   categories?: string[];
   status?: string;
   notes?: string[];
+  configSchema?: ConfigField[];
   accountSettings?: ProviderSetting[];
   runtimeCapabilities?: ProviderRuntimeCapability[];
   connectionKind?: string | null;
@@ -180,6 +181,18 @@ export type ProviderDefinition = {
     origin?: string;
     capabilities: string[];
   }>;
+};
+
+export type AppleDownloadStatus = {
+  state?: string;
+  ready?: boolean;
+  staged?: boolean;
+  daemon_running?: boolean;
+  wrapper_healthy?: boolean;
+  logged_in?: boolean;
+  login_state?: string;
+  api_version?: string | null;
+  account?: { state?: string; logged_in?: boolean };
 };
 
 export type UiSchema = {
@@ -1275,4 +1288,28 @@ export const matchReview = {
       `/api/admin/playlist-links/matches/overrides/${encodeURIComponent(overrideId)}?expectedRevision=${expectedRevision}`,
       { method: "DELETE" },
     ),
+};
+
+export const appleDownload = {
+  status: () => json<AppleDownloadStatus>("/api/admin/apple-download/status"),
+  setup: (file: File) => {
+    const body = new FormData();
+    body.append("file", file, file.name);
+    return json<{ message?: string; fileName?: string; sizeBytes?: number }>(
+      "/api/admin/apple-download/setup",
+      { method: "POST", body },
+    );
+  },
+  login: (username: string, password: string) =>
+    json<AppleDownloadStatus>("/api/admin/apple-download/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    }),
+  submit2fa: (code: string) =>
+    json<AppleDownloadStatus>("/api/admin/apple-download/login/2fa", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    }),
 };

@@ -84,6 +84,7 @@
                 : route.startsWith("/settings")
                   ? {
                       section: route.split("/")[2] || "general",
+                      initialPanel: routeQuery.get("provider") ?? "",
                       administrator: session?.user?.isAdministrator ?? false,
                       onOpenSetup: reopenSetup,
                     }

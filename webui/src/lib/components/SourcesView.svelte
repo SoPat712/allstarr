@@ -14,6 +14,7 @@
     type UiSchema,
   } from "$lib/api";
   import AccountAccessDialog from "$lib/components/AccountAccessDialog.svelte";
+  import AppleDownloadDialog from "$lib/components/AppleDownloadDialog.svelte";
   import ConnectSourceDialog from "$lib/components/ConnectSourceDialog.svelte";
   import ConnectivityBars from "$lib/components/ConnectivityBars.svelte";
   import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
@@ -43,6 +44,7 @@
   let feedback = $state("");
   let action = $state("");
   let connectOpen = $state(false);
+  let appleDownloadOpen = $state(false);
   let configureOpen = $state(false);
   let accessOpen = $state(false);
   let selectedAccount = $state<ProviderAccount | null>(null);
@@ -291,6 +293,10 @@
               <div class="source-card-actions">
                 {#if connected.length}
                   <button type="button" onclick={() => document.getElementById(`connection-${connected[0].id}`)?.scrollIntoView({ behavior: "smooth" })}>Manage</button>
+                {:else if canManage && item.id === "apple-download"}
+                  <button type="button" onclick={() => appleDownloadOpen = true}>Manage</button>
+                {:else if canManage && item.connectionKind === "operator_managed" && item.configSchema?.length}
+                  <a class="button-secondary" href={`#/settings/general?provider=provider-${item.id}`}>Manage</a>
                 {:else if canManage && accountSettings(item).length}
                   <button type="button" onclick={() => connectOpen = true}>Connect</button>
                 {/if}
@@ -424,6 +430,7 @@
 
   <ConnectSourceDialog bind:open={connectOpen} {providers} {administrator} onSaved={completed} />
   <ConnectSourceDialog bind:open={configureOpen} {providers} {administrator} account={selectedAccount} onSaved={completed} />
+  <AppleDownloadDialog bind:open={appleDownloadOpen} />
   <AccountAccessDialog bind:open={accessOpen} account={selectedAccount} users={audienceUsers} onSaved={completed} />
 
   <ConfirmDialog

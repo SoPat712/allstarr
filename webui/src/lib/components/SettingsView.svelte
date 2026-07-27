@@ -24,10 +24,12 @@
 
   let {
     section = "general",
+    initialPanel = "",
     administrator,
     onOpenSetup,
   }: {
     section?: string;
+    initialPanel?: string;
     administrator: boolean;
     onOpenSetup: () => void | Promise<void>;
   } = $props();
@@ -58,8 +60,17 @@
   let dragging = $state<{ groupId: string; index: number } | null>(null);
 
   const active = $derived(tabs.some((item) => item.id === section) ? section : "general");
-  const generalSections = $derived((schema?.configSections ?? [])
-    .filter((item) => item.id !== "spotify-import"));
+  const generalSections = $derived.by(() => {
+    const sections = (schema?.configSections ?? []).filter((item) => item.id !== "spotify-import");
+    const providerSections = (schema?.providers ?? [])
+      .filter((item) => item.connectionKind === "operator_managed" && item.configSchema?.length)
+      .map((item) => ({
+        id: `provider-${item.id}`,
+        label: item.name,
+        fields: item.configSchema ?? [],
+      }));
+    return sections.length ? [sections[0], ...providerSections, ...sections.slice(1)] : providerSections;
+  });
   const cacheDiskCeiling = $derived(
     Number((config.cache as Record<string, unknown> | undefined)?.mediaMaximumMegabytes ?? 512),
   );
@@ -228,7 +239,7 @@
       <div class="settings-stack">
         <header class="settings-intro"><p class="eyebrow">Runtime configuration</p><h2>General</h2><p>Durable settings apply immediately. Deployment-owned values are identified but cannot be edited here.</p></header>
         {#each generalSections as item}
-          <details class="panel settings-disclosure" open={item.id === "general"}>
+          <details class="panel settings-disclosure" open={item.id === "general" || item.id === initialPanel}>
             <summary><span><strong>{item.label}</strong><small>{item.fields.filter((field) => !field.readOnly).length} editable</small></span></summary>
             <form class="settings-fields" onsubmit={(event) => void saveSection(event, item)}>
               {#each item.fields as field}
