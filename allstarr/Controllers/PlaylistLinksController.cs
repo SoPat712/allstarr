@@ -25,6 +25,7 @@ namespace allstarr.Controllers;
 public sealed class PlaylistLinksController(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     IPlaylistPersistenceService playlists,
+    DurablePlaylistProjectionReader projections,
     ITrackMatchRepository matches,
     PlaylistOrchestrationService orchestration,
     DurableJobQueue jobs,
@@ -516,6 +517,21 @@ public sealed class PlaylistLinksController(
                 snapshotsByLink.GetValueOrDefault(link.Id), runsByLink.GetValueOrDefault(link.Id),
                 metricsByLink[link.Id]))
             });
+        });
+    }
+
+    [HttpGet("{id:guid}")]
+    public async Task<IActionResult> Details(Guid id, CancellationToken cancellationToken)
+    {
+        return await Execute(async session =>
+        {
+            await LoadScopedLink(session, id, cancellationToken);
+            var projection = await projections.ReadByLinkIdAsync(
+                session.TenantId!.Value,
+                session.IsAdministrator ? null : session.AllstarrUserId,
+                id,
+                cancellationToken);
+            return projection == null ? NotFound() : Ok(ToProjectionDto(projection));
         });
     }
 
@@ -1102,6 +1118,63 @@ public sealed class PlaylistLinksController(
             generation = metrics.Generation
         },
         virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id)
+    };
+    private static object ToProjectionDto(DurablePlaylistProjection value) => new
+    {
+        id = value.LinkId,
+        snapshotId = value.SnapshotId,
+        snapshotVersion = value.SnapshotVersion,
+        name = value.Name,
+        sourceProviderId = value.SourceProviderId,
+        targetProtocol = value.TargetProtocol,
+        targetPlaylistId = value.TargetPlaylistId,
+        artworkUrl = value.ArtworkReferenceKey == null ? null :
+            $"/api/admin/playlist-sources/{value.ProviderAccountId}/playlists/{Uri.EscapeDataString(value.SourcePlaylistId)}/artwork",
+        retrievedAt = value.RetrievedAt,
+        completedAt = value.CompletedAt,
+        syncState = value.SyncState?.ToString().ToLowerInvariant(),
+        trackCount = value.TotalCount,
+        localCount = value.LocalCount,
+        externalCount = value.ExternalCount,
+        unresolvedCount = value.MissingCount,
+        durationMs = value.DurationMilliseconds,
+        unknownDurationCount = value.UnknownDurationCount,
+        materializationVerification = value.VerificationCode == null ? null : new
+        {
+            code = value.VerificationCode,
+            plannedTrackCount = value.PlannedTargetTrackCount,
+            plannedDurationMs = value.PlannedTargetDurationMilliseconds,
+            reportedTrackCount = value.VerifiedTargetTrackCount,
+            reportedDurationMs = value.VerifiedTargetDurationMilliseconds,
+            verifiedAt = value.VerifiedAt
+        },
+        tracks = value.Entries.Select(item => new
+        {
+            position = item.Position,
+            externalSnapshotId = item.ExternalSnapshotId,
+            title = item.Title,
+            artists = item.Artists,
+            album = item.Album,
+            isrc = item.Isrc,
+            durationMs = item.DurationMilliseconds,
+            durationProvenance = item.DurationProvenance,
+            durationRetrievedAt = item.DurationRetrievedAt,
+            artworkUrl = item.BackendItemId != null
+                ? $"/api/admin/downloads/artwork/{Uri.EscapeDataString(item.BackendItemId)}"
+                : item.RouteKind == "external" && item.RouteProviderId != null
+                    ? $"/api/admin/downloads/artwork/{Uri.EscapeDataString($"ext-{item.RouteProviderId}-song-{item.ExternalId}")}"
+                    : null,
+            backendItemId = item.BackendItemId,
+            routeKind = item.RouteKind,
+            routeProviderId = item.RouteProviderId,
+            matchState = item.MatchState?.ToString().ToLowerInvariant(),
+            providerRoutes = item.ProviderRoutes.Select(route => new
+            {
+                providerId = route.ProviderId,
+                externalId = route.ExternalId,
+                pinned = route.IsManual
+            })
+        })
     };
     private sealed record PlaylistListMetrics(
         int Total,

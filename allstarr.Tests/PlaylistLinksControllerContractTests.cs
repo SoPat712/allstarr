@@ -18,6 +18,7 @@ public sealed class PlaylistLinksControllerContractTests
         var expected = new Dictionary<string, string?>
         {
             [nameof(PlaylistLinksController.List)] = null,
+            [nameof(PlaylistLinksController.Details)] = "{id:guid}",
             [nameof(PlaylistLinksController.Create)] = null,
             [nameof(PlaylistLinksController.Update)] = "{id:guid}",
             [nameof(PlaylistLinksController.Refresh)] = "{id:guid}/refresh",
@@ -115,7 +116,7 @@ public sealed class PlaylistLinksControllerContractTests
     private static PlaylistLinksController Controller()
     {
         var controller = new PlaylistLinksController(
-            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
+            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
     }

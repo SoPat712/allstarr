@@ -3,6 +3,7 @@
   import { page } from "$app/state";
   import { auth, type Session } from "$lib/api";
   import HomeView from "$lib/components/HomeView.svelte";
+  import PlaylistsView from "$lib/components/PlaylistsView.svelte";
   import { liveUpdates } from "$lib/live-updates.svelte";
 
   const destinations = [
@@ -173,6 +174,8 @@
 
       {#if route === "/"}
         <HomeView administrator={session.user?.isAdministrator ?? false} />
+      {:else if route === "/library/playlists"}
+        <PlaylistsView />
       {:else}
         <section class="panel empty-state">
           <span class="empty-orbit" aria-hidden="true">✦</span>

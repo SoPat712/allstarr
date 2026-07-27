@@ -1,0 +1,426 @@
+<script lang="ts">
+  import { onMount } from "svelte";
+  import { DropdownMenu } from "bits-ui";
+  import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import {
+    home,
+    playlistLinks,
+    type PlaylistDetails,
+    type PlaylistLink,
+    type ProviderDefinition,
+  } from "$lib/api";
+  import {
+    filterPlaylists,
+    filterTracks,
+    formatDuration,
+    providerColor,
+    summarizeRoutes,
+    type PlaylistSort,
+    type TrackSort,
+  } from "$lib/playlists";
+  import { liveUpdates } from "$lib/live-updates.svelte";
+
+  let playlists = $state<PlaylistLink[]>([]);
+  let providers = $state<ProviderDefinition[]>([]);
+  let details = $state<PlaylistDetails | null>(null);
+  let selectedId = $state("");
+  let query = $state("");
+  let stateFilter = $state<"all" | "ready" | "attention" | "paused">("all");
+  let sort = $state<PlaylistSort>("name");
+  let trackQuery = $state("");
+  let routeFilter = $state<"all" | "local" | "external" | "unmatched">("all");
+  let trackSort = $state<TrackSort>("position");
+  let loading = $state(true);
+  let detailLoading = $state(false);
+  let refreshing = $state(false);
+  let error = $state("");
+  let degraded = $state("");
+  let feedback = $state("");
+  let action = $state("");
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let detailRequest = 0;
+  let page = $state(1);
+
+  const visiblePlaylists = $derived(filterPlaylists(playlists, query, stateFilter, sort));
+  const pageCount = $derived(Math.max(1, Math.ceil(visiblePlaylists.length / 20)));
+  const currentPage = $derived(Math.min(page, pageCount));
+  const pagePlaylists = $derived(
+    visiblePlaylists.slice((currentPage - 1) * 20, currentPage * 20),
+  );
+  const visibleTracks = $derived(
+    details ? filterTracks(details.tracks, trackQuery, routeFilter, trackSort) : [],
+  );
+  const routeCoverage = $derived(
+    details ? summarizeRoutes(details.tracks, details.targetProtocol) : [],
+  );
+  const selected = $derived(playlists.find((playlist) => playlist.id === selectedId));
+
+  function provider(providerId: string) {
+    return providers.find((item) => item.id.toLowerCase() === providerId.toLowerCase());
+  }
+
+  function providerName(providerId?: string | null) {
+    return providerId ? (provider(providerId)?.name ?? providerId) : "Unresolved";
+  }
+
+  function percent(part: number, total: number) {
+    return total ? Math.round((part / total) * 100) : 0;
+  }
+
+  function relativeTime(value?: string | null) {
+    if (!value) return "Never";
+    const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1_000);
+    const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+    if (Math.abs(seconds) < 60) return formatter.format(seconds, "second");
+    const minutes = Math.round(seconds / 60);
+    if (Math.abs(minutes) < 60) return formatter.format(minutes, "minute");
+    const hours = Math.round(minutes / 60);
+    if (Math.abs(hours) < 24) return formatter.format(hours, "hour");
+    return formatter.format(Math.round(hours / 24), "day");
+  }
+
+  async function loadDetails(id: string) {
+    selectedId = id;
+    details = null;
+    detailLoading = true;
+    const request = ++detailRequest;
+    try {
+      const next = await playlistLinks.details(id);
+      if (request === detailRequest) details = next;
+    } catch (cause) {
+      if (request === detailRequest)
+        degraded = cause instanceof Error ? cause.message : "Playlist details are unavailable.";
+    } finally {
+      if (request === detailRequest) detailLoading = false;
+    }
+  }
+
+  async function refresh() {
+    if (refreshing) return;
+    refreshing = true;
+    error = "";
+    degraded = "";
+    const [linksResult, schemaResult] = await Promise.allSettled([
+      playlistLinks.list(),
+      home.schema(),
+    ]);
+    if (linksResult.status === "rejected") {
+      error =
+        linksResult.reason instanceof Error
+          ? linksResult.reason.message
+          : "Playlists are unavailable.";
+    } else {
+      playlists = linksResult.value.playlistLinks;
+      const nextId = playlists.some((playlist) => playlist.id === selectedId)
+        ? selectedId
+        : (playlists[0]?.id ?? "");
+      if (nextId) await loadDetails(nextId);
+      else {
+        selectedId = "";
+        details = null;
+      }
+    }
+    if (schemaResult.status === "fulfilled") providers = schemaResult.value.providers;
+    else degraded = "Provider names and artwork are temporarily unavailable.";
+    loading = false;
+    refreshing = false;
+  }
+
+  function scheduleRefresh() {
+    if (refreshTimer) return;
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null;
+      void refresh();
+    }, 250);
+  }
+
+  async function run(name: "sync" | "rematch" | "toggle") {
+    if (!selected || action) return;
+    action = name;
+    feedback = "";
+    try {
+      if (name === "sync") {
+        if (!details) return;
+        const result = await playlistLinks.sync(selected.id, details.snapshotId);
+        feedback = result.created ? "Sync queued." : "Sync is already queued.";
+      } else if (name === "rematch") {
+        await playlistLinks.rematch(selected.id);
+        feedback = "Source refreshed and tracks rematched.";
+      } else {
+        await playlistLinks.setEnabled(selected.id, selected.revision, !selected.enabled);
+        feedback = selected.enabled ? "Playlist paused." : "Playlist resumed.";
+      }
+      await refresh();
+    } catch (cause) {
+      feedback = cause instanceof Error ? cause.message : "The action failed.";
+    } finally {
+      action = "";
+    }
+  }
+
+  onMount(() => {
+    void refresh();
+    const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
+    return () => {
+      unsubscribe();
+      if (refreshTimer) clearTimeout(refreshTimer);
+    };
+  });
+</script>
+
+{#if loading}
+  <section class="playlist-layout" aria-label="Loading playlists" aria-busy="true">
+    <div class="panel playlist-list skeleton-panel"></div>
+    <div class="panel playlist-detail skeleton-panel"></div>
+  </section>
+{:else if error}
+  <section class="panel route-error" role="alert">
+    <span aria-hidden="true">!</span>
+    <div>
+      <p class="eyebrow">Playlists unavailable</p>
+      <h2>Allstarr could not load the canonical playlist list.</h2>
+      <p>{error}</p>
+    </div>
+    <button class="button-secondary" type="button" onclick={() => void refresh()}>Try again</button>
+  </section>
+{:else if !playlists.length}
+  <section class="panel empty-state">
+    <span class="empty-orbit" aria-hidden="true">♫</span>
+    <p class="eyebrow">Library playlists</p>
+    <h2>No managed playlists yet.</h2>
+    <p>Add a playlist from an installed Source. Its matches, routes, and sync state will appear here.</p>
+    <a class="button-primary empty-action" href="#/sources">Open Sources</a>
+  </section>
+{:else}
+  {#if degraded}
+    <div class="degraded-banner" role="status">
+      <span aria-hidden="true">!</span>
+      <p><strong>Some playlist data is unavailable.</strong> {degraded}</p>
+      <button type="button" onclick={() => void refresh()}>Retry</button>
+    </div>
+  {/if}
+
+  <section class="playlist-layout" aria-busy={refreshing}>
+    <article class="panel playlist-list">
+      <header class="playlist-toolbar">
+        <div>
+          <p class="eyebrow">Managed playlists</p>
+          <h2>{playlists.length} linked</h2>
+        </div>
+        <button class="icon-button" type="button" onclick={() => void refresh()} aria-label="Refresh playlists">↻</button>
+      </header>
+
+      <div class="playlist-filters">
+        <label>
+          <span class="sr-only">Filter playlists</span>
+          <input bind:value={query} type="search" placeholder="Filter playlists" />
+        </label>
+        <label>
+          <span class="sr-only">Playlist status</span>
+          <select bind:value={stateFilter}>
+            <option value="all">All states</option>
+            <option value="ready">Ready</option>
+            <option value="attention">Needs attention</option>
+            <option value="paused">Paused</option>
+          </select>
+        </label>
+        <label>
+          <span class="sr-only">Sort playlists</span>
+          <select bind:value={sort}>
+            <option value="name">Name</option>
+            <option value="tracks">Tracks</option>
+            <option value="coverage">Coverage</option>
+            <option value="updated">Updated</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="playlist-rows" aria-label="Playlists">
+        {#each pagePlaylists as playlist}
+          <button
+            class:active={playlist.id === selectedId}
+            class="playlist-row"
+            type="button"
+            onclick={() => void loadDetails(playlist.id)}
+          >
+            <span class="media-art playlist-art">
+              {#if playlist.artworkUrl}
+                <img src={playlist.artworkUrl} alt="" loading="lazy" />
+              {:else}
+                <span aria-hidden="true">♫</span>
+              {/if}
+            </span>
+            <span class="playlist-copy">
+              <strong>{playlist.name}</strong>
+              <small class="route-pair">
+                <ProviderMark id={playlist.sourceProviderId} definition={provider(playlist.sourceProviderId)} />
+                <span>{providerName(playlist.sourceProviderId)}</span>
+                <span aria-hidden="true">→</span>
+                <ProviderMark id={playlist.targetProtocol} definition={provider(playlist.targetProtocol)} />
+                <span>{providerName(playlist.targetProtocol)}</span>
+              </small>
+              <span class="coverage-track" aria-label={`${percent(playlist.playableCount, playlist.trackCount)} percent playable`}>
+                <span
+                  style={`width:${percent(playlist.playableCount, playlist.trackCount)}%;--route-color:${providerColor(playlist.sourceProviderId)}`}
+                ></span>
+              </span>
+            </span>
+            <span class="playlist-numbers">
+              <strong>{playlist.playableCount}/{playlist.trackCount}</strong>
+              <small class:attention={playlist.unmatchedCount > 0}>
+                {playlist.enabled ? `${playlist.unmatchedCount} unresolved` : "Paused"}
+              </small>
+            </span>
+          </button>
+        {:else}
+          <div class="compact-empty">
+            <strong>No playlists match these filters</strong>
+            <button type="button" onclick={() => { query = ""; stateFilter = "all"; }}>Clear filters</button>
+          </div>
+        {/each}
+      </div>
+      {#if pageCount > 1}
+        <nav class="playlist-pagination" aria-label="Playlist pages">
+          <button type="button" disabled={currentPage === 1} onclick={() => { page = Math.max(1, currentPage - 1); }}>Previous</button>
+          <span>Page {currentPage} of {pageCount}</span>
+          <button type="button" disabled={currentPage === pageCount} onclick={() => { page = Math.min(pageCount, currentPage + 1); }}>Next</button>
+        </nav>
+      {/if}
+    </article>
+
+    <article class="panel playlist-detail">
+      {#if detailLoading}
+        <div class="detail-loading" aria-busy="true">Loading playlist tracks…</div>
+      {:else if details && selected}
+        <header class="playlist-hero">
+          <span class="media-art hero-art">
+            {#if details.artworkUrl}<img src={details.artworkUrl} alt="" />{:else}<span aria-hidden="true">♫</span>{/if}
+          </span>
+          <div class="playlist-hero-copy">
+            <p class="eyebrow">{providerName(details.sourceProviderId)} playlist</p>
+            <h2>{details.name}</h2>
+            <p>
+              {details.trackCount} tracks · {formatDuration(details.durationMs)}
+              {#if details.unknownDurationCount} · {details.unknownDurationCount} unknown duration{/if}
+            </p>
+            <div class="hero-route">
+              <ProviderMark id={details.sourceProviderId} definition={provider(details.sourceProviderId)} />
+              <span>{providerName(details.sourceProviderId)}</span>
+              <span aria-hidden="true">→</span>
+              <ProviderMark id={details.targetProtocol} definition={provider(details.targetProtocol)} />
+              <span>{providerName(details.targetProtocol)}</span>
+            </div>
+            <div class="coverage-stack" aria-label={`${percent(details.trackCount - details.unresolvedCount, details.trackCount)} percent playable`}>
+              {#each routeCoverage as route}
+                <span
+                  title={`${providerName(route.providerId)}: ${route.count}`}
+                  style={`width:${percent(route.count, details.trackCount)}%;--route-color:${providerColor(route.providerId)}`}
+                ></span>
+              {/each}
+            </div>
+          </div>
+          <div class="playlist-actions" aria-label="Playlist actions">
+            <button disabled={Boolean(action) || !selected.enabled} type="button" onclick={() => void run("sync")}>Sync</button>
+            <button disabled={Boolean(action) || !selected.enabled} type="button" onclick={() => void run("rematch")}>Rematch</button>
+            <button disabled={Boolean(action)} type="button" onclick={() => void refresh()}>Refresh</button>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger class="menu-trigger" aria-label="Additional playlist operations">•••</DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
+                  <DropdownMenu.Item
+                    class="bits-menu-item"
+                    disabled={Boolean(action)}
+                    onSelect={() => void run("toggle")}
+                  >
+                    {selected.enabled ? "Pause playlist" : "Resume playlist"}
+                  </DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+          </div>
+        </header>
+
+        <div class="playlist-stat-grid">
+          <div><strong>{details.localCount}</strong><small>{providerName(details.targetProtocol)}</small></div>
+          <div><strong>{details.externalCount}</strong><small>External routes</small></div>
+          <div class:attention={details.unresolvedCount > 0}><strong>{details.unresolvedCount}</strong><small>Unresolved</small></div>
+          <div><strong>{relativeTime(details.completedAt)}</strong><small>Last sync</small></div>
+        </div>
+
+        {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
+
+        <div class="track-toolbar">
+          <label>
+            <span class="sr-only">Filter tracks</span>
+            <input bind:value={trackQuery} type="search" placeholder="Filter tracks" />
+          </label>
+          <label>
+            <span class="sr-only">Track route</span>
+            <select bind:value={routeFilter}>
+              <option value="all">All routes</option>
+              <option value="local">{providerName(details.targetProtocol)}</option>
+              <option value="external">External</option>
+              <option value="unmatched">Unresolved</option>
+            </select>
+          </label>
+          <label>
+            <span class="sr-only">Sort tracks</span>
+            <select bind:value={trackSort}>
+              <option value="position">Playlist order</option>
+              <option value="title">Title</option>
+              <option value="duration">Duration</option>
+              <option value="route">Route</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="track-table" role="table" aria-label={`${details.name} tracks`}>
+          <div class="track-head" role="row">
+            <span role="columnheader">#</span><span role="columnheader">Track</span>
+            <span role="columnheader">Route</span><span role="columnheader">Time</span>
+            <span role="columnheader"><span class="sr-only">Details</span></span>
+          </div>
+          <div class="track-scroll">
+            {#each visibleTracks as track}
+              <div class="track-row" role="row">
+                <span class="track-index" role="cell">{track.position}</span>
+                <span class="track-identity" role="cell">
+                  <span class="media-art track-art">
+                    {#if track.artworkUrl}<img src={track.artworkUrl} alt="" loading="lazy" />{:else}<span aria-hidden="true">♪</span>{/if}
+                  </span>
+                  <span><strong>{track.title}</strong><small>{track.artists.join(", ") || "Unknown artist"}{track.album ? ` · ${track.album}` : ""}</small></span>
+                </span>
+                <span class="route-cell" role="cell">
+                  <i style={`--route-color:${providerColor(track.routeProviderId ?? track.routeKind)}`}></i>
+                  <span><strong>{providerName(track.routeProviderId ?? (track.routeKind === "local" ? details.targetProtocol : null))}</strong><small>{track.routeKind}</small></span>
+                </span>
+                <span class="track-duration" role="cell">{formatDuration(track.durationMs)}</span>
+                <span class="track-menu" role="cell">
+                  <DropdownMenu.Root>
+                    <DropdownMenu.Trigger class="track-menu-trigger" aria-label={`Technical details for ${track.title}`}>•••</DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content class="bits-menu track-details-menu" sideOffset={4} align="end">
+                        <div class="track-technical">
+                          <strong>{track.matchState ?? "unmatched"}</strong>
+                          {#if track.isrc}<small>ISRC {track.isrc}</small>{/if}
+                          {#if track.backendItemId}<small>Backend {track.backendItemId}</small>{/if}
+                          {#each track.providerRoutes as route}
+                            <small>{providerName(route.providerId)} · {route.externalId}{route.pinned ? " · pinned" : ""}</small>
+                          {/each}
+                        </div>
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
+                </span>
+              </div>
+            {:else}
+              <div class="compact-empty"><strong>No tracks match these filters</strong></div>
+            {/each}
+          </div>
+        </div>
+      {:else}
+        <div class="compact-empty"><strong>Select a playlist to inspect its tracks</strong></div>
+      {/if}
+    </article>
+  </section>
+{/if}

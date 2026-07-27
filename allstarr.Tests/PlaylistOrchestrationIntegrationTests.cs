@@ -512,10 +512,14 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
             Entry(1, "entry-projection-2", "source-2", "Two"));
         await _service.RunAsync(Context(), new(_link, 73));
 
-        var projection = await new DurablePlaylistProjectionReader(_factory)
-            .ReadByNameAsync(_tenant, _user, "Provider Mix");
+        var reader = new DurablePlaylistProjectionReader(_factory);
+        var projection = await reader.ReadByNameAsync(_tenant, _user, "Provider Mix");
+        var projectionByLink = await reader.ReadByLinkIdAsync(_tenant, null, _link);
 
         Assert.NotNull(projection);
+        Assert.NotNull(projectionByLink);
+        Assert.Equal(projection.SnapshotId, projectionByLink.SnapshotId);
+        Assert.Equal(2, projectionByLink.LocalCount);
         Assert.Equal(2, projection.Entries.Count);
         Assert.Equal(2, projection.LocalCount);
         Assert.Equal(0, projection.MissingCount);

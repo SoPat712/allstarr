@@ -80,6 +80,38 @@ public sealed class DurablePlaylistProjectionReader(
             .FirstOrDefaultAsync(cancellationToken);
         if (snapshot == null) return null;
 
+        return await ProjectAsync(database, snapshot, tenantId, cancellationToken);
+    }
+
+    public async Task<DurablePlaylistProjection?> ReadByLinkIdAsync(
+        Guid tenantId,
+        Guid? ownerUserId,
+        Guid playlistLinkId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var database = await factory.CreateDbContextAsync(cancellationToken);
+        var snapshots = database.PlaylistSourceSnapshots.AsNoTracking()
+            .Where(item => item.TenantId == tenantId &&
+                           item.PlaylistLinkId == playlistLinkId &&
+                           item.PublishedAt.HasValue);
+        if (ownerUserId.HasValue)
+            snapshots = snapshots.Where(item => item.OwnerUserId == ownerUserId.Value);
+        var snapshot = await snapshots
+            .OrderByDescending(item => item.SnapshotVersion)
+            .ThenByDescending(item => item.RetrievedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (snapshot == null) return null;
+
+        return await ProjectAsync(database, snapshot, tenantId, cancellationToken);
+    }
+
+    private async Task<DurablePlaylistProjection> ProjectAsync(
+        AllstarrDbContext database,
+        PlaylistSourceSnapshotRecord snapshot,
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        var ownerUserId = snapshot.OwnerUserId;
         var link = await database.PlaylistLinks.AsNoTracking()
             .SingleAsync(item => item.Id == snapshot.PlaylistLinkId, cancellationToken);
         var entries = await database.PlaylistSourceEntries.AsNoTracking()
