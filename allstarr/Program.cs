@@ -522,7 +522,7 @@ if (!builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<StartupValidationOrchestrator>();
 }
 
-// Register cache cleanup service (only runs when StorageMode is Cache)
+// Clean retained cache-mode downloads and temporary transcoded audio.
 builder.Services.AddHostedService<CacheCleanupService>();
 
 // Register Spotify API client, lyrics service, and settings for direct API access

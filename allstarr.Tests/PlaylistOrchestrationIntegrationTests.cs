@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using allstarr.Core.Identity;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Jobs;
 using allstarr.Core.Matching;
 using allstarr.Core.Operations;
 using allstarr.Core.Playlists;
@@ -12,6 +13,7 @@ using allstarr.Core.Storage;
 using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 using Moq;
+using Npgsql;
 
 namespace allstarr.Tests;
 
@@ -686,6 +688,71 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         Assert.Equal("provider-artwork:building", active.ArtworkReferenceKey);
     }
 
+    [Fact]
+    public async Task Durable_job_is_single_owner_and_projection_survives_connection_restart()
+    {
+        _source.Snapshot = Snapshot(
+            "revision-job-restart",
+            Entry(0, "entry-job-restart", "source-1", "One"));
+        var options = new DurableJobOptions();
+        var queue = new DurableJobQueue(
+            _factory,
+            options,
+            new JobPayloadPolicy(options),
+            new Clock(_now));
+        var requests = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ =>
+            queue.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistMaterializationJobPayload>(
+                "playlist.materialize",
+                "playlist-restart-fixture",
+                new(_link, 81),
+                _tenant,
+                _user))));
+
+        Assert.Single(requests, item => item.Created);
+        Assert.Single(requests.Select(item => item.JobId).Distinct());
+        var claim = Assert.IsType<DurableJobClaim>(
+            await queue.ClaimNextAsync("playlist-restart-worker"));
+        var handler = new PlaylistMaterializationJobHandler(
+            _factory,
+            _service,
+            new Clock(_now));
+        var completion = await handler.ExecuteAsync(
+            new DurableJobExecutionContext(claim, EmptyServices.Instance)
+            {
+                ReportProgressAsync = (update, token) =>
+                    queue.ReportProgressAsync(claim, update, token)
+            },
+            default);
+        await queue.CompleteAsync(claim, completion);
+
+        Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
+        Assert.Equal(1, _target.WriteCalls);
+        NpgsqlConnection.ClearAllPools();
+
+        var restartedFactory = new DbFactory(_database.Options);
+        var projection = await new DurablePlaylistProjectionReader(restartedFactory)
+            .ReadByNameAsync(_tenant, _user, "Provider Mix");
+        Assert.NotNull(projection);
+        Assert.Equal(1, projection.TotalCount);
+        Assert.Equal(1, projection.LocalCount);
+        Assert.Equal(0, projection.ExternalCount);
+        Assert.Equal(0, projection.MissingCount);
+        Assert.Equal("local", Assert.Single(projection.Entries).RouteKind);
+
+        await using var db = await restartedFactory.CreateDbContextAsync();
+        Assert.Single(await db.TrackMatches.ToListAsync());
+        Assert.Single(await db.PlaylistSyncRuns.ToListAsync());
+        Assert.Equal(
+            DurableJobState.Succeeded,
+            (await db.Jobs.SingleAsync()).State);
+        Assert.Contains(
+            await db.AuditEvents
+                .Where(item => item.Category == "job-progress")
+                .Select(item => item.Action)
+                .ToListAsync(),
+            eventType => eventType.Contains("playlist.complete", StringComparison.Ordinal));
+    }
+
     private PlaylistLinkRecord Link() => new()
     {
         Id = _link,
@@ -705,6 +772,7 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         SyncName = true,
         SyncDescription = true,
         SyncArtwork = true,
+        Enabled = true,
         RuleVersion = "rules-v1",
         PolicyVersion = "policy-v1",
         CreatedAt = _now,
@@ -804,6 +872,11 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
     {
         public AllstarrDbContext CreateDbContext() => new(options);
         public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(CreateDbContext());
+    }
+    private sealed class EmptyServices : IServiceProvider
+    {
+        public static EmptyServices Instance { get; } = new();
+        public object? GetService(Type serviceType) => null;
     }
     private sealed class FakeSource : IProviderPlaylistSourceGateway
     {

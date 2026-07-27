@@ -26,21 +26,18 @@ public class CacheCleanupService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Only run if storage mode is Cache
-        if (_subsonicSettings.StorageMode != StorageMode.Cache)
-        {
-            _logger.LogInformation("CacheCleanupService disabled: StorageMode is not Cache");
-            return;
-        }
-
-        _logger.LogInformation("CacheCleanupService started with cleanup interval of {Interval} and retention of {Hours} hours",
-            _cleanupInterval, _subsonicSettings.CacheDurationHours);
+        _logger.LogInformation(
+            "CacheCleanupService started with cleanup interval of {Interval}",
+            _cleanupInterval);
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await CleanupOldCachedFilesAsync(stoppingToken);
+                if (_subsonicSettings.StorageMode == StorageMode.Cache)
+                {
+                    await CleanupOldCachedFilesAsync(stoppingToken);
+                }
                 await CleanupTranscodedCacheAsync(stoppingToken);
                 await Task.Delay(_cleanupInterval, stoppingToken);
             }

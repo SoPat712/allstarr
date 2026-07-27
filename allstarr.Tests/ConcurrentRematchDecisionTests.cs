@@ -1,7 +1,8 @@
-using System.Collections.Concurrent;
+using allstarr.Core.Identity;
+using allstarr.Core.Matching;
+using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace allstarr.Tests;
 
@@ -9,32 +10,28 @@ public sealed class ConcurrentRematchDecisionTests
 {
     [Fact]
     [Trait("Category", "Postgres")]
-    public async Task ConcurrentRematch_SameUniqueKey_OneWinsOthersConflictDeterministically()
+    public async Task ConcurrentCommand_CoalescesDecisionAndSurvivesServiceRestart()
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseNpgsql(database.ConnectionString)
-            .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
-            .Options;
-        await using (var initDb = new AllstarrDbContext(options))
+        var factory = new DbFactory(database.Options);
+        await using (var migrated = await factory.CreateDbContextAsync())
         {
-            await initDb.Database.MigrateAsync();
+            await migrated.Database.MigrateAsync();
         }
 
-        var tenantId = Guid.NewGuid();
-        var userId = Guid.NewGuid();
-        var backendIdentityId = Guid.NewGuid();
-        var providerAccountId = Guid.NewGuid();
-        var libraryTrackId = Guid.NewGuid();
-        var externalSnapshotId = Guid.NewGuid();
-        var now = DateTimeOffset.UtcNow;
-
-        await using (var setup = new AllstarrDbContext(options))
+        var tenantId = Guid.CreateVersion7();
+        var userId = Guid.CreateVersion7();
+        var backendIdentityId = Guid.CreateVersion7();
+        var providerAccountId = Guid.CreateVersion7();
+        var libraryTrackId = Guid.CreateVersion7();
+        var externalSnapshotId = Guid.CreateVersion7();
+        var now = new DateTimeOffset(2026, 7, 26, 12, 0, 0, TimeSpan.Zero);
+        await using (var setup = await factory.CreateDbContextAsync())
         {
             setup.Tenants.Add(new TenantRecord
             {
                 Id = tenantId,
-                Slug = $"concurrent-{Guid.NewGuid():N}",
+                Slug = $"concurrent-{tenantId:N}",
                 Name = "Concurrent tenant",
                 CreatedAt = now
             });
@@ -42,7 +39,7 @@ public sealed class ConcurrentRematchDecisionTests
             {
                 Id = userId,
                 TenantId = tenantId,
-                DisplayName = "concurrent",
+                DisplayName = "Concurrent owner",
                 Status = PlatformUserStatus.Active,
                 CreatedAt = now,
                 UpdatedAt = now
@@ -53,8 +50,8 @@ public sealed class ConcurrentRematchDecisionTests
                 TenantId = tenantId,
                 UserId = userId,
                 BackendType = "jellyfin",
-                BackendInstanceId = "concurrent",
-                PrincipalId = "princ",
+                BackendInstanceId = "backend",
+                PrincipalId = "principal",
                 CreatedAt = now,
                 LastSeenAt = now
             });
@@ -64,7 +61,7 @@ public sealed class ConcurrentRematchDecisionTests
                 TenantId = tenantId,
                 OwnerUserId = userId,
                 ProviderId = "spotify",
-                DisplayName = "concurrent",
+                DisplayName = "Spotify",
                 Scope = ProviderAccountScope.User,
                 Enabled = true,
                 CreatedAt = now,
@@ -76,232 +73,90 @@ public sealed class ConcurrentRematchDecisionTests
                 TenantId = tenantId,
                 OwnerUserId = userId,
                 BackendIdentityId = backendIdentityId,
+                LibraryScopeId = "music",
+                Protocol = "jellyfin",
+                BackendInstanceId = "backend",
+                BackendItemId = "local-1",
+                FilePath = "/music/concurrent.flac",
                 Title = "Concurrent track",
                 Artist = "Concurrent artist",
+                DurationMilliseconds = 180_000,
+                ProviderIdsJson = "{}",
                 IndexedAt = now,
                 SourceModifiedAt = now,
                 UpdatedAt = now
             });
-            var hash64 = new string('b', 64);
+            var hash = new string('b', 64);
             setup.ExternalMetadataSnapshots.Add(new ExternalMetadataSnapshotRecord
             {
                 Id = externalSnapshotId,
                 TenantId = tenantId,
                 OwnerUserId = userId,
                 ProviderAccountId = providerAccountId,
+                LibraryScopeId = "music",
+                BackendInstanceId = "backend",
                 ProviderId = "spotify",
                 ResourceKind = "track",
-                ExternalIdHash = hash64,
+                ExternalIdHash = hash,
                 SnapshotVersion = 1,
                 ProviderRevision = "1",
-                PayloadJson = "{}",
-                PayloadSha256 = hash64,
+                PayloadJson = """
+                    {"Title":"Concurrent track","Artist":"Concurrent artist","DurationMilliseconds":180000}
+                    """,
+                PayloadSha256 = hash,
                 RetrievedAt = now
             });
             await setup.SaveChangesAsync();
         }
 
-        const int concurrentWriters = 4;
-        const int decisionVersion = 1;
-        var readyToWrite = new TaskCompletionSource();
-        var successes = 0;
-        var conflicts = 0;
-        var otherErrors = new ConcurrentBag<Exception>();
-        var tasks = Enumerable.Range(0, concurrentWriters).Select(async writerIndex =>
+        var actor = new TrackMatchActor(tenantId, userId, false);
+        var service = CreateService(factory, now);
+        var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(index =>
+            service.RematchSnapshotAsync(actor, externalSnapshotId, $"concurrent-{index}")));
+
+        Assert.All(results, result =>
         {
-            await using var ctx = new AllstarrDbContext(options);
-            var record = new TrackMatchRecord
-            {
-                Id = Guid.NewGuid(),
-                TenantId = tenantId,
-                OwnerUserId = userId,
-                LibraryScopeId = "default",
-                ExternalSnapshotId = externalSnapshotId,
-                LibraryTrackId = libraryTrackId,
-                State = TrackMatchState.Accepted,
-                Confidence = 0.9,
-                Threshold = 0.85,
-                DecisionVersion = decisionVersion,
-                PolicyVersion = "v3",
-                DecidedAt = now,
-                Revision = 1
-            };
-            ctx.TrackMatches.Add(record);
-            await readyToWrite.Task;
-            try
-            {
-                await ctx.SaveChangesAsync();
-                Interlocked.Increment(ref successes);
-            }
-            catch (DbUpdateException ex) when (IsUniqueViolation(ex))
-            {
-                Interlocked.Increment(ref conflicts);
-            }
-            catch (Exception ex)
-            {
-                otherErrors.Add(ex);
-            }
-        }).ToArray();
-
-        await Task.Delay(50);
-        readyToWrite.SetResult();
-        await Task.WhenAll(tasks);
-
-        Assert.Empty(otherErrors);
-        Assert.Equal(1, successes);
-        Assert.Equal(concurrentWriters - 1, conflicts);
-
-        await using var verify = new AllstarrDbContext(options);
-        var matches = await verify.TrackMatches
-            .Where(m => m.TenantId == tenantId
-                && m.OwnerUserId == userId
-                && m.LibraryScopeId == "default"
-                && m.ExternalSnapshotId == externalSnapshotId
-                && m.DecisionVersion == decisionVersion)
-            .ToListAsync();
-        Assert.Single(matches);
-    }
-
-    [Fact]
-    [Trait("Category", "Postgres")]
-    public async Task ConcurrentRematch_DifferentDecisionVersions_AllSucceedOnPostgres()
-    {
-        await using var database = await PostgresTestDatabase.CreateAsync();
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseNpgsql(database.ConnectionString)
-            .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
-            .Options;
-        await using (var initDb = new AllstarrDbContext(options))
+            Assert.True(result.Succeeded);
+            Assert.Equal(1, result.DecisionVersion);
+        });
+        await using (var verify = await factory.CreateDbContextAsync())
         {
-            await initDb.Database.MigrateAsync();
+            var decision = Assert.Single(await verify.TrackMatches.ToListAsync());
+            Assert.Equal(TrackMatchState.Accepted, decision.State);
+            Assert.Equal(libraryTrackId, decision.LibraryTrackId);
         }
 
-        var result = await RunDifferentVersionsAsync(options);
-        Assert.Equal(5, result);
+        var restarted = CreateService(factory, now.AddMinutes(1));
+        var next = await restarted.RematchSnapshotAsync(
+            actor, externalSnapshotId, "after-restart");
+
+        Assert.True(next.Succeeded);
+        Assert.Equal(2, next.DecisionVersion);
+        await using var final = await factory.CreateDbContextAsync();
+        Assert.Equal(2, await final.TrackMatches.CountAsync());
     }
 
-    private static async Task<int> RunDifferentVersionsAsync(DbContextOptions<AllstarrDbContext> options)
+    private static TrackMatchCommandService CreateService(
+        DbFactory factory,
+        DateTimeOffset now) =>
+        new(
+            factory,
+            new TrackMatchDecisionEngine(),
+            new ProviderAccountResolver(factory, new ProviderPolicyOptions()),
+            new Clock(now));
+
+    private sealed class DbFactory(DbContextOptions<AllstarrDbContext> options)
+        : IDbContextFactory<AllstarrDbContext>
     {
-        var tenantId = Guid.NewGuid();
-        var userId = Guid.NewGuid();
-        var backendIdentityId = Guid.NewGuid();
-        var providerAccountId = Guid.NewGuid();
-        var libraryTrackId = Guid.NewGuid();
-        var externalSnapshotId = Guid.NewGuid();
-        var now = DateTimeOffset.UtcNow;
+        public AllstarrDbContext CreateDbContext() => new(options);
 
-        await using (var setup = new AllstarrDbContext(options))
-        {
-            setup.Tenants.Add(new TenantRecord
-            {
-                Id = tenantId,
-                Slug = $"parity-{Guid.NewGuid():N}",
-                Name = "Parity tenant",
-                CreatedAt = now
-            });
-            setup.Users.Add(new PlatformUserRecord
-            {
-                Id = userId,
-                TenantId = tenantId,
-                DisplayName = "parity",
-                Status = PlatformUserStatus.Active,
-                CreatedAt = now,
-                UpdatedAt = now
-            });
-            setup.BackendIdentities.Add(new BackendIdentityRecord
-            {
-                Id = backendIdentityId,
-                TenantId = tenantId,
-                UserId = userId,
-                BackendType = "jellyfin",
-                BackendInstanceId = "parity",
-                PrincipalId = "princ",
-                CreatedAt = now,
-                LastSeenAt = now
-            });
-            setup.ProviderAccounts.Add(new ProviderAccountRecord
-            {
-                Id = providerAccountId,
-                TenantId = tenantId,
-                OwnerUserId = userId,
-                ProviderId = "spotify",
-                DisplayName = "parity",
-                Scope = ProviderAccountScope.User,
-                Enabled = true,
-                CreatedAt = now,
-                UpdatedAt = now
-            });
-            setup.LibraryTracks.Add(new LibraryTrackRecord
-            {
-                Id = libraryTrackId,
-                TenantId = tenantId,
-                OwnerUserId = userId,
-                BackendIdentityId = backendIdentityId,
-                Title = "Parity track",
-                Artist = "Parity artist",
-                IndexedAt = now,
-                SourceModifiedAt = now,
-                UpdatedAt = now
-            });
-            var hash64 = new string('c', 64);
-            setup.ExternalMetadataSnapshots.Add(new ExternalMetadataSnapshotRecord
-            {
-                Id = externalSnapshotId,
-                TenantId = tenantId,
-                OwnerUserId = userId,
-                ProviderAccountId = providerAccountId,
-                ProviderId = "spotify",
-                ResourceKind = "track",
-                ExternalIdHash = hash64,
-                SnapshotVersion = 1,
-                ProviderRevision = "1",
-                PayloadJson = "{}",
-                PayloadSha256 = hash64,
-                RetrievedAt = now
-            });
-            await setup.SaveChangesAsync();
-        }
-
-        var readyToWrite = new TaskCompletionSource();
-        var tasks = Enumerable.Range(1, 5).Select(async version =>
-        {
-            await using var ctx = new AllstarrDbContext(options);
-            var record = new TrackMatchRecord
-            {
-                Id = Guid.NewGuid(),
-                TenantId = tenantId,
-                OwnerUserId = userId,
-                LibraryScopeId = "default",
-                ExternalSnapshotId = externalSnapshotId,
-                LibraryTrackId = libraryTrackId,
-                State = TrackMatchState.Accepted,
-                Confidence = 0.95,
-                Threshold = 0.85,
-                DecisionVersion = version,
-                PolicyVersion = "v3",
-                DecidedAt = now,
-                Revision = version
-            };
-            ctx.TrackMatches.Add(record);
-            await readyToWrite.Task;
-            await ctx.SaveChangesAsync();
-        }).ToArray();
-
-        await Task.Delay(50);
-        readyToWrite.SetResult();
-        await Task.WhenAll(tasks);
-
-        await using var verify = new AllstarrDbContext(options);
-        return await verify.TrackMatches
-            .Where(m => m.TenantId == tenantId)
-            .CountAsync();
+        public Task<AllstarrDbContext> CreateDbContextAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(CreateDbContext());
     }
 
-    private static bool IsUniqueViolation(Exception ex)
+    private sealed class Clock(DateTimeOffset now) : IPlatformClock
     {
-        var message = ex.InnerException?.Message ?? ex.Message;
-        return message.Contains("duplicate key", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("unique constraint", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("23505", StringComparison.OrdinalIgnoreCase);
+        public DateTimeOffset UtcNow => now;
     }
 }

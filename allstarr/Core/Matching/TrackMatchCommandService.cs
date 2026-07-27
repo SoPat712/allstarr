@@ -1317,17 +1317,38 @@ public sealed class TrackMatchCommandService(
             snapshot.SnapshotVersion,
             libraryIndexRevision,
             "manual-rematch-v2");
-        db.TrackMatches.Add(ToRecord(
+        var record = ToRecord(
             input, actor.TenantId, snapshot.OwnerUserId, snapshot.LibraryScopeId,
-            correlationId, clock.UtcNow));
-        await db.SaveChangesAsync(cancellationToken);
+            correlationId, clock.UtcNow);
+        db.TrackMatches.Add(record);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            db.ChangeTracker.Clear();
+            var winner = await db.TrackMatches.AsNoTracking().SingleOrDefaultAsync(item =>
+                item.TenantId == actor.TenantId &&
+                item.OwnerUserId == snapshot.OwnerUserId &&
+                item.LibraryScopeId == snapshot.LibraryScopeId &&
+                item.ExternalSnapshotId == snapshot.Id &&
+                item.DecisionVersion == input.DecisionVersion,
+                cancellationToken);
+            if (winner == null || !MatchesImmutableDecision(winner, input))
+            {
+                throw;
+            }
+
+            record = winner;
+        }
 
         return new(
             true,
             State: decision.State.ToString().ToLowerInvariant(),
             Confidence: decision.Confidence,
             CandidateCount: decision.Candidates.Count,
-            DecisionVersion: latestVersion + 1);
+            DecisionVersion: record.DecisionVersion);
     }
 
     public async Task<TrackMatchCommandResult> ClearSpotifyAsync(

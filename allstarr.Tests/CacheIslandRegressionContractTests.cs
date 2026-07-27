@@ -55,10 +55,10 @@ public sealed class CacheIslandRegressionContractTests
 
         Assert.Contains("IApplicationCache cache", external, StringComparison.Ordinal);
         Assert.Contains("BuildPlaybackMetadataKey", external, StringComparison.Ordinal);
-        Assert.DoesNotContain("ConcurrentDictionary", external, StringComparison.Ordinal);
+        Assert.Contains("_inflight.TryRemove", external, StringComparison.Ordinal);
         Assert.Contains("IApplicationCache cache", jellyfin, StringComparison.Ordinal);
         Assert.Contains("BuildPlaybackMetadataKey", jellyfin, StringComparison.Ordinal);
-        Assert.DoesNotContain("ConcurrentDictionary", jellyfin, StringComparison.Ordinal);
+        Assert.Contains("_inflight.TryRemove", jellyfin, StringComparison.Ordinal);
         Assert.Contains("IMediaAssetResolver mediaAssets", downloads, StringComparison.Ordinal);
         Assert.Contains("MediaAssetIdentity", downloads, StringComparison.Ordinal);
     }
@@ -141,6 +141,8 @@ public sealed class CacheIslandRegressionContractTests
         Assert.Contains("quality.ToString().ToLowerInvariant()", services[1], StringComparison.Ordinal);
         Assert.Contains("quality.ToLowerInvariant()", services[2], StringComparison.Ordinal);
         Assert.Contains("CacheExtensions.TranscodeCacheTTL", cleanup, StringComparison.Ordinal);
+        Assert.Contains("_subsonicSettings.StorageMode == StorageMode.Cache", cleanup, StringComparison.Ordinal);
+        Assert.DoesNotContain("CacheCleanupService disabled", cleanup, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()
