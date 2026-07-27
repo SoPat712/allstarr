@@ -69,12 +69,12 @@ public class CacheSettings
         new(StringComparer.OrdinalIgnoreCase);
 
     // Helper methods to get TimeSpan values
-    public TimeSpan SearchResultsTTL => TimeSpan.FromMinutes(SearchResultsMinutes);
-    public TimeSpan PlaylistImagesTTL => TimeSpan.FromHours(PlaylistImagesHours);
-    public TimeSpan LyricsTTL => TimeSpan.FromDays(LyricsDays);
-    public TimeSpan GenreTTL => TimeSpan.FromDays(GenreDays);
-    public TimeSpan MetadataTTL => TimeSpan.FromDays(MetadataDays);
-    public TimeSpan OdesliLookupTTL => TimeSpan.FromDays(OdesliLookupDays);
-    public TimeSpan ProxyImagesTTL => TimeSpan.FromDays(ProxyImagesDays);
-    public TimeSpan TranscodeCacheTTL => TimeSpan.FromMinutes(TranscodeCacheMinutes);
+    public TimeSpan SearchResultsTTL => TimeSpan.FromMinutes(Math.Clamp(SearchResultsMinutes, 1, 1440));
+    public TimeSpan PlaylistImagesTTL => TimeSpan.FromHours(Math.Clamp(PlaylistImagesHours, 1, 8760));
+    public TimeSpan LyricsTTL => TimeSpan.FromDays(Math.Clamp(LyricsDays, 1, 3650));
+    public TimeSpan GenreTTL => TimeSpan.FromDays(Math.Clamp(GenreDays, 1, 3650));
+    public TimeSpan MetadataTTL => TimeSpan.FromDays(Math.Clamp(MetadataDays, 1, 3650));
+    public TimeSpan OdesliLookupTTL => TimeSpan.FromDays(Math.Clamp(OdesliLookupDays, 1, 3650));
+    public TimeSpan ProxyImagesTTL => TimeSpan.FromDays(Math.Clamp(ProxyImagesDays, 1, 3650));
+    public TimeSpan TranscodeCacheTTL => TimeSpan.FromMinutes(Math.Clamp(TranscodeCacheMinutes, 1, 10080));
 }

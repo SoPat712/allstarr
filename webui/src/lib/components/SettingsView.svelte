@@ -14,6 +14,7 @@
   import EnvMigrationCard from "$lib/components/EnvMigrationCard.svelte";
   import ExtensionsView from "$lib/components/ExtensionsView.svelte";
   import SelectiveTransferCard from "$lib/components/SelectiveTransferCard.svelte";
+  import CacheDiagnosticsCard from "$lib/components/CacheDiagnosticsCard.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import { audienceLabel, humanize } from "$lib/sources";
   import { fieldValue, move, routingOrder } from "$lib/settings";
@@ -49,23 +50,19 @@
   let action = $state("");
   let error = $state("");
   let feedback = $state("");
-  let purgeScope = $state<"metadata" | "media" | "all" | null>(null);
+  let purgeTarget = $state("");
   let purgeOpen = $state(false);
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   const active = $derived(tabs.some((item) => item.id === section) ? section : "general");
   const generalSections = $derived((schema?.configSections ?? [])
     .filter((item) => item.id !== "spotify-import"));
+  const cacheDiskCeiling = $derived(
+    Number((config.cache as Record<string, unknown> | undefined)?.mediaMaximumMegabytes ?? 512),
+  );
 
   function provider(id: string) {
     return schema?.providers.find((item) => item.id.toLowerCase() === id.toLowerCase());
-  }
-
-  function formatBytes(value?: number | null) {
-    if (!value) return "0 B";
-    const units = ["B", "KiB", "MiB", "GiB"];
-    const power = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
-    return `${(value / 1024 ** power).toFixed(power ? 1 : 0)} ${units[power]}`;
   }
 
   async function refresh() {
@@ -172,8 +169,15 @@
   }
 
   async function purge() {
-    if (!purgeScope) return;
-    await run(`purge-${purgeScope}`, () => settings.purgeCache(purgeScope!), `${humanize(purgeScope)} cache purged.`);
+    if (!purgeTarget) return;
+    const scope = ["metadata", "media", "all"].includes(purgeTarget)
+      ? purgeTarget as "metadata" | "media" | "all"
+      : null;
+    await run(
+      `purge-${purgeTarget}`,
+      () => scope ? settings.purgeCache(scope) : settings.purgeCacheCategory(purgeTarget),
+      `${humanize(purgeTarget)} cache purged.`,
+    );
     purgeOpen = false;
   }
 
@@ -237,6 +241,11 @@
                   {#if field.helpText}<small>{field.helpText}</small>{/if}
                 </label>
               {/each}
+              {#if item.id === "cache"}
+                <p class="settings-impact">
+                  Estimated ceiling after save: hot RAM remains fixed at 16 MiB and disk remains deployment-bounded at {cacheDiskCeiling.toLocaleString()} MiB. Retention changes affect refresh frequency, not those ceilings.
+                </p>
+              {/if}
               {#if item.fields.some((field) => !field.readOnly && field.ownership !== "deployment")}
                 <footer><button class="button-primary" type="submit" disabled={Boolean(action)}>{action === item.id ? "Saving…" : `Save ${item.label}`}</button></footer>
               {/if}
@@ -310,14 +319,13 @@
             <button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => void run("backup", settings.backup, "Verified database backup created.")}>{action === "backup" ? "Creating…" : "Create verified backup"}</button>
             <p>Restore remains an offline operator procedure and is intentionally unavailable against the active database.</p>
           </article>
-          <article class="panel maintenance-card">
-            <header><div><strong>Application cache</strong><small>Disposable metadata and media</small></div><span>{formatBytes((cache?.database.payloadBytes ?? 0) + (cache?.media.payloadBytes ?? 0))}</span></header>
-            <dl><div><dt>Metadata entries</dt><dd>{cache?.database.entryCount ?? 0}</dd></div><div><dt>Media entries</dt><dd>{cache?.media.entryCount ?? 0}</dd></div><div><dt>Reclaimable</dt><dd>{formatBytes((cachePreview?.metadata.reclaimableBytes ?? 0) + (cachePreview?.media.reclaimableBytes ?? 0) + (cachePreview?.unreferencedArtworkBytes ?? 0))}</dd></div></dl>
-            <div class="maintenance-actions">
-              <button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => void run("cleanup", settings.cleanCache, "Cache cleanup complete.")}>{action === "cleanup" ? "Cleaning…" : "Clean expired entries"}</button>
-              <button class="button-danger" type="button" onclick={() => { purgeScope = "all"; purgeOpen = true; }}>Purge cache</button>
-            </div>
-          </article>
+          <CacheDiagnosticsCard
+            snapshot={cache}
+            preview={cachePreview}
+            busy={Boolean(action)}
+            onClean={() => void run("cleanup", settings.cleanCache, "Cache cleanup complete.")}
+            onPurge={(target) => { purgeTarget = target; purgeOpen = true; }}
+          />
           <article class="panel maintenance-card">
             <header><div><strong>Media pipeline</strong><small>Metadata, artwork, and authenticated playback</small></div></header>
             <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void run("media", settings.mediaProbe, "Media pipeline checked.")}>{action === "media" ? "Testing…" : "Test media pipeline"}</button>
@@ -342,7 +350,7 @@
 
   <ConfirmDialog
     bind:open={purgeOpen}
-    title="Purge the application cache?"
+    title={purgeTarget === "all" ? "Purge the application cache?" : `Purge ${humanize(purgeTarget)} cache?`}
     description="Disposable metadata and media payloads will be removed. PostgreSQL business state, accounts, mappings, playlists, and kept audio are not affected."
     confirmLabel="Purge cache"
     onConfirm={purge}

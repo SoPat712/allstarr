@@ -366,6 +366,33 @@ public sealed class FileMediaApplicationCache : IApplicationCache, IDisposable
         }
     }
 
+    public async Task<int> DeleteCategoryAsync(ApplicationCacheCategory category)
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            var matches = ReadAllMetadata()
+                .Where(item => ApplicationCachePolicyRegistry.Classify(item.Key) == category)
+                .ToArray();
+            foreach (var match in matches)
+            {
+                DeleteFiles(PathsFor(match.Key));
+            }
+
+            Interlocked.Add(ref _evictions, matches.Length);
+            return matches.Length;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Disk media cache category purge failed for {Category}", category);
+            return 0;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async Task<int> CleanupAsync(CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken);
@@ -865,7 +892,12 @@ public sealed class HybridApplicationCache(
                 })
                 .ToArray(),
             _activity.Snapshot(),
-            DateTimeOffset.UtcNow);
+            DateTimeOffset.UtcNow)
+        {
+            ArtworkLimits = new(
+                (await mediaUsageTask).MaximumEntryBytes ?? 0,
+                MediaAssetResolver.MaximumDecodedPixels)
+        };
     }
 
     public Task<int> PurgeMetadataAsync() => metadata.DeleteByPatternAsync("*");
@@ -909,6 +941,12 @@ public sealed class HybridApplicationCache(
 
     public async Task<int> PurgeAllAsync() =>
         await PurgeMetadataAsync() + await PurgeMediaAsync();
+
+    public Task<int> PurgeCategoryAsync(ApplicationCacheCategory category) =>
+        ApplicationCachePolicyRegistry.Resolve(category, _settings).StorageTier ==
+        ApplicationCacheStorageTier.Metadata
+            ? metadata.DeleteCategoryAsync(category)
+            : media.DeleteCategoryAsync(category);
 
     private IApplicationCache Target(string key) =>
         ApplicationCachePayloadPolicy.IsDatabaseEligible(key) ? metadata : media;

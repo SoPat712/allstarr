@@ -22,12 +22,20 @@ const schema = {
       accountSettings: [{ key: "token", label: "Access token", type: "password", sensitive: true, required: true }],
     },
   ],
-  configSections: [{
-    id: "general", label: "General", fields: [
+  configSections: [
+    {
+      id: "general", label: "General", fields: [
       { key: "Theme", label: "Theme", type: "select", valuePath: "general.theme", options: ["Dark"] },
       { key: "PublicUrl", label: "Public URL", type: "text", valuePath: "deployment.url", ownership: "deployment", readOnly: true },
-    ],
-  }],
+      ],
+    },
+    {
+      id: "cache", label: "Cache", fields: [
+        { key: "CACHE_SEARCH_RESULTS_MINUTES", label: "Search results minutes", type: "number", valuePath: "cache.searchResultsMinutes", min: 1, max: 1440 },
+        { key: "CACHE_MEDIA_MAXIMUM_MEGABYTES", label: "Media cache total MiB", type: "number", valuePath: "cache.mediaMaximumMegabytes", ownership: "deployment", readOnly: true },
+      ],
+    },
+  ],
   priorityGroups: [{
     id: "streaming", label: "Playback", envKey: "StreamingOrder", providers: ["lumen-audio"],
     pinnedProvider: { id: "jellyfin", name: "Jellyfin", icon: "server", reason: "Local media server" },
@@ -137,21 +145,30 @@ const responses: Record<string, unknown> = {
   "/api/admin/provider-diagnostics/deep-stream/latest": { measurements: [] },
   "/api/admin/config": {
     general: { theme: "Dark" }, deployment: { url: "https://music.example.test" },
+    cache: { searchResultsMinutes: 1, mediaMaximumMegabytes: 512 },
     providers: { streamingOrder: "lumen-audio" },
   },
   "/api/admin/storage": { storage: { provider: "PostgreSQL", readiness: "Ready" }, backups: [] },
   "/api/admin/cache": {
-    database: { entryCount: 0, payloadBytes: 0, hitRatio: 0 },
-    hot: { entryCount: 0, payloadBytes: 0, hitRatio: 0 },
-    media: { entryCount: 0, payloadBytes: 0, hitRatio: 0 },
-    activity: { coalescedRequests: 0, staleServes: 0, upstreamBytesAvoided: 0 },
-    extensionStorage: { activeExtensions: 0, entryCount: 0, payloadBytes: 0, maximumBytes: 0 },
+    database: { entryCount: 2, payloadBytes: 2048, hitRatio: .75, hits: 3, misses: 1, writes: 2, evictions: 1 },
+    hot: { entryCount: 1, payloadBytes: 1024, maximumBytes: 16_777_216, hitRatio: .75, hits: 3, misses: 1, writes: 1, evictions: 0 },
+    media: { entryCount: 1, payloadBytes: 4096, maximumBytes: 536_870_912, maximumEntryBytes: 16_777_216, hitRatio: .5, hits: 1, misses: 1, writes: 1, evictions: 1 },
+    categories: [{
+      category: "Artwork", owner: "media-assets", storageTier: "Media", enabled: true,
+      entryCount: 1, payloadBytes: 4096, freshSeconds: 86_400, staleSeconds: 3600,
+      maximumBytes: 536_870_912, maximumEntries: 10_000,
+      warmingRule: "VisibleOrSelected", invalidationTrigger: "resource-or-artwork-revision",
+    }],
+    activity: { coalescedRequests: 4, staleServes: 2, upstreamBytesAvoided: 8192 },
+    artworkLimits: { maximumEntryBytes: 16_777_216, maximumDecodedPixels: 16_000_000 },
+    extensionStorage: { activeExtensions: 1, entryCount: 2, payloadBytes: 512, maximumBytes: 4_194_304 },
     capturedAt: "2026-01-01",
   },
   "/api/admin/cache/maintenance/preview": {
-    metadata: { expiredEntries: 0, overQuotaEntries: 0, reclaimableBytes: 0 },
-    media: { expiredEntries: 0, overQuotaEntries: 0, reclaimableBytes: 0 },
-    unreferencedArtworkPayloads: 0, unreferencedArtworkBytes: 0,
+    metadata: { scannedEntries: 2, scanLimitReached: false, expiredEntries: 1, unknownOwnerEntries: 0, disabledCategoryEntries: 0, supersededEntries: 0, overQuotaEntries: 0, reclaimableBytes: 1024 },
+    media: { scannedFiles: 2, scanLimitReached: false, temporaryFiles: 0, malformedMetadataFiles: 0, orphanedMetadataFiles: 0, orphanedPayloadFiles: 0, expiredEntries: 0, overQuotaEntries: 0, reclaimableBytes: 0, cleanupIntervalSeconds: 900, lastCleanupAt: "2026-01-01", lastCleanupDeletedEntries: 1 },
+    unreferencedArtworkPayloads: 1, unreferencedArtworkBytes: 4096,
+    artworkReferenceScanLimitReached: false,
   },
   "/api/admin/config/migration/status": {
     available: true, completed: false, sourcePresent: false, firstRun: true,
@@ -315,6 +332,12 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
       body = { success: true, alreadyApplied: false };
     if (url.pathname === "/api/admin/config/migration/reset")
       body = {};
+    if (url.pathname.startsWith("/api/admin/cache/categories/") && route.request().method() === "DELETE")
+      body = { category: decodeURIComponent(url.pathname.split("/").at(-1) ?? ""), deleted: 1 };
+    if (url.pathname.match(/^\/api\/admin\/cache\/(metadata|media|all)$/) && route.request().method() === "DELETE")
+      body = { deleted: 1 };
+    if (url.pathname === "/api/admin/cache/maintenance" && route.request().method() === "POST")
+      body = { deleted: 1 };
     if (url.pathname === "/api/admin/intelligence/runs")
       body = { runId: "run-2", jobId: "job-2" };
     if (url.pathname === "/api/admin/intelligence/generated-sets")
@@ -393,7 +416,7 @@ for (const viewport of viewports) {
     test("Settings dialogs remain usable", async ({ page }) => {
       await mockApi(page);
       await page.goto("#/settings/general");
-      await expect(page.getByText("Deployment-owned", { exact: true })).toBeVisible();
+      await expect(page.getByText("Public URL", { exact: true }).locator("..").getByText("Deployment-owned")).toBeVisible();
       await page.goto("#/settings/accounts");
       await expect(page.getByRole("link", { name: "Open Sources" })).toBeInViewport();
       await page.goto("#/settings/routing");
@@ -419,7 +442,7 @@ for (const viewport of viewports) {
       await expect(page.getByText("128 MiB max")).toBeVisible();
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-      await page.getByRole("button", { name: "Purge cache" }).click();
+      await page.getByRole("button", { name: "Purge all cache" }).click();
       const dialog = page.getByRole("alertdialog", { name: "Purge the application cache?" });
       await expect(dialog).toBeVisible();
       await expect(dialog.getByRole("button", { name: "Purge cache" })).toBeInViewport();
@@ -985,6 +1008,32 @@ test("Maintenance validates before selective import and reports applied rows", a
   await expect(result).toContainText("Import complete");
   await expect(result).toContainText("provider-accounts");
   await expect(result).toContainText("playlist-links");
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => page.evaluate(() =>
+    document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});
+
+test("Maintenance reports cache budgets and confirms category purge", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const requests: string[] = [];
+  page.on("request", (request) => requests.push(new URL(request.url()).pathname));
+  await mockApi(page);
+  await page.goto("#/settings/general");
+  const cacheSettings = page.locator("details").filter({ hasText: "Cache" });
+  await cacheSettings.locator("summary").click();
+  await expect(cacheSettings.getByText(/hot RAM remains fixed at 16 MiB/)).toBeVisible();
+  await page.goto("#/settings/maintenance");
+  const card = page.locator(".cache-diagnostics-card");
+
+  await expect(card.getByText("Hot RAM hit / miss")).toBeVisible();
+  await expect(card.getByText("Upstream avoided")).toBeVisible();
+  await card.getByText("Category budgets").click();
+  await expect(card.getByText(/media-assets/)).toBeVisible();
+  await card.getByRole("button", { name: "Purge", exact: true }).click();
+  const dialog = page.getByRole("alertdialog", { name: "Purge Artwork cache?" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Purge cache" }).click();
+  await expect.poll(() => requests).toContain("/api/admin/cache/categories/Artwork");
   await expect(dialog).toBeHidden();
   await expect.poll(() => page.evaluate(() =>
     document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);

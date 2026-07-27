@@ -141,6 +141,13 @@ public sealed class BoundedHotApplicationCache : IApplicationCache, IDisposable
         return await _database.DeleteByPatternAsync(pattern);
     }
 
+    public async Task<int> DeleteCategoryAsync(ApplicationCacheCategory category)
+    {
+        _memory.Clear();
+        Interlocked.Add(ref _evictions, ClearResidents());
+        return await _database.DeleteCategoryAsync(category);
+    }
+
     public Task<ApplicationCacheTierUsage> GetDatabaseUsageAsync(
         CancellationToken cancellationToken = default) =>
         _database.GetUsageAsync(cancellationToken);

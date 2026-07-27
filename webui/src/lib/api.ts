@@ -272,6 +272,89 @@ export type SelectiveTransferPreview = {
   report: SelectiveTransferReport;
 };
 
+export type CacheTierUsage = {
+  tier: string;
+  entryCount: number;
+  payloadBytes: number;
+  maximumBytes?: number | null;
+  maximumEntryBytes?: number | null;
+  enabled: boolean;
+  hits: number;
+  misses: number;
+  writes: number;
+  evictions: number;
+  hitRatio: number;
+};
+
+export type CacheCategoryDiagnostics = {
+  category: string;
+  owner: string;
+  storageTier: string;
+  enabled: boolean;
+  entryCount: number;
+  payloadBytes: number;
+  freshSeconds: number;
+  staleSeconds: number;
+  maximumBytes: number;
+  maximumEntries: number;
+  warmingRule: string;
+  invalidationTrigger: string;
+};
+
+export type CacheDiagnostics = {
+  database: CacheTierUsage;
+  hot: CacheTierUsage;
+  media: CacheTierUsage;
+  categories: CacheCategoryDiagnostics[];
+  activity: {
+    coalescedRequests: number;
+    staleServes: number;
+    upstreamBytesAvoided: number;
+  };
+  artworkLimits: {
+    maximumEntryBytes: number;
+    maximumDecodedPixels: number;
+  };
+  extensionStorage: {
+    activeExtensions: number;
+    entryCount: number;
+    payloadBytes: number;
+    maximumBytes: number;
+  };
+  capturedAt: string;
+};
+
+export type CacheMaintenancePreview = {
+  metadata: {
+    scannedEntries: number;
+    scanLimitReached: boolean;
+    expiredEntries: number;
+    unknownOwnerEntries: number;
+    disabledCategoryEntries: number;
+    supersededEntries: number;
+    overQuotaEntries: number;
+    reclaimableBytes: number;
+  };
+  media: {
+    scannedFiles: number;
+    scanLimitReached: boolean;
+    temporaryFiles: number;
+    malformedMetadataFiles: number;
+    orphanedMetadataFiles: number;
+    orphanedPayloadFiles: number;
+    expiredEntries: number;
+    overQuotaEntries: number;
+    reclaimableBytes: number;
+    cleanupIntervalSeconds: number;
+    lastCleanupAt?: string | null;
+    lastCleanupDeletedEntries: number;
+  };
+  unreferencedArtworkPayloads: number;
+  unreferencedArtworkBytes: number;
+  artworkReferenceScanLimitReached: boolean;
+  capturedAt: string;
+};
+
 export type ProviderAccount = {
   id: string;
   providerId: string;
@@ -813,23 +896,16 @@ export const settings = {
     backups: Array<{ id: string; status: string; createdAt: string; verifiedAt?: string | null }>;
   }>("/api/admin/storage"),
   backup: () => json<{ id: string; status: string }>("/api/admin/storage/backups", { method: "POST" }),
-  cache: () => json<{
-    database: { entryCount: number; payloadBytes: number; hitRatio: number };
-    hot: { entryCount: number; payloadBytes: number; hitRatio: number };
-    media: { entryCount: number; payloadBytes: number; maximumBytes?: number | null; hitRatio: number };
-    activity: { coalescedRequests: number; staleServes: number; upstreamBytesAvoided: number };
-    extensionStorage: { activeExtensions: number; entryCount: number; payloadBytes: number; maximumBytes: number };
-    capturedAt: string;
-  }>("/api/admin/cache"),
-  cachePreview: () => json<{
-    metadata: { expiredEntries: number; overQuotaEntries: number; reclaimableBytes: number };
-    media: { expiredEntries?: number; overQuotaEntries?: number; reclaimableBytes?: number };
-    unreferencedArtworkPayloads: number;
-    unreferencedArtworkBytes: number;
-  }>("/api/admin/cache/maintenance/preview"),
+  cache: () => json<CacheDiagnostics>("/api/admin/cache"),
+  cachePreview: () => json<CacheMaintenancePreview>("/api/admin/cache/maintenance/preview"),
   cleanCache: () => json<{ deleted: number }>("/api/admin/cache/maintenance", { method: "POST" }),
   purgeCache: (scope: "metadata" | "media" | "all") =>
     json<{ deleted: number }>(`/api/admin/cache/${scope}`, { method: "DELETE" }),
+  purgeCacheCategory: (category: string) =>
+    json<{ category: string; deleted: number }>(
+      `/api/admin/cache/categories/${encodeURIComponent(category)}`,
+      { method: "DELETE" },
+    ),
   mediaProbe: () => json<{ success: boolean; code: string; message: string }>("/api/admin/media-probe"),
   playlistProbe: () => json<{ success: boolean; code: string; message: string }>("/api/admin/playlist-readiness"),
   exportState: async (options: SelectiveTransferOptions, signal?: AbortSignal) => {

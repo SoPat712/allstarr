@@ -368,6 +368,25 @@ public sealed class DatabaseApplicationCache(
         }
     }
 
+    public async Task<int> DeleteCategoryAsync(ApplicationCacheCategory category)
+    {
+        try
+        {
+            await using var database = await contextFactory.CreateDbContextAsync();
+            var name = category.ToString();
+            var deleted = await database.Set<ApplicationCacheEntryRecord>()
+                .Where(item => item.Category == name)
+                .ExecuteDeleteAsync();
+            Interlocked.Add(ref _evictions, deleted);
+            return deleted;
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Database cache category purge failed for {Category}", category);
+            return 0;
+        }
+    }
+
     public async Task<int> CleanupExpiredAsync(
         int batchSize = DefaultCleanupBatchSize,
         CancellationToken cancellationToken = default)

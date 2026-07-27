@@ -43,6 +43,8 @@ public sealed class MediaAssetResolver(
     ILogger<MediaAssetResolver> logger,
     ApplicationCacheActivityMetrics? activityMetrics = null) : IMediaAssetResolver
 {
+    public const int MaximumDecodedPixels = 16_000_000;
+
     private readonly ApplicationCacheActivityMetrics _activity =
         activityMetrics ?? new ApplicationCacheActivityMetrics();
     private readonly ConcurrentDictionary<string, Lazy<Task<ResolvedMediaAsset?>>> _inflight =
@@ -176,7 +178,7 @@ public sealed class MediaAssetResolver(
             using var codec = SKCodec.Create(data);
             var info = codec?.Info;
             if (info is not { Width: > 0, Height: > 0 } ||
-                (long)info.Value.Width * info.Value.Height > 16_000_000)
+                (long)info.Value.Width * info.Value.Height > MaximumDecodedPixels)
                 return source;
             var scale = Math.Min(
                 identity.Width.HasValue ? identity.Width.Value / (double)info.Value.Width : 1,

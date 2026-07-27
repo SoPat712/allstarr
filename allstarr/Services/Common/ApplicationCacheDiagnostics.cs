@@ -27,7 +27,13 @@ public sealed record ApplicationCacheDiagnosticsSnapshot(
 {
     public ExtensionStorageUsageSnapshot ExtensionStorage { get; init; } =
         new(0, 0, 0, 0);
+    public ApplicationCacheArtworkLimits ArtworkLimits { get; init; } =
+        new(0, MediaAssetResolver.MaximumDecodedPixels);
 }
+
+public sealed record ApplicationCacheArtworkLimits(
+    int MaximumEntryBytes,
+    int MaximumDecodedPixels);
 
 public sealed record ExtensionStorageUsageSnapshot(
     int ActiveExtensions,

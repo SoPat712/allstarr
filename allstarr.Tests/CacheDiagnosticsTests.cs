@@ -82,6 +82,8 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         Assert.Equal(1, snapshot.Activity.CoalescedRequests);
         Assert.Equal(1, snapshot.Activity.StaleServes);
         Assert.Equal(128, snapshot.Activity.UpstreamBytesAvoided);
+        Assert.Equal(16 * 1024 * 1024, snapshot.ArtworkLimits.MaximumEntryBytes);
+        Assert.Equal(16_000_000, snapshot.ArtworkLimits.MaximumDecodedPixels);
         var metadataCategory = Assert.Single(
             snapshot.Categories,
             item => item.Category == ApplicationCacheCategory.ProviderResponse.ToString());
@@ -137,6 +139,14 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
             Assert.IsType<ApplicationCacheDiagnosticsSnapshot>(ok.Value)
                 .ExtensionStorage.ActiveExtensions);
         Assert.IsType<BadRequestObjectResult>(await controller.Purge("arbitrary:*"));
+
+        Assert.True(await _cache.SetStringAsync("lyrics:fixture", "lyrics"));
+        Assert.True(await _cache.SetStringAsync("odesli:fixture", "provider"));
+        Assert.IsType<OkObjectResult>(await controller.PurgeCategory("lyrics"));
+        Assert.Null(await _cache.GetStringAsync("lyrics:fixture"));
+        Assert.Equal("provider", await _cache.GetStringAsync("odesli:fixture"));
+        Assert.IsType<BadRequestObjectResult>(await controller.PurgeCategory("not-a-category"));
+        Assert.IsType<BadRequestObjectResult>(await controller.PurgeCategory("0"));
     }
 
     [Fact]

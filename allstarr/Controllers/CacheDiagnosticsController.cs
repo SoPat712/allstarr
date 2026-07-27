@@ -48,6 +48,29 @@ public sealed class CacheDiagnosticsController(
             : Ok(new { scope = normalized, deleted });
     }
 
+    [HttpDelete("categories/{category}")]
+    public async Task<IActionResult> PurgeCategory(string category)
+    {
+        if (RequireAdministrator() is { } error)
+        {
+            return error;
+        }
+
+        var name = Enum.GetNames<ApplicationCacheCategory>()
+            .FirstOrDefault(item => item.Equals(category?.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (name == null)
+        {
+            return BadRequest(new
+            {
+                error = "cache_category_invalid",
+                allowed = Enum.GetNames<ApplicationCacheCategory>()
+            });
+        }
+
+        var parsed = Enum.Parse<ApplicationCacheCategory>(name);
+        return Ok(new { category = name, deleted = await cache.PurgeCategoryAsync(parsed) });
+    }
+
     [HttpGet("maintenance/preview")]
     public async Task<IActionResult> PreviewMaintenance(
         CancellationToken cancellationToken = default)
