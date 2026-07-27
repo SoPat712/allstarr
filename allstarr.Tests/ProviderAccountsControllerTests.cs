@@ -5,6 +5,7 @@ using allstarr.Core.Operations;
 using allstarr.Core.Secrets;
 using allstarr.Core.Storage;
 using allstarr.Services.Admin;
+using allstarr.Services.Common;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -23,6 +24,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
     private PostgresTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private EncryptedSecretStore _secretStore = null!;
+    private readonly TestMemoryApplicationCache _cache = new();
 
     public async Task InitializeAsync()
     {
@@ -138,8 +140,18 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
             }));
 
         Assert.DoesNotContain("secretReferenceFixture", JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
+        var cacheKey = CacheKeyBuilder.BuildProviderPlaylistDiscoveryKey(
+            _tenantId, _userId, account.Id, account.Revision, "spotify", null, null, 100);
+        await _cache.SetStringAsync(cacheKey, "{}");
+        await Controller(Session(_userId)).SetEnabled(
+            account.Id,
+            new ProviderAccountsController.SetProviderAccountEnabledRequest
+            {
+                Enabled = false
+            });
+        Assert.False(await _cache.ExistsAsync(cacheKey));
         await using var verification = await _factory.CreateDbContextAsync();
-        Assert.True((await verification.ProviderAccounts.SingleAsync(item => item.Id == account.Id)).Enabled);
+        Assert.False((await verification.ProviderAccounts.SingleAsync(item => item.Id == account.Id)).Enabled);
     }
 
     [Fact]
@@ -358,6 +370,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         return new ProviderAccountsController(
             _factory,
             _secretStore,
+            _cache,
             new ProviderAccountManagementOptions { ManagementMode = mode.ToString() })
         {
             ControllerContext = new ControllerContext { HttpContext = context }

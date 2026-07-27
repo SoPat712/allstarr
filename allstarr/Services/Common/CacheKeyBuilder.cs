@@ -46,18 +46,24 @@ public static class CacheKeyBuilder
         string? cursor,
         int limit)
     {
-        var scope = string.Join('\u001f',
-            tenantId?.ToString("N"),
-            userId?.ToString("N"),
-            accountId.ToString("N"),
-            accountRevision,
-            Normalize(providerId),
+        var request = string.Join('\u001f',
             query?.Trim(),
             cursor?.Trim(),
             limit);
-        return $"playlist:discovery:v1:{Convert.ToHexStringLower(
-            SHA256.HashData(Encoding.UTF8.GetBytes(scope)))}";
+        return string.Join(':',
+            "playlist",
+            "discovery",
+            "v2",
+            tenantId?.ToString("N") ?? "global",
+            userId?.ToString("N") ?? "shared",
+            accountId.ToString("N"),
+            accountRevision,
+            Normalize(providerId),
+            Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(request))));
     }
+
+    public static string BuildProviderPlaylistDiscoveryAccountPattern(Guid accountId) =>
+        $"playlist:discovery:v2:*:*:{accountId:N}:*";
 
     public static string BuildMediaAssetDescriptorKey(MediaAssetIdentity identity)
     {

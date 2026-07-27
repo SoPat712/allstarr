@@ -7,6 +7,7 @@ using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Middleware;
 using allstarr.Services.Admin;
+using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,15 +20,18 @@ public sealed partial class ProviderAccountsController : ControllerBase
 {
     private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
     private readonly EncryptedSecretStore _secretStore;
+    private readonly IApplicationCache _cache;
     private readonly ProviderAccountManagementMode _managementMode;
 
     public ProviderAccountsController(
         IDbContextFactory<AllstarrDbContext> contextFactory,
         EncryptedSecretStore secretStore,
+        IApplicationCache cache,
         ProviderAccountManagementOptions managementOptions)
     {
         _contextFactory = contextFactory;
         _secretStore = secretStore;
+        _cache = cache;
         _managementMode = managementOptions.ParseManagementMode();
     }
 
@@ -260,6 +264,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             "succeeded",
             new { accountId = account.Id, account.ProviderId, secretVersion = secret.ActiveVersion });
         await context.SaveChangesAsync(cancellationToken);
+        await InvalidateAccountCacheAsync(account.Id);
         return Ok(new
         {
             accountId = account.Id,
@@ -315,6 +320,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             "succeeded",
             new { accountId = account.Id, account.ProviderId });
         await context.SaveChangesAsync(cancellationToken);
+        await InvalidateAccountCacheAsync(account.Id);
         return NoContent();
     }
 
@@ -347,6 +353,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
         AddAudit(context, session, request.Enabled ? "provider-account.enabled" : "provider-account.disabled",
             "succeeded", new { accountId = account.Id, account.ProviderId });
         await context.SaveChangesAsync(cancellationToken);
+        await InvalidateAccountCacheAsync(account.Id);
         return Ok(AccountResponse(account, null));
     }
 
@@ -385,8 +392,13 @@ public sealed partial class ProviderAccountsController : ControllerBase
             account.LibraryScopeId
         });
         await context.SaveChangesAsync(cancellationToken);
+        await InvalidateAccountCacheAsync(account.Id);
         return Ok(AccountResponse(account, null, scope == ProviderAccountScope.User ? session.UserName : null));
     }
+
+    private Task<int> InvalidateAccountCacheAsync(Guid accountId) =>
+        _cache.DeleteByPatternAsync(
+            CacheKeyBuilder.BuildProviderPlaylistDiscoveryAccountPattern(accountId));
 
     private bool TryGetSession(
         out AdminAuthSession session,

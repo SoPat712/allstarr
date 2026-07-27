@@ -116,10 +116,16 @@ public class CacheKeyBuilderTests
         var otherUserKey = CacheKeyBuilder.BuildProviderPlaylistDiscoveryKey(
             tenantId, Guid.CreateVersion7(), accountId, 7, "spotify", "private mix", "signed-cursor", 100);
 
-        Assert.StartsWith("playlist:discovery:v1:", key, StringComparison.Ordinal);
+        Assert.StartsWith(
+            $"playlist:discovery:v2:{tenantId:N}:{userId:N}:{accountId:N}:7:spotify:",
+            key,
+            StringComparison.Ordinal);
         Assert.DoesNotContain("private mix", key, StringComparison.Ordinal);
         Assert.DoesNotContain("signed-cursor", key, StringComparison.Ordinal);
         Assert.NotEqual(key, otherUserKey);
+        Assert.Equal(
+            $"playlist:discovery:v2:*:*:{accountId:N}:*",
+            CacheKeyBuilder.BuildProviderPlaylistDiscoveryAccountPattern(accountId));
         Assert.Equal(
             ApplicationCacheCategory.PlaylistDiscovery,
             ApplicationCachePolicyRegistry.Classify(key));
