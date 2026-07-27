@@ -157,6 +157,11 @@
   });
 
   onMount(() => {
+    const compactSidebar = matchMedia("(min-width: 761px) and (max-width: 900px)");
+    const applySidebarBreakpoint = () => { sidebarSlim = compactSidebar.matches; };
+    applySidebarBreakpoint();
+    compactSidebar.addEventListener("change", applySidebarBreakpoint);
+
     void (async () => {
       try {
         session = await auth.session();
@@ -171,7 +176,10 @@
       }
     })();
 
-    return () => liveUpdates.close();
+    return () => {
+      compactSidebar.removeEventListener("change", applySidebarBreakpoint);
+      liveUpdates.close();
+    };
   });
 
   async function login() {

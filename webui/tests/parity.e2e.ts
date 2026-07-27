@@ -235,6 +235,11 @@ const responses: Record<string, unknown> = {
 
 async function mockApi(page: Page, options: { delay?: string; fail?: string[] } = {}) {
   await page.route("**/fonts/**", (route) => route.fulfill({ status: 204 }));
+  await page.route("**/images/providers/**", (route) => route.fulfill({
+    status: 200,
+    contentType: "image/svg+xml",
+    body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>',
+  }));
   await page.route("**/api/admin/**", async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === options.delay) await new Promise((resolve) => setTimeout(resolve, 500));
