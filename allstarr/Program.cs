@@ -496,8 +496,6 @@ var probeOptionalProvidersAtStartup =
     builder.Configuration.GetValue<bool>("StartupValidation:ProbeOptionalProviders");
 if (probeOptionalProvidersAtStartup)
 {
-    builder.Services.AddSingleton<IStartupValidator, DeezerStartupValidator>();
-    builder.Services.AddSingleton<IStartupValidator, QobuzStartupValidator>();
     var disabledProviders = ParseCsv(builder.Configuration["MULTI_PROVIDER_DISABLED_PROVIDERS"])
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
     var enabledMetadataProviders = ParseCsv(
@@ -507,7 +505,6 @@ if (probeOptionalProvidersAtStartup)
     {
         builder.Services.AddSingleton<IStartupValidator>(sp =>
             new SquidWTFStartupValidator(
-                sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
                 sp.GetRequiredService<IHttpClientFactory>().CreateClient("SquidWTF"),
                 squidWtfApiUrls,
                 squidWtfStreamingUrls,
