@@ -6,14 +6,15 @@
   import HomeView from "$lib/components/HomeView.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
+  import UiIcon from "$lib/components/UiIcon.svelte";
 
   const destinations = [
-    { href: "#/", label: "Home", icon: "⌂" },
-    { href: "#/library/playlists", prefix: "/library/", label: "Library", icon: "♫" },
-    { href: "#/intelligence", label: "Intelligence", icon: "✦" },
-    { href: "#/sources", label: "Sources", icon: "◎" },
-    { href: "#/activity", label: "Activity", icon: "↗" },
-    { href: "#/settings", label: "Settings", icon: "⚙" },
+    { href: "#/", label: "Home", icon: "home" },
+    { href: "#/library/playlists", prefix: "/library/", label: "Library", icon: "library" },
+    { href: "#/intelligence", label: "Intelligence", icon: "headphones" },
+    { href: "#/sources", label: "Sources", icon: "sources" },
+    { href: "#/activity", label: "Activity", icon: "activity" },
+    { href: "#/settings", label: "Settings", icon: "settings" },
   ];
   const librarySections = [
     { id: "playlists", label: "Playlists", href: "#/library/playlists" },
@@ -264,7 +265,7 @@
             class:active={activeDestination.href === destination.href}
             aria-current={activeDestination.href === destination.href ? "page" : undefined}
           >
-            <span aria-hidden="true">{destination.icon}</span>
+            <span><UiIcon name={destination.icon} /></span>
             {destination.label}
           </a>
         {/each}
@@ -288,7 +289,7 @@
           <strong>{session.user?.name}</strong>
           <small>{session.backend}</small>
         </div>
-        <button class="icon-button" type="button" onclick={logout} aria-label="Sign out">↪</button>
+        <button class="icon-button" type="button" onclick={logout} aria-label="Sign out"><UiIcon name="logout" /></button>
       </div>
     </aside>
 

@@ -377,7 +377,9 @@
   }
 
   .app-shell.slim .sidebar nav a {
+    width: 3rem;
     justify-content: center;
+    justify-self: center;
     padding: 0;
     font-size: 0;
   }
@@ -451,7 +453,9 @@
   }
 
   .sidebar nav a span {
+    display: grid;
     width: 1.1rem;
+    place-items: center;
     text-align: center;
   }
 
@@ -938,7 +942,9 @@
   }
 
   .sidebar nav a {
+    width: 3rem;
     justify-content: center;
+    justify-self: center;
     padding: 0;
     font-size: 0;
   }
@@ -1087,6 +1093,12 @@
     overflow: hidden;
   }
 
+  .playlist-list {
+    display: flex;
+    height: calc(100dvh - 8rem);
+    flex-direction: column;
+  }
+
   .playlist-detail-dialog {
     position: fixed;
     z-index: 41;
@@ -1192,7 +1204,8 @@
   }
 
   .playlist-rows {
-    max-height: calc(100vh - 14.5rem);
+    min-height: 0;
+    flex: 1;
     overflow: auto;
   }
 
@@ -1772,13 +1785,13 @@
   .playlist-layout {
     grid-template-columns: 1fr;
   }
-
-  .playlist-rows {
-    max-height: 20rem;
-  }
 }
 
 @media (max-width: 650px) {
+  .playlist-list {
+    height: auto;
+  }
+
   .playlist-add-columns {
     grid-template-columns: 1fr;
   }

@@ -1131,14 +1131,18 @@ test("Administrators can reopen durable setup from Maintenance", async ({ page }
 });
 
 test("Playlist details use a responsive dialog and track rows open mapping review", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 835, height: 762 });
   await mockApi(page);
   await page.goto("#/library/playlists");
+  await expect.poll(async () => (await page.locator(".playlist-list").boundingBox())?.height ?? 0).toBeGreaterThan(600);
+  await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Library" }).locator("use"))
+    .toHaveAttribute("href", "/ui-icons.svg#library");
   const refresh = page.waitForRequest((item) =>
     item.method() === "POST" && item.url().endsWith("/api/admin/playlist-links/playlist-link/refresh"));
   await page.getByRole("button", { name: "Refresh playlists" }).click();
   await refresh;
   await expect(page.getByText("1 playlists refreshed.")).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.playlist-row [title="Lumen Audio: 1"]')).toBeVisible();
   await expect(page.locator('.playlist-row [title="Unresolved: 1"]')).toBeVisible();
   await expect(page.locator(".playlist-row .playlist-art > span")).toBeVisible();
