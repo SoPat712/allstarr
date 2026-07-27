@@ -738,7 +738,16 @@ async function request(input: RequestInfo | URL, init?: RequestInit) {
 async function json<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
   const response = await request(input, init);
   if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  return normalizeResponse(await response.json()) as T;
+}
+
+export function normalizeResponse(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeResponse);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key[0].toLowerCase() + key.slice(1),
+    normalizeResponse(item),
+  ]));
 }
 
 function selectiveTransferForm(
