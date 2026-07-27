@@ -1811,9 +1811,9 @@
     min-width: 0;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: start;
-    gap: 0.75rem;
+    gap: 1rem;
     border-bottom: 1px solid var(--color-edge);
-    padding: 0.65rem 0.75rem;
+    padding: 1rem;
   }
 
   .mapping-row.needs-attention {
@@ -1823,14 +1823,14 @@
   .mapping-track-copy {
     display: grid;
     min-width: 0;
-    gap: 0.55rem;
+    gap: 0.85rem;
   }
 
   .mapping-source {
     display: flex;
     min-width: 0;
     align-items: center;
-    gap: 0.65rem;
+    gap: 0.8rem;
   }
 
   .mapping-source > span:last-child,
@@ -1842,7 +1842,7 @@
 
   .mapping-source strong {
     overflow: hidden;
-    font-size: 0.76rem;
+    font-size: 1rem;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1850,7 +1850,7 @@
   .mapping-source small {
     overflow: hidden;
     color: var(--color-ink-muted);
-    font-size: 0.63rem;
+    font-size: 0.75rem;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1861,16 +1861,33 @@
   }
 
   .mapping-art {
-    width: 2.6rem;
-    height: 2.6rem;
+    width: 4rem;
+    height: 4rem;
+  }
+
+  .mapping-art > :is(.provider-mark, img) {
+    grid-area: 1 / 1;
+  }
+
+  .mapping-art > .provider-mark {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: inherit;
+    font-size: 1.1rem;
   }
 
   .mapping-route {
-    display: flex;
+    display: grid;
     min-width: 0;
+    grid-template-columns: minmax(0, 0.75fr) auto minmax(0, 1.25fr);
     align-items: center;
-    gap: 0.55rem;
-    padding-left: 3.25rem;
+    gap: 0.75rem;
+    margin-left: 4.8rem;
+    border: 1px solid var(--color-edge);
+    border-radius: 0.7rem;
+    background: rgb(168 255 62 / 3%);
+    padding: 0.75rem;
   }
 
   .mapping-arrow {
@@ -1881,7 +1898,13 @@
     display: flex;
     min-width: 0;
     align-items: center;
-    gap: 0.35rem;
+    gap: 0.6rem;
+  }
+
+  .mapping-route-node > .provider-mark {
+    width: 2rem;
+    height: 2rem;
+    font-size: 0.75rem;
   }
 
   .mapping-route-node > span:last-child {
@@ -1893,7 +1916,7 @@
   .mapping-route-node em {
     overflow: hidden;
     color: var(--color-ink-muted);
-    font-size: 0.56rem;
+    font-size: 0.7rem;
     font-style: normal;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1901,7 +1924,7 @@
 
   .mapping-route-node strong {
     overflow: hidden;
-    font-size: 0.65rem;
+    font-size: 0.8rem;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1979,7 +2002,7 @@
     align-items: center;
     flex-wrap: wrap;
     gap: 0.35rem;
-    padding-left: 3.25rem;
+    padding-left: 4.8rem;
   }
 
   .mapping-evidence > span,
@@ -1987,8 +2010,8 @@
     border: 1px solid var(--color-edge);
     border-radius: 999px;
     color: var(--color-ink-muted);
-    padding: 0.25rem 0.5rem;
-    font-size: 0.56rem;
+    padding: 0.3rem 0.55rem;
+    font-size: 0.68rem;
   }
 
   .mapping-evidence details {
@@ -2453,7 +2476,12 @@
     grid-template-columns: 1fr;
   }
 
-  .mapping-route,
+  .mapping-route {
+    grid-template-columns: 1fr auto 1fr;
+    margin-left: 0;
+    padding: 0.75rem;
+  }
+
   .mapping-evidence {
     padding-left: 0;
   }

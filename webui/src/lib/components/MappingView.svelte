@@ -314,10 +314,9 @@
             <div class="mapping-track-copy">
               <div class="mapping-source">
                 <span class="media-art mapping-art">
+                  <ProviderMark id={match.providerId} definition={provider(match.providerId)} />
                   {#if match.sourceArtworkUrl || match.artworkUrl}
-                    <img src={match.sourceArtworkUrl || match.artworkUrl || ""} alt="" loading="lazy" />
-                  {:else}
-                    <ProviderMark id={match.providerId} definition={provider(match.providerId)} />
+                    <img src={match.sourceArtworkUrl || match.artworkUrl || ""} alt="" loading="lazy" onerror={(event) => event.currentTarget.remove()} />
                   {/if}
                 </span>
                 <span>

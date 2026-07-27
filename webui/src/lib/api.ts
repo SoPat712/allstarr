@@ -162,6 +162,7 @@ export type ProviderRuntimeCapability = {
 export type ProviderDefinition = {
   id: string;
   name: string;
+  icon?: string | null;
   description?: string | null;
   logoUrl?: string | null;
   categories?: string[];
