@@ -36,6 +36,8 @@ describe("source presentation", () => {
       .toBe("degraded");
     expect(sourceStatus({ ...provider, status: "disabled" }, [account()], health))
       .toBe("disabled");
+    expect(sourceStatus({ id: "qobuz", name: "Qobuz", status: "degraded" }, [], []))
+      .toBe("needs_config");
   });
 
   it("labels audiences without revealing credentials", () => {

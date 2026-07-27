@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Mvc;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
 using allstarr.Filters;
+using allstarr.Services.Common;
 
 namespace allstarr.Tests;
 
@@ -146,6 +147,26 @@ public sealed class HostCompositionTests
         Assert.NotEmpty(schema.Providers);
         Assert.NotEmpty(schema.ProviderSupportMatrix);
         Assert.NotEmpty(schema.ConfigSections);
+    }
+
+    [Fact]
+    public void Provider_schema_does_not_call_missing_configuration_degraded()
+    {
+        ProviderRuntimeStatus Status(ProviderConfigurationState configuration) => new()
+        {
+            Provider = "qobuz",
+            Capability = "metadata",
+            AccountKey = "legacy-global",
+            IsSupported = true,
+            IsEnabled = true,
+            Configuration = configuration,
+            Health = allstarr.Services.Common.ProviderHealthState.Degraded
+        };
+
+        Assert.Equal("needs_config", AdminUiController.AggregateProviderStatus(
+            [Status(ProviderConfigurationState.NeedsConfiguration)]));
+        Assert.Equal("degraded", AdminUiController.AggregateProviderStatus(
+            [Status(ProviderConfigurationState.Configured)]));
     }
 
     [Fact]

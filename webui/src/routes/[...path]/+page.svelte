@@ -37,6 +37,7 @@
   let sidebarSlim = $state(false);
   let ActiveView = $state<Component<any>>();
   let loadedRoute = $state("");
+  let loadedViewKey = $state("");
   let viewError = $state("");
   let viewRequest = 0;
 
@@ -125,9 +126,16 @@
     if (path.startsWith("/settings")) return import("$lib/components/SettingsView.svelte");
   }
 
+  const viewKey = (path: string) => path.startsWith("/settings") ? "/settings" : path;
+
   $effect(() => {
     const path = route;
     const loader = viewLoader(path);
+    const key = viewKey(path);
+    if (ActiveView && loadedViewKey === key) {
+      loadedRoute = path;
+      return;
+    }
     const request = ++viewRequest;
     ActiveView = undefined;
     loadedRoute = loader ? "" : path;
@@ -137,6 +145,7 @@
       ?.then(({ default: view }) => {
         if (request === viewRequest) {
           ActiveView = view;
+          loadedViewKey = key;
           loadedRoute = path;
         }
       })
@@ -327,7 +336,7 @@
         </div>
       {/if}
 
-      {#if ActiveView && loadedRoute === route}
+      {#if ActiveView && loadedViewKey === viewKey(route)}
         <ActiveView {...activeProps} />
       {:else if viewError && loadedRoute === route}
         <RouteError

@@ -52,8 +52,13 @@
 
   const providers = $derived(
     [...(schema?.providers ?? [])].toSorted((left, right) => {
+      const section = (item: ProviderDefinition) =>
+        sourceStatus(item, accounts, health) === "disabled"
+          ? 2
+          : providerAccounts(item.id).some((account) => account.enabled) ? 0 : 1;
       const order = { degraded: 0, needs_config: 1, partial_config: 1, available: 2, configured: 3, healthy: 4, disabled: 5 };
-      return (order[sourceStatus(left, accounts, health) as keyof typeof order] ?? 2) -
+      return section(left) - section(right) ||
+        (order[sourceStatus(left, accounts, health) as keyof typeof order] ?? 2) -
         (order[sourceStatus(right, accounts, health) as keyof typeof order] ?? 2) ||
         left.name.localeCompare(right.name);
     }),
@@ -62,6 +67,12 @@
     providers.filter((item) => sourceStatus(item, accounts, health) === "disabled").length,
   );
   const enabledSourceCount = $derived(providers.length - disabledSourceCount);
+  const activeSourceCount = $derived(
+    providers.filter((item) =>
+      sourceStatus(item, accounts, health) !== "disabled" &&
+      providerAccounts(item.id).some((account) => account.enabled)).length,
+  );
+  const availableSourceCount = $derived(enabledSourceCount - activeSourceCount);
   const canManage = $derived(
     managementMode !== "AdminManaged" || administrator,
   );
@@ -257,7 +268,12 @@
           {@const state = sourceStatus(item, accounts, health)}
           {@const metrics = sourceMetrics(item, summary(item.id), providerHealth(item.id))}
           {@const connected = providerAccounts(item.id)}
-          {#if disabledSourceCount && index === enabledSourceCount}
+          {#if availableSourceCount && index === activeSourceCount}
+            <header class="source-section-heading">
+              <div><h3>Available Sources</h3><p>Built in or installed, but not connected to an account.</p></div>
+              <span>{availableSourceCount}</span>
+            </header>
+          {:else if disabledSourceCount && index === enabledSourceCount}
             <header class="source-section-heading">
               <div><h3>Disabled Sources</h3><p>Installed but excluded from routing and health evaluation.</p></div>
               <span>{disabledSourceCount}</span>
@@ -269,7 +285,14 @@
                 <ProviderArtwork id={item.id} definition={item} />
                 <span><strong>{item.name}</strong><small>{item.description || item.notes?.join(" · ") || "Provider capability Source"}</small></span>
               </div>
-              <span class={`status-pill ${state}`}>{humanize(state)}</span>
+              <div class="source-card-actions">
+                {#if connected.length}
+                  <button type="button" onclick={() => document.getElementById(`connection-${connected[0].id}`)?.scrollIntoView({ behavior: "smooth" })}>Manage</button>
+                {:else if canManage && accountSettings(item).length}
+                  <button type="button" onclick={() => connectOpen = true}>Connect</button>
+                {/if}
+                <span class={`status-pill ${state}`}>{state === "needs_config" ? "Needs setup" : humanize(state)}</span>
+              </div>
             </header>
             <div class="source-capabilities" aria-label={`${item.name} capabilities`}>
               {#each item.categories ?? [] as capability}
@@ -314,7 +337,7 @@
           {@const definition = provider(account.providerId)}
           {@const capabilities = health.filter((item) => item.providerAccountId === account.id)}
           {@const cts = measurements.find((item) => item.providerAccountId === account.id)}
-          <article class="connection-card">
+          <article class="connection-card" id={`connection-${account.id}`}>
             <header>
               <div class="source-identity">
                 <ProviderArtwork id={account.providerId} definition={definition} />
@@ -340,8 +363,8 @@
             </header>
             <div class="connection-state">
               <span class={`status-pill ${account.enabled ? "healthy" : "disabled"}`}>{account.enabled ? "Enabled" : "Disabled"}</span>
-              <button class="audience-button" type="button" disabled={!administrator} onclick={() => manageAccess(account)}>
-                <span>Audience</span><strong>{audienceLabel(account)}</strong>
+              <button class="audience-button" type="button" disabled={!administrator} aria-label={`Audience ${audienceLabel(account)}`} onclick={() => manageAccess(account)}>
+                <span>Audience</span><strong>{audienceLabel(account)} <i aria-hidden="true">›</i></strong>
               </button>
               <span class={`credential-state ${account.secret.configured && !account.secret.revoked ? "ready" : "warning"}`}>
                 {account.secret.configured && !account.secret.revoked ? "Account details stored" : "Setup needed"}
@@ -353,7 +376,7 @@
                   {@const result = testResults[`${account.id}:${capability.capability}`]}
                   <div>
                     <span><strong>{humanize(capability.capability)}</strong><small>{capability.ready ? "Ready" : humanize(capability.reasonCode || capability.configuration)}</small></span>
-                    {#if result?.bars != null}<ConnectivityBars bars={result.bars} latency={result.latencyMs} />{/if}
+                    {#if result?.bars != null}<ConnectivityBars bars={result.healthy ?? result.success ? result.bars : 0} latency={result.latencyMs} />{/if}
                     <span class={`status-pill ${capability.health}`}>{humanize(capability.health)}</span>
                     {#if capability.canTest}
                       <button type="button" disabled={!account.enabled || Boolean(action)} onclick={() => void test(account, capability.capability)}>

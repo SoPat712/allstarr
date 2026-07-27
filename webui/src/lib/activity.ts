@@ -72,7 +72,7 @@ export function groupActivity(items: ActivityItem[]) {
         key: `${key}|${occurrence}`,
         operationKey: key,
         entries: [item],
-        title: item.label,
+        title: humanize(item.label),
       });
     }
   }
@@ -80,7 +80,7 @@ export function groupActivity(items: ActivityItem[]) {
 }
 
 function groupTitle(entries: ActivityItem[]) {
-  if (entries.length === 1) return entries[0].label;
+  if (entries.length === 1) return humanize(entries[0].label);
   const first = entries[0];
   if (first.kind === "matching") {
     const accepted = entries.every((item) =>

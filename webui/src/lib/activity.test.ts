@@ -68,5 +68,7 @@ describe("event log presentation", () => {
       .toBe("#/library/mappings?search=Song%20A");
     expect(activityLink({ ...item("2", "Cached"), kind: "caching" }))
       .toBe("#/library/cached");
+    expect(groupActivity([{ ...item("3", "Failed"), label: "scrobbling check" }])[0].title)
+      .toBe("Scrobbling Check");
   });
 });

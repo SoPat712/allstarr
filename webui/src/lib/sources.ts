@@ -33,6 +33,7 @@ export function sourceStatus(
       ? "configured"
       : "needs_config";
   }
+  if (accountSettings(provider).some((field) => field.required)) return "needs_config";
   return provider.status || "available";
 }
 

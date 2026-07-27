@@ -403,6 +403,7 @@
     min-height: 0;
     align-items: center;
     justify-content: center;
+    gap: 0;
     margin-inline: auto;
     padding: 0;
     font-size: 0;
@@ -416,6 +417,7 @@
 
   .app-shell.slim .sidebar nav a span {
     font-size: 1rem;
+    margin-inline: auto;
   }
 
   .app-shell.slim .profile {
@@ -432,8 +434,7 @@
     justify-self: center;
   }
 
-  .app-shell.slim .sidebar .icon-button,
-  .app-shell.slim .sidebar .ui-icon {
+  .app-shell.slim .sidebar .icon-button {
     margin-inline: auto;
   }
 
@@ -1409,7 +1410,7 @@
   }
 
   .coverage-bar.compact {
-    height: 0.22rem;
+    height: 0.32rem;
     margin-top: 0;
   }
 
@@ -1775,6 +1776,12 @@
     font-size: 0.75rem;
   }
 
+  .bits-menu[data-state="open"],
+  .select-content[data-state="open"] {
+    transform-origin: top;
+    animation: dropdown-in 140ms ease-out;
+  }
+
   .bits-menu-item {
     display: flex;
     width: 100%;
@@ -2092,6 +2099,20 @@
     background: var(--background-100);
     box-shadow: var(--shadow-sm);
     padding: var(--space-1);
+  }
+
+  @keyframes dropdown-in {
+    from {
+      opacity: 0;
+      transform: translateY(-0.25rem) scale(0.98);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bits-menu[data-state="open"],
+    .select-content[data-state="open"] {
+      animation: none;
+    }
   }
 
   .select-item {
@@ -2623,7 +2644,8 @@
 
   .playlist-add-dialog .audience-options label {
     display: grid;
-    grid-template-columns: auto 1.5rem minmax(0, 1fr);
+    grid-template-columns: auto 2.5rem minmax(0, 1fr);
+    column-gap: 0.65rem;
   }
 
   .playlist-targets {
@@ -2654,8 +2676,27 @@
   }
 
   .playlist-add-list .media-art {
-    width: 2rem;
-    height: 2rem;
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+
+  .playlist-add-dialog .audience-options label > span:last-child {
+    min-width: 0;
+  }
+
+  .playlist-add-dialog .audience-options label > span:last-child strong {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .playlist-add-dialog .audience-options label > span:last-child small {
+    display: -webkit-box;
+    overflow: hidden;
+    line-height: 1.35;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 
   .playlist-sync-settings {
@@ -3175,14 +3216,14 @@
   .event-kind-icon {
     position: relative;
     display: grid;
-    width: 2.35rem;
-    height: 2.35rem;
+    width: 2.75rem;
+    height: 2.75rem;
     place-items: center;
     border: 1px solid var(--color-edge);
     border-radius: 0.7rem;
     background: var(--color-panel-raised);
     color: var(--color-signal);
-    font-size: 0.85rem;
+    font-size: 1.15rem;
     overflow: hidden;
   }
 
@@ -3883,6 +3924,25 @@
     gap: 0.8rem;
   }
 
+  .source-card-actions {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .source-card-actions > button {
+    min-height: 2rem;
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--color-signal);
+    cursor: pointer;
+    padding: 0 var(--space-3);
+    font-size: var(--text-xs);
+    font-weight: 750;
+  }
+
   .source-identity > span:last-child {
     display: grid;
     min-width: 0;
@@ -4094,6 +4154,17 @@
     font-size: 0.78rem;
   }
 
+  .audience-button i {
+    margin-left: 0.25rem;
+    color: var(--color-signal);
+    font-style: normal;
+  }
+
+  .audience-button:not(:disabled):hover {
+    border-color: color-mix(in srgb, var(--color-signal) 55%, var(--color-edge));
+    background: var(--color-signal-muted);
+  }
+
   .audience-button:disabled {
     cursor: default;
   }
@@ -4161,10 +4232,19 @@
   }
 
   .connectivity-bars {
+    gap: 0.45rem;
+  }
+
+  .connectivity-bars > span {
+    display: flex;
+    min-width: 1.4rem;
+    height: 1rem;
+    align-items: end;
     gap: 0.12rem;
   }
 
   .connectivity-bars i {
+    display: block;
     width: 0.18rem;
     height: 0.35rem;
     border-radius: 999px;

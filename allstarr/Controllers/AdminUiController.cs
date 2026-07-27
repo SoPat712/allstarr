@@ -1012,7 +1012,7 @@ public class AdminUiController : ControllerBase
             ReasonCode = status.ReasonCode
         };
 
-    private static string AggregateProviderStatus(IReadOnlyList<ProviderRuntimeStatus> statuses)
+    internal static string AggregateProviderStatus(IReadOnlyList<ProviderRuntimeStatus> statuses)
     {
         if (statuses.All(status => !status.IsSupported))
         {
@@ -1029,27 +1029,27 @@ public class AdminUiController : ControllerBase
             return "testing";
         }
 
-        if (statuses.Any(status => status.Health == Services.Common.ProviderHealthState.Degraded))
-        {
-            return "degraded";
-        }
-
         var enabledSupported = statuses.Where(status => status.IsEnabled && status.IsSupported).ToList();
-        if (enabledSupported.Count > 0 && enabledSupported.All(status =>
-                status.Configuration == ProviderConfigurationState.NeedsConfiguration || status.IsReady) &&
-            enabledSupported.Any(status => status.IsReady))
-        {
-            return "healthy";
-        }
-
-        if (statuses.All(status => !status.CanAttempt))
+        if (enabledSupported.All(status =>
+                status.Configuration == ProviderConfigurationState.NeedsConfiguration))
         {
             return "needs_config";
         }
 
-        if (statuses.Any(status => status.Configuration == ProviderConfigurationState.NeedsConfiguration))
+        if (enabledSupported.Any(status =>
+                status.Configuration == ProviderConfigurationState.NeedsConfiguration))
         {
             return "partial_config";
+        }
+
+        if (enabledSupported.Any(status => status.Health == Services.Common.ProviderHealthState.Degraded))
+        {
+            return "degraded";
+        }
+
+        if (enabledSupported.Any(status => status.IsReady))
+        {
+            return "healthy";
         }
 
         return "available";

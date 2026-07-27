@@ -10,6 +10,6 @@
 </script>
 
 <span class="connectivity-bars" role="img" aria-label={description} title={description}>
-  {#each [1, 2, 3, 4] as bar}<i class:active={bar <= bars}></i>{/each}
+  <span>{#each [1, 2, 3, 4] as bar}<i class:active={bar <= bars}></i>{/each}</span>
   {#if latency != null}<small>{Math.round(latency)} ms</small>{/if}
 </span>

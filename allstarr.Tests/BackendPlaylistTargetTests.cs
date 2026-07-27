@@ -110,6 +110,17 @@ public sealed class BackendPlaylistTargetTests
     }
 
     [Fact]
+    public async Task Jellyfin_playlist_list_uses_standard_primary_image_tag()
+    {
+        var backend = new JellyfinFakeBackend("p1", "Mix", []) { ListArtwork = true };
+        var target = new JellyfinPlaylistTarget(new HttpClient(backend), new Uri("https://jellyfin.test/"));
+
+        var result = await target.ListAsync(Context(), null, 25, default);
+
+        Assert.Equal("jellyfin:p1:art", Assert.Single(result.Value!).ArtworkReference);
+    }
+
+    [Fact]
     public async Task Jellyfin_conflict_does_not_mutate_and_recreate_returns_staged_recovery_id()
     {
         var backend = new JellyfinFakeBackend("p1", "Mix", ["a"]);
@@ -282,6 +293,7 @@ public sealed class BackendPlaylistTargetTests
         public HttpStatusCode? ForcedStatus { get; set; }
         public int MutationCount { get; private set; }
         public bool ArtworkWritten { get; private set; }
+        public bool ListArtwork { get; set; }
         public bool FailNextMetadata { get; set; }
         private int _nextId = 2;
 
@@ -301,7 +313,16 @@ public sealed class BackendPlaylistTargetTests
                     var id = parts[3];
                     return Json(new { Id = id, Name = Playlists[id].Name, Overview = Playlists[id].Description, ImageTags = new { Primary = Playlists[id].Artwork ? "art" : null } });
                 }
-                return Json(new { Items = Playlists.Select(pair => new { Id = pair.Key, Name = pair.Value.Name }).ToArray() });
+                return Json(new
+                {
+                    Items = Playlists.Select(pair => new
+                    {
+                        Id = pair.Key,
+                        Name = pair.Value.Name,
+                        ChildCount = pair.Value.Members.Count,
+                        ImageTags = new { Primary = ListArtwork ? "art" : null }
+                    }).ToArray()
+                });
             }
             if (request.Method == HttpMethod.Get && path.StartsWith("Playlists/", StringComparison.Ordinal) && path.EndsWith("/Items", StringComparison.Ordinal))
             {

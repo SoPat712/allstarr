@@ -650,11 +650,26 @@ test("Slim sidebar centers navigation and profile controls", async ({ page }) =>
   await page.goto("#/");
   const sidebar = await page.locator(".sidebar").boundingBox();
   const home = await page.getByRole("link", { name: "Home", exact: true }).boundingBox();
+  const sourcesIcon = await page.getByRole("link", { name: "Sources" }).locator("svg").boundingBox();
   const profile = await page.getByRole("link", { name: "Settings for Tester" }).boundingBox();
-  expect(sidebar && home && profile).toBeTruthy();
+  expect(sidebar && home && sourcesIcon && profile).toBeTruthy();
   const center = (box: NonNullable<typeof sidebar>) => box.x + box.width / 2;
   expect(Math.abs(center(home!) - center(sidebar!))).toBeLessThanOrEqual(1);
+  expect(Math.abs(center(sourcesIcon!) - center(sidebar!))).toBeLessThanOrEqual(1);
   expect(Math.abs(center(profile!) - center(sidebar!))).toBeLessThanOrEqual(1);
+});
+
+test("Shared selects and settings tabs animate without remounting", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("#/settings/general");
+  await page.getByRole("button", { name: "Theme", exact: true }).click();
+  await expect(page.locator(".select-content")).toHaveCSS("animation-name", "dropdown-in");
+  await page.keyboard.press("Escape");
+  const tabs = page.locator(".settings-tabs");
+  await tabs.evaluate((element) => element.setAttribute("data-instance", "stable"));
+  await page.getByRole("tab", { name: "Accounts" }).click();
+  await expect(tabs).toHaveAttribute("data-instance", "stable");
+  await expect(tabs).toHaveCSS("overflow", "hidden");
 });
 
 test("Legacy Library links open their current shared views", async ({ page }) => {
@@ -902,9 +917,11 @@ test("Shared search fields reserve icon space", async ({ page }) => {
 
   await page.goto("#/library/playlists");
   await page.getByRole("button", { name: "Add playlist" }).click();
-  const dialog = page.getByRole("dialog", { name: "Add playlist" });
+  const dialog = page.getByRole("dialog", { name: "Link a playlist" });
+  await dialog.getByRole("radio", { name: /Road trip/ }).check();
+  await dialog.getByRole("button", { name: "Continue" }).click();
   await dialog.getByRole("radio", { name: /Spotify/ }).check();
-  await expect(dialog.getByRole("searchbox", { name: "Search this Source" })).toBeVisible();
+  await expect(dialog.getByRole("searchbox", { name: "Find a source playlist" })).toBeVisible();
 });
 
 test("Event log groups matching work and preserves actionable history", async ({ page }) => {

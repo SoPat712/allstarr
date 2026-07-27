@@ -73,7 +73,8 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
             var name = item.StringOrNull("Name");
             if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name)) continue;
             int? trackCount = item.GetPropertyOrDefault("ChildCount").TryGetInt32(out var count) ? count : null;
-            var imageTag = item.StringOrNull("PrimaryImageTag");
+            var imageTag = item.StringOrNull("PrimaryImageTag")
+                ?? item.GetPropertyOrDefault("ImageTags").StringOrNull("Primary");
             values.Add(new BackendPlaylistSummary(
                 id,
                 name,
