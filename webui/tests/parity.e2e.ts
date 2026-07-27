@@ -560,6 +560,11 @@ test("Suggested mappings sort by confidence and deep links open review", async (
     new URL(item.url()).searchParams.get("sort") === "confidence_desc");
   await page.getByLabel("Confidence").selectOption("confidence_desc");
   await request;
+  const unresolved = page.waitForRequest((item) =>
+    item.url().includes("/api/admin/track-matches") &&
+    new URL(item.url()).searchParams.get("state") === "unresolved");
+  await page.getByLabel("Status").selectOption("unresolved");
+  await unresolved;
   await page.getByRole("button", { name: /Suggested.*High likelihood/ }).click();
   await expect(page.getByRole("button", { name: "Accept" })).toBeVisible();
 });

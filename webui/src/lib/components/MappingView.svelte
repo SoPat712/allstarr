@@ -285,6 +285,7 @@
             <option value="matched">Matched</option>
             <option value="suggested">Suggested / High likelihood</option>
             <option value="ambiguous">Ambiguous</option>
+            <option value="unresolved">Unresolved</option>
             <option value="rejected">Rejected</option>
           </select>
         </label>
