@@ -382,14 +382,15 @@
     display: grid;
     width: 1rem;
     gap: 0.2rem;
-    transition: transform 160ms ease;
   }
 
   .menu-icon > span {
     width: 100%;
     height: 2px;
+    justify-self: center;
     border-radius: 999px;
     background: currentColor;
+    transition: width 160ms ease;
   }
 
   .app-shell.slim {
@@ -444,8 +445,8 @@
     opacity: 0;
   }
 
-  .app-shell.slim .menu-icon {
-    transform: rotate(90deg);
+  .app-shell.slim .menu-icon > span {
+    width: 2px;
   }
 
   .brand {
