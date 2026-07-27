@@ -20,6 +20,7 @@
     type PlaylistLink,
     type ProviderDefinition,
   } from "$lib/api";
+  import { humanize } from "$lib/activity";
   import {
     coverage,
     filterPlaylists,
@@ -79,7 +80,7 @@
   }
 
   function providerName(providerId?: string | null) {
-    return providerId ? (provider(providerId)?.name ?? providerId) : "Unresolved";
+    return providerId ? humanize(provider(providerId)?.name ?? providerId) : "Unresolved";
   }
 
   function relativeTime(value?: string | null) {
