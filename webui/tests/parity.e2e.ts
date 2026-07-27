@@ -370,6 +370,15 @@ for (const viewport of viewports) {
 
     test("Settings dialogs remain usable", async ({ page }) => {
       await mockApi(page);
+      await page.goto("#/settings/general");
+      await expect(page.getByText("Deployment-owned", { exact: true })).toBeVisible();
+      await page.goto("#/settings/accounts");
+      await expect(page.getByRole("link", { name: "Open Sources" })).toBeInViewport();
+      await page.goto("#/settings/routing");
+      await expect(page.getByText("Local · fixed")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Move Jellyfin up" })).toHaveCount(0);
+      await expect.poll(() => page.evaluate(() =>
+        document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.goto("#/settings/extensions");
       await page.getByRole("button", { name: "Install extension" }).click();
       await expect(page.getByRole("dialog", { name: "Install extension" })).toBeVisible();
