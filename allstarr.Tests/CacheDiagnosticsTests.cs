@@ -58,7 +58,7 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
     [Fact]
     public async Task Snapshot_ReportsEveryTierAndScopedPurgesStayIsolated()
     {
-        Assert.True(await _cache.SetStringAsync("metadata:track:1", "metadata"));
+        Assert.True(await _cache.SetStringAsync("odesli:track:1", "metadata"));
         Assert.True(await _cache.SetStringAsync("image:track:1", "media"));
 
         var snapshot = await _cache.GetDiagnosticsAsync();
@@ -85,7 +85,7 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         Assert.Equal(5, artworkCategory.PayloadBytes);
 
         Assert.Equal(1, await _cache.PurgeMediaAsync());
-        Assert.Equal("metadata", await _cache.GetStringAsync("metadata:track:1"));
+        Assert.Equal("metadata", await _cache.GetStringAsync("odesli:track:1"));
         Assert.Null(await _cache.GetStringAsync("image:track:1"));
         snapshot = await _cache.GetDiagnosticsAsync();
         Assert.Equal(1, snapshot.Hot.Hits);
@@ -93,7 +93,7 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
 
         Assert.True(await _cache.SetStringAsync("image:track:2", "media"));
         Assert.Equal(1, await _cache.PurgeMetadataAsync());
-        Assert.Null(await _cache.GetStringAsync("metadata:track:1"));
+        Assert.Null(await _cache.GetStringAsync("odesli:track:1"));
         Assert.Equal("media", await _cache.GetStringAsync("image:track:2"));
 
         Assert.Equal(1, await _cache.PurgeAllAsync());

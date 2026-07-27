@@ -143,6 +143,18 @@ public class CacheKeyBuilderTests
     }
 
     [Fact]
+    public void UnknownNamespaces_HaveNoSemanticOwner()
+    {
+        Assert.False(ApplicationCachePolicyRegistry.TryClassify(
+            "abandoned:key",
+            out _));
+        Assert.True(ApplicationCachePolicyRegistry.TryClassify(
+            "odesli:translate:v2:fixture:spotify",
+            out var category));
+        Assert.Equal(ApplicationCacheCategory.ProviderResponse, category);
+    }
+
+    [Fact]
     public void MediaDescriptorKeys_ExposeOnlyStableOwnershipDimensions()
     {
         var tenantId = Guid.CreateVersion7();

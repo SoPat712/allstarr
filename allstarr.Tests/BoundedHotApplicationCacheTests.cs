@@ -33,39 +33,39 @@ public sealed class BoundedHotApplicationCacheTests : IAsyncLifetime
     [Fact]
     public async Task SuccessfulWrite_IsServedAfterDatabaseRowIsRemoved()
     {
-        Assert.True(await _cache.SetStringAsync("hot:track:1", "cached"));
+        Assert.True(await _cache.SetStringAsync("odesli:hot:track:1", "cached"));
         await using (var context = await _factory.CreateDbContextAsync())
         {
             await context.ApplicationCacheEntries.ExecuteDeleteAsync();
         }
 
-        Assert.Equal("cached", await _cache.GetStringAsync("hot:track:1"));
+        Assert.Equal("cached", await _cache.GetStringAsync("odesli:hot:track:1"));
     }
 
     [Fact]
     public async Task Delete_RemovesHotAndDatabaseCopies()
     {
-        await _cache.SetStringAsync("hot:track:2", "cached");
+        await _cache.SetStringAsync("odesli:hot:track:2", "cached");
 
-        Assert.True(await _cache.DeleteAsync("hot:track:2"));
-        Assert.Null(await _cache.GetStringAsync("hot:track:2"));
+        Assert.True(await _cache.DeleteAsync("odesli:hot:track:2"));
+        Assert.Null(await _cache.GetStringAsync("odesli:hot:track:2"));
     }
 
     [Fact]
     public async Task PatternDelete_ClearsHotTierBeforeDeletingDatabaseRows()
     {
-        await _cache.SetStringAsync("playlist:one", "one");
-        await _cache.SetStringAsync("track:one", "track");
+        await _cache.SetStringAsync("odesli:playlist:one", "one");
+        await _cache.SetStringAsync("odesli:track:one", "track");
 
-        Assert.Equal(1, await _cache.DeleteByPatternAsync("playlist:*"));
+        Assert.Equal(1, await _cache.DeleteByPatternAsync("odesli:playlist:*"));
 
         await using (var context = await _factory.CreateDbContextAsync())
         {
             await context.ApplicationCacheEntries
-                .Where(item => item.Key == "track:one")
+                .Where(item => item.Key == "odesli:track:one")
                 .ExecuteDeleteAsync();
         }
-        Assert.Null(await _cache.GetStringAsync("track:one"));
+        Assert.Null(await _cache.GetStringAsync("odesli:track:one"));
     }
 
     [Fact]
@@ -73,8 +73,8 @@ public sealed class BoundedHotApplicationCacheTests : IAsyncLifetime
     {
         var value = new string('x', BoundedHotApplicationCache.MaximumEntryBytes + 1);
 
-        Assert.True(await _cache.SetStringAsync("large:metadata", value));
-        Assert.Equal(value, await _cache.GetStringAsync("large:metadata"));
+        Assert.True(await _cache.SetStringAsync("odesli:large:metadata", value));
+        Assert.Equal(value, await _cache.GetStringAsync("odesli:large:metadata"));
     }
 
     public async Task DisposeAsync()

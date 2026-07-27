@@ -119,7 +119,9 @@ public sealed class DatabaseApplicationCache(
 
     public async Task<string?> GetStringAsync(string key)
     {
-        if (!IsValidKey(key) || !ApplicationCachePolicyRegistry.IsEnabled(key, _settings))
+        if (!IsValidKey(key) ||
+            !ApplicationCachePolicyRegistry.TryClassify(key, out _) ||
+            !ApplicationCachePolicyRegistry.IsEnabled(key, _settings))
         {
             Interlocked.Increment(ref _misses);
             return null;
@@ -181,6 +183,7 @@ public sealed class DatabaseApplicationCache(
     public async Task<bool> SetStringAsync(string key, string value, TimeSpan? expiry = null)
     {
         if (!IsValidKey(key) ||
+            !ApplicationCachePolicyRegistry.TryClassify(key, out _) ||
             !ApplicationCachePayloadPolicy.IsDatabaseEligible(key) ||
             !ApplicationCachePolicyRegistry.IsEnabled(key, _settings))
         {
@@ -300,7 +303,9 @@ public sealed class DatabaseApplicationCache(
 
     public async Task<bool> ExistsAsync(string key)
     {
-        if (!IsValidKey(key) || !ApplicationCachePolicyRegistry.IsEnabled(key, _settings))
+        if (!IsValidKey(key) ||
+            !ApplicationCachePolicyRegistry.TryClassify(key, out _) ||
+            !ApplicationCachePolicyRegistry.IsEnabled(key, _settings))
         {
             return false;
         }
@@ -758,10 +763,11 @@ public sealed class DatabaseApplicationCache(
         !string.IsNullOrWhiteSpace(key) && key.Length <= MaximumKeyCharacters;
 
     private static bool HasUnknownOwner(ApplicationCacheEntryRecord item) =>
+        !ApplicationCachePolicyRegistry.TryClassify(item.Key, out var expectedCategory) ||
         !Enum.TryParse<ApplicationCacheCategory>(item.Category, ignoreCase: true, out var category) ||
         !Enum.IsDefined(category) ||
         ApplicationCachePolicyRegistry.Resolve(category).StorageTier != ApplicationCacheStorageTier.Metadata ||
-        ApplicationCachePolicyRegistry.Classify(item.Key) != category ||
+        expectedCategory != category ||
         (item.Key.StartsWith("media:descriptor:", StringComparison.Ordinal) &&
          ReadArtworkPayloadKey(item.Value) == null);
 
