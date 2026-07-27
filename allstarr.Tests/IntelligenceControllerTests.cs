@@ -1,3 +1,5 @@
+using System.Data.Common;
+using System.Diagnostics;
 using System.Text.Json;
 using allstarr.Controllers;
 using allstarr.Core.Intelligence;
@@ -7,6 +9,7 @@ using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace allstarr.Tests;
 
@@ -14,11 +17,13 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
 {
     private readonly Guid _tenant = Guid.CreateVersion7(); private readonly Guid _user = Guid.CreateVersion7();
     private PostgresTestDatabase _database = null!;
+    private readonly CommandCounter _commands = new();
     private Factory _factory = null!; private FakePolicy _policy = null!; private FakeRuns _runs = null!; private FakeSmart _smart = null!; private FakeReadiness _readiness = null!;
     public async Task InitializeAsync()
     {
         _database = await PostgresTestDatabase.CreateAsync();
-        _factory = new(_database.Options);
+        _factory = new(new DbContextOptionsBuilder<AllstarrDbContext>(_database.Options)
+            .AddInterceptors(_commands).Options);
         await using var db = await _factory.CreateDbContextAsync(); await db.Database.MigrateAsync();
         db.Tenants.Add(new() { Id = _tenant, Slug = "intelligence", Name = "Intelligence", CreatedAt = DateTimeOffset.UtcNow });
         db.Users.Add(new()
@@ -236,7 +241,12 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
             });
             await db.SaveChangesAsync();
         }
-        var result = Assert.IsType<OkObjectResult>(await Controller().Get(Scope(), default)); var json = JsonSerializer.Serialize(result.Value);
+        _commands.Reset(); var elapsed = Stopwatch.StartNew();
+        var result = Assert.IsType<OkObjectResult>(await Controller().Get(Scope(), default));
+        elapsed.Stop(); var json = JsonSerializer.Serialize(result.Value);
+        Assert.InRange(_commands.Count, 1, 12);
+        Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(2),
+            $"Intelligence read took {elapsed.Elapsed.TotalMilliseconds:F0} ms.");
         Assert.Contains("Shared listening context", json); Assert.Contains("Private preview", json); Assert.Contains("visualization", json);
         Assert.Contains("lastfm:fixture", json, StringComparison.Ordinal);
         Assert.Contains("Recommended song", json, StringComparison.Ordinal);
@@ -481,6 +491,19 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
     public async Task DisposeAsync() => await _database.DisposeAsync();
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
     { public AllstarrDbContext CreateDbContext() => new(options); public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(CreateDbContext()); }
+    private sealed class CommandCounter : DbCommandInterceptor
+    {
+        private int _count;
+        public int Count => Volatile.Read(ref _count);
+        public void Reset() => Interlocked.Exchange(ref _count, 0);
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _count);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
     private sealed class FakePolicy : IIntelligencePolicyService
     {
         public IntelligencePolicyRecord? Record { get; set; }

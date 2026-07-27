@@ -317,6 +317,60 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         Assert.Equal(["library:11111111111111111111111111111111"], provider.Seeds);
     }
 
+    [Fact]
+    public async Task RankingIsDeterministicAndKeepsTheBestDuplicateEvidence()
+    {
+        await _policies.SetAsync(_scope, new(true, 30, ["play"], ["ranking"]));
+        await new RecommendationRunService(_factory, _jobs, _clock).EnqueueAsync(
+            _scope, [], 10, "ranking-run");
+        var claim = await _jobs.ClaimNextAsync("ranking-worker", ["recommendation.generate"]);
+        var result = await new RecommendationRunJobHandler(_factory, [new RankingProvider()],
+            new ListeningProfileService(_factory, _clock), _clock)
+            .ExecuteAsync(new(claim!, EmptyServices.Instance), default);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, result.Kind);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var candidates = await db.RecommendationCandidates.OrderBy(item => item.Position).ToListAsync();
+        Assert.Equal(["track-two", "track-one"], candidates.Select(item => item.TrackKey));
+        Assert.Equal([.9, .7], candidates.Select(item => item.Score));
+        Assert.Contains("best duplicate", candidates[0].SignalsJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RecommendationAccountsPreferExactUserAndNeverCrossOwnerOrLibrary()
+    {
+        var otherUser = Guid.CreateVersion7();
+        var userAccount = Guid.CreateVersion7();
+        var libraryAccount = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.Users.Add(new()
+            {
+                Id = otherUser, TenantId = _tenant, DisplayName = "Other",
+                Status = PlatformUserStatus.Active, CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            });
+            db.ProviderAccounts.AddRange(
+                Account(userAccount, ProviderAccountScope.User, _user),
+                Account(Guid.CreateVersion7(), ProviderAccountScope.User, otherUser),
+                Account(libraryAccount, ProviderAccountScope.Library, null, "music"),
+                Account(Guid.CreateVersion7(), ProviderAccountScope.Library, null, "other"));
+            await db.SaveChangesAsync();
+        }
+        var accessor = new ScopedRecommendationAccountAccessor(_factory, null!);
+        Assert.Equal(userAccount, (await accessor.FindAccountAsync(_scope, "fixture", default))!.AccountId);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.ProviderAccounts.SingleAsync(item => item.Id == userAccount)).Enabled = false;
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal(libraryAccount, (await accessor.FindAccountAsync(_scope, "fixture", default))!.AccountId);
+        Assert.Null(await accessor.FindAccountAsync(
+            _scope with { OwnerUserId = Guid.CreateVersion7(), LibraryScopeId = "missing" },
+            "fixture", default));
+    }
+
     public async Task DisposeAsync() => await _database.DisposeAsync();
     private sealed class FixtureProvider : IRecommendationProvider
     {
@@ -359,6 +413,23 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
                 RecommendationProviderState.Succeeded, []));
         }
     }
+    private sealed class RankingProvider : IRecommendationProvider
+    {
+        public string Id => "ranking";
+        public Task<RecommendationProviderResult> RecommendAsync(RecommendationRequest request) =>
+            Task.FromResult(new RecommendationProviderResult(RecommendationProviderState.Succeeded,
+            [
+                Candidate("track-one", .7,
+                    Guid.Parse("11111111-1111-1111-1111-111111111111"), "tie"),
+                Candidate("track-two", .7,
+                    Guid.Parse("22222222-2222-2222-2222-222222222222"), "lower duplicate"),
+                Candidate("track-two", .9,
+                    Guid.Parse("22222222-2222-2222-2222-222222222222"), "best duplicate")
+            ]));
+        private static RecommendationCandidate Candidate(string key, double score, Guid id, string reason) =>
+            new(key, score, "ranking", [new("score", score, reason)],
+                new(LibraryTrackId: id)) { CanonicalRecordingId = id, SourceRevision = "ranking:1" };
+    }
     private sealed class Clock(DateTimeOffset now) : IPlatformClock { public DateTimeOffset UtcNow { get; set; } = now; }
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
     { public AllstarrDbContext CreateDbContext() => new(options); public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(CreateDbContext()); }
@@ -387,6 +458,13 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     private CanonicalRecordingRecord Canonical(Guid id) => new()
     {
         Id = id, TenantId = _tenant, CreatedByUserId = _user,
+        CreatedAt = _clock.UtcNow, UpdatedAt = _clock.UtcNow, Revision = 1
+    };
+    private ProviderAccountRecord Account(Guid id, ProviderAccountScope scope,
+        Guid? owner, string? library = null) => new()
+    {
+        Id = id, TenantId = _tenant, OwnerUserId = owner, ProviderId = "fixture",
+        DisplayName = "Fixture", Scope = scope, LibraryScopeId = library, Enabled = true,
         CreatedAt = _clock.UtcNow, UpdatedAt = _clock.UtcNow, Revision = 1
     };
 }
