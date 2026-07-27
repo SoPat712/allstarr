@@ -984,7 +984,7 @@
   }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 760px) {
   .app-shell,
   .app-shell.slim {
     grid-template-columns: 1fr;

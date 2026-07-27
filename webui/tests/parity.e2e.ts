@@ -1173,7 +1173,7 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await expect(page.getByText("1 playlists refreshed.")).toBeVisible();
   const coverage = page.locator(".playlist-row .coverage-bar > span");
   await expect(coverage.nth(0)).toHaveAttribute("style", /width:\s*50%/);
-  await expect(coverage.nth(1)).toHaveAttribute("style", /width:\s*50%; --route-color:\s*var\(--color-danger\)/);
+  await expect(coverage.nth(1)).toHaveAttribute("style", /width:\s*50%; --route-color:\s*var\(--color-ink-muted\)/);
   const rematchAll = page.waitForRequest((item) =>
     item.method() === "POST" && item.url().endsWith("/api/admin/playlist-links/playlist-link/run"));
   await page.getByRole("button", { name: "Rematch all" }).click();
@@ -1319,7 +1319,7 @@ test("Segmented navigation and match tabs support arrow keys", async ({ page }) 
   await expect(page.getByRole("tab", { name: /Available/ })).toHaveAttribute("aria-selected", "true");
 });
 
-test("Sidebar uses an edge expander and deterministic slim breakpoint", async ({ page }) => {
+test("Sidebar uses an integrated expander and deterministic slim breakpoint", async ({ page }) => {
   await mockApi(page);
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("#/");
