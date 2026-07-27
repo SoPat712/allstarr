@@ -128,7 +128,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "normalized-v3";
+    public const string AlgorithmVersion = "normalized-v4";
 
     private readonly TrackMatchPolicy _policy;
 
