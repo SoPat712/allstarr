@@ -1,13 +1,9 @@
 using System.Text.Json;
 using System.Text;
-using System.Net.Http;
-using allstarr.Models.Domain;
-using allstarr.Models.Spotify;
 using allstarr.Services.Common;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Http.Features;
 
 namespace allstarr.Controllers;
 
@@ -15,80 +11,12 @@ public partial class JellyfinController
 {
     #region Helpers
 
-    private static readonly HashSet<string> PassthroughResponseHeadersToSkip = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Connection",
-        "Keep-Alive",
-        "Proxy-Authenticate",
-        "Proxy-Authorization",
-        "TE",
-        "Trailer",
-        "Transfer-Encoding",
-        "Upgrade",
-        "Content-Type",
-        "Content-Length"
-    };
-
     /// <summary>
     /// Helper to handle proxy responses with proper status code handling.
     /// </summary>
     private IActionResult HandleProxyResponse(JsonDocument? result, int statusCode, object? fallbackValue = null)
     {
         return ProxyResponseResultFactory.Create(result, statusCode, fallbackValue);
-    }
-
-    private async Task<IActionResult> ProxyJsonPassthroughAsync(string endpoint)
-    {
-        try
-        {
-            // Match the previous proxy semantics for client compatibility.
-            // Some Jellyfin clients/proxies cancel the ASP.NET request token aggressively
-            // even though the upstream request would still complete successfully.
-            var upstreamResponse = await _proxyService.GetPassthroughResponseAsync(
-                endpoint,
-                Request.Headers);
-
-            HttpContext.Response.RegisterForDispose(upstreamResponse);
-            HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
-            Response.StatusCode = (int)upstreamResponse.StatusCode;
-            Response.Headers["X-Accel-Buffering"] = "no";
-
-            CopyPassthroughResponseHeaders(upstreamResponse);
-
-            if (upstreamResponse.Content.Headers.ContentLength.HasValue)
-            {
-                Response.ContentLength = upstreamResponse.Content.Headers.ContentLength.Value;
-            }
-
-            var contentType = upstreamResponse.Content.Headers.ContentType?.ToString() ?? "application/json";
-            var stream = await upstreamResponse.Content.ReadAsStreamAsync();
-
-            return new FileStreamResult(stream, contentType);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to transparently proxy Jellyfin request for {Endpoint}", endpoint);
-            return StatusCode(502, new { error = "Failed to connect to Jellyfin server" });
-        }
-    }
-
-    private void CopyPassthroughResponseHeaders(HttpResponseMessage upstreamResponse)
-    {
-        foreach (var header in upstreamResponse.Headers)
-        {
-            if (!PassthroughResponseHeadersToSkip.Contains(header.Key))
-            {
-                Response.Headers[header.Key] = header.Value.ToArray();
-            }
-        }
-
-        foreach (var header in upstreamResponse.Content.Headers)
-        {
-            if (!PassthroughResponseHeadersToSkip.Contains(header.Key))
-            {
-                Response.Headers[header.Key] = header.Value.ToArray();
-            }
-        }
     }
 
     /// <summary>

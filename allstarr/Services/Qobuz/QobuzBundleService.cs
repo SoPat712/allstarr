@@ -265,22 +265,4 @@ public class QobuzBundleService
         return decodedSecrets;
     }
 
-    /// <summary>
-    /// Tries to decode a base64 string
-    /// </summary>
-    private bool TryDecodeBase64(string input, out string decoded)
-    {
-        decoded = string.Empty;
-
-        try
-        {
-            var bytes = Convert.FromBase64String(input);
-            decoded = System.Text.Encoding.UTF8.GetString(bytes);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
 }

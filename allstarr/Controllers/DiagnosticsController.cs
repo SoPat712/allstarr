@@ -12,7 +12,6 @@ using allstarr.Services.SquidWTF;
 using System.Runtime;
 using allstarr.Core.Storage;
 using allstarr.Core.Operations;
-using allstarr.Models.Spotify;
 
 namespace allstarr.Controllers;
 
@@ -744,11 +743,4 @@ public class DiagnosticsController : ControllerBase
             return StatusCode(500, new { error = "Internal server error" });
         }
     }
-
-
-
-    /// <summary>
-    /// Saves a manual mapping to file for persistence across restarts.
-    /// Manual mappings NEVER expire - they are permanent user decisions.
-    /// </summary>
 }

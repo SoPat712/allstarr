@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
-using allstarr.Models.Spotify;
 using allstarr.Models.Admin;
 using allstarr.Services.Spotify;
 using allstarr.Services.Common;
@@ -142,11 +141,6 @@ public class PlaylistController : ControllerBase
 
     private static string TrackArtworkUrl(string itemId) =>
         $"/api/admin/downloads/artwork/{Uri.EscapeDataString(itemId)}";
-
-    private static void IncrementProviderCount(Dictionary<string, int> counts, string provider)
-    {
-        counts[provider] = counts.GetValueOrDefault(provider) + 1;
-    }
 
     private async Task<Dictionary<string, int>> GetPlaylistInventoryAsync(
         IReadOnlyCollection<SpotifyPlaylistConfig> configuredPlaylists)
@@ -616,79 +610,6 @@ public class PlaylistController : ControllerBase
             _logger.LogError(ex, "Failed to get Jellyfin track {Id}", id);
             return StatusCode(500, new { error = "Failed to get track details" });
         }
-    }
-
-    private static string? NormalizeKnownExternalProvider(string? provider)
-    {
-        if (string.IsNullOrWhiteSpace(provider))
-        {
-            return null;
-        }
-
-        return provider.Trim().ToLowerInvariant() switch
-        {
-            "squidwtf" or "squid-wtf" or "squid_wtf" or "tidal" => "squidwtf",
-            "deezer" => "deezer",
-            "qobuz" => "qobuz",
-            "applemusic" or "apple-music" or "apple_music" => "applemusic",
-            _ => null
-        };
-    }
-
-    private static string? NormalizeExternalProviderForDisplay(string? provider)
-    {
-        if (string.IsNullOrWhiteSpace(provider))
-        {
-            return null;
-        }
-
-        return NormalizeKnownExternalProvider(provider) ?? provider.Trim().ToLowerInvariant();
-    }
-
-    private static string? ResolveExternalProviderFromProviderIds(Dictionary<string, string> providerIds)
-    {
-        foreach (var providerKey in providerIds.Keys)
-        {
-            var normalized = NormalizeKnownExternalProvider(providerKey);
-            if (!string.IsNullOrWhiteSpace(normalized))
-            {
-                return normalized;
-            }
-        }
-
-        return null;
-    }
-
-    private static string? ExtractExternalProviderFromItemId(string? itemId)
-    {
-        if (string.IsNullOrWhiteSpace(itemId))
-        {
-            return null;
-        }
-
-        var trimmed = itemId.Trim();
-        if (!trimmed.StartsWith("ext-", StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
-
-        var parts = trimmed.Split('-', 4, StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length < 2)
-        {
-            return null;
-        }
-
-        return NormalizeExternalProviderForDisplay(parts[1]);
-    }
-
-    private string? ResolvePreferredExternalProvider(SpotifyTrackMapping mapping)
-    {
-        if (mapping.TryGetExternalTarget(null, out var provider, out _))
-        {
-            return NormalizeExternalProviderForDisplay(provider);
-        }
-
-        return NormalizeExternalProviderForDisplay(mapping.ExternalProvider);
     }
 
     /// <summary>

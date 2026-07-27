@@ -169,34 +169,6 @@ public class JellyfinProxyService
     }
 
     /// <summary>
-    /// Sends a proxied GET request to Jellyfin and returns the raw upstream response without buffering the body.
-    /// Intended for transparent passthrough of large JSON payloads that Allstarr does not modify.
-    /// </summary>
-    public async Task<HttpResponseMessage> GetPassthroughResponseAsync(
-        string endpoint,
-        IHeaderDictionary? clientHeaders = null,
-        CancellationToken cancellationToken = default)
-    {
-        var url = BuildUrl(endpoint);
-        using var request = CreateClientGetRequest(url, clientHeaders, out var isBrowserStaticRequest, out var isPublicEndpoint);
-        ForwardPassthroughRequestHeaders(clientHeaders, request);
-
-        LogOutboundRequest(HttpMethod.Get, url);
-
-        var response = await _httpClient.SendAsync(
-            request,
-            HttpCompletionOption.ResponseHeadersRead,
-            cancellationToken);
-
-        if (!response.IsSuccessStatusCode && !isBrowserStaticRequest && !isPublicEndpoint)
-        {
-            LogUpstreamFailure(HttpMethod.Get, response.StatusCode, url);
-        }
-
-        return response;
-    }
-
-    /// <summary>
     /// Relays an unhandled client request without assuming a JSON body or replacing client authentication.
     /// </summary>
     public async Task<HttpResponseMessage> SendPassthroughResponseAsync(
@@ -353,39 +325,6 @@ public class JellyfinProxyService
 
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         return request;
-    }
-
-    private static void ForwardPassthroughRequestHeaders(
-        IHeaderDictionary? clientHeaders,
-        HttpRequestMessage request)
-    {
-        if (clientHeaders == null || clientHeaders.Count == 0)
-        {
-            return;
-        }
-
-        if (clientHeaders.TryGetValue("Accept-Encoding", out var acceptEncoding) &&
-            acceptEncoding.Count > 0)
-        {
-            request.Headers.TryAddWithoutValidation("Accept-Encoding", acceptEncoding.ToArray());
-        }
-
-        if (clientHeaders.TryGetValue("User-Agent", out var userAgent) &&
-            userAgent.Count > 0)
-        {
-            request.Headers.TryAddWithoutValidation("User-Agent", userAgent.ToArray());
-        }
-
-        if (clientHeaders.TryGetValue("Accept-Language", out var acceptLanguage) &&
-            acceptLanguage.Count > 0)
-        {
-            request.Headers.TryAddWithoutValidation("Accept-Language", acceptLanguage.ToArray());
-        }
-
-        if (clientHeaders.TryGetValue("Accept", out var accept) && accept.Count > 0)
-        {
-            request.Headers.TryAddWithoutValidation("Accept", accept.ToArray());
-        }
     }
 
     private static void ForwardRelayRequestHeaders(

@@ -943,22 +943,6 @@ public partial class JellyfinController
         return _settings.UserId;
     }
 
-    private static int? ToPlaybackPositionSeconds(long? positionTicks)
-    {
-        if (!positionTicks.HasValue)
-        {
-            return null;
-        }
-
-        var seconds = positionTicks.Value / TimeSpan.TicksPerSecond;
-        if (seconds <= 0)
-        {
-            return 0;
-        }
-
-        return seconds > int.MaxValue ? int.MaxValue : (int)seconds;
-    }
-
     private string? ResolveDeviceId(string? parsedDeviceId, JsonElement? payload = null)
     {
         if (!string.IsNullOrWhiteSpace(parsedDeviceId))

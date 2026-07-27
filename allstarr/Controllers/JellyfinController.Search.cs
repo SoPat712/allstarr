@@ -569,44 +569,6 @@ public partial class JellyfinController
         }
     }
 
-    /// <summary>
-    /// Gets child items of a parent (tracks in album, albums for artist).
-    /// </summary>
-    private async Task<IActionResult> GetChildItems(
-        string parentId,
-        string? includeItemTypes,
-        int limit,
-        int startIndex,
-        string? sortBy)
-    {
-        // Check if this is an external playlist
-        if (PlaylistIdHelper.IsExternalPlaylist(parentId))
-        {
-            return await GetPlaylistTracks(parentId);
-        }
-
-        var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(parentId);
-
-        if (isExternal)
-        {
-            // Get external album or artist content
-            return await GetExternalChildItems(provider!, type!, externalId!, includeItemTypes);
-        }
-
-        // For library items, proxy transparently with full query string
-        _logger.LogDebug("Proxying library item request to Jellyfin: ParentId={ParentId}", parentId);
-
-        // Build endpoint - handle both /Items and /Users/{userId}/Items routes
-        var userIdFromRoute = Request.RouteValues["userId"]?.ToString();
-        var endpoint = string.IsNullOrEmpty(userIdFromRoute)
-            ? $"Items{Request.QueryString}"
-            : $"Users/{userIdFromRoute}/Items{Request.QueryString}";
-
-        var (result, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
-
-        return HandleProxyResponse(result, statusCode);
-    }
-
     private async Task<(JsonDocument? Body, int StatusCode)> GetLocalSearchResultForCurrentRequest(
         string cleanQuery,
         string? includeItemTypes,

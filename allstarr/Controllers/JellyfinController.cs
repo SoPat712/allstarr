@@ -8,7 +8,6 @@ using allstarr.Models.Lyrics;
 using allstarr.Models.Scrobbling;
 using allstarr.Models.Settings;
 using allstarr.Models.Subsonic;
-using allstarr.Models.Spotify;
 using allstarr.Services;
 using allstarr.Services.Common;
 using allstarr.Services.Local;

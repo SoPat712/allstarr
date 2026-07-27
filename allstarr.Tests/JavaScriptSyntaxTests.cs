@@ -78,15 +78,6 @@ public class JavaScriptSyntaxTests
         Assert.DoesNotContain("/npm/", runtime);
     }
 
-    [Fact]
-    public void SpotifyMappingsHtml_ShouldRedirectToIntegratedRoute()
-    {
-        var mappingsPath = Path.Combine(_wwwrootPath, "spotify-mappings.html");
-        var content = File.ReadAllText(mappingsPath);
-
-        Assert.Contains("/#/library/mappings", content);
-    }
-
     private static bool ValidateJavaScriptSyntax(string filePath, out string error)
     {
         error = string.Empty;

@@ -413,80 +413,6 @@ public class ExtensionManager : IDisposable
         return false;
     }
 
-    private async Task BootInstalledExtensions()
-    {
-        try
-        {
-            var dirs = Directory.GetDirectories(_extensionsDir);
-            foreach (var dir in dirs)
-            {
-                if (IsExtensionDisabled(dir))
-                {
-                    _logger.LogInformation("Skipping disabled extension folder {Path}", dir);
-                    continue;
-                }
-
-                await BootExtensionAsync(dir);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error booting installed extensions");
-        }
-    }
-
-    private async Task BootExtensionAsync(string folderPath)
-    {
-        try
-        {
-            if (!TryResolveInstalledExtensionFolder(folderPath, out var extensionId, out var safeFolderPath))
-            {
-                _logger.LogWarning("Skipping extension directory with an unsafe or ambiguous path: {Path}", folderPath);
-                return;
-            }
-
-            if (IsExtensionDisabled(safeFolderPath))
-            {
-                return;
-            }
-
-            var manifestPath = Path.Combine(safeFolderPath, "manifest.json");
-            var indexJsPath = Path.Combine(safeFolderPath, "index.js");
-
-            if (!File.Exists(manifestPath) || !File.Exists(indexJsPath)) return;
-
-            var manifestJson = await File.ReadAllTextAsync(manifestPath);
-            var indexJs = await File.ReadAllTextAsync(indexJsPath);
-            using var manifest = JsonDocument.Parse(manifestJson);
-            if (!TryValidateExtensionId(ReadString(manifest.RootElement, "id", "name"), out var manifestId) ||
-                !manifestId.Equals(extensionId, StringComparison.Ordinal))
-            {
-                throw new InvalidDataException(
-                    "Extension manifest id must be valid and match its installation directory.");
-            }
-
-            var sandbox = new ExtensionSandbox(
-                safeFolderPath,
-                manifestJson,
-                indexJs,
-                _httpClientFactory,
-                _logger,
-                permissions: ExtensionRuntimePermissionSet.None,
-                runtimeStateDirectory: ResolveContainedPath(Path.Combine(".runtime", extensionId)));
-            _activeExtensions[extensionId] = sandbox;
-            _logger.LogInformation("Loaded extension successfully: {DisplayName} ({Id}) v{Version}", sandbox.DisplayName, sandbox.Id, sandbox.Version);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to boot extension in folder {Path}", folderPath);
-        }
-    }
-
-    private bool IsExtensionInstalled(string id)
-    {
-        return TryResolveExtensionDirectory(id, out var folder) && Directory.Exists(folder);
-    }
-
     private static bool IsExtensionDisabled(string folderPath)
     {
         return File.Exists(Path.Combine(folderPath, DisabledMarkerFile));
@@ -795,47 +721,6 @@ public class ExtensionManager : IDisposable
         return Path.GetFullPath(left).Equals(Path.GetFullPath(right), comparison);
     }
 
-    private static string ResolveExtensionPackageRoot(string extractedDirectory)
-    {
-        if (File.Exists(Path.Combine(extractedDirectory, "manifest.json")) &&
-            File.Exists(Path.Combine(extractedDirectory, "index.js")))
-        {
-            return extractedDirectory;
-        }
-
-        var childDirectories = Directory.GetDirectories(extractedDirectory);
-        foreach (var childDirectory in childDirectories)
-        {
-            if (File.Exists(Path.Combine(childDirectory, "manifest.json")) &&
-                File.Exists(Path.Combine(childDirectory, "index.js")))
-            {
-                return childDirectory;
-            }
-        }
-
-        return extractedDirectory;
-    }
-
-    private void CopyDirectory(string sourceDirectory, string targetDirectory)
-    {
-        var safeSourceDirectory = EnsureContainedPath(sourceDirectory);
-        var safeTargetDirectory = EnsureContainedPath(targetDirectory);
-
-        foreach (var directory in Directory.GetDirectories(safeSourceDirectory, "*", SearchOption.AllDirectories))
-        {
-            var relativePath = Path.GetRelativePath(safeSourceDirectory, directory);
-            var targetPath = EnsureContainedPath(Path.Combine(safeTargetDirectory, relativePath));
-            Directory.CreateDirectory(targetPath);
-        }
-
-        foreach (var file in Directory.GetFiles(safeSourceDirectory, "*", SearchOption.AllDirectories))
-        {
-            var relativePath = Path.GetRelativePath(safeSourceDirectory, file);
-            var targetFile = EnsureContainedPath(Path.Combine(safeTargetDirectory, relativePath));
-            Directory.CreateDirectory(Path.GetDirectoryName(targetFile)!);
-            File.Copy(file, targetFile, overwrite: true);
-        }
-    }
 }
 
 public class ExtensionStoreResponse
