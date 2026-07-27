@@ -205,6 +205,30 @@ export type PriorityGroup = {
   } | null;
 };
 
+export type EnvMigrationPreview = {
+  previewToken: string;
+  revision: string;
+  expiresAt: string;
+  canApply: boolean;
+  importedSettingCount: number;
+  providerAccountCount: number;
+  manualCount: number;
+  backendIdentityCount: number;
+  playlistLinkCount: number;
+  scheduleCount: number;
+  items: Array<{
+    key: string;
+    sourceLine: number;
+    action: string;
+    reason: string;
+    sensitive: boolean;
+    valuePreview?: string | null;
+    warning?: string | null;
+  }>;
+  conflicts: string[];
+  warnings: string[];
+};
+
 export type ProviderAccount = {
   id: string;
   providerId: string;
@@ -640,6 +664,37 @@ export const settings = {
     json<{ deleted: number }>(`/api/admin/cache/${scope}`, { method: "DELETE" }),
   mediaProbe: () => json<{ success: boolean; code: string; message: string }>("/api/admin/media-probe"),
   playlistProbe: () => json<{ success: boolean; code: string; message: string }>("/api/admin/playlist-readiness"),
+  migrationStatus: () => json<{
+    available: boolean;
+    completed: boolean;
+    sourcePresent: boolean;
+    firstRun: boolean;
+    lastAppliedAt?: string | null;
+  }>("/api/admin/config/migration/status"),
+  previewMigration: (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return json<EnvMigrationPreview>("/api/admin/config/migration/preview", {
+      method: "POST",
+      body,
+    });
+  },
+  applyMigration: (preview: EnvMigrationPreview) =>
+    json<{ success: boolean; alreadyApplied: boolean }>("/api/admin/config/migration/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        previewToken: preview.previewToken,
+        revision: preview.revision,
+        confirmed: true,
+      }),
+    }),
+  resetMigration: (previewToken: string) =>
+    json<void>("/api/admin/config/migration/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ previewToken }),
+    }),
 };
 
 export type ExtensionRegistry = {

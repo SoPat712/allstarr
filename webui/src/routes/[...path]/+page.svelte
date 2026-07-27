@@ -64,7 +64,10 @@
               : route === "/sources"
                 ? { administrator: session?.user?.isAdministrator ?? false }
                 : route.startsWith("/settings")
-                  ? { section: route.split("/")[2] || "general" }
+                  ? {
+                      section: route.split("/")[2] || "general",
+                      administrator: session?.user?.isAdministrator ?? false,
+                    }
                   : {},
   );
 

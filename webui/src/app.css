@@ -4159,6 +4159,39 @@
     gap: 0.45rem;
   }
 
+  .maintenance-card > .settings-fields {
+    grid-template-columns: 1fr;
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  .maintenance-card > .settings-fields > button {
+    margin: 0.75rem;
+  }
+
+  .migration-items {
+    display: grid;
+    max-height: 14rem;
+    overflow: auto;
+    margin: 0.5rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .migration-items li {
+    display: grid;
+    gap: 0.15rem;
+    border-top: 1px solid var(--color-edge);
+    padding: 0.5rem 0;
+    font-size: 0.58rem;
+  }
+
+  .migration-items small,
+  .migration-items span {
+    color: var(--color-ink-muted);
+  }
+
   .maintenance-transfer {
     display: flex;
     align-items: center;

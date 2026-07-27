@@ -11,13 +11,20 @@
     type UiSchema,
   } from "$lib/api";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import EnvMigrationCard from "$lib/components/EnvMigrationCard.svelte";
   import ExtensionsView from "$lib/components/ExtensionsView.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import { audienceLabel, humanize } from "$lib/sources";
   import { fieldValue, move, routingOrder } from "$lib/settings";
   import { liveUpdates } from "$lib/live-updates.svelte";
 
-  let { section = "general" }: { section?: string } = $props();
+  let {
+    section = "general",
+    administrator,
+  }: {
+    section?: string;
+    administrator: boolean;
+  } = $props();
 
   const tabs = [
     { id: "general", label: "General", href: "#/settings/general" },
@@ -316,6 +323,7 @@
             <header><div><strong>Playlist pipeline</strong><small>Source access and playable materialization</small></div></header>
             <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void run("playlists", settings.playlistProbe, "Playlist pipeline checked.")}>{action === "playlists" ? "Testing…" : "Test playlist readiness"}</button>
           </article>
+          {#if administrator}<EnvMigrationCard />{/if}
         </section>
       </div>
     {/if}

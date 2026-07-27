@@ -131,6 +131,9 @@ const responses: Record<string, unknown> = {
     media: { expiredEntries: 0, overQuotaEntries: 0, reclaimableBytes: 0 },
     unreferencedArtworkPayloads: 0, unreferencedArtworkBytes: 0,
   },
+  "/api/admin/config/migration/status": {
+    available: true, completed: false, sourcePresent: false, firstRun: true,
+  },
   "/api/admin/extensions/packages": [{
     id: "package", extensionId: "lumen-audio", displayName: "Lumen Audio", version: "1.0.0",
     lifecycle: "active", state: "active", active: true, installed: true,
@@ -221,6 +224,22 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
       const account = (responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[] }).accounts[0];
       body = { ...account, scope: input.scope, ownerUserId: input.ownerUserId, revision: 2 };
     }
+    if (url.pathname === "/api/admin/config/migration/preview")
+      body = {
+        previewToken: "preview-token", revision: "revision", expiresAt: "2026-01-01",
+        canApply: true, importedSettingCount: 1, providerAccountCount: 1, manualCount: 0,
+        backendIdentityCount: 1, playlistLinkCount: 1, scheduleCount: 1,
+        items: [{
+          key: "CACHE_LYRICS_DAYS", sourceLine: 1, action: "import_if_absent",
+          reason: "Import into tenant-scoped durable runtime settings.", sensitive: false,
+          valuePreview: "21",
+        }],
+        conflicts: [], warnings: ["Imported accounts remain disabled until reviewed."],
+      };
+    if (url.pathname === "/api/admin/config/migration/apply")
+      body = { success: true, alreadyApplied: false };
+    if (url.pathname === "/api/admin/config/migration/reset")
+      body = {};
     await route.fulfill({
       status: body === undefined ? 404 : 200,
       contentType: "application/json",
@@ -706,10 +725,39 @@ test("Settings loads only the active section owners", async ({ page }) => {
   await page.getByRole("tab", { name: "Maintenance" }).click();
   await expect(page.getByRole("heading", { name: "Maintenance", level: 2 })).toBeVisible();
   await expect.poll(() => requests.includes("/api/admin/cache/maintenance/preview")).toBe(true);
+  await expect.poll(() => requests.includes("/api/admin/config/migration/status")).toBe(true);
   expect(requests).toContain("/api/admin/storage");
   expect(requests).toContain("/api/admin/cache");
   expect(requests).not.toContain("/api/admin/config");
   expect(requests).not.toContain("/api/admin/provider-accounts");
+});
+
+test("Maintenance previews, retries, and applies a legacy import on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+  await page.goto("#/settings/maintenance");
+  const card = page.locator(".maintenance-card").filter({ hasText: "Legacy v2 import" });
+  const legacyFile = {
+    name: "allstarr.env",
+    mimeType: "text/plain",
+    buffer: Buffer.from("CACHE_LYRICS_DAYS=21"),
+  };
+
+  await card.getByLabel("Legacy environment file").setInputFiles(legacyFile);
+  await card.getByRole("button", { name: "Preview import" }).click();
+  await expect(card.getByText("Imported accounts remain disabled until reviewed.")).toBeVisible();
+  await card.getByText("Review 1 parsed settings").click();
+  await expect(card.getByText("CACHE_LYRICS_DAYS")).toBeVisible();
+  await expect.poll(() => page.evaluate(() =>
+    document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await card.getByRole("button", { name: "Discard and retry" }).click();
+  await expect(card.getByRole("button", { name: "Preview import" })).toBeVisible();
+
+  await card.getByLabel("Legacy environment file").setInputFiles(legacyFile);
+  await card.getByRole("button", { name: "Preview import" }).click();
+  await card.getByRole("checkbox").check();
+  await card.getByRole("button", { name: "Import preview" }).click();
+  await expect(card.getByText("Legacy settings imported.")).toBeVisible();
 });
 
 test("Playlist details use a responsive dialog and track rows open mapping review", async ({ page }) => {
