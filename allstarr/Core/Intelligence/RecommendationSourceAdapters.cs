@@ -62,7 +62,7 @@ public abstract class BoundedRecommendationProvider(string id) : IRecommendation
                 Required(item.TrackKey, 500), Math.Clamp(item.Score, 0, 1), Id,
                 item.Signals.Select(signal => new RecommendationSignal(Required(signal.Code, 100),
                     Math.Clamp(signal.Weight, 0, 1), Required(signal.Explanation, 500))).ToArray(), item.Identity)
-                { ProviderAccountId = item.ProviderAccountId, SourceRevision = item.SourceRevision }).ToArray();
+            { ProviderAccountId = item.ProviderAccountId, SourceRevision = item.SourceRevision }).ToArray();
             return new(RecommendationProviderState.Succeeded, candidates, null);
         }
         catch (OperationCanceledException) when (request.CancellationToken.IsCancellationRequested) { throw; }

@@ -244,8 +244,18 @@ public sealed class IntelligenceController(
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var candidates = await db.RecommendationCandidates.AsNoTracking().Where(item => item.RunId == request.RunId &&
             item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId).OrderBy(item => item.Position)
-            .Select(item => new { item.TrackKey, item.Score, item.Source, item.SignalsJson, item.IdentityJson,
-                item.CanonicalRecordingId, item.ProviderAccountId, item.SourceRevision, item.ExclusionsJson })
+            .Select(item => new
+            {
+                item.TrackKey,
+                item.Score,
+                item.Source,
+                item.SignalsJson,
+                item.IdentityJson,
+                item.CanonicalRecordingId,
+                item.ProviderAccountId,
+                item.SourceRevision,
+                item.ExclusionsJson
+            })
             .ToListAsync(cancellationToken);
         try
         {
@@ -253,8 +263,11 @@ public sealed class IntelligenceController(
                 candidates.Where(item => ParseArray(item.ExclusionsJson).Count == 0)
                     .Select(item => new RecommendationCandidate(item.TrackKey, item.Score, item.Source,
                         ParseSignals(item.SignalsJson), ParseIdentity(item.IdentityJson))
-                    { CanonicalRecordingId = item.CanonicalRecordingId, ProviderAccountId = item.ProviderAccountId,
-                        SourceRevision = item.SourceRevision }).ToArray(), cancellationToken);
+                    {
+                        CanonicalRecordingId = item.CanonicalRecordingId,
+                        ProviderAccountId = item.ProviderAccountId,
+                        SourceRevision = item.SourceRevision
+                    }).ToArray(), cancellationToken);
             return Ok(new { id, state = "preview" });
         }
         catch (ArgumentException exception) { return BadRequest(new { error = "generated_playlist_invalid", message = exception.Message }); }
@@ -287,10 +300,15 @@ public sealed class IntelligenceController(
             if (request.ExpectedRevision != 0) return Conflict(new { error = "recommendation_feedback_revision_conflict" });
             feedback = new()
             {
-                Id = Guid.CreateVersion7(), CandidateId = candidateId, TenantId = scope.TenantId,
-                OwnerUserId = scope.OwnerUserId, Protocol = scope.Protocol,
-                BackendInstanceId = scope.BackendInstanceId, LibraryScopeId = scope.LibraryScopeId,
-                TrackKey = candidate.item.TrackKey, CreatedAt = clock?.UtcNow ?? DateTimeOffset.UtcNow,
+                Id = Guid.CreateVersion7(),
+                CandidateId = candidateId,
+                TenantId = scope.TenantId,
+                OwnerUserId = scope.OwnerUserId,
+                Protocol = scope.Protocol,
+                BackendInstanceId = scope.BackendInstanceId,
+                LibraryScopeId = scope.LibraryScopeId,
+                TrackKey = candidate.item.TrackKey,
+                CreatedAt = clock?.UtcNow ?? DateTimeOffset.UtcNow,
                 Revision = 1
             };
             db.RecommendationFeedback.Add(feedback);

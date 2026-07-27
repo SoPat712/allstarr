@@ -248,8 +248,11 @@ public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbCont
             candidates = records.Where(item => item.ExclusionsJson == "[]").Select(item => new RecommendationCandidate(item.TrackKey, item.Score, item.Source,
                 JsonSerializer.Deserialize<RecommendationSignal[]>(item.SignalsJson) ?? [],
                 JsonSerializer.Deserialize<RecommendationTrackIdentity>(item.IdentityJson))
-                { CanonicalRecordingId = item.CanonicalRecordingId, ProviderAccountId = item.ProviderAccountId,
-                    SourceRevision = item.SourceRevision }).ToArray();
+            {
+                CanonicalRecordingId = item.CanonicalRecordingId,
+                ProviderAccountId = item.ProviderAccountId,
+                SourceRevision = item.SourceRevision
+            }).ToArray();
         }
         catch (JsonException)
         {

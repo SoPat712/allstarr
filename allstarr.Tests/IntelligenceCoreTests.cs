@@ -78,10 +78,18 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         Assert.Single(await db.RecommendationRuns.ToListAsync());
         db.RecommendationFeedback.Add(new()
         {
-            Id = Guid.CreateVersion7(), CandidateId = candidate.Id, TenantId = _tenant, OwnerUserId = _user,
-            Protocol = "jellyfin", BackendInstanceId = "main", LibraryScopeId = "music",
-            TrackKey = candidate.TrackKey, Kind = "dislike", CreatedAt = _clock.UtcNow,
-            UpdatedAt = _clock.UtcNow, Revision = 1
+            Id = Guid.CreateVersion7(),
+            CandidateId = candidate.Id,
+            TenantId = _tenant,
+            OwnerUserId = _user,
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            TrackKey = candidate.TrackKey,
+            Kind = "dislike",
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow,
+            Revision = 1
         });
         await db.SaveChangesAsync();
         await db.DisposeAsync();
@@ -346,8 +354,11 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         {
             db.Users.Add(new()
             {
-                Id = otherUser, TenantId = _tenant, DisplayName = "Other",
-                Status = PlatformUserStatus.Active, CreatedAt = _clock.UtcNow,
+                Id = otherUser,
+                TenantId = _tenant,
+                DisplayName = "Other",
+                Status = PlatformUserStatus.Active,
+                CreatedAt = _clock.UtcNow,
                 UpdatedAt = _clock.UtcNow
             });
             db.ProviderAccounts.AddRange(
@@ -428,7 +439,8 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
             ]));
         private static RecommendationCandidate Candidate(string key, double score, Guid id, string reason) =>
             new(key, score, "ranking", [new("score", score, reason)],
-                new(LibraryTrackId: id)) { CanonicalRecordingId = id, SourceRevision = "ranking:1" };
+                new(LibraryTrackId: id))
+            { CanonicalRecordingId = id, SourceRevision = "ranking:1" };
     }
     private sealed class Clock(DateTimeOffset now) : IPlatformClock { public DateTimeOffset UtcNow { get; set; } = now; }
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
@@ -457,14 +469,26 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
 
     private CanonicalRecordingRecord Canonical(Guid id) => new()
     {
-        Id = id, TenantId = _tenant, CreatedByUserId = _user,
-        CreatedAt = _clock.UtcNow, UpdatedAt = _clock.UtcNow, Revision = 1
+        Id = id,
+        TenantId = _tenant,
+        CreatedByUserId = _user,
+        CreatedAt = _clock.UtcNow,
+        UpdatedAt = _clock.UtcNow,
+        Revision = 1
     };
     private ProviderAccountRecord Account(Guid id, ProviderAccountScope scope,
         Guid? owner, string? library = null) => new()
-    {
-        Id = id, TenantId = _tenant, OwnerUserId = owner, ProviderId = "fixture",
-        DisplayName = "Fixture", Scope = scope, LibraryScopeId = library, Enabled = true,
-        CreatedAt = _clock.UtcNow, UpdatedAt = _clock.UtcNow, Revision = 1
-    };
+        {
+            Id = id,
+            TenantId = _tenant,
+            OwnerUserId = owner,
+            ProviderId = "fixture",
+            DisplayName = "Fixture",
+            Scope = scope,
+            LibraryScopeId = library,
+            Enabled = true,
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow,
+            Revision = 1
+        };
 }

@@ -256,15 +256,22 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
         var feedback = Assert.IsType<OkObjectResult>(await Controller().SetFeedback(
             Guid.Parse("33333333-3333-3333-3333-333333333333"), new()
             {
-                Protocol = "jellyfin", BackendInstanceId = "main", LibraryScopeId = "music",
-                Kind = "dislike", ReasonCode = "not-my-style", ExpectedRevision = 0
+                Protocol = "jellyfin",
+                BackendInstanceId = "main",
+                LibraryScopeId = "music",
+                Kind = "dislike",
+                ReasonCode = "not-my-style",
+                ExpectedRevision = 0
             }, default));
         Assert.Contains("dislike", JsonSerializer.Serialize(feedback.Value), StringComparison.Ordinal);
         Assert.IsType<NotFoundResult>(await Controller().SetFeedback(
             Guid.Parse("33333333-3333-3333-3333-333333333333"), new()
             {
-                Protocol = "jellyfin", BackendInstanceId = "main", LibraryScopeId = "other",
-                Kind = "dismiss", ExpectedRevision = 1
+                Protocol = "jellyfin",
+                BackendInstanceId = "main",
+                LibraryScopeId = "other",
+                Kind = "dismiss",
+                ExpectedRevision = 1
             }, default));
         Assert.IsType<OkObjectResult>(await Controller().GenerateSet(new()
         {
