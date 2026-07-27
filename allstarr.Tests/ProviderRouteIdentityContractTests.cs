@@ -12,7 +12,7 @@ public sealed class ProviderRouteIdentityContractTests
 
         Assert.Contains("provider.ImplementationOrigin ??= \"built_in\";", controller, StringComparison.Ordinal);
         Assert.Contains("provider.RouteId ??= $\"builtin:{provider.Id}\";", controller, StringComparison.Ordinal);
-        Assert.Contains("RouteId = $\"extension:{item.Id}\"", controller, StringComparison.Ordinal);
+        Assert.Contains("RouteId = $\"{item.Origin.ToString().ToLowerInvariant()}:{item.Id}\"", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("RouteId = item.Id,", controller, StringComparison.Ordinal);
     }
 

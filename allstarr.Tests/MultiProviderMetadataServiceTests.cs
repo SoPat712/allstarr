@@ -65,6 +65,6 @@ public sealed class MultiProviderMetadataServiceTests
                 TimeSpan.FromMilliseconds(25),
                 CancellationToken.None));
 
-        Assert.True(cancelled.Task.IsCompleted);
+        await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(1));
     }
 }

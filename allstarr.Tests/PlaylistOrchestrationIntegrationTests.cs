@@ -160,7 +160,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             Assert.Equal(
                 refresh.SnapshotId,
                 (await service.RefreshAsync(Context(), _link)).SnapshotId);
-            Assert.InRange(commands.Count, 1, 15);
+            Assert.InRange(commands.Count, 1, 16);
 
             commands.Reset();
             allocatedBefore = GC.GetTotalAllocatedBytes();

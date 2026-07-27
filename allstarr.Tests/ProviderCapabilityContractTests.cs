@@ -14,10 +14,11 @@ public sealed class ProviderCapabilityContractTests
             typeof(IProviderDownloadCapability),
             typeof(IProviderPlaylistCapability),
             typeof(IProviderLyricsCapability),
+            typeof(IProviderIntelligenceCapability),
             typeof(IProviderHealthProbeCapability)
         ];
 
-        Assert.Equal(6, Enum.GetValues<ProviderCapabilityKind>().Length);
+        Assert.Equal(capabilityInterfaces.Length, Enum.GetValues<ProviderCapabilityKind>().Length);
         foreach (var capabilityInterface in capabilityInterfaces)
         {
             Assert.True(typeof(IProviderCapability).IsAssignableFrom(capabilityInterface));
