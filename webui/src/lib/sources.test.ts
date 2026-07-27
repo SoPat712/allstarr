@@ -66,7 +66,7 @@ describe("source presentation", () => {
   it("uses runtime readiness for operator-managed Sources", () => {
     const managed = {
       id: "apple-download",
-      name: "Apple download",
+      name: "Apple Music - Gamdl",
       connectionKind: "operator_managed",
       runtimeCapabilities: [
         { id: "download", ready: true, canAttempt: true, health: "healthy" },

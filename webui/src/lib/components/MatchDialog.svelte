@@ -161,7 +161,7 @@
 
 <Dialog.Root bind:open>
   <Dialog.Portal>
-    <Dialog.Overlay class="dialog-overlay" />
+    <Dialog.Overlay class="dialog-overlay match-dialog-overlay" />
     <Dialog.Content class="match-dialog">
       {#if match}
         <header>

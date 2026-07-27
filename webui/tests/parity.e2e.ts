@@ -22,7 +22,7 @@ const schema = {
       accountSettings: [{ key: "token", label: "Access token", type: "password", sensitive: true, required: true }],
     },
     {
-      id: "apple-download", name: "Apple download", categories: ["metadata", "download"],
+      id: "apple-download", name: "Apple Music - Gamdl", categories: ["metadata", "download"],
       connectionKind: "operator_managed",
       configSchema: [
         { key: "APPLE_DOWNLOAD_URL", label: "External provider URL", type: "url", valuePath: "appleDownload.baseUrl" },
@@ -1053,15 +1053,15 @@ test("Sources keep primary actions visible and report scoped degradation", async
   await expect(page.getByText("Lumen Audio connection · Connected by Tester")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Disabled Sources" })).toBeVisible();
   await expect(page.getByTitle("Disabled Source")).toBeVisible();
-  const appleSource = page.locator(".source-card").filter({ hasText: "Apple download" });
+  const appleSource = page.locator(".source-card").filter({ hasText: "Apple Music - Gamdl" });
   await appleSource.getByRole("button", { name: "Manage" }).click();
-  const appleManager = page.getByRole("dialog", { name: "Apple download" });
+  const appleManager = page.getByRole("dialog", { name: "Apple Music - Gamdl" });
   await appleManager.getByLabel("Apple ID").fill("tester@example.test");
   await appleManager.getByLabel("Password").fill("password");
   await appleManager.getByRole("button", { name: "Start login" }).click();
   await appleManager.getByLabel("2FA code").fill("123456");
   await appleManager.getByRole("button", { name: "Submit 2FA" }).click();
-  await expect(appleManager.getByText("Apple download is ready")).toBeVisible();
+  await expect(appleManager.getByText("Apple Music - Gamdl is ready")).toBeVisible();
   await expect(appleManager.getByRole("link", { name: "Provider settings" }))
     .toHaveAttribute("href", "#/settings/general?provider=provider-apple-download");
   await page.keyboard.press("Escape");

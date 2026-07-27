@@ -759,7 +759,7 @@ public class AdminUiController : ControllerBase
         new()
         {
             Id = "apple-download",
-            Name = "Apple download",
+            Name = "Apple Music - Gamdl",
             Icon = "applemusic",
             Status = ProviderStatus("apple-download", string.IsNullOrWhiteSpace(_appleMusicSettings.BaseUrl) ? "needs_config" : "unknown"),
             Categories = ["metadata", "streaming", "download", "lyrics"],

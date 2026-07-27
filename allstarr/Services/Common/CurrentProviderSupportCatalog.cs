@@ -27,7 +27,7 @@ public static class CurrentProviderSupportCatalog
         Provider(
             "apple-download",
             "apple-download",
-            "Apple download",
+            "Apple Music - Gamdl",
             "global",
             "URL of an optional, operator-managed GAMDL-compatible service.",
             Capability("metadata", Partial, "The compatible external manifest must advertise song search and detail. Album, artist, playlist, and library features remain unsupported unless separately advertised and implemented.", "AppleDownloadEndpointDiscoveryTests; provider contract gap"),

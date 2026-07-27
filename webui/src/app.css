@@ -2604,6 +2604,10 @@
     backdrop-filter: blur(0.45rem);
   }
 
+  .match-dialog-overlay {
+    z-index: 42;
+  }
+
   .match-dialog,
   .source-dialog,
   .confirm-dialog {
@@ -2619,6 +2623,10 @@
     background: var(--color-panel);
     box-shadow: 0 2rem 8rem rgb(0 0 0 / 55%);
     transform: translate(-50%, -50%);
+  }
+
+  .match-dialog {
+    z-index: 43;
   }
 
   .match-dialog > header,

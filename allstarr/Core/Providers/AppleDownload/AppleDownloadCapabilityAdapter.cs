@@ -167,7 +167,7 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
         AppleDownloadLyricsCapabilityAdapter? lyrics = null) => new(
         new ProviderDescriptor(
             StableProviderId,
-            "Apple download",
+            "Apple Music - Gamdl",
             "Optional operator-managed Apple audio downloads through a discovered compatible gateway.",
             ProviderOrigin.BuiltIn,
             sdkVersion: "1",
