@@ -34,6 +34,8 @@ public sealed class ProviderPlaylistSnapshotCollectorTests
         Assert.Equal(snapshot.Entries[0].ProviderTrackIdHash, snapshot.Entries[2].ProviderTrackIdHash);
         Assert.NotEqual(snapshot.Entries[0].SourceEntryIdHash, snapshot.Entries[2].SourceEntryIdHash);
         Assert.All(snapshot.Entries, entry => Assert.Equal(180_000, entry.DurationMilliseconds));
+        Assert.All(snapshot.Entries, entry =>
+            Assert.Equal("https://i.scdn.co/album.jpg", entry.ArtworkUrl));
         var json = JsonSerializer.Serialize(snapshot);
         Assert.DoesNotContain("opaque-playlist-secret", json, StringComparison.Ordinal);
         Assert.DoesNotContain("opaque-track-a", json, StringComparison.Ordinal);
@@ -164,7 +166,9 @@ public sealed class ProviderPlaylistSnapshotCollectorTests
             albumTitle: "Album",
             duration: TimeSpan.FromMinutes(3),
             isrc: $"USABC{position:0000000}",
-            isExplicit: false));
+            isExplicit: false,
+            artwork: new ProviderArtworkReference(
+                publicUri: new Uri("https://i.scdn.co/album.jpg"))));
 
     private static ProviderPlaylistTrackPage Page(
         ProviderPlaylistSummary summary,

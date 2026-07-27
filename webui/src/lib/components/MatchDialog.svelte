@@ -6,6 +6,7 @@
     type MatchTarget,
     type ProviderDefinition,
   } from "$lib/api";
+  import ArtworkSimilarity from "$lib/components/ArtworkSimilarity.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -188,6 +189,12 @@
                     {#each scoreComponents(candidate) as [name, value]}
                       <span><small>{name.replaceAll("_", " ")}</small><strong>{percent(value)}</strong></span>
                     {/each}
+                    {#if match.sourceArtworkUrl && candidate.backendItemId}
+                      <ArtworkSimilarity
+                        source={match.sourceArtworkUrl}
+                        candidate={candidateArtwork(candidate.backendItemId)}
+                      />
+                    {/if}
                   </div>
                   <div class="candidate-reasons">
                     {#each [...(candidate.reasons ?? []), ...(candidate.warnings ?? [])].slice(0, 3) as reason}

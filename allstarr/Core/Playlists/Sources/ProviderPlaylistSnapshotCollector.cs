@@ -21,7 +21,8 @@ public sealed record CollectedPlaylistSourceEntry(
     string? Album,
     long? DurationMilliseconds,
     string? Isrc,
-    bool? IsExplicit);
+    bool? IsExplicit,
+    string? ArtworkUrl = null);
 
 public sealed record CollectedPlaylistSourceSnapshot(
     string ProviderId,
@@ -199,7 +200,8 @@ public sealed class ProviderPlaylistSnapshotCollector
                 ? checked((long)Math.Round(duration.TotalMilliseconds))
                 : null,
             metadata?.Isrc,
-            metadata?.IsExplicit);
+            metadata?.IsExplicit,
+            metadata?.Artwork?.PublicUri?.AbsoluteUri);
     }
 
     private static string? StableArtworkReference(ProviderArtworkReference? artwork)

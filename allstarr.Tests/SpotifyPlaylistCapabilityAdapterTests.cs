@@ -33,6 +33,8 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         Assert.Null(page.Playlist.Artwork?.PublicUri);
         Assert.Equal([2, 3], page.Tracks.Items.Select(track => track.Position));
         Assert.Equal(["track-a", "track-a"], page.Tracks.Items.Select(track => track.TrackId.Value));
+        Assert.All(page.Tracks.Items, track =>
+            Assert.Equal("https://i.scdn.co/album.jpg", track.Metadata?.Artwork?.PublicUri?.AbsoluteUri));
         Assert.Equal("4", page.Tracks.NextCursor);
         Assert.Equal("snapshot-9", page.Tracks.SnapshotVersion);
         Assert.Equal(context.Account!.AccountId, secrets.AccountIds.Single());

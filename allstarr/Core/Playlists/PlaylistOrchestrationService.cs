@@ -410,6 +410,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     durationProvenance = entry.DurationMilliseconds.HasValue ? link.SourceProviderId : null,
                     entry.Isrc,
                     entry.IsExplicit,
+                    entry.ArtworkUrl,
                     entry.CanonicalRecordingId
                 });
                 return (Payload: payload, PayloadHash: Hash(payload));

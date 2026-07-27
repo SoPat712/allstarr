@@ -439,12 +439,14 @@ public sealed class SpotifyPathfinderPlaylistClient
 
         ProviderExternalResourceId? albumId = null;
         string? albumTitle = null;
+        Uri? artwork = null;
         if (TryPath(data, out var album, "albumOfTrack"))
         {
             albumTitle = String(album, "name");
             var albumValue = SpotifyId(String(album, "uri"), "album");
             if (albumValue != null)
                 albumId = new(ProviderId, ProviderResourceKind.Album, albumValue);
+            artwork = ArtworkUri(album);
         }
 
         var durationMs = TryPath(data, out var duration, "trackDuration")
@@ -461,7 +463,8 @@ public sealed class SpotifyPathfinderPlaylistClient
             albumId,
             albumTitle,
             durationMs is null ? null : TimeSpan.FromMilliseconds(durationMs.Value),
-            isExplicit: explicitValue);
+            isExplicit: explicitValue,
+            artwork: artwork == null ? null : new ProviderArtworkReference(publicUri: artwork));
         return new ProviderPlaylistTrack(position, trackId, metadata: metadata);
     }
 

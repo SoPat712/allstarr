@@ -30,6 +30,30 @@ export function scoreComponents(candidate: MatchCandidate) {
     .toSorted((left, right) => right[1] - left[1]);
 }
 
+export function differenceHash(pixels: ArrayLike<number>) {
+  let hash = 0n;
+  for (let row = 0; row < 8; row += 1) {
+    for (let column = 0; column < 8; column += 1) {
+      const left = (row * 9 + column) * 4;
+      const right = left + 4;
+      const brightness = (offset: number) =>
+        pixels[offset] * 0.299 + pixels[offset + 1] * 0.587 + pixels[offset + 2] * 0.114;
+      if (brightness(left) > brightness(right)) hash |= 1n << BigInt(row * 8 + column);
+    }
+  }
+  return hash;
+}
+
+export function hashSimilarity(left: bigint, right: bigint) {
+  let difference = left ^ right;
+  let count = 0;
+  while (difference) {
+    count += Number(difference & 1n);
+    difference >>= 1n;
+  }
+  return 1 - count / 64;
+}
+
 export function currentTarget(match: MatchReviewItem) {
   if (match.localTrack)
     return {

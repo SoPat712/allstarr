@@ -4,10 +4,12 @@ using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
 using allstarr.Core.Matching;
+using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Services.Admin;
+using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -23,7 +25,10 @@ namespace allstarr.Controllers;
 public sealed class TrackMatchesController(
     ITrackMatchRepository trackMatchCommands,
     IProtocolProviderGateway providerGateway,
-    AdminProtocolExecutionContextFactory protocolContexts) : ControllerBase
+    AdminProtocolExecutionContextFactory protocolContexts,
+    IDbContextFactory<AllstarrDbContext> contextFactory,
+    IHttpClientFactory httpClients,
+    IMediaAssetResolver mediaAssets) : ControllerBase
 {
     public sealed record ResolveTrackMatchRequest(
         string TargetType,
@@ -31,6 +36,54 @@ public sealed class TrackMatchesController(
         string? ExternalProvider = null,
         string? ExternalId = null,
         string? Reason = null);
+
+    [HttpGet("{externalSnapshotId:guid}/artwork")]
+    public async Task<IActionResult> SourceArtwork(
+        Guid externalSnapshotId,
+        CancellationToken cancellationToken)
+    {
+        if (!TrySession(out var session, out var error)) return error!;
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var snapshot = await db.ExternalMetadataSnapshots.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.Id == externalSnapshotId &&
+            item.TenantId == session!.TenantId &&
+            (session.IsAdministrator || item.OwnerUserId == session.AllstarrUserId),
+            cancellationToken);
+        if (snapshot == null) return NotFound();
+        var artworkUrl = Metadata(snapshot.PayloadJson).ArtworkUrl;
+        if (!snapshot.ProviderId.Equals("spotify", StringComparison.OrdinalIgnoreCase) ||
+            !Uri.TryCreate(artworkUrl, UriKind.Absolute, out var artworkUri) ||
+            artworkUri.Scheme != Uri.UriSchemeHttps ||
+            !SpotifyPlaylistCapabilityAdapter.IsAllowedArtworkHost(artworkUri.Host))
+            return NotFound();
+
+        var asset = await mediaAssets.ResolveAsync(
+            new MediaAssetIdentity(
+                snapshot.TenantId,
+                snapshot.OwnerUserId,
+                snapshot.ProviderAccountId,
+                snapshot.ProviderId,
+                "track",
+                snapshot.ExternalIdHash,
+                snapshot.ProviderRevision,
+                Width: 96),
+            async token =>
+            {
+                var outcome = await SpotifyPlaylistCapabilityAdapter.DownloadArtworkAsync(
+                    httpClients.CreateClient(SpotifyPlaylistCapabilityAdapter.HttpClientName),
+                    artworkUri,
+                    5 * 1024 * 1024,
+                    token);
+                if (!outcome.IsSuccess) return null;
+                var artwork = outcome.RequireValue();
+                return new MediaAssetSource(artwork.Bytes, artwork.ContentType);
+            },
+            5 * 1024 * 1024,
+            cancellationToken);
+        if (asset == null) return NotFound();
+        Response.Headers.CacheControl = "private, max-age=300";
+        return File(asset.Bytes, asset.ContentType);
+    }
 
     [HttpGet("spotify/{spotifyId}")]
     public async Task<IActionResult> Detail(
@@ -134,11 +187,13 @@ public sealed class TrackMatchesController(
                 artist = primaryLocal?.Artist,
                 album = primaryLocal?.Album,
                 artworkUrl = primaryLocal?.CoverArtReference == null
-                    ? sourceMetadata.ArtworkUrl == null ? null : ExternalArtworkUrl("spotify", spotifyId)
+                    ? sourceMetadata.ArtworkUrl == null || latestSnapshot == null
+                        ? null
+                        : SourceArtworkUrl(latestSnapshot.Id)
                     : LocalArtworkUrl(primaryLocal.BackendItemId),
-                sourceArtworkUrl = sourceMetadata.ArtworkUrl == null
+                sourceArtworkUrl = sourceMetadata.ArtworkUrl == null || latestSnapshot == null
                     ? null
-                    : ExternalArtworkUrl("spotify", spotifyId),
+                    : SourceArtworkUrl(latestSnapshot.Id),
                 candidateArtworkUrl = primaryLocal?.CoverArtReference == null
                     ? null
                     : LocalArtworkUrl(primaryLocal.BackendItemId),
@@ -519,9 +574,9 @@ public sealed class TrackMatchesController(
             }).ToArray()
             : [];
         var metadata = Metadata(snapshot.PayloadJson);
-        var sourceArtworkUrl = metadata.ArtworkUrl == null || sourceIdentity == null
+        var sourceArtworkUrl = metadata.ArtworkUrl == null
             ? null
-            : ExternalArtworkUrl(sourceIdentity.ProviderId, sourceIdentity.ExternalId);
+            : SourceArtworkUrl(snapshot.Id);
         var candidateArtworkUrl = track?.CoverArtReference == null
             ? null
             : LocalArtworkUrl(track.BackendItemId);
@@ -634,6 +689,9 @@ public sealed class TrackMatchesController(
 
     private static string LocalArtworkUrl(string backendItemId) =>
         $"/api/admin/downloads/artwork/{Uri.EscapeDataString(backendItemId)}";
+
+    private static string SourceArtworkUrl(Guid externalSnapshotId) =>
+        $"/api/admin/track-matches/{externalSnapshotId}/artwork";
 
     private static string ExternalArtworkUrl(string provider, string externalId) =>
         LocalArtworkUrl($"ext-{provider}-song-{externalId}");

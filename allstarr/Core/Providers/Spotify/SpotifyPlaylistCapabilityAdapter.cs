@@ -104,7 +104,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
                 return ProviderOutcome<ProviderPlaylistArtwork>.Failure(new(ProviderErrorKind.PermanentFailure));
             var artwork = await _pathfinder.GetPlaylistArtworkUriAsync(token, request.Artwork, cancellationToken);
             return artwork.IsSuccess
-                ? await DownloadArtworkAsync(artwork.RequireValue(), request.MaximumBytes, cancellationToken)
+                ? await DownloadArtworkAsync(_http, artwork.RequireValue(), request.MaximumBytes, cancellationToken)
                 : ProviderOutcome<ProviderPlaylistArtwork>.Failure(artwork.Error!);
         });
 
@@ -220,12 +220,12 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
         return null;
     }
 
-    private async Task<ProviderOutcome<ProviderPlaylistArtwork>> DownloadArtworkAsync(
-        Uri uri, int maximumBytes, CancellationToken cancellationToken)
+    internal static async Task<ProviderOutcome<ProviderPlaylistArtwork>> DownloadArtworkAsync(
+        HttpClient http, Uri uri, int maximumBytes, CancellationToken cancellationToken)
     {
         try
         {
-            using var response = await _http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            using var response = await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             if (response.RequestMessage?.RequestUri is { } finalUri && !IsAllowedArtworkHost(finalUri.Host))
                 return ProviderOutcome<ProviderPlaylistArtwork>.Failure(new(ProviderErrorKind.PermanentFailure));
             if (!response.IsSuccessStatusCode)
@@ -252,7 +252,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
         catch (HttpRequestException) { return ProviderOutcome<ProviderPlaylistArtwork>.Failure(new(ProviderErrorKind.TransientFailure)); }
     }
 
-    private static bool IsAllowedArtworkHost(string host) =>
+    internal static bool IsAllowedArtworkHost(string host) =>
         host.Equals("i.scdn.co", StringComparison.OrdinalIgnoreCase) ||
         host.EndsWith(".scdn.co", StringComparison.OrdinalIgnoreCase) ||
         host.EndsWith(".spotifycdn.com", StringComparison.OrdinalIgnoreCase);
