@@ -21,6 +21,7 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
     private BoundedHotApplicationCache _hot = null!;
     private FileMediaApplicationCache _media = null!;
     private TestClock _clock = null!;
+    private readonly ApplicationCacheActivityMetrics _activity = new();
 
     public async Task InitializeAsync()
     {
@@ -37,7 +38,10 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
             new FileMediaCacheOptions(_mediaPath),
             _clock,
             NullLogger<FileMediaApplicationCache>.Instance);
-        _cache = new HybridApplicationCache(_hot, _media);
+        _cache = new HybridApplicationCache(
+            _hot,
+            _media,
+            activityMetrics: _activity);
 
         await using var context = await factory.CreateDbContextAsync();
         await context.Database.MigrateAsync();
@@ -71,6 +75,13 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         Assert.Equal(1, snapshot.Database.Writes);
         Assert.Equal(1, snapshot.Hot.Writes);
         Assert.Equal(1, snapshot.Media.Writes);
+        _activity.RecordCoalesced();
+        _activity.RecordStaleServe();
+        _activity.RecordUpstreamBytesAvoided(128);
+        snapshot = await _cache.GetDiagnosticsAsync();
+        Assert.Equal(1, snapshot.Activity.CoalescedRequests);
+        Assert.Equal(1, snapshot.Activity.StaleServes);
+        Assert.Equal(128, snapshot.Activity.UpstreamBytesAvoided);
         var metadataCategory = Assert.Single(
             snapshot.Categories,
             item => item.Category == ApplicationCacheCategory.ProviderResponse.ToString());

@@ -23,7 +23,11 @@ public sealed class MediaAssetResolverTests
     public async Task ConcurrentScopedRequestsShareFetchAndContentAddressedPayload()
     {
         var cache = new TestMemoryApplicationCache();
-        var resolver = new MediaAssetResolver(cache, NullLogger<MediaAssetResolver>.Instance);
+        var metrics = new ApplicationCacheActivityMetrics();
+        var resolver = new MediaAssetResolver(
+            cache,
+            NullLogger<MediaAssetResolver>.Instance,
+            metrics);
         var identity = Identity(Guid.CreateVersion7());
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var fetches = 0;
@@ -45,6 +49,8 @@ public sealed class MediaAssetResolverTests
         Assert.All(results, result => Assert.False(result!.FromCache));
         Assert.True(cached!.FromCache);
         Assert.Equal("\"etag\"", cached.ETag);
+        Assert.Equal(1, metrics.Snapshot().CoalescedRequests);
+        Assert.Equal(4, metrics.Snapshot().UpstreamBytesAvoided);
         Assert.Single(cache.GetKeysByPattern("media:descriptor:v3:*"));
         Assert.Single(cache.GetKeysByPattern("artwork:payload:v1:*"));
     }

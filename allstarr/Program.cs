@@ -367,6 +367,7 @@ builder.Services.AddSingleton(squidWtfEndpointCatalog);
 builder.Services.AddSingleton<DatabaseApplicationCache>();
 builder.Services.AddSingleton<BoundedHotApplicationCache>();
 builder.Services.AddSingleton<FileMediaApplicationCache>();
+builder.Services.AddSingleton<ApplicationCacheActivityMetrics>();
 builder.Services.AddSingleton<HybridApplicationCache>();
 builder.Services.AddSingleton<IApplicationCache>(sp =>
     sp.GetRequiredService<HybridApplicationCache>());

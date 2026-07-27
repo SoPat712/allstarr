@@ -118,6 +118,7 @@ public sealed class ExternalPlaybackMetadataResolverTests
             TaskCreationOptions.RunContinuationsAsynchronously);
         var refreshRelease = new TaskCompletionSource<Song?>(
             TaskCreationOptions.RunContinuationsAsynchronously);
+        var metrics = new ApplicationCacheActivityMetrics();
         var calls = 0;
         var service = new Mock<IMusicMetadataService>();
         service.Setup(item => item.GetSongAsync("deezer", "42", It.IsAny<CancellationToken>()))
@@ -133,7 +134,8 @@ public sealed class ExternalPlaybackMetadataResolverTests
             new TestMemoryApplicationCache(),
             new StubHttpClientFactory(new HttpClient()),
             clock,
-            NullLogger<ExternalPlaybackMetadataResolver>.Instance);
+            NullLogger<ExternalPlaybackMetadataResolver>.Instance,
+            metrics);
         Assert.Equal(
             "Stale",
             (await resolver.ResolveAsync("ext-deezer-song-42", CancellationToken.None))!.Title);
@@ -146,6 +148,7 @@ public sealed class ExternalPlaybackMetadataResolverTests
 
         Assert.Equal("Stale", stale!.Title);
         Assert.Equal(2, calls);
+        Assert.Equal(1, metrics.Snapshot().StaleServes);
         refreshRelease.SetResult(new Song { Title = "Fresh", Artist = "Artist" });
     }
 

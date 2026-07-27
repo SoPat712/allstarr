@@ -8,13 +8,16 @@ public sealed class ExternalPlaybackMetadataResolver(
     IApplicationCache cache,
     IHttpClientFactory httpClientFactory,
     IPlatformClock clock,
-    ILogger<ExternalPlaybackMetadataResolver> logger) : IPlaybackMetadataResolver
+    ILogger<ExternalPlaybackMetadataResolver> logger,
+    ApplicationCacheActivityMetrics? activityMetrics = null) : IPlaybackMetadataResolver
 {
     private const int MaximumArtworkBytes = 5 * 1024 * 1024;
     private static readonly TimeSpan MetadataCacheDuration = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan FailureCacheDuration = TimeSpan.FromSeconds(30);
     private readonly ConcurrentDictionary<string, Lazy<Task<PlaybackTrackMetadata?>>> _inflight =
         new(StringComparer.Ordinal);
+    private readonly ApplicationCacheActivityMetrics _activity =
+        activityMetrics ?? new ApplicationCacheActivityMetrics();
 
     public async Task<PlaybackTrackMetadata?> ResolveAsync(string itemId, CancellationToken cancellationToken)
     {
@@ -28,6 +31,7 @@ public sealed class ExternalPlaybackMetadataResolver(
         {
             if (cached.FreshUntil <= clock.UtcNow)
             {
+                _activity.RecordStaleServe();
                 _ = RefreshStaleAsync(identity.Value, cacheKey, negativeKey);
             }
 
@@ -45,11 +49,14 @@ public sealed class ExternalPlaybackMetadataResolver(
         string negativeKey,
         CancellationToken cancellationToken)
     {
-        var pending = _inflight.GetOrAdd(
-            cacheKey,
-            _ => new Lazy<Task<PlaybackTrackMetadata?>>(
-                () => ResolveUncachedAsync(identity, cacheKey, negativeKey, cancellationToken),
-                LazyThreadSafetyMode.ExecutionAndPublication));
+        var created = new Lazy<Task<PlaybackTrackMetadata?>>(
+            () => ResolveUncachedAsync(identity, cacheKey, negativeKey, cancellationToken),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+        var pending = _inflight.GetOrAdd(cacheKey, created);
+        if (!ReferenceEquals(pending, created))
+        {
+            _activity.RecordCoalesced();
+        }
         try
         {
             return await pending.Value.WaitAsync(cancellationToken);

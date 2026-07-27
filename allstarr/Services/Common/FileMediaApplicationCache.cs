@@ -783,11 +783,14 @@ public sealed class FileMediaApplicationCache : IApplicationCache, IDisposable
 public sealed class HybridApplicationCache(
     BoundedHotApplicationCache metadata,
     FileMediaApplicationCache media,
-    Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>? configuredSettings = null)
+    Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>? configuredSettings = null,
+    ApplicationCacheActivityMetrics? activityMetrics = null)
     : IApplicationCache
 {
     private readonly allstarr.Models.Settings.CacheSettings _settings =
         configuredSettings?.Value ?? new allstarr.Models.Settings.CacheSettings();
+    private readonly ApplicationCacheActivityMetrics _activity =
+        activityMetrics ?? new ApplicationCacheActivityMetrics();
 
     public bool IsEnabled => metadata.IsEnabled || media.IsEnabled;
 
@@ -861,6 +864,7 @@ public sealed class HybridApplicationCache(
                         usage);
                 })
                 .ToArray(),
+            _activity.Snapshot(),
             DateTimeOffset.UtcNow);
     }
 

@@ -40,8 +40,11 @@ public interface IMediaAssetResolver
 
 public sealed class MediaAssetResolver(
     IApplicationCache cache,
-    ILogger<MediaAssetResolver> logger) : IMediaAssetResolver
+    ILogger<MediaAssetResolver> logger,
+    ApplicationCacheActivityMetrics? activityMetrics = null) : IMediaAssetResolver
 {
+    private readonly ApplicationCacheActivityMetrics _activity =
+        activityMetrics ?? new ApplicationCacheActivityMetrics();
     private readonly ConcurrentDictionary<string, Lazy<Task<ResolvedMediaAsset?>>> _inflight =
         new(StringComparer.Ordinal);
 
@@ -55,13 +58,19 @@ public sealed class MediaAssetResolver(
         ArgumentNullException.ThrowIfNull(fetch);
         var descriptorKey = CacheKeyBuilder.BuildMediaAssetDescriptorKey(identity);
         if (await ReadAsync(descriptorKey, maximumBytes) is { } cached)
+        {
+            _activity.RecordUpstreamBytesAvoided(cached.Bytes.Length);
             return cached;
+        }
 
-        var pending = _inflight.GetOrAdd(
-            descriptorKey,
-            _ => new Lazy<Task<ResolvedMediaAsset?>>(
-                () => FetchAsync(identity, descriptorKey, fetch, maximumBytes, cancellationToken),
-                LazyThreadSafetyMode.ExecutionAndPublication));
+        var created = new Lazy<Task<ResolvedMediaAsset?>>(
+            () => FetchAsync(identity, descriptorKey, fetch, maximumBytes, cancellationToken),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+        var pending = _inflight.GetOrAdd(descriptorKey, created);
+        if (!ReferenceEquals(pending, created))
+        {
+            _activity.RecordCoalesced();
+        }
         try
         {
             return await pending.Value.WaitAsync(cancellationToken);

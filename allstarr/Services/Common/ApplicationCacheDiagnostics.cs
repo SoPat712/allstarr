@@ -22,7 +22,30 @@ public sealed record ApplicationCacheDiagnosticsSnapshot(
     ApplicationCacheTierUsage Hot,
     ApplicationCacheTierUsage Media,
     IReadOnlyList<ApplicationCacheCategoryDiagnostics> Categories,
+    ApplicationCacheActivitySnapshot Activity,
     DateTimeOffset CapturedAt);
+
+public sealed record ApplicationCacheActivitySnapshot(
+    long CoalescedRequests,
+    long StaleServes,
+    long UpstreamBytesAvoided);
+
+public sealed class ApplicationCacheActivityMetrics
+{
+    private long _coalescedRequests;
+    private long _staleServes;
+    private long _upstreamBytesAvoided;
+
+    public void RecordCoalesced() => Interlocked.Increment(ref _coalescedRequests);
+    public void RecordStaleServe() => Interlocked.Increment(ref _staleServes);
+    public void RecordUpstreamBytesAvoided(long bytes) =>
+        Interlocked.Add(ref _upstreamBytesAvoided, Math.Max(0, bytes));
+
+    public ApplicationCacheActivitySnapshot Snapshot() => new(
+        Volatile.Read(ref _coalescedRequests),
+        Volatile.Read(ref _staleServes),
+        Volatile.Read(ref _upstreamBytesAvoided));
+}
 
 public sealed record ApplicationCacheCategoryUsage(
     long EntryCount,

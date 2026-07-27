@@ -21,19 +21,22 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
     private readonly IPlatformClock _clock;
     private readonly ConcurrentDictionary<string, Lazy<Task<PlaybackTrackMetadata?>>> _inflight =
         new(StringComparer.Ordinal);
+    private readonly ApplicationCacheActivityMetrics _activity;
 
     public JellyfinPlaybackMetadataResolver(
         IHttpClientFactory httpClientFactory,
         IOptions<JellyfinSettings> settings,
         IApplicationCache cache,
         IPlatformClock clock,
-        ILogger<JellyfinPlaybackMetadataResolver> logger)
+        ILogger<JellyfinPlaybackMetadataResolver> logger,
+        ApplicationCacheActivityMetrics? activityMetrics = null)
     {
         _httpClient = httpClientFactory.CreateClient(JellyfinProxyService.HttpClientName);
         _settings = settings.Value;
         _cache = cache;
         _clock = clock;
         _logger = logger;
+        _activity = activityMetrics ?? new ApplicationCacheActivityMetrics();
     }
 
     public async Task<PlaybackTrackMetadata?> ResolveAsync(
@@ -54,6 +57,7 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
         {
             if (cached.FreshUntil <= _clock.UtcNow)
             {
+                _activity.RecordStaleServe();
                 _ = RefreshStaleAsync(itemId, cacheKey, negativeKey);
             }
 
@@ -71,11 +75,14 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
         string negativeKey,
         CancellationToken cancellationToken)
     {
-        var pending = _inflight.GetOrAdd(
-            cacheKey,
-            _ => new Lazy<Task<PlaybackTrackMetadata?>>(
-                () => ResolveUncachedAsync(itemId, cacheKey, negativeKey, cancellationToken),
-                LazyThreadSafetyMode.ExecutionAndPublication));
+        var created = new Lazy<Task<PlaybackTrackMetadata?>>(
+            () => ResolveUncachedAsync(itemId, cacheKey, negativeKey, cancellationToken),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+        var pending = _inflight.GetOrAdd(cacheKey, created);
+        if (!ReferenceEquals(pending, created))
+        {
+            _activity.RecordCoalesced();
+        }
         try
         {
             return await pending.Value.WaitAsync(cancellationToken);
