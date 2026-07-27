@@ -3,6 +3,7 @@ using allstarr.Core.Storage;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -14,6 +15,7 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
     private TestFactory _factory = null!;
     private TestClock _clock = null!;
     private DatabaseApplicationCache _cache = null!;
+    private readonly List<string> _warnings = [];
 
     public async Task InitializeAsync()
     {
@@ -23,7 +25,7 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
         _cache = new DatabaseApplicationCache(
             _factory,
             _clock,
-            NullLogger<DatabaseApplicationCache>.Instance);
+            new WarningLogger(_warnings));
 
         await using var database = await _factory.CreateDbContextAsync();
         await database.Database.MigrateAsync();
@@ -41,6 +43,19 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
         var entry = await database.ApplicationCacheEntries.SingleAsync();
         Assert.Equal("second", entry.Value);
         Assert.Equal(6, entry.PayloadBytes);
+    }
+
+    [Fact]
+    public async Task ConcurrentWrites_UpsertOneDisposableEntry()
+    {
+        const string key = "jellyfin:item-type:v1:concurrent";
+        var writes = await Task.WhenAll(Enumerable.Range(0, 32)
+            .Select(index => _cache.SetStringAsync(key, $"value-{index}", TimeSpan.FromMinutes(5))));
+
+        Assert.True(_warnings.Count == 0, _warnings.FirstOrDefault());
+        Assert.All(writes, Assert.True);
+        await using var database = await _factory.CreateDbContextAsync();
+        Assert.Single(await database.ApplicationCacheEntries.Where(item => item.Key == key).ToListAsync());
     }
 
     [Fact]
@@ -376,5 +391,16 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
         public Task<AllstarrDbContext> CreateDbContextAsync(
             CancellationToken cancellationToken = default) =>
             Task.FromResult(CreateDbContext());
+    }
+
+    private sealed class WarningLogger(List<string> warnings) : ILogger<DatabaseApplicationCache>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (IsEnabled(logLevel)) warnings.Add($"{formatter(state, exception)}: {exception}");
+        }
     }
 }

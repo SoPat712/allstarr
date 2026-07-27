@@ -205,59 +205,31 @@ public sealed class DatabaseApplicationCache(
         var effectiveExpiry = expiry ?? ApplicationCachePolicyRegistry.Resolve(key, _settings).FreshFor;
         var expiresAt = now.Add(effectiveExpiry);
         var category = ApplicationCachePolicyRegistry.Classify(key).ToString();
+        var nowTicks = now.UtcTicks;
+        var expiresAtTicks = expiresAt.UtcTicks;
 
         try
         {
             await using var database = await contextFactory.CreateDbContextAsync();
-            var updated = await UpdateExistingAsync(
-                database,
-                key,
-                value,
-                payloadBytes,
-                category,
-                now,
-                expiresAt);
-            if (updated > 0)
+            var written = await database.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO application_cache_entries
+                    ("Key", "Category", "Value", "PayloadBytes", "CreatedAt", "UpdatedAt", "ExpiresAt")
+                VALUES
+                    ({key}, {category}, {value}, {payloadBytes}, {nowTicks}, {nowTicks}, {expiresAtTicks})
+                ON CONFLICT ("Key") DO UPDATE SET
+                    "Category" = EXCLUDED."Category",
+                    "Value" = EXCLUDED."Value",
+                    "PayloadBytes" = EXCLUDED."PayloadBytes",
+                    "UpdatedAt" = EXCLUDED."UpdatedAt",
+                    "ExpiresAt" = EXCLUDED."ExpiresAt"
+                """);
+            if (written > 0)
             {
                 Interlocked.Increment(ref _writes);
                 return true;
             }
 
-            database.Set<ApplicationCacheEntryRecord>().Add(new ApplicationCacheEntryRecord
-            {
-                Key = key,
-                Category = category,
-                Value = value,
-                PayloadBytes = payloadBytes,
-                CreatedAt = now,
-                UpdatedAt = now,
-                ExpiresAt = expiresAt
-            });
-
-            try
-            {
-                await database.SaveChangesAsync();
-                Interlocked.Increment(ref _writes);
-                return true;
-            }
-            catch (DbUpdateException)
-            {
-                database.ChangeTracker.Clear();
-                var recovered = await UpdateExistingAsync(
-                    database,
-                    key,
-                    value,
-                    payloadBytes,
-                    category,
-                    now,
-                    expiresAt) > 0;
-                if (recovered)
-                {
-                    Interlocked.Increment(ref _writes);
-                }
-
-                return recovered;
-            }
+            return false;
         }
         catch (Exception exception)
         {
@@ -770,23 +742,6 @@ public sealed class DatabaseApplicationCache(
             return deletedTotal;
         }
     }
-
-    private static Task<int> UpdateExistingAsync(
-        AllstarrDbContext database,
-        string key,
-        string value,
-        int payloadBytes,
-        string category,
-        DateTimeOffset now,
-        DateTimeOffset? expiresAt) =>
-        database.Set<ApplicationCacheEntryRecord>()
-            .Where(item => item.Key == key)
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(item => item.Value, value)
-                .SetProperty(item => item.PayloadBytes, payloadBytes)
-                .SetProperty(item => item.Category, category)
-                .SetProperty(item => item.UpdatedAt, now)
-                .SetProperty(item => item.ExpiresAt, expiresAt));
 
     private static bool IsValidKey(string key) =>
         !string.IsNullOrWhiteSpace(key) && key.Length <= MaximumKeyCharacters;
