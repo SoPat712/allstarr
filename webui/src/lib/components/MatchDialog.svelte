@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Dialog, Tabs } from "bits-ui";
+  import { Dialog } from "bits-ui";
   import {
     matchReview,
     type MatchReviewItem,
@@ -7,6 +7,7 @@
     type ProviderDefinition,
   } from "$lib/api";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import { percent, playableProviders, scoreComponents } from "$lib/mappings";
   import { formatDuration } from "$lib/playlists";
 
@@ -204,17 +205,16 @@
           {/if}
         </section>
 
-        <Tabs.Root
-          value={targetMode}
-          loop
-          onValueChange={(value) => switchMode(value as "local" | "provider")}
-        >
-          <Tabs.List class="match-target-tabs" aria-label="Candidate source">
-            <span class:provider={targetMode === "provider"} aria-hidden="true"></span>
-            <Tabs.Trigger value="local">Local library</Tabs.Trigger>
-            <Tabs.Trigger value="provider">Playable providers</Tabs.Trigger>
-          </Tabs.List>
-        </Tabs.Root>
+        <SegmentedNav
+          items={[
+            { id: "local", label: "Local library" },
+            { id: "provider", label: "Playable providers" },
+          ]}
+          active={targetMode}
+          label="Candidate source"
+          class="match-target-tabs"
+          onchange={(value) => switchMode(value as "local" | "provider")}
+        />
 
         <form class="target-search" onsubmit={(event) => { event.preventDefault(); void search(); }}>
           {#if targetMode === "provider"}

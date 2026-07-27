@@ -1045,7 +1045,7 @@ test("Segmented navigation and match tabs support arrow keys", async ({ page }) 
   const dialog = page.getByRole("dialog", { name: "Test song" });
   await dialog.getByRole("tab", { name: "Local library" }).focus();
   await page.keyboard.press("ArrowRight");
-  await expect(dialog.getByRole("tab", { name: "Playable providers" })).toHaveAttribute("data-state", "active");
+  await expect(dialog.getByRole("tab", { name: "Playable providers" })).toHaveAttribute("aria-selected", "true");
 
   await page.goto("#/settings/extensions");
   await page.getByRole("tab", { name: /Installed/ }).focus();
