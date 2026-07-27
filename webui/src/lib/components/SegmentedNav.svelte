@@ -15,8 +15,6 @@
     onchange?: (id: string) => void;
   } = $props();
 
-  const activeIndex = $derived(Math.max(0, items.findIndex((item) => item.id === active)));
-
   function navigate(event: KeyboardEvent) {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     const tabs = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('[role="tab"]')];
@@ -38,10 +36,9 @@
     class={`segmented-tabs ${className}`}
     role="tablist"
     tabindex="-1"
-    style={`--tab-count:${items.length};--tab-index:${activeIndex}`}
+    style={`--tab-count:${items.length}`}
     onkeydown={navigate}
   >
-    <span class="segmented-tab-indicator" aria-hidden="true"></span>
     {#each items as item}
       {#if item.href}
         <a

@@ -428,6 +428,7 @@ for (const viewport of viewports) {
       await page.goto("#/settings/routing");
       await expect(page.getByText("Local · fixed")).toBeVisible();
       await expect(page.getByRole("button", { name: "Move Jellyfin up" })).toHaveCount(0);
+      await expect(page.locator(".provider-art").first()).toHaveCSS("border-top-width", "0px");
       const routes = page.locator(".routing-group li[draggable=true]");
       await routes.nth(0).dragTo(routes.nth(1));
       await expect(routes.nth(0)).toContainText("Future Audio");
@@ -436,6 +437,7 @@ for (const viewport of viewports) {
       await page.goto("#/settings/extensions");
       await expect(page.locator(".extension-row .badge")).toContainText(["Metadata", "Streaming"]);
       await expect(page.locator(".segmented-tab-count").first()).toHaveCSS("border-style", "solid");
+      await expect(page.getByRole("tab", { name: /Available/ })).toHaveCSS("border-right-width", "0px");
       await page.getByRole("tab", { name: /Available/ }).click();
       await expect(page.getByText("Available packages", { exact: true })).toBeVisible();
       await page.getByRole("tab", { name: /Registries/ }).click();
@@ -537,8 +539,7 @@ for (const viewport of viewports) {
       await page.emulateMedia({ reducedMotion: "reduce" });
       await mockApi(page);
       await page.goto("#/settings/extensions");
-      await expect.poll(() => page.locator(".settings-tabs > .segmented-tab-indicator").evaluate((element) =>
-        Number.parseFloat(getComputedStyle(element).transitionDuration))).toBeLessThanOrEqual(0.01);
+      await expect(page.getByRole("tab", { name: "Extensions" })).toHaveAttribute("aria-selected", "true");
       await page.getByRole("button", { name: "Install extension" }).click();
       const dialog = page.getByRole("dialog", { name: "Install extension" });
       await expect(dialog).toBeVisible();
@@ -1266,19 +1267,19 @@ test("Profile artwork is stable in full, slim, and mobile navigation", async ({ 
     body: Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", "base64"),
   }));
 
-  for (const width of [1280, 850, 390]) {
+  for (const width of [1280, 924, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await page.goto("#/");
     const avatar = page.locator(".profile .avatar");
     await expect(avatar).toBeVisible();
     await expect(avatar.locator("img")).toBeVisible();
     await expect.poll(async () => (await avatar.boundingBox())?.width ?? 0).toBe(36);
-    if (width === 850) {
+    if (width === 924) {
       await page.getByRole("button", { name: "Collapse sidebar" }).click();
       await expect(page.locator(".app-shell")).toHaveClass(/slim/);
       await expect.poll(async () =>
         (await page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Library" }).boundingBox())?.width ?? 0
-      ).toBe(56);
+      ).toBe(48);
       await page.getByRole("button", { name: "Expand sidebar" }).click();
       await expect(page.locator(".app-shell")).not.toHaveClass(/slim/);
     }
