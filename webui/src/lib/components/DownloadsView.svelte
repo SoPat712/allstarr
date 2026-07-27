@@ -238,8 +238,10 @@
                 <strong>{file.quality || file.codec}</strong>
                 <small>{qualityDetails(file).join(" · ")}</small>
               </span>
-              <span role="cell">{file.sizeFormatted}</span>
-              <span role="cell"><time datetime={file.lastModified}>{relativeTime(file.lastModified)}</time></span>
+              <span role="cell" aria-label={`Size ${file.sizeFormatted}`}>{file.sizeFormatted}</span>
+              <span role="cell" aria-label={`Updated ${relativeTime(file.lastModified)}`}>
+                <time datetime={file.lastModified}>{relativeTime(file.lastModified)}</time>
+              </span>
               <span class="download-actions" role="cell">
                 <a class="button-secondary" href={downloads.fileUrl(file.path, storage)}>Download</a>
                 {#if cached}<button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => void keep(file)}>Keep</button>{/if}

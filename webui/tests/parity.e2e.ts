@@ -617,6 +617,28 @@ test("Event log groups matching work and preserves actionable history", async ({
   await expect(page).toHaveURL(/#\/library\/mappings\?search=Song%200$/);
 });
 
+test("Cached and Kept keep media facts and actions readable on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+  await page.goto("#/library/cached");
+  const cached = page.locator(".download-row");
+  await expect(cached.getByText("FLAC · 900 kbps · 16-bit · 44.1 kHz · 2 ch")).toBeVisible();
+  await expect(cached.getByRole("cell", { name: "Size 1000 KiB" })).toBeVisible();
+  await expect(cached.getByRole("cell", { name: /^Updated / })).toBeVisible();
+  await expect(cached.getByRole("link", { name: "Download" })).toBeInViewport();
+  await expect(cached.getByRole("button", { name: "Keep" })).toBeInViewport();
+  await expect(cached.getByRole("button", { name: "Remove" })).toBeInViewport();
+
+  await page.goto("#/library/kept");
+  const kept = page.locator(".download-row");
+  await expect(kept.getByRole("button", { name: "Keep" })).toHaveCount(0);
+  const downloadWidth = (await kept.getByRole("link", { name: "Download" }).boundingBox())?.width ?? 0;
+  const removeWidth = (await kept.getByRole("button", { name: "Remove" }).boundingBox())?.width ?? 0;
+  expect(Math.abs(downloadWidth - removeWidth)).toBeLessThanOrEqual(1);
+  await kept.getByRole("button", { name: "Remove" }).click();
+  await expect(page.getByRole("alertdialog", { name: "Remove this track?" })).toBeVisible();
+});
+
 test("Playlist details use a responsive dialog and track rows open mapping review", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
