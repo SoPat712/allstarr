@@ -646,6 +646,7 @@ test("Event log groups matching work and preserves actionable history", async ({
           sourceTitle: `Song ${index}`, targetProviderId: "library",
           targetTitle: `Local Song ${index}`, confidenceLabel: "96%",
           sourceProviderTrackId: `provider-${index}`, backendItemId: `backend-${index}`,
+          artworkUrl: `/artwork-${index}.jpg`,
         }));
     return route.fulfill({
       status: 200,
@@ -661,6 +662,7 @@ test("Event log groups matching work and preserves actionable history", async ({
   await page.goto("#/activity");
 
   await expect(page.getByText("Matched 3 tracks across 2 playlists")).toBeVisible();
+  await expect(page.locator(".event-log-group summary .event-kind-icon img")).toHaveCount(1);
   await expect.poll(() => page.evaluate(() =>
     document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   await page.getByLabel("Search").fill("missing event");

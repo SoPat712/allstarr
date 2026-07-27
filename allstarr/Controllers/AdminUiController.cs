@@ -413,7 +413,7 @@ public class AdminUiController : ControllerBase
                 ? "Download placed"
                 : "Track cached",
             item.State.ToString().ToLowerInvariant(),
-            $"{FormatBytes(item.Length)} verified from {item.ProviderId}",
+            $"{FormatBytes(item.Length)} verified",
             item.PlacedAt ?? item.VerifiedAt,
             item.DurableJobId.ToString("N"),
             SeverityForState(item.State.ToString()),

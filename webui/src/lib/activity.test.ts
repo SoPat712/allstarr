@@ -56,6 +56,13 @@ describe("event log presentation", () => {
       provider: "",
       severity: "",
     })).toHaveLength(1);
+    expect(filterActivity([item("1", "Song A")], {
+      query: "",
+      kind: "",
+      outcome: "",
+      provider: "future-extension",
+      severity: "",
+    })).toHaveLength(0);
     expect(humanize("provider_health.failed")).toBe("Provider Health Failed");
     expect(activityLink({ ...item("1", "Song A"), sourceTitle: "Song A" }))
       .toBe("#/library/mappings?search=Song%20A");

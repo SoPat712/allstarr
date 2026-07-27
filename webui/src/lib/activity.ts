@@ -28,7 +28,7 @@ export function filterActivity(items: ActivityItem[], filters: ActivityFilters) 
   return items.filter((item) => {
     if (filters.kind && item.kind !== filters.kind) return false;
     if (filters.outcome && item.state !== filters.outcome) return false;
-    if (filters.provider && (item.providerId || item.source) !== filters.provider) return false;
+    if (filters.provider && item.providerId !== filters.provider) return false;
     if (filters.severity && (item.severity || "info") !== filters.severity) return false;
     return !query || [
       item.label,

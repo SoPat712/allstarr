@@ -49,7 +49,7 @@
   const groups = $derived(groupActivity(filtered));
   const kinds = $derived(unique(items.map((item) => item.kind)));
   const outcomes = $derived(unique(items.map((item) => item.state)));
-  const eventProviders = $derived(unique(items.map((item) => item.providerId || item.source)));
+  const eventProviders = $derived(unique(items.map((item) => item.providerId)));
   const severities = $derived(unique(items.map((item) => item.severity || "info")));
   const filtering = $derived(Boolean(query || kind || outcome || providerFilter || severity));
 
@@ -255,7 +255,7 @@
         >
           <summary>
             <span class="event-kind-icon" data-severity={severityState} aria-hidden="true">
-              {activityIcon(first.kind)}
+              {#if first.artworkUrl}<img src={first.artworkUrl} alt="" loading="lazy" />{:else}{activityIcon(first.kind)}{/if}
             </span>
             <span class="event-summary-copy">
               <span>
@@ -265,8 +265,8 @@
               {#if first.kind === "matching"}
                 <span class="event-route">
                   <span>
-                    <ProviderMark id={first.providerId || first.source} definition={provider(first.providerId || first.source)} />
-                    <span><small>{providerName(first.providerId || first.source)}</small><strong>{first.sourceTitle || first.detail}</strong></span>
+                    {#if first.providerId}<ProviderMark id={first.providerId} definition={provider(first.providerId)} />{/if}
+                    <span><small>{providerName(first.providerId)}</small><strong>{first.sourceTitle || first.detail}</strong></span>
                   </span>
                   <i aria-hidden="true">→</i>
                   <span class:unresolved={!first.targetProviderId}>
@@ -277,7 +277,7 @@
                   </span>
                 </span>
               {:else}
-                <small>{providerName(first.providerId || first.source)} · {first.detail}</small>
+                <small>{providerName(first.providerId)} · {first.detail}</small>
               {/if}
             </span>
             <span class={`status-pill ${outcomeClass(groupState)}`}>{humanize(groupState)}</span>
@@ -303,7 +303,7 @@
                   {#if item.kind === "matching"}
                     <p>{item.sourceArtist ? `${item.sourceArtist} · ` : ""}{item.sourceTitle || item.detail}</p>
                     <div class="event-child-route">
-                      <span>{providerName(item.providerId || item.source)}</span>
+                      <span>{providerName(item.providerId)}</span>
                       <i aria-hidden="true">→</i>
                       <strong>{item.targetTitle || "No playable match"}</strong>
                       {#if item.confidenceLabel}<span>{item.confidenceLabel}</span>{/if}
