@@ -339,7 +339,7 @@
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>
 
-  <Dialog.Root open={reviewOpen}>
+  <Dialog.Root bind:open={reviewOpen}>
     <Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog extension-review-dialog">
       <header class="dialog-heading"><div><Dialog.Title>Review permissions</Dialog.Title><Dialog.Description>{reviewPackage?.displayName} needs explicit access before its runtime can start.</Dialog.Description></div></header>
       {#if previousPackage}

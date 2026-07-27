@@ -466,7 +466,11 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
 
   await page.goto("#/settings/extensions");
   await page.getByRole("button", { name: "Review permissions" }).click();
-  const review = page.getByRole("dialog", { name: "Review permissions" });
+  let review = page.getByRole("dialog", { name: "Review permissions" });
+  await page.keyboard.press("Escape");
+  await expect(review).toBeHidden();
+  await page.getByRole("button", { name: "Review permissions" }).click();
+  review = page.getByRole("dialog", { name: "Review permissions" });
   await expect(review.getByText("Update 1.0.0 → 2.0.0. Capability and permission changes are shown below.")).toBeVisible();
   await expect(review.getByText("New access", { exact: false })).toBeVisible();
   await expect(review.getByText("Removed access", { exact: false })).toBeVisible();
