@@ -185,7 +185,7 @@ public sealed class ComposeContractTests
         Assert.Contains("aspnet:10.0.9@sha256:", dockerfile, StringComparison.Ordinal);
         Assert.Contains("node:22.23.1-alpine3.23@sha256:", dockerfile, StringComparison.Ordinal);
         Assert.Contains("COPY webui/package.json webui/package-lock.json", dockerfile, StringComparison.Ordinal);
-        Assert.Contains("COPY --from=webui /src/webui/build ./wwwroot/next/", dockerfile, StringComparison.Ordinal);
+        Assert.Contains("COPY --from=webui /src/webui/build ./wwwroot/", dockerfile, StringComparison.Ordinal);
         Assert.Contains("postgresql-client-18", dockerfile, StringComparison.Ordinal);
         Assert.Contains("/app/state/backups", dockerfile, StringComparison.Ordinal);
     }

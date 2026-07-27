@@ -41,26 +41,6 @@ public class AdminStaticFilesMiddleware
                 return;
             }
 
-            // Keep the replacement SPA opt-in until route parity and cutover.
-            if (path == "/next")
-            {
-                context.Response.Redirect("/next/", permanent: true, preserveMethod: true);
-                return;
-            }
-
-            if (path == "/next/")
-            {
-                var nextIndexPath = Path.Combine(_webRootPath, "next", "index.html");
-                if (File.Exists(nextIndexPath))
-                {
-                    SetRevalidationHeaders(context.Response);
-                    context.Response.ContentType = "text/html";
-                    await context.Response.SendFileAsync(nextIndexPath);
-                    return;
-                }
-            }
-
-            // Serve the current application for the root path.
             if (path == "/" || path == "/index.html")
             {
                 var indexPath = Path.Combine(_webRootPath, "index.html");
@@ -83,7 +63,7 @@ public class AdminStaticFilesMiddleware
 
             if (File.Exists(candidatePath))
             {
-                if (path.StartsWith("/next/_app/immutable/", StringComparison.Ordinal))
+                if (path.StartsWith("/_app/immutable/", StringComparison.Ordinal))
                 {
                     context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
                 }
@@ -104,9 +84,7 @@ public class AdminStaticFilesMiddleware
 
     private static void SetRevalidationHeaders(HttpResponse response)
     {
-        // The WebUI ships inside the application image without content-hashed asset
-        // names. Prevent a browser from reusing JavaScript or CSS from the previous
-        // container after an update.
+        // Entry HTML and shared static media must revalidate across container updates.
         response.Headers.CacheControl = "no-store";
         response.Headers.Pragma = "no-cache";
         response.Headers.Expires = "0";

@@ -101,9 +101,9 @@ Playlist source entries, order, matches, decisions, sync timestamps, sessions, a
 
 ## WebUI
 
-The shipped WebUI is a static Lit application in `allstarr/wwwroot/js/webui.js` with shared CSS in `allstarr/wwwroot/css`.
-
-A framework and visual redesign is unfinished work, not current architecture. The replacement defines its own component foundation from current product requirements rather than preserving the Lit-era design. Until cutover, fixes must not create a second source of truth or bypass the existing HTTP contracts.
+The WebUI is a Svelte 5 and SvelteKit static SPA built from `webui/`. ASP.NET
+serves its hashed assets on the administration port and remains the sole owner
+of API, authentication, and authorization behavior.
 
 ## Optional upstream services
 

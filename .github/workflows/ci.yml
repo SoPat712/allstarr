@@ -48,9 +48,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            webui/package-lock.json
+          cache-dependency-path: webui/package-lock.json
 
       - name: Install PostgreSQL 18 client
         shell: bash
@@ -80,9 +78,6 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore -p:NuGetAudit=true
 
-      - name: Restore legacy WebUI tooling
-        run: npm ci
-
       - name: Restore Svelte WebUI
         working-directory: webui
         run: |
@@ -94,9 +89,6 @@ jobs:
 
       - name: Build
         run: dotnet build --configuration Release --no-restore -p:TreatWarningsAsErrors=true
-
-      - name: Verify legacy WebUI contracts
-        run: npm run check:webui
 
       - name: Verify Svelte WebUI
         working-directory: webui

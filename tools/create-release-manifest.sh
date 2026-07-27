@@ -83,7 +83,7 @@ apple_lock_files=(
 migration_digest="$(hash_set migrations "${migration_files[@]}")"
 compose_digest="$(hash_set compose "${compose_files[@]}")"
 apple_digest="$(hash_set apple "${apple_lock_files[@]}")"
-package_lock_digest="$(hash_file package-lock.json)"
+package_lock_digest="$(hash_file webui/package-lock.json)"
 
 generated_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 

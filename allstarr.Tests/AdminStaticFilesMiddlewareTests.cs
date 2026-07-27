@@ -82,57 +82,10 @@ public class AdminStaticFilesMiddlewareTests
     }
 
     [Fact]
-    public async Task InvokeAsync_NextRoot_ServesUncachedSvelteEntry()
+    public async Task InvokeAsync_HashedAsset_ServesWithImmutableCaching()
     {
         var webRoot = CreateTempWebRoot();
-        var nextDir = Path.Combine(webRoot, "next");
-        Directory.CreateDirectory(nextDir);
-        await File.WriteAllTextAsync(Path.Combine(nextDir, "index.html"), "<html>svelte</html>");
-
-        try
-        {
-            var middleware = CreateMiddleware(webRoot, out var nextInvoked);
-            var context = CreateContext(localPort: 5275, path: "/next/");
-
-            await middleware.InvokeAsync(context);
-
-            Assert.False(nextInvoked());
-            Assert.Equal("text/html", context.Response.ContentType);
-            Assert.Equal("no-store", context.Response.Headers.CacheControl);
-        }
-        finally
-        {
-            DeleteTempWebRoot(webRoot);
-        }
-    }
-
-    [Fact]
-    public async Task InvokeAsync_NextWithoutTrailingSlash_RedirectsToCanonicalEntry()
-    {
-        var webRoot = CreateTempWebRoot();
-
-        try
-        {
-            var middleware = CreateMiddleware(webRoot, out var nextInvoked);
-            var context = CreateContext(localPort: 5275, path: "/next");
-
-            await middleware.InvokeAsync(context);
-
-            Assert.False(nextInvoked());
-            Assert.Equal(StatusCodes.Status308PermanentRedirect, context.Response.StatusCode);
-            Assert.Equal("/next/", context.Response.Headers.Location);
-        }
-        finally
-        {
-            DeleteTempWebRoot(webRoot);
-        }
-    }
-
-    [Fact]
-    public async Task InvokeAsync_NextHashedAsset_ServesWithImmutableCaching()
-    {
-        var webRoot = CreateTempWebRoot();
-        var assetDir = Path.Combine(webRoot, "next", "_app", "immutable", "chunks");
+        var assetDir = Path.Combine(webRoot, "_app", "immutable", "chunks");
         Directory.CreateDirectory(assetDir);
         await File.WriteAllTextAsync(Path.Combine(assetDir, "app.abc123.js"), "export {};");
 
@@ -141,7 +94,7 @@ public class AdminStaticFilesMiddlewareTests
             var middleware = CreateMiddleware(webRoot, out var nextInvoked);
             var context = CreateContext(
                 localPort: 5275,
-                path: "/next/_app/immutable/chunks/app.abc123.js");
+                path: "/_app/immutable/chunks/app.abc123.js");
 
             await middleware.InvokeAsync(context);
 

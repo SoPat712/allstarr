@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { acceptUpdate } from "./live-updates.svelte";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { acceptUpdate, liveUpdates } from "./live-updates.svelte";
+
+afterEach(() => {
+  liveUpdates.close();
+  vi.useRealTimers();
+});
 
 describe("acceptUpdate", () => {
   it("deduplicates event IDs without comparing unrelated resource revisions", () => {
@@ -38,5 +43,24 @@ describe("acceptUpdate", () => {
         eventIds,
       ),
     ).toBe(false);
+  });
+
+  it("polls only while the unified stream is unavailable", () => {
+    vi.useFakeTimers();
+    const listener = vi.fn();
+    const unsubscribe = liveUpdates.subscribe(listener, 1_000);
+
+    liveUpdates.state.status = "reconnecting";
+    vi.advanceTimersByTime(1_000);
+    expect(listener).toHaveBeenCalledOnce();
+
+    liveUpdates.state.status = "live";
+    vi.advanceTimersByTime(1_000);
+    expect(listener).toHaveBeenCalledOnce();
+
+    unsubscribe();
+    liveUpdates.state.status = "stale";
+    vi.advanceTimersByTime(1_000);
+    expect(listener).toHaveBeenCalledOnce();
   });
 });

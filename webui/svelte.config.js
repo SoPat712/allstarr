@@ -9,9 +9,6 @@ const config = {
       fallback: "index.html",
       strict: true,
     }),
-    paths: {
-      base: "/next",
-    },
     router: {
       type: "hash",
     },

@@ -307,7 +307,7 @@
         </div>
         <div class="live-state" data-state={liveUpdates.state.status}>
           <span aria-hidden="true"></span>
-          {liveUpdates.state.status}
+          {liveUpdates.state.status[0].toUpperCase() + liveUpdates.state.status.slice(1)}
         </div>
       </header>
 
@@ -335,12 +335,9 @@
       {:else}
         <section class="panel empty-state">
           <span class="empty-orbit" aria-hidden="true">✦</span>
-          <p class="eyebrow">Svelte migration preview</p>
-          <h2>{activeDestination.label} is next in line.</h2>
-          <p>
-            This opt-in shell is isolated at <code>/next/#/</code>. The current WebUI remains
-            available while complete routes move over one at a time.
-          </p>
+          <p class="eyebrow">Page not found</p>
+          <h2>This Allstarr view does not exist.</h2>
+          <p>Use the navigation to return to a current workspace.</p>
         </section>
       {/if}
     </main>

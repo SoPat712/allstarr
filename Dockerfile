@@ -57,7 +57,7 @@ RUN apt-get update \
 RUN install -d /app/downloads /app/kept /app/cache /app/state/backups
 
 COPY --from=build /app/publish .
-COPY --from=webui /src/webui/build ./wwwroot/next/
+COPY --from=webui /src/webui/build ./wwwroot/
 
 # Program.cs owns both listeners. Clear the base image's default HTTP_PORTS value
 # so Kestrel does not report a duplicate address override during every startup.

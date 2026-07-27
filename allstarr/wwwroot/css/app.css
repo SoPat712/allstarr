@@ -1,9 +1,0 @@
-@layer tokens, legacy, foundation, primitives, shell, workspaces, responsive;
-
-@import url("./tokens.css") layer(tokens);
-@import url("./base.css") layer(legacy);
-@import url("./foundation.css") layer(foundation);
-@import url("./primitives.css") layer(primitives);
-@import url("./shell.css") layer(shell);
-@import url("./workspaces.css") layer(workspaces);
-@import url("./responsive.css") layer(responsive);

@@ -81,12 +81,8 @@
   onMount(() => {
     void load();
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
-    const fallback = setInterval(() => {
-      if (liveUpdates.state.status !== "live") void load();
-    }, 5_000);
     return () => {
       unsubscribe();
-      clearInterval(fallback);
       if (refreshTimer) clearTimeout(refreshTimer);
     };
   });

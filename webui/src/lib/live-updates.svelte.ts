@@ -81,9 +81,15 @@ export const liveUpdates = {
       scheduleStale();
     };
   },
-  subscribe(listener: (event: UpdateEvent) => void) {
+  subscribe(listener: (event: UpdateEvent) => void, pollInterval = 15_000) {
     listeners.add(listener);
-    return () => listeners.delete(listener);
+    const fallback = setInterval(() => {
+      if (state.status !== "live") listener({});
+    }, pollInterval);
+    return () => {
+      listeners.delete(listener);
+      clearInterval(fallback);
+    };
   },
   close() {
     source?.close();
