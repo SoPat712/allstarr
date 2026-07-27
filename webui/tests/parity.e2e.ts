@@ -11,7 +11,10 @@ const schema = {
   activeBackend: "Jellyfin",
   providers: [
     { id: "jellyfin", name: "Jellyfin", categories: ["streaming"] },
-    { id: "lumen-audio", name: "Lumen Audio", categories: ["metadata", "streaming"] },
+    {
+      id: "lumen-audio", name: "Lumen Audio", categories: ["metadata", "streaming"],
+      accountSettings: [{ key: "token", label: "Access token", type: "password", sensitive: true, required: true }],
+    },
   ],
   configSections: [{
     id: "general", label: "General", fields: [
@@ -37,7 +40,14 @@ const responses: Record<string, unknown> = {
   "/api/admin/ui/activity?limit=8": { items: [], hasMore: false },
   "/api/admin/ui/provider-summaries": { providers: [] },
   "/api/admin/playlist-links": { playlistLinks: [] },
-  "/api/admin/provider-accounts": { managementMode: "ApplicationManaged", accounts: [] },
+  "/api/admin/provider-accounts": {
+    managementMode: "ApplicationManaged",
+    accounts: [{
+      id: "account", providerId: "lumen-audio", displayName: "Lumen account",
+      sourceDisplayName: "Lumen Audio", scope: "User", enabled: true, revision: 1,
+      secret: { configured: true, revoked: false }, createdAt: "2026-01-01", updatedAt: "2026-01-01",
+    }],
+  },
   "/api/admin/providers/status": [],
   "/api/admin/provider-diagnostics/deep-stream/latest": { measurements: [] },
   "/api/admin/config": {
@@ -75,11 +85,31 @@ async function mockApi(page: Page) {
     let body = responses[`${url.pathname}${url.search}`] ?? responses[url.pathname];
     if (url.pathname === "/api/admin/ui/activity") body = { items: [], hasMore: false };
     if (url.pathname === "/api/admin/downloads")
-      body = { storage: url.searchParams.get("storage"), files: [], totalSize: 0, totalSizeFormatted: "0 B", count: 0 };
+      body = {
+        storage: url.searchParams.get("storage"),
+        files: [{
+          path: "/managed/song.flac", storage: url.searchParams.get("storage"), artist: "Artist",
+          album: "Album", title: "Test song", fileName: "song.flac", size: 1_024_000,
+          sizeFormatted: "1000 KiB", lastModified: "2026-01-01", codec: "FLAC",
+          bitrateKbps: 900, sampleRateHz: 44_100, bitDepth: 16, channels: 2,
+          durationMilliseconds: 180_000, quality: "Lossless", provider: "lumen-audio",
+          externalId: "track-1",
+        }],
+        totalSize: 1_024_000, totalSizeFormatted: "1000 KiB", count: 1,
+      };
     if (url.pathname === "/api/admin/track-matches")
       body = {
-        matches: [], stats: { total: 0, matched: 0, accepted: 0, unresolved: 0, review: 0, rejected: 0, attention: 0 },
-        pagination: { page: 1, pageSize: 50, total: 0, totalPages: 0 },
+        matches: [{
+          externalSnapshotId: "snapshot", providerId: "lumen-audio", libraryScopeId: "library",
+          state: "review", decisionSource: "automatic", confidence: 0.82, threshold: 0.9,
+          title: "Test song", artist: "Artist", album: "Album", durationMilliseconds: 180_000,
+          providerIdentities: [], reasons: ["title_match"], warnings: [], candidates: [{
+            libraryTrackId: "local-track", title: "Test song", artist: "Artist", album: "Album",
+            confidence: 0.82, durationMilliseconds: 180_000,
+          }],
+        }],
+        stats: { total: 1, matched: 0, accepted: 0, unresolved: 0, review: 1, rejected: 0, attention: 1 },
+        pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
       };
     await route.fulfill({
       status: body === undefined ? 404 : 200,
@@ -129,6 +159,36 @@ for (const viewport of viewports) {
       const dialog = page.getByRole("alertdialog", { name: "Purge the application cache?" });
       await expect(dialog).toBeVisible();
       await expect(dialog.getByRole("button", { name: "Purge cache" })).toBeInViewport();
+    });
+
+    test("Source dialogs remain usable", async ({ page }) => {
+      await mockApi(page);
+      await page.goto("#/sources");
+      await page.getByRole("button", { name: "Connect Source" }).click();
+      await expect(page.getByRole("dialog", { name: "Connect a Source" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Save and test" })).toBeInViewport();
+      await page.getByRole("button", { name: "Close source connection dialog" }).click();
+      await page.getByRole("button", { name: "Audience Only me" }).click();
+      await expect(page.getByRole("dialog", { name: "Lumen Audio" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Save access" })).toBeInViewport();
+    });
+
+    test("Match and removal dialogs remain usable", async ({ page }) => {
+      await mockApi(page);
+      await page.goto("#/library/mappings");
+      await page.getByRole("button", { name: "Review match" }).click();
+      await expect(page.getByRole("dialog", { name: "Test song" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Reject candidate" })).toBeInViewport();
+      await page.getByRole("button", { name: "Reject candidate" }).click();
+      const reject = page.getByRole("alertdialog", { name: "Reject this candidate?" });
+      await expect(reject).toBeVisible();
+      await expect(reject.getByRole("button", { name: "Reject candidate" })).toBeInViewport();
+
+      await page.goto("#/library/cached");
+      await page.getByRole("button", { name: "Remove", exact: true }).click();
+      const removal = page.getByRole("alertdialog", { name: "Remove this track?" });
+      await expect(removal).toBeVisible();
+      await expect(removal.getByRole("button", { name: "Remove track" })).toBeInViewport();
     });
   });
 }
