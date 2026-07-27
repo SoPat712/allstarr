@@ -150,6 +150,7 @@ public sealed class ComposeContractTests
         Assert.Contains("--profile apple", controller, StringComparison.Ordinal);
         Assert.Contains("git diff --quiet && git diff --cached --quiet", controller, StringComparison.Ordinal);
         Assert.Contains("git pull --ff-only", controller, StringComparison.Ordinal);
+        Assert.Contains("docker builder prune --force --min-free-space 8GB", controller, StringComparison.Ordinal);
         Assert.Contains("tracked source files have local changes", controller, StringComparison.Ordinal);
         Assert.Contains("prepare-apple) prepare_apple \"$@\" ;;", controller, StringComparison.Ordinal);
         Assert.Contains("up -d --remove-orphans --wait --wait-timeout 180", controller, StringComparison.Ordinal);

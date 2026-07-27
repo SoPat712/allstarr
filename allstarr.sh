@@ -203,6 +203,8 @@ update() {
     git diff --quiet && git diff --cached --quiet ||
       die "tracked source files have local changes; commit or stash them before updating"
     git pull --ff-only
+    docker image prune --force
+    docker builder prune --force --min-free-space 8GB
     docker compose "${COMPOSE[@]}" build allstarr
     if profiles | grep -qx apple; then
       docker compose "${COMPOSE[@]}" build apple-gateway
