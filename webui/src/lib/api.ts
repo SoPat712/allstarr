@@ -147,6 +147,45 @@ export type UiSchema = {
   activeBackend: string;
   providerAccountManagementMode?: string;
   providers: ProviderDefinition[];
+  configSections?: ConfigSection[];
+  priorityGroups?: PriorityGroup[];
+};
+
+export type ConfigField = {
+  key: string;
+  label: string;
+  type: string;
+  valuePath?: string | null;
+  options?: string[];
+  placeholder?: string | null;
+  sensitive?: boolean;
+  required?: boolean;
+  ownership?: string;
+  readOnly?: boolean;
+  helpText?: string | null;
+  min?: number | null;
+  max?: number | null;
+};
+
+export type ConfigSection = {
+  id: string;
+  label: string;
+  fields: ConfigField[];
+};
+
+export type PriorityGroup = {
+  id: string;
+  label: string;
+  description?: string | null;
+  envKey: string;
+  enabledEnvKey?: string | null;
+  providers: string[];
+  pinnedProvider?: {
+    id: string;
+    name: string;
+    icon: string;
+    reason: string;
+  } | null;
 };
 
 export type ProviderAccount = {
@@ -411,8 +450,8 @@ async function json<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T>
   });
 
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(body?.error || `${response.status} ${response.statusText}`);
+    const body = (await response.json().catch(() => null)) as { error?: string; message?: string } | null;
+    throw new Error(body?.error || body?.message || `${response.status} ${response.statusText}`);
   }
 
   if (response.status === 204) return undefined as T;
@@ -505,6 +544,160 @@ export const sources = {
         providerAccountId: account.id,
         quality,
       }),
+    }),
+};
+
+export const settings = {
+  config: () => json<Record<string, unknown>>("/api/admin/config"),
+  save: (updates: Record<string, string>) =>
+    json<{ message: string; updatedKeys: string[] }>("/api/admin/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ updates }),
+    }),
+  storage: () => json<{
+    storage: { provider?: string; readiness?: string; checkedAt?: string };
+    backups: Array<{ id: string; status: string; createdAt: string; verifiedAt?: string | null }>;
+  }>("/api/admin/storage"),
+  backup: () => json<{ id: string; status: string }>("/api/admin/storage/backups", { method: "POST" }),
+  cache: () => json<{
+    database: { entryCount: number; payloadBytes: number; hitRatio: number };
+    hot: { entryCount: number; payloadBytes: number; hitRatio: number };
+    media: { entryCount: number; payloadBytes: number; maximumBytes?: number | null; hitRatio: number };
+    activity: { coalescedRequests: number; staleServes: number; upstreamBytesAvoided: number };
+    extensionStorage: { activeExtensions: number; entryCount: number; payloadBytes: number; maximumBytes: number };
+    capturedAt: string;
+  }>("/api/admin/cache"),
+  cachePreview: () => json<{
+    metadata: { expiredEntries: number; overQuotaEntries: number; reclaimableBytes: number };
+    media: { expiredEntries?: number; overQuotaEntries?: number; reclaimableBytes?: number };
+    unreferencedArtworkPayloads: number;
+    unreferencedArtworkBytes: number;
+  }>("/api/admin/cache/maintenance/preview"),
+  cleanCache: () => json<{ deleted: number }>("/api/admin/cache/maintenance", { method: "POST" }),
+  purgeCache: (scope: "metadata" | "media" | "all") =>
+    json<{ deleted: number }>(`/api/admin/cache/${scope}`, { method: "DELETE" }),
+  mediaProbe: () => json<{ success: boolean; code: string; message: string }>("/api/admin/media-probe"),
+  playlistProbe: () => json<{ success: boolean; code: string; message: string }>("/api/admin/playlist-readiness"),
+};
+
+export type ExtensionRegistry = {
+  id: string;
+  name: string;
+  registryUrl: string;
+  enabled: boolean;
+  revision: number;
+};
+
+export type ExtensionPackage = {
+  id: string;
+  registryId?: string | null;
+  previousPackageId?: string | null;
+  extensionId: string;
+  displayName: string;
+  version: string;
+  lifecycle: string;
+  state: string;
+  active: boolean;
+  installed: boolean;
+  permissionReviewRequired: boolean;
+  description?: string | null;
+  author?: string | null;
+  iconUrl?: string | null;
+  capabilities?: string[];
+  compatibility?: string | null;
+  failureCode?: string | null;
+  stagedAt?: string | null;
+  revision: number;
+};
+
+export type ExtensionStoreItem = {
+  id: string;
+  displayName: string;
+  version: string;
+  description?: string | null;
+  author?: string | null;
+  downloadUrl: string;
+  sha256: string;
+  registryId?: string | null;
+  iconUrl?: string | null;
+  types?: string[];
+};
+
+export type ExtensionPermission = {
+  id: string;
+  permissionKind: string;
+  permissionValue: string;
+  required: boolean;
+  decision: string;
+};
+
+export type ExtensionLog = {
+  id: string;
+  extensionPackageId?: string | null;
+  extensionId?: string | null;
+  level: string;
+  eventCode?: string | null;
+  message?: string | null;
+  summary: string;
+  createdAt: string;
+};
+
+const revisionBody = (expectedRevision: number) => ({
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ expectedRevision }),
+});
+
+export const extensions = {
+  registries: () => json<ExtensionRegistry[]>("/api/admin/extensions/registries"),
+  addRegistry: (name: string, registryUrl: string) =>
+    json<ExtensionRegistry>("/api/admin/extensions/registries", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, registryUrl, enabled: true }),
+    }),
+  setRegistryEnabled: (item: ExtensionRegistry, enabled: boolean) =>
+    json<ExtensionRegistry>(`/api/admin/extensions/registries/${item.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled, expectedRevision: item.revision }),
+    }),
+  removeRegistry: (item: ExtensionRegistry) =>
+    json<void>(`/api/admin/extensions/registries/${item.id}?expectedRevision=${item.revision}`, {
+      method: "DELETE",
+    }),
+  packages: () => json<ExtensionPackage[]>("/api/admin/extensions/packages"),
+  store: () => json<{ items: ExtensionStoreItem[]; errors: Array<{ repository: string; message: string }> }>("/api/admin/extensions/store"),
+  logs: () => json<ExtensionLog[]>("/api/admin/extensions/logs?limit=100"),
+  install: (item: Pick<ExtensionStoreItem, "id" | "downloadUrl" | "sha256" | "registryId">) =>
+    json<{ packageId: string; message: string }>("/api/admin/extensions/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(item),
+    }),
+  permissions: (id: string) =>
+    json<ExtensionPermission[]>(`/api/admin/extensions/packages/${id}/permissions`),
+  review: (item: ExtensionPackage, decisions: Array<{ kind: string; value: string; approved: boolean }>) =>
+    json<ExtensionPackage>(`/api/admin/extensions/packages/${item.id}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expectedRevision: item.revision, decisions }),
+    }),
+  activate: (item: ExtensionPackage) =>
+    json<ExtensionPackage>(`/api/admin/extensions/packages/${item.id}/activate`, revisionBody(item.revision)),
+  disable: (item: ExtensionPackage) =>
+    json<void>(`/api/admin/extensions/packages/${item.id}/disable`, revisionBody(item.revision)),
+  rollback: (item: ExtensionPackage) =>
+    json<ExtensionPackage>(`/api/admin/extensions/packages/${item.id}/rollback`, revisionBody(item.revision)),
+  revokePermissions: (item: ExtensionPackage) =>
+    json<ExtensionPackage>(`/api/admin/extensions/packages/${item.id}/permissions/revoke`, revisionBody(item.revision)),
+  cancelStaging: (item: ExtensionPackage) =>
+    json<ExtensionPackage>(`/api/admin/extensions/packages/${item.id}/staging/cancel`, revisionBody(item.revision)),
+  uninstall: (item: ExtensionPackage) =>
+    json<ExtensionPackage>(`/api/admin/extensions/packages/${item.id}`, {
+      ...revisionBody(item.revision),
+      method: "DELETE",
     }),
 };
 

@@ -27,6 +27,19 @@
 }
 
 @layer base {
+  :root {
+    --border: var(--color-edge);
+    --surface: var(--color-panel);
+    --surface-muted: rgb(18 22 30 / 68%);
+    --surface-strong: var(--color-panel-raised);
+    --text: var(--color-ink);
+    --text-muted: var(--color-ink-muted);
+    --warning: #f4b860;
+    --radius-md: 0.8rem;
+    --radius-lg: 1.1rem;
+    --shadow-sm: 0 0.35rem 1rem rgb(0 0 0 / 18%);
+  }
+
   * {
     box-sizing: border-box;
   }
@@ -3385,5 +3398,908 @@
 
   .source-setting-grid .wide {
     grid-column: auto;
+  }
+}
+
+@layer components {
+  .settings-workspace,
+  .settings-stack {
+    display: grid;
+    min-width: 0;
+    gap: 1rem;
+  }
+
+  .settings-tabs {
+    position: relative;
+    display: grid;
+    width: min(100%, 46rem);
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    border: 1px solid var(--color-edge);
+    border-radius: 0.8rem;
+    background: var(--color-panel);
+    padding: 0.2rem;
+  }
+
+  .settings-tab-indicator {
+    position: absolute;
+    z-index: 0;
+    top: 0.2rem;
+    bottom: 0.2rem;
+    left: 0.2rem;
+    width: calc(20% - 0.08rem);
+    border-radius: 0.58rem;
+    background: var(--color-signal-muted);
+    transition: transform 160ms ease;
+  }
+
+  .settings-tab-indicator.accounts {
+    transform: translateX(100%);
+  }
+
+  .settings-tab-indicator.routing {
+    transform: translateX(200%);
+  }
+
+  .settings-tab-indicator.extensions {
+    transform: translateX(300%);
+  }
+
+  .settings-tab-indicator.maintenance {
+    transform: translateX(400%);
+  }
+
+  .settings-tabs a {
+    z-index: 1;
+    display: grid;
+    min-height: 2.6rem;
+    place-items: center;
+    color: var(--color-ink-muted);
+    font-size: 0.64rem;
+    font-weight: 750;
+    text-align: center;
+    text-decoration: none;
+  }
+
+  .settings-tabs a[aria-current="page"] {
+    color: var(--color-signal);
+  }
+
+  .settings-intro {
+    padding: 0.2rem 0.25rem;
+  }
+
+  .settings-intro h2 {
+    margin: 0.15rem 0 0;
+    font-family: var(--font-display);
+    font-size: 1.35rem;
+  }
+
+  .settings-intro p:last-child {
+    max-width: 46rem;
+    margin: 0.4rem 0 0;
+    color: var(--color-ink-muted);
+    font-size: 0.7rem;
+    line-height: 1.55;
+  }
+
+  .settings-disclosure {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .settings-disclosure > summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 0.9rem 1rem;
+  }
+
+  .settings-disclosure > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .settings-disclosure > summary > span {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .settings-disclosure > summary strong {
+    font-size: 0.78rem;
+  }
+
+  .settings-disclosure > summary small {
+    color: var(--color-ink-muted);
+    font-size: 0.58rem;
+  }
+
+  .settings-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-top: 1px solid var(--color-edge);
+  }
+
+  .setting-field {
+    display: grid;
+    min-width: 0;
+    gap: 0.4rem;
+    border-right: 1px solid var(--color-edge);
+    border-bottom: 1px solid var(--color-edge);
+    padding: 0.8rem;
+  }
+
+  .setting-field:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .setting-field > span {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .setting-field strong {
+    font-size: 0.68rem;
+  }
+
+  .setting-field > span small {
+    border-radius: 999px;
+    background: rgb(255 255 255 / 6%);
+    color: var(--color-ink-muted);
+    padding: 0.2rem 0.4rem;
+    font-size: 0.5rem;
+  }
+
+  .setting-field input:not([type="checkbox"]),
+  .setting-field select,
+  .setting-field output {
+    display: flex;
+    width: 100%;
+    min-height: 2.45rem;
+    align-items: center;
+    border: 1px solid var(--color-edge);
+    border-radius: 0.65rem;
+    background: var(--color-panel-raised);
+    color: var(--color-ink);
+    padding: 0 0.65rem;
+    font-size: 0.68rem;
+  }
+
+  .setting-field input[type="checkbox"] {
+    width: 1rem;
+    height: 1rem;
+    accent-color: var(--color-signal);
+  }
+
+  .setting-field > small {
+    color: var(--color-ink-muted);
+    font-size: 0.55rem;
+    line-height: 1.45;
+  }
+
+  .setting-field.read-only {
+    background: rgb(255 255 255 / 1.5%);
+  }
+
+  .setting-field.read-only output {
+    color: var(--color-ink-muted);
+  }
+
+  .settings-fields > footer {
+    display: flex;
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+    padding: 0.75rem;
+  }
+
+  .settings-fields > footer button {
+    min-height: 2.4rem;
+    padding: 0 0.8rem;
+  }
+
+  .settings-account-panel > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    border-bottom: 1px solid var(--color-edge);
+    padding: 0.85rem 1rem;
+  }
+
+  .settings-account-panel > header > div,
+  .settings-account-panel article > span:nth-child(2) {
+    display: grid;
+    min-width: 0;
+    gap: 0.15rem;
+  }
+
+  .settings-account-panel > header small,
+  .settings-account-panel article small {
+    color: var(--color-ink-muted);
+    font-size: 0.58rem;
+  }
+
+  .settings-account-panel > header a {
+    display: grid;
+    min-height: 2.4rem;
+    place-items: center;
+    padding: 0 0.8rem;
+    font-size: 0.65rem;
+    text-decoration: none;
+  }
+
+  .settings-account-panel > div {
+    display: grid;
+  }
+
+  .settings-account-panel article {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.65rem;
+    border-bottom: 1px solid var(--color-edge);
+    padding: 0.7rem 0.85rem;
+  }
+
+  .settings-account-panel article:last-child {
+    border-bottom: 0;
+  }
+
+  .settings-account-panel article strong {
+    overflow: hidden;
+    font-size: 0.7rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .routing-groups {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+
+  .routing-group {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .routing-group > header {
+    display: flex;
+    min-height: 4.6rem;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border-bottom: 1px solid var(--color-edge);
+    padding: 0.8rem;
+  }
+
+  .routing-group > header > div {
+    display: grid;
+    gap: 0.2rem;
+  }
+
+  .routing-group > header strong {
+    font-size: 0.74rem;
+  }
+
+  .routing-group > header small {
+    color: var(--color-ink-muted);
+    font-size: 0.57rem;
+    line-height: 1.45;
+  }
+
+  .routing-group > header button {
+    min-height: 2.1rem;
+    flex: none;
+    padding: 0 0.6rem;
+    font-size: 0.56rem;
+  }
+
+  .routing-group ol {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .routing-group li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.6rem;
+    border-bottom: 1px solid var(--color-edge);
+    padding: 0.65rem 0.75rem;
+  }
+
+  .routing-group li:last-child {
+    border-bottom: 0;
+  }
+
+  .routing-group li.pinned {
+    background: var(--color-signal-muted);
+  }
+
+  .routing-group li > span:nth-child(2) {
+    display: grid;
+    min-width: 0;
+    gap: 0.12rem;
+  }
+
+  .routing-group li strong {
+    font-size: 0.67rem;
+  }
+
+  .routing-group li small {
+    overflow: hidden;
+    color: var(--color-ink-muted);
+    font-size: 0.54rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .routing-actions {
+    display: flex;
+    gap: 0.25rem;
+  }
+
+  .routing-actions button {
+    display: grid;
+    width: 1.9rem;
+    height: 1.9rem;
+    border: 1px solid var(--color-edge);
+    place-items: center;
+    border-radius: 0.5rem;
+    background: transparent;
+    color: var(--color-ink);
+    cursor: pointer;
+  }
+
+  .routing-actions button:disabled {
+    cursor: not-allowed;
+    opacity: 0.3;
+  }
+
+  .settings-extension-handoff {
+    min-height: 22rem;
+  }
+
+  .settings-extension-handoff a {
+    display: grid;
+    min-height: 2.5rem;
+    place-items: center;
+    padding: 0 0.8rem;
+    text-decoration: none;
+  }
+
+  .maintenance-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+
+  .maintenance-card {
+    display: grid;
+    min-width: 0;
+    align-content: start;
+    gap: 0.75rem;
+    padding: 0.9rem;
+  }
+
+  .maintenance-card > header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .maintenance-card > header > div {
+    display: grid;
+    gap: 0.15rem;
+  }
+
+  .maintenance-card > header strong {
+    font-size: 0.75rem;
+  }
+
+  .maintenance-card > header small,
+  .maintenance-card > p {
+    color: var(--color-ink-muted);
+    font-size: 0.57rem;
+    line-height: 1.5;
+  }
+
+  .maintenance-card dl {
+    display: grid;
+    margin: 0;
+  }
+
+  .maintenance-card dl > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    border-bottom: 1px solid var(--color-edge);
+    padding: 0.45rem 0;
+    font-size: 0.62rem;
+  }
+
+  .maintenance-card dt {
+    color: var(--color-ink-muted);
+  }
+
+  .maintenance-card dd {
+    margin: 0;
+    font-weight: 750;
+  }
+
+  .maintenance-card > button,
+  .maintenance-actions > button {
+    min-height: 2.4rem;
+    padding: 0 0.7rem;
+    font-size: 0.62rem;
+  }
+
+  .maintenance-actions {
+    display: flex;
+    gap: 0.45rem;
+  }
+
+  .maintenance-transfer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.9rem;
+  }
+
+  .maintenance-transfer > div {
+    display: grid;
+    gap: 0.25rem;
+  }
+
+  .maintenance-transfer strong {
+    font-size: 0.75rem;
+  }
+
+  .maintenance-transfer p {
+    max-width: 52rem;
+    margin: 0;
+    color: var(--color-ink-muted);
+    font-size: 0.58rem;
+    line-height: 1.5;
+  }
+}
+
+@media (max-width: 900px) {
+  .routing-groups,
+  .maintenance-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 650px) {
+  .settings-tabs a {
+    min-height: 2.8rem;
+    font-size: 0.52rem;
+    line-height: 1.15;
+  }
+
+  .settings-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .setting-field {
+    border-right: 0;
+  }
+
+  .settings-account-panel > header,
+  .maintenance-transfer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-account-panel > header a {
+    width: 100%;
+  }
+
+  .routing-group > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .routing-group > header button {
+    width: 100%;
+  }
+
+  .maintenance-actions {
+    display: grid;
+  }
+}
+
+@layer components {
+  .extension-workspace {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .extension-header,
+  .extension-catalog > header,
+  .extension-activity > header,
+  .extension-registry-form > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .extension-header > div,
+  .extension-catalog > header > div,
+  .extension-activity > header,
+  .extension-registry-form > header {
+    display: grid;
+    gap: 0.2rem;
+  }
+
+  .extension-header strong,
+  .extension-catalog strong,
+  .extension-registry-form strong,
+  .extension-activity strong {
+    font-size: 0.95rem;
+  }
+
+  .extension-header small,
+  .extension-catalog small,
+  .extension-registry-form small,
+  .extension-activity small {
+    color: var(--text-muted);
+  }
+
+  .extension-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.3rem;
+    padding: 0.3rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface-muted);
+  }
+
+  .extension-tabs button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    min-height: 2.55rem;
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-muted);
+    font-weight: 650;
+  }
+
+  .extension-tabs button[aria-pressed="true"] {
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .extension-tabs button span {
+    min-width: 1.25rem;
+    padding: 0.1rem 0.35rem;
+    border-radius: 999px;
+    background: var(--surface-strong);
+    font-size: 0.68rem;
+  }
+
+  .extension-list {
+    display: grid;
+    gap: 0.65rem;
+  }
+
+  .extension-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 0.9rem;
+    padding: 1rem;
+  }
+
+  .extension-copy,
+  .extension-copy > span {
+    display: grid;
+    min-width: 0;
+    gap: 0.15rem;
+  }
+
+  .extension-copy > span {
+    grid-template-columns: auto 1fr;
+    align-items: baseline;
+    gap: 0.45rem;
+  }
+
+  .extension-copy p {
+    margin: 0.25rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+  }
+
+  .extension-copy > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-top: 0.35rem;
+  }
+
+  .extension-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.4rem;
+    max-width: 23rem;
+  }
+
+  .extension-catalog {
+    display: grid;
+    gap: 1rem;
+    padding: 1rem;
+  }
+
+  .extension-catalog > header input {
+    width: min(18rem, 42vw);
+    min-height: 2.7rem;
+    padding: 0 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-strong);
+    color: var(--text);
+  }
+
+  .extension-catalog > div {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem;
+  }
+
+  .extension-catalog article {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-muted);
+  }
+
+  .extension-catalog article > span {
+    display: grid;
+    min-width: 0;
+    gap: 0.1rem;
+  }
+
+  .extension-catalog article p {
+    margin: 0.25rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+  }
+
+  .extension-registry-layout {
+    display: grid;
+    grid-template-columns: minmax(16rem, 0.7fr) minmax(0, 1.3fr);
+    gap: 0.8rem;
+    align-items: start;
+  }
+
+  .extension-registry-form {
+    display: grid;
+    gap: 0.8rem;
+    padding: 1rem;
+  }
+
+  .extension-registry-form label {
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  .extension-registry-form label span {
+    font-size: 0.72rem;
+    font-weight: 700;
+  }
+
+  .extension-registry-list {
+    display: grid;
+    gap: 0.65rem;
+  }
+
+  .extension-registry-list article {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.9rem 1rem;
+  }
+
+  .extension-registry-list article > span:first-child {
+    display: grid;
+    min-width: 0;
+    gap: 0.18rem;
+  }
+
+  .extension-registry-list small {
+    overflow: hidden;
+    color: var(--text-muted);
+    text-overflow: ellipsis;
+  }
+
+  .extension-registry-list em,
+  .extension-permissions em {
+    color: var(--warning);
+    font-size: 0.7rem;
+    font-style: normal;
+  }
+
+  .extension-registry-list article > div {
+    display: flex;
+    gap: 0.4rem;
+  }
+
+  .extension-activity {
+    padding: 1rem;
+  }
+
+  .extension-activity > header {
+    padding-bottom: 0.7rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .extension-activity details {
+    border-bottom: 1px solid var(--border);
+  }
+
+  .extension-activity summary {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.8rem 0;
+    cursor: pointer;
+  }
+
+  .extension-activity summary span:nth-child(2) {
+    display: grid;
+  }
+
+  .extension-activity time {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+  }
+
+  .extension-activity details > p {
+    margin: 0 0 0.8rem 1.35rem;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+  }
+
+  .extension-install-dialog,
+  .extension-review-dialog {
+    width: min(44rem, calc(100vw - 2rem));
+  }
+
+  .extension-install-dialog .settings-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .extension-permissions {
+    display: grid;
+    max-height: min(46vh, 28rem);
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .extension-permissions article {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.8rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .extension-permissions article:last-child {
+    border-bottom: 0;
+  }
+
+  .extension-permissions article > span {
+    display: grid;
+    min-width: 0;
+    gap: 0.1rem;
+  }
+
+  .extension-permissions article small {
+    overflow-wrap: anywhere;
+    color: var(--text-muted);
+  }
+
+  .extension-permissions article > div {
+    display: flex;
+    gap: 0.35rem;
+  }
+
+  .permission-confirm {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    margin-top: 1rem;
+    font-size: 0.82rem;
+  }
+
+  .extension-skeleton {
+    min-height: 18rem;
+  }
+}
+
+@media (max-width: 900px) {
+  .extension-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .extension-actions {
+    grid-column: 2 / -1;
+    justify-content: flex-start;
+    max-width: none;
+  }
+
+  .extension-catalog > div,
+  .extension-registry-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 650px) {
+  .extension-header,
+  .extension-catalog > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .extension-header button,
+  .extension-catalog > header input {
+    width: 100%;
+  }
+
+  .extension-tabs button {
+    min-width: 0;
+    padding: 0.55rem 0.2rem;
+    font-size: 0.64rem;
+  }
+
+  .extension-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .extension-row > .status-pill {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .extension-actions {
+    grid-column: 1 / -1;
+  }
+
+  .extension-catalog article,
+  .extension-registry-list article {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .extension-catalog article button,
+  .extension-registry-list article > div {
+    grid-column: 1 / -1;
+  }
+
+  .extension-permissions article {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

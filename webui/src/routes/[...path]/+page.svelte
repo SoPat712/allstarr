@@ -8,6 +8,7 @@
   import MappingView from "$lib/components/MappingView.svelte";
   import PlaylistsView from "$lib/components/PlaylistsView.svelte";
   import SourcesView from "$lib/components/SourcesView.svelte";
+  import SettingsView from "$lib/components/SettingsView.svelte";
   import { liveUpdates } from "$lib/live-updates.svelte";
 
   const destinations = [
@@ -202,6 +203,8 @@
         <EventLogView />
       {:else if route === "/sources"}
         <SourcesView administrator={session.user?.isAdministrator ?? false} />
+      {:else if route.startsWith("/settings")}
+        <SettingsView section={route.split("/")[2] || "general"} />
       {:else}
         <section class="panel empty-state">
           <span class="empty-orbit" aria-hidden="true">✦</span>
