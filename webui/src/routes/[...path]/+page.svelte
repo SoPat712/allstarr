@@ -273,7 +273,9 @@
         aria-label={sidebarSlim ? "Expand sidebar" : "Collapse sidebar"}
         aria-expanded={!sidebarSlim}
         onclick={() => sidebarSlim = !sidebarSlim}
-      ><span aria-hidden="true">‹</span></button>
+      >
+        <span class="menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>
+      </button>
 
       <nav aria-label="Primary">
         {#each destinations as destination}

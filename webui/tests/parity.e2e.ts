@@ -1415,6 +1415,11 @@ test("Sidebar uses an integrated expander and deterministic slim breakpoint", as
   const shell = page.locator(".app-shell");
   const expander = page.getByRole("button", { name: "Collapse sidebar" });
   await expect(expander).toBeVisible();
+  const [expanderBox, brandBox] = await Promise.all([
+    expander.boundingBox(),
+    page.getByRole("link", { name: "Allstarr home" }).boundingBox(),
+  ]);
+  expect(expanderBox!.y + expanderBox!.height).toBeLessThanOrEqual(brandBox!.y);
   await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("link")).toHaveCount(6);
   const libraryIcon = page.getByRole("navigation", { name: "Primary" })
     .getByRole("link", { name: "Library" }).locator("svg");
@@ -1426,7 +1431,7 @@ test("Sidebar uses an integrated expander and deterministic slim breakpoint", as
   const collapsedIcon = await libraryIcon.boundingBox();
   expect(Math.abs((expandedIcon!.x + expandedIcon!.width / 2) -
     (collapsedIcon!.x + collapsedIcon!.width / 2))).toBeLessThanOrEqual(0.5);
-  await expect(page.getByRole("button", { name: "Expand sidebar" }).locator("span"))
+  await expect(page.getByRole("button", { name: "Expand sidebar" }).locator(".menu-icon"))
     .toHaveCSS("transform", "matrix(-1, 0, 0, -1, 0, 0)");
   const library = page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Library" });
   await expect.poll(async () => {
