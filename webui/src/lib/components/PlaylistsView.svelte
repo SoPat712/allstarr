@@ -50,6 +50,7 @@
   let page = $state(1);
   let addOpen = $state(false);
   let operationJobId = $state("");
+  let sourceRefreshProgress = $state("");
 
   const visiblePlaylists = $derived(filterPlaylists(playlists, query, stateFilter, sort));
   const pageCount = $derived(Math.max(1, Math.ceil(visiblePlaylists.length / 20)));
@@ -162,6 +163,27 @@
     }
   }
 
+  async function refreshSources(ids = playlists.map((playlist) => playlist.id)) {
+    if (action || refreshing || !ids.length) return;
+    action = "refresh-sources";
+    feedback = "";
+    let failed = 0;
+    for (const [index, id] of ids.entries()) {
+      sourceRefreshProgress = `${index + 1}/${ids.length}`;
+      try {
+        await playlistLinks.refresh(id);
+      } catch {
+        failed++;
+      }
+    }
+    feedback = failed
+      ? `${ids.length - failed} playlists refreshed; ${failed} failed.`
+      : `${ids.length} playlists refreshed.`;
+    sourceRefreshProgress = "";
+    action = "";
+    await refresh();
+  }
+
   async function playlistAdded(message: string) {
     feedback = message;
     await refresh();
@@ -216,9 +238,17 @@
         </div>
         <div class="playlist-toolbar-actions">
           <button class="button-primary" type="button" onclick={() => addOpen = true}>Add playlist</button>
-          <button class="icon-button" type="button" onclick={() => void refresh()} aria-label="Refresh playlists">↻</button>
+          <button
+            class="button-secondary"
+            disabled={Boolean(action) || refreshing}
+            type="button"
+            onclick={() => void refreshSources()}
+          >
+            {action === "refresh-sources" ? `Refreshing ${sourceRefreshProgress}` : "Refresh playlists"}
+          </button>
         </div>
       </header>
+      {#if feedback}<p class="playlist-feedback" role="status">{feedback}</p>{/if}
 
       <div class="playlist-filters">
         <SearchField bind:value={query} label="Filter playlists" placeholder="Filter playlists" hiddenLabel />
@@ -325,7 +355,7 @@
           <div class="playlist-actions" aria-label="Playlist actions">
             <button disabled={Boolean(action) || !selected.enabled} type="button" onclick={() => void run("sync")}>Sync</button>
             <button disabled={Boolean(action) || !selected.enabled} type="button" onclick={() => void run("rematch")}>Rematch</button>
-            <button disabled={Boolean(action)} type="button" onclick={() => void refresh()}>Refresh</button>
+            <button disabled={Boolean(action)} type="button" onclick={() => void refreshSources([selected.id])}>Refresh</button>
             <DropdownMenu.Root>
               <DropdownMenu.Trigger class="menu-trigger" aria-label="Additional playlist operations">•••</DropdownMenu.Trigger>
               <DropdownMenu.Portal>

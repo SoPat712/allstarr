@@ -1132,6 +1132,8 @@ export const downloads = {
 export const playlistLinks = {
   list: () => json<{ playlistLinks: PlaylistLink[] }>("/api/admin/playlist-links"),
   details: (id: string) => json<PlaylistDetails>(`/api/admin/playlist-links/${encodeURIComponent(id)}`),
+  refresh: (id: string) =>
+    json(`/api/admin/playlist-links/${encodeURIComponent(id)}/refresh`, { method: "POST" }),
   run: (id: string, snapshotId?: string) =>
     json<{ jobId: string; created: boolean }>(`/api/admin/playlist-links/${encodeURIComponent(id)}/run`, {
       method: "POST",

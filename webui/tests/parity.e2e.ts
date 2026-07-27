@@ -307,6 +307,8 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
       };
     if (url.pathname === "/api/admin/playlist-links" && route.request().method() === "POST")
       body = { id: "new-playlist" };
+    if (url.pathname.endsWith("/refresh") && route.request().method() === "POST")
+      body = { snapshot: { snapshotId: "playlist-snapshot" }, preview: {} };
     if (url.pathname.endsWith("/run") && route.request().method() === "POST")
       body = { jobId: "11111111-1111-1111-1111-111111111111", created: true };
     if (url.pathname.endsWith("/cancel") && route.request().method() === "POST")
@@ -1132,6 +1134,11 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
   await page.goto("#/library/playlists");
+  const refresh = page.waitForRequest((item) =>
+    item.method() === "POST" && item.url().endsWith("/api/admin/playlist-links/playlist-link/refresh"));
+  await page.getByRole("button", { name: "Refresh playlists" }).click();
+  await refresh;
+  await expect(page.getByText("1 playlists refreshed.")).toBeVisible();
   await expect(page.locator('.playlist-row [title="Lumen Audio: 1"]')).toBeVisible();
   await expect(page.locator('.playlist-row [title="Unresolved: 1"]')).toBeVisible();
   await expect(page.locator(".playlist-row .playlist-art > span")).toBeVisible();
