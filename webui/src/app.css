@@ -2590,6 +2590,7 @@
   }
 
   .event-kind-icon {
+    position: relative;
     display: grid;
     width: 2.35rem;
     height: 2.35rem;
@@ -2599,6 +2600,7 @@
     background: var(--color-panel-raised);
     color: var(--color-signal);
     font-size: 0.85rem;
+    overflow: hidden;
   }
 
   .event-kind-icon[data-severity="error"] {
@@ -2610,6 +2612,8 @@
   }
 
   .event-kind-icon img {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     border-radius: inherit;

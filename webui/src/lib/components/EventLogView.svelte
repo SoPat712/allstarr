@@ -17,6 +17,7 @@
     mergeActivity,
     outcomeClass,
   } from "$lib/activity";
+  import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import { formatDuration } from "$lib/playlists";
@@ -253,7 +254,10 @@
         >
           <summary>
             <span class="event-kind-icon" data-severity={severityState} aria-hidden="true">
-              {#if first.artworkUrl}<img src={first.artworkUrl} alt="" loading="lazy" />{:else}{activityIcon(first.kind)}{/if}
+              <span>{activityIcon(first.kind)}</span>
+              {#if first.artworkUrl}
+                <img src={first.artworkUrl} alt="" loading="lazy" onerror={(event) => event.currentTarget.remove()} />
+              {/if}
             </span>
             <span class="event-summary-copy">
               <span>
@@ -288,11 +292,7 @@
               {@const link = activityLink(item)}
               {@const details = technical(item)}
               <article class="event-child">
-                <span class="media-art event-art">
-                  {#if item.artworkUrl}<img src={item.artworkUrl} alt="" loading="lazy" />{:else}
-                    <span aria-hidden="true">{activityIcon(item.kind)}</span>
-                  {/if}
-                </span>
+                <MediaArtwork class="event-art" url={item.artworkUrl} fallback={activityIcon(item.kind)} />
                 <div class="event-child-copy">
                   <header>
                     <strong>{humanize(item.label)}</strong>

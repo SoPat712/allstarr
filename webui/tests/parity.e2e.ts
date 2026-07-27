@@ -766,7 +766,8 @@ test("Event log groups matching work and preserves actionable history", async ({
   await page.goto("#/activity");
 
   await expect(page.getByText("Matched 3 tracks across 2 playlists")).toBeVisible();
-  await expect(page.locator(".event-log-group summary .event-kind-icon img")).toHaveCount(1);
+  await expect(page.locator(".event-log-group summary .event-kind-icon img")).toHaveCount(0);
+  await expect(page.locator(".event-log-group summary .event-kind-icon")).toContainText("↔");
   await expect.poll(() => page.evaluate(() =>
     document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   await page.getByLabel("Search").fill("missing event");
@@ -778,6 +779,7 @@ test("Event log groups matching work and preserves actionable history", async ({
   const group = page.locator(".event-log-group").first();
   await group.locator(":scope > summary").focus();
   await page.keyboard.press("Enter");
+  await expect(group.locator(".event-child .event-art > span").first()).toBeVisible();
   const technical = page.getByText("Technical details").first();
   await expect(technical).toBeVisible();
   await expect(page.getByText("Title Similarity").first()).toBeHidden();
