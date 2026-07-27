@@ -232,6 +232,62 @@ public sealed class EncryptedSecretStore
         }
     }
 
+    public async Task RebindTenantWithinTransactionAsync(
+        AllstarrDbContext context,
+        Guid referenceId,
+        SecretAccessContext currentAccess,
+        Guid? tenantId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (context.Database.CurrentTransaction == null)
+            throw new InvalidOperationException("An active database transaction is required.");
+
+        var reference = await context.SecretReferences.SingleAsync(
+            item => item.Id == referenceId, cancellationToken);
+        EnsureTenantMatch(reference, currentAccess);
+        if (reference.TenantId == tenantId) return;
+
+        var keyRing = await _keyRingProvider.LoadAsync(cancellationToken);
+        byte[]? plaintext = null;
+        try
+        {
+            var current = await context.SecretVersions.SingleAsync(
+                item => item.SecretReferenceId == reference.Id &&
+                        item.Version == reference.ActiveVersion,
+                cancellationToken);
+            plaintext = Decrypt(
+                current,
+                keyRing.GetKey(current.KeyId),
+                AssociatedData(reference, current.Version));
+            var now = _clock.UtcNow;
+            current.RetiredAt = now;
+            reference.TenantId = tenantId;
+            reference.ActiveVersion++;
+            reference.UpdatedAt = now;
+            var encrypted = Encrypt(
+                plaintext,
+                keyRing.GetActiveKey(),
+                AssociatedData(reference, reference.ActiveVersion));
+            context.SecretVersions.Add(new SecretVersionRecord
+            {
+                Id = Guid.CreateVersion7(),
+                SecretReferenceId = reference.Id,
+                Version = reference.ActiveVersion,
+                KeyId = keyRing.ActiveKeyId,
+                Nonce = encrypted.Nonce,
+                Ciphertext = encrypted.Ciphertext,
+                AuthenticationTag = encrypted.Tag,
+                CreatedAt = now
+            });
+        }
+        finally
+        {
+            if (plaintext != null) CryptographicOperations.ZeroMemory(plaintext);
+            ClearKeyRing(keyRing);
+        }
+    }
+
     public async Task<SecretReferenceInfo> RotateEncryptionAsync(
         Guid referenceId,
         SecretAccessContext access,

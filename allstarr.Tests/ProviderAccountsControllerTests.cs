@@ -387,6 +387,42 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         Assert.Equal(_userId, saved.CreatedByUserId);
     }
 
+    [Fact]
+    public async Task UpdatingAudienceRebindsEncryptedSecretToNewTenant()
+    {
+        using var secret = JsonDocument.Parse("""{"accessToken":"global-token"}""");
+        var created = Assert.IsType<CreatedAtActionResult>(await Controller(
+            Session(_userId, administrator: true)).Create(
+            new ProviderAccountsController.CreateProviderAccountRequest
+            {
+                ProviderId = "spotify",
+                DisplayName = "Shared Spotify",
+                Scope = "Global",
+                Secret = secret.RootElement.Clone()
+            }));
+        ProviderAccountRecord account;
+        await using (var context = await _factory.CreateDbContextAsync())
+            account = await context.ProviderAccounts.SingleAsync();
+
+        Assert.IsType<OkObjectResult>(await Controller(
+            Session(_userId, administrator: true)).UpdateAudience(
+            account.Id,
+            new ProviderAccountsController.UpdateProviderAccountAudienceRequest
+            {
+                Scope = "User",
+                OwnerUserId = _userId,
+                ExpectedRevision = account.Revision
+            }));
+
+        using var lease = await _secretStore.OpenAsync(
+            account.SecretReferenceId!.Value,
+            new SecretAccessContext(_tenantId));
+        Assert.Contains("global-token", lease.ReadUtf8(), StringComparison.Ordinal);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => _secretStore.OpenAsync(
+            account.SecretReferenceId.Value,
+            new SecretAccessContext(null, AllowGlobal: true)));
+    }
+
     private ProviderAccountsController Controller(
         AdminAuthSession session,
         ProviderAccountManagementMode mode = ProviderAccountManagementMode.Hybrid)

@@ -401,13 +401,22 @@ public sealed partial class ProviderAccountsController : ControllerBase
             if (owner == null) return BadRequest(new { error = "Choose an active user for this audience." });
         }
 
-        account.Scope = scope;
-        account.TenantId = scope switch
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
+        var targetTenantId = scope switch
         {
             ProviderAccountScope.Global => null,
             ProviderAccountScope.User => owner!.TenantId,
             _ => account.TenantId ?? session.TenantId
         };
+        if (account.SecretReferenceId.HasValue)
+            await _secretStore.RebindTenantWithinTransactionAsync(
+                context,
+                account.SecretReferenceId.Value,
+                new SecretAccessContext(account.TenantId, account.TenantId == null),
+                targetTenantId,
+                cancellationToken);
+        account.Scope = scope;
+        account.TenantId = targetTenantId;
         account.OwnerUserId = owner?.Id;
         account.LibraryScopeId = scope == ProviderAccountScope.Library ? libraryScopeId : null;
         account.UpdatedAt = DateTimeOffset.UtcNow;
@@ -421,6 +430,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             account.LibraryScopeId
         });
         await context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         await InvalidateAccountCacheAsync(account.Id);
         return Ok(AccountResponse(account, null, owner?.DisplayName));
     }
