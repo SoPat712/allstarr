@@ -262,7 +262,7 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
           id: url.searchParams.has("cursor") ? "playlist-2" : "playlist",
           providerId: url.pathname.split("/")[4],
           name: url.searchParams.has("cursor") ? "Second Mix" : "Source Mix",
-          owner: "Tester", trackCount: 24,
+          owner: "Tester", trackCount: 24, artworkUrl: "/missing-source-playlist-art",
         }],
         nextCursor: url.searchParams.has("cursor") ? null : "next",
       };
@@ -698,6 +698,7 @@ test("Add playlist prioritizes local and configured Sources on mobile", async ({
     "Jellyfin", "Subsonic", "Spotify", "Lumen Audio", "Qobuz",
   ]);
   await dialog.getByRole("radio", { name: /Spotify/ }).check();
+  await expect(dialog.locator(".playlist-art > span")).toBeVisible();
   await dialog.getByRole("button", { name: "Load more" }).click();
   await expect(dialog.getByRole("radio", { name: /Second Mix/ })).toBeVisible();
   await dialog.getByRole("radio", { name: /Source Mix/ }).check();

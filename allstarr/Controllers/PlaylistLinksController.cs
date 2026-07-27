@@ -37,7 +37,8 @@ public sealed class PlaylistLinksController(
     IApplicationCache applicationCache,
     IPlatformClock clock,
     ProviderPolicyOptions providerPolicy,
-    AdminProtocolExecutionContextFactory protocolContexts) : ControllerBase
+    AdminProtocolExecutionContextFactory protocolContexts,
+    IConfiguration configuration) : ControllerBase
 {
     private const string SubsonicCredentialPurpose = "playlist-backend:subsonic";
 
@@ -78,6 +79,13 @@ public sealed class PlaylistLinksController(
                                session.IsAdministrator)
                 .ToArray();
             var blockedAccounts = capableAccounts.Except(availableAccounts).ToArray();
+            var configuredProviderOrder = (configuration["Providers:PlaylistOrder"] ??
+                                           configuration["MULTI_PROVIDER_PLAYLIST_ORDER"] ??
+                                           "spotify,deezer,qobuz")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select((id, index) => (id: id.ToLowerInvariant(), index))
+                .GroupBy(item => item.id)
+                .ToDictionary(group => group.Key, group => group.First().index);
             return Ok(new
             {
                 accounts = availableAccounts.Select(item => ToPlaylistSourceAccountDto(
@@ -97,17 +105,20 @@ public sealed class PlaylistLinksController(
                     (item.CreatedByUserId ?? item.OwnerUserId) is { } creatorId
                         ? creatorNames.GetValueOrDefault(creatorId)
                         : null)),
-                providers = supportedProviders.Values.Select(provider =>
-                {
-                    var capability = provider.Capabilities.Single(value => value.Capability == ProviderCapabilityKind.Playlist);
-                    return new
+                providers = supportedProviders.Values
+                    .OrderBy(provider => configuredProviderOrder.GetValueOrDefault(provider.Id, int.MaxValue))
+                    .ThenBy(provider => provider.Id, StringComparer.Ordinal)
+                    .Select(provider =>
                     {
-                        id = provider.Id,
-                        displayName = provider.DisplayName,
-                        origin = provider.Origin.ToString().ToLowerInvariant(),
-                        accountRequirement = capability.AccountRequirement.ToString().ToLowerInvariant()
-                    };
-                }),
+                        var capability = provider.Capabilities.Single(value => value.Capability == ProviderCapabilityKind.Playlist);
+                        return new
+                        {
+                            id = provider.Id,
+                            displayName = provider.DisplayName,
+                            origin = provider.Origin.ToString().ToLowerInvariant(),
+                            accountRequirement = capability.AccountRequirement.ToString().ToLowerInvariant()
+                        };
+                    }),
                 policy = new
                 {
                     allowSharedPlaylistCredentials = providerPolicy.AllowGlobalPersonalAccounts,

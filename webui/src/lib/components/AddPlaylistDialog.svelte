@@ -7,6 +7,7 @@
     type PlaylistSourceAccount,
     type ProviderDefinition,
   } from "$lib/api";
+  import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import { orderPlaylistSources } from "$lib/playlists";
@@ -181,7 +182,7 @@
               {#each playlists as playlist}
                 <label class:active={playlistId === playlist.id}>
                   <input bind:group={playlistId} type="radio" value={playlist.id} />
-                  <span class="media-art playlist-art">{#if playlist.artworkUrl}<img src={playlist.artworkUrl} alt="" loading="lazy" />{:else}♫{/if}</span>
+                  <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
                   <span><strong>{playlist.name}</strong><small>{playlist.owner || "Unknown owner"} · {playlist.trackCount ?? "?"} tracks</small></span>
                 </label>
               {:else}{#if !loading}<p class="credential-safety">No playlists found. Try another search.</p>{/if}{/each}
