@@ -109,7 +109,8 @@ public sealed class PlaylistLinksControllerContractTests
         Assert.Contains("retryAfterSeconds", source, StringComparison.Ordinal);
         Assert.Contains("BuildProviderPlaylistDiscoveryKey", source, StringComparison.Ordinal);
         Assert.Contains("PlaylistDiscoveryPageCacheEntry", source, StringComparison.Ordinal);
-        Assert.Contains("applicationCache.SetAsync(cacheKey, page)", source, StringComparison.Ordinal);
+        Assert.Contains("requestCoalescer.RunAsync", source, StringComparison.Ordinal);
+        Assert.Contains("applicationCache.SetAsync(", source, StringComparison.Ordinal);
         Assert.Contains("configuration[\"Providers:PlaylistOrder\"]", source, StringComparison.Ordinal);
         Assert.Contains("configuredProviderOrder.GetValueOrDefault", source, StringComparison.Ordinal);
         Assert.DoesNotContain("value.Artwork?.PublicUri", source, StringComparison.Ordinal);
@@ -133,7 +134,7 @@ public sealed class PlaylistLinksControllerContractTests
     private static PlaylistLinksController Controller()
     {
         var controller = new PlaylistLinksController(
-            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
+            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
     }

@@ -38,7 +38,8 @@ public sealed class PlaylistLinksController(
     IPlatformClock clock,
     ProviderPolicyOptions providerPolicy,
     AdminProtocolExecutionContextFactory protocolContexts,
-    IConfiguration configuration) : ControllerBase
+    IConfiguration configuration,
+    ApplicationCacheRequestCoalescer requestCoalescer) : ControllerBase
 {
     private const string SubsonicCredentialPurpose = "playlist-backend:subsonic";
 
@@ -197,13 +198,26 @@ public sealed class PlaylistLinksController(
                 var page = await applicationCache.GetAsync<PlaylistDiscoveryPageCacheEntry>(cacheKey);
                 if (page == null)
                 {
-                    var outcome = string.IsNullOrWhiteSpace(query)
-                        ? await candidate.Implementation.GetUserPlaylistsAsync(
-                            candidate.Context,
-                            new ProviderUserPlaylistsRequest(pageRequest))
-                        : await candidate.Implementation.SearchPlaylistsAsync(
-                            candidate.Context,
-                            new ProviderPlaylistSearchRequest(query.Trim(), pageRequest));
+                    var outcome = await requestCoalescer.RunAsync(
+                        cacheKey,
+                        async () =>
+                        {
+                            var fetched = string.IsNullOrWhiteSpace(query)
+                                ? await candidate.Implementation.GetUserPlaylistsAsync(
+                                    candidate.Context,
+                                    new ProviderUserPlaylistsRequest(pageRequest))
+                                : await candidate.Implementation.SearchPlaylistsAsync(
+                                    candidate.Context,
+                                    new ProviderPlaylistSearchRequest(query.Trim(), pageRequest));
+                            if (fetched.IsSuccess)
+                            {
+                                await applicationCache.SetAsync(
+                                    cacheKey,
+                                    ToDiscoveryCacheEntry(fetched.RequireValue()));
+                            }
+                            return fetched;
+                        },
+                        cancellationToken);
                     if (!outcome.IsSuccess)
                     {
                         var failure = outcome.Error!;
@@ -234,7 +248,6 @@ public sealed class PlaylistLinksController(
                         });
                     }
                     page = ToDiscoveryCacheEntry(outcome.RequireValue());
-                    await applicationCache.SetAsync(cacheKey, page);
                 }
 
                 foreach (var item in page.Items)
