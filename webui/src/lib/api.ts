@@ -48,11 +48,41 @@ export type Job = {
 
 export type ActivityItem = {
   id: string;
+  kind: string;
   source: string;
   label: string;
   state: string;
   detail: string;
   occurredAt: string;
+  correlationId?: string | null;
+  severity?: string;
+  providerId?: string | null;
+  playlistLinkId?: string | null;
+  playlistName?: string | null;
+  artworkUrl?: string | null;
+  sourceTitle?: string | null;
+  sourceArtist?: string | null;
+  sourceAlbum?: string | null;
+  targetProviderId?: string | null;
+  targetTitle?: string | null;
+  targetArtist?: string | null;
+  confidenceLabel?: string | null;
+  isrc?: string | null;
+  sourceProviderTrackId?: string | null;
+  targetProviderTrackId?: string | null;
+  backendItemId?: string | null;
+  routeDecisionId?: string | null;
+  actorUserId?: string | null;
+  action?: string | null;
+  durationMilliseconds?: number | null;
+  technicalDetails?: Record<string, string> | null;
+};
+
+export type ActivityResponse = {
+  items: ActivityItem[];
+  hasMore: boolean;
+  nextCursor?: string | null;
+  nextCursorId?: string | null;
 };
 
 export type ProviderSummary = {
@@ -277,8 +307,17 @@ export const home = {
   status: () => json<RuntimeStatus>("/api/admin/status"),
   playlists: () => json<PlaylistResponse>("/api/admin/playlists"),
   jobs: () => json<{ jobs: Job[] }>("/api/admin/jobs?limit=100"),
-  activity: () => json<{ items: ActivityItem[] }>("/api/admin/ui/activity?limit=8"),
+  activity: () => json<ActivityResponse>("/api/admin/ui/activity?limit=8"),
   providers: () => json<{ providers: ProviderSummary[] }>("/api/admin/ui/provider-summaries"),
+};
+
+export const eventLog = {
+  list: (params: { limit?: number; before?: string; beforeId?: string } = {}) => {
+    const query = new URLSearchParams({ limit: String(params.limit ?? 50) });
+    if (params.before) query.set("before", params.before);
+    if (params.beforeId) query.set("beforeId", params.beforeId);
+    return json<ActivityResponse>(`/api/admin/ui/activity?${query}`);
+  },
 };
 
 export const playlistLinks = {

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { page } from "$app/state";
   import { auth, type Session } from "$lib/api";
+  import EventLogView from "$lib/components/EventLogView.svelte";
   import HomeView from "$lib/components/HomeView.svelte";
   import MappingView from "$lib/components/MappingView.svelte";
   import PlaylistsView from "$lib/components/PlaylistsView.svelte";
@@ -24,6 +25,7 @@
   let avatarFailed = $state(false);
 
   const route = $derived(`/${page.params.path ?? ""}`);
+  const routeQuery = $derived(new URLSearchParams(page.url.hash.split("?", 2)[1] ?? ""));
   const activeDestination = $derived(
     destinations.find((item) =>
       item.href === "#/" ? route === "/" : route.startsWith(item.prefix ?? item.href.slice(1)),
@@ -186,9 +188,11 @@
       {#if route === "/"}
         <HomeView administrator={session.user?.isAdministrator ?? false} />
       {:else if route === "/library/playlists"}
-        <PlaylistsView />
+        <PlaylistsView initialId={routeQuery.get("playlist") ?? ""} />
       {:else if route === "/library/mappings"}
-        <MappingView />
+        <MappingView initialSearch={routeQuery.get("search") ?? ""} />
+      {:else if route === "/activity"}
+        <EventLogView />
       {:else}
         <section class="panel empty-state">
           <span class="empty-orbit" aria-hidden="true">✦</span>

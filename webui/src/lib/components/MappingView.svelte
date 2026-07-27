@@ -19,6 +19,8 @@
 
   type DestructiveAction = { kind: "reject" | "clear"; match: MatchReviewItem };
 
+  let { initialSearch = "" }: { initialSearch?: string } = $props();
+
   let data = $state<MatchReviewResponse | null>(null);
   let providers = $state<ProviderDefinition[]>([]);
   let backend = $state("Local library");
@@ -170,6 +172,9 @@
   }
 
   onMount(() => {
+    searchInput = initialSearch;
+    search = initialSearch;
+    if (initialSearch) stateFilter = "";
     void loadProviders();
     void load();
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);

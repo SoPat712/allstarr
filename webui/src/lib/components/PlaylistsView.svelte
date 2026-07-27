@@ -20,6 +20,8 @@
   } from "$lib/playlists";
   import { liveUpdates } from "$lib/live-updates.svelte";
 
+  let { initialId = "" }: { initialId?: string } = $props();
+
   let playlists = $state<PlaylistLink[]>([]);
   let providers = $state<ProviderDefinition[]>([]);
   let details = $state<PlaylistDetails | null>(null);
@@ -159,6 +161,7 @@
   }
 
   onMount(() => {
+    selectedId = initialId;
     void refresh();
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
