@@ -526,7 +526,6 @@
   match={selectedMatch}
   {providers}
   backend={details?.targetProtocol ?? "Local library"}
-  initialMode="provider"
   autoSearch
   showReject={false}
   onSaved={matchSaved}

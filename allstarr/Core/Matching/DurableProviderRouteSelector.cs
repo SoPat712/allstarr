@@ -21,6 +21,7 @@ public static class DurableProviderRouteSelector
                 item.CanonicalRecordingId == source.CanonicalRecordingId &&
                 item.ResourceKind == ProviderResourceKind.Track &&
                 (item.Scope == ProviderIdentityScope.Catalog || item.Id == source.Id) &&
+                item.VerificationMethod != "source-snapshot-hash" &&
                 item.Verification is ProviderIdentityVerification.Verified or
                     ProviderIdentityVerification.Pinned &&
                 priority.ContainsKey(item.ProviderId) &&

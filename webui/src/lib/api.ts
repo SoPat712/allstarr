@@ -638,6 +638,7 @@ export type MatchTarget = {
   album?: string | null;
   artworkUrl?: string | null;
   durationMilliseconds?: number | null;
+  confidence?: number | null;
   isrc?: string | null;
 };
 
@@ -1255,13 +1256,12 @@ export const matchReview = {
   },
   get: async (externalSnapshotId: string) =>
     (await matchReview.list({ externalSnapshotId, pageSize: 1 })).matches[0] ?? null,
-  searchLocal: (query: string, libraryScopeId: string) =>
+  searchLocal: (query: string, libraryScopeId: string, externalSnapshotId: string) =>
     json<{ tracks: MatchTarget[] }>(
-      `/api/admin/track-matches/targets/local?query=${encodeURIComponent(query)}&libraryScopeId=${encodeURIComponent(libraryScopeId)}`,
+      `/api/admin/track-matches/targets/local?query=${encodeURIComponent(query)}&libraryScopeId=${encodeURIComponent(libraryScopeId)}&externalSnapshotId=${encodeURIComponent(externalSnapshotId)}`,
     ),
-  searchProviders: (query: string, libraryScopeId: string, provider = "") => {
-    const params = new URLSearchParams({ query, libraryScopeId, limit: "50" });
-    if (provider) params.set("provider", provider);
+  searchProviders: (query: string, libraryScopeId: string, externalSnapshotId: string) => {
+    const params = new URLSearchParams({ query, libraryScopeId, externalSnapshotId, limit: "50" });
     return json<{ tracks: MatchTarget[]; providers: string[] }>(
       `/api/admin/track-matches/targets/provider?${params}`,
     );

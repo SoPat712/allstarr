@@ -447,6 +447,60 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     }
 
     [Fact]
+    public async Task Provider_selection_bootstraps_an_unidentified_source_snapshot()
+    {
+        _source.Snapshot = Snapshot(
+            "revision-provider-review",
+            Entry(0, "entry-provider-review", "unindexed-source", "Manual target"));
+        var refresh = await _service.RefreshAsync(Context(), _link);
+        Guid externalSnapshotId;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            externalSnapshotId = await db.PlaylistSourceEntries
+                .Where(item => item.PlaylistSourceSnapshotId == refresh.SnapshotId)
+                .Select(item => item.ExternalMetadataSnapshotId)
+                .SingleAsync();
+            Assert.Null((await db.ExternalMetadataSnapshots.SingleAsync(item =>
+                item.Id == externalSnapshotId)).ProviderTrackIdentityId);
+        }
+
+        var result = await _trackMatches.ResolveSnapshotAsync(
+            new TrackMatchActor(_tenant, _user, false),
+            externalSnapshotId,
+            new ResolveTrackMatchCommand(
+                "provider",
+                ExternalProvider: "deezer",
+                ExternalId: "manual-deezer-track"),
+            "manual-provider-review");
+
+        Assert.True(result.Succeeded);
+        Assert.True((await _trackMatches.ResolveSnapshotAsync(
+            new TrackMatchActor(_tenant, _user, false),
+            externalSnapshotId,
+            new ResolveTrackMatchCommand(
+                "provider",
+                ExternalProvider: "deezer",
+                ExternalId: "manual-deezer-track"),
+            "manual-provider-review-repeat")).Succeeded);
+        await using var verify = await _factory.CreateDbContextAsync();
+        var snapshot = await verify.ExternalMetadataSnapshots.SingleAsync(item =>
+            item.Id == externalSnapshotId);
+        var source = await verify.ProviderTrackIdentities.SingleAsync(item =>
+            item.ProviderId == snapshot.ProviderId &&
+            item.ExternalIdHash == snapshot.ExternalIdHash);
+        var selected = await verify.ProviderTrackIdentities.SingleAsync(item =>
+            item.ProviderId == "deezer" && item.ExternalId == "manual-deezer-track");
+        Assert.Null(snapshot.ProviderTrackIdentityId);
+        Assert.Equal(source.CanonicalRecordingId, selected.CanonicalRecordingId);
+        Assert.Equal(ProviderIdentityVerification.Verified, source.Verification);
+        Assert.Equal(ProviderIdentityVerification.Pinned, selected.Verification);
+        var projection = await new DurablePlaylistProjectionReader(_factory)
+            .ReadByLinkIdAsync(_tenant, _user, _link);
+        Assert.Equal("external", Assert.Single(projection!.Entries).RouteKind);
+        Assert.Equal("deezer", Assert.Single(projection.Entries).RouteProviderId);
+    }
+
+    [Fact]
     public async Task Reconcile_writes_order_records_skips_propagates_credential_and_same_generation_is_idempotent()
     {
         _source.Snapshot = Snapshot("revision-reconcile", Entry(0, "entry-0", "source-2", "Two"), Entry(1, "entry-1", "source-1", "One"), Entry(2, "entry-2", "missing", "Missing"));

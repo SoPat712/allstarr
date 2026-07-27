@@ -165,6 +165,20 @@ public sealed class TrackMatchDecisionEngine
         return new(new TrackMatchCandidateIndex(items), LibraryIndexRevision(items));
     }
 
+    public IReadOnlyList<TrackMatchCandidateScore> ScoreCandidates(
+        ExternalTrackMatchSnapshot source,
+        IEnumerable<LocalTrackMatchCandidate> candidates)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(candidates);
+        ValidateSource(source);
+        return candidates
+            .Select(candidate => ScoreCandidate(source, candidate))
+            .OrderByDescending(candidate => candidate.Confidence)
+            .ThenBy(candidate => candidate.LibraryTrackId)
+            .ToArray();
+    }
+
     public TrackMatchDecision Decide(
         TrackMatchScope scope,
         ExternalTrackMatchSnapshot source,
@@ -218,10 +232,7 @@ public sealed class TrackMatchDecisionEngine
                     scope);
         }
 
-        var scores = visible
-            .Select(candidate => ScoreCandidate(source, candidate))
-            .OrderByDescending(candidate => candidate.Confidence)
-            .ThenBy(candidate => candidate.LibraryTrackId)
+        var scores = ScoreCandidates(source, visible)
             .Take(20)
             .ToList();
         if (scores.Count == 0)

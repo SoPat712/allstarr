@@ -9,12 +9,10 @@
   import ArtworkSimilarity from "$lib/components/ArtworkSimilarity.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
-  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
-  import SelectField from "$lib/components/SelectField.svelte";
   import {
     percent,
-    playableProviders,
     providerResultCounts,
+    rankedTargets,
     scoreComponents,
   } from "$lib/mappings";
   import { formatDuration } from "$lib/playlists";
@@ -24,7 +22,6 @@
     match,
     providers,
     backend,
-    initialMode = "local",
     autoSearch = false,
     showReject = true,
     onSaved,
@@ -34,7 +31,6 @@
     match: MatchReviewItem | null;
     providers: ProviderDefinition[];
     backend: string;
-    initialMode?: "local" | "provider";
     autoSearch?: boolean;
     showReject?: boolean;
     onSaved: (message: string) => void | Promise<void>;
@@ -42,7 +38,6 @@
   } = $props();
 
   let preparedId = $state("");
-  let targetMode = $state<"local" | "provider">("local");
   let targetQuery = $state("");
   let providerFilter = $state("");
   let results = $state<MatchTarget[]>([]);
@@ -51,12 +46,13 @@
   let saving = $state(false);
   let error = $state("");
 
-  const providerOptions = $derived(playableProviders(providers));
   const resultProviders = $derived(providerResultCounts(results));
   const visibleResults = $derived(
     providerFilter
       ? results.filter((target) =>
-          target.externalProvider?.toLowerCase() === providerFilter.toLowerCase())
+          providerFilter === "local"
+            ? !target.externalProvider
+            : target.externalProvider?.toLowerCase() === providerFilter.toLowerCase())
       : results,
   );
 
@@ -67,7 +63,6 @@
     }
     if (!match || preparedId === match.externalSnapshotId) return;
     preparedId = match.externalSnapshotId;
-    targetMode = initialMode;
     targetQuery = [match.artist, match.title].filter(Boolean).join(" ");
     providerFilter = "";
     results = [];
@@ -91,28 +86,25 @@
       : "";
   }
 
-  function switchMode(mode: "local" | "provider") {
-    targetMode = mode;
-    results = [];
-    searched = false;
-    error = "";
-  }
-
   async function search() {
     if (!match || targetQuery.trim().length < 2 || loading) return;
     loading = true;
     searched = true;
     error = "";
     try {
-      const response =
-        targetMode === "local"
-          ? await matchReview.searchLocal(targetQuery.trim(), match.libraryScopeId)
-          : await matchReview.searchProviders(
-              targetQuery.trim(),
-              match.libraryScopeId,
-              providerFilter,
-            );
-      results = response.tracks;
+      const [local, external] = await Promise.all([
+        matchReview.searchLocal(
+          targetQuery.trim(),
+          match.libraryScopeId,
+          match.externalSnapshotId,
+        ),
+        matchReview.searchProviders(
+          targetQuery.trim(),
+          match.libraryScopeId,
+          match.externalSnapshotId,
+        ),
+      ]);
+      results = rankedTargets([...local.tracks, ...external.tracks]);
     } catch (cause) {
       results = [];
       error = cause instanceof Error ? cause.message : "Candidate search failed.";
@@ -246,26 +238,9 @@
           {/if}
         </section>
 
-        <SegmentedNav
-          items={[
-            { id: "local", label: "Local library" },
-            { id: "provider", label: "Playable providers" },
-          ]}
-          active={targetMode}
-          label="Candidate source"
-          class="match-target-tabs"
-          onchange={(value) => switchMode(value as "local" | "provider")}
-        />
-
         <form class="target-search" onsubmit={(event) => { event.preventDefault(); void search(); }}>
-          {#if targetMode === "provider"}
-            <div class="filter-field"><span>Provider</span><SelectField bind:value={providerFilter} label="Provider" options={[
-              { value: "", label: "All playable providers" },
-              ...providerOptions.map((option) => ({ value: option.id, label: option.name })),
-            ]} /></div>
-          {/if}
           <label class="grow">
-            <span>Artist and track</span>
+            <span>Search local library and playable providers</span>
             <input bind:value={targetQuery} required minlength="2" />
           </label>
           <button class="button-primary" type="submit" disabled={loading}>
@@ -274,7 +249,7 @@
         </form>
 
         {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
-        {#if targetMode === "provider" && resultProviders.length}
+        {#if resultProviders.length}
           <div class="provider-result-summary" aria-label="Providers with results">
             {#each resultProviders as resultProvider}
               <button
@@ -285,7 +260,10 @@
                     providerFilter === resultProvider.providerId ? "" : resultProvider.providerId;
                 }}
               >
-                <ProviderMark id={resultProvider.providerId} definition={provider(resultProvider.providerId)} />
+                <ProviderMark
+                  id={resultProvider.providerId === "local" ? backend.toLowerCase() : resultProvider.providerId}
+                  definition={provider(resultProvider.providerId)}
+                />
                 <span>{providerName(resultProvider.providerId)}</span>
                 <strong>{resultProvider.count}</strong>
               </button>
@@ -298,9 +276,9 @@
               type="button"
               disabled={saving}
               onclick={() =>
-                targetMode === "local"
-                  ? void chooseLocal(target.id, "Selected from indexed library search")
-                  : void chooseProvider(target)}
+                target.externalProvider
+                  ? void chooseProvider(target)
+                  : void chooseLocal(target.id, "Selected from indexed library search")}
             >
               <span class="media-art mapping-art">
                 {#if target.artworkUrl}<img src={target.artworkUrl} alt="" loading="lazy" />{:else}
@@ -312,11 +290,11 @@
                 <strong>{formatDuration(target.durationMilliseconds)}</strong>
                 <small>{target.externalProvider ? providerName(target.externalProvider) : backend}</small>
               </span>
-              <span>Choose</span>
+              <span>{percent(target.confidence)}</span>
             </button>
           {:else}
             {#if searched && !loading}
-              <div class="compact-empty"><strong>No playable candidates found</strong><p>Try a more exact title or another provider filter.</p></div>
+              <div class="compact-empty"><strong>No matching candidates found</strong><p>Try a more exact artist and title.</p></div>
             {/if}
           {/each}
         </div>

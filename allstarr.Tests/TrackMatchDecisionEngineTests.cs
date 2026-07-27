@@ -81,6 +81,25 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void ReviewScoresUseTheMatcherAndReturnHighestConfidenceFirst()
+    {
+        var scope = Scope();
+        var exact = Candidate(scope);
+        var weak = Candidate(scope) with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "weak",
+            Title = "Different",
+            Artist = "Someone Else"
+        };
+
+        var scores = new TrackMatchDecisionEngine().ScoreCandidates(Source(), [weak, exact]);
+
+        Assert.Equal(exact.LibraryTrackId, scores[0].LibraryTrackId);
+        Assert.True(scores[0].Confidence > scores[1].Confidence);
+    }
+
+    [Fact]
     public void LibraryIndexRevision_IsStableAndChangesWithMatchableMetadata()
     {
         var scope = Scope();

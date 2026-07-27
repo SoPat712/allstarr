@@ -1547,6 +1547,15 @@ public sealed class TrackMatchCommandService(
                 item => item.Id == snapshot.ProviderTrackIdentityId.Value && item.TenantId == actor.TenantId,
                 cancellationToken)
             : null;
+        sourceIdentity ??= await db.ProviderTrackIdentities
+            .Where(item => item.TenantId == actor.TenantId &&
+                           item.ProviderId == snapshot.ProviderId &&
+                           item.ResourceKind == ProviderResourceKind.Track &&
+                           item.ExternalIdHash == snapshot.ExternalIdHash &&
+                           (item.Scope == ProviderIdentityScope.Catalog ||
+                            item.ProviderAccountId == snapshot.ProviderAccountId))
+            .OrderByDescending(item => item.ProviderAccountId == snapshot.ProviderAccountId)
+            .FirstOrDefaultAsync(cancellationToken);
         var latestDecision = await db.TrackMatches
             .Where(item => item.TenantId == actor.TenantId && item.ExternalSnapshotId == externalSnapshotId)
             .OrderByDescending(item => item.DecisionVersion)
@@ -1631,16 +1640,55 @@ public sealed class TrackMatchCommandService(
 
             var canonicalId = latestDecision?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId;
             if (!canonicalId.HasValue)
-                return TrackMatchCommandResult.Fail(
-                    TrackMatchCommandFailure.Conflict,
-                    "The source track has no canonical identity yet; rematch it first");
+            {
+                var metadata = ReadMetadata(snapshot.PayloadJson);
+                var canonical = new CanonicalRecordingRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    TenantId = actor.TenantId,
+                    CreatedByUserId = actor.UserId,
+                    Isrc = metadata.Isrc,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+                db.CanonicalRecordings.Add(canonical);
+                canonicalId = canonical.Id;
+            }
+
+            if (sourceIdentity == null)
+            {
+                sourceIdentity = new ProviderTrackIdentityRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    TenantId = actor.TenantId,
+                    CanonicalRecordingId = canonicalId.Value,
+                    ProviderAccountId = snapshot.ProviderAccountId,
+                    ProviderId = snapshot.ProviderId,
+                    ResourceKind = ProviderResourceKind.Track,
+                    CatalogNamespace = "default",
+                    Scope = ProviderIdentityScope.Account,
+                    ExternalId = snapshot.ExternalIdHash,
+                    ExternalIdHash = snapshot.ExternalIdHash,
+                    Verification = ProviderIdentityVerification.Verified,
+                    VerificationMethod = "source-snapshot-hash",
+                    DecisionVersion = decisionVersion,
+                    VerifiedAt = now,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+                db.ProviderTrackIdentities.Add(sourceIdentity);
+            }
 
             var externalHash = Hash(externalId);
-            var identity = await db.ProviderTrackIdentities.SingleOrDefaultAsync(item =>
-                item.TenantId == actor.TenantId && item.ProviderId == providerId &&
-                item.ResourceKind == ProviderResourceKind.Track && item.CatalogNamespace == "default" &&
-                item.Scope == ProviderIdentityScope.Catalog && item.ExternalIdHash == externalHash,
-                cancellationToken);
+            var identity =
+                sourceIdentity.ProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase) &&
+                sourceIdentity.ExternalIdHash == externalHash
+                    ? sourceIdentity
+                    : await db.ProviderTrackIdentities.SingleOrDefaultAsync(item =>
+                        item.TenantId == actor.TenantId && item.ProviderId == providerId &&
+                        item.ResourceKind == ProviderResourceKind.Track && item.CatalogNamespace == "default" &&
+                        item.Scope == ProviderIdentityScope.Catalog && item.ExternalIdHash == externalHash,
+                        cancellationToken);
             if (identity != null && identity.CanonicalRecordingId != canonicalId.Value)
                 return TrackMatchCommandResult.Fail(
                     TrackMatchCommandFailure.Conflict,
@@ -1665,6 +1713,15 @@ public sealed class TrackMatchCommandService(
                     CreatedAt = now,
                     UpdatedAt = now
                 });
+            }
+            else
+            {
+                identity.ExternalId = externalId;
+                identity.Verification = ProviderIdentityVerification.Pinned;
+                identity.VerificationMethod = "manual-review";
+                identity.DecisionVersion = decisionVersion;
+                identity.VerifiedAt = now;
+                identity.UpdatedAt = now;
             }
         }
 

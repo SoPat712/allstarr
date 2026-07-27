@@ -8,6 +8,7 @@ using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Filters;
+using allstarr.Models.Domain;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
@@ -28,7 +29,8 @@ public sealed class TrackMatchesController(
     AdminProtocolExecutionContextFactory protocolContexts,
     IDbContextFactory<AllstarrDbContext> contextFactory,
     IHttpClientFactory httpClients,
-    IMediaAssetResolver mediaAssets) : ControllerBase
+    IMediaAssetResolver mediaAssets,
+    TrackMatchDecisionEngine matcher) : ControllerBase
 {
     public sealed record ResolveTrackMatchRequest(
         string TargetType,
@@ -353,6 +355,7 @@ public sealed class TrackMatchesController(
     public async Task<IActionResult> SearchLocalTargets(
         [FromQuery] string query,
         [FromQuery] string? libraryScopeId = null,
+        [FromQuery] Guid? externalSnapshotId = null,
         [FromQuery] int limit = 20,
         CancellationToken cancellationToken = default)
     {
@@ -369,6 +372,11 @@ public sealed class TrackMatchesController(
             libraryScopeId,
             limit,
             cancellationToken);
+        var source = await ReviewSourceAsync(session!, externalSnapshotId, cancellationToken);
+        var scores = source == null
+            ? []
+            : matcher.ScoreCandidates(source, tracks.Select(ToCandidate))
+                .ToDictionary(item => item.LibraryTrackId);
         var values = tracks.Select(item => new
         {
             id = item.Id,
@@ -378,8 +386,9 @@ public sealed class TrackMatchesController(
             album = item.Album,
             durationMilliseconds = item.DurationMilliseconds,
             isrc = item.Isrc,
+            confidence = scores.GetValueOrDefault(item.Id)?.Confidence,
             artworkUrl = item.CoverArtReference == null ? null : LocalArtworkUrl(item.BackendItemId)
-        }).ToArray();
+        }).OrderByDescending(item => item.confidence).ThenBy(item => item.title).ToArray();
         return Ok(new { tracks = values });
     }
 
@@ -388,6 +397,7 @@ public sealed class TrackMatchesController(
         [FromQuery] string query,
         [FromQuery] string? provider = null,
         [FromQuery] string? libraryScopeId = null,
+        [FromQuery] Guid? externalSnapshotId = null,
         [FromQuery] int limit = 20,
         CancellationToken cancellationToken = default)
     {
@@ -428,22 +438,51 @@ public sealed class TrackMatchesController(
                             provider.Equals(song.ExternalProvider, StringComparison.OrdinalIgnoreCase)))
             .Take(limit)
             .ToArray();
+        var source = await ReviewSourceAsync(session!, externalSnapshotId, cancellationToken);
+        var candidates = songs.Select(song => new
+        {
+            Song = song,
+            Candidate = ToCandidate(
+                song,
+                session!.TenantId!.Value,
+                session.AllstarrUserId!.Value,
+                libraryScopeId ?? string.Empty)
+        }).ToArray();
+        var scores = source == null
+            ? []
+            : matcher.ScoreCandidates(source, candidates.Select(item => item.Candidate))
+                .ToDictionary(item => item.LibraryTrackId);
+        var ranked = candidates
+            .Select(item => new
+            {
+                item.Song,
+                Confidence = scores.GetValueOrDefault(item.Candidate.LibraryTrackId)?.Confidence
+            })
+            .OrderByDescending(item => item.Confidence)
+            .ThenBy(item => item.Song.ExternalProvider)
+            .ThenBy(item => item.Song.Title)
+            .ToArray();
         return Ok(new
         {
-            tracks = songs.Select(song => new
+            tracks = ranked.Select(item =>
             {
-                id = song.ExternalId,
-                externalId = song.ExternalId,
-                externalProvider = song.ExternalProvider ?? provider,
-                title = song.Title,
-                artist = song.Artist,
-                album = song.Album,
-                artworkUrl = string.IsNullOrWhiteSpace(song.CoverArtUrl) ||
-                             string.IsNullOrWhiteSpace(song.ExternalId)
-                    ? null
-                    : ExternalArtworkUrl(song.ExternalProvider ?? provider, song.ExternalId!),
-                durationMilliseconds = song.Duration * 1000,
-                isrc = song.Isrc
+                var song = item.Song;
+                return new
+                {
+                    id = song.ExternalId,
+                    externalId = song.ExternalId,
+                    externalProvider = song.ExternalProvider ?? provider,
+                    title = song.Title,
+                    artist = song.Artist,
+                    album = song.Album,
+                    artworkUrl = string.IsNullOrWhiteSpace(song.CoverArtUrl) ||
+                                 string.IsNullOrWhiteSpace(song.ExternalId)
+                        ? null
+                        : ExternalArtworkUrl(song.ExternalProvider ?? provider, song.ExternalId!),
+                    durationMilliseconds = song.Duration * 1000,
+                    isrc = song.Isrc,
+                    confidence = item.Confidence
+                };
             }),
             providers = playableProviders
         });
@@ -668,6 +707,98 @@ public sealed class TrackMatchesController(
         }
         catch (JsonException) { return (null, null, null, null, null, null); }
     }
+
+    private async Task<ExternalTrackMatchSnapshot?> ReviewSourceAsync(
+        AdminAuthSession session,
+        Guid? externalSnapshotId,
+        CancellationToken cancellationToken)
+    {
+        if (!externalSnapshotId.HasValue) return null;
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var snapshot = await db.ExternalMetadataSnapshots.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.Id == externalSnapshotId.Value &&
+            item.TenantId == session.TenantId &&
+            (session.IsAdministrator || item.OwnerUserId == session.AllstarrUserId),
+            cancellationToken);
+        if (snapshot == null) return null;
+        var identity = snapshot.ProviderTrackIdentityId.HasValue
+            ? await db.ProviderTrackIdentities.AsNoTracking().SingleOrDefaultAsync(item =>
+                item.Id == snapshot.ProviderTrackIdentityId.Value &&
+                item.TenantId == snapshot.TenantId,
+                cancellationToken)
+            : null;
+        var canonicalId = identity?.CanonicalRecordingId ?? await db.TrackMatches.AsNoTracking()
+            .Where(item => item.TenantId == snapshot.TenantId &&
+                           item.ExternalSnapshotId == snapshot.Id)
+            .OrderByDescending(item => item.DecisionVersion)
+            .Select(item => item.CanonicalRecordingId)
+            .FirstOrDefaultAsync(cancellationToken);
+        var metadata = Metadata(snapshot.PayloadJson);
+        return new(
+            snapshot.Id.ToString("N"),
+            identity?.ProviderId ?? snapshot.ProviderId,
+            identity?.ExternalId ?? snapshot.ExternalIdHash,
+            metadata.Title ?? "Unknown",
+            metadata.Artist ?? "Unknown",
+            metadata.Album,
+            null,
+            metadata.DurationMilliseconds,
+            metadata.Isrc,
+            null,
+            null,
+            canonicalId);
+    }
+
+    private static LocalTrackMatchCandidate ToCandidate(LibraryTrackRecord item) => new(
+        item.Id,
+        item.TenantId,
+        item.OwnerUserId,
+        item.BackendInstanceId,
+        item.LibraryScopeId,
+        item.BackendItemId,
+        item.CanonicalRecordingId,
+        item.Title,
+        item.Artist,
+        item.Album,
+        item.AlbumArtist,
+        item.DurationMilliseconds,
+        item.Isrc,
+        item.MusicBrainzRecordingId,
+        null,
+        null);
+
+    private static LocalTrackMatchCandidate ToCandidate(
+        Song song,
+        Guid tenantId,
+        Guid ownerUserId,
+        string libraryScopeId) => new(
+        Guid.CreateVersion7(),
+        tenantId,
+        ownerUserId,
+        string.Empty,
+        libraryScopeId,
+        song.ExternalId ?? song.Id,
+        null,
+        song.Title,
+        song.Artist,
+        song.Album,
+        song.AlbumArtist,
+        song.Duration * 1000L,
+        song.Isrc,
+        null,
+        song.ExplicitContentLyrics switch
+        {
+            1 => true,
+            0 or 3 => false,
+            _ => null
+        },
+        string.IsNullOrWhiteSpace(song.ExternalProvider) ||
+        string.IsNullOrWhiteSpace(song.ExternalId)
+            ? null
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [song.ExternalProvider] = song.ExternalId
+            });
 
     private static long? DurationMilliseconds(JsonElement root)
     {

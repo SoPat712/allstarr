@@ -3049,10 +3049,6 @@
     color: var(--color-ink-muted);
   }
 
-  .match-target-tabs {
-    margin: 0.9rem 1rem 0;
-  }
-
   .target-search {
     display: flex;
     align-items: end;
@@ -3163,7 +3159,8 @@
 
   .target-results > button > span:last-child {
     color: var(--color-signal);
-    font-size: 0.62rem;
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
     font-weight: 750;
   }
 

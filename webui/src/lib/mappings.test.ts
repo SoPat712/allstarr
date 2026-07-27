@@ -4,27 +4,12 @@ import {
   hashSimilarity,
   isAttention,
   percent,
-  playableProviders,
   providerResultCounts,
+  rankedTargets,
   scoreComponents,
 } from "./mappings";
 
 describe("mapping review presentation", () => {
-  it("discovers arbitrary installed playback providers", () => {
-    expect(
-      playableProviders([
-        { id: "future-extension", name: "Future", categories: ["metadata", "streaming"] },
-        { id: "playlist-only", name: "Playlist", categories: ["playlist"] },
-        {
-          id: "offline",
-          name: "Offline",
-          categories: ["download"],
-          runtimeCapabilities: [{ id: "download", ready: false, canAttempt: false }],
-        },
-      ]).map((provider) => provider.id),
-    ).toEqual(["future-extension"]);
-  });
-
   it("compares simple artwork fingerprints", () => {
     const pixels = new Uint8ClampedArray(9 * 8 * 4);
     for (let row = 0; row < 8; row += 1)
@@ -50,9 +35,19 @@ describe("mapping review presentation", () => {
       { id: "1", title: "One", externalProvider: "apple-download" },
       { id: "2", title: "Two", externalProvider: "deezer" },
       { id: "3", title: "Three", externalProvider: "apple-download" },
+      { id: "4", title: "Four" },
     ])).toEqual([
       { providerId: "apple-download", count: 2 },
       { providerId: "deezer", count: 1 },
+      { providerId: "local", count: 1 },
     ]);
+  });
+
+  it("orders unified results by match confidence", () => {
+    expect(rankedTargets([
+      { id: "1", title: "Weak", confidence: 0.45 },
+      { id: "2", title: "Best", externalProvider: "deezer", confidence: 0.98 },
+      { id: "3", title: "Unknown" },
+    ]).map((target) => target.title)).toEqual(["Best", "Weak", "Unknown"]);
   });
 });

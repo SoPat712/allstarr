@@ -159,8 +159,14 @@ public sealed class DurablePlaylistProjectionReader(
             .Where(item => item.ProviderTrackIdentityId.HasValue)
             .Select(item => item.ProviderTrackIdentityId!.Value)
             .ToArray();
+        var externalHashes = external.Values
+            .Select(item => item.ExternalIdHash)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
         var sourceIdentities = await database.ProviderTrackIdentities.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && identityIds.Contains(item.Id))
+            .Where(item => item.TenantId == tenantId &&
+                           (identityIds.Contains(item.Id) ||
+                            externalHashes.Contains(item.ExternalIdHash)))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
         var canonicalIds = sourceIdentities.Values
             .Select(item => item.CanonicalRecordingId)
@@ -283,6 +289,9 @@ public sealed class DurablePlaylistProjectionReader(
         ProviderTrackIdentityRecord? identity = null;
         if (external.ProviderTrackIdentityId is { } identityId)
             sourceIdentities.TryGetValue(identityId, out identity);
+        identity ??= sourceIdentities.Values.FirstOrDefault(item =>
+            item.ProviderId.Equals(external.ProviderId, StringComparison.OrdinalIgnoreCase) &&
+            item.ExternalIdHash == external.ExternalIdHash);
         var classification = TrackClassifier.Classify(
             manual,
             match,

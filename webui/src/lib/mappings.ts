@@ -1,4 +1,4 @@
-import type { MatchCandidate, MatchReviewItem, MatchTarget, ProviderDefinition } from "./api";
+import type { MatchCandidate, MatchReviewItem, MatchTarget } from "./api";
 
 export function isAttention(state: string) {
   return ["unresolved", "suggested", "ambiguous", "rejected"].includes(state.toLowerCase());
@@ -6,22 +6,6 @@ export function isAttention(state: string) {
 
 export function percent(value?: number | null) {
   return value == null || !Number.isFinite(value) ? "—" : `${Math.round(value * 1_000) / 10}%`;
-}
-
-export function playableProviders(providers: ProviderDefinition[]) {
-  return providers
-    .filter((provider) => {
-      const capabilities = [
-        ...(provider.categories ?? []),
-        ...(provider.capabilityRoutes ?? []).flatMap((route) => route.capabilities),
-      ];
-      if (!capabilities.some((value) => value === "streaming" || value === "download")) return false;
-      const runtime = provider.runtimeCapabilities?.filter(
-        (value) => value.id === "streaming" || value.id === "download",
-      );
-      return provider.status !== "disabled" && (!runtime?.length || runtime.some((value) => value.canAttempt));
-    })
-    .toSorted((left, right) => left.name.localeCompare(right.name));
 }
 
 export function scoreComponents(candidate: MatchCandidate) {
@@ -32,12 +16,18 @@ export function scoreComponents(candidate: MatchCandidate) {
 
 export function providerResultCounts(targets: MatchTarget[]) {
   return [...targets.reduce((counts, target) => {
-    if (target.externalProvider)
-      counts.set(target.externalProvider, (counts.get(target.externalProvider) ?? 0) + 1);
+    const providerId = target.externalProvider || "local";
+    counts.set(providerId, (counts.get(providerId) ?? 0) + 1);
     return counts;
   }, new Map<string, number>())]
     .map(([providerId, count]) => ({ providerId, count }))
     .toSorted((left, right) => right.count - left.count || left.providerId.localeCompare(right.providerId));
+}
+
+export function rankedTargets(targets: MatchTarget[]) {
+  return targets.toSorted((left, right) =>
+    (right.confidence ?? -1) - (left.confidence ?? -1) ||
+    left.title.localeCompare(right.title));
 }
 
 export function differenceHash(pixels: ArrayLike<number>) {
