@@ -21,7 +21,8 @@ public sealed record PlaylistOrchestrationRequest(
     long Generation,
     Guid? SourceSnapshotId = null,
     Guid? JobId = null,
-    Guid? ScheduleId = null);
+    Guid? ScheduleId = null,
+    Func<int, int, string, CancellationToken, Task>? Progress = null);
 
 public sealed record PlaylistOrchestrationResult(
     PlaylistMaterializationPlan Plan,
@@ -203,7 +204,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             ? await LoadSnapshotAsync(initial, link, request.SourceSnapshotId.Value, cancellationToken)
             : await CollectAndPersistAsync(execution, link, request.JobId, cancellationToken);
         var (source, decisions, decisionIds) = await MatchAndLoadAsync(
-            execution, link, snapshot, cancellationToken);
+            execution, link, snapshot, request.Progress, cancellationToken);
         await PublishGenerationAsync(link, snapshot, decisionIds, cancellationToken);
         var mode = link.Mode == PlaylistLinkMode.Virtual
             ? PlaylistPlanMode.Virtual
@@ -326,7 +327,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         PersistenceGuard.RequireLibrary(execution, link.LibraryScopeId);
         if (!link.Enabled) throw new InvalidOperationException("The playlist is paused. Resume it before refreshing.");
         var snapshot = await CollectAndPersistAsync(execution, link, jobId, cancellationToken);
-        var (_, _, decisionIds) = await MatchAndLoadAsync(execution, link, snapshot, cancellationToken);
+        var (_, _, decisionIds) = await MatchAndLoadAsync(execution, link, snapshot, null, cancellationToken);
         await PublishGenerationAsync(link, snapshot, decisionIds, cancellationToken);
         return new PlaylistRefreshResult(snapshot.Id, snapshot.SnapshotVersion, snapshot.ProviderRevision);
     }
@@ -545,6 +546,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         ProtocolExecutionContext execution,
         PlaylistLinkRecord link,
         PlaylistSourceSnapshotRecord snapshot,
+        Func<int, int, string, CancellationToken, Task>? progress,
         CancellationToken cancellationToken)
     {
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
@@ -642,6 +644,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
 
         foreach (var entry in entries)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var external = externals[entry.ExternalMetadataSnapshotId];
             allManualOverrides.TryGetValue(external.Id, out var manual);
 
@@ -726,6 +729,14 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             decisions.Add(new PersistedPlaylistMatchDecision(entry.Id, external.Id, effectiveState,
                 effectiveLibraryTrackId, library?.BackendItemId, library?.BackendInstanceId, stored.Confidence,
                 stored.Threshold, stored.DecisionVersion, DeserializeStrings(stored.ReasonsJson), DeserializeStrings(stored.WarningsJson)));
+            if (progress != null)
+            {
+                using var payload = JsonDocument.Parse(external.PayloadJson);
+                var title = payload.RootElement.TryGetProperty("Title", out var value)
+                    ? value.GetString() ?? "Unknown track"
+                    : "Unknown track";
+                await progress(decisions.Count, entries.Count, title, cancellationToken);
+            }
         }
 
         // Populate decision IDs after repository persistence so every ID is durable.
@@ -1052,7 +1063,16 @@ public sealed class PlaylistMaterializationJobHandler(
                     Provider: link.SourceProviderId, Playlist: playlistName), cancellationToken);
             var result = await orchestration.RunAsync(execution,
                 new PlaylistOrchestrationRequest(link.Id, payload.Generation, payload.SourceSnapshotId,
-                    context.Claim.JobId, link.ScheduleId), cancellationToken);
+                    context.Claim.JobId, link.ScheduleId,
+                    async (completed, total, track, token) =>
+                    {
+                        await context.ReportProgressAsync(
+                            new("playlist.match", $"Matched {track}.", completed, total,
+                                link.SourceProviderId, playlistName, track,
+                                ThroughputPerSecond: completed / Math.Max(
+                                    Stopwatch.GetElapsedTime(started).TotalSeconds, .001)),
+                            token);
+                    }), cancellationToken);
             var completed = result.Plan?.Entries.Count;
             var retry = result.State is PlaylistSyncState.Failed or PlaylistSyncState.Conflicted;
             await context.ReportProgressAsync(

@@ -509,6 +509,32 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
 test("Playlist operations show durable progress and confirm cancellation", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
+  let cancelled = false;
+  let detailRequests = 0;
+  await page.route("**/api/admin/jobs?limit=100", (route) => {
+    const fixture = responses["/api/admin/jobs?limit=100"] as { jobs: Record<string, unknown>[]; progress: unknown[] };
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...fixture,
+        jobs: fixture.jobs.map((job) => ({ ...job, state: cancelled ? "Succeeded" : "Running" })),
+      }),
+    });
+  });
+  await page.route("**/api/admin/jobs/*/cancel", (route) => {
+    cancelled = true;
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        jobId: "11111111-1111-1111-1111-111111111111",
+        state: "CancellationRequested",
+      }),
+    });
+  });
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/admin/playlist-links/playlist-link")
+      detailRequests++;
+  });
   await page.goto("#/library/playlists");
   await page.getByRole("button", { name: /Test playlist/ }).click();
   const dialog = page.getByRole("dialog", { name: "Test playlist" });
@@ -527,6 +553,7 @@ test("Playlist operations show durable progress and confirm cancellation", async
     item.method() === "POST" && item.url().endsWith("/api/admin/jobs/11111111-1111-1111-1111-111111111111/cancel"));
   await confirmation.getByRole("button", { name: "Cancel operation" }).click();
   await request;
+  await expect.poll(() => detailRequests).toBeGreaterThanOrEqual(2);
 });
 
 test("Profile artwork is stable in full, slim, and mobile navigation", async ({ page }) => {

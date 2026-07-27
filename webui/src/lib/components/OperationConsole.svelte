@@ -19,15 +19,18 @@
   let cancelOpen = $state(false);
   let cancelling = $state(false);
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let observedJobId = "";
   let observedState = "";
 
-  const job = $derived(
-    data?.jobs.find((item) => item.id === requestedJobId) ??
-    data?.jobs.find((item) =>
-      item.type === "playlist.materialize" &&
-      data?.progress.some((progress) =>
-        progress.jobId === item.id && progressDetails(progress).playlist === playlistName)),
-  );
+  function selectJob(next: JobResponse | null) {
+    return next?.jobs.find((item) => item.id === requestedJobId) ??
+      next?.jobs.find((item) =>
+        item.type === "playlist.materialize" &&
+        next.progress.some((progress) =>
+          progress.jobId === item.id && progressDetails(progress).playlist === playlistName));
+  }
+
+  const job = $derived(selectJob(data));
   const entries = $derived(compactProgress(
     data?.progress.filter((item) => item.jobId === job?.id) ?? [],
   ));
@@ -40,12 +43,16 @@
   async function load() {
     try {
       data = await home.jobs();
-      const next = data.jobs.find((item) => item.id === requestedJobId)?.state;
-      if (observedState && ["Pending", "Running", "Deferred"].includes(observedState) &&
-          next && !["Pending", "Running", "Deferred"].includes(next)) {
+      const next = selectJob(data);
+      if (observedJobId === next?.id &&
+          observedState && ["Pending", "Running", "Deferred"].includes(observedState) &&
+          !["Pending", "Running", "Deferred"].includes(next.state)) {
         await onTerminal();
       }
-      if (next) observedState = next;
+      if (next) {
+        observedJobId = next.id;
+        observedState = next.state;
+      }
     } catch {
       // The parent route retains its authoritative playlist state when job diagnostics fail.
     }
@@ -88,7 +95,7 @@
 {#if job}
   <details class="operation-console" open={Boolean(active)}>
     <summary>
-      <span><strong>{latest.stage?.replaceAll(".", " ") || job.type.replaceAll(".", " ")}</strong><small>{latest.message || job.state}</small></span>
+      <span><strong aria-live="polite">{latest.stage?.replaceAll(".", " ") || job.type.replaceAll(".", " ")}</strong><small>{latest.message || job.state}</small></span>
       <span class={`status-pill ${job.state.toLowerCase()}`}>{job.state}</span>
     </summary>
     <div class="operation-console-body">
@@ -101,6 +108,7 @@
         {#if latest.provider}<span><small>Provider</small><strong>{latest.provider}</strong></span>{/if}
         {#if latest.total != null}<span><small>Progress</small><strong>{latest.completed ?? 0}/{latest.total}</strong></span>{/if}
         {#if latest.throughputPerSecond != null}<span><small>Throughput</small><strong>{latest.throughputPerSecond.toFixed(1)}/s</strong></span>{/if}
+        {#if (job.attemptCount ?? 0) > 1}<span><small>Retries</small><strong>{(job.attemptCount ?? 1) - 1}</strong></span>{/if}
         {#if job.failureCount}<span><small>Failures</small><strong>{job.failureCount}</strong></span>{/if}
         {#if job.deferralCount}<span><small>Deferrals</small><strong>{job.deferralCount}</strong></span>{/if}
       </div>

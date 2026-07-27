@@ -17,5 +17,7 @@ describe("job progress", () => {
     expect(progressDetails(item)).toMatchObject({ completed: 2, total: 5 });
     expect(progressDetails(progress("bad", "not-json"))).toEqual({});
     expect(compactProgress([item, progress("2", item.detailsJson)])).toHaveLength(1);
+    expect(compactProgress(Array.from({ length: 250 }, (_, index) =>
+      progress(String(index), `{"message":"Track ${index}"}`)))).toHaveLength(200);
   });
 });
