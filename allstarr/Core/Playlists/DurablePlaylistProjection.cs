@@ -46,10 +46,20 @@ public sealed record DurablePlaylistProjection(
     string? VerificationCode = null,
     DateTimeOffset? VerifiedAt = null)
 {
+    public string? Description { get; init; }
+    public Guid? RunId { get; init; }
+    public long? Generation { get; init; }
+    public int MaterializedCount { get; init; }
     public int TotalCount => Entries.Count;
     public int LocalCount => Entries.Count(item => item.BackendItemId != null);
     public int ExternalCount => Entries.Count(item => item.RouteKind == "external");
     public int MissingCount => Entries.Count(item => item.RouteKind == "unmatched");
+    public int MatchedCount => Entries.Count(item =>
+        item.MatchState is TrackMatchState.Accepted or TrackMatchState.Pinned);
+    public int ReviewCount => Entries.Count(item =>
+        item.MatchState is TrackMatchState.Suggested or TrackMatchState.Ambiguous);
+    public int RejectedCount => Entries.Count(item => item.MatchState == TrackMatchState.Rejected);
+    public int PlayableCount => LocalCount + ExternalCount;
     public int UnknownDurationCount => Entries.Count(item => !item.DurationMilliseconds.HasValue);
     public long? DurationMilliseconds => Entries.Any(item => item.DurationMilliseconds.HasValue)
         ? Entries.Sum(item => item.DurationMilliseconds ?? 0)
@@ -103,6 +113,23 @@ public sealed class DurablePlaylistProjectionReader(
         if (snapshot == null) return null;
 
         return await ProjectAsync(database, snapshot, tenantId, cancellationToken);
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, DurablePlaylistProjection>> ReadByLinkIdsAsync(
+        Guid tenantId,
+        Guid? ownerUserId,
+        IReadOnlyCollection<Guid> playlistLinkIds,
+        CancellationToken cancellationToken = default)
+    {
+        var result = new Dictionary<Guid, DurablePlaylistProjection>();
+        // ponytail: project sequentially; bulk-load only if measured list latency requires it.
+        foreach (var playlistLinkId in playlistLinkIds)
+        {
+            var projection = await ReadByLinkIdAsync(
+                tenantId, ownerUserId, playlistLinkId, cancellationToken);
+            if (projection != null) result[playlistLinkId] = projection;
+        }
+        return result;
     }
 
     private async Task<DurablePlaylistProjection> ProjectAsync(
@@ -178,9 +205,21 @@ public sealed class DurablePlaylistProjectionReader(
         var playableLibraryTrackIds = library.Keys.ToHashSet();
         var run = await database.PlaylistSyncRuns.AsNoTracking()
             .Where(item => item.PlaylistLinkId == link.Id &&
-                           item.PlaylistSourceSnapshotId == snapshot.Id)
+                           item.PlaylistSourceSnapshotId == snapshot.Id &&
+                           item.State != PlaylistSyncState.Pending &&
+                           item.State != PlaylistSyncState.Running)
             .OrderByDescending(item => item.Generation)
             .FirstOrDefaultAsync(cancellationToken);
+        var materializedCount = run == null
+            ? 0
+            : await database.PlaylistSyncEntryResults.AsNoTracking()
+                .Where(item => item.PlaylistSyncRunId == run.Id &&
+                               (item.Outcome == PlaylistEntryOutcome.Reused ||
+                                item.Outcome == PlaylistEntryOutcome.Added ||
+                                item.Outcome == PlaylistEntryOutcome.Reordered))
+                .Select(item => item.PlaylistSourceEntryId)
+                .Distinct()
+                .CountAsync(cancellationToken);
 
         return new(
             link.Id,
@@ -214,7 +253,13 @@ public sealed class DurablePlaylistProjectionReader(
             run?.VerifiedTargetTrackCount,
             run?.VerifiedTargetDurationMilliseconds,
             run?.VerificationCode,
-            run?.VerifiedAt);
+            run?.VerifiedAt)
+        {
+            Description = snapshot.Description,
+            RunId = run?.Id,
+            Generation = run?.Generation,
+            MaterializedCount = materializedCount
+        };
     }
 
     private static DurablePlaylistEntryProjection ProjectEntry(

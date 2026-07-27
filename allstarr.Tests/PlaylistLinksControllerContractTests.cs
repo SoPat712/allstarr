@@ -69,6 +69,17 @@ public sealed class PlaylistLinksControllerContractTests
     }
 
     [Fact]
+    public void ListAndDetailsShareTheDurableProjectionReader()
+    {
+        var source = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Controllers", "PlaylistLinksController.cs"));
+
+        Assert.Contains("projections.ReadByLinkIdsAsync", source, StringComparison.Ordinal);
+        Assert.Contains("projections.ReadByLinkIdAsync", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildMetrics(", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RequestContracts_ContainStableReferencesAndNoRawCredentialFields()
     {
         var create = typeof(CreatePlaylistLinkRequest).GetProperties().Select(item => item.Name).ToArray();

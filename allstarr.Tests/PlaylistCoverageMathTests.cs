@@ -1,3 +1,6 @@
+using allstarr.Core.Matching;
+using allstarr.Core.Playlists;
+using allstarr.Core.Storage;
 using allstarr.Services.Admin;
 
 namespace allstarr.Tests;
@@ -55,4 +58,32 @@ public sealed class PlaylistCoverageMathTests
 
         Assert.Equal(new PlaylistCoverageCounts(47, 43, 4, 0), result);
     }
+
+    [Fact]
+    public void DurableProjection_OwnsConsistentListAndDetailCounts()
+    {
+        var projection = new DurablePlaylistProjection(
+            Guid.NewGuid(), Guid.NewGuid(), 1, "Playlist", "source", "playlist",
+            Guid.NewGuid(), "jellyfin", null, null, DateTimeOffset.UtcNow, null, null,
+            [
+                Entry("local", TrackMatchState.Accepted, "backend"),
+                Entry("external", TrackMatchState.Suggested, routes: [new("provider", "track")]),
+                Entry("unmatched", TrackMatchState.Rejected)
+            ]);
+
+        Assert.Equal(projection.TotalCount,
+            projection.LocalCount + projection.ExternalCount + projection.MissingCount);
+        Assert.Equal(2, projection.PlayableCount);
+        Assert.Equal(1, projection.MatchedCount);
+        Assert.Equal(1, projection.ReviewCount);
+        Assert.Equal(1, projection.RejectedCount);
+    }
+
+    private static DurablePlaylistEntryProjection Entry(
+        string route,
+        TrackMatchState state,
+        string? backend = null,
+        IReadOnlyList<DurableProviderRoute>? routes = null) =>
+        new(0, Guid.NewGuid(), "external", "Track", [], null, null, null, null, null,
+            state, backend, route, routes?.FirstOrDefault()?.ProviderId, routes ?? []);
 }
