@@ -39,6 +39,7 @@
   let degraded = $state("");
   let feedback = $state("");
   let action = $state("");
+  let loadVersion = 0;
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   let dialogOpen = $state(false);
@@ -70,11 +71,11 @@
   }
 
   async function load() {
-    if (refreshing) return;
+    const version = ++loadVersion;
     refreshing = true;
     error = "";
     try {
-      data = await matchReview.list({
+      const response = await matchReview.list({
         page,
         pageSize: 50,
         search,
@@ -82,6 +83,8 @@
         sort,
         libraryScopeId,
       });
+      if (version !== loadVersion) return;
+      data = response;
       if (initialReview && !initialReviewOpened) {
         const requested = data.matches.find((item) => item.externalSnapshotId === initialReview);
         if (requested) {
@@ -90,10 +93,13 @@
         }
       }
     } catch (cause) {
+      if (version !== loadVersion) return;
       error = cause instanceof Error ? cause.message : "Match review is unavailable.";
     } finally {
-      loading = false;
-      refreshing = false;
+      if (version === loadVersion) {
+        loading = false;
+        refreshing = false;
+      }
     }
   }
 
