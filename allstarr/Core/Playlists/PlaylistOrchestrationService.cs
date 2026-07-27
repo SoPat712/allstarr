@@ -448,7 +448,11 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 .ToListAsync(cancellationToken));
         }
         var exactExternals = storedExternals
-            .Where(item => item.ProviderRevision == collected.SourceRevision)
+            .Where(item => item.OwnerUserId == link.OwnerUserId &&
+                           item.LibraryScopeId == link.LibraryScopeId &&
+                           item.BackendInstanceId == link.TargetBackendInstanceId &&
+                           item.Protocol == link.TargetProtocol &&
+                           item.ProviderRevision == collected.SourceRevision)
             .GroupBy(item => (item.ExternalIdHash, item.ProviderRevision, item.PayloadSha256))
             .ToDictionary(group => group.Key, group => group.OrderByDescending(item => item.SnapshotVersion).First());
         var latestVersions = storedExternals

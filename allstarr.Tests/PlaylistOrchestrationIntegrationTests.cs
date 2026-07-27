@@ -210,6 +210,32 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     }
 
     [Fact]
+    public async Task Refresh_does_not_reuse_metadata_from_another_library_scope()
+    {
+        _source.Snapshot = Snapshot("revision-scope", Entry(0, "entry-0", "source-1", "One"));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var link = await db.PlaylistLinks.SingleAsync();
+            link.LibraryScopeId = "old-scope";
+            await db.SaveChangesAsync();
+        }
+        var oldScope = await _service.RefreshAsync(Context("old-scope"), _link);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var link = await db.PlaylistLinks.SingleAsync();
+            link.LibraryScopeId = "music";
+            await db.SaveChangesAsync();
+        }
+        var currentScope = await _service.RefreshAsync(Context(), _link);
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        var snapshots = await verify.ExternalMetadataSnapshots.OrderBy(item => item.SnapshotVersion).ToListAsync();
+        Assert.Equal(["old-scope", "music"], snapshots.Select(item => item.LibraryScopeId));
+        Assert.NotEqual(oldScope.SnapshotId, currentScope.SnapshotId);
+    }
+
+    [Fact]
     public async Task Refresh_BackfillsNewDurationWithoutMutatingThePriorGeneration()
     {
         var entry = Entry(0, "entry-duration", "source-1", "One");
@@ -1021,9 +1047,9 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         await db.SaveChangesAsync();
     }
 
-    private ProtocolExecutionContext Context() => new(ProtocolKind.Jellyfin, "backend", "principal",
+    private ProtocolExecutionContext Context(string libraryScopeId = "music") => new(ProtocolKind.Jellyfin, "backend", "principal",
         new AllstarrPrincipal(_tenant, _user, "jellyfin", "backend", "principal", "Owner", false),
-        "correlation", _now.AddMinutes(5), default, libraryScopeId: "music");
+        "correlation", _now.AddMinutes(5), default, libraryScopeId: libraryScopeId);
     private CollectedPlaylistSourceSnapshot Snapshot(string revision, params CollectedPlaylistSourceEntry[] entries) =>
         new("fixture", _account, Hash("playlist"), revision, $"etag-{revision}", "Provider Mix", "Description",
             "provider-artwork:stable:key", entries);
