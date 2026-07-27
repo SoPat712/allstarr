@@ -1336,6 +1336,11 @@ test("Sidebar uses an integrated expander and deterministic slim breakpoint", as
   await expect(shell).toHaveClass(/slim/);
   await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
   await expect.poll(async () => (await page.locator(".sidebar").boundingBox())?.width ?? 0).toBe(80);
+  const library = page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Library" });
+  await expect.poll(async () => {
+    const [link, icon] = await Promise.all([library.boundingBox(), library.locator("svg").boundingBox()]);
+    return Math.abs((link!.y + link!.height / 2) - (icon!.y + icon!.height / 2));
+  }).toBeLessThan(0.5);
 
   await page.setViewportSize({ width: 850, height: 800 });
   await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();

@@ -396,11 +396,12 @@
   }
 
   .app-shell.slim .sidebar nav a {
-    display: grid;
+    display: flex;
     width: var(--control-lg);
     height: var(--control-lg);
     min-height: 0;
-    place-items: center;
+    align-items: center;
+    justify-content: center;
     padding: 0;
     font-size: 0;
   }
