@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace allstarr.Services.Common;
 
 public sealed class ExternalPlaybackMetadataResolver(
@@ -9,6 +11,8 @@ public sealed class ExternalPlaybackMetadataResolver(
     private const int MaximumArtworkBytes = 5 * 1024 * 1024;
     private static readonly TimeSpan MetadataCacheDuration = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan FailureCacheDuration = TimeSpan.FromSeconds(30);
+    private readonly ConcurrentDictionary<string, Lazy<Task<PlaybackTrackMetadata?>>> _inflight =
+        new(StringComparer.Ordinal);
 
     public async Task<PlaybackTrackMetadata?> ResolveAsync(string itemId, CancellationToken cancellationToken)
     {
@@ -21,11 +25,32 @@ public sealed class ExternalPlaybackMetadataResolver(
         var cached = await cache.GetAsync<PlaybackMetadataCacheEntry>(cacheKey);
         if (cached != null) return cached.Metadata;
 
+        var pending = _inflight.GetOrAdd(
+            cacheKey,
+            _ => new Lazy<Task<PlaybackTrackMetadata?>>(
+                () => ResolveUncachedAsync(identity.Value, cacheKey, negativeKey, cancellationToken),
+                LazyThreadSafetyMode.ExecutionAndPublication));
+        try
+        {
+            return await pending.Value.WaitAsync(cancellationToken);
+        }
+        finally
+        {
+            _inflight.TryRemove(new(cacheKey, pending));
+        }
+    }
+
+    private async Task<PlaybackTrackMetadata?> ResolveUncachedAsync(
+        (string Provider, string ExternalId) identity,
+        string cacheKey,
+        string negativeKey,
+        CancellationToken cancellationToken)
+    {
         PlaybackTrackMetadata? metadata = null;
         try
         {
             var song = await metadataService.GetSongAsync(
-                identity.Value.Provider, identity.Value.ExternalId, cancellationToken);
+                identity.Provider, identity.ExternalId, cancellationToken);
             if (song != null)
             {
                 metadata = new(song.Title, song.Artist, song.Album,
@@ -38,7 +63,11 @@ public sealed class ExternalPlaybackMetadataResolver(
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "Unable to resolve external playback metadata for {ItemId}", itemId);
+            logger.LogDebug(
+                ex,
+                "Unable to resolve {Provider} playback metadata for {ExternalId}",
+                identity.Provider,
+                identity.ExternalId);
         }
 
         if (metadata == null)

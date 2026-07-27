@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Collections.Concurrent;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
 using Microsoft.Extensions.Options;
@@ -16,6 +17,8 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
     private readonly JellyfinSettings _settings;
     private readonly ILogger<JellyfinPlaybackMetadataResolver> _logger;
     private readonly IApplicationCache _cache;
+    private readonly ConcurrentDictionary<string, Lazy<Task<PlaybackTrackMetadata?>>> _inflight =
+        new(StringComparer.Ordinal);
 
     public JellyfinPlaybackMetadataResolver(
         IHttpClientFactory httpClientFactory,
@@ -46,6 +49,27 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
         var cached = await _cache.GetAsync<MetadataCacheEntry>(cacheKey);
         if (cached != null) return cached.Metadata;
 
+        var pending = _inflight.GetOrAdd(
+            cacheKey,
+            _ => new Lazy<Task<PlaybackTrackMetadata?>>(
+                () => ResolveUncachedAsync(itemId, cacheKey, negativeKey, cancellationToken),
+                LazyThreadSafetyMode.ExecutionAndPublication));
+        try
+        {
+            return await pending.Value.WaitAsync(cancellationToken);
+        }
+        finally
+        {
+            _inflight.TryRemove(new(cacheKey, pending));
+        }
+    }
+
+    private async Task<PlaybackTrackMetadata?> ResolveUncachedAsync(
+        string itemId,
+        string cacheKey,
+        string negativeKey,
+        CancellationToken cancellationToken)
+    {
         PlaybackTrackMetadata? metadata = null;
         try
         {

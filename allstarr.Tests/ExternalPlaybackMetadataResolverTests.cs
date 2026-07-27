@@ -79,6 +79,31 @@ public sealed class ExternalPlaybackMetadataResolverTests
             cache.GetKeysByPattern("negative:*"));
     }
 
+    [Fact]
+    public async Task ConcurrentMetadataRequestsShareOneProviderFetch()
+    {
+        var release = new TaskCompletionSource<Song?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var service = new Mock<IMusicMetadataService>();
+        service.Setup(item => item.GetSongAsync("deezer", "42", It.IsAny<CancellationToken>()))
+            .Returns(release.Task);
+        var resolver = new ExternalPlaybackMetadataResolver(
+            service.Object,
+            new TestMemoryApplicationCache(),
+            new StubHttpClientFactory(new HttpClient()),
+            NullLogger<ExternalPlaybackMetadataResolver>.Instance);
+
+        var first = resolver.ResolveAsync("ext-deezer-song-42", CancellationToken.None);
+        var second = resolver.ResolveAsync("ext-deezer-song-42", CancellationToken.None);
+        release.SetResult(new Song { Title = "Shared", Artist = "Artist" });
+
+        var results = await Task.WhenAll(first, second);
+        Assert.All(results, result => Assert.Equal("Shared", result!.Title));
+        service.Verify(
+            item => item.GetSongAsync("deezer", "42", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
     private sealed class StubHttpClientFactory(HttpClient client) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => client;
