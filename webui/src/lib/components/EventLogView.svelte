@@ -19,6 +19,7 @@
   } from "$lib/activity";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import { formatDuration } from "$lib/playlists";
   import { liveUpdates } from "$lib/live-updates.svelte";
@@ -177,15 +178,12 @@
 {#if loading}
   <section class="panel event-log-panel skeleton-panel" aria-label="Loading Event log" aria-busy="true"></section>
 {:else if error && !items.length}
-  <section class="panel route-error" role="alert">
-    <span aria-hidden="true">!</span>
-    <div>
-      <p class="eyebrow">Event log unavailable</p>
-      <h2>Allstarr could not load durable activity.</h2>
-      <p>{error}</p>
-    </div>
-    <button class="button-secondary" type="button" onclick={() => void load("initial")}>Try again</button>
-  </section>
+  <RouteError
+    eyebrow="Event log unavailable"
+    title="Allstarr could not load durable activity."
+    message={error}
+    onRetry={() => load("initial")}
+  />
 {:else}
   {#if error}
     <div class="degraded-banner" role="status">

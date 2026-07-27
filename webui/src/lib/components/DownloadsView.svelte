@@ -9,6 +9,7 @@
     type ProviderDefinition,
   } from "$lib/api";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import {
     filterDownloads,
@@ -141,15 +142,12 @@
 {#if loading}
   <section class="panel downloads-panel skeleton-panel" aria-label={`Loading ${label} tracks`} aria-busy="true"></section>
 {:else if error && !data}
-  <section class="panel route-error" role="alert">
-    <span aria-hidden="true">!</span>
-    <div>
-      <p class="eyebrow">{label} tracks unavailable</p>
-      <h2>Allstarr could not inspect managed audio.</h2>
-      <p>{error}</p>
-    </div>
-    <button class="button-secondary" type="button" onclick={() => void refresh()}>Try again</button>
-  </section>
+  <RouteError
+    eyebrow={`${label} tracks unavailable`}
+    title="Allstarr could not inspect managed audio."
+    message={error}
+    onRetry={refresh}
+  />
 {:else if data}
   {#if error}
     <div class="degraded-banner" role="status">

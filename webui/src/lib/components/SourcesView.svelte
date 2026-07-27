@@ -17,6 +17,7 @@
   import ConnectSourceDialog from "$lib/components/ConnectSourceDialog.svelte";
   import ConnectivityBars from "$lib/components/ConnectivityBars.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import RouteError from "$lib/components/RouteError.svelte";
   import {
     accountSettings,
     audienceLabel,
@@ -222,11 +223,12 @@
 {#if loading}
   <section class="panel sources-panel skeleton-panel" aria-label="Loading Sources" aria-busy="true"></section>
 {:else if !schema}
-  <section class="panel route-error" role="alert">
-    <span aria-hidden="true">!</span>
-    <div><p class="eyebrow">Sources unavailable</p><h2>Allstarr could not load the Source catalog.</h2><p>{error}</p></div>
-    <button class="button-secondary" type="button" onclick={() => void refresh()}>Try again</button>
-  </section>
+  <RouteError
+    eyebrow="Sources unavailable"
+    title="Allstarr could not load the Source catalog."
+    message={error}
+    onRetry={refresh}
+  />
 {:else}
   {#if error}
     <div class="degraded-banner" role="status">

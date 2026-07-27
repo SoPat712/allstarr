@@ -12,6 +12,7 @@
   import MatchDialog from "$lib/components/MatchDialog.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import {
     currentTarget,
@@ -230,15 +231,12 @@
     <div class="panel skeleton-panel"></div>
   </section>
 {:else if error && !data}
-  <section class="panel route-error" role="alert">
-    <span aria-hidden="true">!</span>
-    <div>
-      <p class="eyebrow">Match review unavailable</p>
-      <h2>Allstarr could not load canonical match decisions.</h2>
-      <p>{error}</p>
-    </div>
-    <button class="button-secondary" type="button" onclick={() => void load()}>Try again</button>
-  </section>
+  <RouteError
+    eyebrow="Match review unavailable"
+    title="Allstarr could not load canonical match decisions."
+    message={error}
+    onRetry={load}
+  />
 {:else if data}
   {#if degraded || error}
     <div class="degraded-banner" role="status">

@@ -4,6 +4,7 @@
   import { auth, onboarding, type OnboardingState, type Session } from "$lib/api";
   import { liveUpdates } from "$lib/live-updates.svelte";
   import HomeView from "$lib/components/HomeView.svelte";
+  import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
 
   const destinations = [
@@ -320,11 +321,12 @@
       {#if ActiveView && loadedRoute === route}
         <ActiveView {...activeProps} />
       {:else if viewError && loadedRoute === route}
-        <section class="panel empty-state" role="alert">
-          <p class="eyebrow">View unavailable</p>
-          <h2>{activeDestination.label} could not be loaded.</h2>
-          <p>{viewError}</p>
-        </section>
+        <RouteError
+          eyebrow="View unavailable"
+          title={`${activeDestination.label} could not be loaded.`}
+          message={viewError}
+          onRetry={() => window.location.reload()}
+        />
       {:else if viewLoader(route)}
         <section class="panel skeleton-panel" aria-busy="true" aria-label={`Loading ${activeDestination.label}`}>
           <div class="skeleton-line short"></div>

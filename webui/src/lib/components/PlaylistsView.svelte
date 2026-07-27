@@ -6,6 +6,7 @@
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import OperationConsole from "$lib/components/OperationConsole.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import {
     home,
@@ -183,15 +184,12 @@
     <div class="panel playlist-detail skeleton-panel"></div>
   </section>
 {:else if error}
-  <section class="panel route-error" role="alert">
-    <span aria-hidden="true">!</span>
-    <div>
-      <p class="eyebrow">Playlists unavailable</p>
-      <h2>Allstarr could not load the canonical playlist list.</h2>
-      <p>{error}</p>
-    </div>
-    <button class="button-secondary" type="button" onclick={() => void refresh()}>Try again</button>
-  </section>
+  <RouteError
+    eyebrow="Playlists unavailable"
+    title="Allstarr could not load the canonical playlist list."
+    message={error}
+    onRetry={refresh}
+  />
 {:else if !playlists.length}
   <section class="panel empty-state">
     <span class="empty-orbit" aria-hidden="true">♫</span>

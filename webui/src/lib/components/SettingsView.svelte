@@ -13,6 +13,7 @@
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import EnvMigrationCard from "$lib/components/EnvMigrationCard.svelte";
   import ExtensionsView from "$lib/components/ExtensionsView.svelte";
+  import RouteError from "$lib/components/RouteError.svelte";
   import SelectiveTransferCard from "$lib/components/SelectiveTransferCard.svelte";
   import CacheDiagnosticsCard from "$lib/components/CacheDiagnosticsCard.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -194,11 +195,12 @@
 {#if loading}
   <section class="panel settings-panel skeleton-panel" aria-label="Loading Settings" aria-busy="true"></section>
 {:else if !schema}
-  <section class="panel route-error" role="alert">
-    <span aria-hidden="true">!</span>
-    <div><p class="eyebrow">Settings unavailable</p><h2>Allstarr could not load runtime settings.</h2><p>{error}</p></div>
-    <button class="button-secondary" type="button" onclick={() => void refresh()}>Try again</button>
-  </section>
+  <RouteError
+    eyebrow="Settings unavailable"
+    title="Allstarr could not load runtime settings."
+    message={error}
+    onRetry={refresh}
+  />
 {:else}
   <section class="settings-workspace" aria-busy={refreshing}>
     <SegmentedNav items={tabs} {active} label="Settings sections" class="settings-tabs" />

@@ -1,5 +1,6 @@
 <script lang="ts">
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import RouteError from "$lib/components/RouteError.svelte";
   import { home, intelligence, type IntelligenceScope, type IntelligenceState } from "$lib/api";
 
   let protocol = $state("jellyfin");
@@ -106,10 +107,12 @@
       <p>Enter the backend instance and library IDs used by your media server.</p>
     </section>
   {:else if data.state === "unauthorized" || data.state === "error"}
-    <section class="panel route-error" role="alert">
-      <span aria-hidden="true">!</span><div><p class="eyebrow">{data.state}</p><h2>This library is unavailable.</h2><p>{data.message}</p></div>
-      <button class="button-secondary" type="button" onclick={() => void load()}>Try again</button>
-    </section>
+    <RouteError
+      eyebrow={data.state}
+      title="This library is unavailable."
+      message={data.message ?? "The library could not be loaded."}
+      onRetry={load}
+    />
   {:else}
     {#if data.state === "degraded"}
       <div class="degraded-banner" role="status"><span aria-hidden="true">!</span><p><strong>Some discovery sources need attention.</strong> Existing results remain available.</p></div>

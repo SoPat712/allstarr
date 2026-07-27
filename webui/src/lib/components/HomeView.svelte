@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { home, playlistLinks } from "$lib/api";
+  import RouteError from "$lib/components/RouteError.svelte";
   import { summarizeHome, type HomeSnapshot } from "$lib/home";
   import { liveUpdates } from "$lib/live-updates.svelte";
 
@@ -119,15 +120,12 @@
     <div class="panel skeleton-panel"></div>
   </section>
 {:else if completelyUnavailable}
-  <section class="panel route-error" role="alert">
-    <span aria-hidden="true">!</span>
-    <div>
-      <p class="eyebrow">Home unavailable</p>
-      <h2>Allstarr could not load its current state.</h2>
-      <p>{snapshot?.failures[0] ?? "The server did not return a usable response."}</p>
-    </div>
-    <button class="button-secondary" type="button" onclick={() => void refresh()}>Try again</button>
-  </section>
+  <RouteError
+    eyebrow="Home unavailable"
+    title="Allstarr could not load its current state."
+    message={snapshot?.failures[0] ?? "The server did not return a usable response."}
+    onRetry={refresh}
+  />
 {:else if snapshot && summary}
   {#if snapshot.failures.length}
     <div class="degraded-banner" role="status">
