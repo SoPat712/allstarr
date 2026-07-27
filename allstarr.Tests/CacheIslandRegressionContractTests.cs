@@ -114,6 +114,35 @@ public sealed class CacheIslandRegressionContractTests
         Assert.DoesNotContain("ConcurrentDictionary", client, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void TemporaryAudio_UsesConfiguredRootPolicyTtlAndQualityIdentity()
+    {
+        var services = new[] { "Qobuz", "Deezer", "SquidWTF" }
+            .Select(provider => File.ReadAllText(Path.Combine(
+                _repositoryRoot,
+                "allstarr",
+                "Services",
+                provider,
+                $"{provider}DownloadService.cs")))
+            .ToArray();
+        var cleanup = File.ReadAllText(Path.Combine(
+            _repositoryRoot,
+            "allstarr",
+            "Services",
+            "Common",
+            "CacheCleanupService.cs"));
+
+        Assert.All(services, source =>
+        {
+            Assert.Contains("Path.Combine(DownloadPath, \"transcoded\")", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("Path.Combine(\"downloads\", \"transcoded\")", source, StringComparison.Ordinal);
+        });
+        Assert.Contains("quality.ToString().ToLowerInvariant()", services[0], StringComparison.Ordinal);
+        Assert.Contains("quality.ToString().ToLowerInvariant()", services[1], StringComparison.Ordinal);
+        Assert.Contains("quality.ToLowerInvariant()", services[2], StringComparison.Ordinal);
+        Assert.Contains("CacheExtensions.TranscodeCacheTTL", cleanup, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

@@ -185,7 +185,9 @@ public class DeezerDownloadService : BaseDownloadService
         // These files are cleaned up by CacheCleanupService based on CACHE_TRANSCODE_MINUTES TTL
         var artistForPath = song.AlbumArtist ?? song.Artist;
         var basePath = Path.Combine(DownloadPath, "transcoded");
-        var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension, "deezer", trackId);
+        var outputPath = PathHelper.BuildTrackPath(
+            basePath, artistForPath, song.Album, song.Title, song.Track, extension,
+            "deezer", $"{trackId}-{quality.ToString().ToLowerInvariant()}");
 
         // Create directories if they don't exist
         var albumFolder = Path.GetDirectoryName(outputPath)!;

@@ -128,12 +128,16 @@ public class SquidWTFDownloadService : BaseDownloadService
         };
 
         var artistForPath = song.AlbumArtist ?? song.Artist;
-        var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension, "squidwtf", trackId);
+        var temporary = basePath.EndsWith("transcoded", StringComparison.OrdinalIgnoreCase);
+        var cacheId = temporary ? $"{trackId}-{quality.ToLowerInvariant()}" : trackId;
+        var outputPath = PathHelper.BuildTrackPath(
+            basePath, artistForPath, song.Album, song.Title, song.Track, extension,
+            "squidwtf", cacheId);
 
         var albumFolder = Path.GetDirectoryName(outputPath)!;
         EnsureDirectoryExists(albumFolder);
 
-        if (basePath.EndsWith("transcoded") && IOFile.Exists(outputPath))
+        if (temporary && IOFile.Exists(outputPath))
         {
             IOFile.SetLastWriteTime(outputPath, DateTime.UtcNow);
             Logger.LogInformation("Quality override cache hit: {Path}", outputPath);
@@ -254,7 +258,7 @@ public class SquidWTFDownloadService : BaseDownloadService
             "Quality override: StreamQuality.{Quality} → SquidWTF quality '{SquidQuality}' (env ceiling: {EnvQuality}) for track {TrackId}",
             quality, squidQuality, envQuality, trackId);
 
-        var basePath = Path.Combine("downloads", "transcoded");
+        var basePath = Path.Combine(DownloadPath, "transcoded");
 
         return await QueueRequestAsync(async () =>
         {
