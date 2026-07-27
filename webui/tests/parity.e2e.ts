@@ -1240,6 +1240,15 @@ test("Profile artwork is stable in full, slim, and mobile navigation", async ({ 
     await expect(avatar).toBeVisible();
     await expect(avatar.locator("img")).toBeVisible();
     await expect.poll(async () => (await avatar.boundingBox())?.width ?? 0).toBe(40);
+    if (width === 850) {
+      await page.getByRole("button", { name: "Collapse sidebar" }).click();
+      await expect(page.locator(".app-shell")).toHaveClass(/slim/);
+      await expect.poll(async () =>
+        (await page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Library" }).boundingBox())?.width ?? 0
+      ).toBe(48);
+      await page.getByRole("button", { name: "Expand sidebar" }).click();
+      await expect(page.locator(".app-shell")).not.toHaveClass(/slim/);
+    }
     if (width === 390) {
       await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Settings" })).toBeHidden();
       await expect(avatar).toHaveAttribute("href", "#/settings");
