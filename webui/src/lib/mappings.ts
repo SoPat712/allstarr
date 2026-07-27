@@ -1,4 +1,4 @@
-import type { MatchCandidate, MatchReviewItem, ProviderDefinition } from "./api";
+import type { MatchCandidate, MatchReviewItem, MatchTarget, ProviderDefinition } from "./api";
 
 export function isAttention(state: string) {
   return ["unresolved", "suggested", "ambiguous", "rejected"].includes(state.toLowerCase());
@@ -28,6 +28,16 @@ export function scoreComponents(candidate: MatchCandidate) {
   return Object.entries(candidate.components ?? {})
     .filter((entry): entry is [string, number] => Number.isFinite(entry[1]))
     .toSorted((left, right) => right[1] - left[1]);
+}
+
+export function providerResultCounts(targets: MatchTarget[]) {
+  return [...targets.reduce((counts, target) => {
+    if (target.externalProvider)
+      counts.set(target.externalProvider, (counts.get(target.externalProvider) ?? 0) + 1);
+    return counts;
+  }, new Map<string, number>())]
+    .map(([providerId, count]) => ({ providerId, count }))
+    .toSorted((left, right) => right.count - left.count || left.providerId.localeCompare(right.providerId));
 }
 
 export function differenceHash(pixels: ArrayLike<number>) {

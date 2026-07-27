@@ -253,6 +253,7 @@ public sealed class TrackMatchesController(
         [FromQuery] string? libraryScopeId = null,
         [FromQuery] string? state = null,
         [FromQuery] string? search = null,
+        [FromQuery] Guid? externalSnapshotId = null,
         [FromQuery] string? sort = null,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50,
@@ -274,6 +275,7 @@ public sealed class TrackMatchesController(
             new TrackMatchActor(tenantId, userId, session.IsAdministrator),
             libraryScopeId,
             search,
+            externalSnapshotId,
             cancellationToken: cancellationToken);
         var decisions = review.LatestDecisions.ToDictionary(item => item.ExternalSnapshotId);
         var overrides = review.ActiveOverrides.ToDictionary(item => item.ExternalSnapshotId);

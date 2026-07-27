@@ -11,7 +11,12 @@
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
-  import { percent, playableProviders, scoreComponents } from "$lib/mappings";
+  import {
+    percent,
+    playableProviders,
+    providerResultCounts,
+    scoreComponents,
+  } from "$lib/mappings";
   import { formatDuration } from "$lib/playlists";
 
   let {
@@ -19,6 +24,9 @@
     match,
     providers,
     backend,
+    initialMode = "local",
+    autoSearch = false,
+    showReject = true,
     onSaved,
     onReject,
   }: {
@@ -26,8 +34,11 @@
     match: MatchReviewItem | null;
     providers: ProviderDefinition[];
     backend: string;
+    initialMode?: "local" | "provider";
+    autoSearch?: boolean;
+    showReject?: boolean;
     onSaved: (message: string) => void | Promise<void>;
-    onReject: (match: MatchReviewItem) => void;
+    onReject?: (match: MatchReviewItem) => void;
   } = $props();
 
   let preparedId = $state("");
@@ -41,6 +52,13 @@
   let error = $state("");
 
   const providerOptions = $derived(playableProviders(providers));
+  const resultProviders = $derived(providerResultCounts(results));
+  const visibleResults = $derived(
+    providerFilter
+      ? results.filter((target) =>
+          target.externalProvider?.toLowerCase() === providerFilter.toLowerCase())
+      : results,
+  );
 
   $effect(() => {
     if (!open) {
@@ -49,12 +67,13 @@
     }
     if (!match || preparedId === match.externalSnapshotId) return;
     preparedId = match.externalSnapshotId;
-    targetMode = "local";
+    targetMode = initialMode;
     targetQuery = [match.artist, match.title].filter(Boolean).join(" ");
     providerFilter = "";
     results = [];
     searched = false;
     error = "";
+    if (autoSearch) void search();
   });
 
   function provider(providerId: string) {
@@ -166,6 +185,21 @@
           </div>
         </section>
 
+        <details class="match-technical">
+          <summary>PostgreSQL and identity data</summary>
+          <dl>
+            <div><dt>Source snapshot</dt><dd>{match.externalSnapshotId}</dd></div>
+            <div><dt>Source provider</dt><dd>{match.providerId}</dd></div>
+            <div><dt>Library scope</dt><dd>{match.libraryScopeId}</dd></div>
+            {#if match.canonicalRecordingId}<div><dt>Canonical recording</dt><dd>{match.canonicalRecordingId}</dd></div>{/if}
+            {#if match.libraryTrackId}<div><dt>Library track</dt><dd>{match.libraryTrackId}</dd></div>{/if}
+            {#if match.algorithmVersion}<div><dt>Algorithm</dt><dd>{match.algorithmVersion}</dd></div>{/if}
+            {#each match.providerIdentities as identity}
+              <div><dt>{providerName(identity.providerId)}</dt><dd>{identity.externalId} · {identity.verification}</dd></div>
+            {/each}
+          </dl>
+        </details>
+
         <section class="automatic-candidates">
           <div class="dialog-section-heading">
             <div><strong>Automatic candidates</strong><small>Same scores used by automatic matching</small></div>
@@ -240,8 +274,26 @@
         </form>
 
         {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
+        {#if targetMode === "provider" && resultProviders.length}
+          <div class="provider-result-summary" aria-label="Providers with results">
+            {#each resultProviders as resultProvider}
+              <button
+                type="button"
+                aria-pressed={providerFilter === resultProvider.providerId}
+                onclick={() => {
+                  providerFilter =
+                    providerFilter === resultProvider.providerId ? "" : resultProvider.providerId;
+                }}
+              >
+                <ProviderMark id={resultProvider.providerId} definition={provider(resultProvider.providerId)} />
+                <span>{providerName(resultProvider.providerId)}</span>
+                <strong>{resultProvider.count}</strong>
+              </button>
+            {/each}
+          </div>
+        {/if}
         <div class="target-results">
-          {#each results as target}
+          {#each visibleResults as target}
             <button
               type="button"
               disabled={saving}
@@ -270,7 +322,9 @@
         </div>
 
         <footer>
-          <button class="button-danger" type="button" onclick={() => { open = false; onReject(match!); }}>Reject candidate</button>
+          {#if showReject}
+            <button class="button-danger" type="button" onclick={() => { open = false; onReject?.(match!); }}>Reject candidate</button>
+          {/if}
           <Dialog.Close class="button-secondary">Cancel</Dialog.Close>
         </footer>
       {/if}

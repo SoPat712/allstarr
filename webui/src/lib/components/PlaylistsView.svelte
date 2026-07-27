@@ -3,6 +3,7 @@
   import { Dialog, DropdownMenu, Popover } from "bits-ui";
   import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
   import CoverageBar from "$lib/components/CoverageBar.svelte";
+  import MatchDialog from "$lib/components/MatchDialog.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import OperationConsole from "$lib/components/OperationConsole.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
@@ -11,7 +12,9 @@
   import SelectField from "$lib/components/SelectField.svelte";
   import {
     home,
+    matchReview,
     playlistLinks,
+    type MatchReviewItem,
     type PlaylistDetails,
     type PlaylistLink,
     type ProviderDefinition,
@@ -53,6 +56,9 @@
   let addOpen = $state(false);
   let operationJobId = $state("");
   let bulkProgress = $state("");
+  let matchOpen = $state(false);
+  let selectedMatch = $state<MatchReviewItem | null>(null);
+  let matchLoading = $state("");
 
   const visiblePlaylists = $derived(filterPlaylists(playlists, query, stateFilter, sort));
   const pageCount = $derived(Math.max(1, Math.ceil(visiblePlaylists.length / 20)));
@@ -209,6 +215,25 @@
   async function playlistAdded(message: string) {
     feedback = message;
     await refresh();
+  }
+
+  async function openTrackMatch(externalSnapshotId: string) {
+    if (matchLoading) return;
+    matchLoading = externalSnapshotId;
+    try {
+      selectedMatch = await matchReview.get(externalSnapshotId);
+      if (!selectedMatch) throw new Error("This track no longer has a current match snapshot.");
+      matchOpen = true;
+    } catch (cause) {
+      feedback = cause instanceof Error ? cause.message : "Track details are unavailable.";
+    } finally {
+      matchLoading = "";
+    }
+  }
+
+  async function matchSaved(message: string) {
+    feedback = message;
+    if (selectedId) await loadDetails(selectedId);
   }
 
   onMount(() => {
@@ -440,11 +465,13 @@
           <div class="track-scroll">
             {#each visibleTracks as track}
               <div class="track-row">
-                <a
+                <button
+                  type="button"
                   class="track-row-link"
                   aria-label={`Open mapping details for ${track.title}`}
-                  href={`#/library/mappings?search=${encodeURIComponent(track.title)}&review=${encodeURIComponent(track.externalSnapshotId)}`}
-                ></a>
+                  disabled={matchLoading === track.externalSnapshotId}
+                  onclick={() => void openTrackMatch(track.externalSnapshotId)}
+                ></button>
                 <span class="track-index">{track.position}</span>
                 <span class="track-identity">
                   <MediaArtwork class="track-art" url={track.artworkUrl} />
@@ -467,10 +494,11 @@
                           {#each track.providerRoutes as route}
                             <small>{providerName(route.providerId)} · {route.externalId}{route.pinned ? " · pinned" : ""}</small>
                           {/each}
-                          <a
+                          <button
+                            type="button"
                             class="button-secondary"
-                            href={`#/library/mappings?search=${encodeURIComponent(track.title)}&review=${encodeURIComponent(track.externalSnapshotId)}`}
-                          >Review match</a>
+                            onclick={() => void openTrackMatch(track.externalSnapshotId)}
+                          >Review match</button>
                         </div>
                       </Popover.Content>
                     </Popover.Portal>
@@ -492,3 +520,13 @@
 {/if}
 
 <AddPlaylistDialog bind:open={addOpen} {providers} onSaved={playlistAdded} />
+<MatchDialog
+  bind:open={matchOpen}
+  match={selectedMatch}
+  {providers}
+  backend={details?.targetProtocol ?? "Local library"}
+  initialMode="provider"
+  autoSearch
+  showReject={false}
+  onSaved={matchSaved}
+/>

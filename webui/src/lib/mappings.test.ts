@@ -5,6 +5,7 @@ import {
   isAttention,
   percent,
   playableProviders,
+  providerResultCounts,
   scoreComponents,
 } from "./mappings";
 
@@ -41,6 +42,17 @@ describe("mapping review presentation", () => {
     expect(scoreComponents({ components: { title: 0.9, artist: 0.75 } })).toEqual([
       ["title", 0.9],
       ["artist", 0.75],
+    ]);
+  });
+
+  it("summarizes every provider returned by an unfiltered search", () => {
+    expect(providerResultCounts([
+      { id: "1", title: "One", externalProvider: "apple-download" },
+      { id: "2", title: "Two", externalProvider: "deezer" },
+      { id: "3", title: "Three", externalProvider: "apple-download" },
+    ])).toEqual([
+      { providerId: "apple-download", count: 2 },
+      { providerId: "deezer", count: 1 },
     ]);
   });
 });

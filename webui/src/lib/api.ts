@@ -1245,6 +1245,7 @@ export const matchReview = {
     state?: string;
     sort?: string;
     libraryScopeId?: string;
+    externalSnapshotId?: string;
   }) => {
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
@@ -1252,6 +1253,8 @@ export const matchReview = {
     }
     return json<MatchReviewResponse>(`/api/admin/track-matches?${query}`);
   },
+  get: async (externalSnapshotId: string) =>
+    (await matchReview.list({ externalSnapshotId, pageSize: 1 })).matches[0] ?? null,
   searchLocal: (query: string, libraryScopeId: string) =>
     json<{ tracks: MatchTarget[] }>(
       `/api/admin/track-matches/targets/local?query=${encodeURIComponent(query)}&libraryScopeId=${encodeURIComponent(libraryScopeId)}`,

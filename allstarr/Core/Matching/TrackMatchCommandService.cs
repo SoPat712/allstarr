@@ -125,6 +125,7 @@ public interface ITrackMatchRepository
         TrackMatchActor actor,
         string? libraryScopeId = null,
         string? search = null,
+        Guid? externalSnapshotId = null,
         int scanLimit = 5000,
         CancellationToken cancellationToken = default);
 
@@ -635,6 +636,7 @@ public sealed class TrackMatchCommandService(
         TrackMatchActor actor,
         string? libraryScopeId = null,
         string? search = null,
+        Guid? externalSnapshotId = null,
         int scanLimit = 5000,
         CancellationToken cancellationToken = default)
     {
@@ -643,6 +645,8 @@ public sealed class TrackMatchCommandService(
             .Where(item => item.TenantId == actor.TenantId);
         if (!actor.IsAdministrator)
             snapshotsQuery = snapshotsQuery.Where(item => item.OwnerUserId == actor.UserId);
+        if (externalSnapshotId.HasValue)
+            snapshotsQuery = snapshotsQuery.Where(item => item.Id == externalSnapshotId.Value);
         if (!string.IsNullOrWhiteSpace(libraryScopeId))
             snapshotsQuery = snapshotsQuery.Where(item => item.LibraryScopeId == libraryScopeId.Trim());
         if (!string.IsNullOrWhiteSpace(search))
