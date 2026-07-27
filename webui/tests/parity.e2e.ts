@@ -493,6 +493,8 @@ test("Home stays inside runtime and request budgets", async ({ page }) => {
   await mockApi(page);
   await page.goto("#/");
   await expect(page.getByLabel("Loading Home")).toBeHidden();
+  await expect(page.getByText("Managed", { exact: true })).toBeVisible();
+  await expect(page.getByText("Unmanaged", { exact: true })).toBeVisible();
 
   const apiRequests = requests.filter((path) => path.startsWith("/api/admin/"));
   const jsRequests = requests.filter((path) => path.endsWith(".js"));

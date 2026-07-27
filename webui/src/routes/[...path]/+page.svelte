@@ -3,6 +3,7 @@
   import { page } from "$app/state";
   import { auth, onboarding, type OnboardingState, type Session } from "$lib/api";
   import { liveUpdates } from "$lib/live-updates.svelte";
+  import HomeView from "$lib/components/HomeView.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
 
   const destinations = [
@@ -101,7 +102,7 @@
   }
 
   function viewLoader(path: string) {
-    if (path === "/") return import("$lib/components/HomeView.svelte");
+    if (path === "/") return Promise.resolve({ default: HomeView });
     if (path === "/library/playlists") return import("$lib/components/PlaylistsView.svelte");
     if (path === "/library/mappings") return import("$lib/components/MappingView.svelte");
     if (path === "/library/cached" || path === "/library/kept") {
