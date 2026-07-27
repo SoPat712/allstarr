@@ -114,6 +114,7 @@
     error = "";
     try {
       session = await auth.login(username, password, rememberMe);
+      avatarFailed = false;
       password = "";
       liveUpdates.connect();
     } catch (cause) {

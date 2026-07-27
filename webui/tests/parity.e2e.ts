@@ -37,7 +37,10 @@ const schema = {
 const responses: Record<string, unknown> = {
   "/api/admin/auth/me": {
     authenticated: true, backend: "Jellyfin",
-    user: { id: "user", name: "Tester", isAdministrator: true },
+    user: {
+      id: "user", name: "Tester", isAdministrator: true,
+      avatarUrl: "/api/admin/auth/me/avatar?user=user",
+    },
   },
   "/api/admin/ui/schema": schema,
   "/api/admin/status": { version: "test", backendType: "Jellyfin" },
@@ -481,4 +484,27 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await dialog.getByRole("button", { name: "Open mapping details for Test song" }).click();
   await expect(page).toHaveURL(/#\/library\/mappings\?search=Test%20song&review=snapshot$/);
   await expect(page.getByRole("dialog", { name: "Test song" })).toBeVisible();
+});
+
+test("Profile artwork is stable in full, slim, and mobile navigation", async ({ page }) => {
+  await mockApi(page);
+  await page.route("**/api/admin/auth/me/avatar?user=user", (route) => route.fulfill({
+    status: 200,
+    contentType: "image/gif",
+    body: Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", "base64"),
+  }));
+
+  for (const width of [1280, 850, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("#/");
+    const avatar = page.locator(".profile .avatar");
+    await expect(avatar).toBeVisible();
+    await expect(avatar.locator("img")).toBeVisible();
+    await expect.poll(async () => (await avatar.boundingBox())?.width ?? 0).toBe(40);
+  }
+
+  await page.route("**/api/admin/auth/me/avatar?user=user", (route) => route.fulfill({ status: 404 }));
+  await page.reload();
+  await expect(page.locator(".profile .avatar span")).toHaveText("T");
+  await expect.poll(async () => (await page.locator(".profile .avatar").boundingBox())?.width ?? 0).toBe(40);
 });
