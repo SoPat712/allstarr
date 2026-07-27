@@ -20,7 +20,7 @@ public interface IApplicationCache
 
     Task<bool> ExistsAsync(string key);
 
-    IEnumerable<string> GetKeysByPattern(string pattern);
-
     Task<int> DeleteByPatternAsync(string pattern);
+
+    Task<int> PurgeAllAsync();
 }

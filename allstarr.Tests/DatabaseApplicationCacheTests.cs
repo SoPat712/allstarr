@@ -32,10 +32,10 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
     [Fact]
     public async Task SetAndGet_OverwriteOneDisposableEntry()
     {
-        Assert.True(await _cache.SetStringAsync("playback:metadata:test:1", "first", TimeSpan.FromMinutes(5)));
-        Assert.True(await _cache.SetStringAsync("playback:metadata:test:1", "second", TimeSpan.FromMinutes(10)));
+        Assert.True(await _cache.SetStringAsync("playback:metadata:v1:test:1", "first", TimeSpan.FromMinutes(5)));
+        Assert.True(await _cache.SetStringAsync("playback:metadata:v1:test:1", "second", TimeSpan.FromMinutes(10)));
 
-        Assert.Equal("second", await _cache.GetStringAsync("playback:metadata:test:1"));
+        Assert.Equal("second", await _cache.GetStringAsync("playback:metadata:v1:test:1"));
 
         await using var database = await _factory.CreateDbContextAsync();
         var entry = await database.ApplicationCacheEntries.SingleAsync();
@@ -46,11 +46,11 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
     [Fact]
     public async Task ReadsFlushOneSampledAccessTimestamp()
     {
-        await _cache.SetStringAsync("search:touched", "value", TimeSpan.FromHours(1));
+        await _cache.SetStringAsync("search:v2:touched", "value", TimeSpan.FromHours(1));
         _clock.UtcNow = _clock.UtcNow.AddMinutes(5);
 
-        Assert.Equal("value", await _cache.GetStringAsync("search:touched"));
-        Assert.Equal("value", await _cache.GetStringAsync("search:touched"));
+        Assert.Equal("value", await _cache.GetStringAsync("search:v2:touched"));
+        Assert.Equal("value", await _cache.GetStringAsync("search:v2:touched"));
         Assert.Equal(1, await _cache.FlushAccessesAsync());
 
         await using var database = await _factory.CreateDbContextAsync();
@@ -63,11 +63,11 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
     [Fact]
     public async Task ExpiredEntry_IsAColdMissAndIsRemoved()
     {
-        await _cache.SetStringAsync("odesli:playlist-artwork:1", "asset", TimeSpan.FromMinutes(1));
+        await _cache.SetStringAsync("odesli:translate:v2:expired:spotify", "asset", TimeSpan.FromMinutes(1));
         _clock.UtcNow = _clock.UtcNow.AddMinutes(2);
 
-        Assert.Null(await _cache.GetStringAsync("odesli:playlist-artwork:1"));
-        Assert.False(await _cache.ExistsAsync("odesli:playlist-artwork:1"));
+        Assert.Null(await _cache.GetStringAsync("odesli:translate:v2:expired:spotify"));
+        Assert.False(await _cache.ExistsAsync("odesli:translate:v2:expired:spotify"));
 
         await using var database = await _factory.CreateDbContextAsync();
         Assert.Empty(await database.ApplicationCacheEntries.ToListAsync());
@@ -76,31 +76,31 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
     [Fact]
     public async Task CleanupExpired_IsBoundedAndLeavesLiveEntries()
     {
-        await _cache.SetStringAsync("odesli:expired:1", "one", TimeSpan.FromMinutes(1));
-        await _cache.SetStringAsync("odesli:expired:2", "two", TimeSpan.FromMinutes(1));
-        await _cache.SetStringAsync("odesli:live:1", "live", TimeSpan.FromHours(1));
+        await _cache.SetStringAsync("odesli:translate:v2:expired-1:spotify", "one", TimeSpan.FromMinutes(1));
+        await _cache.SetStringAsync("odesli:translate:v2:expired-2:spotify", "two", TimeSpan.FromMinutes(1));
+        await _cache.SetStringAsync("odesli:translate:v2:live:spotify", "live", TimeSpan.FromHours(1));
         _clock.UtcNow = _clock.UtcNow.AddMinutes(2);
 
         Assert.Equal(1, await _cache.CleanupExpiredAsync(batchSize: 1));
 
         await using var database = await _factory.CreateDbContextAsync();
         Assert.Equal(2, await database.ApplicationCacheEntries.CountAsync());
-        Assert.True(await database.ApplicationCacheEntries.AnyAsync(item => item.Key == "odesli:live:1"));
+        Assert.True(await database.ApplicationCacheEntries.AnyAsync(item => item.Key == "odesli:translate:v2:live:spotify"));
     }
 
     [Fact]
     public async Task MaintenancePreview_ReportsAndCleanupRemovesOnlyDisposableEntries()
     {
-        await _cache.SetStringAsync("search:live", "live", TimeSpan.FromHours(1));
-        await _cache.SetStringAsync("search:expired", "expired", TimeSpan.FromMinutes(1));
+        await _cache.SetStringAsync("search:v2:live", "live", TimeSpan.FromHours(1));
+        await _cache.SetStringAsync("search:v2:expired", "expired", TimeSpan.FromMinutes(1));
         _clock.UtcNow = _clock.UtcNow.AddMinutes(2);
 
         await using (var database = await _factory.CreateDbContextAsync())
         {
             database.ApplicationCacheEntries.Add(new ApplicationCacheEntryRecord
             {
-                Key = "legacy:no-owner",
-                Category = "Legacy",
+                Key = "lyrics:Artist:Title:Album:240",
+                Category = ApplicationCacheCategory.Lyrics.ToString(),
                 Value = "orphan",
                 PayloadBytes = 6,
                 CreatedAt = _clock.UtcNow,
@@ -136,7 +136,7 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
 
         Assert.Equal(1, await _cache.CleanupExpiredAsync());
         Assert.Equal(3, await _cache.CleanupInvalidOwnershipAsync());
-        Assert.Equal("live", await _cache.GetStringAsync("search:live"));
+        Assert.Equal("live", await _cache.GetStringAsync("search:v2:live"));
 
         await using var remaining = await _factory.CreateDbContextAsync();
         Assert.Single(await remaining.ApplicationCacheEntries.ToListAsync());
@@ -163,15 +163,12 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
     [Fact]
     public async Task PatternOperations_UseRedisCompatibleWildcards()
     {
-        await _cache.SetStringAsync("odesli:playlist:one", "1");
-        await _cache.SetStringAsync("odesli:playlist:two", "2");
-        await _cache.SetStringAsync("odesli:track:one", "3");
+        await _cache.SetStringAsync("odesli:translate:v2:playlist-one:spotify", "1");
+        await _cache.SetStringAsync("odesli:translate:v2:playlist-two:spotify", "2");
+        await _cache.SetStringAsync("odesli:translate:v2:track-one:spotify", "3");
 
-        Assert.Equal(
-            ["odesli:playlist:one", "odesli:playlist:two"],
-            _cache.GetKeysByPattern("odesli:playlist:*").Order(StringComparer.Ordinal).ToArray());
-        Assert.Equal(2, await _cache.DeleteByPatternAsync("odesli:playlist:*"));
-        Assert.Equal("3", await _cache.GetStringAsync("odesli:track:one"));
+        Assert.Equal(2, await _cache.DeleteByPatternAsync("odesli:translate:v2:playlist-*:spotify"));
+        Assert.Equal("3", await _cache.GetStringAsync("odesli:translate:v2:track-one:spotify"));
     }
 
     [Fact]
@@ -179,19 +176,16 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
     {
         var payload = new string('x', DatabaseApplicationCache.MaximumPayloadBytes + 1);
 
-        Assert.False(await _cache.SetStringAsync("odesli:too-large", payload));
+        Assert.False(await _cache.SetStringAsync("odesli:translate:v2:too-large:spotify", payload));
 
         await using var database = await _factory.CreateDbContextAsync();
         Assert.Empty(await database.ApplicationCacheEntries.ToListAsync());
     }
 
-    [Theory]
-    [InlineData("image:jellyfin:primary:track")]
-    [InlineData("playlist:image:release-radar")]
-    [InlineData("artwork:spotify:album")]
-    [InlineData("cover:qobuz:playlist")]
-    public async Task MediaPayloadKey_IsRejectedWithoutWriting(string key)
+    [Fact]
+    public async Task MediaPayloadKey_IsRejectedWithoutWriting()
     {
+        const string key = "artwork:payload:v1:fixture";
         Assert.False(await _cache.SetStringAsync(key, "base64-or-binary-json"));
 
         await using var database = await _factory.CreateDbContextAsync();
@@ -211,7 +205,7 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
     [Fact]
     public async Task DisabledCategory_RejectsAccessAndCleanupRemovesExistingEntries()
     {
-        Assert.True(await _cache.SetStringAsync("lyrics:disabled-fixture", "lyrics"));
+        Assert.True(await _cache.SetStringAsync("lyrics:v2:disabled-fixture", "lyrics"));
 
         var disabledSettings = new CacheSettings
         {
@@ -226,9 +220,9 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
             NullLogger<DatabaseApplicationCache>.Instance,
             Options.Create(disabledSettings));
 
-        Assert.Null(await disabledCache.GetStringAsync("lyrics:disabled-fixture"));
-        Assert.False(await disabledCache.ExistsAsync("lyrics:disabled-fixture"));
-        Assert.False(await disabledCache.SetStringAsync("lyrics:new", "blocked"));
+        Assert.Null(await disabledCache.GetStringAsync("lyrics:v2:disabled-fixture"));
+        Assert.False(await disabledCache.ExistsAsync("lyrics:v2:disabled-fixture"));
+        Assert.False(await disabledCache.SetStringAsync("lyrics:v2:new", "blocked"));
         Assert.Equal(1, await disabledCache.CleanupPolicyOverflowAsync());
 
         await using var database = await _factory.CreateDbContextAsync();
@@ -252,13 +246,13 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
             Options.Create(settings));
         var payload = new string('x', 600 * 1024);
 
-        Assert.True(await cache.SetStringAsync("odesli:provider:first", payload, TimeSpan.FromHours(1)));
+        Assert.True(await cache.SetStringAsync("odesli:translate:v2:first:spotify", payload, TimeSpan.FromHours(1)));
         _clock.UtcNow = _clock.UtcNow.AddSeconds(1);
-        Assert.True(await cache.SetStringAsync("odesli:provider:second", payload, TimeSpan.FromHours(1)));
+        Assert.True(await cache.SetStringAsync("odesli:translate:v2:second:spotify", payload, TimeSpan.FromHours(1)));
 
         Assert.Equal(1, await cache.CleanupPolicyOverflowAsync());
-        Assert.Null(await cache.GetStringAsync("odesli:provider:first"));
-        Assert.Equal(payload, await cache.GetStringAsync("odesli:provider:second"));
+        Assert.Null(await cache.GetStringAsync("odesli:translate:v2:first:spotify"));
+        Assert.Equal(payload, await cache.GetStringAsync("odesli:translate:v2:second:spotify"));
     }
 
     [Fact]
@@ -277,12 +271,12 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
             NullLogger<DatabaseApplicationCache>.Instance,
             Options.Create(settings));
 
-        Assert.True(await cache.SetStringAsync("search:first", "one", TimeSpan.FromHours(1)));
+        Assert.True(await cache.SetStringAsync("search:v2:first", "one", TimeSpan.FromHours(1)));
         _clock.UtcNow = _clock.UtcNow.AddSeconds(1);
-        Assert.True(await cache.SetStringAsync("search:second", "two", TimeSpan.FromHours(1)));
+        Assert.True(await cache.SetStringAsync("search:v2:second", "two", TimeSpan.FromHours(1)));
         _clock.UtcNow = _clock.UtcNow.AddSeconds(1);
-        Assert.True(await cache.SetStringAsync("search:third", "three", TimeSpan.FromHours(1)));
-        Assert.True(await cache.SetStringAsync("lyrics:fixture", "lyrics", TimeSpan.FromHours(1)));
+        Assert.True(await cache.SetStringAsync("search:v2:third", "three", TimeSpan.FromHours(1)));
+        Assert.True(await cache.SetStringAsync("lyrics:v2:fixture", "lyrics", TimeSpan.FromHours(1)));
 
         Assert.Equal(1, await cache.CleanupPolicyOverflowAsync());
 
@@ -290,10 +284,10 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
         var entries = await database.ApplicationCacheEntries
             .OrderBy(item => item.Key)
             .ToListAsync();
-        Assert.DoesNotContain(entries, item => item.Key == "search:first");
+        Assert.DoesNotContain(entries, item => item.Key == "search:v2:first");
         Assert.Equal(2, entries.Count(item => item.Category == nameof(ApplicationCacheCategory.SearchResults)));
         Assert.Contains(entries, item =>
-            item.Key == "lyrics:fixture" &&
+            item.Key == "lyrics:v2:fixture" &&
             item.Category == nameof(ApplicationCacheCategory.Lyrics));
     }
 

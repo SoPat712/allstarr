@@ -23,9 +23,9 @@ public sealed class FileMediaApplicationCacheTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData("image:jellyfin:primary:../track")]
-    [InlineData("playlist:image:release/radar")]
-    [InlineData("artwork:spotify:album")]
+    [InlineData("artwork:payload:v1:../track")]
+    [InlineData("artwork:payload:v1:release/radar")]
+    [InlineData("artwork:payload:v1:album")]
     public async Task MediaKey_RoundTripsThroughHashedPaths(string key)
     {
         Assert.True(await _cache.SetStringAsync(key, "\"image-bytes\"", TimeSpan.FromHours(1)));
@@ -47,39 +47,39 @@ public sealed class FileMediaApplicationCacheTests : IAsyncLifetime
     [Fact]
     public async Task ExpiredEntry_IsRemovedOnRead()
     {
-        await _cache.SetStringAsync("image:expired", "value", TimeSpan.FromMinutes(1));
+        await _cache.SetStringAsync("artwork:payload:v1:expired", "value", TimeSpan.FromMinutes(1));
         _clock.UtcNow = _clock.UtcNow.AddMinutes(2);
 
-        Assert.Null(await _cache.GetStringAsync("image:expired"));
+        Assert.Null(await _cache.GetStringAsync("artwork:payload:v1:expired"));
         Assert.Empty(Directory.GetFiles(_root, "*", SearchOption.AllDirectories));
     }
 
     [Fact]
     public async Task Quota_RemovesOldestEntry()
     {
-        await _cache.SetStringAsync("image:first", new string('a', 40));
+        await _cache.SetStringAsync("artwork:payload:v1:first", new string('a', 40));
         _clock.UtcNow = _clock.UtcNow.AddSeconds(1);
-        await _cache.SetStringAsync("image:second", new string('b', 40));
+        await _cache.SetStringAsync("artwork:payload:v1:second", new string('b', 40));
 
-        Assert.Null(await _cache.GetStringAsync("image:first"));
-        Assert.Equal(new string('b', 40), await _cache.GetStringAsync("image:second"));
+        Assert.Null(await _cache.GetStringAsync("artwork:payload:v1:first"));
+        Assert.Equal(new string('b', 40), await _cache.GetStringAsync("artwork:payload:v1:second"));
     }
 
     [Fact]
     public async Task PatternDelete_RemovesOnlyMatchingMediaKeys()
     {
-        await _cache.SetStringAsync("image:one", "one");
-        await _cache.SetStringAsync("playlist:image:two", "two");
+        await _cache.SetStringAsync("artwork:payload:v1:track-one", "one");
+        await _cache.SetStringAsync("artwork:payload:v1:playlist-two", "two");
 
-        Assert.Equal(1, await _cache.DeleteByPatternAsync("playlist:image:*"));
-        Assert.Equal("one", await _cache.GetStringAsync("image:one"));
-        Assert.Null(await _cache.GetStringAsync("playlist:image:two"));
+        Assert.Equal(1, await _cache.DeleteByPatternAsync("artwork:payload:v1:playlist-*"));
+        Assert.Equal("one", await _cache.GetStringAsync("artwork:payload:v1:track-one"));
+        Assert.Null(await _cache.GetStringAsync("artwork:payload:v1:playlist-two"));
     }
 
     [Fact]
     public async Task Cleanup_RemovesMalformedOrphanedAndTemporaryFiles()
     {
-        await _cache.SetStringAsync("image:malformed", "value");
+        await _cache.SetStringAsync("artwork:payload:v1:malformed", "value");
         var entryFiles = Directory.GetFiles(_root, "*", SearchOption.AllDirectories);
         var metadataPath = Assert.Single(
             entryFiles,

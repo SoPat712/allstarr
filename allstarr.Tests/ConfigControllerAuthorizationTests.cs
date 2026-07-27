@@ -145,7 +145,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         var envPath = Path.Combine(_root, ".env");
         await File.WriteAllTextAsync(envPath, "CACHE_LYRICS_DAYS=14\n");
         var cache = new TestMemoryApplicationCache();
-        await cache.SetStringAsync("lyrics:fixture", "cached");
+        await cache.SetStringAsync("lyrics:v2:fixture", "cached");
         var controller = CreateController(
             CreateHttpContextWithSession(isAdmin: true),
             applicationCache: cache);
@@ -162,7 +162,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         Assert.Equal(_tenantId, setting.TenantId);
         Assert.Equal("Cache:LyricsDays", setting.Key);
         Assert.Equal("45", setting.ValueJson);
-        Assert.False(await cache.ExistsAsync("lyrics:fixture"));
+        Assert.False(await cache.ExistsAsync("lyrics:v2:fixture"));
 
         var getResult = Assert.IsType<OkObjectResult>(await controller.GetConfig());
         using var config = JsonDocument.Parse(JsonSerializer.Serialize(

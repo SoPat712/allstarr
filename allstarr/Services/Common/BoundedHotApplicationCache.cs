@@ -131,14 +131,18 @@ public sealed class BoundedHotApplicationCache : IApplicationCache, IDisposable
         return await _database.ExistsAsync(key);
     }
 
-    public IEnumerable<string> GetKeysByPattern(string pattern) =>
-        _database.GetKeysByPattern(pattern);
-
     public async Task<int> DeleteByPatternAsync(string pattern)
     {
         _memory.Clear();
         Interlocked.Add(ref _evictions, ClearResidents());
         return await _database.DeleteByPatternAsync(pattern);
+    }
+
+    public async Task<int> PurgeAllAsync()
+    {
+        _memory.Clear();
+        Interlocked.Add(ref _evictions, ClearResidents());
+        return await _database.PurgeAllAsync();
     }
 
     public async Task<int> DeleteCategoryAsync(ApplicationCacheCategory category)

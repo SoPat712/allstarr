@@ -19,9 +19,9 @@ public class CacheKeyBuilderTests
             true,
             "1635cd7d23144ba08251ebe22a56119e");
 
-        Assert.Equal(
-            "search:data:musicalbum:500:0:efa26829c37196b030fa31d127e0715b:datecreated,sortname:descending:true:1635cd7d23144ba08251ebe22a56119e:",
-            key);
+        Assert.StartsWith("search:v2:", key, StringComparison.Ordinal);
+        Assert.DoesNotContain("data", key, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("1635cd7d", key, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -52,25 +52,17 @@ public class CacheKeyBuilderTests
             "true");
 
         Assert.NotEqual(normalKey, favoritesOnlyKey);
-        Assert.EndsWith(":false", normalKey);
-        Assert.EndsWith(":true", favoritesOnlyKey);
-    }
-
-    [Fact]
-    public void SearchKey_OldOverload_ShouldRemainCompatible()
-    {
-        Assert.Equal("search:data:Audio:500:0", CacheKeyBuilder.BuildSearchKey("DATA", "Audio", 500, 0));
+        Assert.StartsWith("search:v2:", normalKey, StringComparison.Ordinal);
+        Assert.StartsWith("search:v2:", favoritesOnlyKey, StringComparison.Ordinal);
     }
 
     [Fact]
     public void LyricsAndGenreKeys_ShouldMatchExpectedFormats()
     {
-        Assert.Equal("lyrics:Artist:Title:Album:240", CacheKeyBuilder.BuildLyricsKey("Artist", "Title", "Album", 240));
-        Assert.Equal("lyricsplus:Artist:Title:Album:240", CacheKeyBuilder.BuildLyricsPlusKey("Artist", "Title", "Album", 240));
-        Assert.Equal("lyrics:id:42", CacheKeyBuilder.BuildLyricsByIdKey(42));
-
-        Assert.Equal("genre:Track:Artist", CacheKeyBuilder.BuildGenreEnrichmentKey("Track", "Artist"));
-        Assert.Equal("genre:Track:Artist", CacheKeyBuilder.BuildGenreEnrichmentKey("Track:Artist"));
+        Assert.StartsWith("lyrics:v2:", CacheKeyBuilder.BuildLyricsKey("Artist", "Title", "Album", 240));
+        Assert.StartsWith("lyricsplus:v2:", CacheKeyBuilder.BuildLyricsPlusKey("Artist", "Title", "Album", 240));
+        Assert.Equal("lyrics:id:v2:42", CacheKeyBuilder.BuildLyricsByIdKey(42));
+        Assert.StartsWith("genre:v2:", CacheKeyBuilder.BuildGenreEnrichmentKey("Track:Artist"));
         Assert.Equal(
             ApplicationCacheCategory.CanonicalMetadata,
             ApplicationCachePolicyRegistry.Classify(CacheKeyBuilder.BuildAlbumKey("qobuz", "42")));
@@ -86,11 +78,11 @@ public class CacheKeyBuilderTests
     [Fact]
     public void MusicBrainzAndOdesliKeys_ShouldMatchExpectedFormats()
     {
-        Assert.Equal("musicbrainz:isrc:USABC123", CacheKeyBuilder.BuildMusicBrainzIsrcKey("USABC123"));
-        Assert.Equal("musicbrainz:search:title:artist:5", CacheKeyBuilder.BuildMusicBrainzSearchKey("Title", "Artist", 5));
-        Assert.Equal("musicbrainz:mbid:abc-def", CacheKeyBuilder.BuildMusicBrainzMbidKey("abc-def"));
+        Assert.Equal("musicbrainz:isrc:v1:usabc123", CacheKeyBuilder.BuildMusicBrainzIsrcKey("USABC123"));
+        Assert.StartsWith("musicbrainz:search:v1:", CacheKeyBuilder.BuildMusicBrainzSearchKey("Title", "Artist", 5));
+        Assert.Equal("musicbrainz:mbid:v1:abc-def", CacheKeyBuilder.BuildMusicBrainzMbidKey("abc-def"));
 
-        Assert.Equal("odesli:tidal-to-spotify:123", CacheKeyBuilder.BuildOdesliTidalToSpotifyKey("123"));
+        Assert.StartsWith("odesli:tidal-to-spotify:v2:", CacheKeyBuilder.BuildOdesliTidalToSpotifyKey("123"));
         var urlKey = CacheKeyBuilder.BuildOdesliUrlToSpotifyKey("https://example.com/track?token=secret");
         Assert.StartsWith("odesli:url-to-spotify:v2:", urlKey, StringComparison.Ordinal);
         Assert.DoesNotContain("example.com", urlKey, StringComparison.Ordinal);
@@ -136,7 +128,8 @@ public class CacheKeyBuilderTests
     {
         var key = CacheKeyBuilder.BuildPlaybackMetadataNegativeKey("jellyfin", "track-1");
 
-        Assert.Equal("negative:playback:metadata:jellyfin:track-1", key);
+        Assert.StartsWith("negative:playback:metadata:v1:jellyfin:", key);
+        Assert.DoesNotContain("track-1", key, StringComparison.Ordinal);
         Assert.Equal(
             ApplicationCacheCategory.NegativeResult,
             ApplicationCachePolicyRegistry.Classify(key));
@@ -152,6 +145,9 @@ public class CacheKeyBuilderTests
             "odesli:translate:v2:fixture:spotify",
             out var category));
         Assert.Equal(ApplicationCacheCategory.ProviderResponse, category);
+        Assert.False(ApplicationCachePolicyRegistry.TryClassify(
+            "lyrics:Artist:Title:Album:240",
+            out _));
     }
 
     [Fact]

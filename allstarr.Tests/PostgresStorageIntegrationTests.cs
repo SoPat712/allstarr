@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Configuration;
 using allstarr.Core.Favorites;
 using allstarr.Core.Jobs;
@@ -654,25 +655,145 @@ public sealed class PostgresStorageIntegrationTests
         var clock = new FixedClock(now);
         var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
+        var accountId = Guid.CreateVersion7();
+        var recordingId = Guid.CreateVersion7();
+        var providerIdentityId = Guid.CreateVersion7();
+        var linkId = Guid.CreateVersion7();
+        var snapshotId = Guid.CreateVersion7();
+        var firstExternalId = Guid.CreateVersion7();
+        var secondExternalId = Guid.CreateVersion7();
+        const string hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         await using (var seed = await factory.CreateDbContextAsync())
         {
-            seed.Tenants.Add(new TenantRecord
-            {
-                Id = tenantId,
-                Slug = "cache-loss",
-                Name = "Cache loss",
-                CreatedAt = now
-            });
-            seed.Users.Add(new PlatformUserRecord
-            {
-                Id = userId,
-                TenantId = tenantId,
-                DisplayName = "Cache owner",
-                Status = PlatformUserStatus.Active,
-                CreatedAt = now,
-                UpdatedAt = now
-            });
+            seed.AddRange(
+                new TenantRecord
+                {
+                    Id = tenantId,
+                    Slug = "cache-loss",
+                    Name = "Cache loss",
+                    CreatedAt = now
+                },
+                new PlatformUserRecord
+                {
+                    Id = userId,
+                    TenantId = tenantId,
+                    DisplayName = "Cache owner",
+                    Status = PlatformUserStatus.Active,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                },
+                new ProviderAccountRecord
+                {
+                    Id = accountId,
+                    TenantId = tenantId,
+                    OwnerUserId = userId,
+                    ProviderId = "fixture",
+                    DisplayName = "Fixture",
+                    Scope = ProviderAccountScope.User,
+                    Enabled = true,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                },
+                new CanonicalRecordingRecord
+                {
+                    Id = recordingId,
+                    TenantId = tenantId,
+                    CreatedByUserId = userId,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                },
+                new ProviderTrackIdentityRecord
+                {
+                    Id = providerIdentityId,
+                    TenantId = tenantId,
+                    CanonicalRecordingId = recordingId,
+                    ProviderAccountId = accountId,
+                    ProviderId = "fixture",
+                    ResourceKind = ProviderResourceKind.Track,
+                    Scope = ProviderIdentityScope.Account,
+                    ExternalId = "track",
+                    ExternalIdHash = hash,
+                    Verification = ProviderIdentityVerification.Verified,
+                    VerificationMethod = "fixture",
+                    DecisionVersion = 1,
+                    VerifiedAt = now,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                },
+                new PlaylistLinkRecord
+                {
+                    Id = linkId,
+                    TenantId = tenantId,
+                    OwnerUserId = userId,
+                    ProviderAccountId = accountId,
+                    LibraryScopeId = "music",
+                    SourceProviderId = "fixture",
+                    SourcePlaylistId = "playlist",
+                    SourcePlaylistIdHash = hash,
+                    TargetProtocol = "jellyfin",
+                    TargetBackendInstanceId = "home",
+                    Mode = PlaylistLinkMode.Materialized,
+                    MaterializationMode = PlaylistMaterializationMode.Reconcile,
+                    RuleVersion = "rules-v1",
+                    PolicyVersion = "policy-v1",
+                    CreatedAt = now,
+                    UpdatedAt = now
+                },
+                External(firstExternalId, 1),
+                External(secondExternalId, 2),
+                new PlaylistSourceSnapshotRecord
+                {
+                    Id = snapshotId,
+                    TenantId = tenantId,
+                    OwnerUserId = userId,
+                    PlaylistLinkId = linkId,
+                    ProviderAccountId = accountId,
+                    SnapshotVersion = 1,
+                    ProviderRevision = "revision",
+                    Name = "Ordered",
+                    PayloadSha256 = hash,
+                    CorrelationId = "cache-loss",
+                    RetrievedAt = now
+                },
+                new PlaylistSourceEntryRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    TenantId = tenantId,
+                    PlaylistSourceSnapshotId = snapshotId,
+                    ExternalMetadataSnapshotId = firstExternalId,
+                    SourcePosition = 0,
+                    SourceEntryIdHash = hash
+                },
+                new PlaylistSourceEntryRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    TenantId = tenantId,
+                    PlaylistSourceSnapshotId = snapshotId,
+                    ExternalMetadataSnapshotId = secondExternalId,
+                    SourcePosition = 1,
+                    SourceEntryIdHash = new string('b', 64)
+                });
             await seed.SaveChangesAsync();
+
+            ExternalMetadataSnapshotRecord External(Guid id, int version) => new()
+            {
+                Id = id,
+                TenantId = tenantId,
+                OwnerUserId = userId,
+                ProviderAccountId = accountId,
+                LibraryScopeId = "music",
+                BackendInstanceId = "home",
+                BackendPrincipalId = "principal",
+                Protocol = "jellyfin",
+                ProviderId = "fixture",
+                ResourceKind = "track",
+                ExternalIdHash = new string((char)('a' + version), 64),
+                SnapshotVersion = 1,
+                ProviderRevision = $"revision-{version}",
+                PayloadSha256 = new string((char)('c' + version), 64),
+                CorrelationId = "cache-loss",
+                RetrievedAt = now
+            };
         }
 
         var jobOptions = new DurableJobOptions();
@@ -703,10 +824,10 @@ public sealed class PostgresStorageIntegrationTests
             clock,
             NullLogger<DatabaseApplicationCache>.Instance);
         Assert.True(await firstCache.SetStringAsync(
-            "search:cache-loss",
+            "search:v2:cache-loss",
             "disposable",
             TimeSpan.FromHours(1)));
-        Assert.Equal("disposable", await firstCache.GetStringAsync("search:cache-loss"));
+        Assert.Equal("disposable", await firstCache.GetStringAsync("search:v2:cache-loss"));
 
         await using (var purge = await factory.CreateDbContextAsync())
         {
@@ -717,9 +838,19 @@ public sealed class PostgresStorageIntegrationTests
             factory,
             clock,
             NullLogger<DatabaseApplicationCache>.Instance);
-        Assert.Null(await restartedCache.GetStringAsync("search:cache-loss"));
+        Assert.Null(await restartedCache.GetStringAsync("search:v2:cache-loss"));
         await using var verification = await factory.CreateDbContextAsync();
         Assert.True(await verification.Jobs.AnyAsync(item => item.Id == enqueued.JobId));
+        Assert.True(await verification.CanonicalRecordings.AnyAsync(item => item.Id == recordingId));
+        Assert.True(await verification.ProviderTrackIdentities.AnyAsync(item =>
+            item.Id == providerIdentityId &&
+            item.CanonicalRecordingId == recordingId));
+        var positions = await verification.PlaylistSourceEntries
+            .Where(item => item.PlaylistSourceSnapshotId == snapshotId)
+            .OrderBy(item => item.SourcePosition)
+            .Select(item => item.SourcePosition)
+            .ToArrayAsync();
+        Assert.Equal(new[] { 0, 1 }, positions);
         Assert.True(await verification.AuditEvents.AnyAsync(item =>
             item.Category == "job-progress" &&
             item.CorrelationId == claim!.CorrelationId));

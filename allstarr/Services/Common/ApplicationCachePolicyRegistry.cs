@@ -60,38 +60,40 @@ public static class ApplicationCachePolicyRegistry
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
         category = default;
 
-        if (StartsWithAny(key, "image:", "playlist:image:", "artwork:", "cover:"))
+        if (CacheKeyBuilder.IsMediaAssetPayloadKey(key))
             category = ApplicationCacheCategory.Artwork;
-        if (StartsWithAny(key, "lyrics:", "lyricsplus:"))
+        if (StartsWithAny(key, "lyrics:v2:", "lyrics:id:v2:", "lyricsplus:v2:"))
             category = ApplicationCacheCategory.Lyrics;
-        if (StartsWithAny(key, "transcode:", "temporary-audio:"))
-            category = ApplicationCacheCategory.TemporaryAudio;
-        if (key.StartsWith("negative:", StringComparison.OrdinalIgnoreCase))
+        if (key.StartsWith("negative:playback:metadata:v1:", StringComparison.Ordinal))
             category = ApplicationCacheCategory.NegativeResult;
-        if (StartsWithAny(key, "playback:signal:", "cts:rotation:"))
+        if (key.StartsWith("playback:signal:dedupe:v1:", StringComparison.Ordinal))
             category = ApplicationCacheCategory.Coordination;
-        if (key.StartsWith("admin:playlists:", StringComparison.OrdinalIgnoreCase))
-            category = ApplicationCacheCategory.DerivedProjection;
         if (StartsWithAny(
                 key,
-                "media:descriptor:",
-                "playlist:artwork-descriptor:",
-                "musicbrainz:",
-                "genre:",
-                "playback:metadata:"))
+                "media:descriptor:v3:",
+                "playlist:artwork-descriptor:v1:",
+                "metadata:album:v1:",
+                "metadata:artist:v1:",
+                "musicbrainz:isrc:v1:",
+                "musicbrainz:search:v1:",
+                "musicbrainz:mbid:v1:",
+                "genre:v2:",
+                "playback:metadata:v1:"))
             category = ApplicationCacheCategory.CanonicalMetadata;
-        if (key.Contains(":album:", StringComparison.OrdinalIgnoreCase) ||
-            key.Contains(":artist:", StringComparison.OrdinalIgnoreCase))
-            category = ApplicationCacheCategory.CanonicalMetadata;
-        if (key.StartsWith("search:", StringComparison.OrdinalIgnoreCase))
+        if (key.StartsWith("search:v2:", StringComparison.Ordinal))
             category = ApplicationCacheCategory.SearchResults;
-        if (key.StartsWith("playlist:discovery:", StringComparison.OrdinalIgnoreCase))
+        if (key.StartsWith("playlist:discovery:v2:", StringComparison.Ordinal))
             category = ApplicationCacheCategory.PlaylistDiscovery;
-        if (StartsWithAny(key, "odesli:", "jellyfin:item-type:"))
+        if (StartsWithAny(
+                key,
+                "odesli:tidal-to-spotify:v2:",
+                "odesli:url-to-spotify:v2:",
+                "odesli:translate:v2:",
+                "jellyfin:item-type:v1:"))
             category = ApplicationCacheCategory.ProviderResponse;
 
         return category != default ||
-               key.StartsWith("search:", StringComparison.OrdinalIgnoreCase);
+               key.StartsWith("search:v2:", StringComparison.Ordinal);
     }
 
     public static ApplicationCacheCategoryPolicy Resolve(string key, CacheSettings? settings = null) =>

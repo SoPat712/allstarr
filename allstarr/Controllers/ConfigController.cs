@@ -353,7 +353,7 @@ public class ConfigController : ControllerBase
             var cacheEntriesInvalidated = normalized.Any(item =>
                 !item.DurableKey.StartsWith("Scrobbling:", StringComparison.OrdinalIgnoreCase) &&
                 !item.DurableKey.StartsWith("WebUi:", StringComparison.OrdinalIgnoreCase))
-                ? await _cache.DeleteByPatternAsync("*")
+                ? await _cache.PurgeAllAsync()
                 : 0;
 
             return Ok(new
@@ -392,21 +392,8 @@ public class ConfigController : ControllerBase
     {
         _logger.LogDebug("Cache clear requested from admin UI");
 
-        var clearedCacheEntries = 0;
-
-        // Clear all search cache keys (pattern-based deletion)
-        var searchKeysDeleted =
-            await _cache.DeleteByPatternAsync(CacheKeyBuilder.BuildSearchPattern());
-        clearedCacheEntries += searchKeysDeleted;
-
-        // Clear all media descriptor and content-addressed payload keys.
-        var imageKeysDeleted =
-            await _cache.DeleteByPatternAsync(CacheKeyBuilder.BuildMediaDescriptorPattern()) +
-            await _cache.DeleteByPatternAsync(CacheKeyBuilder.BuildMediaPayloadPattern());
-        clearedCacheEntries += imageKeysDeleted;
-
-        _logger.LogInformation("Cache cleared: {Entries} derived entries (including {SearchKeys} search keys, {ImageKeys} image keys)",
-            clearedCacheEntries, searchKeysDeleted, imageKeysDeleted);
+        var clearedCacheEntries = await _cache.PurgeAllAsync();
+        _logger.LogInformation("Cache cleared: {Entries} disposable entries", clearedCacheEntries);
 
         return Ok(new
         {

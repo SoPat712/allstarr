@@ -29,8 +29,8 @@ public sealed class ApplicationCacheContractTests
                 nameof(IApplicationCache.SetAsync),
                 nameof(IApplicationCache.DeleteAsync),
                 nameof(IApplicationCache.ExistsAsync),
-                nameof(IApplicationCache.GetKeysByPattern),
                 nameof(IApplicationCache.DeleteByPatternAsync),
+                nameof(IApplicationCache.PurgeAllAsync),
             },
             methodNames);
     }

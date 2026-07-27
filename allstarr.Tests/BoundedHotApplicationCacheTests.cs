@@ -33,39 +33,39 @@ public sealed class BoundedHotApplicationCacheTests : IAsyncLifetime
     [Fact]
     public async Task SuccessfulWrite_IsServedAfterDatabaseRowIsRemoved()
     {
-        Assert.True(await _cache.SetStringAsync("odesli:hot:track:1", "cached"));
+        Assert.True(await _cache.SetStringAsync("odesli:translate:v2:hot-1:spotify", "cached"));
         await using (var context = await _factory.CreateDbContextAsync())
         {
             await context.ApplicationCacheEntries.ExecuteDeleteAsync();
         }
 
-        Assert.Equal("cached", await _cache.GetStringAsync("odesli:hot:track:1"));
+        Assert.Equal("cached", await _cache.GetStringAsync("odesli:translate:v2:hot-1:spotify"));
     }
 
     [Fact]
     public async Task Delete_RemovesHotAndDatabaseCopies()
     {
-        await _cache.SetStringAsync("odesli:hot:track:2", "cached");
+        await _cache.SetStringAsync("odesli:translate:v2:hot-2:spotify", "cached");
 
-        Assert.True(await _cache.DeleteAsync("odesli:hot:track:2"));
-        Assert.Null(await _cache.GetStringAsync("odesli:hot:track:2"));
+        Assert.True(await _cache.DeleteAsync("odesli:translate:v2:hot-2:spotify"));
+        Assert.Null(await _cache.GetStringAsync("odesli:translate:v2:hot-2:spotify"));
     }
 
     [Fact]
     public async Task PatternDelete_ClearsHotTierBeforeDeletingDatabaseRows()
     {
-        await _cache.SetStringAsync("odesli:playlist:one", "one");
-        await _cache.SetStringAsync("odesli:track:one", "track");
+        await _cache.SetStringAsync("odesli:translate:v2:playlist-one:spotify", "one");
+        await _cache.SetStringAsync("odesli:translate:v2:track-one:spotify", "track");
 
-        Assert.Equal(1, await _cache.DeleteByPatternAsync("odesli:playlist:*"));
+        Assert.Equal(1, await _cache.DeleteByPatternAsync("odesli:translate:v2:playlist-*:spotify"));
 
         await using (var context = await _factory.CreateDbContextAsync())
         {
             await context.ApplicationCacheEntries
-                .Where(item => item.Key == "odesli:track:one")
+                .Where(item => item.Key == "odesli:translate:v2:track-one:spotify")
                 .ExecuteDeleteAsync();
         }
-        Assert.Null(await _cache.GetStringAsync("odesli:track:one"));
+        Assert.Null(await _cache.GetStringAsync("odesli:translate:v2:track-one:spotify"));
     }
 
     [Fact]
@@ -73,8 +73,8 @@ public sealed class BoundedHotApplicationCacheTests : IAsyncLifetime
     {
         var value = new string('x', BoundedHotApplicationCache.MaximumEntryBytes + 1);
 
-        Assert.True(await _cache.SetStringAsync("odesli:large:metadata", value));
-        Assert.Equal(value, await _cache.GetStringAsync("odesli:large:metadata"));
+        Assert.True(await _cache.SetStringAsync("odesli:translate:v2:large:spotify", value));
+        Assert.Equal(value, await _cache.GetStringAsync("odesli:translate:v2:large:spotify"));
     }
 
     public async Task DisposeAsync()

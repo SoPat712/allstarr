@@ -50,7 +50,7 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
     [Fact]
     public async Task CategoryPolicySuppliesDefaultExpiry()
     {
-        const string key = "playlist:discovery:v1:fixture";
+        const string key = "playlist:discovery:v2:global:shared:00000000000000000000000000000000:1:fixture:digest";
         Assert.True(await _cache.SetStringAsync(key, "{}"));
 
         await using var context = new AllstarrDbContext(_database.Options);
@@ -62,8 +62,8 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
     [Fact]
     public async Task Snapshot_ReportsEveryTierAndScopedPurgesStayIsolated()
     {
-        Assert.True(await _cache.SetStringAsync("odesli:track:1", "metadata"));
-        Assert.True(await _cache.SetStringAsync("image:track:1", "media"));
+        Assert.True(await _cache.SetStringAsync("odesli:translate:v2:track-1:spotify", "metadata"));
+        Assert.True(await _cache.SetStringAsync("artwork:payload:v1:track-1", "media"));
 
         var snapshot = await _cache.GetDiagnosticsAsync();
         Assert.Equal(1, snapshot.Database.EntryCount);
@@ -98,19 +98,19 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         Assert.Equal(5, artworkCategory.PayloadBytes);
 
         Assert.Equal(1, await _cache.PurgeMediaAsync());
-        Assert.Equal("metadata", await _cache.GetStringAsync("odesli:track:1"));
-        Assert.Null(await _cache.GetStringAsync("image:track:1"));
+        Assert.Equal("metadata", await _cache.GetStringAsync("odesli:translate:v2:track-1:spotify"));
+        Assert.Null(await _cache.GetStringAsync("artwork:payload:v1:track-1"));
         snapshot = await _cache.GetDiagnosticsAsync();
         Assert.Equal(1, snapshot.Hot.Hits);
         Assert.Equal(1, snapshot.Media.Misses);
 
-        Assert.True(await _cache.SetStringAsync("image:track:2", "media"));
+        Assert.True(await _cache.SetStringAsync("artwork:payload:v1:track-2", "media"));
         Assert.Equal(1, await _cache.PurgeMetadataAsync());
-        Assert.Null(await _cache.GetStringAsync("odesli:track:1"));
-        Assert.Equal("media", await _cache.GetStringAsync("image:track:2"));
+        Assert.Null(await _cache.GetStringAsync("odesli:translate:v2:track-1:spotify"));
+        Assert.Equal("media", await _cache.GetStringAsync("artwork:payload:v1:track-2"));
 
         Assert.Equal(1, await _cache.PurgeAllAsync());
-        Assert.Null(await _cache.GetStringAsync("image:track:2"));
+        Assert.Null(await _cache.GetStringAsync("artwork:payload:v1:track-2"));
     }
 
     [Fact]
@@ -140,11 +140,11 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
                 .ExtensionStorage.ActiveExtensions);
         Assert.IsType<BadRequestObjectResult>(await controller.Purge("arbitrary:*"));
 
-        Assert.True(await _cache.SetStringAsync("lyrics:fixture", "lyrics"));
-        Assert.True(await _cache.SetStringAsync("odesli:fixture", "provider"));
+        Assert.True(await _cache.SetStringAsync("lyrics:v2:fixture", "lyrics"));
+        Assert.True(await _cache.SetStringAsync("odesli:translate:v2:fixture:spotify", "provider"));
         Assert.IsType<OkObjectResult>(await controller.PurgeCategory("lyrics"));
-        Assert.Null(await _cache.GetStringAsync("lyrics:fixture"));
-        Assert.Equal("provider", await _cache.GetStringAsync("odesli:fixture"));
+        Assert.Null(await _cache.GetStringAsync("lyrics:v2:fixture"));
+        Assert.Equal("provider", await _cache.GetStringAsync("odesli:translate:v2:fixture:spotify"));
         Assert.IsType<BadRequestObjectResult>(await controller.PurgeCategory("not-a-category"));
         Assert.IsType<BadRequestObjectResult>(await controller.PurgeCategory("0"));
     }
@@ -153,11 +153,11 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
     public async Task MaintenancePreviewAndRunCoverMetadataAndMediaTiers()
     {
         Assert.True(await _cache.SetStringAsync(
-            "search:expired",
+            "search:v2:expired",
             "metadata",
             TimeSpan.FromMinutes(1)));
         Assert.True(await _cache.SetStringAsync(
-            "image:expired",
+            "artwork:payload:v1:expired",
             "media",
             TimeSpan.FromMinutes(1)));
         _clock.UtcNow = _clock.UtcNow.AddMinutes(2);

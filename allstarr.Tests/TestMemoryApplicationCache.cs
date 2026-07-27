@@ -52,5 +52,7 @@ internal sealed class TestMemoryApplicationCache : IApplicationCache
         return Task.FromResult(deleted);
     }
 
+    public Task<int> PurgeAllAsync() => DeleteByPatternAsync("*");
+
     private sealed record Entry(string Value, DateTimeOffset? ExpiresAt);
 }

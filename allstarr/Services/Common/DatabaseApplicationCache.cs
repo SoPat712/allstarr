@@ -327,28 +327,6 @@ public sealed class DatabaseApplicationCache(
         }
     }
 
-    public IEnumerable<string> GetKeysByPattern(string pattern)
-    {
-        try
-        {
-            var now = clock.UtcNow;
-            using var database = contextFactory.CreateDbContext();
-            var likePattern = ToLikePattern(pattern);
-            return database.Set<ApplicationCacheEntryRecord>()
-                .AsNoTracking()
-                .Where(item =>
-                    (item.ExpiresAt == null || item.ExpiresAt > now) &&
-                    EF.Functions.Like(item.Key, likePattern, "\\"))
-                .Select(item => item.Key)
-                .ToArray();
-        }
-        catch (Exception exception)
-        {
-            logger.LogWarning(exception, "Database cache key scan failed for pattern {Pattern}", pattern);
-            return Array.Empty<string>();
-        }
-    }
-
     public async Task<int> DeleteByPatternAsync(string pattern)
     {
         try
@@ -364,6 +342,22 @@ public sealed class DatabaseApplicationCache(
         catch (Exception exception)
         {
             logger.LogWarning(exception, "Database cache pattern delete failed for pattern {Pattern}", pattern);
+            return 0;
+        }
+    }
+
+    public async Task<int> PurgeAllAsync()
+    {
+        try
+        {
+            await using var database = await contextFactory.CreateDbContextAsync();
+            var deleted = await database.Set<ApplicationCacheEntryRecord>().ExecuteDeleteAsync();
+            Interlocked.Add(ref _evictions, deleted);
+            return deleted;
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Database cache purge failed");
             return 0;
         }
     }
@@ -594,7 +588,7 @@ public sealed class DatabaseApplicationCache(
             var values = await database.Set<ApplicationCacheEntryRecord>()
                 .AsNoTracking()
                 .Where(item =>
-                    item.Key.StartsWith("media:descriptor:") &&
+                    item.Key.StartsWith("media:descriptor:v3:") &&
                     (item.ExpiresAt == null || item.ExpiresAt > clock.UtcNow))
                 .OrderBy(item => item.Key)
                 .Select(item => item.Value)
@@ -787,7 +781,7 @@ public sealed class DatabaseApplicationCache(
         !Enum.IsDefined(category) ||
         ApplicationCachePolicyRegistry.Resolve(category).StorageTier != ApplicationCacheStorageTier.Metadata ||
         expectedCategory != category ||
-        (item.Key.StartsWith("media:descriptor:", StringComparison.Ordinal) &&
+        (CacheKeyBuilder.IsMediaAssetDescriptorKey(item.Key) &&
          ReadArtworkPayloadKey(item.Value) == null);
 
     private static string? ReadArtworkPayloadKey(string value)
@@ -813,7 +807,7 @@ public sealed class DatabaseApplicationCache(
     private static IEnumerable<ApplicationCacheEntryRecord> FindSupersededArtworkDescriptors(
         IEnumerable<ApplicationCacheEntryRecord> entries) =>
         entries
-            .Where(item => item.Key.StartsWith("media:descriptor:v3:", StringComparison.Ordinal))
+            .Where(item => CacheKeyBuilder.IsMediaAssetDescriptorKey(item.Key))
             .GroupBy(item => item.Key[..item.Key.LastIndexOf(':')], StringComparer.Ordinal)
             .SelectMany(group => group
                 .OrderByDescending(item => item.UpdatedAt)

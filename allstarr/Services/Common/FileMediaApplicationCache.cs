@@ -313,29 +313,6 @@ public sealed class FileMediaApplicationCache : IApplicationCache, IDisposable
     public async Task<bool> ExistsAsync(string key) =>
         await GetStringAsync(key) is not null;
 
-    public IEnumerable<string> GetKeysByPattern(string pattern)
-    {
-        _gate.Wait();
-        try
-        {
-            return ReadAllMetadata()
-                .Where(item =>
-                    (item.ExpiresAt is null || item.ExpiresAt > _clock.UtcNow) &&
-                    FileSystemName.MatchesSimpleExpression(pattern, item.Key, ignoreCase: true))
-                .Select(item => item.Key)
-                .ToArray();
-        }
-        catch (Exception exception)
-        {
-            _logger.LogWarning(exception, "Disk media cache key scan failed for pattern {Pattern}", pattern);
-            return Array.Empty<string>();
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-
     public async Task<int> DeleteByPatternAsync(string pattern)
     {
         await _gate.WaitAsync();
@@ -358,6 +335,32 @@ public sealed class FileMediaApplicationCache : IApplicationCache, IDisposable
         catch (Exception exception)
         {
             _logger.LogWarning(exception, "Disk media cache pattern delete failed for {Pattern}", pattern);
+            return 0;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<int> PurgeAllAsync()
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            if (!Directory.Exists(_options.RootPath)) return 0;
+            var deleted = Directory.EnumerateFiles(
+                    _options.RootPath,
+                    "*.json",
+                    SearchOption.AllDirectories)
+                .Count();
+            Directory.Delete(_options.RootPath, recursive: true);
+            Interlocked.Add(ref _evictions, deleted);
+            return deleted;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Disk media cache purge failed");
             return 0;
         }
         finally
@@ -568,7 +571,7 @@ public sealed class FileMediaApplicationCache : IApplicationCache, IDisposable
             var take = Math.Clamp(maximumEntries, 1, _options.MaximumCleanupFiles);
             var entries = ReadAllMetadata()
                 .Where(item =>
-                    item.Key.StartsWith("artwork:payload:", StringComparison.Ordinal) &&
+                    CacheKeyBuilder.IsMediaAssetPayloadKey(item.Key) &&
                     item.LastAccessAt <= _clock.UtcNow.AddMinutes(-5) &&
                     !referencedPayloadKeys.Contains(item.Key))
                 .OrderBy(item => item.LastAccessAt)
@@ -849,16 +852,8 @@ public sealed class HybridApplicationCache(
             ? Target(key).ExistsAsync(key)
             : Task.FromResult(false);
 
-    public IEnumerable<string> GetKeysByPattern(string pattern) =>
-        metadata.GetKeysByPattern(pattern)
-            .Concat(media.GetKeysByPattern(pattern))
-            .Where(IsCategoryEnabled)
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-
-    public async Task<int> DeleteByPatternAsync(string pattern) =>
-        await metadata.DeleteByPatternAsync(pattern) +
-        await media.DeleteByPatternAsync(pattern);
+    public Task<int> DeleteByPatternAsync(string pattern) =>
+        metadata.DeleteByPatternAsync(pattern);
 
     public async Task<ApplicationCacheDiagnosticsSnapshot> GetDiagnosticsAsync(
         CancellationToken cancellationToken = default)
@@ -900,9 +895,9 @@ public sealed class HybridApplicationCache(
         };
     }
 
-    public Task<int> PurgeMetadataAsync() => metadata.DeleteByPatternAsync("*");
+    public Task<int> PurgeMetadataAsync() => metadata.PurgeAllAsync();
 
-    public Task<int> PurgeMediaAsync() => media.DeleteByPatternAsync("*");
+    public Task<int> PurgeMediaAsync() => media.PurgeAllAsync();
 
     public async Task<ApplicationCacheMaintenancePreview> PreviewMaintenanceAsync(
         CancellationToken cancellationToken = default)

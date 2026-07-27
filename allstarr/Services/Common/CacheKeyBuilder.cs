@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -10,29 +11,25 @@ namespace allstarr.Services.Common;
 public static class CacheKeyBuilder
 {
     public static string BuildPlaybackMetadataKey(string provider, string itemId) =>
-        $"playback:metadata:{Normalize(provider)}:{Normalize(itemId)}";
+        $"playback:metadata:v1:{Normalize(provider)}:{Digest(itemId.Trim())}";
 
     public static string BuildPlaybackMetadataNegativeKey(string provider, string itemId) =>
-        $"negative:playback:metadata:{Normalize(provider)}:{Normalize(itemId)}";
+        $"negative:playback:metadata:v1:{Normalize(provider)}:{Digest(itemId.Trim())}";
 
     public static string BuildJellyfinItemTypeKey(string itemId) =>
-        $"jellyfin:item-type:{Normalize(itemId)}";
+        $"jellyfin:item-type:v1:{Digest(itemId.Trim())}";
 
     public static string BuildPlaybackSignalDedupeKey(
         string signalType,
         string deviceId,
-        string itemId)
-    {
-        var identity = $"{Normalize(signalType)}\u001f{Normalize(deviceId)}\u001f{Normalize(itemId)}";
-        var digest = SHA256.HashData(Encoding.UTF8.GetBytes(identity));
-        return $"playback:signal:dedupe:{Convert.ToHexStringLower(digest)}";
-    }
+        string itemId) =>
+        $"playback:signal:dedupe:v1:{DigestIdentity(signalType, deviceId, itemId)}";
 
     public static string BuildProviderPlaylistArtworkDescriptorKey(
         string provider,
         string playlistId,
         string? revision) =>
-        $"playlist:artwork-descriptor:{Normalize(provider)}:{Normalize(playlistId)}:{Normalize(revision)}";
+        $"playlist:artwork-descriptor:v1:{Normalize(provider)}:{Digest(playlistId.Trim())}:{Digest(revision?.Trim() ?? string.Empty)}";
 
     public static string BuildProviderPlaylistDiscoveryKey(
         Guid? tenantId,
@@ -44,10 +41,6 @@ public static class CacheKeyBuilder
         string? cursor,
         int limit)
     {
-        var request = string.Join('\u001f',
-            query?.Trim(),
-            cursor?.Trim(),
-            limit);
         return string.Join(':',
             "playlist",
             "discovery",
@@ -55,9 +48,9 @@ public static class CacheKeyBuilder
             tenantId?.ToString("N") ?? "global",
             userId?.ToString("N") ?? "shared",
             accountId.ToString("N"),
-            accountRevision,
+            accountRevision.ToString(CultureInfo.InvariantCulture),
             Normalize(providerId),
-            Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(request))));
+            DigestIdentity(query, cursor, limit));
     }
 
     public static string BuildProviderPlaylistDiscoveryAccountPattern(Guid accountId) =>
@@ -69,7 +62,7 @@ public static class CacheKeyBuilder
             Encoding.UTF8.GetBytes(identity.ResourceId.Trim())));
         var revision = Convert.ToHexStringLower(SHA256.HashData(
             Encoding.UTF8.GetBytes(identity.Revision?.Trim() ?? string.Empty)));
-        var dimensions = $"{identity.Width ?? 0}x{identity.Height ?? 0}";
+        var dimensions = FormattableString.Invariant($"{identity.Width ?? 0}x{identity.Height ?? 0}");
         return string.Join(':',
             "media",
             "descriptor",
@@ -88,14 +81,9 @@ public static class CacheKeyBuilder
         $"media:descriptor:v3:*:*:{accountId:N}:*";
 
     public static string BuildMediaAssetPayloadKey(string sha256) =>
-        $"artwork:payload:v1:{sha256}";
+        $"artwork:payload:v1:{Normalize(sha256)}";
 
     #region Search Keys
-
-    public static string BuildSearchKey(string? searchTerm, string? itemTypes, int? limit, int? startIndex)
-    {
-        return $"search:{searchTerm?.ToLowerInvariant()}:{itemTypes}:{limit}:{startIndex}";
-    }
 
     public static string BuildSearchKey(
         string? searchTerm,
@@ -109,19 +97,18 @@ public static class CacheKeyBuilder
         string? userId,
         string? isFavorite = null)
     {
-        var normalizedTerm = Normalize(searchTerm);
-        var normalizedItemTypes = Normalize(itemTypes);
-        var normalizedParentId = Normalize(parentId);
-        var normalizedSortBy = Normalize(sortBy);
-        var normalizedSortOrder = Normalize(sortOrder);
-        var normalizedUserId = Normalize(userId);
-        var normalizedIsFavorite = Normalize(isFavorite);
-        var normalizedRecursive = recursive.HasValue ? (recursive.Value ? "true" : "false") : string.Empty;
-
-        return $"search:{normalizedTerm}:{normalizedItemTypes}:{limit}:{startIndex}:{normalizedParentId}:{normalizedSortBy}:{normalizedSortOrder}:{normalizedRecursive}:{normalizedUserId}:{normalizedIsFavorite}";
+        return $"search:v2:{DigestIdentity(
+            searchTerm,
+            itemTypes,
+            limit,
+            startIndex,
+            parentId,
+            sortBy,
+            sortOrder,
+            recursive,
+            userId,
+            isFavorite)}";
     }
-
-    public static string BuildSearchPattern() => "search:*";
 
     private static string Normalize(string? value)
     {
@@ -136,12 +123,12 @@ public static class CacheKeyBuilder
 
     public static string BuildAlbumKey(string provider, string externalId)
     {
-        return $"{provider}:album:{externalId}";
+        return $"metadata:album:v1:{Normalize(provider)}:{Digest(externalId.Trim())}";
     }
 
     public static string BuildArtistKey(string provider, string externalId)
     {
-        return $"{provider}:artist:{externalId}";
+        return $"metadata:artist:v1:{Normalize(provider)}:{Digest(externalId.Trim())}";
     }
 
     #endregion
@@ -150,39 +137,36 @@ public static class CacheKeyBuilder
 
     public static string BuildLyricsKey(string artist, string title, string? album, int? durationSeconds)
     {
-        return $"lyrics:{artist}:{title}:{album}:{durationSeconds}";
+        return $"lyrics:v2:{DigestIdentity(artist, title, album, durationSeconds)}";
     }
 
     public static string BuildLyricsPlusKey(string artist, string title, string? album, int? durationSeconds)
     {
-        return $"lyricsplus:{artist}:{title}:{album}:{durationSeconds}";
+        return $"lyricsplus:v2:{DigestIdentity(artist, title, album, durationSeconds)}";
     }
 
     public static string BuildLyricsByIdKey(int id)
     {
-        return $"lyrics:id:{id}";
+        return $"lyrics:id:v2:{id.ToString(CultureInfo.InvariantCulture)}";
     }
 
     #endregion
 
     #region Image Keys
 
-    public static string BuildMediaDescriptorPattern() => "media:descriptor:*";
+    public static bool IsMediaAssetDescriptorKey(string key) =>
+        key.StartsWith("media:descriptor:v3:", StringComparison.Ordinal);
 
-    public static string BuildMediaPayloadPattern() => "artwork:payload:*";
+    public static bool IsMediaAssetPayloadKey(string key) =>
+        key.StartsWith("artwork:payload:v1:", StringComparison.Ordinal);
 
     #endregion
 
     #region Genre Keys
 
-    public static string BuildGenreEnrichmentKey(string title, string artist)
-    {
-        return $"genre:{title}:{artist}";
-    }
-
     public static string BuildGenreEnrichmentKey(string compositeCacheKey)
     {
-        return $"genre:{compositeCacheKey}";
+        return $"genre:v2:{Digest(compositeCacheKey.Trim())}";
     }
 
     #endregion
@@ -191,17 +175,17 @@ public static class CacheKeyBuilder
 
     public static string BuildMusicBrainzIsrcKey(string isrc)
     {
-        return $"musicbrainz:isrc:{isrc}";
+        return $"musicbrainz:isrc:v1:{Normalize(isrc)}";
     }
 
     public static string BuildMusicBrainzSearchKey(string title, string artist, int limit)
     {
-        return $"musicbrainz:search:{title.ToLowerInvariant()}:{artist.ToLowerInvariant()}:{limit}";
+        return $"musicbrainz:search:v1:{DigestIdentity(title, artist, limit)}";
     }
 
     public static string BuildMusicBrainzMbidKey(string mbid)
     {
-        return $"musicbrainz:mbid:{mbid}";
+        return $"musicbrainz:mbid:v1:{Normalize(mbid)}";
     }
 
     #endregion
@@ -210,7 +194,7 @@ public static class CacheKeyBuilder
 
     public static string BuildOdesliTidalToSpotifyKey(string tidalTrackId)
     {
-        return $"odesli:tidal-to-spotify:{tidalTrackId}";
+        return $"odesli:tidal-to-spotify:v2:{Digest(tidalTrackId.Trim())}";
     }
 
     public static string BuildOdesliUrlToSpotifyKey(string musicUrl)
@@ -220,13 +204,20 @@ public static class CacheKeyBuilder
 
     public static string BuildOdesliTranslationKey(string sourceUrl, string targetPlatform)
     {
-        return $"odesli:translate:v2:{HashOdesliUrl(sourceUrl)}:{targetPlatform.ToLowerInvariant()}";
+        return $"odesli:translate:v2:{HashOdesliUrl(sourceUrl)}:{Normalize(targetPlatform)}";
     }
 
     private static string HashOdesliUrl(string value) =>
-        Convert.ToHexStringLower(
-            System.Security.Cryptography.SHA256.HashData(
-                System.Text.Encoding.UTF8.GetBytes(value)));
+        Digest(value);
+
+    private static string DigestIdentity(params object?[] values) =>
+        Digest(string.Join('\u001f', values.Select(value => Normalize(
+            value is IFormattable formattable
+                ? formattable.ToString(null, CultureInfo.InvariantCulture)
+                : value?.ToString()))));
+
+    private static string Digest(string value) =>
+        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 
     #endregion
 }

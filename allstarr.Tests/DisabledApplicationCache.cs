@@ -20,7 +20,7 @@ internal sealed class DisabledApplicationCache : IApplicationCache
 
     public Task<bool> ExistsAsync(string key) => Task.FromResult(false);
 
-    public IEnumerable<string> GetKeysByPattern(string pattern) => [];
-
     public Task<int> DeleteByPatternAsync(string pattern) => Task.FromResult(0);
+
+    public Task<int> PurgeAllAsync() => Task.FromResult(0);
 }
