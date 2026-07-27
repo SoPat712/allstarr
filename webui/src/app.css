@@ -430,9 +430,9 @@
 
   .app-shell.slim .sidebar-expander {
     top: 4.35rem;
-    right: 50%;
-    transform: rotate(180deg);
-    translate: 50% 0;
+    right: auto;
+    left: 50%;
+    transform: translateX(-50%) rotate(180deg);
   }
 
   .brand {

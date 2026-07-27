@@ -78,6 +78,7 @@ export function formatDuration(milliseconds?: number | null) {
 export function providerColor(providerId: string) {
   const colors: Record<string, string> = {
     unresolved: "var(--color-ink-muted)",
+    unmatched: "var(--color-ink-muted)",
     jellyfin: "#aa5cc3",
     spotify: "#1ed760",
     applemusic: "#fa243c",
