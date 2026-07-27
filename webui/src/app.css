@@ -364,15 +364,15 @@
 
   .sidebar-expander {
     position: absolute;
-    top: 4.25rem;
-    right: -0.9rem;
+    top: 1.35rem;
+    right: 0.85rem;
     display: grid;
     width: 1.8rem;
     height: 1.8rem;
     place-items: center;
-    border: 1px solid var(--color-edge);
+    border: 0;
     border-radius: 50%;
-    background: var(--color-panel-raised);
+    background: transparent;
     color: var(--color-ink-muted);
     cursor: pointer;
     transition: transform 160ms ease;
@@ -396,9 +396,11 @@
   }
 
   .app-shell.slim .sidebar nav a {
+    display: grid;
     width: var(--control-lg);
-    min-height: var(--control-lg);
-    justify-content: center;
+    height: var(--control-lg);
+    min-height: 0;
+    place-items: center;
     padding: 0;
     font-size: 0;
   }
@@ -427,7 +429,10 @@
   }
 
   .app-shell.slim .sidebar-expander {
+    top: 4.35rem;
+    right: 50%;
     transform: rotate(180deg);
+    translate: 50% 0;
   }
 
   .brand {
@@ -513,6 +518,8 @@
     display: grid;
     width: 2.25rem;
     height: 2.25rem;
+    inline-size: 2.25rem;
+    block-size: 2.25rem;
     min-width: 2.25rem;
     max-width: 2.25rem;
     min-height: 2.25rem;
@@ -524,6 +531,7 @@
     place-items: center;
     border: 1px solid var(--color-edge);
     border-radius: 50%;
+    clip-path: circle(50%);
     background: var(--color-panel-raised);
     color: var(--color-signal);
     font-weight: 800;
@@ -534,7 +542,11 @@
     display: block;
     width: 100%;
     height: 100%;
+    inline-size: 100%;
+    block-size: 100%;
+    aspect-ratio: 1;
     border-radius: 50%;
+    clip-path: circle(50%);
     object-fit: cover;
     object-position: center;
   }
@@ -563,7 +575,7 @@
 
   .workspace-header {
     display: flex;
-    align-items: end;
+    align-items: center;
     justify-content: space-between;
     gap: 1rem;
     margin-bottom: 1.25rem;
@@ -1223,7 +1235,7 @@
   }
 
   .search-field input {
-    padding-inline: 2rem 1.8rem;
+    padding-inline: 2.25rem 1.8rem;
   }
 
   .playlist-rows {
@@ -1896,7 +1908,20 @@
     overflow: hidden;
   }
 
+  .segmented-tabs::before {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: calc(100% / var(--tab-count));
+    border-radius: calc(0.8rem - 1px);
+    background: var(--color-signal-muted);
+    content: "";
+    transform: translateX(calc(var(--active-tab) * 100%));
+    transition: transform 180ms ease;
+  }
+
   .segmented-tabs :is(a, button) {
+    position: relative;
+    z-index: 1;
     display: grid;
     grid-auto-flow: column;
     gap: 0.4rem;
@@ -1911,8 +1936,14 @@
   }
 
   .segmented-tabs :is(a, button)[aria-selected="true"] {
-    background: var(--color-signal-muted);
+    background: transparent;
     color: var(--color-signal);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .segmented-tabs::before {
+      transition: none;
+    }
   }
 
   .segmented-tab-count {

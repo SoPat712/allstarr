@@ -27,8 +27,10 @@ const playlist = (values: Partial<PlaylistLink>): PlaylistLink => ({
 });
 
 describe("playlist presentation", () => {
-  it("uses the danger token for unresolved coverage", () => {
-    expect(providerColor("unresolved")).toBe("var(--color-danger)");
+  it("uses provider colors and a neutral unresolved segment", () => {
+    expect(providerColor("unresolved")).toBe("var(--color-ink-muted)");
+    expect(providerColor("jellyfin")).toBe("#aa5cc3");
+    expect(providerColor("apple-download")).toBe("#fa243c");
   });
 
   it("filters and orders summaries by canonical coverage", () => {

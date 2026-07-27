@@ -76,9 +76,22 @@ export function formatDuration(milliseconds?: number | null) {
 }
 
 export function providerColor(providerId: string) {
-  if (providerId === "unresolved") return "var(--color-danger)";
+  const colors: Record<string, string> = {
+    unresolved: "var(--color-ink-muted)",
+    jellyfin: "#aa5cc3",
+    spotify: "#1ed760",
+    applemusic: "#fa243c",
+    "apple-music": "#fa243c",
+    "apple-download": "#fa243c",
+    deezer: "#a238ff",
+    qobuz: "#0070ef",
+    soundcloud: "#ff5500",
+    "youtube-music": "#ff0033",
+  };
+  const normalized = providerId.toLowerCase();
+  if (colors[normalized]) return colors[normalized];
   let hash = 0;
-  for (const character of providerId) hash = (hash * 31 + character.codePointAt(0)!) >>> 0;
+  for (const character of normalized) hash = (hash * 31 + character.codePointAt(0)!) >>> 0;
   return `hsl(${hash % 360} 72% 58%)`;
 }
 
