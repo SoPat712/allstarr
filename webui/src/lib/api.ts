@@ -534,6 +534,65 @@ export type DownloadsResponse = {
   count: number;
 };
 
+export type IntelligenceScope = {
+  protocol: string;
+  backendInstanceId: string;
+  libraryScopeId: string;
+};
+
+export type IntelligenceState = {
+  state: string;
+  message?: string | null;
+  scope: IntelligenceScope;
+  policy?: {
+    enabled: boolean;
+    retentionDays: number;
+    revision: number;
+  } | null;
+  availableSignalTypes: Array<{ id: string; label: string; enabled: boolean }>;
+  providers: Array<{
+    id: string;
+    label: string;
+    description: string;
+    enabled: boolean;
+    available: boolean;
+    state: string;
+    reasonCode?: string | null;
+  }>;
+  actions: {
+    canRun: boolean;
+    canGenerate: boolean;
+    latestRunId?: string | null;
+    latestRunState?: string | null;
+  };
+  candidates: Array<{
+    id: string;
+    trackKey: string;
+    title?: string | null;
+    artist?: string | null;
+    album?: string | null;
+    artworkUrl?: string | null;
+    score: number;
+    source: string;
+    providerId: string;
+    sourceRevision: string;
+    revision: number;
+    explanations: Array<{ code: string; weight: number; explanation: string }>;
+    exclusions: string[];
+    feedback?: { kind: string; reasonCode?: string | null; revision: number } | null;
+  }>;
+  generatedSets: Array<{
+    id: string;
+    name: string;
+    trackCount: number;
+    state: string;
+    materialized: boolean;
+    backendPlaylistId?: string | null;
+    errorCode?: string | null;
+  }>;
+  visualization: Array<{ key: string; label: string; value: number }>;
+};
+
 async function json<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
     cache: "no-store",
@@ -565,6 +624,31 @@ export const onboarding = {
   status: () => json<OnboardingState>("/api/admin/onboarding/status"),
   complete: () => json<OnboardingState>("/api/admin/onboarding/complete", { method: "POST" }),
   reopen: () => json<OnboardingState>("/api/admin/onboarding/reopen", { method: "POST" }),
+};
+
+const intelligenceBody = (value: object, method = "POST") => ({
+  method,
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(value),
+});
+
+export const intelligence = {
+  get: (scope: IntelligenceScope) =>
+    json<IntelligenceState>(`/api/admin/intelligence?${new URLSearchParams(scope)}`),
+  savePolicy: (scope: IntelligenceScope, input: object) =>
+    json<{ revision: number }>("/api/admin/intelligence/policy",
+      intelligenceBody({ ...scope, ...input }, "PUT")),
+  run: (scope: IntelligenceScope, seedTrackKeys: string[] = []) =>
+    json<{ runId: string; jobId: string }>("/api/admin/intelligence/runs",
+      intelligenceBody({ ...scope, seedTrackKeys, limit: 25, idempotencyKey: crypto.randomUUID() })),
+  generate: (scope: IntelligenceScope, runId: string, name: string) =>
+    json<{ id: string }>("/api/admin/intelligence/generated-sets",
+      intelligenceBody({ ...scope, runId, name })),
+  feedback: (scope: IntelligenceScope, candidateId: string, kind: string, expectedRevision: number) =>
+    json<{ revision: number }>(`/api/admin/intelligence/candidates/${encodeURIComponent(candidateId)}/feedback`,
+      intelligenceBody({ ...scope, kind, expectedRevision }, "PUT")),
+  purge: (scope: IntelligenceScope) =>
+    json<void>("/api/admin/intelligence/data", intelligenceBody(scope, "DELETE")),
 };
 
 export const home = {

@@ -163,6 +163,30 @@ const responses: Record<string, unknown> = {
   "/api/admin/extensions/registries": [],
   "/api/admin/extensions/store": { items: [], errors: [] },
   "/api/admin/extensions/logs?limit=100": [],
+  "/api/admin/intelligence": {
+    state: "configured",
+    scope: { protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music" },
+    policy: { enabled: true, retentionDays: 30, revision: 1 },
+    availableSignalTypes: [{ id: "play", label: "Play", enabled: true }],
+    providers: [{
+      id: "lumen-audio", label: "Lumen Audio", description: "Private similarity source.",
+      enabled: true, available: true, state: "ready",
+    }],
+    actions: {
+      canRun: true, canGenerate: true, latestRunId: "run-1", latestRunState: "succeeded",
+    },
+    candidates: [{
+      id: "candidate-1", trackKey: "track-1", title: "Future Song", artist: "Artist",
+      album: "Album", score: .91, source: "lumen-audio", providerId: "lumen-audio",
+      sourceRevision: "fixture:1", revision: 1, explanations: [{
+        code: "similar", weight: .9, explanation: "Similar to recent listening.",
+      }], exclusions: [], feedback: null,
+    }],
+    generatedSets: [{
+      id: "set-1", name: "Morning discovery", trackCount: 25, state: "succeeded", materialized: true,
+    }],
+    visualization: [{ key: "plays", label: "Plays", value: .7 }],
+  },
 };
 
 async function mockApi(page: Page, options: { delay?: string; fail?: string[] } = {}) {
@@ -261,6 +285,16 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
       body = { success: true, alreadyApplied: false };
     if (url.pathname === "/api/admin/config/migration/reset")
       body = {};
+    if (url.pathname === "/api/admin/intelligence/runs")
+      body = { runId: "run-2", jobId: "job-2" };
+    if (url.pathname === "/api/admin/intelligence/generated-sets")
+      body = { id: "set-2" };
+    if (url.pathname.includes("/api/admin/intelligence/candidates/") && url.pathname.endsWith("/feedback"))
+      body = { revision: 1 };
+    if (url.pathname === "/api/admin/intelligence/policy")
+      body = { revision: 2 };
+    if (url.pathname === "/api/admin/intelligence/data")
+      body = {};
     await route.fulfill({
       status: body === undefined ? 404 : 200,
       contentType: "application/json",
@@ -276,6 +310,7 @@ const routes = [
   ["#/library/cached", "Library"],
   ["#/library/kept", "Library"],
   ["#/activity", "Activity"],
+  ["#/intelligence", "Intelligence"],
   ["#/sources", "Sources"],
   ["#/settings/general", "Settings"],
 ] as const;
@@ -337,6 +372,30 @@ for (const viewport of viewports) {
       const dialog = page.getByRole("alertdialog", { name: "Purge the application cache?" });
       await expect(dialog).toBeVisible();
       await expect(dialog.getByRole("button", { name: "Purge cache" })).toBeInViewport();
+    });
+
+    test("Intelligence results remain usable", async ({ page, context }) => {
+      await mockApi(page, { delay: "/api/admin/intelligence" });
+      await page.goto("#/intelligence");
+      await page.getByLabel("Backend instance").fill("main");
+      await page.getByLabel("Library scope").fill("music");
+      await page.getByRole("button", { name: "Open library" }).click();
+      await expect(page.getByLabel("Loading Intelligence")).toBeVisible();
+      await expect(page.getByText("Future Song")).toBeVisible();
+      await expect(page.getByText("Morning discovery")).toBeVisible();
+      await expect(page.getByText("Private similarity source. · ready")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Refresh recommendations" })).toBeInViewport();
+      await expect.poll(() => page.evaluate(() =>
+        document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+
+      const errorPage = await context.newPage();
+      await mockApi(errorPage, { fail: ["/api/admin/intelligence"] });
+      await errorPage.goto("#/intelligence");
+      await errorPage.getByLabel("Backend instance").fill("main");
+      await errorPage.getByLabel("Library scope").fill("music");
+      await errorPage.getByRole("button", { name: "Open library" }).click();
+      await expect(errorPage.getByRole("alert")).toContainText("Fixture unavailable");
+      await expect(errorPage.getByRole("button", { name: "Open library" })).toBeInViewport();
     });
 
     test("Source dialogs remain usable", async ({ page }) => {

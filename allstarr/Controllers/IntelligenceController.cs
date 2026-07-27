@@ -48,6 +48,16 @@ public sealed class IntelligenceController(
                 .Where(item => candidateIds.Contains(item.CandidateId) && item.TenantId == scope.TenantId &&
                                item.OwnerUserId == scope.OwnerUserId)
                 .ToDictionaryAsync(item => item.CandidateId, cancellationToken);
+            var candidateIdentities = candidates.ToDictionary(item => item.Id, item => ParseIdentity(item.IdentityJson));
+            var libraryTrackIds = candidateIdentities.Values.Select(item => item?.LibraryTrackId).OfType<Guid>().ToArray();
+            var canonicalIds = candidates.Select(item => item.CanonicalRecordingId).OfType<Guid>().ToArray();
+            var localTracks = await db.LibraryTracks.AsNoTracking().Where(item =>
+                    item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+                    item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
+                    item.LibraryScopeId == scope.LibraryScopeId &&
+                    (libraryTrackIds.Contains(item.Id) ||
+                     item.CanonicalRecordingId.HasValue && canonicalIds.Contains(item.CanonicalRecordingId.Value)))
+                .ToListAsync(cancellationToken);
             var sets = await db.GeneratedSets.AsNoTracking().Where(item => item.TenantId == scope.TenantId &&
                 item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
                 item.BackendInstanceId == scope.BackendInstanceId && item.LibraryScopeId == scope.LibraryScopeId)
@@ -105,21 +115,36 @@ public sealed class IntelligenceController(
                 {
                     canRun = policy?.Enabled == true && enabledProviders.Any(id => readinessById.TryGetValue(id, out var item) && item.State == RecommendationProviderReadinessState.Ready),
                     canGenerate = latestRun?.State == RecommendationRunState.Succeeded,
-                    latestRunId = latestRun?.Id
+                    latestRunId = latestRun?.Id,
+                    latestRunState = latestRun?.State.ToString().ToLowerInvariant()
                 },
-                candidates = candidates.Select(item => new
+                candidates = candidates.Select(item =>
                 {
-                    item.TrackKey,
-                    item.Score,
-                    item.Source,
-                    item.CanonicalRecordingId,
-                    item.ProviderAccountId,
-                    item.SourceRevision,
-                    explanations = ParseSignals(item.SignalsJson),
-                    exclusions = ParseArray(item.ExclusionsJson),
-                    feedback = feedback.TryGetValue(item.Id, out var value)
+                    var identity = candidateIdentities[item.Id];
+                    var local = localTracks.FirstOrDefault(track => track.Id == identity?.LibraryTrackId) ??
+                                localTracks.FirstOrDefault(track => track.CanonicalRecordingId == item.CanonicalRecordingId);
+                    return new
+                    {
+                        id = item.Id,
+                        item.TrackKey,
+                        title = identity?.Title ?? local?.Title,
+                        artist = identity?.Artist ?? local?.Artist,
+                        album = identity?.Album ?? local?.Album,
+                        artworkUrl = local?.CoverArtReference == null ? null :
+                            $"/api/admin/downloads/artwork/{Uri.EscapeDataString(local.BackendItemId)}",
+                        item.Score,
+                        item.Source,
+                        providerId = identity?.ProviderId ?? item.Source,
+                        item.CanonicalRecordingId,
+                        item.ProviderAccountId,
+                        item.SourceRevision,
+                        item.Revision,
+                        explanations = ParseSignals(item.SignalsJson),
+                        exclusions = ParseArray(item.ExclusionsJson),
+                        feedback = feedback.TryGetValue(item.Id, out var value)
                         ? new { value.Kind, value.ReasonCode, value.UpdatedAt, value.Revision }
                         : null
+                    };
                 }),
                 generatedSets = sets.Select(item => new
                 {

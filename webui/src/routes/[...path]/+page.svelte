@@ -8,6 +8,7 @@
   const destinations = [
     { href: "#/", label: "Home", icon: "⌂" },
     { href: "#/library/playlists", prefix: "/library/", label: "Library", icon: "♫" },
+    { href: "#/intelligence", label: "Intelligence", icon: "✦" },
     { href: "#/sources", label: "Sources", icon: "◎" },
     { href: "#/activity", label: "Activity", icon: "↗" },
     { href: "#/settings", label: "Settings", icon: "⚙" },
@@ -107,6 +108,7 @@
       return import("$lib/components/DownloadsView.svelte");
     }
     if (path === "/activity") return import("$lib/components/EventLogView.svelte");
+    if (path === "/intelligence") return import("$lib/components/IntelligenceView.svelte");
     if (path === "/sources") return import("$lib/components/SourcesView.svelte");
     if (path.startsWith("/settings")) return import("$lib/components/SettingsView.svelte");
   }

@@ -188,6 +188,8 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
                 SignalsJson = JsonSerializer.Serialize(new[] { new RecommendationSignal("similar", .9, "Shared listening context") }),
                 IdentityJson = JsonSerializer.Serialize(new RecommendationTrackIdentity(
                     MusicBrainzRecordingId: "11111111-1111-1111-1111-111111111111",
+                    Title: "Recommended song",
+                    Artist: "Recommended artist",
                     LibraryTrackId: Guid.Parse("22222222-2222-2222-2222-222222222222"),
                     BackendItemId: "backend-track-42")),
                 CreatedAt = DateTimeOffset.UtcNow
@@ -224,6 +226,8 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
         var result = Assert.IsType<OkObjectResult>(await Controller().Get(Scope(), default)); var json = JsonSerializer.Serialize(result.Value);
         Assert.Contains("Shared listening context", json); Assert.Contains("Private preview", json); Assert.Contains("visualization", json);
         Assert.Contains("lastfm:fixture", json, StringComparison.Ordinal);
+        Assert.Contains("Recommended song", json, StringComparison.Ordinal);
+        Assert.Contains("\"latestRunState\":\"succeeded\"", json, StringComparison.Ordinal);
         Assert.DoesNotContain("TenantId", json, StringComparison.Ordinal);
         var feedback = Assert.IsType<OkObjectResult>(await Controller().SetFeedback(
             Guid.Parse("33333333-3333-3333-3333-333333333333"), new()
