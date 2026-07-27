@@ -220,6 +220,30 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SelectiveTransferEndpoints_RequireAdministratorAndBoundedArchive()
+    {
+        var transfer = new SelectiveStateTransferService(
+            _factory,
+            new DurableStorageOptions { ConnectionString = _database.ConnectionString },
+            _storageState);
+        var request = new SelectiveStateTransferControllerRequest
+        {
+            File = new FormFile(Stream.Null, 0, 0, "File", "state.zip")
+        };
+
+        var nonAdministrator = CreateController(CreateHttpContextWithSession(isAdmin: false));
+        AssertForbidden(await nonAdministrator.ExportSelectiveState(null, transfer));
+        AssertForbidden(await nonAdministrator.PreviewSelectiveState(request, transfer));
+        AssertForbidden(await nonAdministrator.ImportSelectiveState(request, transfer));
+
+        var administrator = CreateController(CreateHttpContextWithSession(isAdmin: true));
+        Assert.IsType<BadRequestObjectResult>(
+            await administrator.PreviewSelectiveState(request, transfer));
+        Assert.IsType<BadRequestObjectResult>(
+            await administrator.ImportSelectiveState(request, transfer));
+    }
+
+    [Fact]
     public async Task MigrationController_ReturnsNonCachedAdminPreviewAndRequiresExplicitConfirmation()
     {
         var controller = CreateController(CreateHttpContextWithSession(isAdmin: true));

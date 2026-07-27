@@ -4157,6 +4157,120 @@
     gap: 0.45rem;
   }
 
+  .transfer-card {
+    grid-column: 1 / -1;
+  }
+
+  .transfer-card > header .status-pill {
+    white-space: nowrap;
+  }
+
+  .transfer-categories {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin: 0;
+    border: 0;
+    padding: 0;
+  }
+
+  .transfer-categories legend,
+  .transfer-file-summary label > span {
+    margin-bottom: 0.35rem;
+    color: var(--color-ink-muted);
+    font-size: 0.57rem;
+  }
+
+  .transfer-categories label {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    border: 1px solid var(--color-edge);
+    border-radius: 999px;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.6rem;
+  }
+
+  .transfer-actions,
+  .transfer-progress {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .transfer-actions > *,
+  .transfer-file-summary > button {
+    min-height: 2.4rem;
+  }
+
+  .transfer-file {
+    position: relative;
+    display: grid;
+    place-items: center;
+    padding: 0 0.7rem;
+    font-size: 0.62rem;
+    cursor: pointer;
+  }
+
+  .transfer-file input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+  }
+
+  .transfer-file-summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(12rem, 0.6fr) auto;
+    align-items: end;
+    gap: 0.6rem;
+  }
+
+  .transfer-file-summary > span,
+  .transfer-file-summary label {
+    display: grid;
+    gap: 0.2rem;
+    min-width: 0;
+  }
+
+  .transfer-file-summary small,
+  .transfer-feedback,
+  .transfer-progress,
+  .transfer-report {
+    color: var(--color-ink-muted);
+    font-size: 0.6rem;
+  }
+
+  .transfer-progress progress {
+    flex: 1 1 14rem;
+  }
+
+  .transfer-report {
+    display: grid;
+    gap: 0.55rem;
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-md);
+    padding: 0.75rem;
+  }
+
+  .transfer-report > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+  }
+
+  .transfer-report p,
+  .transfer-report ul {
+    margin: 0;
+  }
+
+  .transfer-rows {
+    max-height: 14rem;
+    overflow: auto;
+  }
+
   .maintenance-card > .settings-fields {
     grid-template-columns: 1fr;
     border: 1px solid var(--color-edge);
@@ -4290,6 +4404,19 @@
   }
 
   .routing-group > header button {
+    width: 100%;
+  }
+
+  .transfer-actions,
+  .transfer-file-summary,
+  .transfer-progress {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .transfer-actions > *,
+  .transfer-file-summary > button,
+  .transfer-progress button {
     width: 100%;
   }
 

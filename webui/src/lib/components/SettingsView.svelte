@@ -13,6 +13,7 @@
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import EnvMigrationCard from "$lib/components/EnvMigrationCard.svelte";
   import ExtensionsView from "$lib/components/ExtensionsView.svelte";
+  import SelectiveTransferCard from "$lib/components/SelectiveTransferCard.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import { audienceLabel, humanize } from "$lib/sources";
   import { fieldValue, move, routingOrder } from "$lib/settings";
@@ -325,6 +326,7 @@
             <header><div><strong>Playlist pipeline</strong><small>Source access and playable materialization</small></div></header>
             <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void run("playlists", settings.playlistProbe, "Playlist pipeline checked.")}>{action === "playlists" ? "Testing…" : "Test playlist readiness"}</button>
           </article>
+          {#if administrator}<SelectiveTransferCard />{/if}
           {#if administrator}
             <article class="panel maintenance-card">
               <header><div><strong>Setup guide</strong><small>Durable account onboarding</small></div></header>

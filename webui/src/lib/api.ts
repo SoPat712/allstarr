@@ -250,6 +250,28 @@ export type EnvMigrationPreview = {
   warnings: string[];
 };
 
+export type SelectiveTransferOptions = {
+  settings: boolean;
+  accounts: boolean;
+  playlists: boolean;
+  intelligence: boolean;
+  extensions: boolean;
+};
+
+export type SelectiveTransferReport = {
+  includedCategories: string[];
+  excludedCategories: string[];
+  totalRows: number;
+  rowsByEntry: Record<string, number>;
+};
+
+export type SelectiveTransferPreview = {
+  canImport: boolean;
+  dependencies: string[];
+  conflicts: string[];
+  report: SelectiveTransferReport;
+};
+
 export type ProviderAccount = {
   id: string;
   providerId: string;
@@ -612,7 +634,7 @@ export type IntelligenceState = {
   visualization: Array<{ key: string; label: string; value: number }>;
 };
 
-async function json<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+async function request(input: RequestInfo | URL, init?: RequestInit) {
   const response = await fetch(input, {
     cache: "no-store",
     credentials: "same-origin",
@@ -623,9 +645,26 @@ async function json<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T>
     const body = (await response.json().catch(() => null)) as { error?: string; message?: string } | null;
     throw new Error(body?.error || body?.message || `${response.status} ${response.statusText}`);
   }
+  return response;
+}
 
+async function json<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+  const response = await request(input, init);
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+function selectiveTransferForm(
+  file: File,
+  mode: "Conflict" | "Merge" | "Replace",
+  options: SelectiveTransferOptions,
+) {
+  const body = new FormData();
+  body.append("File", file);
+  body.append("Mode", mode);
+  for (const [category, included] of Object.entries(options))
+    body.append(`Import${category[0].toUpperCase()}${category.slice(1)}`, String(included));
+  return body;
 }
 
 export const auth = {
@@ -793,6 +832,39 @@ export const settings = {
     json<{ deleted: number }>(`/api/admin/cache/${scope}`, { method: "DELETE" }),
   mediaProbe: () => json<{ success: boolean; code: string; message: string }>("/api/admin/media-probe"),
   playlistProbe: () => json<{ success: boolean; code: string; message: string }>("/api/admin/playlist-readiness"),
+  exportState: async (options: SelectiveTransferOptions, signal?: AbortSignal) => {
+    const response = await request("/api/admin/export-selective-state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.fromEntries(Object.entries(options)
+        .map(([category, included]) => [`include${category[0].toUpperCase()}${category.slice(1)}`, included]))),
+      signal,
+    });
+    const filename = /filename="?([^";]+)"?/i.exec(response.headers.get("Content-Disposition") ?? "")?.[1] ??
+      "allstarr-selective-export.zip";
+    return { blob: await response.blob(), filename };
+  },
+  previewState: (
+    file: File,
+    mode: "Conflict" | "Merge" | "Replace",
+    options: SelectiveTransferOptions,
+    signal?: AbortSignal,
+  ) => json<SelectiveTransferPreview>("/api/admin/preview-selective-state", {
+    method: "POST",
+    body: selectiveTransferForm(file, mode, options),
+    signal,
+  }),
+  importState: (
+    file: File,
+    mode: "Conflict" | "Merge" | "Replace",
+    options: SelectiveTransferOptions,
+    signal?: AbortSignal,
+  ) => json<{ success: boolean; message: string; report: SelectiveTransferReport }>(
+    "/api/admin/import-selective-state", {
+      method: "POST",
+      body: selectiveTransferForm(file, mode, options),
+      signal,
+    }),
   migrationStatus: () => json<{
     available: boolean;
     completed: boolean;
