@@ -266,7 +266,7 @@
           <article class="source-card" data-state={state}>
             <header>
               <div class="source-identity">
-                <span class="media-art source-art"><ProviderMark id={item.id} definition={item} /></span>
+                <span class="media-art provider-art"><ProviderMark id={item.id} definition={item} /></span>
                 <span><strong>{item.name}</strong><small>{item.description || item.notes?.join(" · ") || "Provider capability Source"}</small></span>
               </div>
               <span class={`status-pill ${state}`}>{humanize(state)}</span>
@@ -317,7 +317,7 @@
           <article class="connection-card">
             <header>
               <div class="source-identity">
-                <ProviderMark id={account.providerId} definition={definition} />
+                <span class="media-art provider-art"><ProviderMark id={account.providerId} definition={definition} /></span>
                 <span>
                   <strong>{account.sourceDisplayName || account.displayName}</strong>
                   <small>{definition?.name ?? account.providerId} connection · Connected by {account.creatorDisplayName || account.ownerDisplayName || "unknown user"}</small>

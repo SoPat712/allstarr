@@ -54,6 +54,7 @@
   let purgeTarget = $state("");
   let purgeOpen = $state(false);
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let dragging = $state<{ groupId: string; index: number } | null>(null);
 
   const active = $derived(tabs.some((item) => item.id === section) ? section : "general");
   const generalSections = $derived((schema?.configSections ?? [])
@@ -151,6 +152,15 @@
 
   function moveProvider(group: PriorityGroup, index: number, direction: -1 | 1) {
     orders = { ...orders, [group.id]: move(orders[group.id] ?? [], index, direction) };
+  }
+
+  function dropProvider(group: PriorityGroup, index: number) {
+    if (!dragging || dragging.groupId !== group.id || dragging.index === index) return;
+    const order = [...(orders[group.id] ?? [])];
+    const [providerId] = order.splice(dragging.index, 1);
+    order.splice(index, 0, providerId);
+    orders = { ...orders, [group.id]: order };
+    dragging = null;
   }
 
   async function run(name: string, operation: () => Promise<unknown>, message: string) {
@@ -285,15 +295,22 @@
               <ol>
                 {#if group.pinnedProvider}
                   <li class="pinned">
-                    <ProviderMark id={group.pinnedProvider.id} label={group.pinnedProvider.name} />
+                    <span class="media-art provider-art"><ProviderMark id={group.pinnedProvider.id} label={group.pinnedProvider.name} /></span>
                     <span><strong>{group.pinnedProvider.name}</strong><small>{group.pinnedProvider.reason}</small></span>
                     <span class="status-pill healthy">Local · fixed</span>
                   </li>
                 {/if}
                 {#each orders[group.id] ?? group.providers as providerId, index}
                   {@const definition = provider(providerId)}
-                  <li>
-                    <ProviderMark id={providerId} definition={definition} />
+                  <li
+                    draggable="true"
+                    class:dragging={dragging?.groupId === group.id && dragging.index === index}
+                    ondragstart={() => { dragging = { groupId: group.id, index }; }}
+                    ondragover={(event) => event.preventDefault()}
+                    ondrop={() => dropProvider(group, index)}
+                    ondragend={() => { dragging = null; }}
+                  >
+                    <span class="media-art provider-art"><ProviderMark id={providerId} definition={definition} /></span>
                     <span><strong>{definition?.name ?? humanize(providerId)}</strong><small>{definition?.categories?.map(humanize).join(" · ") || "Provider Source"}</small></span>
                     <span class="routing-actions">
                       <button type="button" aria-label={`Move ${definition?.name ?? providerId} up`} disabled={index === 0} onclick={() => moveProvider(group, index, -1)}>↑</button>

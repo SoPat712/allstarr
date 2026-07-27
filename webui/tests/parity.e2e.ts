@@ -37,7 +37,7 @@ const schema = {
     },
   ],
   priorityGroups: [{
-    id: "streaming", label: "Playback", envKey: "StreamingOrder", providers: ["lumen-audio"],
+    id: "streaming", label: "Playback", envKey: "StreamingOrder", providers: ["lumen-audio", "future-audio"],
     pinnedProvider: { id: "jellyfin", name: "Jellyfin", icon: "server", reason: "Local media server" },
   }],
 };
@@ -425,6 +425,9 @@ for (const viewport of viewports) {
       await page.goto("#/settings/routing");
       await expect(page.getByText("Local · fixed")).toBeVisible();
       await expect(page.getByRole("button", { name: "Move Jellyfin up" })).toHaveCount(0);
+      const routes = page.locator(".routing-group li[draggable=true]");
+      await routes.nth(0).dragTo(routes.nth(1));
+      await expect(routes.nth(0)).toContainText("Future Audio");
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.goto("#/settings/extensions");

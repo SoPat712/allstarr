@@ -269,7 +269,7 @@
         {#each installed as item}
           {@const update = updateFor(item)}
           <article class="panel extension-row">
-            <ProviderMark id={item.extensionId} definition={definition(item)} />
+            <span class="media-art provider-art"><ProviderMark id={item.extensionId} definition={definition(item)} /></span>
             <div class="extension-copy"><span><strong>{item.displayName}</strong><small>v{item.version}{item.author ? ` · ${item.author}` : ""}</small></span><p>{item.description || "No description supplied."}</p><div>{#each item.capabilities ?? [] as capability}<span class="chip">{humanize(capability)}</span>{/each}</div></div>
             <span class={`status-pill ${item.active ? "healthy" : item.state === "failed" ? "degraded" : "suggested"}`}>{humanize(item.state)}</span>
             <div class="extension-actions">
@@ -302,7 +302,7 @@
         <div>
           {#each available as item}
             <article>
-              <ProviderMark id={item.id} definition={definition(item)} />
+              <span class="media-art provider-art"><ProviderMark id={item.id} definition={definition(item)} /></span>
               <span><strong>{item.displayName}</strong><small>v{item.version}{item.author ? ` · ${item.author}` : ""}</small><p>{item.description || "No description supplied."}</p></span>
               <button class="button-primary" type="button" disabled={!item.sha256 || Boolean(action)} onclick={() => void stage(item)}>{action === `install:${item.id}` ? "Verifying…" : installed.some((entry) => entry.extensionId.toLowerCase() === item.id.toLowerCase()) ? "Review update" : "Install"}</button>
             </article>
