@@ -1,5 +1,7 @@
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
@@ -48,7 +50,7 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
             IncludeExtensions = false
         };
 
-        var (artifact, report) = await service.ExportAsync(exportDir, request, writesQuiesced: true);
+        var (artifact, report) = await service.ExportAsync(exportDir, request);
 
         Assert.True(File.Exists(artifact.Path));
         Assert.Contains("Settings", report.ExcludedCategories);
@@ -83,38 +85,31 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
         var (sourceFactory, sourceOptions, sourceState) = await CreateSeededContextAsync();
         var sourceService = new SelectiveStateTransferService(sourceFactory, sourceOptions, sourceState);
 
-        var exportDir = Path.Combine(_root, "export-just-accounts");
+        var exportDir = Path.Combine(_root, "export-just-playlists");
         var (artifact, _) = await sourceService.ExportAsync(
             exportDir,
             new SelectiveExportRequest
             {
                 IncludeSettings = false,
-                IncludeAccounts = true,
-                IncludePlaylists = false,
+                IncludeAccounts = false,
+                IncludePlaylists = true,
                 IncludeIntelligence = false,
                 IncludeExtensions = false
-            },
-            writesQuiesced: true);
-
-        var zipBytes = await File.ReadAllBytesAsync(artifact.Path);
-        var backupJson = JsonSerializer.Serialize(new
-        {
-            archiveBase64 = Convert.ToBase64String(zipBytes)
-        });
+            });
 
         var (targetFactory, targetOptions, targetState) = await CreateEmptyContextAsync();
         var targetService = new SelectiveStateTransferService(targetFactory, targetOptions, targetState);
 
+        await using var archive = File.OpenRead(artifact.Path);
         var ex = await Assert.ThrowsAsync<SelectiveTransferValidationException>(() =>
-            targetService.ImportAsync(new SelectiveImportRequest
+            targetService.ImportAsync(archive, new SelectiveImportRequest
             {
                 ImportSettings = false,
                 ImportAccounts = false,
                 ImportPlaylists = true,
                 ImportIntelligence = false,
-                ImportExtensions = false,
-                BackupJson = backupJson
-            }));
+                ImportExtensions = false
+            }, Guid.Empty, "missing-dependency"));
 
         Assert.Contains("requires 'Settings'", ex.Message);
     }
@@ -135,31 +130,24 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
                 IncludePlaylists = false,
                 IncludeIntelligence = false,
                 IncludeExtensions = false
-            },
-            writesQuiesced: true);
+            });
 
         Assert.Equal(2, exportReport.IncludedCategories.Count);
         Assert.Contains("Settings", exportReport.IncludedCategories);
         Assert.Contains("Accounts", exportReport.IncludedCategories);
 
-        var zipBytes = await File.ReadAllBytesAsync(artifact.Path);
-        var backupJson = JsonSerializer.Serialize(new
-        {
-            archiveBase64 = Convert.ToBase64String(zipBytes)
-        });
-
         var (targetFactory, targetOptions, targetState) = await CreateEmptyContextAsync();
         var targetService = new SelectiveStateTransferService(targetFactory, targetOptions, targetState);
 
-        var report = await targetService.ImportAsync(new SelectiveImportRequest
+        await using var archive = File.OpenRead(artifact.Path);
+        var report = await targetService.ImportAsync(archive, new SelectiveImportRequest
         {
             ImportSettings = true,
             ImportAccounts = true,
             ImportPlaylists = false,
             ImportIntelligence = false,
-            ImportExtensions = false,
-            BackupJson = backupJson
-        });
+            ImportExtensions = false
+        }, Guid.Empty, "round-trip");
 
         Assert.Equal(2, report.IncludedCategories.Count);
         Assert.Equal(1, report.RowsByEntry.GetValueOrDefault("tenants"));
@@ -171,6 +159,232 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
         Assert.Equal(1, await verify.Tenants.CountAsync());
         Assert.Equal(1, await verify.Users.CountAsync());
         Assert.Equal(1, await verify.ProviderAccounts.CountAsync());
+        Assert.Contains(await verify.AuditEvents.ToListAsync(), item =>
+            item.Action == "selective-import.apply" &&
+            item.CorrelationId == "round-trip");
+    }
+
+    [Fact]
+    public async Task ImportSelective_InvalidForeignKeyRollsBackEveryRowAndAudit()
+    {
+        var (sourceFactory, sourceOptions, sourceState) = await CreateSeededContextAsync();
+        var sourceService = new SelectiveStateTransferService(sourceFactory, sourceOptions, sourceState);
+        var (artifact, _) = await sourceService.ExportAsync(
+            Path.Combine(_root, "invalid-foreign-key"),
+            new SelectiveExportRequest
+            {
+                IncludeSettings = true,
+                IncludeAccounts = true,
+                IncludePlaylists = false,
+                IncludeIntelligence = false,
+                IncludeExtensions = false
+            });
+        await RewriteEntryAsync(artifact.Path, "provider-accounts.json", rows =>
+        {
+            rows[0]!["ownerUserId"] = Guid.NewGuid().ToString();
+        });
+
+        var (targetFactory, targetOptions, targetState) = await CreateEmptyContextAsync();
+        var targetService = new SelectiveStateTransferService(targetFactory, targetOptions, targetState);
+        await using var archive = File.OpenRead(artifact.Path);
+        var ex = await Assert.ThrowsAsync<SelectiveTransferConflictException>(() =>
+            targetService.ImportAsync(
+                archive,
+                new SelectiveImportRequest
+                {
+                    ImportSettings = true,
+                    ImportAccounts = true,
+                    ImportPlaylists = false,
+                    ImportIntelligence = false,
+                    ImportExtensions = false
+                },
+                Guid.Empty,
+                "must-roll-back"));
+
+        Assert.Contains("database key or dependency", ex.Message);
+        await using var verify = await targetFactory.CreateDbContextAsync();
+        Assert.Empty(await verify.Tenants.ToListAsync());
+        Assert.Empty(await verify.Users.ToListAsync());
+        Assert.Empty(await verify.ProviderAccounts.ToListAsync());
+        Assert.Empty(await verify.AuditEvents.ToListAsync());
+    }
+
+    [Fact]
+    public async Task PreviewSelective_RejectsTamperedEntryChecksum()
+    {
+        var (factory, options, state) = await CreateSeededContextAsync();
+        var service = new SelectiveStateTransferService(factory, options, state);
+        var (artifact, _) = await service.ExportAsync(
+            Path.Combine(_root, "tampered"),
+            new SelectiveExportRequest
+            {
+                IncludeSettings = true,
+                IncludeAccounts = false,
+                IncludePlaylists = false,
+                IncludeIntelligence = false,
+                IncludeExtensions = false
+            });
+
+        using (var archive = ZipFile.Open(artifact.Path, ZipArchiveMode.Update))
+        {
+            var entry = archive.GetEntry("tenants.json")!;
+            entry.Delete();
+            await using var stream = archive.CreateEntry("tenants.json").Open();
+            await JsonSerializer.SerializeAsync(stream, Array.Empty<object>());
+        }
+
+        await using var upload = File.OpenRead(artifact.Path);
+        var ex = await Assert.ThrowsAsync<SelectiveTransferValidationException>(() =>
+            service.PreviewAsync(
+                upload,
+                new SelectiveImportRequest
+                {
+                    ImportSettings = true,
+                    ImportAccounts = false,
+                    ImportPlaylists = false,
+                    ImportIntelligence = false,
+                    ImportExtensions = false
+                }));
+        Assert.Contains("checksum or bounds", ex.Message);
+    }
+
+    [Fact]
+    public async Task PreviewSelective_ConflictModeReportsNonEmptyTarget()
+    {
+        var (factory, options, state) = await CreateSeededContextAsync();
+        var service = new SelectiveStateTransferService(factory, options, state);
+        var (artifact, _) = await service.ExportAsync(
+            Path.Combine(_root, "conflict-preview"),
+            new SelectiveExportRequest
+            {
+                IncludeSettings = true,
+                IncludeAccounts = false,
+                IncludePlaylists = false,
+                IncludeIntelligence = false,
+                IncludeExtensions = false
+            });
+
+        await using var archive = File.OpenRead(artifact.Path);
+        var preview = await service.PreviewAsync(
+            archive,
+            new SelectiveImportRequest
+            {
+                Mode = SelectiveImportMode.Conflict,
+                ImportSettings = true,
+                ImportAccounts = false,
+                ImportPlaylists = false,
+                ImportIntelligence = false,
+                ImportExtensions = false
+            });
+
+        Assert.False(preview.CanImport);
+        Assert.Contains(preview.Conflicts, conflict => conflict.Contains("empty target"));
+    }
+
+    [Fact]
+    public async Task ImportSelective_MergeAddsRowsWithoutReplacingDependencies()
+    {
+        var (sourceFactory, sourceOptions, sourceState) = await CreateSeededContextAsync();
+        await using var sourceContext = await sourceFactory.CreateDbContextAsync();
+        var sourceTenant = await sourceContext.Tenants.AsNoTracking().SingleAsync();
+        var sourceService = new SelectiveStateTransferService(sourceFactory, sourceOptions, sourceState);
+        var (artifact, _) = await sourceService.ExportAsync(
+            Path.Combine(_root, "merge"),
+            new SelectiveExportRequest
+            {
+                IncludeSettings = false,
+                IncludeAccounts = true,
+                IncludePlaylists = false,
+                IncludeIntelligence = false,
+                IncludeExtensions = false
+            });
+
+        var (targetFactory, targetOptions, targetState) = await CreateEmptyContextAsync();
+        await using (var targetContext = await targetFactory.CreateDbContextAsync())
+        {
+            targetContext.Tenants.Add(new TenantRecord
+            {
+                Id = sourceTenant.Id,
+                Slug = sourceTenant.Slug,
+                Name = "Existing target tenant",
+                CreatedAt = sourceTenant.CreatedAt
+            });
+            await targetContext.SaveChangesAsync();
+        }
+        var targetService = new SelectiveStateTransferService(targetFactory, targetOptions, targetState);
+        await using var archive = File.OpenRead(artifact.Path);
+        await targetService.ImportAsync(
+            archive,
+            new SelectiveImportRequest
+            {
+                Mode = SelectiveImportMode.Merge,
+                ImportSettings = false,
+                ImportAccounts = true,
+                ImportPlaylists = false,
+                ImportIntelligence = false,
+                ImportExtensions = false
+            },
+            Guid.Empty,
+            "merge");
+
+        await using var verify = await targetFactory.CreateDbContextAsync();
+        Assert.Equal("Existing target tenant", (await verify.Tenants.SingleAsync()).Name);
+        Assert.Single(await verify.Users.ToListAsync());
+        Assert.Single(await verify.ProviderAccounts.ToListAsync());
+    }
+
+    [Fact]
+    public async Task ImportSelective_ReplaceReplacesEveryRowInSelectedCategory()
+    {
+        var (sourceFactory, sourceOptions, sourceState) = await CreateSeededContextAsync();
+        await using var sourceContext = await sourceFactory.CreateDbContextAsync();
+        var sourceTenantId = await sourceContext.Tenants.Select(item => item.Id).SingleAsync();
+        var sourceService = new SelectiveStateTransferService(sourceFactory, sourceOptions, sourceState);
+        var (artifact, _) = await sourceService.ExportAsync(
+            Path.Combine(_root, "replace"),
+            new SelectiveExportRequest
+            {
+                IncludeSettings = true,
+                IncludeAccounts = false,
+                IncludePlaylists = false,
+                IncludeIntelligence = false,
+                IncludeExtensions = false
+            });
+
+        var (targetFactory, targetOptions, targetState) = await CreateEmptyContextAsync();
+        var oldTenantId = Guid.NewGuid();
+        await using (var targetContext = await targetFactory.CreateDbContextAsync())
+        {
+            targetContext.Tenants.Add(new TenantRecord
+            {
+                Id = oldTenantId,
+                Slug = $"old-{oldTenantId:N}",
+                Name = "Old tenant",
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await targetContext.SaveChangesAsync();
+        }
+        var targetService = new SelectiveStateTransferService(targetFactory, targetOptions, targetState);
+        await using var archive = File.OpenRead(artifact.Path);
+        await targetService.ImportAsync(
+            archive,
+            new SelectiveImportRequest
+            {
+                Mode = SelectiveImportMode.Replace,
+                ImportSettings = true,
+                ImportAccounts = false,
+                ImportPlaylists = false,
+                ImportIntelligence = false,
+                ImportExtensions = false
+            },
+            Guid.Empty,
+            "replace");
+
+        await using var verify = await targetFactory.CreateDbContextAsync();
+        Assert.False(await verify.Tenants.AnyAsync(item => item.Id == oldTenantId));
+        Assert.True(await verify.Tenants.AnyAsync(item => item.Id == sourceTenantId));
+        Assert.Contains(await verify.AuditEvents.ToListAsync(), item =>
+            item.CorrelationId == "replace");
     }
 
     [Fact]
@@ -190,21 +404,18 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
                     IncludePlaylists = false,
                     IncludeIntelligence = false,
                     IncludeExtensions = false
-                },
-                writesQuiesced: true));
+                }));
     }
 
     [Fact]
-    public async Task ImportSelective_RejectsEmptyBackupPayload()
+    public async Task ImportSelective_RejectsEmptyArchive()
     {
         var (factory, options, state) = await CreateSeededContextAsync();
         var service = new SelectiveStateTransferService(factory, options, state);
 
+        await using var archive = new MemoryStream();
         await Assert.ThrowsAsync<SelectiveTransferValidationException>(() =>
-            service.ImportAsync(new SelectiveImportRequest
-            {
-                BackupJson = "   "
-            }));
+            service.ImportAsync(archive, new SelectiveImportRequest(), Guid.Empty, "empty"));
     }
 
     [Fact]
@@ -216,6 +427,11 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
         var fakeArchivePath = Path.Combine(_root, "wrong-version.zip");
         using (var archive = ZipFile.Open(fakeArchivePath, ZipArchiveMode.Create))
         {
+            var data = archive.CreateEntry("tenants.json");
+            await using (var dataStream = data.Open())
+            {
+                await JsonSerializer.SerializeAsync(dataStream, Array.Empty<object>());
+            }
             var manifest = archive.CreateEntry("manifest.json");
             await using var stream = manifest.Open();
             await JsonSerializer.SerializeAsync(stream, new[]
@@ -233,19 +449,16 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
                 }
             });
         }
-        var bytes = await File.ReadAllBytesAsync(fakeArchivePath);
-        var backupJson = JsonSerializer.Serialize(new { archiveBase64 = Convert.ToBase64String(bytes) });
-
+        await using var archiveStream = File.OpenRead(fakeArchivePath);
         await Assert.ThrowsAsync<SelectiveTransferSchemaMismatchException>(() =>
-            service.ImportAsync(new SelectiveImportRequest
+            service.ImportAsync(archiveStream, new SelectiveImportRequest
             {
                 ImportSettings = true,
                 ImportAccounts = false,
                 ImportPlaylists = false,
                 ImportIntelligence = false,
-                ImportExtensions = false,
-                BackupJson = backupJson
-            }));
+                ImportExtensions = false
+            }, Guid.Empty, "wrong-version"));
     }
 
     [Fact]
@@ -268,6 +481,20 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
         Assert.Equal(new[] { "Settings", "Playlists", "Extensions" }, included.Select(c => c.ToString()));
     }
 
+    [Fact]
+    public async Task PreviewSelective_RejectsUnknownImportModeBeforeReadingUpload()
+    {
+        var service = new SelectiveStateTransferService(
+            new TestDbContextFactory(new DbContextOptionsBuilder<AllstarrDbContext>().Options),
+            new DurableStorageOptions { Provider = "Postgres", ConnectionString = "Host=database;Database=allstarr" },
+            new DurableStorageState(new DurableStorageOptions { Provider = "Postgres", ConnectionString = "Host=database;Database=allstarr" }));
+
+        await Assert.ThrowsAsync<SelectiveTransferValidationException>(() =>
+            service.PreviewAsync(
+                Stream.Null,
+                new SelectiveImportRequest { Mode = (SelectiveImportMode)999 }));
+    }
+
     private static async Task<Dictionary<string, object>> ReadManifestAsync(ZipArchive archive)
     {
         var entry = archive.Entries.First(e => e.FullName == "manifest.json");
@@ -288,6 +515,49 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
             };
         }
         return result;
+    }
+
+    private static async Task RewriteEntryAsync(
+        string archivePath,
+        string entryName,
+        Action<JsonArray> mutate)
+    {
+        using (var archive = ZipFile.Open(archivePath, ZipArchiveMode.Update))
+        {
+            var entry = archive.GetEntry(entryName)!;
+            JsonArray rows;
+            await using (var stream = entry.Open())
+            {
+                rows = (await JsonNode.ParseAsync(stream))!.AsArray();
+            }
+            mutate(rows);
+            entry.Delete();
+            await using var replacement = archive.CreateEntry(entryName, CompressionLevel.Optimal).Open();
+            await JsonSerializer.SerializeAsync(replacement, rows);
+        }
+
+        using (var archive = ZipFile.Open(archivePath, ZipArchiveMode.Update))
+        {
+            var manifestEntry = archive.GetEntry("manifest.json")!;
+            JsonArray manifest;
+            await using (var stream = manifestEntry.Open())
+            {
+                manifest = (await JsonNode.ParseAsync(stream))!.AsArray();
+            }
+            var entry = archive.GetEntry(entryName)!;
+            var descriptor = manifest[0]!["entries"]!.AsArray()
+                .Single(item => item!["name"]!.GetValue<string>() == entryName)!;
+            descriptor["expandedBytes"] = entry.Length;
+            descriptor["compressedBytes"] = entry.CompressedLength;
+            await using (var stream = entry.Open())
+            {
+                descriptor["sha256"] = Convert.ToHexString(
+                    await SHA256.HashDataAsync(stream)).ToLowerInvariant();
+            }
+            manifestEntry.Delete();
+            await using var replacement = archive.CreateEntry("manifest.json", CompressionLevel.Optimal).Open();
+            await JsonSerializer.SerializeAsync(replacement, manifest);
+        }
     }
 
     private async Task<(TestDbContextFactory Factory, DurableStorageOptions Options, DurableStorageState State)>

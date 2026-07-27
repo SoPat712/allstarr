@@ -1,4 +1,6 @@
+using System.Data;
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text.Json;
 using allstarr.Core.Downloads;
 using allstarr.Core.Favorites;
@@ -20,6 +22,13 @@ public enum TransferCategory
     Extensions
 }
 
+public enum SelectiveImportMode
+{
+    Conflict,
+    Merge,
+    Replace
+}
+
 public sealed record SelectiveTransferReport(
     IReadOnlyDictionary<string, int> RowsByEntry,
     IReadOnlyList<string> IncludedCategories,
@@ -37,17 +46,28 @@ public sealed record SelectiveExportRequest
 
 public sealed record SelectiveImportRequest
 {
+    public SelectiveImportMode Mode { get; init; }
     public bool ImportSettings { get; init; } = true;
     public bool ImportAccounts { get; init; } = true;
     public bool ImportPlaylists { get; init; } = true;
     public bool ImportIntelligence { get; init; } = true;
     public bool ImportExtensions { get; init; } = true;
-    public string BackupJson { get; init; } = string.Empty;
 }
 
-public sealed class SelectiveTransferValidationException : Exception
+public sealed record SelectiveTransferPreview(
+    SelectiveTransferReport Report,
+    IReadOnlyList<string> Dependencies,
+    IReadOnlyList<string> Conflicts,
+    bool CanImport);
+
+public class SelectiveTransferValidationException : Exception
 {
     public SelectiveTransferValidationException(string message) : base(message) { }
+}
+
+public sealed class SelectiveTransferConflictException : SelectiveTransferValidationException
+{
+    public SelectiveTransferConflictException(string message) : base(message) { }
 }
 
 public sealed class SelectiveTransferSchemaMismatchException : Exception
@@ -64,7 +84,14 @@ public sealed class SelectiveTransferSchemaMismatchException : Exception
 /// </summary>
 public sealed class SelectiveStateTransferService
 {
-    public const int CurrentFormatVersion = 2;
+    public const int CurrentFormatVersion = 3;
+    public const long MaximumArchiveBytes = 128L * 1024 * 1024;
+    public const long MaximumRequestBytes = MaximumArchiveBytes + (1024 * 1024);
+    public const long MaximumExpandedBytes = 512L * 1024 * 1024;
+    public const long MaximumEntryBytes = 64L * 1024 * 1024;
+    public const int MaximumEntries = 64;
+    public const int MaximumRowsPerEntry = 100_000;
+    private const long MaximumManifestBytes = 64 * 1024;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -85,6 +112,7 @@ public sealed class SelectiveStateTransferService
             {
                 "users",
                 "backend-identities",
+                "onboarding-states",
                 "provider-accounts",
                 "secret-references",
                 "secret-versions"
@@ -159,6 +187,16 @@ public sealed class SelectiveStateTransferService
             [TransferCategory.Extensions] = new[] { TransferCategory.Settings }
         };
 
+    private static readonly IReadOnlyDictionary<string, string> EntryTableAliases =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["jobs"] = "durable_jobs",
+            ["outbox"] = "outbox_messages",
+            ["health-samples"] = "provider_health_samples",
+            ["health-rollups"] = "provider_health_rollups",
+            ["circuits"] = "provider_circuits"
+        };
+
     private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
     private readonly DurableStorageOptions _options;
     private readonly DurableStorageState _storageState;
@@ -198,15 +236,8 @@ public sealed class SelectiveStateTransferService
     public async Task<(DurableStateTransferArtifact Artifact, SelectiveTransferReport Report)> ExportAsync(
         string destinationDirectory,
         SelectiveExportRequest request,
-        bool writesQuiesced,
         CancellationToken cancellationToken = default)
     {
-        if (!writesQuiesced)
-        {
-            throw new InvalidOperationException(
-                "A selective export requires confirmed write quiescence.");
-        }
-
         var snapshot = _storageState.GetSnapshot();
         if (snapshot.Readiness != DurableStorageReadiness.Ready)
         {
@@ -233,6 +264,9 @@ public sealed class SelectiveStateTransferService
             $"allstarr-selective-{createdAt:yyyyMMddTHHmmssZ}-{Guid.NewGuid():N}.zip");
 
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        await using var snapshotTransaction = await context.Database.BeginTransactionAsync(
+            IsolationLevel.RepeatableRead,
+            cancellationToken);
         var compatibility = await DurableSchemaCompatibility.InspectAsync(context, cancellationToken);
         if (!compatibility.IsCurrent)
         {
@@ -242,6 +276,7 @@ public sealed class SelectiveStateTransferService
 
         var schemaVersion = compatibility.CurrentSchemaVersion;
         var rowsByEntry = new Dictionary<string, int>(StringComparer.Ordinal);
+        SelectiveManifest manifest;
 
         await using (var stream = new FileStream(
                          path,
@@ -252,7 +287,7 @@ public sealed class SelectiveStateTransferService
                          FileOptions.Asynchronous))
         using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: false))
         {
-            var manifest = new SelectiveManifest
+            manifest = new SelectiveManifest
             {
                 FormatVersion = CurrentFormatVersion,
                 IsFullExport = false,
@@ -263,7 +298,6 @@ public sealed class SelectiveStateTransferService
                 SecretKeyMaterialIncluded = false,
                 IncludedCategories = included.Select(category => category.ToString()).ToArray()
             };
-            await WriteManifestAsync(archive, manifest, cancellationToken);
 
             var orderedEntries = included
                 .SelectMany(category => CategoryEntries[category])
@@ -275,6 +309,36 @@ public sealed class SelectiveStateTransferService
                 var count = await WriteCategoryEntryAsync(context, archive, entry, cancellationToken);
                 rowsByEntry[entry] = count;
             }
+        }
+        await snapshotTransaction.CommitAsync(cancellationToken);
+
+        using (var archive = ZipFile.Open(path, ZipArchiveMode.Update))
+        {
+            var descriptors = new List<SelectiveEntryManifest>(archive.Entries.Count);
+            long expandedBytes = 0;
+            foreach (var entry in archive.Entries)
+            {
+                expandedBytes += entry.Length;
+                if (entry.Length > MaximumEntryBytes ||
+                    expandedBytes > MaximumExpandedBytes)
+                {
+                    throw new SelectiveTransferValidationException(
+                        "Selective export exceeds its expanded entry limits.");
+                }
+                descriptors.Add(new(
+                    entry.FullName,
+                    rowsByEntry[Path.GetFileNameWithoutExtension(entry.FullName)],
+                    entry.Length,
+                    entry.CompressedLength,
+                    await ComputeSha256Async(entry, cancellationToken)));
+            }
+            manifest.Entries = descriptors;
+            await WriteManifestAsync(archive, manifest, cancellationToken);
+        }
+        if (new FileInfo(path).Length > MaximumArchiveBytes)
+        {
+            throw new SelectiveTransferValidationException(
+                $"Selective archive exceeds the {MaximumArchiveBytes / (1024 * 1024)} MiB limit.");
         }
 
         var hash = await ComputeSha256Async(path, cancellationToken);
@@ -294,15 +358,78 @@ public sealed class SelectiveStateTransferService
         return (artifact, report);
     }
 
-    public async Task<SelectiveTransferReport> ImportAsync(
+    public async Task<SelectiveTransferPreview> PreviewAsync(
+        Stream archiveStream,
         SelectiveImportRequest request,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(request.BackupJson))
+        ValidateImportMode(request.Mode);
+        var included = ResolveIncludedCategories(request);
+        if (included.Count == 0)
         {
-            throw new SelectiveTransferValidationException("BackupJson payload is required.");
+            throw new SelectiveTransferValidationException(
+                "At least one category must be selected for preview.");
         }
 
+        var archivePath = await MaterializeArchiveAsync(archiveStream, cancellationToken);
+        try
+        {
+            using var archive = ZipFile.OpenRead(archivePath);
+            await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+            var (manifest, archiveCategories) = await ValidateArchiveAsync(
+                archive, context, included, cancellationToken);
+            var targetHasData = await HasAnyDataAsync(
+                context,
+                Enum.GetValues<TransferCategory>(),
+                cancellationToken);
+            var existingDependencies = await GetExistingDependenciesAsync(context, cancellationToken);
+            ValidateImportRequest(included, archiveCategories, existingDependencies);
+            var conflicts = request.Mode == SelectiveImportMode.Conflict && targetHasData
+                ? new[] { "Conflict mode requires an empty target. Choose merge or replace explicitly." }
+                : Array.Empty<string>();
+            if (conflicts.Length == 0)
+            {
+                try
+                {
+                    await ValidateRowsAsync(
+                        context,
+                        archive,
+                        included,
+                        request.Mode,
+                        cancellationToken);
+                }
+                catch (SelectiveTransferConflictException ex)
+                {
+                    conflicts = [ex.Message];
+                }
+            }
+            var dependencies = included
+                .SelectMany(category => CategoryDependencies[category])
+                .Distinct()
+                .Select(category => category.ToString())
+                .ToArray();
+            var report = ReportFromManifest(manifest, included);
+            return new(report, dependencies, conflicts, conflicts.Length == 0);
+        }
+        catch (InvalidDataException ex)
+        {
+            throw new SelectiveTransferValidationException(
+                $"Selective archive is not a valid ZIP file: {ex.Message}");
+        }
+        finally
+        {
+            TryDeleteOwnedArchive(archivePath);
+        }
+    }
+
+    public async Task<SelectiveTransferReport> ImportAsync(
+        Stream archiveStream,
+        SelectiveImportRequest request,
+        Guid actorUserId,
+        string correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateImportMode(request.Mode);
         var included = ResolveIncludedCategories(request);
         if (included.Count == 0)
         {
@@ -310,36 +437,33 @@ public sealed class SelectiveStateTransferService
                 "At least one category must be selected for import.");
         }
 
-        var archivePath = await MaterializeArchiveAsync(request.BackupJson, cancellationToken);
+        var archivePath = await MaterializeArchiveAsync(archiveStream, cancellationToken);
         try
         {
             using var archive = ZipFile.OpenRead(archivePath);
-            var manifest = await ReadManifestAsync(archive, cancellationToken);
-
-            if (manifest.FormatVersion != CurrentFormatVersion)
-            {
-                throw new SelectiveTransferSchemaMismatchException(
-                    $"Selective transfer format version {manifest.FormatVersion} is not compatible with this build (expected {CurrentFormatVersion}).");
-            }
-
-            var archiveCategories = manifest.IsFullExport
-                ? (IReadOnlyList<TransferCategory>)Enum.GetValues<TransferCategory>()
-                : manifest.IncludedCategories
-                    .Select(ParseCategory)
-                    .ToArray();
-
             await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
-            var compatibility = await DurableSchemaCompatibility.InspectAsync(context, cancellationToken);
-            if (!compatibility.IsCurrent)
+            var (manifest, archiveCategories) = await ValidateArchiveAsync(
+                archive, context, included, cancellationToken);
+            var targetHasData = await HasAnyDataAsync(
+                context,
+                Enum.GetValues<TransferCategory>(),
+                cancellationToken);
+            var existingDependencies = await GetExistingDependenciesAsync(context, cancellationToken);
+            ValidateImportRequest(included, archiveCategories, existingDependencies);
+            if (request.Mode == SelectiveImportMode.Conflict && targetHasData)
             {
-                throw new InvalidOperationException(
-                    "Durable storage schema must match this Allstarr build before import.");
+                throw new SelectiveTransferConflictException(
+                    "Conflict mode requires an empty target. Choose merge or replace explicitly.");
             }
 
-            var targetIsEmpty = !await HasAnyDataAsync(context, cancellationToken);
-            ValidateImportRequest(included, archiveCategories, targetIsEmpty);
-
+            await using var transaction = await context.Database.BeginTransactionAsync(
+                IsolationLevel.Serializable,
+                cancellationToken);
             var rowsByEntry = new Dictionary<string, int>(StringComparer.Ordinal);
+            if (request.Mode == SelectiveImportMode.Replace)
+            {
+                await DeleteSelectedCategoriesAsync(context, included, cancellationToken);
+            }
             var orderedEntries = included
                 .SelectMany(category => CategoryEntries[category])
                 .Distinct(StringComparer.Ordinal)
@@ -356,7 +480,46 @@ public sealed class SelectiveStateTransferService
                 rowsByEntry[entry] = count;
             }
 
+            try
+            {
+                await context.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException ex)
+            {
+                throw new SelectiveTransferConflictException(
+                    $"Selective archive rows violate a database key or dependency: {ex.GetBaseException().Message}");
+            }
+            var tenantId = await context.Tenants
+                .OrderBy(item => item.Id)
+                .Select(item => (Guid?)item.Id)
+                .FirstOrDefaultAsync(cancellationToken);
+            context.AuditEvents.Add(new AuditEventRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = tenantId,
+                ActorUserId = tenantId.HasValue &&
+                              await context.Users.AnyAsync(
+                                  item => item.TenantId == tenantId &&
+                                          item.Id == actorUserId,
+                                  cancellationToken)
+                    ? actorUserId
+                    : null,
+                Category = "state-transfer",
+                Action = "selective-import.apply",
+                Outcome = "succeeded",
+                CorrelationId = correlationId,
+                DetailsJson = JsonSerializer.Serialize(new
+                {
+                    manifest.FormatVersion,
+                    manifest.SchemaVersion,
+                    mode = request.Mode.ToString(),
+                    categories = included.Select(item => item.ToString()),
+                    rows = rowsByEntry.Values.Sum()
+                }, JsonOptions),
+                CreatedAt = DateTimeOffset.UtcNow
+            });
             await context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
 
             return new SelectiveTransferReport(
                 rowsByEntry,
@@ -367,26 +530,32 @@ public sealed class SelectiveStateTransferService
                     .ToArray(),
                 rowsByEntry.Values.Sum());
         }
+        catch (InvalidDataException ex)
+        {
+            throw new SelectiveTransferValidationException(
+                $"Selective archive is not a valid ZIP file: {ex.Message}");
+        }
         finally
         {
-            try { File.Delete(archivePath); } catch { }
+            TryDeleteOwnedArchive(archivePath);
         }
     }
 
     private static void ValidateImportRequest(
         IReadOnlyList<TransferCategory> requested,
         IReadOnlyList<TransferCategory> archiveCategories,
-        bool targetIsEmpty)
+        IReadOnlySet<TransferCategory> existingCategories)
     {
         var archiveSet = new HashSet<TransferCategory>(archiveCategories);
+        var requestedSet = new HashSet<TransferCategory>(requested);
         var missing = new List<string>();
         foreach (var category in requested)
         {
             foreach (var dependency in CategoryDependencies[category])
             {
                 var dependencySatisfied =
-                    archiveSet.Contains(dependency) ||
-                    (!targetIsEmpty && dependency == TransferCategory.Settings);
+                    (requestedSet.Contains(dependency) && archiveSet.Contains(dependency)) ||
+                    existingCategories.Contains(dependency);
                 if (!dependencySatisfied)
                 {
                     missing.Add($"'{category}' requires '{dependency}'");
@@ -401,17 +570,153 @@ public sealed class SelectiveStateTransferService
         }
     }
 
-    private static async Task<bool> HasAnyDataAsync(
+    private static void ValidateImportMode(SelectiveImportMode mode)
+    {
+        if (!Enum.IsDefined(mode))
+        {
+            throw new SelectiveTransferValidationException(
+                $"Unknown selective import mode '{mode}'.");
+        }
+    }
+
+    private static async Task<HashSet<TransferCategory>> GetExistingDependenciesAsync(
         AllstarrDbContext context,
         CancellationToken cancellationToken)
     {
-        return await context.Tenants.AnyAsync(cancellationToken)
-            || await context.Users.AnyAsync(cancellationToken)
-            || await context.ProviderAccounts.AnyAsync(cancellationToken)
-            || await context.PlaylistLinks.AnyAsync(cancellationToken)
-            || await context.ExtensionRegistries.AnyAsync(cancellationToken)
-            || await context.IntelligencePolicies.AnyAsync(cancellationToken);
+        var result = new HashSet<TransferCategory>();
+        if (await context.Tenants.AnyAsync(cancellationToken))
+        {
+            result.Add(TransferCategory.Settings);
+        }
+        if (await context.Users.AnyAsync(cancellationToken))
+        {
+            result.Add(TransferCategory.Accounts);
+        }
+        return result;
     }
+
+    private async Task ValidateRowsAsync(
+        AllstarrDbContext context,
+        ZipArchive archive,
+        IReadOnlyList<TransferCategory> included,
+        SelectiveImportMode mode,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = await context.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
+        try
+        {
+            if (mode == SelectiveImportMode.Replace)
+            {
+                await DeleteSelectedCategoriesAsync(context, included, cancellationToken);
+            }
+            foreach (var entry in included
+                         .SelectMany(category => CategoryEntries[category])
+                         .Distinct(StringComparer.Ordinal))
+            {
+                await ReadCategoryEntryAsync(context, archive, entry, cancellationToken);
+            }
+            await context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex)
+        {
+            throw new SelectiveTransferConflictException(
+                $"Selective archive rows violate a database key or dependency: {ex.GetBaseException().Message}");
+        }
+        finally
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            context.ChangeTracker.Clear();
+        }
+    }
+
+    private static async Task<bool> HasAnyDataAsync(
+        AllstarrDbContext context,
+        IReadOnlyCollection<TransferCategory> categories,
+        CancellationToken cancellationToken)
+    {
+        var tables = ResolveTableNames(context, categories);
+        var sql = "SELECT EXISTS (" +
+                  string.Join(" UNION ALL ", tables.Select(table => $"SELECT 1 FROM {Quote(table)}")) +
+                  " LIMIT 1)";
+        var connection = context.Database.GetDbConnection();
+        await context.Database.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+    }
+
+    private static async Task DeleteSelectedCategoriesAsync(
+        AllstarrDbContext context,
+        IReadOnlyCollection<TransferCategory> categories,
+        CancellationToken cancellationToken)
+    {
+        var tables = ResolveTableNames(context, categories).ToHashSet(StringComparer.Ordinal);
+        var selectedTypes = context.Model.GetEntityTypes()
+            .Where(type => type.GetTableName() is { } table && tables.Contains(table))
+            .ToHashSet();
+        var ordered = new List<Microsoft.EntityFrameworkCore.Metadata.IEntityType>(selectedTypes.Count);
+        var visiting = new HashSet<Microsoft.EntityFrameworkCore.Metadata.IEntityType>();
+        var visited = new HashSet<Microsoft.EntityFrameworkCore.Metadata.IEntityType>();
+
+        void Visit(Microsoft.EntityFrameworkCore.Metadata.IEntityType type)
+        {
+            if (visited.Contains(type))
+            {
+                return;
+            }
+            if (!visiting.Add(type))
+            {
+                throw new SelectiveTransferValidationException(
+                    "Selected categories contain a cyclic database dependency.");
+            }
+            foreach (var dependent in selectedTypes.Where(candidate =>
+                         candidate.GetForeignKeys().Any(key => key.PrincipalEntityType == type)))
+            {
+                Visit(dependent);
+            }
+            visiting.Remove(type);
+            visited.Add(type);
+            ordered.Add(type);
+        }
+
+        foreach (var type in selectedTypes)
+        {
+            Visit(type);
+        }
+        foreach (var table in ordered.Select(type => type.GetTableName()!).Distinct(StringComparer.Ordinal))
+        {
+#pragma warning disable EF1002 // Identifier comes only from the trusted EF model.
+            await context.Database.ExecuteSqlRawAsync($"DELETE FROM {Quote(table)}", cancellationToken);
+#pragma warning restore EF1002
+        }
+    }
+
+    private static IReadOnlyList<string> ResolveTableNames(
+        AllstarrDbContext context,
+        IEnumerable<TransferCategory> categories)
+    {
+        var modelTables = context.Model.GetEntityTypes()
+            .Select(type => type.GetTableName())
+            .OfType<string>()
+            .ToHashSet(StringComparer.Ordinal);
+        var tables = categories
+            .SelectMany(category => CategoryEntries[category])
+            .Select(entry => EntryTableAliases.GetValueOrDefault(entry) ?? entry.Replace('-', '_'))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var missing = tables.Where(table => !modelTables.Contains(table)).ToArray();
+        if (missing.Length > 0)
+        {
+            throw new InvalidOperationException(
+                "Selective transfer table mapping is incomplete: " + string.Join(", ", missing));
+        }
+        return tables;
+    }
+
+    private static string Quote(string identifier) =>
+        $"\"{identifier.Replace("\"", "\"\"")}\"";
 
     private static TransferCategory ParseCategory(string value)
     {
@@ -453,6 +758,12 @@ public sealed class SelectiveStateTransferService
             case "backend-identities":
                 {
                     var rows = await context.BackendIdentities.AsNoTracking().ToListAsync(cancellationToken);
+                    await WriteJsonAsync(archive, entry, rows, cancellationToken);
+                    return rows.Count;
+                }
+            case "onboarding-states":
+                {
+                    var rows = await context.OnboardingStates.AsNoTracking().ToListAsync(cancellationToken);
                     await WriteJsonAsync(archive, entry, rows, cancellationToken);
                     return rows.Count;
                 }
@@ -783,6 +1094,12 @@ public sealed class SelectiveStateTransferService
                     context.BackendIdentities.AddRange(rows);
                     return rows.Count;
                 }
+            case "onboarding-states":
+                {
+                    var rows = await ReadJsonAsync<OnboardingStateRecord>(archiveEntry, cancellationToken);
+                    context.OnboardingStates.AddRange(rows);
+                    return rows.Count;
+                }
             case "provider-accounts":
                 {
                     var rows = await ReadJsonAsync<ProviderAccountRecord>(archiveEntry, cancellationToken);
@@ -1077,6 +1394,11 @@ public sealed class SelectiveStateTransferService
         IReadOnlyCollection<T> values,
         CancellationToken cancellationToken)
     {
+        if (values.Count > MaximumRowsPerEntry)
+        {
+            throw new SelectiveTransferValidationException(
+                $"Selective archive entry '{entry}' exceeds the {MaximumRowsPerEntry} row limit.");
+        }
         var zipEntry = archive.CreateEntry($"{entry}.json", CompressionLevel.Optimal);
         await using var stream = zipEntry.Open();
         await JsonSerializer.SerializeAsync(stream, values, JsonOptions, cancellationToken);
@@ -1090,7 +1412,13 @@ public sealed class SelectiveStateTransferService
         try
         {
             var result = await JsonSerializer.DeserializeAsync<List<T>>(stream, JsonOptions, cancellationToken);
-            return result ?? new List<T>();
+            result ??= [];
+            if (result.Count > MaximumRowsPerEntry)
+            {
+                throw new SelectiveTransferValidationException(
+                    $"Selective archive entry '{entry.FullName}' exceeds the {MaximumRowsPerEntry} row limit.");
+            }
+            return result;
         }
         catch (JsonException ex)
         {
@@ -1100,70 +1428,206 @@ public sealed class SelectiveStateTransferService
     }
 
     private static async Task<string> MaterializeArchiveAsync(
-        string backupJson,
+        Stream source,
         CancellationToken cancellationToken)
     {
-        if (TryDecodeBase64Archive(backupJson, out var base64Path))
+        if (!source.CanRead)
         {
-            return base64Path;
+            throw new SelectiveTransferValidationException(
+                "The selective archive upload is not readable.");
         }
 
+        var path = Path.Combine(
+            Path.GetTempPath(),
+            $"allstarr-selective-upload-{Guid.NewGuid():N}.zip");
         try
         {
-            using var document = JsonDocument.Parse(backupJson);
-            if (document.RootElement.ValueKind == JsonValueKind.Object &&
-                document.RootElement.TryGetProperty("archiveBase64", out var base64Element) &&
-                base64Element.ValueKind == JsonValueKind.String)
+            await using var destination = new FileStream(
+                path,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                81920,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            var buffer = new byte[81920];
+            long total = 0;
+            while (true)
             {
-                var bytes = Convert.FromBase64String(base64Element.GetString()!);
-                var path = Path.Combine(
-                    Path.GetTempPath(),
-                    $"allstarr-selective-{Guid.NewGuid():N}.zip");
-                await File.WriteAllBytesAsync(path, bytes, cancellationToken);
-                return path;
+                var read = await source.ReadAsync(buffer, cancellationToken);
+                if (read == 0)
+                {
+                    break;
+                }
+                total += read;
+                if (total > MaximumArchiveBytes)
+                {
+                    throw new SelectiveTransferValidationException(
+                        $"Selective archive exceeds the {MaximumArchiveBytes / (1024 * 1024)} MiB upload limit.");
+                }
+                await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+            }
+            if (total == 0)
+            {
+                throw new SelectiveTransferValidationException(
+                    "The selective archive upload is empty.");
             }
 
-            if (document.RootElement.ValueKind == JsonValueKind.Object &&
-                document.RootElement.TryGetProperty("path", out var pathElement) &&
-                pathElement.ValueKind == JsonValueKind.String)
-            {
-                return pathElement.GetString()!;
-            }
+            return path;
         }
-        catch (JsonException)
+        catch
         {
+            TryDeleteOwnedArchive(path);
+            throw;
         }
-
-        var rawPath = Path.Combine(
-            Path.GetTempPath(),
-            $"allstarr-selective-{Guid.NewGuid():N}.zip");
-        await File.WriteAllTextAsync(rawPath, backupJson, cancellationToken);
-        return rawPath;
     }
 
-    private static bool TryDecodeBase64Archive(string value, out string path)
+    private static async Task<(SelectiveManifest Manifest, IReadOnlyList<TransferCategory> Categories)>
+        ValidateArchiveAsync(
+            ZipArchive archive,
+            AllstarrDbContext context,
+            IReadOnlyList<TransferCategory> requested,
+            CancellationToken cancellationToken)
     {
-        path = string.Empty;
-        var trimmed = value.Trim();
-        if (trimmed.Length < 64 || trimmed.Length % 4 != 0)
+        if (archive.Entries.Count is < 2 or > MaximumEntries)
         {
-            return false;
+            throw new SelectiveTransferValidationException(
+                $"Selective archive must contain 2 to {MaximumEntries} entries.");
         }
 
-        Span<byte> buffer = stackalloc byte[trimmed.Length];
-        if (!Convert.TryFromBase64String(trimmed, buffer, out var written))
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        long expandedBytes = 0;
+        long compressedBytes = 0;
+        foreach (var entry in archive.Entries)
         {
-            return false;
+            if (entry.FullName.Length is 0 or > 200 ||
+                entry.FullName.Contains('/') ||
+                entry.FullName.Contains('\\') ||
+                !names.Add(entry.FullName) ||
+                entry.Length < 0 ||
+                entry.CompressedLength < 0 ||
+                entry.Length > MaximumEntryBytes)
+            {
+                throw new SelectiveTransferValidationException(
+                    "Selective archive contains a duplicate, unsafe, or oversized entry.");
+            }
+            expandedBytes += entry.Length;
+            compressedBytes += entry.CompressedLength;
+            if (expandedBytes > MaximumExpandedBytes ||
+                compressedBytes > MaximumArchiveBytes)
+            {
+                throw new SelectiveTransferValidationException(
+                    "Selective archive exceeds its compressed or expanded byte limit.");
+            }
         }
 
-        if (written < 4 || buffer[0] != 0x50 || buffer[1] != 0x4B)
+        var manifest = await ReadManifestAsync(archive, cancellationToken);
+        if (manifest.FormatVersion != CurrentFormatVersion)
         {
-            return false;
+            throw new SelectiveTransferSchemaMismatchException(
+                $"Selective transfer format version {manifest.FormatVersion} is not compatible with this build (expected {CurrentFormatVersion}).");
+        }
+        if (manifest.IsFullExport ||
+            manifest.SecretKeyMaterialIncluded ||
+            !manifest.SourceProvider.Equals(
+                DurableStorageProvider.Postgres.ToString(),
+                StringComparison.Ordinal) ||
+            !manifest.ApplicationVersion.Equals(AppVersion.Version, StringComparison.Ordinal))
+        {
+            throw new SelectiveTransferValidationException(
+                "Selective archive provider, application version, or secret policy is incompatible.");
         }
 
-        path = Path.Combine(Path.GetTempPath(), $"allstarr-selective-{Guid.NewGuid():N}.zip");
-        File.WriteAllBytes(path, buffer[..written].ToArray());
-        return true;
+        var compatibility = await DurableSchemaCompatibility.InspectAsync(
+            context,
+            cancellationToken);
+        if (!compatibility.IsCurrent ||
+            !manifest.SchemaVersion.Equals(
+                compatibility.CurrentSchemaVersion,
+                StringComparison.Ordinal))
+        {
+            throw new SelectiveTransferSchemaMismatchException(
+                "Selective archive schema does not match the running PostgreSQL schema.");
+        }
+
+        var categories = manifest.IncludedCategories.Select(ParseCategory).ToArray();
+        if (categories.Length == 0 ||
+            categories.Length != categories.Distinct().Count() ||
+            requested.Any(category => !categories.Contains(category)))
+        {
+            throw new SelectiveTransferValidationException(
+                "Selective archive categories are incomplete or duplicated.");
+        }
+
+        var expectedNames = categories
+            .SelectMany(category => CategoryEntries[category])
+            .Distinct(StringComparer.Ordinal)
+            .Select(entry => $"{entry}.json")
+            .ToHashSet(StringComparer.Ordinal);
+        var actualNames = archive.Entries
+            .Where(entry => entry.FullName != "manifest.json")
+            .Select(entry => entry.FullName)
+            .ToHashSet(StringComparer.Ordinal);
+        if (!expectedNames.SetEquals(actualNames))
+        {
+            throw new SelectiveTransferValidationException(
+                "Selective archive manifest is incomplete or contains unexpected entries.");
+        }
+
+        if (manifest.Entries.Select(entry => entry.Name).Distinct(StringComparer.Ordinal).Count() !=
+            manifest.Entries.Count)
+        {
+            throw new SelectiveTransferValidationException(
+                "Selective archive entry manifest is incomplete or duplicated.");
+        }
+        var descriptors = manifest.Entries.ToDictionary(entry => entry.Name, StringComparer.Ordinal);
+        if (
+            !expectedNames.SetEquals(descriptors.Keys))
+        {
+            throw new SelectiveTransferValidationException(
+                "Selective archive entry manifest is incomplete or duplicated.");
+        }
+        foreach (var entry in archive.Entries.Where(item => item.FullName != "manifest.json"))
+        {
+            var descriptor = descriptors[entry.FullName];
+            if (descriptor.Rows is < 0 or > MaximumRowsPerEntry ||
+                descriptor.ExpandedBytes != entry.Length ||
+                descriptor.CompressedBytes != entry.CompressedLength ||
+                !descriptor.Sha256.Equals(
+                    await ComputeSha256Async(entry, cancellationToken),
+                    StringComparison.Ordinal))
+            {
+                throw new SelectiveTransferValidationException(
+                    $"Selective archive entry '{entry.FullName}' failed checksum or bounds validation.");
+            }
+        }
+
+        return (manifest, categories);
+    }
+
+    private static SelectiveTransferReport ReportFromManifest(
+        SelectiveManifest manifest,
+        IReadOnlyList<TransferCategory> included) =>
+        new(
+            manifest.Entries.ToDictionary(
+                item => Path.GetFileNameWithoutExtension(item.Name),
+                item => item.Rows,
+                StringComparer.Ordinal),
+            included.Select(item => item.ToString()).ToArray(),
+            Enum.GetValues<TransferCategory>()
+                .Where(item => !included.Contains(item))
+                .Select(item => item.ToString())
+                .ToArray(),
+            manifest.Entries.Sum(item => item.Rows));
+
+    private static void TryDeleteOwnedArchive(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch
+        {
+        }
     }
 
     private static async Task WriteManifestAsync(
@@ -1182,6 +1646,11 @@ public sealed class SelectiveStateTransferService
     {
         var entry = archive.Entries.FirstOrDefault(e => e.FullName.Equals("manifest.json", StringComparison.Ordinal))
             ?? throw new SelectiveTransferValidationException("Archive is missing a manifest entry.");
+        if (entry.Length > MaximumManifestBytes)
+        {
+            throw new SelectiveTransferValidationException(
+                "Selective archive manifest is too large.");
+        }
         await using var stream = entry.Open();
         try
         {
@@ -1204,10 +1673,20 @@ public sealed class SelectiveStateTransferService
                 SecretKeyMaterialIncluded = value.TryGetProperty("secretKeyMaterialIncluded", out var sec) && sec.GetBoolean(),
                 IncludedCategories = value.TryGetProperty("includedCategories", out var cat) && cat.ValueKind == JsonValueKind.Array
                     ? cat.EnumerateArray().Select(e => e.GetString() ?? string.Empty).ToArray()
-                    : Array.Empty<string>()
+                    : Array.Empty<string>(),
+                Entries = value.TryGetProperty("entries", out var entries) &&
+                          entries.ValueKind == JsonValueKind.Array
+                    ? entries.EnumerateArray().Select(item => new SelectiveEntryManifest(
+                        item.GetProperty("name").GetString() ?? string.Empty,
+                        item.GetProperty("rows").GetInt32(),
+                        item.GetProperty("expandedBytes").GetInt64(),
+                        item.GetProperty("compressedBytes").GetInt64(),
+                        item.GetProperty("sha256").GetString() ?? string.Empty)).ToArray()
+                    : []
             };
         }
-        catch (JsonException ex)
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or
+                                   InvalidOperationException or FormatException or OverflowException)
         {
             throw new SelectiveTransferValidationException($"Manifest JSON is invalid: {ex.Message}");
         }
@@ -1228,6 +1707,22 @@ public sealed class SelectiveStateTransferService
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
+    private static async Task<string> ComputeSha256Async(
+        ZipArchiveEntry entry,
+        CancellationToken cancellationToken)
+    {
+        await using var stream = entry.Open();
+        var hash = await SHA256.HashDataAsync(stream, cancellationToken);
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private sealed record SelectiveEntryManifest(
+        string Name,
+        int Rows,
+        long ExpandedBytes,
+        long CompressedBytes,
+        string Sha256);
+
     private sealed class SelectiveManifest
     {
         public int FormatVersion { get; set; }
@@ -1238,5 +1733,6 @@ public sealed class SelectiveStateTransferService
         public DateTimeOffset CreatedAt { get; set; }
         public bool SecretKeyMaterialIncluded { get; set; }
         public IReadOnlyList<string> IncludedCategories { get; set; } = Array.Empty<string>();
+        public IReadOnlyList<SelectiveEntryManifest> Entries { get; set; } = [];
     }
 }

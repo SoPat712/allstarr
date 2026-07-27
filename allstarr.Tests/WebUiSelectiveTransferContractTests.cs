@@ -52,18 +52,26 @@ public sealed class WebUiSelectiveTransferContractTests
         Assert.Contains("IncludeSettings", controller, StringComparison.Ordinal);
         Assert.Contains("ImportSettings", controller, StringComparison.Ordinal);
         Assert.Contains("SelectiveTransferValidationException", controller, StringComparison.Ordinal);
+        Assert.Contains("SelectiveTransferConflictException", controller, StringComparison.Ordinal);
         Assert.Contains("SelectiveTransferSchemaMismatchException", controller, StringComparison.Ordinal);
+        Assert.Contains("[FromForm]", controller, StringComparison.Ordinal);
+        Assert.Contains("OpenReadStream", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("BackupJson", controller, StringComparison.Ordinal);
 
         Assert.Contains("ResolveIncludedCategories", service, StringComparison.Ordinal);
         Assert.Contains("CategoryDependencies", service, StringComparison.Ordinal);
         Assert.Contains("ValidateImportRequest", service, StringComparison.Ordinal);
-        Assert.Contains("ValidateImportRequest", service, StringComparison.Ordinal);
+        Assert.Contains("public enum SelectiveImportMode", service, StringComparison.Ordinal);
+        Assert.Contains("IsolationLevel.RepeatableRead", service, StringComparison.Ordinal);
+        Assert.Contains("MaximumExpandedBytes", service, StringComparison.Ordinal);
+        Assert.Contains("ComputeSha256Async", service, StringComparison.Ordinal);
         Assert.Contains("TransferCategory.Settings", service, StringComparison.Ordinal);
         Assert.Contains("TransferCategory.Accounts", service, StringComparison.Ordinal);
         Assert.Contains("TransferCategory.Playlists", service, StringComparison.Ordinal);
         Assert.Contains("TransferCategory.Intelligence", service, StringComparison.Ordinal);
         Assert.Contains("TransferCategory.Extensions", service, StringComparison.Ordinal);
-        Assert.Contains("BackupJson", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("BackupJson", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("stackalloc", service, StringComparison.Ordinal);
     }
 
     [Fact]
