@@ -142,7 +142,10 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         Assert.DoesNotContain("secretReferenceFixture", JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
         var cacheKey = CacheKeyBuilder.BuildProviderPlaylistDiscoveryKey(
             _tenantId, _userId, account.Id, account.Revision, "spotify", null, null, 100);
+        var artworkKey = CacheKeyBuilder.BuildMediaAssetDescriptorKey(new(
+            _tenantId, _userId, account.Id, "spotify", "playlist", "private", "revision"));
         await _cache.SetStringAsync(cacheKey, "{}");
+        await _cache.SetStringAsync(artworkKey, "{}");
         await Controller(Session(_userId)).SetEnabled(
             account.Id,
             new ProviderAccountsController.SetProviderAccountEnabledRequest
@@ -150,6 +153,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
                 Enabled = false
             });
         Assert.False(await _cache.ExistsAsync(cacheKey));
+        Assert.False(await _cache.ExistsAsync(artworkKey));
         await using var verification = await _factory.CreateDbContextAsync();
         Assert.False((await verification.ProviderAccounts.SingleAsync(item => item.Id == account.Id)).Enabled);
     }

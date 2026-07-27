@@ -67,18 +67,25 @@ public static class CacheKeyBuilder
 
     public static string BuildMediaAssetDescriptorKey(MediaAssetIdentity identity)
     {
-        var scope = string.Join('\u001f',
-            identity.TenantId?.ToString("N"),
-            identity.UserId?.ToString("N"),
-            identity.ProviderAccountId?.ToString("N"),
-            Normalize(identity.ProviderId),
-            Normalize(identity.ResourceKind),
+        var resource = string.Join('\u001f',
             identity.ResourceId.Trim(),
             identity.Revision?.Trim(),
             identity.Width,
             identity.Height);
-        return $"media:descriptor:v1:{Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(scope)))}";
+        return string.Join(':',
+            "media",
+            "descriptor",
+            "v2",
+            identity.TenantId?.ToString("N") ?? "global",
+            identity.UserId?.ToString("N") ?? "shared",
+            identity.ProviderAccountId?.ToString("N") ?? "none",
+            Normalize(identity.ProviderId),
+            Normalize(identity.ResourceKind),
+            Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(resource))));
     }
+
+    public static string BuildMediaAssetDescriptorAccountPattern(Guid accountId) =>
+        $"media:descriptor:v2:*:*:{accountId:N}:*";
 
     public static string BuildMediaAssetPayloadKey(string sha256) =>
         $"artwork:payload:v1:{sha256}";

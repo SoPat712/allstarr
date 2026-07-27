@@ -89,18 +89,27 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
                 CreatedAt = _clock.UtcNow,
                 UpdatedAt = _clock.UtcNow
             });
+            database.ApplicationCacheEntries.Add(new ApplicationCacheEntryRecord
+            {
+                Key = "media:descriptor:v2:global:shared:none:jellyfin:playlist:broken",
+                Category = ApplicationCacheCategory.CanonicalMetadata.ToString(),
+                Value = "{broken",
+                PayloadBytes = 7,
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            });
             await database.SaveChangesAsync();
         }
 
         var preview = await _cache.PreviewMaintenanceAsync();
-        Assert.Equal(3, preview.ScannedEntries);
+        Assert.Equal(4, preview.ScannedEntries);
         Assert.False(preview.ScanLimitReached);
         Assert.Equal(1, preview.ExpiredEntries);
-        Assert.Equal(1, preview.UnknownOwnerEntries);
-        Assert.Equal(13, preview.ReclaimableBytes);
+        Assert.Equal(2, preview.UnknownOwnerEntries);
+        Assert.Equal(20, preview.ReclaimableBytes);
 
         Assert.Equal(1, await _cache.CleanupExpiredAsync());
-        Assert.Equal(1, await _cache.CleanupInvalidOwnershipAsync());
+        Assert.Equal(2, await _cache.CleanupInvalidOwnershipAsync());
         Assert.Equal("live", await _cache.GetStringAsync("search:live"));
 
         await using var remaining = await _factory.CreateDbContextAsync();

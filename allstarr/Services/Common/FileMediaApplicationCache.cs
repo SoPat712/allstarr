@@ -57,6 +57,11 @@ public sealed record FileMediaCacheMaintenancePreview(
     int LastCleanupDeletedEntries,
     DateTimeOffset CapturedAt);
 
+public sealed record UnreferencedMediaPayloadPreview(
+    IReadOnlyList<string> Keys,
+    long ReclaimableBytes,
+    bool ScanLimitReached);
+
 /// <summary>
 /// Bounded disk cache for artwork and other reconstructable media payloads.
 /// Cache keys are hashed before becoming paths and original keys live only in sidecars.
@@ -525,6 +530,54 @@ public sealed class FileMediaApplicationCache : IApplicationCache, IDisposable
         }
     }
 
+    public async Task<UnreferencedMediaPayloadPreview> PreviewUnreferencedArtworkAsync(
+        IReadOnlySet<string> referencedPayloadKeys,
+        int maximumEntries = 1000,
+        CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var take = Math.Clamp(maximumEntries, 1, _options.MaximumCleanupFiles);
+            var entries = ReadAllMetadata()
+                .Where(item =>
+                    item.Key.StartsWith("artwork:payload:", StringComparison.Ordinal) &&
+                    item.LastAccessAt <= _clock.UtcNow.AddMinutes(-5) &&
+                    !referencedPayloadKeys.Contains(item.Key))
+                .OrderBy(item => item.LastAccessAt)
+                .ThenBy(item => item.Key, StringComparer.Ordinal)
+                .Take(take + 1)
+                .ToArray();
+            return new(
+                entries.Take(take).Select(item => item.Key).ToArray(),
+                entries.Take(take).Sum(item => Math.Max(0, item.PayloadBytes)),
+                entries.Length > take);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<int> CleanupUnreferencedArtworkAsync(
+        IReadOnlySet<string> referencedPayloadKeys,
+        CancellationToken cancellationToken = default)
+    {
+        var preview = await PreviewUnreferencedArtworkAsync(
+            referencedPayloadKeys,
+            cancellationToken: cancellationToken);
+        var deleted = 0;
+        foreach (var key in preview.Keys)
+        {
+            if (await DeleteAsync(key))
+            {
+                deleted++;
+            }
+        }
+
+        return deleted;
+    }
+
     public void Dispose()
     {
         _gate.Dispose();
@@ -820,16 +873,35 @@ public sealed class HybridApplicationCache(
     {
         var metadataTask = metadata.PreviewDatabaseMaintenanceAsync(cancellationToken);
         var mediaTask = media.PreviewCleanupAsync(cancellationToken);
-        await Task.WhenAll(metadataTask, mediaTask);
+        var referencesTask = metadata.GetArtworkPayloadReferencesAsync(cancellationToken);
+        await Task.WhenAll(metadataTask, mediaTask, referencesTask);
+        var references = await referencesTask;
+        var unreferenced = await media.PreviewUnreferencedArtworkAsync(
+            references.PayloadKeys,
+            cancellationToken: cancellationToken);
         return new(
             await metadataTask,
             await mediaTask,
+            unreferenced.Keys.Count,
+            unreferenced.ReclaimableBytes,
+            references.ScanLimitReached || unreferenced.ScanLimitReached,
             DateTimeOffset.UtcNow);
     }
 
-    public async Task<int> CleanupAsync(CancellationToken cancellationToken = default) =>
-        await metadata.CleanupDatabaseAsync(cancellationToken) +
-        await media.CleanupAsync(cancellationToken);
+    public async Task<int> CleanupAsync(CancellationToken cancellationToken = default)
+    {
+        var deleted = await metadata.CleanupDatabaseAsync(cancellationToken);
+        var references = await metadata.GetArtworkPayloadReferencesAsync(cancellationToken);
+        deleted += await media.CleanupAsync(cancellationToken);
+        if (!references.ScanLimitReached)
+        {
+            deleted += await media.CleanupUnreferencedArtworkAsync(
+                references.PayloadKeys,
+                cancellationToken);
+        }
+
+        return deleted;
+    }
 
     public async Task<int> PurgeAllAsync() =>
         await PurgeMetadataAsync() + await PurgeMediaAsync();

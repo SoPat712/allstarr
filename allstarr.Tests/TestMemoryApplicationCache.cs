@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.IO.Enumeration;
 using System.Text.Json;
 using allstarr.Services.Common;
 
@@ -40,8 +41,9 @@ internal sealed class TestMemoryApplicationCache : IApplicationCache
 
     public IEnumerable<string> GetKeysByPattern(string pattern)
     {
-        var prefix = pattern.TrimEnd('*');
-        return _entries.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToArray();
+        return _entries.Keys
+            .Where(key => FileSystemName.MatchesSimpleExpression(pattern, key))
+            .ToArray();
     }
 
     public Task<int> DeleteByPatternAsync(string pattern)

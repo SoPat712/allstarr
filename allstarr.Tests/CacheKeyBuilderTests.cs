@@ -141,4 +141,32 @@ public class CacheKeyBuilderTests
             ApplicationCacheCategory.NegativeResult,
             ApplicationCachePolicyRegistry.Classify(key));
     }
+
+    [Fact]
+    public void MediaDescriptorKeys_ExposeOnlyStableOwnershipDimensions()
+    {
+        var tenantId = Guid.CreateVersion7();
+        var userId = Guid.CreateVersion7();
+        var accountId = Guid.CreateVersion7();
+        var key = CacheKeyBuilder.BuildMediaAssetDescriptorKey(new(
+            tenantId,
+            userId,
+            accountId,
+            "spotify",
+            "playlist",
+            "private-playlist-id",
+            "signed-revision",
+            96,
+            96));
+
+        Assert.StartsWith(
+            $"media:descriptor:v2:{tenantId:N}:{userId:N}:{accountId:N}:spotify:playlist:",
+            key,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("private-playlist-id", key, StringComparison.Ordinal);
+        Assert.DoesNotContain("signed-revision", key, StringComparison.Ordinal);
+        Assert.Equal(
+            $"media:descriptor:v2:*:*:{accountId:N}:*",
+            CacheKeyBuilder.BuildMediaAssetDescriptorAccountPattern(accountId));
+    }
 }

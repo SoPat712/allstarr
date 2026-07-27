@@ -152,6 +152,10 @@ public sealed class BoundedHotApplicationCache : IApplicationCache, IDisposable
         CancellationToken cancellationToken = default) =>
         _database.PreviewMaintenanceAsync(cancellationToken: cancellationToken);
 
+    public Task<ArtworkPayloadReferenceSnapshot> GetArtworkPayloadReferencesAsync(
+        CancellationToken cancellationToken = default) =>
+        _database.GetArtworkPayloadReferencesAsync(cancellationToken: cancellationToken);
+
     public async Task<int> CleanupDatabaseAsync(CancellationToken cancellationToken = default)
     {
         _memory.Clear();

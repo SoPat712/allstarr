@@ -41,7 +41,14 @@ public sealed record DatabaseCacheMaintenancePreview(
 public sealed record ApplicationCacheMaintenancePreview(
     DatabaseCacheMaintenancePreview Metadata,
     FileMediaCacheMaintenancePreview Media,
+    int UnreferencedArtworkPayloads,
+    long UnreferencedArtworkBytes,
+    bool ArtworkReferenceScanLimitReached,
     DateTimeOffset CapturedAt);
+
+public sealed record ArtworkPayloadReferenceSnapshot(
+    IReadOnlySet<string> PayloadKeys,
+    bool ScanLimitReached);
 
 public sealed record ApplicationCacheCategoryDiagnostics(
     string Category,

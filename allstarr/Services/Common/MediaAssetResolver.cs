@@ -106,6 +106,21 @@ public sealed class MediaAssetResolver(
                 return Asset(source, false);
 
             var selected = CreateVariant(source, identity, maximumBytes);
+            if (!bytes.AsSpan().SequenceEqual(selected.Bytes))
+            {
+                var originalSha256 = Convert.ToHexStringLower(SHA256.HashData(bytes));
+                await cache.SetAsync(
+                    CacheKeyBuilder.BuildMediaAssetDescriptorKey(
+                        identity with { Width = null, Height = null }),
+                    new MediaAssetDescriptor(
+                        CacheKeyBuilder.BuildMediaAssetPayloadKey(originalSha256),
+                        originalSha256,
+                        source.ContentType,
+                        bytes.Length,
+                        source.ETag,
+                        source.LastModified),
+                    policy.FreshFor);
+            }
             var sha256 = Convert.ToHexStringLower(SHA256.HashData(selected.Bytes));
             var payloadKey = CacheKeyBuilder.BuildMediaAssetPayloadKey(sha256);
             if (!bytes.AsSpan().SequenceEqual(selected.Bytes) &&

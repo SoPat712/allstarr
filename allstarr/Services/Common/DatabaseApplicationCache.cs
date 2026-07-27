@@ -504,6 +504,40 @@ public sealed class DatabaseApplicationCache(
         }
     }
 
+    public async Task<ArtworkPayloadReferenceSnapshot> GetArtworkPayloadReferencesAsync(
+        int batchSize = 10_000,
+        CancellationToken cancellationToken = default)
+    {
+        var take = Math.Clamp(batchSize, 1, 10_000);
+        try
+        {
+            await using var database = await contextFactory.CreateDbContextAsync(cancellationToken);
+            var values = await database.Set<ApplicationCacheEntryRecord>()
+                .AsNoTracking()
+                .Where(item =>
+                    item.Key.StartsWith("media:descriptor:") &&
+                    (item.ExpiresAt == null || item.ExpiresAt > clock.UtcNow))
+                .OrderBy(item => item.Key)
+                .Select(item => item.Value)
+                .Take(take + 1)
+                .ToArrayAsync(cancellationToken);
+            var references = values.Take(take)
+                .Select(ReadArtworkPayloadKey)
+                .ToArray();
+            return new(
+                references
+                    .Where(item => item != null)
+                    .Cast<string>()
+                    .ToHashSet(StringComparer.Ordinal),
+                values.Length > take || references.Any(item => item == null));
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Artwork payload reference scan failed");
+            return new(new HashSet<string>(StringComparer.Ordinal), true);
+        }
+    }
+
     public async Task<int> CleanupPolicyOverflowAsync(
         int batchSize = DefaultCleanupBatchSize,
         CancellationToken cancellationToken = default)
@@ -633,7 +667,29 @@ public sealed class DatabaseApplicationCache(
         !Enum.TryParse<ApplicationCacheCategory>(item.Category, ignoreCase: true, out var category) ||
         !Enum.IsDefined(category) ||
         ApplicationCachePolicyRegistry.Resolve(category).StorageTier != ApplicationCacheStorageTier.Metadata ||
-        ApplicationCachePolicyRegistry.Classify(item.Key) != category;
+        ApplicationCachePolicyRegistry.Classify(item.Key) != category ||
+        (item.Key.StartsWith("media:descriptor:", StringComparison.Ordinal) &&
+         ReadArtworkPayloadKey(item.Value) == null);
+
+    private static string? ReadArtworkPayloadKey(string value)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(value);
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (property.Name.Equals("PayloadKey", StringComparison.OrdinalIgnoreCase))
+                {
+                    return property.Value.GetString();
+                }
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return null;
+    }
 
     private static string ToLikePattern(string pattern) =>
         pattern

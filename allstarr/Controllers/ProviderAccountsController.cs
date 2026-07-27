@@ -396,9 +396,11 @@ public sealed partial class ProviderAccountsController : ControllerBase
         return Ok(AccountResponse(account, null, scope == ProviderAccountScope.User ? session.UserName : null));
     }
 
-    private Task<int> InvalidateAccountCacheAsync(Guid accountId) =>
-        _cache.DeleteByPatternAsync(
-            CacheKeyBuilder.BuildProviderPlaylistDiscoveryAccountPattern(accountId));
+    private async Task<int> InvalidateAccountCacheAsync(Guid accountId) =>
+        await _cache.DeleteByPatternAsync(
+            CacheKeyBuilder.BuildProviderPlaylistDiscoveryAccountPattern(accountId)) +
+        await _cache.DeleteByPatternAsync(
+            CacheKeyBuilder.BuildMediaAssetDescriptorAccountPattern(accountId));
 
     private bool TryGetSession(
         out AdminAuthSession session,

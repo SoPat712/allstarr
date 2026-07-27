@@ -3,6 +3,7 @@ using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -143,6 +144,29 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         Assert.Equal(2, await _cache.CleanupAsync());
         Assert.Equal(0, (await _cache.PreviewMaintenanceAsync()).Metadata.ExpiredEntries);
         Assert.Equal(0, (await _cache.PreviewMaintenanceAsync()).Media.ExpiredEntries);
+    }
+
+    [Fact]
+    public async Task MaintenanceRemovesOnlyUnreferencedAgedArtworkPayloads()
+    {
+        var referencedKey = CacheKeyBuilder.BuildMediaAssetPayloadKey(new string('a', 64));
+        var orphanedKey = CacheKeyBuilder.BuildMediaAssetPayloadKey(new string('b', 64));
+        var descriptorKey = CacheKeyBuilder.BuildMediaAssetDescriptorKey(new(
+            null, null, null, "jellyfin", "playlist", "playlist-1", "revision-1"));
+        Assert.True(await _cache.SetStringAsync(referencedKey, "referenced"));
+        Assert.True(await _cache.SetStringAsync(orphanedKey, "orphaned"));
+        Assert.True(await _cache.SetStringAsync(
+            descriptorKey,
+            JsonSerializer.Serialize(new { PayloadKey = referencedKey })));
+        _clock.UtcNow = _clock.UtcNow.AddMinutes(6);
+
+        var preview = await _cache.PreviewMaintenanceAsync();
+        Assert.Equal(1, preview.UnreferencedArtworkPayloads);
+        Assert.False(preview.ArtworkReferenceScanLimitReached);
+
+        Assert.Equal(1, await _cache.CleanupAsync());
+        Assert.Equal("referenced", await _cache.GetStringAsync(referencedKey));
+        Assert.Null(await _cache.GetStringAsync(orphanedKey));
     }
 
     public async Task DisposeAsync()
