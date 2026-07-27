@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { page } from "$app/state";
   import { auth, type Session } from "$lib/api";
+  import HomeView from "$lib/components/HomeView.svelte";
   import { liveUpdates } from "$lib/live-updates.svelte";
 
   const destinations = [
@@ -170,15 +171,19 @@
         </div>
       </header>
 
-      <section class="panel empty-state">
-        <span class="empty-orbit" aria-hidden="true">✦</span>
-        <p class="eyebrow">Svelte migration preview</p>
-        <h2>{activeDestination.label} is next in line.</h2>
-        <p>
-          This opt-in shell is isolated at <code>/next/#/</code>. The current WebUI remains
-          available while complete routes move over one at a time.
-        </p>
-      </section>
+      {#if route === "/"}
+        <HomeView administrator={session.user?.isAdministrator ?? false} />
+      {:else}
+        <section class="panel empty-state">
+          <span class="empty-orbit" aria-hidden="true">✦</span>
+          <p class="eyebrow">Svelte migration preview</p>
+          <h2>{activeDestination.label} is next in line.</h2>
+          <p>
+            This opt-in shell is isolated at <code>/next/#/</code>. The current WebUI remains
+            available while complete routes move over one at a time.
+          </p>
+        </section>
+      {/if}
     </main>
   </div>
 {/if}
