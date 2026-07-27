@@ -519,7 +519,7 @@ public sealed class TrackMatchesController(
             }).ToArray()
             : [];
         var metadata = Metadata(snapshot.PayloadJson);
-        var sourceArtworkUrl = sourceIdentity == null
+        var sourceArtworkUrl = metadata.ArtworkUrl == null || sourceIdentity == null
             ? null
             : ExternalArtworkUrl(sourceIdentity.ProviderId, sourceIdentity.ExternalId);
         var candidateArtworkUrl = track?.CoverArtReference == null
