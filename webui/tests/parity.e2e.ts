@@ -78,10 +78,19 @@ const responses: Record<string, unknown> = {
   "/api/admin/extensions/logs?limit=100": [],
 };
 
-async function mockApi(page: Page) {
+async function mockApi(page: Page, options: { delay?: string; fail?: string[] } = {}) {
   await page.route("**/fonts/**", (route) => route.fulfill({ status: 204 }));
   await page.route("**/api/admin/**", async (route) => {
     const url = new URL(route.request().url());
+    if (url.pathname === options.delay) await new Promise((resolve) => setTimeout(resolve, 500));
+    if (options.fail?.includes(url.pathname)) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Fixture unavailable" }),
+      });
+      return;
+    }
     let body = responses[`${url.pathname}${url.search}`] ?? responses[url.pathname];
     if (url.pathname === "/api/admin/ui/activity") body = { items: [], hasMore: false };
     if (url.pathname === "/api/admin/downloads")
@@ -130,6 +139,19 @@ const routes = [
   ["#/settings/general", "Settings"],
 ] as const;
 
+const stateRoutes = [
+  ["#/", "Home", "Loading Home", "/api/admin/status", [
+    "/api/admin/ui/schema", "/api/admin/status", "/api/admin/playlists", "/api/admin/jobs",
+    "/api/admin/ui/activity", "/api/admin/ui/provider-summaries",
+  ]],
+  ["#/library/playlists", "Library", "Loading playlists", "/api/admin/playlist-links", ["/api/admin/playlist-links"]],
+  ["#/library/mappings", "Library", "Loading match review", "/api/admin/track-matches", ["/api/admin/track-matches"]],
+  ["#/library/cached", "Library", "Loading Cached tracks", "/api/admin/downloads", ["/api/admin/downloads"]],
+  ["#/activity", "Activity", "Loading Event log", "/api/admin/ui/activity", ["/api/admin/ui/activity"]],
+  ["#/sources", "Sources", "Loading Sources", "/api/admin/provider-accounts", ["/api/admin/ui/schema", "/api/admin/provider-accounts"]],
+  ["#/settings/general", "Settings", "Loading Settings", "/api/admin/ui/schema", ["/api/admin/ui/schema"]],
+] as const;
+
 for (const viewport of viewports) {
   test.describe(`${viewport.width}x${viewport.height}`, () => {
     test.use({ viewport });
@@ -144,6 +166,21 @@ for (const viewport of viewports) {
         await expect.poll(() => page.evaluate(() =>
           document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
         expect(errors).toEqual([]);
+      });
+    }
+
+    for (const [route, heading, loadingLabel, delay, failures] of stateRoutes) {
+      test(`${route} exposes loading and error recovery`, async ({ page, context }) => {
+        await mockApi(page, { delay });
+        await page.goto(route);
+        await expect(page.getByLabel(loadingLabel)).toBeVisible();
+        await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
+
+        const errorPage = await context.newPage();
+        await mockApi(errorPage, { fail: [...failures] });
+        await errorPage.goto(route);
+        await expect(errorPage.getByRole("alert")).toBeVisible();
+        await expect(errorPage.getByRole("button", { name: "Try again" })).toBeInViewport();
       });
     }
 
@@ -189,6 +226,19 @@ for (const viewport of viewports) {
       const removal = page.getByRole("alertdialog", { name: "Remove this track?" });
       await expect(removal).toBeVisible();
       await expect(removal.getByRole("button", { name: "Remove track" })).toBeInViewport();
+    });
+
+    test("keyboard dialogs honor reduced motion", async ({ page }) => {
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await mockApi(page);
+      await page.goto("#/settings/extensions");
+      await expect.poll(() => page.locator(".settings-tab-indicator").evaluate((element) =>
+        Number.parseFloat(getComputedStyle(element).transitionDuration))).toBeLessThanOrEqual(0.01);
+      await page.getByRole("button", { name: "Install extension" }).click();
+      const dialog = page.getByRole("dialog", { name: "Install extension" });
+      await expect(dialog).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(dialog).toBeHidden();
     });
   });
 }
