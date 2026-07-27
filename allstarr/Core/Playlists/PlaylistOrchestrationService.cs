@@ -564,24 +564,53 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                            providerIdentityIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
 
-        var candidates = await db.LibraryTracks.AsNoTracking().Where(item =>
-            item.TenantId == link.TenantId && item.OwnerUserId == link.OwnerUserId &&
-            item.LibraryScopeId == link.LibraryScopeId && item.BackendInstanceId == link.TargetBackendInstanceId)
+        var candidates = await db.LibraryTracks.AsNoTracking()
+            .Where(item =>
+                item.TenantId == link.TenantId && item.OwnerUserId == link.OwnerUserId &&
+                item.LibraryScopeId == link.LibraryScopeId &&
+                item.BackendInstanceId == link.TargetBackendInstanceId)
+            .Select(item => new LibraryTrackRecord
+            {
+                Id = item.Id,
+                TenantId = item.TenantId,
+                OwnerUserId = item.OwnerUserId,
+                CanonicalRecordingId = item.CanonicalRecordingId,
+                LibraryScopeId = item.LibraryScopeId,
+                BackendInstanceId = item.BackendInstanceId,
+                BackendItemId = item.BackendItemId,
+                Title = item.Title,
+                Artist = item.Artist,
+                Album = item.Album,
+                AlbumArtist = item.AlbumArtist,
+                DurationMilliseconds = item.DurationMilliseconds,
+                Isrc = item.Isrc,
+                MusicBrainzRecordingId = item.MusicBrainzRecordingId,
+                ProviderIdsJson = item.ProviderIdsJson
+            })
             .ToListAsync(cancellationToken);
         var candidateIds = candidates.Select(item => item.Id).ToHashSet();
-        var priorAccepted = (await db.TrackMatches.AsNoTracking()
-                .Where(item =>
-                    item.TenantId == link.TenantId &&
-                    item.OwnerUserId == link.OwnerUserId &&
-                    item.LibraryScopeId == link.LibraryScopeId &&
-                    item.CanonicalRecordingId.HasValue &&
-                    item.LibraryTrackId.HasValue &&
-                    candidateIds.Contains(item.LibraryTrackId.Value))
-                .OrderByDescending(item => item.DecisionVersion)
-                .ThenByDescending(item => item.DecidedAt)
-                .ToListAsync(cancellationToken))
+        var candidateDecisions = db.TrackMatches.AsNoTracking()
+            .Where(item =>
+                item.TenantId == link.TenantId &&
+                item.OwnerUserId == link.OwnerUserId &&
+                item.LibraryScopeId == link.LibraryScopeId &&
+                item.CanonicalRecordingId.HasValue &&
+                item.LibraryTrackId.HasValue &&
+                candidateIds.Contains(item.LibraryTrackId.Value));
+        var latestCandidateVersions = candidateDecisions
             .GroupBy(item => item.ExternalSnapshotId)
-            .Select(group => group.First())
+            .Select(group => new
+            {
+                ExternalSnapshotId = group.Key,
+                DecisionVersion = group.Max(item => item.DecisionVersion)
+            });
+        var latestCandidateDecisions =
+            from decision in candidateDecisions
+            join version in latestCandidateVersions
+                on new { decision.ExternalSnapshotId, decision.DecisionVersion }
+                equals new { version.ExternalSnapshotId, version.DecisionVersion }
+            select decision;
+        var priorAccepted = (await latestCandidateDecisions.ToListAsync(cancellationToken))
             .Where(item => item.State is TrackMatchState.Accepted or TrackMatchState.Pinned)
             .OrderByDescending(item => item.DecidedAt)
             .GroupBy(item => item.LibraryTrackId!.Value)
@@ -635,6 +664,84 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var allManualOverrides = resolution.ActiveOverrides
             .ToDictionary(item => item.ExternalSnapshotId);
 
+        var pendingDecisions = new Dictionary<Guid, MatchDecisionInput>();
+        foreach (var entry in entries)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var external = externals[entry.ExternalMetadataSnapshotId];
+            if (pendingDecisions.ContainsKey(external.Id))
+                continue;
+            allManualOverrides.TryGetValue(external.Id, out var manual);
+            storedByExternalId.TryGetValue(external.Id, out var stored);
+            if (stored != null &&
+                stored.SourceSnapshotVersion == external.SnapshotVersion &&
+                stored.LibraryIndexRevision == libraryIndexRevision &&
+                stored.MatcherVersion == TrackMatchDecisionEngine.AlgorithmVersion &&
+                stored.PolicyVersion == link.PolicyVersion)
+                continue;
+
+            using var payload = JsonDocument.Parse(external.PayloadJson);
+            var root = payload.RootElement;
+            var artists = root.GetProperty("Artists").EnumerateArray().Select(item => item.GetString()).Where(item => item != null).ToArray();
+            var canonicalRecordingId = external.ProviderTrackIdentityId.HasValue &&
+                                       providerIdentities.TryGetValue(
+                                           external.ProviderTrackIdentityId.Value, out var providerIdentity)
+                ? providerIdentity.CanonicalRecordingId
+                : root.TryGetProperty("CanonicalRecordingId", out var canonical) &&
+                  canonical.ValueKind == JsonValueKind.String &&
+                  canonical.TryGetGuid(out var parsedCanonical)
+                    ? parsedCanonical
+                    : (Guid?)null;
+            var source = new ExternalTrackMatchSnapshot(external.Id.ToString("N"), link.SourceProviderId,
+                external.ExternalIdHash, root.TryGetProperty("Title", out var title) ? title.GetString() ?? "Unknown" : "Unknown",
+                artists.Length > 0 ? string.Join(", ", artists) : "Unknown",
+                root.TryGetProperty("Album", out var album) ? album.GetString() : null, null,
+                ReadDurationMilliseconds(root),
+                root.TryGetProperty("Isrc", out var isrc) ? isrc.GetString() : null, null,
+                root.TryGetProperty("IsExplicit", out var explicitValue) && explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False ? explicitValue.GetBoolean() : null,
+                canonicalRecordingId);
+
+            var rejectedOverride =
+                manual?.Decision == ManualOverrideDecision.Reject &&
+                manual.LibraryTrackId.HasValue &&
+                manual.MatcherVersion == TrackMatchDecisionEngine.AlgorithmVersion
+                    ? new ScopedTrackMatchOverride(
+                        link.TenantId,
+                        link.OwnerUserId,
+                        link.LibraryScopeId,
+                        source.ProviderId,
+                        source.ExternalId,
+                        null,
+                        new HashSet<Guid> { manual.LibraryTrackId.Value })
+                    : null;
+
+            var match = _matcher.Decide(
+                new TrackMatchScope(link.TenantId, link.OwnerUserId, link.TargetBackendInstanceId, link.LibraryScopeId, link.ProviderAccountId, 1, snapshot.SnapshotVersion),
+                source,
+                candidateSet,
+                rejectedOverride);
+            var matchedCanonicalRecordingId = match.SelectedLibraryTrackId.HasValue &&
+                                              candidateById.TryGetValue(match.SelectedLibraryTrackId.Value, out var matchedCandidate)
+                ? canonicalRecordingId ?? matchedCandidate.CanonicalRecordingId
+                : null;
+            pendingDecisions[external.Id] = MatchDecisionInput.FromDecision(
+                external.Id,
+                matchedCanonicalRecordingId,
+                match,
+                (stored?.DecisionVersion ?? 0) + 1,
+                external.SnapshotVersion,
+                libraryIndexRevision,
+                link.PolicyVersion);
+        }
+
+        if (pendingDecisions.Count > 0)
+        {
+            var storedDecisions = await _trackMatches.RecordDecisionsAsync(
+                execution, pendingDecisions.Values, cancellationToken);
+            foreach (var stored in storedDecisions)
+                storedByExternalId[stored.ExternalSnapshotId] = stored;
+        }
+
         var decisions = new List<PersistedPlaylistMatchDecision>(entries.Count);
         var decisionIds = new Dictionary<Guid, Guid?>(entries.Count);
 
@@ -643,72 +750,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             cancellationToken.ThrowIfCancellationRequested();
             var external = externals[entry.ExternalMetadataSnapshotId];
             allManualOverrides.TryGetValue(external.Id, out var manual);
-
-            storedByExternalId.TryGetValue(external.Id, out var stored);
-            if (stored == null ||
-                stored.SourceSnapshotVersion != external.SnapshotVersion ||
-                stored.LibraryIndexRevision != libraryIndexRevision ||
-                stored.MatcherVersion != TrackMatchDecisionEngine.AlgorithmVersion ||
-                stored.PolicyVersion != link.PolicyVersion)
-            {
-                using var payload = JsonDocument.Parse(external.PayloadJson);
-                var root = payload.RootElement;
-                var artists = root.GetProperty("Artists").EnumerateArray().Select(item => item.GetString()).Where(item => item != null).ToArray();
-                var canonicalRecordingId = external.ProviderTrackIdentityId.HasValue &&
-                                           providerIdentities.TryGetValue(
-                                               external.ProviderTrackIdentityId.Value, out var providerIdentity)
-                    ? providerIdentity.CanonicalRecordingId
-                    : root.TryGetProperty("CanonicalRecordingId", out var canonical) &&
-                      canonical.ValueKind == JsonValueKind.String &&
-                      canonical.TryGetGuid(out var parsedCanonical)
-                        ? parsedCanonical
-                        : (Guid?)null;
-                var source = new ExternalTrackMatchSnapshot(external.Id.ToString("N"), link.SourceProviderId,
-                    external.ExternalIdHash, root.TryGetProperty("Title", out var title) ? title.GetString() ?? "Unknown" : "Unknown",
-                    artists.Length > 0 ? string.Join(", ", artists) : "Unknown",
-                    root.TryGetProperty("Album", out var album) ? album.GetString() : null, null,
-                    ReadDurationMilliseconds(root),
-                    root.TryGetProperty("Isrc", out var isrc) ? isrc.GetString() : null, null,
-                    root.TryGetProperty("IsExplicit", out var explicitValue) && explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False ? explicitValue.GetBoolean() : null,
-                    canonicalRecordingId);
-
-                var rejectedOverride =
-                    manual?.Decision == ManualOverrideDecision.Reject &&
-                    manual.LibraryTrackId.HasValue &&
-                    manual.MatcherVersion == TrackMatchDecisionEngine.AlgorithmVersion
-                        ? new ScopedTrackMatchOverride(
-                            link.TenantId,
-                            link.OwnerUserId,
-                            link.LibraryScopeId,
-                            source.ProviderId,
-                            source.ExternalId,
-                            null,
-                            new HashSet<Guid> { manual.LibraryTrackId.Value })
-                        : null;
-
-                var match = _matcher.Decide(
-                    new TrackMatchScope(link.TenantId, link.OwnerUserId, link.TargetBackendInstanceId, link.LibraryScopeId, link.ProviderAccountId, 1, snapshot.SnapshotVersion),
-                    source,
-                    candidateSet,
-                    rejectedOverride);
-
-                var matchedCanonicalRecordingId = match.SelectedLibraryTrackId.HasValue &&
-                                                  candidateById.TryGetValue(match.SelectedLibraryTrackId.Value, out var matchedCandidate)
-                    ? canonicalRecordingId ?? matchedCandidate.CanonicalRecordingId
-                    : null;
-                stored = await _trackMatches.RecordDecisionAsync(
-                    execution,
-                    MatchDecisionInput.FromDecision(
-                        external.Id,
-                        matchedCanonicalRecordingId,
-                        match,
-                        (stored?.DecisionVersion ?? 0) + 1,
-                        external.SnapshotVersion,
-                        libraryIndexRevision,
-                        link.PolicyVersion),
-                    cancellationToken);
-                storedByExternalId[external.Id] = stored;
-            }
+            var stored = storedByExternalId[external.Id];
 
             var classification = TrackClassifier.Classify(
                 manual,

@@ -1,12 +1,59 @@
 using System.Text.Json;
+using System.Diagnostics;
 using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
 using allstarr.Core.Storage;
+using Xunit.Abstractions;
 
 namespace allstarr.Tests;
 
-public sealed class TrackMatchDecisionEngineTests
+public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
 {
+    [Fact]
+    public void Matching_baseline_is_linear_at_100_1000_and_10000_tracks()
+    {
+        var baselines = new List<(int Count, long Allocated, long ElapsedTicks)>();
+        foreach (var count in new[] { 100, 1_000, 10_000 })
+        {
+            var scope = Scope();
+            var candidates = Enumerable.Range(0, count)
+                .Select(index => Candidate(scope) with
+                {
+                    LibraryTrackId = Guid.CreateVersion7(),
+                    BackendItemId = $"local-{index}",
+                    Title = $"Track {index}",
+                    Isrc = $"USAAA26{index:D5}"
+                })
+                .ToArray();
+            var sources = candidates.Select((candidate, index) =>
+                Source() with
+                {
+                    SnapshotId = index.ToString(),
+                    Title = candidate.Title,
+                    Isrc = candidate.Isrc
+                }).ToArray();
+            var engine = new TrackMatchDecisionEngine();
+
+            var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+            var timer = Stopwatch.StartNew();
+            var prepared = engine.PrepareCandidates(candidates);
+            var decisions = sources.Select(source => engine.Decide(scope, source, prepared)).ToArray();
+            timer.Stop();
+            var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+
+            Assert.Equal(count, decisions.Length);
+            Assert.All(decisions, decision => Assert.Equal(TrackMatchReviewState.Accepted, decision.State));
+            Assert.All(decisions, decision => Assert.Single(decision.Candidates));
+            baselines.Add((count, allocated, timer.ElapsedTicks));
+            output.WriteLine(
+                $"matching tracks={count} allocated_bytes={allocated} elapsed_ticks={timer.ElapsedTicks}");
+        }
+
+        Assert.All(baselines.Zip(baselines.Skip(1)), pair =>
+            Assert.True(pair.Second.Allocated < pair.First.Allocated * 30,
+                $"Allocation growth from {pair.First.Count} to {pair.Second.Count} tracks was quadratic."));
+    }
+
     [Fact]
     public void PreparedCandidatesAndPersistenceInputPreserveOneDecision()
     {

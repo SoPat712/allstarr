@@ -159,6 +159,11 @@ public interface ITrackMatchRepository
         MatchDecisionInput input,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<TrackMatchRecord>> RecordDecisionsAsync(
+        ProtocolExecutionContext context,
+        IReadOnlyCollection<MatchDecisionInput> inputs,
+        CancellationToken cancellationToken = default);
+
     Task<ManualTrackOverrideRecord> SetOverrideAsync(
         ProtocolExecutionContext context,
         ManualOverrideInput input,
@@ -289,88 +294,111 @@ public sealed class TrackMatchCommandService(
     public async Task<TrackMatchRecord> RecordDecisionAsync(
         ProtocolExecutionContext context,
         MatchDecisionInput input,
+        CancellationToken cancellationToken = default) =>
+        (await RecordDecisionsAsync(context, [input], cancellationToken)).Single();
+
+    public async Task<IReadOnlyList<TrackMatchRecord>> RecordDecisionsAsync(
+        ProtocolExecutionContext context,
+        IReadOnlyCollection<MatchDecisionInput> inputs,
         CancellationToken cancellationToken = default)
     {
         var actor = context.RequireActor();
-        if (input.DecisionVersion <= 0 ||
-            input.SourceSnapshotVersion <= 0 ||
-            string.IsNullOrWhiteSpace(input.MatcherVersion) ||
-            input.Confidence is < 0 or > 1 ||
-            input.Threshold is < 0 or > 1 ||
-            string.IsNullOrWhiteSpace(input.PolicyVersion))
-            throw new ArgumentException("The match decision is incomplete.", nameof(input));
-        PersistenceGuard.ValidateSafeJson(input.CandidateResultsJson, nameof(input.CandidateResultsJson));
-        PersistenceGuard.ValidateSafeJson(input.ReasonsJson, nameof(input.ReasonsJson));
-        PersistenceGuard.ValidateSafeJson(input.WarningsJson, nameof(input.WarningsJson));
+        var requested = inputs.ToArray();
+        if (requested.Length == 0)
+            return [];
+        foreach (var input in requested)
+            ValidateDecisionInput(input);
+        if (requested.Select(item => (item.ExternalSnapshotId, item.DecisionVersion)).Distinct().Count() !=
+            requested.Length)
+            throw new ArgumentException("A match decision version may appear only once.", nameof(inputs));
 
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var snapshot = await OwnedSnapshotAsync(db, actor, input.ExternalSnapshotId, cancellationToken);
-        PersistenceGuard.RequireLibrary(context, snapshot.LibraryScopeId);
-        if (input.State is TrackMatchState.Accepted or TrackMatchState.Pinned &&
-                !input.LibraryTrackId.HasValue ||
-            input.State is TrackMatchState.Unresolved or TrackMatchState.Suggested or
-                TrackMatchState.Rejected or TrackMatchState.Ambiguous &&
-                input.LibraryTrackId.HasValue)
-            throw new ArgumentException(
-                "The selected library track does not match the decision state.",
-                nameof(input));
-        if (input.State == TrackMatchState.Accepted && input.Confidence < input.Threshold)
-            throw new ArgumentException(
-                "A match below its acceptance threshold cannot be accepted for automatic action.",
-                nameof(input));
-        if (input.LibraryTrackId.HasValue &&
-            !await db.LibraryTracks.AnyAsync(item =>
-                    item.Id == input.LibraryTrackId &&
-                    item.TenantId == actor.TenantId &&
-                    item.OwnerUserId == snapshot.OwnerUserId &&
-                    item.LibraryScopeId == snapshot.LibraryScopeId,
-                cancellationToken))
-            throw new UnauthorizedAccessException(
-                "The selected library track is outside the snapshot scope.");
-
-        var existing = await db.TrackMatches.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.TenantId == actor.TenantId &&
-            item.OwnerUserId == snapshot.OwnerUserId &&
-            item.LibraryScopeId == snapshot.LibraryScopeId &&
-            item.ExternalSnapshotId == snapshot.Id &&
-            item.DecisionVersion == input.DecisionVersion,
-            cancellationToken);
-        if (existing != null)
+        var snapshotIds = requested.Select(item => item.ExternalSnapshotId).Distinct().ToArray();
+        var snapshots = await db.ExternalMetadataSnapshots
+            .Where(item => item.TenantId == actor.TenantId && snapshotIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
+        if (snapshots.Count != snapshotIds.Length)
+            throw new UnauthorizedAccessException("A source snapshot is outside the actor scope.");
+        foreach (var snapshot in snapshots.Values)
         {
-            if (!MatchesImmutableDecision(existing, input))
-                throw new InvalidOperationException(
-                    "The match decision version already exists with different content.");
-            return existing;
+            PersistenceGuard.RequireOwner(actor, snapshot.OwnerUserId);
+            PersistenceGuard.RequireLibrary(context, snapshot.LibraryScopeId);
         }
 
-        var record = ToRecord(
-            input, actor.TenantId, snapshot.OwnerUserId, snapshot.LibraryScopeId,
-            context.CorrelationId, clock.UtcNow);
-        db.TrackMatches.Add(record);
+        var libraryTrackIds = requested
+            .Where(item => item.LibraryTrackId.HasValue)
+            .Select(item => item.LibraryTrackId!.Value)
+            .Distinct()
+            .ToArray();
+        var libraryTracks = await db.LibraryTracks.AsNoTracking()
+            .Where(item => item.TenantId == actor.TenantId && libraryTrackIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
+        foreach (var input in requested.Where(item => item.LibraryTrackId.HasValue))
+        {
+            var snapshot = snapshots[input.ExternalSnapshotId];
+            if (!libraryTracks.TryGetValue(input.LibraryTrackId!.Value, out var libraryTrack) ||
+                libraryTrack.OwnerUserId != snapshot.OwnerUserId ||
+                libraryTrack.LibraryScopeId != snapshot.LibraryScopeId)
+                throw new UnauthorizedAccessException(
+                    "The selected library track is outside the snapshot scope.");
+        }
+
+        var versions = requested.Select(item => item.DecisionVersion).Distinct().ToArray();
+        var existing = await db.TrackMatches.AsNoTracking()
+            .Where(item => item.TenantId == actor.TenantId &&
+                           snapshotIds.Contains(item.ExternalSnapshotId) &&
+                           versions.Contains(item.DecisionVersion))
+            .ToDictionaryAsync(
+                item => (item.ExternalSnapshotId, item.DecisionVersion),
+                cancellationToken);
+        var now = clock.UtcNow;
+        var records = new List<TrackMatchRecord>(requested.Length);
+        foreach (var input in requested)
+        {
+            if (existing.TryGetValue((input.ExternalSnapshotId, input.DecisionVersion), out var stored))
+            {
+                if (!MatchesImmutableDecision(stored, input))
+                    throw new InvalidOperationException(
+                        "The match decision version already exists with different content.");
+                records.Add(stored);
+                continue;
+            }
+
+            var snapshot = snapshots[input.ExternalSnapshotId];
+            var record = ToRecord(
+                input, actor.TenantId, snapshot.OwnerUserId, snapshot.LibraryScopeId,
+                context.CorrelationId, now);
+            db.TrackMatches.Add(record);
+            records.Add(record);
+        }
+
         try
         {
             await db.SaveChangesAsync(cancellationToken);
-            return record;
+            return records;
         }
         catch (DbUpdateException)
         {
             db.ChangeTracker.Clear();
-            var winner = await db.TrackMatches.AsNoTracking().SingleOrDefaultAsync(item =>
-                item.TenantId == actor.TenantId &&
-                item.OwnerUserId == snapshot.OwnerUserId &&
-                item.LibraryScopeId == snapshot.LibraryScopeId &&
-                item.ExternalSnapshotId == snapshot.Id &&
-                item.DecisionVersion == input.DecisionVersion,
-                cancellationToken);
-            if (winner is null)
+            var winners = await db.TrackMatches.AsNoTracking()
+                .Where(item => item.TenantId == actor.TenantId &&
+                               snapshotIds.Contains(item.ExternalSnapshotId) &&
+                               versions.Contains(item.DecisionVersion))
+                .ToDictionaryAsync(
+                    item => (item.ExternalSnapshotId, item.DecisionVersion),
+                    cancellationToken);
+            foreach (var input in requested)
             {
-                throw;
+                if (!winners.TryGetValue(
+                        (input.ExternalSnapshotId, input.DecisionVersion), out var winner))
+                    throw;
+                if (!MatchesImmutableDecision(winner, input))
+                    throw new InvalidOperationException(
+                        "A concurrent match decision used the same version with different content.");
             }
-
-            if (!MatchesImmutableDecision(winner, input))
-                throw new InvalidOperationException(
-                    "A concurrent match decision used the same version with different content.");
-            return winner;
+            return requested
+                .Select(input => winners[(input.ExternalSnapshotId, input.DecisionVersion)])
+                .ToArray();
         }
     }
 
@@ -816,17 +844,12 @@ public sealed class TrackMatchCommandService(
                            item.RevokedAt == null &&
                            ownedSnapshotIds.Contains(item.ExternalSnapshotId))
             .ToListAsync(cancellationToken);
-        var decisions = (await db.TrackMatches.AsNoTracking()
+        var decisions = await LatestDecisions(db.TrackMatches.AsNoTracking()
                 .Where(item => item.TenantId == actor.TenantId &&
                                item.OwnerUserId == ownerUserId &&
                                (libraryScopeId == null || item.LibraryScopeId == libraryScopeId) &&
-                               ownedSnapshotIds.Contains(item.ExternalSnapshotId))
-                .OrderByDescending(item => item.DecisionVersion)
-                .ThenByDescending(item => item.DecidedAt)
-                .ToListAsync(cancellationToken))
-            .GroupBy(item => item.ExternalSnapshotId)
-            .Select(group => group.First())
-            .ToArray();
+                               ownedSnapshotIds.Contains(item.ExternalSnapshotId)))
+            .ToArrayAsync(cancellationToken);
         return new(snapshots, identities, overrides, decisions);
     }
 
@@ -1076,13 +1099,33 @@ public sealed class TrackMatchCommandService(
                 ownerIds.Contains(item.OwnerUserId) &&
                 libraryScopes.Contains(item.LibraryScopeId))
             .ToListAsync(cancellationToken);
-        var latestDecisions = (await db.TrackMatches
-                .Where(item => snapshotIds.Contains(item.ExternalSnapshotId))
-                .OrderByDescending(item => item.DecisionVersion)
-                .ThenByDescending(item => item.DecidedAt)
-                .ToListAsync(cancellationToken))
-            .GroupBy(item => item.ExternalSnapshotId)
-            .ToDictionary(group => group.Key, group => group.First());
+        var latestDecisions = await LatestDecisions(db.TrackMatches
+                .Where(item => snapshotIds.Contains(item.ExternalSnapshotId)))
+            .ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
+        var scopedLibraries = libraryTracks
+            .GroupBy(item => new
+            {
+                item.TenantId,
+                item.OwnerUserId,
+                item.LibraryScopeId,
+                item.BackendInstanceId
+            })
+            .ToDictionary(
+                group => group.Key,
+                group =>
+                {
+                    var tracks = group.ToArray();
+                    return (
+                        Tracks: tracks,
+                        ById: tracks.ToDictionary(item => item.Id),
+                        PlayableIds: tracks.Select(item => item.Id).ToHashSet(),
+                        Candidates: decisionEngine.PrepareCandidates(tracks.Select(ToLocalCandidate)));
+                });
+        var emptyLibrary = (
+            Tracks: Array.Empty<LibraryTrackRecord>(),
+            ById: new Dictionary<Guid, LibraryTrackRecord>(),
+            PlayableIds: new HashSet<Guid>(),
+            Candidates: decisionEngine.PrepareCandidates([]));
 
         var results = new List<AutomatedSourceMatchResult>(snapshots.Length);
         var now = DateTimeOffset.UtcNow;
@@ -1093,22 +1136,23 @@ public sealed class TrackMatchCommandService(
             var seed = tracks[SourceKey(identity.ProviderId, identity.ExternalId)];
             latestDecisions.TryGetValue(snapshot.Id, out var latest);
             activeOverrides.TryGetValue(snapshot.Id, out var manual);
-            var scopedTracks = libraryTracks
-                .Where(item =>
-                    item.TenantId == snapshot.TenantId &&
-                    item.OwnerUserId == snapshot.OwnerUserId &&
-                    item.LibraryScopeId == snapshot.LibraryScopeId &&
-                    item.BackendInstanceId == snapshot.BackendInstanceId)
-                .ToArray();
+            if (!scopedLibraries.TryGetValue(new
+            {
+                snapshot.TenantId,
+                snapshot.OwnerUserId,
+                snapshot.LibraryScopeId,
+                snapshot.BackendInstanceId
+            }, out var library))
+                library = emptyLibrary;
             if (manual?.Decision == ManualOverrideDecision.Pin ||
                 manual?.Decision == ManualOverrideDecision.Reject && !manual.LibraryTrackId.HasValue)
             {
                 var classification = TrackClassifier.Classify(
                     manual,
                     latest,
-                    playableLibraryTrackIds: scopedTracks.Select(item => item.Id).ToHashSet());
+                    playableLibraryTrackIds: library.PlayableIds);
                 var protectedLocal = classification.LibraryTrackId is { } protectedId
-                    ? scopedTracks.FirstOrDefault(item => item.Id == protectedId)
+                    ? library.ById.GetValueOrDefault(protectedId)
                     : null;
                 results.Add(ToAutomatedResult(
                     seed,
@@ -1118,7 +1162,7 @@ public sealed class TrackMatchCommandService(
                 continue;
             }
 
-            var candidates = decisionEngine.PrepareCandidates(scopedTracks.Select(ToLocalCandidate));
+            var candidates = library.Candidates;
             var libraryIndexRevision = candidates.Revision;
             var scope = new TrackMatchScope(
                 snapshot.TenantId,
@@ -1156,7 +1200,7 @@ public sealed class TrackMatchCommandService(
             var decision = decisionEngine.Decide(
                 scope, source, candidates, rejectedOverride);
             var selected = decision.SelectedLibraryTrackId is { } selectedId
-                ? scopedTracks.Single(item => item.Id == selectedId)
+                ? library.ById[selectedId]
                 : null;
             if (selected != null && !selected.CanonicalRecordingId.HasValue)
             {
@@ -1196,6 +1240,23 @@ public sealed class TrackMatchCommandService(
 
     private static string SourceKey(string providerId, string externalId) =>
         $"{providerId.Trim().ToLowerInvariant()}:{externalId.Trim()}";
+
+    private static IQueryable<TrackMatchRecord> LatestDecisions(
+        IQueryable<TrackMatchRecord> decisions)
+    {
+        var versions = decisions
+            .GroupBy(item => item.ExternalSnapshotId)
+            .Select(group => new
+            {
+                ExternalSnapshotId = group.Key,
+                DecisionVersion = group.Max(item => item.DecisionVersion)
+            });
+        return from decision in decisions
+               join version in versions
+                   on new { decision.ExternalSnapshotId, decision.DecisionVersion }
+                   equals new { version.ExternalSnapshotId, version.DecisionVersion }
+               select decision;
+    }
 
     private static LocalTrackMatchCandidate ToLocalCandidate(LibraryTrackRecord item) => new(
         item.Id,
@@ -1615,6 +1676,32 @@ public sealed class TrackMatchCommandService(
 
     private static string Hash(string value) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+
+    private static void ValidateDecisionInput(MatchDecisionInput input)
+    {
+        if (input.DecisionVersion <= 0 ||
+            input.SourceSnapshotVersion <= 0 ||
+            string.IsNullOrWhiteSpace(input.MatcherVersion) ||
+            input.Confidence is < 0 or > 1 ||
+            input.Threshold is < 0 or > 1 ||
+            string.IsNullOrWhiteSpace(input.PolicyVersion))
+            throw new ArgumentException("The match decision is incomplete.", nameof(input));
+        PersistenceGuard.ValidateSafeJson(input.CandidateResultsJson, nameof(input.CandidateResultsJson));
+        PersistenceGuard.ValidateSafeJson(input.ReasonsJson, nameof(input.ReasonsJson));
+        PersistenceGuard.ValidateSafeJson(input.WarningsJson, nameof(input.WarningsJson));
+        if (input.State is TrackMatchState.Accepted or TrackMatchState.Pinned &&
+                !input.LibraryTrackId.HasValue ||
+            input.State is TrackMatchState.Unresolved or TrackMatchState.Suggested or
+                TrackMatchState.Rejected or TrackMatchState.Ambiguous &&
+                input.LibraryTrackId.HasValue)
+            throw new ArgumentException(
+                "The selected library track does not match the decision state.",
+                nameof(input));
+        if (input.State == TrackMatchState.Accepted && input.Confidence < input.Threshold)
+            throw new ArgumentException(
+                "A match below its acceptance threshold cannot be accepted for automatic action.",
+                nameof(input));
+    }
 
     private static bool MatchesImmutableDecision(
         TrackMatchRecord record,

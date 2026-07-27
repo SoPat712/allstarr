@@ -1,10 +1,52 @@
+using System.Diagnostics;
 using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
+using Xunit.Abstractions;
 
 namespace allstarr.Tests;
 
-public sealed class PlaylistMaterializationPlannerTests
+public sealed class PlaylistMaterializationPlannerTests(ITestOutputHelper output)
 {
+    [Fact]
+    public void Reconciliation_baseline_is_linear_at_100_1000_and_10000_tracks()
+    {
+        var baselines = new List<(int Count, long Allocated, long ElapsedTicks)>();
+        foreach (var count in new[] { 100, 1_000, 10_000 })
+        {
+            var entries = Enumerable.Range(0, count)
+                .Select(index => Entry(index, $"source-{index}"))
+                .ToArray();
+            var source = Source(entries);
+            var decisions = entries
+                .Select((entry, index) => Accepted(entry, $"local-{index}"))
+                .ToArray();
+
+            var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+            var timer = Stopwatch.StartNew();
+            var plan = Planner().Plan(
+                PlaylistPlanMode.Reconcile, source, decisions, Target(), Rules());
+            timer.Stop();
+            var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+
+            Assert.Equal(count, plan.Entries.Count);
+            Assert.Equal(count, plan.OrderedBackendItemIds.Count);
+            Assert.Equal(
+                Enumerable.Range(0, count).Select(index => $"local-{index}"),
+                plan.OrderedBackendItemIds);
+            Assert.Equal(
+                plan.IdempotencyKey,
+                Planner().Plan(
+                    PlaylistPlanMode.Reconcile, source, decisions, Target(), Rules()).IdempotencyKey);
+            baselines.Add((count, allocated, timer.ElapsedTicks));
+            output.WriteLine(
+                $"reconciliation tracks={count} allocated_bytes={allocated} elapsed_ticks={timer.ElapsedTicks}");
+        }
+
+        Assert.All(baselines.Zip(baselines.Skip(1)), pair =>
+            Assert.True(pair.Second.Allocated < pair.First.Allocated * 30,
+                $"Allocation growth from {pair.First.Count} to {pair.Second.Count} tracks was quadratic."));
+    }
+
     [Fact]
     public void Accepted_local_matches_keep_first_source_order_and_deduplicate_backend_items()
     {
