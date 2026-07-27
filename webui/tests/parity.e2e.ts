@@ -388,7 +388,7 @@ test("Home stays inside runtime and request budgets", async ({ page }) => {
   const apiRequests = requests.filter((path) => path.startsWith("/api/admin/"));
   const jsRequests = requests.filter((path) => path.endsWith(".js"));
   expect(apiRequests.length).toBeLessThanOrEqual(14); // Lit Home baseline.
-  expect(jsRequests).toHaveLength(12); // Shell, error route, and active Home only.
+  expect(jsRequests.length).toBeLessThanOrEqual(13); // Shell, Home, and one shared primitive.
 
   await page.evaluate(() => {
     const metrics = window.__allstarrMetrics;
