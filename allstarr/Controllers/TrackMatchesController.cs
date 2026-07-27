@@ -314,13 +314,13 @@ public sealed class TrackMatchesController(
             cancellationToken);
         var values = tracks.Select(item => new
         {
-            item.Id,
-            item.BackendItemId,
-            item.Title,
-            item.Artist,
-            item.Album,
-            item.DurationMilliseconds,
-            item.Isrc,
+            id = item.Id,
+            backendItemId = item.BackendItemId,
+            title = item.Title,
+            artist = item.Artist,
+            album = item.Album,
+            durationMilliseconds = item.DurationMilliseconds,
+            isrc = item.Isrc,
             artworkUrl = item.CoverArtReference == null ? null : LocalArtworkUrl(item.BackendItemId)
         }).ToArray();
         return Ok(new { tracks = values });
@@ -378,15 +378,15 @@ public sealed class TrackMatchesController(
                 id = song.ExternalId,
                 externalId = song.ExternalId,
                 externalProvider = song.ExternalProvider ?? provider,
-                song.Title,
-                song.Artist,
-                song.Album,
+                title = song.Title,
+                artist = song.Artist,
+                album = song.Album,
                 artworkUrl = string.IsNullOrWhiteSpace(song.CoverArtUrl) ||
                              string.IsNullOrWhiteSpace(song.ExternalId)
                     ? null
                     : ExternalArtworkUrl(song.ExternalProvider ?? provider, song.ExternalId!),
                 durationMilliseconds = song.Duration * 1000,
-                song.Isrc
+                isrc = song.Isrc
             }),
             providers = playableProviders
         });
@@ -510,7 +510,13 @@ public sealed class TrackMatchesController(
             trackId = canonicalTrack.Id;
         }
         var providerIdentities = canonicalId.HasValue && identities.TryGetValue(canonicalId.Value, out var values)
-            ? values.Select(item => new { item.ProviderId, item.ExternalId, scope = item.Scope.ToString(), verification = item.Verification.ToString() }).ToArray()
+            ? values.Select(item => new
+            {
+                providerId = item.ProviderId,
+                externalId = item.ExternalId,
+                scope = item.Scope.ToString(),
+                verification = item.Verification.ToString()
+            }).ToArray()
             : [];
         var metadata = Metadata(snapshot.PayloadJson);
         var sourceArtworkUrl = metadata.ArtworkUrl == null || sourceIdentity == null
@@ -522,9 +528,9 @@ public sealed class TrackMatchesController(
         var value = new
         {
             externalSnapshotId = snapshot.Id,
-            snapshot.ProviderId,
-            snapshot.ProviderAccountId,
-            snapshot.LibraryScopeId,
+            providerId = snapshot.ProviderId,
+            providerAccountId = snapshot.ProviderAccountId,
+            libraryScopeId = snapshot.LibraryScopeId,
             state = state.ToString().ToLowerInvariant(),
             decisionSource = manual != null
                 ? "manual_override"
@@ -533,9 +539,9 @@ public sealed class TrackMatchesController(
                     : sourceIdentity != null
                         ? "canonical_provider_identity"
                         : "unresolved",
-            decision?.Confidence,
-            decision?.Threshold,
-            decision?.DecisionVersion,
+            confidence = decision?.Confidence,
+            threshold = decision?.Threshold,
+            decisionVersion = decision?.DecisionVersion,
             algorithmVersion = decision?.MatcherVersion,
             policyVersion = decision?.PolicyVersion,
             sourceSnapshotVersion = decision?.SourceSnapshotVersion,
@@ -560,14 +566,14 @@ public sealed class TrackMatchesController(
                 : metadata.DurationMilliseconds.HasValue ? snapshot.RetrievedAt : null,
             localTrack = track == null ? null : new
             {
-                track.Id,
-                track.BackendItemId,
-                track.Title,
-                track.Artist,
-                track.Album,
-                track.DurationMilliseconds,
-                track.DurationProvenance,
-                track.DurationRetrievedAt,
+                id = track.Id,
+                backendItemId = track.BackendItemId,
+                title = track.Title,
+                artist = track.Artist,
+                album = track.Album,
+                durationMilliseconds = track.DurationMilliseconds,
+                durationProvenance = track.DurationProvenance,
+                durationRetrievedAt = track.DurationRetrievedAt,
                 artworkUrl = candidateArtworkUrl,
                 providerIds = ParseObject(track.ProviderIdsJson)
             },

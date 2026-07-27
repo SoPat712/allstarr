@@ -32,6 +32,7 @@ public sealed class DurationProjectionContractTests
             emptyLibrary,
             new Dictionary<Guid, ProviderTrackIdentityRecord[]>()
         ])!);
+        Assert.Equal("spotify", source.GetProperty("providerId").GetString());
         Assert.Equal(196_456, source.GetProperty("durationMilliseconds").GetInt64());
         Assert.Equal("spotify", source.GetProperty("durationProvenance").GetString());
         Assert.Equal(retrievedAt, source.GetProperty("durationRetrievedAt").GetDateTimeOffset());
@@ -80,6 +81,9 @@ public sealed class DurationProjectionContractTests
     private static JsonElement Value(object row)
     {
         var value = row.GetType().GetProperty("Value")!.GetValue(row);
-        return JsonSerializer.SerializeToElement(value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        return JsonSerializer.SerializeToElement(value, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = null
+        });
     }
 }
