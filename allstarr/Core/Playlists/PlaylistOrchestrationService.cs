@@ -220,93 +220,108 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         if (!plan.RequiresBackendWrite)
             return new(plan, null, null, false, false);
 
-        await using (var duplicateDb = await _factory.CreateDbContextAsync(cancellationToken))
-        {
-            var duplicate = await duplicateDb.PlaylistSyncRuns.AsNoTracking().SingleOrDefaultAsync(item =>
-                item.TenantId == actor.TenantId && item.PlaylistLinkId == link.Id &&
-                item.IdempotencyKey == plan.IdempotencyKey, cancellationToken);
-            if (duplicate != null)
-                return new(plan, duplicate.Id, duplicate.State, false, true, duplicate.ConflictCode);
-        }
+        var claim = await ClaimRunAsync(
+            request, link, snapshot, plan, decisionIds, cancellationToken);
+        if (!claim.Claimed)
+            return new(
+                plan, claim.Run.Id, claim.Run.State, false, true, claim.Run.ConflictCode);
+        var runId = claim.Run.Id;
 
-        var target = _targets.Resolve(link.TargetProtocol);
-        ProviderPlaylistArtwork? resolvedArtwork = null;
-        string? artworkIssue = null;
-        if (link.SyncArtwork && snapshot.ArtworkReferenceKey != null)
+        try
         {
-            if (!target.Capabilities.CanWriteArtwork)
+            var target = _targets.Resolve(link.TargetProtocol);
+            ProviderPlaylistArtwork? resolvedArtwork = null;
+            string? artworkIssue = null;
+            if (link.SyncArtwork && snapshot.ArtworkReferenceKey != null)
             {
-                artworkIssue = "artwork_target_unsupported";
+                if (!target.Capabilities.CanWriteArtwork)
+                {
+                    artworkIssue = "artwork_target_unsupported";
+                }
+                else
+                {
+                    var artwork = await _source.ResolveArtworkAsync(execution, link,
+                        new ProviderPlaylistArtworkRequest(new ProviderArtworkReference(
+                            new ProviderExternalResourceId(link.SourceProviderId, ProviderResourceKind.Playlist,
+                                link.SourcePlaylistId), revision: snapshot.ProviderRevision)), cancellationToken);
+                    if (artwork.IsSuccess) resolvedArtwork = artwork.RequireValue();
+                    else artworkIssue = $"artwork_{artwork.Error!.Kind.ToString().ToLowerInvariant()}";
+                }
+            }
+            var targetContext = new BackendPlaylistTargetContext(
+                link.TargetBackendInstanceId,
+                execution.VerifiedBackendPrincipalId,
+                link.TargetCredentialReferenceId?.ToString(),
+                link.TenantId);
+            BackendPlaylistSnapshot? before = null;
+            if (link.TargetPlaylistId != null)
+            {
+                var read = await target.ReadAsync(targetContext, link.TargetPlaylistId, cancellationToken);
+                if (read.IsSuccess) before = read.Value;
+                else if (read.Status is not BackendPlaylistTargetStatus.NotFound)
+                    return await RecordFailureAsync(runId, plan,
+                        read.Status == BackendPlaylistTargetStatus.Conflict ? PlaylistSyncState.Conflicted : PlaylistSyncState.Failed,
+                        read.ErrorCode ?? read.Status.ToString(), before?.Fingerprint, backendWriteAttempted: false,
+                        cancellationToken);
             }
             else
             {
-                var artwork = await _source.ResolveArtworkAsync(execution, link,
-                    new ProviderPlaylistArtworkRequest(new ProviderArtworkReference(
-                        new ProviderExternalResourceId(link.SourceProviderId, ProviderResourceKind.Playlist,
-                            link.SourcePlaylistId), revision: snapshot.ProviderRevision)), cancellationToken);
-                if (artwork.IsSuccess) resolvedArtwork = artwork.RequireValue();
-                else artworkIssue = $"artwork_{artwork.Error!.Kind.ToString().ToLowerInvariant()}";
+                var found = await target.FindByNameAsync(targetContext, snapshot.Name, cancellationToken);
+                if (found.IsSuccess) before = found.Value;
+                else if (found.Status is not BackendPlaylistTargetStatus.NotFound)
+                    return await RecordFailureAsync(runId, plan,
+                        found.Status == BackendPlaylistTargetStatus.Conflict ? PlaylistSyncState.Conflicted : PlaylistSyncState.Failed,
+                        found.ErrorCode ?? found.Status.ToString(), null, backendWriteAttempted: false,
+                        cancellationToken);
             }
-        }
-        var targetContext = new BackendPlaylistTargetContext(
-            link.TargetBackendInstanceId,
-            execution.VerifiedBackendPrincipalId,
-            link.TargetCredentialReferenceId?.ToString(),
-            link.TenantId);
-        BackendPlaylistSnapshot? before = null;
-        if (link.TargetPlaylistId != null)
-        {
-            var read = await target.ReadAsync(targetContext, link.TargetPlaylistId, cancellationToken);
-            if (read.IsSuccess) before = read.Value;
-            else if (read.Status is not BackendPlaylistTargetStatus.NotFound)
-                return await RecordFailureAsync(execution, request, link, snapshot, plan, decisionIds,
-                    read.Status == BackendPlaylistTargetStatus.Conflict ? PlaylistSyncState.Conflicted : PlaylistSyncState.Failed,
-                    read.ErrorCode ?? read.Status.ToString(), before?.Fingerprint, backendWriteAttempted: false,
+
+            var write = await target.WriteAsync(targetContext, new BackendPlaylistWriteRequest(
+                plan.Mode == PlaylistPlanMode.Recreate ? BackendPlaylistWriteMode.Recreate : BackendPlaylistWriteMode.Reconcile,
+                new BackendPlaylistMetadata(plan.Metadata.Name ?? snapshot.Name,
+                    plan.Metadata.Description, resolvedArtwork?.Bytes, resolvedArtwork?.ContentType),
+                plan.OrderedBackendItemIds, plan.IdempotencyKey,
+                before?.BackendPlaylistId ?? link.TargetPlaylistId,
+                before?.NativeRevision, before?.Fingerprint,
+                owned, link.MirrorStaleEntries), cancellationToken);
+            if (!write.IsSuccess || write.Value == null)
+                return await RecordFailureAsync(runId, plan,
+                    write.Status == BackendPlaylistTargetStatus.Conflict ? PlaylistSyncState.Conflicted : PlaylistSyncState.Failed,
+                    write.ErrorCode ?? write.Status.ToString(), before?.Fingerprint, backendWriteAttempted: true,
                     cancellationToken);
+
+            var receipt = artworkIssue == null
+                ? write.Value
+                : write.Value with
+                {
+                    UnsupportedMetadataFields = write.Value.UnsupportedMetadataFields
+                        .Concat([artworkIssue]).Distinct(StringComparer.Ordinal).ToArray()
+                };
+            var verificationRead = await target.ReadAsync(
+                targetContext, receipt.Snapshot.BackendPlaylistId, cancellationToken);
+            var verificationError = verificationRead.IsSuccess && verificationRead.Value != null
+                ? null
+                : verificationRead.ErrorCode ?? verificationRead.Status.ToString().ToLowerInvariant();
+            if (verificationRead.IsSuccess && verificationRead.Value != null)
+                receipt = receipt with { Snapshot = verificationRead.Value };
+
+            return await PersistSuccessAsync(
+                runId, link, plan, before, receipt,
+                verificationError, cancellationToken);
         }
-        else
+        catch (OperationCanceledException)
         {
-            var found = await target.FindByNameAsync(targetContext, snapshot.Name, cancellationToken);
-            if (found.IsSuccess) before = found.Value;
-            else if (found.Status is not BackendPlaylistTargetStatus.NotFound)
-                return await RecordFailureAsync(execution, request, link, snapshot, plan, decisionIds,
-                    found.Status == BackendPlaylistTargetStatus.Conflict ? PlaylistSyncState.Conflicted : PlaylistSyncState.Failed,
-                    found.ErrorCode ?? found.Status.ToString(), null, backendWriteAttempted: false,
-                    cancellationToken);
+            await MarkClaimAsync(runId, PlaylistSyncState.Cancelled, "cancelled");
+            throw;
         }
-
-        var write = await target.WriteAsync(targetContext, new BackendPlaylistWriteRequest(
-            plan.Mode == PlaylistPlanMode.Recreate ? BackendPlaylistWriteMode.Recreate : BackendPlaylistWriteMode.Reconcile,
-            new BackendPlaylistMetadata(plan.Metadata.Name ?? snapshot.Name,
-                plan.Metadata.Description, resolvedArtwork?.Bytes, resolvedArtwork?.ContentType),
-            plan.OrderedBackendItemIds, plan.IdempotencyKey,
-            before?.BackendPlaylistId ?? link.TargetPlaylistId,
-            before?.NativeRevision, before?.Fingerprint,
-            owned, link.MirrorStaleEntries), cancellationToken);
-        if (!write.IsSuccess || write.Value == null)
-            return await RecordFailureAsync(execution, request, link, snapshot, plan, decisionIds,
-                write.Status == BackendPlaylistTargetStatus.Conflict ? PlaylistSyncState.Conflicted : PlaylistSyncState.Failed,
-                write.ErrorCode ?? write.Status.ToString(), before?.Fingerprint, backendWriteAttempted: true,
-                cancellationToken);
-
-        var receipt = artworkIssue == null
-            ? write.Value
-            : write.Value with
-            {
-                UnsupportedMetadataFields = write.Value.UnsupportedMetadataFields
-                    .Concat([artworkIssue]).Distinct(StringComparer.Ordinal).ToArray()
-            };
-        var verificationRead = await target.ReadAsync(
-            targetContext, receipt.Snapshot.BackendPlaylistId, cancellationToken);
-        var verificationError = verificationRead.IsSuccess && verificationRead.Value != null
-            ? null
-            : verificationRead.ErrorCode ?? verificationRead.Status.ToString().ToLowerInvariant();
-        if (verificationRead.IsSuccess && verificationRead.Value != null)
-            receipt = receipt with { Snapshot = verificationRead.Value };
-
-        return await PersistSuccessAsync(
-            execution, request, link, snapshot, plan, decisionIds, before, receipt,
-            verificationError, cancellationToken);
+        catch (Exception exception)
+        {
+            var code = exception.GetType().Name.ToLowerInvariant();
+            await MarkClaimAsync(
+                runId,
+                PlaylistSyncState.Failed,
+                code[..Math.Min(100, code.Length)]);
+            throw;
+        }
     }
 
     public async Task<PlaylistRefreshResult> RefreshAsync(
@@ -793,18 +808,97 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             snapshot.Description, snapshot.ArtworkReferenceKey), decisions, decisionIds);
     }
 
+    private async Task<(PlaylistSyncRunRecord Run, bool Claimed)> ClaimRunAsync(
+        PlaylistOrchestrationRequest request,
+        PlaylistLinkRecord link,
+        PlaylistSourceSnapshotRecord snapshot,
+        PlaylistMaterializationPlan plan,
+        IReadOnlyDictionary<Guid, Guid?> decisionIds,
+        CancellationToken cancellationToken)
+    {
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        var existing = await db.PlaylistSyncRuns.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.TenantId == link.TenantId &&
+            item.PlaylistLinkId == link.Id &&
+            item.IdempotencyKey == plan.IdempotencyKey,
+            cancellationToken);
+        if (existing != null)
+            return await ReclaimRunAsync(db, existing, request, snapshot, plan, cancellationToken);
+
+        var run = NewRun(
+            request, link, snapshot, plan, PlaylistSyncState.Running, null, null);
+        db.PlaylistSyncRuns.Add(run);
+        db.PlaylistSyncEntryResults.AddRange(
+            ToRunEntries(link.TenantId, run.Id, plan, decisionIds));
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            return (run, true);
+        }
+        catch (DbUpdateException)
+        {
+            db.ChangeTracker.Clear();
+            var winner = await db.PlaylistSyncRuns.AsNoTracking().SingleAsync(item =>
+                item.TenantId == link.TenantId &&
+                item.PlaylistLinkId == link.Id &&
+                item.IdempotencyKey == plan.IdempotencyKey,
+                cancellationToken);
+            return await ReclaimRunAsync(
+                db, winner, request, snapshot, plan, cancellationToken);
+        }
+    }
+
+    private async Task<(PlaylistSyncRunRecord Run, bool Claimed)> ReclaimRunAsync(
+        AllstarrDbContext db,
+        PlaylistSyncRunRecord run,
+        PlaylistOrchestrationRequest request,
+        PlaylistSourceSnapshotRecord snapshot,
+        PlaylistMaterializationPlan plan,
+        CancellationToken cancellationToken)
+    {
+        if (run.PlaylistSourceSnapshotId != snapshot.Id ||
+            run.Generation != request.Generation ||
+            run.RuleVersion != plan.Rules.RuleVersion ||
+            run.MaterializationMode != (plan.Mode == PlaylistPlanMode.Recreate
+                ? PlaylistMaterializationMode.Recreate
+                : PlaylistMaterializationMode.Reconcile))
+            throw new InvalidOperationException(
+                "The sync-run idempotency key already belongs to different inputs.");
+        if (run.State is not (PlaylistSyncState.Failed or PlaylistSyncState.Conflicted or
+            PlaylistSyncState.Cancelled))
+            return (run, false);
+
+        var claimed = await db.PlaylistSyncRuns
+            .Where(item => item.Id == run.Id &&
+                           (item.State == PlaylistSyncState.Failed ||
+                            item.State == PlaylistSyncState.Conflicted ||
+                            item.State == PlaylistSyncState.Cancelled))
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(item => item.State, PlaylistSyncState.Running)
+                .SetProperty(item => item.JobId, request.JobId)
+                .SetProperty(item => item.ScheduleId, request.ScheduleId)
+                .SetProperty(item => item.ConflictCode, (string?)null)
+                .SetProperty(item => item.CompletedAt, (DateTimeOffset?)null)
+                .SetProperty(item => item.StartedAt, _clock.UtcNow)
+                .SetProperty(item => item.Revision, item => item.Revision + 1),
+                cancellationToken);
+        var current = await db.PlaylistSyncRuns.AsNoTracking()
+            .SingleAsync(item => item.Id == run.Id, cancellationToken);
+        return (current, claimed == 1);
+    }
+
     private async Task<PlaylistOrchestrationResult> PersistSuccessAsync(
-        ProtocolExecutionContext execution, PlaylistOrchestrationRequest request, PlaylistLinkRecord link,
-        PlaylistSourceSnapshotRecord snapshot, PlaylistMaterializationPlan plan,
-        IReadOnlyDictionary<Guid, Guid?> decisionIds, BackendPlaylistSnapshot? before,
+        Guid runId, PlaylistLinkRecord link, PlaylistMaterializationPlan plan,
+        BackendPlaylistSnapshot? before,
         BackendPlaylistWriteReceipt receipt, string? verificationError,
         CancellationToken cancellationToken)
     {
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        var existing = await db.PlaylistSyncRuns.AsNoTracking().SingleOrDefaultAsync(item => item.TenantId == link.TenantId &&
-            item.PlaylistLinkId == link.Id && item.IdempotencyKey == plan.IdempotencyKey, cancellationToken);
-        if (existing != null) return new(plan, existing.Id, existing.State, true, true, existing.ConflictCode);
+        var run = await db.PlaylistSyncRuns.SingleAsync(item =>
+            item.Id == runId && item.TenantId == link.TenantId &&
+            item.PlaylistLinkId == link.Id && item.State == PlaylistSyncState.Running,
+            cancellationToken);
         var memberships = await db.PlaylistTargetMemberships
             .Where(item => item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id)
             .ToListAsync(cancellationToken);
@@ -819,16 +913,18 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var metadataIssue = receipt.UnsupportedMetadataFields.Count == 0
             ? null
             : string.Join(',', receipt.UnsupportedMetadataFields.Order(StringComparer.Ordinal));
-        var run = NewRun(request, link, snapshot, plan, state, before?.Fingerprint,
-            receipt.Snapshot.Fingerprint, metadataIssue);
+        run.State = state;
+        run.TargetRevisionBefore = before?.Fingerprint;
+        run.TargetRevisionAfter = receipt.Snapshot.Fingerprint;
+        run.ConflictCode = metadataIssue;
         run.PlannedTargetTrackCount = verification.PlannedTrackCount;
         run.PlannedTargetDurationMilliseconds = verification.PlannedDurationMilliseconds;
         run.VerifiedTargetTrackCount = verification.VerifiedTrackCount;
         run.VerifiedTargetDurationMilliseconds = verification.VerifiedDurationMilliseconds;
         run.VerificationCode = verification.Code;
         run.VerifiedAt = _clock.UtcNow;
-        db.PlaylistSyncRuns.Add(run);
-        db.PlaylistSyncEntryResults.AddRange(ToRunEntries(link.TenantId, run.Id, plan, decisionIds));
+        run.CompletedAt = _clock.UtcNow;
+        run.Revision++;
         var included = plan.Entries.Where(item => item.Status == PlaylistPreviewEntryStatus.Included && item.LibraryTrackId.HasValue).ToArray();
         var membershipByLibraryTrack = memberships.ToDictionary(item => item.LibraryTrackId);
         var includedLibraryTrackIds = included.Select(item => item.LibraryTrackId!.Value).ToHashSet();
@@ -951,16 +1047,35 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         string Code);
 
     private async Task<PlaylistOrchestrationResult> RecordFailureAsync(
-        ProtocolExecutionContext execution, PlaylistOrchestrationRequest request, PlaylistLinkRecord link,
-        PlaylistSourceSnapshotRecord snapshot, PlaylistMaterializationPlan plan,
-        IReadOnlyDictionary<Guid, Guid?> decisionIds, PlaylistSyncState state, string code,
+        Guid runId, PlaylistMaterializationPlan plan, PlaylistSyncState state, string code,
         string? targetBefore, bool backendWriteAttempted, CancellationToken cancellationToken)
     {
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        var run = NewRun(request, link, snapshot, plan, state, targetBefore, null, code);
-        db.PlaylistSyncRuns.Add(run); db.PlaylistSyncEntryResults.AddRange(ToRunEntries(link.TenantId, run.Id, plan, decisionIds));
+        var run = await db.PlaylistSyncRuns.SingleAsync(item =>
+            item.Id == runId && item.State == PlaylistSyncState.Running,
+            cancellationToken);
+        run.State = state;
+        run.TargetRevisionBefore = targetBefore;
+        run.ConflictCode = code;
+        run.CompletedAt = _clock.UtcNow;
+        run.Revision++;
         await db.SaveChangesAsync(cancellationToken);
-        return new(plan, run.Id, state, backendWriteAttempted, false, code);
+        return new(plan, runId, state, backendWriteAttempted, false, code);
+    }
+
+    private async Task MarkClaimAsync(
+        Guid runId,
+        PlaylistSyncState state,
+        string code)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        await db.PlaylistSyncRuns
+            .Where(item => item.Id == runId && item.State == PlaylistSyncState.Running)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(item => item.State, state)
+                .SetProperty(item => item.ConflictCode, code)
+                .SetProperty(item => item.CompletedAt, _clock.UtcNow)
+                .SetProperty(item => item.Revision, item => item.Revision + 1));
     }
 
     private PlaylistSyncRunRecord NewRun(PlaylistOrchestrationRequest request, PlaylistLinkRecord link,
@@ -983,7 +1098,9 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             TargetRevisionAfter = after,
             ConflictCode = conflict,
             StartedAt = _clock.UtcNow,
-            CompletedAt = _clock.UtcNow
+            CompletedAt = state is PlaylistSyncState.Pending or PlaylistSyncState.Running
+                ? null
+                : _clock.UtcNow
         };
 
     private static IEnumerable<PlaylistSyncEntryResultRecord> ToRunEntries(Guid tenantId, Guid runId,

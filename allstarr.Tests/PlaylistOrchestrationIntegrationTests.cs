@@ -878,6 +878,46 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             eventType => eventType.Contains("playlist.complete", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task Concurrent_sync_claims_once_and_failed_claim_retries_with_the_same_run()
+    {
+        _source.Snapshot = Snapshot(
+            "revision-sync-claim",
+            Entry(0, "entry-sync-claim", "source-1", "One"));
+        var refresh = await _service.RefreshAsync(Context(), _link);
+        var request = new PlaylistOrchestrationRequest(_link, 91, refresh.SnapshotId);
+        var writeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _target.WriteStarted = writeStarted;
+        _target.WriteBlock = releaseWrite.Task;
+
+        var first = _service.RunAsync(Context(), request);
+        await writeStarted.Task;
+        var duplicate = await _service.RunAsync(Context(), request);
+
+        Assert.True(duplicate.ReusedRun);
+        Assert.Equal(PlaylistSyncState.Running, duplicate.State);
+        Assert.Equal(1, _target.WriteCalls);
+
+        releaseWrite.SetResult();
+        var completed = await first;
+        Assert.Equal(completed.RunId, duplicate.RunId);
+        Assert.Equal(PlaylistSyncState.PartiallySucceeded, completed.State);
+
+        var retryRequest = request with { Generation = 92 };
+        _target.WriteStarted = null;
+        _target.WriteBlock = null;
+        _target.WriteStatus = BackendPlaylistTargetStatus.BackendFailure;
+        var failed = await _service.RunAsync(Context(), retryRequest);
+        Assert.Equal(PlaylistSyncState.Failed, failed.State);
+
+        _target.WriteStatus = BackendPlaylistTargetStatus.Success;
+        var retried = await _service.RunAsync(Context(), retryRequest);
+        Assert.Equal(failed.RunId, retried.RunId);
+        Assert.Equal(PlaylistSyncState.PartiallySucceeded, retried.State);
+        Assert.False(retried.ReusedRun);
+    }
+
     private PlaylistLinkRecord Link() => new()
     {
         Id = _link,
@@ -1059,6 +1099,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         public int TotalCalls => FindCalls + ReadCalls + WriteCalls;
         public int ReportedTrackCountAdjustment { get; set; }
         public long ReportedDurationAdjustmentMilliseconds { get; set; }
+        public TaskCompletionSource? WriteStarted { get; set; }
+        public Task? WriteBlock { get; set; }
         public BackendPlaylistWriteRequest? LastWrite { get; private set; }
         private BackendPlaylistSnapshot? LastSnapshot { get; set; }
         public List<BackendPlaylistTargetContext> Contexts { get; } = [];
@@ -1081,16 +1123,20 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 : null;
             return Task.FromResult(new BackendPlaylistTargetResult<BackendPlaylistSnapshot>(ReadStatus, snapshot, ErrorCode: ErrorCode));
         }
-        public Task<BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>> WriteAsync(BackendPlaylistTargetContext context, BackendPlaylistWriteRequest request, CancellationToken cancellationToken)
+        public async Task<BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>> WriteAsync(BackendPlaylistTargetContext context, BackendPlaylistWriteRequest request, CancellationToken cancellationToken)
         {
             WriteCalls++; Contexts.Add(context); LastWrite = request;
+            WriteStarted?.TrySetResult();
+            if (WriteBlock != null)
+                await WriteBlock.WaitAsync(cancellationToken);
             LastSnapshot = WriteStatus == BackendPlaylistTargetStatus.Success
                 ? Backend(request.BackendPlaylistId ?? "target-created", request.OrderedBackendItemIds)
                 : null;
             var receipt = LastSnapshot == null
                 ? null
                 : new BackendPlaylistWriteReceipt(LastSnapshot, true, []);
-            return Task.FromResult(new BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>(WriteStatus, receipt, ErrorCode: ErrorCode));
+            return new BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>(
+                WriteStatus, receipt, ErrorCode: ErrorCode);
         }
         private BackendPlaylistSnapshot Backend(string id, IEnumerable<string>? members = null)
         {
