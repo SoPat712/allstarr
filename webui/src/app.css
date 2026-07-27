@@ -4389,10 +4389,13 @@
     padding: 1rem;
   }
 
-  .extension-catalog > header input {
+  .extension-catalog > header .extension-search {
     width: min(18rem, 42vw);
+  }
+
+  .extension-catalog > header input {
+    width: 100%;
     min-height: 2.7rem;
-    padding: 0 0.8rem;
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     background: var(--surface-strong);
@@ -4609,7 +4612,7 @@
   }
 
   .extension-header button,
-  .extension-catalog > header input {
+  .extension-catalog > header .extension-search {
     width: 100%;
   }
 

@@ -380,6 +380,14 @@ for (const viewport of viewports) {
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.goto("#/settings/extensions");
+      await page.getByRole("tab", { name: /Available/ }).click();
+      await expect(page.getByText("Available packages", { exact: true })).toBeVisible();
+      await page.getByRole("tab", { name: /Registries/ }).click();
+      await expect(page.getByText("Add registry", { exact: true })).toBeVisible();
+      await page.getByRole("tab", { name: "Activity" }).click();
+      await expect(page.getByText("Extension activity", { exact: true })).toBeVisible();
+      await expect.poll(() => page.evaluate(() =>
+        document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.getByRole("button", { name: "Install extension" }).click();
       await expect(page.getByRole("dialog", { name: "Install extension" })).toBeVisible();
       await expect(page.getByRole("button", { name: "Verify package" })).toBeInViewport();
@@ -635,7 +643,14 @@ test("extension updates stay beside the shared management menu", async ({ page }
       id: "old", extensionId: "lumen-audio", displayName: "Lumen Audio",
       version: "1.0.0", lifecycle: "active", state: "active", active: true,
       installed: true, permissionReviewRequired: false, capabilities: ["metadata"],
-      previousPackageId: "previous", stagedAt: "2026-01-01", revision: 1,
+      previousPackageId: "previous", registryId: "registry", stagedAt: "2026-01-01", revision: 1,
+    }]),
+  }));
+  await page.route("**/api/admin/extensions/registries", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify([{
+      id: "registry", name: "Community", registryUrl: "https://example.test/registry.json",
+      enabled: true, revision: 1,
     }]),
   }));
   await page.route("**/api/admin/extensions/store", (route) => route.fulfill({
@@ -658,6 +673,13 @@ test("extension updates stay beside the shared management menu", async ({ page }
   await expect(page.getByRole("menuitem", { name: "Rollback" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Review access" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Uninstall" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Uninstall" }).click();
+  const uninstall = page.getByRole("alertdialog", { name: "Uninstall Lumen Audio?" });
+  await expect(uninstall).toBeVisible();
+  await uninstall.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("tab", { name: /Registries/ }).click();
+  await expect(page.getByText("1 installed package version must be removed first.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Remove" })).toBeDisabled();
 });
 
 test("Add playlist prioritizes local and configured Sources on mobile", async ({ page }) => {

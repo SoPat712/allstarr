@@ -10,6 +10,7 @@
     type ExtensionStoreItem,
   } from "$lib/api";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import SearchField from "$lib/components/SearchField.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import { availablePackages, currentPackages, valueChanges } from "$lib/extensions";
   import { humanize } from "$lib/sources";
@@ -296,7 +297,7 @@
       </div>
     {:else if tab === "available"}
       <section class="panel extension-catalog">
-        <header><div><strong>Available packages</strong><small>Updates appear beside new extensions.</small></div><input aria-label="Search extensions" placeholder="Search extensions…" bind:value={search} /></header>
+        <header><div><strong>Available packages</strong><small>Updates appear beside new extensions.</small></div><SearchField class="extension-search" label="Search extensions" placeholder="Search extensions…" hiddenLabel bind:value={search} /></header>
         {#each storeErrors as item}<p class="error-text">{item.repository}: {item.message}</p>{/each}
         <div>
           {#each available as item}
