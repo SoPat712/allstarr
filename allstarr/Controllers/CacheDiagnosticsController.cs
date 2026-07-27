@@ -1,6 +1,7 @@
 using allstarr.Filters;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
+using allstarr.Core.Extensions;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers;
@@ -8,7 +9,9 @@ namespace allstarr.Controllers;
 [ApiController]
 [Route("api/admin/cache")]
 [ServiceFilter(typeof(AdminPortFilter))]
-public sealed class CacheDiagnosticsController(HybridApplicationCache cache) : ControllerBase
+public sealed class CacheDiagnosticsController(
+    HybridApplicationCache cache,
+    ExtensionRuntimeCoordinator? extensions = null) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken cancellationToken = default)
@@ -18,7 +21,10 @@ public sealed class CacheDiagnosticsController(HybridApplicationCache cache) : C
             return error;
         }
 
-        return Ok(await cache.GetDiagnosticsAsync(cancellationToken));
+        return Ok((await cache.GetDiagnosticsAsync(cancellationToken)) with
+        {
+            ExtensionStorage = extensions?.GetStorageUsage() ?? new(0, 0, 0, 0)
+        });
     }
 
     [HttpDelete("{scope}")]

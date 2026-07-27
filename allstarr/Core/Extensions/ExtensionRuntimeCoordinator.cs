@@ -11,6 +11,7 @@ namespace allstarr.Core.Extensions;
 
 public sealed class ExtensionRuntimeCoordinator : IHostedService
 {
+    private const long MaximumStorageBytesPerExtension = 4L * 1024 * 1024;
     private readonly IDbContextFactory<AllstarrDbContext> _factory;
     private readonly ExtensionControlPlaneService _controlPlane;
     private readonly IDynamicProviderRegistry _registry;
@@ -298,6 +299,16 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     public object StartSignedSessionVerification(Guid packageId) => RequireSandbox(packageId).StartSignedSessionVerification();
     public object CompleteSignedSessionGrant(Guid packageId, string grant) => RequireSandbox(packageId).CompleteSignedSessionGrant(grant);
     public object ClearSignedSession(Guid packageId) => RequireSandbox(packageId).ClearSignedSession();
+
+    public ExtensionStorageUsageSnapshot GetStorageUsage()
+    {
+        var usage = _sandboxes.Values.Select(item => item.StorageUsage()).ToArray();
+        return new(
+            usage.Length,
+            usage.Sum(item => item.EntryCount),
+            usage.Sum(item => item.PayloadBytes),
+            usage.Length * MaximumStorageBytesPerExtension);
+    }
 
     private ExtensionSandbox RequireSandbox(Guid packageId)
     {

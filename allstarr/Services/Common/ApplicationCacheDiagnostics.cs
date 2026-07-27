@@ -23,7 +23,17 @@ public sealed record ApplicationCacheDiagnosticsSnapshot(
     ApplicationCacheTierUsage Media,
     IReadOnlyList<ApplicationCacheCategoryDiagnostics> Categories,
     ApplicationCacheActivitySnapshot Activity,
-    DateTimeOffset CapturedAt);
+    DateTimeOffset CapturedAt)
+{
+    public ExtensionStorageUsageSnapshot ExtensionStorage { get; init; } =
+        new(0, 0, 0, 0);
+}
+
+public sealed record ExtensionStorageUsageSnapshot(
+    int ActiveExtensions,
+    int EntryCount,
+    long PayloadBytes,
+    long MaximumBytes);
 
 public sealed record ApplicationCacheActivitySnapshot(
     long CoalescedRequests,

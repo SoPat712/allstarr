@@ -131,7 +131,11 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
 
         controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] =
             Session(isAdministrator: true);
-        Assert.IsType<OkObjectResult>(await controller.Get());
+        var ok = Assert.IsType<OkObjectResult>(await controller.Get());
+        Assert.Equal(
+            0,
+            Assert.IsType<ApplicationCacheDiagnosticsSnapshot>(ok.Value)
+                .ExtensionStorage.ActiveExtensions);
         Assert.IsType<BadRequestObjectResult>(await controller.Purge("arbitrary:*"));
     }
 

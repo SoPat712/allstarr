@@ -1149,6 +1149,13 @@ public class ExtensionSandbox
         !string.IsNullOrWhiteSpace(hook) && IsCallable(hook);
 
     public bool HasSignedSession => _hostBridge.HasSignedSession;
+    public (int EntryCount, long PayloadBytes) StorageUsage()
+    {
+        lock (_engineLock)
+        {
+            return _hostBridge.StorageUsage();
+        }
+    }
     public object SignedSessionStatus() => _hostBridge.SessionStatus();
     public object StartSignedSessionVerification() => _hostBridge.SessionStartVerification();
     public object CompleteSignedSessionGrant(string grant) => _hostBridge.SessionCompleteGrant(grant);
@@ -1526,6 +1533,12 @@ public class ExtensionHostBridge
         EnsureCachePermission(key);
         return _storage.TryGetValue(key, out var val) ? val : null;
     }
+
+    public (int EntryCount, long PayloadBytes) StorageUsage() => (
+        _storage.Count,
+        _storage.Sum(item =>
+            (long)Encoding.UTF8.GetByteCount(item.Key) +
+            Encoding.UTF8.GetByteCount(item.Value)));
 
     public void StorageSet(string key, string value)
     {

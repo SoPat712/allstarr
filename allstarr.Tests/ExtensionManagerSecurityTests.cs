@@ -273,6 +273,7 @@ public class ExtensionManagerSecurityTests
 
             bridge.StorageSet("metadataCache", "value");
             Assert.Equal("value", bridge.StorageGet("metadataCache"));
+            Assert.Equal((1, 18L), bridge.StorageUsage());
             Assert.Throws<UnauthorizedAccessException>(() => bridge.StorageSet("otherCache", "value"));
             Assert.Equal("{{allstarr-secret:accountToken}}", bridge.SecretGet("accountToken"));
             Assert.Throws<UnauthorizedAccessException>(() => bridge.SecretGet("otherToken"));
