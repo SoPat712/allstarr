@@ -350,6 +350,11 @@ public class ConfigController : ControllerBase
                 "admin-ui",
                 session.AllstarrUserId,
                 HttpContext.RequestAborted);
+            var cacheEntriesInvalidated = normalized.Any(item =>
+                !item.DurableKey.StartsWith("Scrobbling:", StringComparison.OrdinalIgnoreCase) &&
+                !item.DurableKey.StartsWith("WebUi:", StringComparison.OrdinalIgnoreCase))
+                ? await _cache.DeleteByPatternAsync("*")
+                : 0;
 
             return Ok(new
             {
@@ -357,6 +362,7 @@ public class ConfigController : ControllerBase
                 updatedKeys = normalized.Select(item => item.LegacyKey).ToArray(),
                 requiresRestart = false,
                 changeVersion = result.ChangeVersion,
+                cacheEntriesInvalidated,
                 settings = result.Settings.Select(item => new { item.Key, item.Revision, item.UpdatedAt })
             });
         }

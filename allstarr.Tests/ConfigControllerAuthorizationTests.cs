@@ -144,7 +144,11 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     {
         var envPath = Path.Combine(_root, ".env");
         await File.WriteAllTextAsync(envPath, "CACHE_LYRICS_DAYS=14\n");
-        var controller = CreateController(CreateHttpContextWithSession(isAdmin: true));
+        var cache = new TestMemoryApplicationCache();
+        await cache.SetStringAsync("lyrics:fixture", "cached");
+        var controller = CreateController(
+            CreateHttpContextWithSession(isAdmin: true),
+            applicationCache: cache);
 
         var result = Assert.IsType<OkObjectResult>(await controller.UpdateConfig(new ConfigUpdateRequest
         {
@@ -158,6 +162,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         Assert.Equal(_tenantId, setting.TenantId);
         Assert.Equal("Cache:LyricsDays", setting.Key);
         Assert.Equal("45", setting.ValueJson);
+        Assert.False(await cache.ExistsAsync("lyrics:fixture"));
 
         var getResult = Assert.IsType<OkObjectResult>(await controller.GetConfig());
         using var config = JsonDocument.Parse(JsonSerializer.Serialize(
@@ -420,7 +425,8 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         Dictionary<string, string?>? configValues = null,
         IHttpClientFactory? httpClientFactory = null,
         DurableProviderHealthStore? healthStore = null,
-        EncryptedSecretStore? secretStore = null)
+        EncryptedSecretStore? secretStore = null,
+        IApplicationCache? applicationCache = null)
     {
         var logger = new Mock<ILogger<ConfigController>>();
         configValues ??= new Dictionary<string, string?>();
@@ -434,7 +440,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         var contentRoot = Path.Combine(_root, "app");
         Directory.CreateDirectory(contentRoot);
         webHostEnvironment.SetupGet(e => e.ContentRootPath).Returns(contentRoot);
-        var applicationCache = new DisabledApplicationCache();
+        applicationCache ??= new DisabledApplicationCache();
         var spotifySessionCookieService = new SpotifySessionCookieService(
             Options.Create(new SpotifyApiSettings()));
         var providerStatusManager = new ProviderStatusManager(
