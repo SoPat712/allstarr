@@ -1,24 +1,26 @@
 <script lang="ts">
-  type Item = { id: string; label: string; href: string };
+  type Item = { id: string; label: string; href?: string; count?: number };
 
   let {
     items,
     active,
     label,
     class: className = "",
+    onchange,
   }: {
     items: readonly Item[];
     active: string;
     label: string;
     class?: string;
+    onchange?: (id: string) => void;
   } = $props();
 
   const activeIndex = $derived(Math.max(0, items.findIndex((item) => item.id === active)));
 
   function navigate(event: KeyboardEvent) {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-    const tabs = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLAnchorElement>('[role="tab"]')];
-    const current = tabs.indexOf(document.activeElement as HTMLAnchorElement);
+    const tabs = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('[role="tab"]')];
+    const current = tabs.indexOf(document.activeElement as HTMLElement);
     if (current < 0) return;
     event.preventDefault();
     const next = event.key === "Home"
@@ -41,12 +43,22 @@
   >
     <span class="segmented-tab-indicator" aria-hidden="true"></span>
     {#each items as item}
-      <a
-        href={item.href}
-        role="tab"
-        aria-selected={active === item.id}
-        tabindex={active === item.id ? 0 : -1}
-      >{item.label}</a>
+      {#if item.href}
+        <a
+          href={item.href}
+          role="tab"
+          aria-selected={active === item.id}
+          tabindex={active === item.id ? 0 : -1}
+        >{item.label}{#if item.count !== undefined}<span class="segmented-tab-count">{item.count}</span>{/if}</a>
+      {:else}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={active === item.id}
+          tabindex={active === item.id ? 0 : -1}
+          onclick={() => onchange?.(item.id)}
+        >{item.label}{#if item.count !== undefined}<span class="segmented-tab-count">{item.count}</span>{/if}</button>
+      {/if}
     {/each}
   </div>
 </nav>

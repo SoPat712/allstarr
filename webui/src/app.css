@@ -1646,19 +1646,31 @@
     transition: transform 160ms ease;
   }
 
-  .segmented-tabs a {
+  .segmented-tabs :is(a, button) {
     z-index: 1;
     display: grid;
+    grid-auto-flow: column;
+    gap: 0.4rem;
     min-height: 2.4rem;
     place-items: center;
+    border: 0;
+    background: transparent;
     color: var(--color-ink-muted);
     font-size: 0.72rem;
     font-weight: 750;
     text-decoration: none;
   }
 
-  .segmented-tabs a[aria-selected="true"] {
+  .segmented-tabs :is(a, button)[aria-selected="true"] {
     color: var(--color-signal);
+  }
+
+  .segmented-tab-count {
+    min-width: 1.25rem;
+    border-radius: 999px;
+    background: var(--color-panel-raised);
+    padding: 0.1rem 0.35rem;
+    font-size: 0.68rem;
   }
 
   .library-tabs {
@@ -4248,43 +4260,6 @@
     color: var(--text-muted);
   }
 
-  .extension-tabs {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 0.3rem;
-    padding: 0.3rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    background: var(--surface-muted);
-  }
-
-  .extension-tabs button {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.45rem;
-    min-height: 2.55rem;
-    border: 0;
-    border-radius: var(--radius-md);
-    background: transparent;
-    color: var(--text-muted);
-    font-weight: 650;
-  }
-
-  .extension-tabs button[aria-pressed="true"] {
-    background: var(--surface);
-    color: var(--text);
-    box-shadow: var(--shadow-sm);
-  }
-
-  .extension-tabs button span {
-    min-width: 1.25rem;
-    padding: 0.1rem 0.35rem;
-    border-radius: 999px;
-    background: var(--surface-strong);
-    font-size: 0.68rem;
-  }
-
   .extension-list {
     display: grid;
     gap: 0.65rem;
@@ -4560,12 +4535,6 @@
   .extension-header button,
   .extension-catalog > header input {
     width: 100%;
-  }
-
-  .extension-tabs button {
-    min-width: 0;
-    padding: 0.55rem 0.2rem;
-    font-size: 0.64rem;
   }
 
   .extension-row {

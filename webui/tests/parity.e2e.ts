@@ -600,6 +600,11 @@ test("Segmented navigation and match tabs support arrow keys", async ({ page }) 
   await dialog.getByRole("tab", { name: "Local library" }).focus();
   await page.keyboard.press("ArrowRight");
   await expect(dialog.getByRole("tab", { name: "Playable providers" })).toHaveAttribute("data-state", "active");
+
+  await page.goto("#/settings/extensions");
+  await page.getByRole("tab", { name: /Installed/ }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: /Available/ })).toHaveAttribute("aria-selected", "true");
 });
 
 test("Sidebar uses an edge expander and deterministic slim breakpoint", async ({ page }) => {

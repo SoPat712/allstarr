@@ -10,6 +10,7 @@
     type ExtensionStoreItem,
   } from "$lib/api";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import { availablePackages, currentPackages, valueChanges } from "$lib/extensions";
   import { humanize } from "$lib/sources";
 
@@ -39,6 +40,13 @@
   const installed = $derived(currentPackages(packages));
   const available = $derived(availablePackages(store, installed)
     .filter((item) => `${item.displayName} ${item.description ?? ""}`.toLowerCase().includes(search.toLowerCase())));
+  const extensionTabs = $derived(tabs.map((id) => ({
+    id,
+    label: humanize(id),
+    count: id === "installed" ? installed.length :
+      id === "available" ? available.length :
+        id === "registries" ? registries.length : undefined,
+  })));
   const permissionChanges = $derived(valueChanges(
     permissions.map((item) => `${item.permissionKind}:${item.permissionValue}`),
     previousPermissions.map((item) => `${item.permissionKind}:${item.permissionValue}`),
@@ -213,16 +221,13 @@
       <div><strong>Extension manager</strong><small>Verified packages, explicit permissions, and reversible lifecycle actions.</small></div>
       <button class="button-primary" type="button" onclick={() => { installOpen = true; }}>Install extension</button>
     </header>
-    <nav class="extension-tabs" aria-label="Extension views">
-      {#each tabs as id}
-        <button type="button" aria-pressed={tab === id} onclick={() => { tab = id; }}>
-          {humanize(id)}
-          {#if id === "installed"}<span>{installed.length}</span>
-          {:else if id === "available"}<span>{available.length}</span>
-          {:else if id === "registries"}<span>{registries.length}</span>{/if}
-        </button>
-      {/each}
-    </nav>
+    <SegmentedNav
+      items={extensionTabs}
+      active={tab}
+      label="Extension views"
+      class="extension-tabs"
+      onchange={(id) => { tab = id as typeof tab; }}
+    />
     {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
 
     {#if tab === "installed"}
