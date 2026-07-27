@@ -183,6 +183,9 @@ public sealed class ComposeContractTests
 
         Assert.Contains("sdk:10.0.301@sha256:", dockerfile, StringComparison.Ordinal);
         Assert.Contains("aspnet:10.0.9@sha256:", dockerfile, StringComparison.Ordinal);
+        Assert.Contains("node:22.23.1-alpine3.23@sha256:", dockerfile, StringComparison.Ordinal);
+        Assert.Contains("COPY webui/package.json webui/package-lock.json", dockerfile, StringComparison.Ordinal);
+        Assert.Contains("COPY --from=webui /src/webui/build ./wwwroot/next/", dockerfile, StringComparison.Ordinal);
         Assert.Contains("postgresql-client-18", dockerfile, StringComparison.Ordinal);
         Assert.Contains("/app/state/backups", dockerfile, StringComparison.Ordinal);
     }
@@ -193,6 +196,10 @@ public sealed class ComposeContractTests
         var workflow = File.ReadAllText(Path.Combine(_repositoryRoot, ".github", "workflows", "ci.yml"));
 
         Assert.Contains("DOTNET_VERSION: \"10.0.301\"", workflow, StringComparison.Ordinal);
+        Assert.Contains("NODE_VERSION: \"22.23.1\"", workflow, StringComparison.Ordinal);
+        Assert.Contains("working-directory: webui", workflow, StringComparison.Ordinal);
+        Assert.Contains("npm run check", workflow, StringComparison.Ordinal);
+        Assert.Contains("npm run build", workflow, StringComparison.Ordinal);
         Assert.Contains("dotnet format allstarr.sln --no-restore --verify-no-changes --verbosity minimal", workflow, StringComparison.Ordinal);
         Assert.Contains("dotnet test --configuration Release --no-build", workflow, StringComparison.Ordinal);
         Assert.Contains("docker compose -f docker-compose.yml config --quiet", workflow, StringComparison.Ordinal);

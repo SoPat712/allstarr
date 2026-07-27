@@ -41,7 +41,26 @@ public class AdminStaticFilesMiddleware
                 return;
             }
 
-            // Serve index.html for root path
+            // Keep the replacement SPA opt-in until route parity and cutover.
+            if (path == "/next")
+            {
+                context.Response.Redirect("/next/", permanent: true, preserveMethod: true);
+                return;
+            }
+
+            if (path == "/next/")
+            {
+                var nextIndexPath = Path.Combine(_webRootPath, "next", "index.html");
+                if (File.Exists(nextIndexPath))
+                {
+                    SetRevalidationHeaders(context.Response);
+                    context.Response.ContentType = "text/html";
+                    await context.Response.SendFileAsync(nextIndexPath);
+                    return;
+                }
+            }
+
+            // Serve the current application for the root path.
             if (path == "/" || path == "/index.html")
             {
                 var indexPath = Path.Combine(_webRootPath, "index.html");
@@ -64,7 +83,14 @@ public class AdminStaticFilesMiddleware
 
             if (File.Exists(candidatePath))
             {
-                SetRevalidationHeaders(context.Response);
+                if (path.StartsWith("/next/_app/immutable/", StringComparison.Ordinal))
+                {
+                    context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+                }
+                else
+                {
+                    SetRevalidationHeaders(context.Response);
+                }
                 var contentType = GetContentType(candidatePath);
                 context.Response.ContentType = contentType;
                 await context.Response.SendFileAsync(candidatePath);

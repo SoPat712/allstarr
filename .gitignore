@@ -115,3 +115,6 @@ sampleMissingPlaylists/
 
 # Development-only WebUI tooling
 /node_modules/
+/webui/node_modules/
+/webui/.svelte-kit/
+/webui/build/

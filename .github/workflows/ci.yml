@@ -13,6 +13,7 @@ concurrency:
 
 env:
   DOTNET_VERSION: "10.0.301"
+  NODE_VERSION: "22.23.1"
   ALLSTARR_TEST_POSTGRES: "Host=127.0.0.1;Port=5432;Database=allstarr_test;Username=allstarr;Password=ci-postgres-password;SSL Mode=Disable"
 
 jobs:
@@ -42,6 +43,15 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            webui/package-lock.json
+
       - name: Install PostgreSQL 18 client
         shell: bash
         run: |
@@ -70,7 +80,11 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore -p:NuGetAudit=true
 
-      - name: Restore WebUI tooling
+      - name: Restore legacy WebUI tooling
+        run: npm ci
+
+      - name: Restore Svelte WebUI
+        working-directory: webui
         run: npm ci
 
       - name: Verify C# formatting and analyzers
@@ -79,8 +93,14 @@ jobs:
       - name: Build
         run: dotnet build --configuration Release --no-restore -p:TreatWarningsAsErrors=true
 
-      - name: Verify WebUI contracts
+      - name: Verify legacy WebUI contracts
         run: npm run check:webui
+
+      - name: Verify Svelte WebUI
+        working-directory: webui
+        run: |
+          npm run check
+          npm run build
 
       - name: Test
         run: dotnet test --configuration Release --no-build --verbosity normal

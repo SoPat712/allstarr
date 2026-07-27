@@ -1,5 +1,16 @@
 ARG ALLSTARR_VERSION=development
 
+# Replacement WebUI build stage
+FROM node:22.23.1-alpine3.23@sha256:8516dce0483394d5708d4b2ee6cacb79fb1d617ea4e2787c2120bcca92ce372e AS webui
+WORKDIR /src/webui
+
+COPY webui/package.json webui/package-lock.json ./
+RUN npm ci
+
+COPY webui/ ./
+COPY allstarr/AppVersion.cs /src/allstarr/AppVersion.cs
+RUN npm run build
+
 # Build stage
 FROM mcr.microsoft.com/dotnet/sdk:10.0.301@sha256:ea8bde36c11b6e7eec2656d0e59101d4462f6bd630730f2c8201ed0572b295d5 AS build
 WORKDIR /src
@@ -46,6 +57,7 @@ RUN apt-get update \
 RUN install -d /app/downloads /app/kept /app/cache /app/state/backups
 
 COPY --from=build /app/publish .
+COPY --from=webui /src/webui/build ./wwwroot/next/
 
 # Program.cs owns both listeners. Clear the base image's default HTTP_PORTS value
 # so Kestrel does not report a duplicate address override during every startup.
