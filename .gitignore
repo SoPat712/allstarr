@@ -118,3 +118,5 @@ sampleMissingPlaylists/
 /webui/node_modules/
 /webui/.svelte-kit/
 /webui/build/
+/webui/playwright-report/
+/webui/test-results/
