@@ -2343,17 +2343,15 @@
   }
 
   .mapping-metrics .metric-card {
-    display: flex;
-    min-height: 4.25rem;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
+    display: grid;
+    min-height: 5rem;
+    grid-template-rows: minmax(2.2rem, auto) 1fr;
     border: 1px solid var(--color-edge);
     border-radius: 0.75rem;
     background: transparent;
     color: inherit;
     cursor: pointer;
-    padding: 0.65rem 0.85rem;
+    padding: 0;
     text-align: left;
     transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
   }
@@ -2376,15 +2374,23 @@
   }
 
   .mapping-metrics .metric-card > span {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid var(--color-edge);
     color: var(--color-ink-muted);
     font-size: 0.65rem;
     font-weight: 750;
+    padding: 0.45rem 0.7rem;
     text-transform: uppercase;
   }
 
   .mapping-metrics .metric-card strong {
+    display: grid;
+    place-items: center;
     font-family: var(--font-display);
-    font-size: 1.2rem;
+    font-size: 1.3rem;
+    padding: 0.45rem 0.7rem;
+    text-align: center;
   }
 
   .mapping-queue {
