@@ -56,6 +56,7 @@ public static class TrackClassifier
                     TrackMatchState.Pinned => decision.LibraryTrackId,
                     TrackMatchState.Accepted when decision.Confidence >= decision.Threshold =>
                         decision.LibraryTrackId,
+                    TrackMatchState.Suggested => decision.LibraryTrackId,
                     _ => null
                 };
         if (libraryTrackId.HasValue &&

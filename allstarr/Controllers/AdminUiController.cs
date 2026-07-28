@@ -254,7 +254,9 @@ public class AdminUiController : ControllerBase
         var playlistSnapshots = playlistLinkIds.Length == 0
             ? new Dictionary<Guid, PlaylistSourceSnapshotRecord>()
             : (await context.PlaylistSourceSnapshots.AsNoTracking()
-                .Where(item => playlistLinkIds.Contains(item.PlaylistLinkId))
+                .Where(item =>
+                    playlistLinkIds.Contains(item.PlaylistLinkId) &&
+                    item.PublishedAt.HasValue)
                 .GroupBy(item => item.PlaylistLinkId)
                 .Select(group => group.OrderByDescending(item => item.SnapshotVersion)
                     .ThenByDescending(item => item.RetrievedAt).First())

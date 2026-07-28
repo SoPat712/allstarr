@@ -431,7 +431,7 @@ public sealed class TrackMatchesController(
         var fetchLimit = provider.Length == 0
             ? limit
             : Math.Min(200, limit * playableProviders.Length);
-        var songs = (await providerGateway.SearchAsync(execution, query, fetchLimit, 0, 0)).Songs
+        var songs = (await providerGateway.SearchPlayableSongsAsync(execution, query, fetchLimit))
             .Where(song => !string.IsNullOrWhiteSpace(song.ExternalProvider) &&
                            playableProviders.Contains(song.ExternalProvider, StringComparer.OrdinalIgnoreCase) &&
                            (provider.Length == 0 ||

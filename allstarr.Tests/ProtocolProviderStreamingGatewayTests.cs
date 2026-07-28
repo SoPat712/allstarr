@@ -12,6 +12,54 @@ namespace allstarr.Tests;
 public sealed class ProtocolProviderStreamingGatewayTests
 {
     [Fact]
+    public async Task PlayableSearch_OnlyQueriesTracksAndIsolatesProviderFailures()
+    {
+        var failing = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        failing.SetupGet(item => item.ProviderId).Returns("apple-download");
+        failing.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        failing.Setup(item => item.SearchTracksAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderMetadataSearchRequest>(request => request.Query == "Track Artist")))
+            .ThrowsAsync(new HttpRequestException("unavailable"));
+        var healthy = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        healthy.SetupGet(item => item.ProviderId).Returns("deezer");
+        healthy.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        healthy.Setup(item => item.SearchTracksAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderMetadataSearchRequest>(request => request.Query == "Track Artist")))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new(
+                "deezer",
+                [new ProviderTrackMetadata(
+                    new("deezer", ProviderResourceKind.Track, "track-1"),
+                    "Track",
+                    [new("Artist")])])));
+        var registry = MetadataRegistry(failing.Object, healthy.Object);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(
+                It.Is<ProviderRouteRequest>(request =>
+                    request.Capability == ProviderCapabilityKind.Metadata &&
+                    request.ProviderPriority.SequenceEqual(new[] { "apple-download", "deezer" }))))
+            .ReturnsAsync((ProviderRouteRequest request) =>
+                MetadataPlan(request, registry, failing.Object, healthy.Object));
+        var legacy = new Mock<IMusicMetadataService>();
+        legacy.Setup(item => item.SearchPlayableSongsAsync(
+                "Track Artist", 10, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        var gateway = new ProtocolProviderGateway(
+            router.Object,
+            registry,
+            Mock.Of<IProviderRouteAccountResolver>(),
+            legacy.Object,
+            new HttpClientFactory());
+
+        var songs = await gateway.SearchPlayableSongsAsync(Context(), "Track Artist", 10);
+
+        Assert.Equal("track-1", Assert.Single(songs).ExternalId);
+        failing.VerifyAll();
+        healthy.VerifyAll();
+    }
+
+    [Fact]
     public async Task OpenStream_UsesVerifiedRouterFallback()
     {
         var first = Capability("deezer", ProviderOutcome<ProviderStreamLease>.Failure(
@@ -94,6 +142,31 @@ public sealed class ProtocolProviderStreamingGatewayTests
                 [capability]);
         }));
 
+    private static ProviderRegistry MetadataRegistry(params IProviderMetadataCapability[] capabilities) => new(
+        capabilities.Select(capability => new ProviderRegistration(
+            new ProviderDescriptor(
+                capability.ProviderId,
+                capability.ProviderId,
+                "Test provider",
+                ProviderOrigin.BuiltIn,
+                "1",
+                "1.0",
+                [
+                    new ProviderCapabilityDescriptor(
+                        ProviderCapabilityKind.Metadata,
+                        ProviderCapabilitySupportState.Supported,
+                        ProviderAccountRequirement.None,
+                        "1.0",
+                        ["searchTracks", "getTrack"]),
+                    new ProviderCapabilityDescriptor(
+                        ProviderCapabilityKind.Streaming,
+                        ProviderCapabilitySupportState.ConfiguredOnly,
+                        ProviderAccountRequirement.None,
+                        "1.0")
+                ],
+                new ProviderPermissionDescriptor()),
+            [capability])));
+
     private static ProviderRoutePlan<IProviderStreamingCapability> Plan(
         ProviderRouteRequest request,
         IProviderRegistry registry,
@@ -133,6 +206,48 @@ public sealed class ProtocolProviderStreamingGatewayTests
                 candidates.Select(item => new ProviderRouteCandidateDecision(
                     item.Provider.Id, null, ProviderRouteDecisionStatus.Accepted,
                     item.Priority == 0 ? "selected" : "eligible-fallback", item.Priority)).ToArray()));
+    }
+
+    private static ProviderRoutePlan<IProviderMetadataCapability> MetadataPlan(
+        ProviderRouteRequest request,
+        IProviderRegistry registry,
+        params IProviderMetadataCapability[] capabilities)
+    {
+        var candidates = capabilities.Select((capability, index) =>
+        {
+            var provider = registry.GetRequired(capability.ProviderId);
+            return new ProviderRouteCandidate<IProviderMetadataCapability>(
+                index,
+                provider,
+                provider.Capabilities.Single(item =>
+                    item.Capability == ProviderCapabilityKind.Metadata),
+                capability,
+                new ProviderExecutionContext(
+                    request.Actor,
+                    capability.ProviderId,
+                    null,
+                    request.Library,
+                    request.Policy,
+                    request.OperationId,
+                    request.CorrelationId,
+                    request.Deadline,
+                    request.CancellationToken),
+                null);
+        }).ToArray();
+        return new ProviderRoutePlan<IProviderMetadataCapability>(
+            request,
+            candidates,
+            new ProviderRouteDecisionRecord(
+                request.CorrelationId,
+                ProviderCapabilityKind.Metadata,
+                candidates[0].Provider.Id,
+                null,
+                candidates.Select(item => new ProviderRouteCandidateDecision(
+                    item.Provider.Id,
+                    null,
+                    ProviderRouteDecisionStatus.Accepted,
+                    item.Priority == 0 ? "selected" : "eligible-fallback",
+                    item.Priority)).ToArray()));
     }
 
     private static ProtocolExecutionContext Context()

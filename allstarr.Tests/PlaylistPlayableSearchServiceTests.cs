@@ -4,7 +4,6 @@ using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
-using allstarr.Models.Search;
 using allstarr.Models.Settings;
 using allstarr.Services.Spotify;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -25,11 +24,9 @@ public sealed class PlaylistPlayableSearchServiceTests
             .Returns(["apple-download", "deezer"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["apple-download", "deezer"]);
-        gateway.Setup(item => item.SearchAsync(
-                It.IsAny<ProtocolExecutionContext>(), "Feels Calvin Harris", 60, 1, 1))
-            .ReturnsAsync(new SearchResult
-            {
-                Songs =
+        gateway.Setup(item => item.SearchPlayableSongsAsync(
+                It.IsAny<ProtocolExecutionContext>(), "Feels Calvin Harris", 60))
+            .ReturnsAsync(
                 [
                     new Song
                     {
@@ -49,8 +46,7 @@ public sealed class PlaylistPlayableSearchServiceTests
                         Album = "Funk Wav Bounces Vol. 1",
                         Duration = 223
                     }
-                ]
-            });
+                ]);
         var service = new PlaylistPlayableSearchService(
             gateway.Object,
             new TrackMatchDecisionEngine(),
@@ -74,25 +70,28 @@ public sealed class PlaylistPlayableSearchServiceTests
 
         Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
         Assert.Equal("best", result.SelectedExternal!.ExternalId);
-        Assert.Equal(2, result.AcceptedExternalCandidates.Count);
+        Assert.Equal(2, result.RoutableExternalCandidates.Count);
     }
 
     [Fact]
-    public async Task Verified_route_gets_one_availability_check_and_no_search()
+    public async Task Cached_routes_try_the_next_provider_before_searching_again()
     {
         var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
-            .Returns(["apple-download"]);
+            .Returns(["apple-download", "deezer"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
-            .Returns(["apple-download"]);
+            .Returns(["apple-download", "deezer"]);
         gateway.Setup(item => item.GetSongAsync(
                 It.IsAny<ProtocolExecutionContext>(), "applemusic", "cached-track"))
+            .ReturnsAsync((Song?)null);
+        gateway.Setup(item => item.GetSongAsync(
+                It.IsAny<ProtocolExecutionContext>(), "deezer", "fallback-track"))
             .ReturnsAsync(new Song
             {
-                ExternalProvider = "apple-download",
-                ExternalId = "cached-track",
+                ExternalProvider = "deezer",
+                ExternalId = "fallback-track",
                 Title = "Hit 'Em Up",
                 Artist = "2Pac, Outlawz",
                 Album = "Greatest Hits",
@@ -125,18 +124,28 @@ public sealed class PlaylistPlayableSearchServiceTests
                     ResourceKind = ProviderResourceKind.Track,
                     ExternalId = "cached-track",
                     Verification = ProviderIdentityVerification.Verified
+                },
+                new ProviderTrackIdentityRecord
+                {
+                    TenantId = tenant,
+                    CanonicalRecordingId = canonical,
+                    ProviderId = "deezer",
+                    ResourceKind = ProviderResourceKind.Track,
+                    ExternalId = "fallback-track",
+                    Verification = ProviderIdentityVerification.Verified
                 }
             ],
             CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
-        Assert.Equal("cached-track", result.SelectedExternal!.ExternalId);
+        Assert.Equal("fallback-track", result.SelectedExternal!.ExternalId);
         gateway.Verify(item => item.GetSongAsync(
             It.IsAny<ProtocolExecutionContext>(), "applemusic", "cached-track"), Times.Once);
-        gateway.Verify(item => item.SearchAsync(
-            It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(),
-            It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+        gateway.Verify(item => item.GetSongAsync(
+            It.IsAny<ProtocolExecutionContext>(), "deezer", "fallback-track"), Times.Once);
+        gateway.Verify(item => item.SearchPlayableSongsAsync(
+            It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>()), Times.Never);
     }
 
     [Fact]
@@ -149,11 +158,9 @@ public sealed class PlaylistPlayableSearchServiceTests
             .Returns(["apple-download"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["apple-download"]);
-        gateway.Setup(item => item.SearchAsync(
-                It.IsAny<ProtocolExecutionContext>(), "Feels Calvin Harris", 60, 1, 1))
-            .ReturnsAsync(new SearchResult
-            {
-                Songs =
+        gateway.Setup(item => item.SearchPlayableSongsAsync(
+                It.IsAny<ProtocolExecutionContext>(), "Feels Calvin Harris", 60))
+            .ReturnsAsync(
                 [
                     new Song
                     {
@@ -164,8 +171,7 @@ public sealed class PlaylistPlayableSearchServiceTests
                         Album = "Funk Wav Bounces Vol. 1",
                         Duration = 223
                     }
-                ]
-            });
+                ]);
         var service = new PlaylistPlayableSearchService(
             gateway.Object,
             new TrackMatchDecisionEngine(),
@@ -185,7 +191,7 @@ public sealed class PlaylistPlayableSearchServiceTests
             null,
             CancellationToken.None);
 
-        Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
+        Assert.Equal(TrackMatchReviewState.Suggested, result.Decision.State);
         Assert.InRange(
             result.Decision.Confidence,
             result.Decision.SuggestThreshold,

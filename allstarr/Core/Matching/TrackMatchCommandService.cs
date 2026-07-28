@@ -1369,8 +1369,6 @@ public sealed class TrackMatchCommandService(
                             item.ProviderAccountId == snapshot.ProviderAccountId))
             .OrderByDescending(item => item.ProviderAccountId == snapshot.ProviderAccountId)
             .FirstOrDefaultAsync(cancellationToken);
-        if (source != null && !snapshot.ProviderTrackIdentityId.HasValue)
-            snapshot.ProviderTrackIdentityId = source.Id;
         var candidates = await db.LibraryTracks.AsNoTracking()
             .Where(item =>
                 item.TenantId == actor.TenantId &&
@@ -1460,13 +1458,13 @@ public sealed class TrackMatchCommandService(
         var selected = decision.SelectedLibraryTrackId.HasValue
             ? candidates.SingleOrDefault(item => item.Id == decision.SelectedLibraryTrackId.Value)
             : null;
-        var externalAccepted =
-            decision.State == TrackMatchReviewState.Accepted &&
+        var externalRoutable =
+            (decision.State is TrackMatchReviewState.Accepted or TrackMatchReviewState.Suggested) &&
             playable != null &&
             selected == null;
-        var selectedExternal = externalAccepted ? playable!.SelectedExternal : null;
+        var selectedExternal = externalRoutable ? playable!.SelectedExternal : null;
         Guid? canonicalRecordingId = selected?.CanonicalRecordingId ?? source?.CanonicalRecordingId;
-        if (externalAccepted && selectedExternal != null)
+        if (externalRoutable && selectedExternal != null)
         {
             if (source == null)
             {
@@ -1487,12 +1485,13 @@ public sealed class TrackMatchCommandService(
                 db,
                 source,
                 selectedExternal,
-                playable!.AcceptedExternalCandidates,
+                playable!.RoutableExternalCandidates,
+                decision.State,
                 latestVersion + 1,
                 clock.UtcNow,
                 cancellationToken);
         }
-        var input = externalAccepted && canonicalRecordingId.HasValue
+        var input = externalRoutable && canonicalRecordingId.HasValue
             ? MatchDecisionInput.FromExternalDecision(
                 snapshot.Id,
                 canonicalRecordingId.Value,
@@ -1547,19 +1546,25 @@ public sealed class TrackMatchCommandService(
         AllstarrDbContext db,
         ProviderTrackIdentityRecord source,
         Song selected,
-        IReadOnlyList<Song> accepted,
+        IReadOnlyList<Song> routable,
+        TrackMatchReviewState state,
         int decisionVersion,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
+        var verificationMethod = state == TrackMatchReviewState.Suggested
+            ? "automatic-suggestion"
+            : "automatic-match";
         var canonicalRecordingId = await LinkExternalIdentityAsync(
-            db, source, selected, source.CanonicalRecordingId, true, decisionVersion, now, cancellationToken);
-        foreach (var alternate in accepted.Where(song =>
+            db, source, selected, source.CanonicalRecordingId, true, verificationMethod,
+            decisionVersion, now, cancellationToken);
+        foreach (var alternate in routable.Where(song =>
                      !string.Equals(song.ExternalProvider, selected.ExternalProvider, StringComparison.OrdinalIgnoreCase) ||
                      !string.Equals(song.ExternalId, selected.ExternalId, StringComparison.Ordinal)))
         {
             await LinkExternalIdentityAsync(
-                db, source, alternate, canonicalRecordingId, false, decisionVersion, now, cancellationToken);
+                db, source, alternate, canonicalRecordingId, false, verificationMethod,
+                decisionVersion, now, cancellationToken);
         }
         return canonicalRecordingId;
     }
@@ -1570,6 +1575,7 @@ public sealed class TrackMatchCommandService(
         Song song,
         Guid canonicalRecordingId,
         bool primary,
+        string verificationMethod,
         int decisionVersion,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -1598,6 +1604,14 @@ public sealed class TrackMatchCommandService(
                 source.CanonicalRecordingId = canonicalRecordingId;
                 source.UpdatedAt = now;
             }
+            if (verificationMethod == "automatic-match" &&
+                identity.VerificationMethod == "automatic-suggestion")
+            {
+                identity.VerificationMethod = verificationMethod;
+                identity.DecisionVersion = decisionVersion;
+                identity.VerifiedAt = now;
+                identity.UpdatedAt = now;
+            }
             return canonicalRecordingId;
         }
 
@@ -1613,7 +1627,7 @@ public sealed class TrackMatchCommandService(
             ExternalId = externalId,
             ExternalIdHash = externalHash,
             Verification = ProviderIdentityVerification.Verified,
-            VerificationMethod = "automatic-match",
+            VerificationMethod = verificationMethod,
             DecisionVersion = decisionVersion,
             VerifiedAt = now,
             CreatedAt = now,
@@ -1944,7 +1958,6 @@ public sealed class TrackMatchCommandService(
             UpdatedAt = now
         };
         db.ProviderTrackIdentities.Add(identity);
-        snapshot.ProviderTrackIdentityId = identity.Id;
         return identity;
     }
 
@@ -1969,11 +1982,13 @@ public sealed class TrackMatchCommandService(
         PersistenceGuard.ValidateSafeJson(input.CandidateResultsJson, nameof(input.CandidateResultsJson));
         PersistenceGuard.ValidateSafeJson(input.ReasonsJson, nameof(input.ReasonsJson));
         PersistenceGuard.ValidateSafeJson(input.WarningsJson, nameof(input.WarningsJson));
-        if (input.State is TrackMatchState.Accepted or TrackMatchState.Pinned &&
+        if (input.State is TrackMatchState.Accepted or TrackMatchState.Suggested &&
                 !input.LibraryTrackId.HasValue &&
                 !input.CanonicalRecordingId.HasValue ||
-            input.State is TrackMatchState.Unresolved or TrackMatchState.Suggested or
-                TrackMatchState.Rejected or TrackMatchState.Ambiguous &&
+            input.State == TrackMatchState.Pinned &&
+                !input.LibraryTrackId.HasValue ||
+            input.State is TrackMatchState.Unresolved or TrackMatchState.Rejected or
+                TrackMatchState.Ambiguous &&
                 input.LibraryTrackId.HasValue)
             throw new ArgumentException(
                 "The selected library track does not match the decision state.",

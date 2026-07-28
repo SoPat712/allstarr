@@ -47,8 +47,7 @@ public sealed class PlaylistPlayableSearchService(
             $"playlist-match-{Guid.NewGuid():N}",
             DateTimeOffset.UtcNow.AddSeconds(30),
             cancellationToken);
-        var result = await gateway.SearchAsync(context, query, limit, 1, 1);
-        return result.Songs
+        return (await gateway.SearchPlayableSongsAsync(context, query, limit))
             .Where(IsPlayable)
             .Take(limit)
             .ToList();
@@ -64,7 +63,7 @@ public sealed class PlaylistPlayableSearchService(
     {
         var query = string.Join(' ', new[] { source.Title, source.Artist }
             .Where(value => !string.IsNullOrWhiteSpace(value)));
-        var songs = (await gateway.SearchAsync(context, query, 60, 1, 1)).Songs
+        var songs = (await gateway.SearchPlayableSongsAsync(context, query, 60))
             .Where(IsPlayable)
             .Where(song => !string.IsNullOrWhiteSpace(song.ExternalProvider) &&
                            !string.IsNullOrWhiteSpace(song.ExternalId))
@@ -80,21 +79,6 @@ public sealed class PlaylistPlayableSearchService(
             .Concat(groups.Select(group => ToCandidate(group[0], scope)))
             .ToArray();
         var decision = matcher.Decide(scope, source, candidates, manualOverride);
-        if (decision.State == TrackMatchReviewState.Suggested)
-        {
-            var selected = decision.Candidates[0];
-            decision = decision with
-            {
-                State = TrackMatchReviewState.Accepted,
-                SelectedLibraryTrackId = selected.LibraryTrackId,
-                SelectedBackendItemId = selected.BackendItemId,
-                Warnings = decision.Warnings
-                    .Append("below_accept_threshold_review")
-                    .Distinct(StringComparer.Ordinal)
-                    .ToArray(),
-                RequiresReview = true
-            };
-        }
         return new(
             decision,
             external,
@@ -117,48 +101,62 @@ public sealed class PlaylistPlayableSearchService(
                 Index: index))
             .GroupBy(item => item.Provider, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Min(item => item.Index), StringComparer.Ordinal);
-        var cached = identities
+        var cachedRoutes = identities
             .Where(identity => order.ContainsKey(
                 ExternalTrackPlaybackPolicy.Normalize(identity.ProviderId)))
             .OrderBy(identity => order[ExternalTrackPlaybackPolicy.Normalize(identity.ProviderId)])
             .ThenByDescending(identity => identity.Verification == ProviderIdentityVerification.Pinned)
-            .FirstOrDefault();
-        if (cached == null) return null;
-
-        Song? song;
-        try
-        {
-            song = await gateway.GetSongAsync(context, cached.ProviderId, cached.ExternalId);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            logger.LogInformation(
-                "Cached {Provider} track {TrackId} is unavailable; searching providers again",
-                cached.ProviderId,
-                cached.ExternalId);
-            return null;
-        }
-        if (song == null) return null;
-
-        var candidate = ToCandidate(song, scope);
-        var score = matcher.ScoreCandidates(source, [candidate]).Single();
-        var reasons = score.Reasons
-            .Prepend("verified_provider_identity")
-            .Distinct(StringComparer.Ordinal)
             .ToArray();
-        return new(
-            new TrackMatchDecision(
-                TrackMatchReviewState.Accepted,
-                candidate.LibraryTrackId,
-                candidate.BackendItemId,
-                1,
-                [score with { Confidence = 1, Reasons = reasons }],
-                reasons,
-                [],
-                scope.PolicyVersion,
-                scope.SourceSnapshotVersion),
-            new Dictionary<Guid, Song> { [candidate.LibraryTrackId] = song },
-            new Dictionary<Guid, IReadOnlyList<Song>> { [candidate.LibraryTrackId] = [song] });
+        foreach (var cached in cachedRoutes)
+        {
+            Song? song;
+            try
+            {
+                song = await gateway.GetSongAsync(context, cached.ProviderId, cached.ExternalId);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger.LogInformation(
+                    "Cached {Provider} track {TrackId} is unavailable; trying the next route",
+                    cached.ProviderId,
+                    cached.ExternalId);
+                continue;
+            }
+            if (song == null) continue;
+
+            var candidate = ToCandidate(song, scope);
+            if (cached.VerificationMethod == "automatic-suggestion")
+            {
+                var suggested = matcher.Decide(scope, source, [candidate], null);
+                if (suggested.State is not (
+                        TrackMatchReviewState.Accepted or TrackMatchReviewState.Suggested))
+                    continue;
+                return new(
+                    suggested,
+                    new Dictionary<Guid, Song> { [candidate.LibraryTrackId] = song },
+                    new Dictionary<Guid, IReadOnlyList<Song>> { [candidate.LibraryTrackId] = [song] });
+            }
+
+            var score = matcher.ScoreCandidates(source, [candidate]).Single();
+            var reasons = score.Reasons
+                .Prepend("verified_provider_identity")
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            return new(
+                new TrackMatchDecision(
+                    TrackMatchReviewState.Accepted,
+                    candidate.LibraryTrackId,
+                    candidate.BackendItemId,
+                    1,
+                    [score with { Confidence = 1, Reasons = reasons }],
+                    reasons,
+                    [],
+                    scope.PolicyVersion,
+                    scope.SourceSnapshotVersion),
+                new Dictionary<Guid, Song> { [candidate.LibraryTrackId] = song },
+                new Dictionary<Guid, IReadOnlyList<Song>> { [candidate.LibraryTrackId] = [song] });
+        }
+        return null;
     }
 
     private bool IsPlayable(Song song)
@@ -290,12 +288,9 @@ public sealed record PlayableTrackMatch(
             ? ExternalCandidates.GetValueOrDefault(id)
             : null;
 
-    public IReadOnlyList<Song> AcceptedExternalCandidates =>
-        Decision.State == TrackMatchReviewState.Accepted
-            ? Decision.Candidates
-                .Where(candidate => candidate.Confidence >= Decision.SuggestThreshold)
-                .SelectMany(candidate =>
-                    EquivalentExternalCandidates.GetValueOrDefault(candidate.LibraryTrackId) ?? [])
-                .ToArray()
+    public IReadOnlyList<Song> RoutableExternalCandidates =>
+        (Decision.State is TrackMatchReviewState.Accepted or TrackMatchReviewState.Suggested) &&
+        Decision.SelectedLibraryTrackId is { } id
+            ? EquivalentExternalCandidates.GetValueOrDefault(id) ?? []
             : [];
 }

@@ -132,7 +132,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "normalized-v6";
+    public const string AlgorithmVersion = "normalized-v7";
 
     private readonly TrackMatchPolicy _policy;
 
@@ -213,7 +213,10 @@ public sealed class TrackMatchDecisionEngine
     }
 
     private static double PreferenceScore(TrackMatchCandidateScore score) =>
-        score.Components?.GetValueOrDefault("preferenceScore") ?? score.Confidence;
+        score.Components != null &&
+        score.Components.TryGetValue("preferenceScore", out var preferenceScore)
+            ? preferenceScore
+            : score.Confidence;
 
     public TrackMatchDecision Decide(
         TrackMatchScope scope,
@@ -315,11 +318,18 @@ public sealed class TrackMatchDecisionEngine
                 : TrackMatchReviewState.Unresolved;
         return Result(
             state,
-            state == TrackMatchReviewState.Accepted ? selected : null,
+            state is TrackMatchReviewState.Accepted or TrackMatchReviewState.Suggested
+                ? selected
+                : null,
             best.Confidence,
             scores,
             best.Reasons,
-            state == TrackMatchReviewState.Unresolved ? ["below_suggestion_threshold"] : [],
+            state switch
+            {
+                TrackMatchReviewState.Suggested => ["below_accept_threshold_review"],
+                TrackMatchReviewState.Unresolved => ["below_suggestion_threshold"],
+                _ => []
+            },
             scope);
     }
 

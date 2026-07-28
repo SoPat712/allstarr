@@ -232,6 +232,9 @@ public sealed class Phase4DurableModelTests
 
         var accepted = await context.TrackMatches.SingleAsync();
         accepted.State = TrackMatchState.Suggested;
+        await context.SaveChangesAsync();
+        Assert.Equal(TrackMatchState.Suggested, accepted.State);
+        accepted.State = TrackMatchState.Unresolved;
         await Assert.ThrowsAsync<DbUpdateException>(() => context.SaveChangesAsync());
         context.Entry(accepted).Reload();
 

@@ -778,11 +778,14 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var rematchedExternal = false;
         if (_trackMatches.SupportsExternalMatching)
         {
-            foreach (var stored in storedByExternalId.Values.Where(item =>
-                         item.State is TrackMatchState.Unresolved or
-                             TrackMatchState.Suggested or
-                             TrackMatchState.Ambiguous))
+            var pendingExternal = storedByExternalId.Values.Where(item =>
+                    item.State is TrackMatchState.Unresolved or
+                        TrackMatchState.Suggested or
+                        TrackMatchState.Ambiguous)
+                .ToArray();
+            foreach (var stored in pendingExternal)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (allManualOverrides.TryGetValue(stored.ExternalSnapshotId, out var manual) &&
                     (manual.Decision == ManualOverrideDecision.Pin ||
                      manual.Decision == ManualOverrideDecision.Reject && !manual.LibraryTrackId.HasValue))
@@ -793,7 +796,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     execution.CorrelationId,
                     link.PolicyVersion,
                     cancellationToken);
-                rematchedExternal |= rematch.Succeeded;
+                if (rematch.Succeeded)
+                    rematchedExternal = true;
             }
         }
         if (rematchedExternal)

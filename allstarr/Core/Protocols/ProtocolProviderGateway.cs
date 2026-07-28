@@ -25,6 +25,11 @@ public interface IProtocolProviderGateway
         int albumLimit,
         int artistLimit);
 
+    Task<IReadOnlyList<Song>> SearchPlayableSongsAsync(
+        ProtocolExecutionContext protocol,
+        string query,
+        int limit);
+
     Task<Song?> GetSongAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
 
     Task<Album?> GetAlbumAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
@@ -169,6 +174,83 @@ public sealed class ProtocolProviderGateway(
             Albums = Merge(routed.Albums, legacy.Albums.Where(item => Allowed(item.ExternalProvider, allowedCompatibilityProviders)), albumLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider),
             Artists = Merge(routed.Artists, legacy.Artists.Where(item => Allowed(item.ExternalProvider, allowedCompatibilityProviders)), artistLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider)
         };
+    }
+
+    public async Task<IReadOnlyList<Song>> SearchPlayableSongsAsync(
+        ProtocolExecutionContext protocol,
+        string query,
+        int limit)
+    {
+        ArgumentNullException.ThrowIfNull(protocol);
+        limit = Math.Clamp(limit, 1, 200);
+        var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Streaming)
+            .Concat(ResolveProviderOrder(ProviderCapabilityKind.Download))
+            .Select(NormalizeProvider)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (providerOrder.Length == 0) return [];
+
+        if (protocol.Actor is null)
+        {
+            var publicLegacy = await legacyMetadata.SearchPlayableSongsAsync(
+                query, limit, protocol.CancellationToken);
+            return publicLegacy
+                .Where(item => IsPublicMetadataProvider(item.ExternalProvider))
+                .Where(item => providerOrder.Contains(
+                    NormalizeProvider(item.ExternalProvider), StringComparer.Ordinal))
+                .Take(limit)
+                .ToArray();
+        }
+
+        var actor = protocol.RequireActor();
+        var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(
+            protocol,
+            actor,
+            ProviderCapabilityKind.Metadata,
+            "protocol-playable-track-search",
+            providerIds: providerOrder,
+            sourceTrackId: null));
+        using var searchGate = new SemaphoreSlim(ProviderSearchConcurrency);
+        var tasks = plan.Candidates.Select(async candidate =>
+        {
+            await searchGate.WaitAsync(protocol.CancellationToken);
+            try
+            {
+                return await candidate.Implementation.SearchTracksAsync(
+                    candidate.Context,
+                    new ProviderMetadataSearchRequest(query, new ProviderPageRequest(limit)));
+            }
+            catch (OperationCanceledException) when (protocol.CancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                return null;
+            }
+            finally
+            {
+                searchGate.Release();
+            }
+        });
+        var routed = (await Task.WhenAll(tasks))
+            .Where(outcome => outcome?.IsSuccess == true)
+            .SelectMany(outcome => outcome!.RequireValue().Items)
+            .Select(Map);
+        var legacy = await legacyMetadata.SearchPlayableSongsAsync(
+            query, limit, protocol.CancellationToken);
+        var allowedCompatibilityProviders = await ResolveAllowedCompatibilityProvidersAsync(
+            protocol, actor);
+        return Merge(
+            routed,
+            legacy.Where(item =>
+                Allowed(item.ExternalProvider, allowedCompatibilityProviders) &&
+                providerOrder.Contains(
+                    NormalizeProvider(item.ExternalProvider), StringComparer.Ordinal)),
+            limit,
+            item => Key(item.ExternalProvider, item.ExternalId, item.Id),
+            item => item.ExternalProvider,
+            providerOrder);
     }
 
     public async Task<Song?> GetSongAsync(
@@ -736,14 +818,18 @@ public sealed class ProtocolProviderGateway(
         IEnumerable<T> legacy,
         int limit,
         Func<T, string> key,
-        Func<T, string?> provider)
+        Func<T, string?> provider,
+        IReadOnlyList<string>? preferredOrder = null)
     {
         var items = routed.Concat(legacy)
             .DistinctBy(key, StringComparer.Ordinal)
             .ToList();
-        var preferred = (configuration?["Providers:MetadataOrder"] ??
-                         configuration?["MULTI_PROVIDER_METADATA_ORDER"] ??
-                         "apple-download,deezer,qobuz")
+        var preferred = preferredOrder?
+            .Select(NormalizeProvider)
+            .Distinct(StringComparer.Ordinal)
+            .ToList() ?? (configuration?["Providers:MetadataOrder"] ??
+                          configuration?["MULTI_PROVIDER_METADATA_ORDER"] ??
+                          "apple-download,deezer,qobuz")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(NormalizeProvider)
             .Distinct(StringComparer.Ordinal)

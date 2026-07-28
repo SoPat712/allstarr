@@ -22,6 +22,15 @@ public interface IMusicMetadataService
     Task<List<Song>> SearchSongsAsync(string query, int limit = 20, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Searches only providers that can currently supply audio.
+    /// </summary>
+    Task<List<Song>> SearchPlayableSongsAsync(
+        string query,
+        int limit = 20,
+        CancellationToken cancellationToken = default) =>
+        SearchSongsAsync(query, limit, cancellationToken);
+
+    /// <summary>
     /// Searches for albums on external providers
     /// </summary>
     Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20, CancellationToken cancellationToken = default);

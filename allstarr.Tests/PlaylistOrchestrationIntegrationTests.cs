@@ -12,8 +12,13 @@ using allstarr.Core.Playlists.Sources;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Models.Domain;
+using allstarr.Models.Settings;
+using allstarr.Services.Spotify;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 using Npgsql;
 using Xunit.Abstractions;
@@ -322,7 +327,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         var ambiguous = decisions[snapshots[Hash("source-ambiguous")].Id];
         var unresolved = decisions[snapshots[Hash("source-unresolved")].Id];
         Assert.Equal(TrackMatchState.Suggested, suggested.State);
-        Assert.Null(suggested.LibraryTrackId);
+        Assert.Equal(suggestedId, suggested.LibraryTrackId);
         Assert.Equal(TrackMatchDecisionEngine.AlgorithmVersion, suggested.MatcherVersion);
         Assert.Contains("NormalizedCandidateTitle", suggested.CandidateResultsJson);
         Assert.Contains("ArtistOverlap", suggested.CandidateResultsJson);
@@ -498,6 +503,90 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             .ReadByLinkIdAsync(_tenant, _user, _link);
         Assert.Equal("external", Assert.Single(projection!.Entries).RouteKind);
         Assert.Equal("deezer", Assert.Single(projection.Entries).RouteProviderId);
+    }
+
+    [Fact]
+    public async Task Automatic_suggestion_persists_ranked_provider_fallbacks_as_one_playable_track()
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot(
+            "revision-provider-suggestion",
+            Entry(0, "entry-provider-suggestion", "unindexed-source", "Feels"));
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
+            .Returns(["apple-download", "deezer"]);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
+            .Returns(["apple-download", "deezer"]);
+        gateway.Setup(item => item.SearchPlayableSongsAsync(
+                It.IsAny<ProtocolExecutionContext>(), "Feels Artist", 60))
+            .ReturnsAsync(
+            [
+                new Song
+                {
+                    ExternalProvider = "apple-download",
+                    ExternalId = "apple-feels",
+                    Title = "Feels (Live)",
+                    Artist = "Artist",
+                    Album = "Album",
+                    Duration = 180
+                },
+                new Song
+                {
+                    ExternalProvider = "deezer",
+                    ExternalId = "deezer-feels",
+                    Title = "Feels (Live)",
+                    Artist = "Artist",
+                    Album = "Album",
+                    Duration = 180
+                }
+            ]);
+        var matcher = new TrackMatchDecisionEngine();
+        var trackMatches = new TrackMatchCommandService(
+            _factory,
+            matcher,
+            new ProviderAccountResolver(_factory, new ProviderPolicyOptions()),
+            new Clock(_now),
+            new PlaylistPlayableSearchService(
+                gateway.Object,
+                matcher,
+                null!,
+                new IdentityOptions(),
+                Options.Create(new JellyfinSettings()),
+                NullLogger<PlaylistPlayableSearchService>.Instance));
+        var service = new PlaylistOrchestrationService(
+            _factory,
+            _source,
+            new FakeTargetResolver(_target),
+            new PlaylistMaterializationPlanner(),
+            matcher,
+            trackMatches,
+            new Clock(_now));
+
+        await service.RefreshAsync(Context(), _link);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var decision = await db.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+        Assert.Equal(TrackMatchState.Suggested, decision.State);
+        Assert.Null(decision.LibraryTrackId);
+        Assert.NotNull(decision.CanonicalRecordingId);
+        Assert.Null((await db.ExternalMetadataSnapshots.SingleAsync()).ProviderTrackIdentityId);
+        var routes = await db.ProviderTrackIdentities
+            .Where(item =>
+                item.CanonicalRecordingId == decision.CanonicalRecordingId &&
+                (item.ProviderId == "apple-download" || item.ProviderId == "deezer"))
+            .OrderBy(item => item.ProviderId)
+            .ToListAsync();
+        Assert.Equal(2, routes.Count);
+        Assert.All(routes, item => Assert.Equal("automatic-suggestion", item.VerificationMethod));
+        var projection = await new DurablePlaylistProjectionReader(_factory, gateway.Object)
+            .ReadByLinkIdAsync(_tenant, _user, _link);
+        Assert.NotNull(projection);
+        Assert.Equal(1, projection.TotalCount);
+        Assert.Equal(1, projection.PlayableCount);
+        Assert.Equal(1, projection.ExternalCount);
+        Assert.Equal(1, projection.ReviewCount);
+        Assert.Equal(["apple-download", "deezer"],
+            Assert.Single(projection.Entries).ProviderRoutes.Select(item => item.ProviderId));
     }
 
     [Fact]

@@ -20,9 +20,8 @@ public sealed class TrackClassifierTests
             null, suggested, source, [source, fallback], ["qobuz"], new HashSet<Guid> { local });
 
         Assert.Equal(TrackMatchState.Suggested, classification.State);
-        Assert.Null(classification.LibraryTrackId);
-        Assert.Equal(TrackRouteKind.External, classification.RouteKind);
-        Assert.Equal("qobuz", classification.PrimaryProviderRoute!.ProviderId);
+        Assert.Equal(local, classification.LibraryTrackId);
+        Assert.Equal(TrackRouteKind.Local, classification.RouteKind);
 
         var pinned = TrackClassifier.Classify(
             new ManualTrackOverrideRecord
