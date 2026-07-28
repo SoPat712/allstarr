@@ -228,13 +228,21 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         var first = Candidate(scope) with
         {
             CanonicalRecordingId = null,
-            MusicBrainzRecordingId = "16ba7915-2acf-42b2-8c87-ed67090dca91"
+            MusicBrainzRecordingId = "c37ae419-a9a1-4a89-8c3f-d9cadceb8d7f",
+            ProviderTrackIds = new Dictionary<string, string>
+            {
+                ["musicbrainzrecording"] = "16ba7915-2acf-42b2-8c87-ed67090dca91"
+            }
         };
         var second = first with
         {
             LibraryTrackId = Guid.CreateVersion7(),
             BackendItemId = "local-2",
-            MusicBrainzRecordingId = "16BA79152ACF42B28C87ED67090DCA91"
+            MusicBrainzRecordingId = "2b9f56d8-0a1a-4d84-bcc9-67d29641ba30",
+            ProviderTrackIds = new Dictionary<string, string>
+            {
+                ["MusicBrainzRecording"] = "16BA79152ACF42B28C87ED67090DCA91"
+            }
         };
 
         var decision = new TrackMatchDecisionEngine().Decide(scope, Source(), [first, second]);

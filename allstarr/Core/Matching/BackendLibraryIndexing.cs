@@ -101,7 +101,8 @@ public sealed class JellyfinLibraryCatalogScanner : JsonLibraryCatalogScanner, I
                 {
                     await Index.UpsertAsync(context, new(request.LibraryScopeId, id, path, title, string.Join(", ", artists), Text(item, "Album"),
                         Text(item, "AlbumArtist"), duration, duration.HasValue ? "jellyfin" : null,
-                        duration.HasValue ? Clock.UtcNow : null, Get(providers, "isrc"), Get(providers, "musicbrainztrack"),
+                        duration.HasValue ? Clock.UtcNow : null, Get(providers, "isrc"),
+                        Get(providers, "musicbrainzrecording") ?? Get(providers, "musicbrainztrack"),
                         Get(providers, "musicbrainzalbum"), Get(providers, "musicbrainzartist"), providers, null, null,
                         imageTag == null ? null : $"jellyfin-cover:{id}:{imageTag}", modified.Value), cancellationToken);
                     indexed++;

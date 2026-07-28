@@ -349,7 +349,7 @@ public sealed class TrackMatchDecisionEngine
             return Score(source, candidate, 1, ["canonical_recording_id_exact"], warnings,
                 new Dictionary<string, double> { ["canonicalRecordingId"] = 1 });
         }
-        if (EqualsNormalized(source.MusicBrainzRecordingId, candidate.MusicBrainzRecordingId))
+        if (EqualsNormalized(source.MusicBrainzRecordingId, RecordingIdentity(candidate)))
         {
             return Score(source, candidate, 1, ["musicbrainz_recording_id_exact"], warnings,
                 new Dictionary<string, double> { ["musicbrainzRecordingId"] = 1 });
@@ -544,7 +544,12 @@ public sealed class TrackMatchDecisionEngine
         LocalTrackMatchCandidate right) =>
         left.CanonicalRecordingId.HasValue &&
         left.CanonicalRecordingId == right.CanonicalRecordingId ||
-        EqualsNormalized(left.MusicBrainzRecordingId, right.MusicBrainzRecordingId);
+        EqualsNormalized(RecordingIdentity(left), RecordingIdentity(right));
+
+    private static string? RecordingIdentity(LocalTrackMatchCandidate candidate) =>
+        TryGetProviderTrackId(candidate.ProviderTrackIds, "musicbrainzrecording", out var recordingId)
+            ? recordingId
+            : candidate.MusicBrainzRecordingId;
 
     private static bool IsVisible(TrackMatchScope scope, LocalTrackMatchCandidate candidate) =>
         candidate.TenantId == scope.TenantId &&
