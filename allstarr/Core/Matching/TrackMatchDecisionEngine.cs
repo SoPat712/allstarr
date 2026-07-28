@@ -132,7 +132,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "normalized-v9";
+    public const string AlgorithmVersion = "normalized-v10";
 
     private readonly TrackMatchPolicy _policy;
 
@@ -582,8 +582,9 @@ public sealed class TrackMatchDecisionEngine
                                 StringComparison.Ordinal);
         return sameTitle && (sameArtist || sameAlbum) ||
                Similarity(leftTitle, rightTitle) >= 0.9 &&
-               ArtistSimilarity(left.Artist, right.Artist) >= 0.85 &&
-               ComparableSimilarity(left.Album, right.Album) >= 0.9;
+               (sameAlbum ||
+                ArtistSimilarity(left.Artist, right.Artist) >= 0.85 &&
+                ComparableSimilarity(left.Album, right.Album) >= 0.9);
     }
 
     private static string? RecordingIdentity(LocalTrackMatchCandidate candidate) =>

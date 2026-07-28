@@ -355,6 +355,42 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void ClassicalCreditVariantsOnTheSameAlbum_DoNotTriggerAmbiguity()
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            Title = "21 Hungarian Dances, WoO 1: Hungarian Dance No. 5 in G Minor. Allegro (Orch. Schmeling)",
+            Artist = "Claudio Abbado, Wiener Philharmoniker",
+            Album = "Brahms: 21 Hungarian Dances",
+            DurationMilliseconds = 138_706
+        };
+        var conductor = Candidate(scope) with
+        {
+            CanonicalRecordingId = null,
+            Title = $"Brahms: {source.Title}",
+            Artist = "Claudio Abbado",
+            Album = source.Album,
+            DurationMilliseconds = 139_000,
+            IsLocal = false
+        };
+        var orchestra = conductor with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "deezer-4158796",
+            Title = $"21 Hungarian Dances, WoO 1 : Brahms: {source.Title}",
+            Artist = "Wiener Philharmoniker",
+            DurationMilliseconds = 137_000
+        };
+
+        var decision = new TrackMatchDecisionEngine().Decide(
+            scope, source, [conductor, orchestra]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(2, decision.Candidates.Count);
+    }
+
+    [Fact]
     public void FullArtistCreditsAndAlbumBreakCompilationTie()
     {
         var scope = Scope();
