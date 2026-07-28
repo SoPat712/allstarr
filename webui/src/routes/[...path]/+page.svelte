@@ -285,7 +285,7 @@
         </svg>
       </button>
 
-      <nav aria-label="Primary">
+      <nav aria-label="Primary" data-active={destinations.indexOf(activeDestination)}>
         {#each destinations as destination}
           <a
             href={destination.href}

@@ -489,12 +489,45 @@
   }
 
   .sidebar nav {
+    position: relative;
     display: grid;
     gap: 0.35rem;
     margin-top: 2rem;
   }
 
+  .sidebar nav::before {
+    position: absolute;
+    inset: 0 0 auto;
+    height: var(--control-lg);
+    border-radius: 0.8rem;
+    background: var(--color-signal-muted);
+    content: "";
+    transition: transform 180ms ease;
+  }
+
+  .sidebar nav[data-active="1"]::before {
+    transform: translateY(calc(100% + 0.35rem));
+  }
+
+  .sidebar nav[data-active="2"]::before {
+    transform: translateY(calc(200% + 0.7rem));
+  }
+
+  .sidebar nav[data-active="3"]::before {
+    transform: translateY(calc(300% + 1.05rem));
+  }
+
+  .sidebar nav[data-active="4"]::before {
+    transform: translateY(calc(400% + 1.4rem));
+  }
+
+  .sidebar nav[data-active="5"]::before {
+    transform: translateY(calc(500% + 1.75rem));
+  }
+
   .sidebar nav a {
+    position: relative;
+    z-index: 1;
     display: grid;
     width: 100%;
     min-height: var(--control-lg);
@@ -512,7 +545,6 @@
   }
 
   .sidebar nav a.active {
-    background: var(--color-signal-muted);
     color: var(--color-signal);
   }
 
@@ -1062,6 +1094,31 @@
     grid-template-columns: repeat(5, 1fr);
     gap: 0.2rem;
     margin: 0;
+  }
+
+  .sidebar nav::before {
+    width: calc((100% - 0.8rem) / 5);
+    height: 100%;
+  }
+
+  .sidebar nav[data-active="1"]::before {
+    transform: translateX(calc(100% + 0.2rem));
+  }
+
+  .sidebar nav[data-active="2"]::before {
+    transform: translateX(calc(200% + 0.4rem));
+  }
+
+  .sidebar nav[data-active="3"]::before {
+    transform: translateX(calc(300% + 0.6rem));
+  }
+
+  .sidebar nav[data-active="4"]::before {
+    transform: translateX(calc(400% + 0.8rem));
+  }
+
+  .sidebar nav[data-active="5"]::before {
+    opacity: 0;
   }
 
   .app-shell.slim .sidebar nav {
