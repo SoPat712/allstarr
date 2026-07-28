@@ -146,6 +146,95 @@ public sealed class DurableStorageTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SuggestedTargetMigration_NormalizesLegacyTargetlessRows()
+    {
+        await using var context = await Factory().CreateDbContextAsync();
+        var migrator = context.GetService<IMigrator>();
+        await migrator.MigrateAsync("20260727233000_AllowExternalAcceptedTrackMatches");
+        var now = DateTimeOffset.UtcNow;
+        var tenantId = Guid.CreateVersion7();
+        var userId = Guid.CreateVersion7();
+        var accountId = Guid.CreateVersion7();
+        var snapshotId = Guid.CreateVersion7();
+        context.AddRange(
+            new TenantRecord
+            {
+                Id = tenantId,
+                Slug = "legacy-suggestion",
+                Name = "Legacy suggestion",
+                CreatedAt = now
+            },
+            new PlatformUserRecord
+            {
+                Id = userId,
+                TenantId = tenantId,
+                DisplayName = "User",
+                Status = PlatformUserStatus.Active,
+                CreatedAt = now,
+                UpdatedAt = now
+            },
+            new ProviderAccountRecord
+            {
+                Id = accountId,
+                TenantId = tenantId,
+                OwnerUserId = userId,
+                ProviderId = "spotify",
+                DisplayName = "Spotify",
+                Scope = ProviderAccountScope.User,
+                Enabled = true,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+        await context.SaveChangesAsync();
+        context.ExternalMetadataSnapshots.Add(new ExternalMetadataSnapshotRecord
+        {
+            Id = snapshotId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            ProviderAccountId = accountId,
+            LibraryScopeId = "music",
+            BackendInstanceId = "home",
+            BackendPrincipalId = "principal",
+            Protocol = "jellyfin",
+            ProviderId = "spotify",
+            ResourceKind = "track",
+            ExternalIdHash = new('a', 64),
+            SnapshotVersion = 1,
+            PayloadJson = "{}",
+            PayloadSha256 = new('b', 64),
+            CorrelationId = "legacy-suggestion",
+            RetrievedAt = now
+        });
+        await context.SaveChangesAsync();
+        context.TrackMatches.Add(new TrackMatchRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            ExternalSnapshotId = snapshotId,
+            LibraryScopeId = "music",
+            State = TrackMatchState.Suggested,
+            Confidence = .8,
+            Threshold = .88,
+            DecisionVersion = 1,
+            PolicyVersion = "normalized-v6",
+            ReasonsJson = "[]",
+            CandidateResultsJson = "[]",
+            WarningsJson = "[]",
+            CorrelationId = "legacy-suggestion",
+            DecidedAt = now
+        });
+        await context.SaveChangesAsync();
+
+        await migrator.MigrateAsync();
+        context.ChangeTracker.Clear();
+
+        Assert.Equal(TrackMatchState.Unresolved, await context.TrackMatches
+            .Select(item => item.State)
+            .SingleAsync());
+    }
+
+    [Fact]
     public async Task ProbeCacheSnapshot_AppliesToFreshPostgres()
     {
         await using var context = await Factory().CreateDbContextAsync();

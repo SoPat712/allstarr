@@ -21,6 +21,14 @@ public sealed class AllowSuggestedTrackTargets : Migration
 
     protected override void Up(MigrationBuilder migrationBuilder)
     {
+        migrationBuilder.Sql(
+            """
+            UPDATE track_matches
+            SET "State" = 'Unresolved'
+            WHERE "State" = 'Suggested'
+              AND "LibraryTrackId" IS NULL
+              AND "CanonicalRecordingId" IS NULL;
+            """);
         migrationBuilder.DropCheckConstraint(
             name: "CK_track_matches_selected_shape",
             table: "track_matches");
