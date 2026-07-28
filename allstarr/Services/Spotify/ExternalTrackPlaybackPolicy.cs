@@ -35,10 +35,13 @@ public static class ExternalTrackPlaybackPolicy
         return normalized.Length > 0;
     }
 
-    public static string Normalize(string? provider) =>
-        (provider ?? string.Empty)
+    public static string Normalize(string? provider)
+    {
+        var normalized = (provider ?? string.Empty)
             .Trim()
             .ToLowerInvariant()
             .Replace("-", string.Empty, StringComparison.Ordinal)
             .Replace("_", string.Empty, StringComparison.Ordinal);
+        return normalized == "applemusic" ? "appledownload" : normalized;
+    }
 }

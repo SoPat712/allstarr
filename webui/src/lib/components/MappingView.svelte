@@ -17,6 +17,7 @@
   import SearchField from "$lib/components/SearchField.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import {
+    candidateResolution,
     currentTarget,
     isAttention,
     percent,
@@ -164,13 +165,12 @@
   }
 
   async function accept(match: MatchReviewItem) {
-    const candidate = match.candidates.find((item) => item.libraryTrackId);
-    if (!candidate?.libraryTrackId || action) return openMatch(match);
+    const resolution = candidateResolution(match.candidates[0], match.providerId);
+    if (!resolution || action) return openMatch(match);
     action = match.externalSnapshotId;
     try {
       await matchReview.resolve(match.externalSnapshotId, {
-        targetType: "local",
-        libraryTrackId: candidate.libraryTrackId,
+        ...resolution,
         reason: "Accepted highest-confidence automatic candidate",
       });
       feedback = "Highest-confidence candidate accepted.";
@@ -296,6 +296,14 @@
         {#each data.matches as match}
           {@const target = currentTarget(match)}
           {@const candidate = match.candidates[0]}
+          {@const resolution = candidateResolution(candidate, match.providerId)}
+          {@const candidateProviderId = resolution?.targetType === "provider" ? resolution.externalProvider : "local"}
+          {@const candidateExternalId = resolution?.targetType === "provider" ? resolution.externalId : null}
+          {@const candidateArtwork = candidateExternalId
+            ? `/api/admin/downloads/artwork/${encodeURIComponent(`ext-${candidateProviderId}-song-${candidateExternalId}`)}`
+            : candidate?.backendItemId
+              ? `/api/admin/downloads/artwork/${encodeURIComponent(candidate.backendItemId)}`
+              : ""}
           <article class:needs-attention={isAttention(match.state)} class="mapping-row">
             <div class="mapping-track-copy">
               <div class="mapping-source">
@@ -317,24 +325,28 @@
                   <span><small>Source</small><strong>{providerName(match.providerId)}</strong></span>
                 </span>
                 <span class="mapping-arrow" aria-hidden="true">→</span>
-                <span class:unresolved={!target} class="mapping-route-node">
-                  {#if target}
-                    {#if match.candidateArtworkUrl}
-                      <MediaArtwork class="mapping-art" url={match.candidateArtworkUrl} />
+                <span class:unresolved={!target && !candidate} class="mapping-route-node">
+                  {#if target || candidate}
+                    {#if match.candidateArtworkUrl || candidateArtwork}
+                      <MediaArtwork class="mapping-art" url={match.candidateArtworkUrl || candidateArtwork} />
                     {:else}
                       <ProviderMark
-                        id={target.providerId === "local" ? backend.toLowerCase() : target.providerId}
-                        definition={provider(target.providerId)}
-                        label={providerName(target.providerId)}
+                        id={(target?.providerId ?? candidateProviderId) === "local" ? backend.toLowerCase() : (target?.providerId ?? candidateProviderId)}
+                        definition={provider(target?.providerId ?? candidateProviderId)}
+                        label={providerName(target?.providerId ?? candidateProviderId)}
                       />
                     {/if}
                   {:else}
                     <span class="mapping-route-missing" aria-hidden="true">?</span>
                   {/if}
                   <span>
-                    <small>Current match</small>
-                    <strong>{target?.title || "No playable match"}</strong>
-                    <em>{target ? `${providerName(target.providerId)} · ${target.detail}` : "Review candidates"}</em>
+                    <small>{target ? "Current match" : candidate ? "Best candidate" : "Match status"}</small>
+                    <strong>{target?.title || candidate?.title || "Unmatched"}</strong>
+                    <em>{target
+                      ? `${providerName(target.providerId)} · ${target.detail}`
+                      : candidate
+                        ? `${providerName(candidateProviderId)} · ${candidate.artist || candidate.album || "Scored candidate"}`
+                        : "No candidate retained"}</em>
                   </span>
                 </span>
               </div>
@@ -372,10 +384,19 @@
             </div>
 
             <div class="mapping-row-actions">
-              {#if match.candidates.some((candidate) => candidate.libraryTrackId)}
+              {#if !target && resolution}
+                <span class="mapping-action-confidence">
+                  <strong>{percent(candidate?.confidence ?? match.confidence)}</strong>
+                  <small>Confidence</small>
+                </span>
                 <button class="button-primary" type="button" disabled={action === match.externalSnapshotId} onclick={() => void accept(match)}>Accept</button>
               {/if}
-              <button class="button-primary" type="button" onclick={() => openMatch(match)}>Review match</button>
+              {#if !target}
+                <button class="button-secondary" type="button" disabled={action === match.externalSnapshotId} onclick={() => void rematch(match)}>Rematch</button>
+              {/if}
+              <button class="button-primary" type="button" onclick={() => openMatch(match)}>
+                {target ? "Review match" : "Interactive search"}
+              </button>
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger class="track-menu-trigger" aria-label={`More actions for ${match.title || "track"}`}>•••</DropdownMenu.Trigger>
                 <DropdownMenu.Portal>

@@ -143,6 +143,10 @@ public class ConfigController : ControllerBase
             backendType,
             explicitFilter = RuntimeString("Library:ExplicitFilter", fallbackExplicitFilter),
             enableExternalPlaylists = RuntimeBool("Library:EnableExternalPlaylists", fallbackEnableExternalPlaylists),
+            matching = new
+            {
+                localPreferencePercent = RuntimeInt("Matching:LocalPreferencePercent", 7)
+            },
             playlistsDirectory = RuntimeString("Library:PlaylistsDirectory", fallbackPlaylistsDirectory),
             providers = new
             {

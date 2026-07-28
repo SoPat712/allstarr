@@ -74,3 +74,14 @@ export function currentTarget(match: MatchReviewItem) {
       }
     : null;
 }
+
+export function candidateResolution(candidate: MatchCandidate | undefined, sourceProviderId: string) {
+  if (candidate?.libraryTrackId)
+    return { targetType: "local" as const, libraryTrackId: candidate.libraryTrackId };
+  const provider = Object.entries(candidate?.providerTrackIds ?? {}).find(
+    ([providerId]) => providerId.toLowerCase() !== sourceProviderId.toLowerCase(),
+  );
+  return provider
+    ? { targetType: "provider" as const, externalProvider: provider[0], externalId: provider[1] }
+    : null;
+}

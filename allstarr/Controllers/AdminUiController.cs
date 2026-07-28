@@ -1175,7 +1175,15 @@ public class AdminUiController : ControllerBase
             DeploymentField("BACKEND_TYPE", "Backend", "select", "backendType", ["Jellyfin", "Subsonic"]),
             Field("STORAGE_MODE", "Storage mode", "select", "library.storageMode", ["Permanent", "Cache"]),
             Field("DOWNLOAD_MODE", "Download mode", "select", "library.downloadMode", ["Track", "Album"]),
-            Field("EXPLICIT_FILTER", "Explicit filter", "select", "explicitFilter", ["All", "ExplicitOnly", "CleanOnly"])
+            Field("EXPLICIT_FILTER", "Explicit filter", "select", "explicitFilter", ["All", "ExplicitOnly", "CleanOnly"]),
+            Field(
+                "MATCHING_LOCAL_PREFERENCE_PERCENT",
+                "Local track preference",
+                "number",
+                "matching.localPreferencePercent",
+                helpText: "Percentage points added to Jellyfin-local candidates. Default: 7%.",
+                min: 0,
+                max: 20)
         ]),
         Section("paths", "Library paths",
         [

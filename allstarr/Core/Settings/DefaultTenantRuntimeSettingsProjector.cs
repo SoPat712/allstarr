@@ -1,4 +1,5 @@
 using allstarr.Core.Identity;
+using allstarr.Core.Matching;
 using allstarr.Models.Settings;
 using Microsoft.Extensions.Options;
 
@@ -21,6 +22,7 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
     private readonly ScrobblingSettings _scrobbling;
     private readonly JellyfinSettings _jellyfin;
     private readonly SubsonicSettings _subsonic;
+    private readonly TrackMatchPolicy _matching;
     private readonly ILogger<DefaultTenantRuntimeSettingsProjector> _logger;
     private readonly string? _bootstrapAppleBaseUrl;
     private readonly SemaphoreSlim _refresh = new(0, 1);
@@ -32,6 +34,7 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
         IOptions<SpotifyApiSettings> spotifyApi, IOptions<SpotifyImportSettings> spotifyImport,
         IOptions<MusicBrainzSettings> musicBrainz, IOptions<ScrobblingSettings> scrobbling,
         IOptions<JellyfinSettings> jellyfin, IOptions<SubsonicSettings> subsonic,
+        TrackMatchPolicy matching,
         ILogger<DefaultTenantRuntimeSettingsProjector> logger)
     {
         (_settings, _signal, _configuration, _logger) = (settings, signal, configuration, logger);
@@ -41,6 +44,7 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
         (_spotifyApi, _spotifyImport, _musicBrainz, _scrobbling) =
             (spotifyApi.Value, spotifyImport.Value, musicBrainz.Value, scrobbling.Value);
         (_jellyfin, _subsonic) = (jellyfin.Value, subsonic.Value);
+        _matching = matching;
     }
 
     public override async Task StartAsync(CancellationToken cancellationToken)
@@ -126,6 +130,7 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
             case "Scrobbling:LastFm:Enabled": _scrobbling.LastFm.Enabled = (bool)value; break;
             case "Scrobbling:ListenBrainz:Enabled": _scrobbling.ListenBrainz.Enabled = (bool)value; break;
             case "Library:EnableExternalPlaylists": SetBoth(item => item.EnableExternalPlaylists = (bool)value, item => item.EnableExternalPlaylists = (bool)value); break;
+            case "Matching:LocalPreferencePercent": _matching.LocalPreferenceBoost = (int)value / 100d; break;
             case "Library:PlaylistsDirectory": SetBoth(item => item.PlaylistsDirectory = (string)value, item => item.PlaylistsDirectory = (string)value); break;
             case "Library:ExplicitFilter": SetBoth(item => item.ExplicitFilter = Enum.Parse<ExplicitFilter>((string)value), item => item.ExplicitFilter = Enum.Parse<ExplicitFilter>((string)value)); break;
             case "Library:DownloadMode": SetBoth(item => item.DownloadMode = Enum.Parse<DownloadMode>((string)value), item => item.DownloadMode = Enum.Parse<DownloadMode>((string)value)); break;

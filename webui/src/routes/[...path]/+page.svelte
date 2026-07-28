@@ -275,7 +275,11 @@
         aria-expanded={!sidebarSlim}
         onclick={() => sidebarSlim = !sidebarSlim}
       >
-        <span class="menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>
+        <svg class="menu-icon" aria-hidden="true" viewBox="0 0 24 24">
+          <path class="menu-line" d={sidebarSlim ? "M4 5h16" : "M4 5h12l4 4"} />
+          <path class="menu-line menu-line-middle" d="M4 12h16" />
+          <path class="menu-line" d={sidebarSlim ? "M4 19h16" : "M4 19h12l4-4"} />
+        </svg>
       </button>
 
       <nav aria-label="Primary">

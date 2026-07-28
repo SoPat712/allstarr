@@ -129,6 +129,7 @@ public static class RuntimeSettingCatalog
         items.Add(new("Providers:EnabledPlaylist", RuntimeSettingValueType.StringList, "MULTI_PROVIDER_ENABLED_PLAYLIST"));
         items.Add(new("Providers:Disabled", RuntimeSettingValueType.StringList, "MULTI_PROVIDER_DISABLED_PROVIDERS"));
         Bool("Library:EnableExternalPlaylists", "Jellyfin:EnableExternalPlaylists");
+        Int("Matching:LocalPreferencePercent", 0, 20);
         items.Add(new("Library:PlaylistsDirectory", RuntimeSettingValueType.String, "Jellyfin:PlaylistsDirectory"));
         items.Add(new("Library:ExplicitFilter", RuntimeSettingValueType.String, "Jellyfin:ExplicitFilter", Choices: new HashSet<string>(["All", "ExplicitOnly", "CleanOnly"], Comparer)));
         items.Add(new("Library:DownloadMode", RuntimeSettingValueType.String, "Jellyfin:DownloadMode", Choices: new HashSet<string>(["Track", "Album"], Comparer)));

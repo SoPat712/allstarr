@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  candidateResolution,
   differenceHash,
   hashSimilarity,
   isAttention,
@@ -49,5 +50,20 @@ describe("mapping review presentation", () => {
       { id: "2", title: "Best", externalProvider: "deezer", confidence: 0.98 },
       { id: "3", title: "Unknown" },
     ]).map((target) => target.title)).toEqual(["Best", "Weak", "Unknown"]);
+  });
+
+  it("only accepts a concrete local or non-source provider candidate", () => {
+    expect(candidateResolution({ libraryTrackId: "local-1" }, "spotify")).toEqual({
+      targetType: "local",
+      libraryTrackId: "local-1",
+    });
+    expect(candidateResolution({
+      providerTrackIds: { spotify: "source", deezer: "candidate" },
+    }, "spotify")).toEqual({
+      targetType: "provider",
+      externalProvider: "deezer",
+      externalId: "candidate",
+    });
+    expect(candidateResolution({ providerTrackIds: { spotify: "source" } }, "spotify")).toBeNull();
   });
 });

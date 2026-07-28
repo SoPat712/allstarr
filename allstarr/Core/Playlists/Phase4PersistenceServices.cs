@@ -41,6 +41,29 @@ public sealed record MatchDecisionInput(
         JsonSerializer.Serialize(decision.Candidates),
         JsonSerializer.Serialize(decision.Reasons),
         JsonSerializer.Serialize(decision.Warnings));
+
+    public static MatchDecisionInput FromExternalDecision(
+        Guid externalSnapshotId,
+        Guid canonicalRecordingId,
+        TrackMatchDecision decision,
+        int decisionVersion,
+        int sourceSnapshotVersion,
+        long libraryIndexRevision,
+        string policyVersion) => new(
+        externalSnapshotId,
+        null,
+        canonicalRecordingId,
+        Enum.Parse<TrackMatchState>(decision.State.ToString(), true),
+        decision.Confidence,
+        decision.AcceptThreshold,
+        decisionVersion,
+        sourceSnapshotVersion,
+        libraryIndexRevision,
+        TrackMatchDecisionEngine.AlgorithmVersion,
+        policyVersion,
+        JsonSerializer.Serialize(decision.Candidates),
+        JsonSerializer.Serialize(decision.Reasons),
+        JsonSerializer.Serialize(decision.Warnings));
 }
 public sealed record ManualOverrideInput(
     Guid ExternalSnapshotId, string LibraryScopeId, ManualOverrideDecision Decision,

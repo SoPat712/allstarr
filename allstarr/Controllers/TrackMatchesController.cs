@@ -525,13 +525,21 @@ public sealed class TrackMatchesController(
     public async Task<IActionResult> Rematch(Guid externalSnapshotId, CancellationToken cancellationToken = default)
     {
         if (!TrySession(out var session, out var error)) return error!;
+        ProtocolExecutionContext execution;
+        try
+        {
+            execution = await protocolContexts.CreateAsync(
+                session!, null, HttpContext.TraceIdentifier, cancellationToken);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return StatusCode(403, new { error = "The linked backend identity is unavailable" });
+        }
         var result = await trackMatchCommands.RematchSnapshotAsync(
-            new TrackMatchActor(
-                session!.TenantId!.Value,
-                session.AllstarrUserId!.Value,
-                session.IsAdministrator),
+            execution,
             externalSnapshotId,
             HttpContext.TraceIdentifier,
+            "manual-rematch-v3",
             cancellationToken);
 
         if (!result.Succeeded)

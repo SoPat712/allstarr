@@ -383,18 +383,16 @@
   }
 
   .menu-icon {
-    display: grid;
-    width: 1rem;
-    gap: 0.2rem;
+    width: 1.15rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 
-  .menu-icon > span {
-    width: 100%;
-    height: 2px;
-    justify-self: center;
-    border-radius: 999px;
-    background: currentColor;
-    transition: width 160ms ease;
+  .menu-line {
+    transition: d 160ms ease;
   }
 
   .app-shell.slim {
@@ -447,10 +445,6 @@
     width: 0;
     overflow: hidden;
     opacity: 0;
-  }
-
-  .app-shell.slim .menu-icon > span {
-    width: 2px;
   }
 
   .brand {
@@ -2559,10 +2553,31 @@
     padding-top: 0.15rem;
   }
 
-  .mapping-row-actions .button-primary {
+  .mapping-row-actions :is(.button-primary, .button-secondary) {
     min-height: 2.25rem;
     padding: 0 0.65rem;
     font-size: 0.65rem;
+  }
+
+  .mapping-action-confidence {
+    display: grid;
+    justify-items: end;
+    margin-right: 0.15rem;
+    line-height: 1;
+  }
+
+  .mapping-action-confidence strong {
+    color: var(--color-signal);
+    font-size: 0.85rem;
+  }
+
+  .mapping-action-confidence small {
+    margin-top: 0.2rem;
+    color: var(--color-ink-muted);
+    font-size: 0.5rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
   }
 
   .danger-item {
@@ -3008,10 +3023,39 @@
     font-size: 0.6rem;
   }
 
+  .candidate-provider {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--color-ink-muted);
+    font-size: 0.6rem;
+  }
+
+  .candidate-provider .provider-mark {
+    width: 1rem;
+    height: 1rem;
+    font-size: 0.42rem;
+  }
+
   .candidate-confidence {
+    display: grid;
+    justify-items: end;
     color: var(--color-signal);
-    font-size: 0.72rem;
-    font-weight: 800;
+    line-height: 1;
+  }
+
+  .candidate-confidence strong {
+    font-size: 0.8rem;
+    font-weight: 850;
+  }
+
+  .candidate-confidence small {
+    margin-top: 0.18rem;
+    color: var(--color-ink-muted);
+    font-size: 0.48rem;
+    font-weight: 750;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
   }
 
   .candidate-card > button {
@@ -3037,16 +3081,21 @@
   }
 
   .score-components > span {
-    display: flex;
-    gap: 0.35rem;
+    display: grid;
+    min-width: 3.4rem;
+    gap: 0.12rem;
     border-radius: 0.4rem;
     background: var(--color-panel-raised);
-    padding: 0.25rem 0.4rem;
+    padding: 0.3rem 0.45rem;
     font-size: 0.55rem;
   }
 
   .score-components small {
     color: var(--color-ink-muted);
+  }
+
+  .score-components strong {
+    font-size: 0.62rem;
   }
 
   .target-search {

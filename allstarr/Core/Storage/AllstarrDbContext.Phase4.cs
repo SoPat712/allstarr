@@ -90,7 +90,7 @@ public sealed partial class AllstarrDbContext
             {
                 table.HasCheckConstraint("CK_track_matches_confidence", "\"Confidence\" >= 0 AND \"Confidence\" <= 1 AND \"Threshold\" >= 0 AND \"Threshold\" <= 1");
                 table.HasCheckConstraint("CK_track_matches_version", "\"DecisionVersion\" > 0");
-                table.HasCheckConstraint("CK_track_matches_selected_shape", "(\"State\" IN ('Accepted', 'Pinned') AND \"LibraryTrackId\" IS NOT NULL) OR (\"State\" IN ('Unresolved', 'Suggested', 'Rejected', 'Ambiguous') AND \"LibraryTrackId\" IS NULL)");
+                table.HasCheckConstraint("CK_track_matches_selected_shape", "(\"State\" = 'Accepted' AND (\"LibraryTrackId\" IS NOT NULL OR \"CanonicalRecordingId\" IS NOT NULL)) OR (\"State\" = 'Pinned' AND \"LibraryTrackId\" IS NOT NULL) OR (\"State\" IN ('Unresolved', 'Suggested', 'Rejected', 'Ambiguous') AND \"LibraryTrackId\" IS NULL)");
             });
             entity.HasKey(item => item.Id);
             entity.HasAlternateKey(item => new { item.TenantId, item.Id });

@@ -80,9 +80,18 @@
     return provider(providerId)?.name ?? providerId;
   }
 
-  function candidateArtwork(backendItemId?: string | null) {
-    return backendItemId
-      ? `/api/admin/downloads/artwork/${encodeURIComponent(backendItemId)}`
+  function candidateProvider(candidate: MatchReviewItem["candidates"][number]) {
+    return Object.keys(candidate.providerTrackIds ?? {})[0] ?? "";
+  }
+
+  function candidateArtwork(candidate: MatchReviewItem["candidates"][number]) {
+    const providerId = candidateProvider(candidate);
+    const externalId = providerId ? candidate.providerTrackIds?.[providerId] : "";
+    const itemId = providerId && externalId
+      ? `ext-${providerId}-song-${externalId}`
+      : candidate.backendItemId;
+    return itemId
+      ? `/api/admin/downloads/artwork/${encodeURIComponent(itemId)}`
       : "";
   }
 
@@ -201,24 +210,49 @@
             <div class="candidate-list">
               {#each match.candidates.slice(0, 5) as candidate}
                 <article class="candidate-card">
-                  <MediaArtwork class="mapping-art" url={candidateArtwork(candidate.backendItemId)} />
+                  <MediaArtwork
+                    class="mapping-art"
+                    url={candidateArtwork(candidate)}
+                    fallback="♫"
+                  />
                   <div class="candidate-copy">
                     <strong>{candidate.title || candidate.backendItemId || "Indexed track"}</strong>
                     <small>{candidate.artist || "Unknown artist"}{candidate.album ? ` · ${candidate.album}` : ""}</small>
                     <small>{formatDuration(candidate.durationMilliseconds)}{candidate.candidateIsrc ? ` · ISRC ${candidate.candidateIsrc}` : ""}</small>
-                    {#each Object.entries(candidate.providerTrackIds ?? {}) as [providerId, externalId]}
-                      <small>{providerName(providerId)} · {externalId}</small>
-                    {/each}
+                    <span class="candidate-provider">
+                      <ProviderMark
+                        id={candidateProvider(candidate) || backend.toLowerCase()}
+                        definition={provider(candidateProvider(candidate))}
+                      />
+                      {candidateProvider(candidate)
+                        ? providerName(candidateProvider(candidate))
+                        : backend}
+                    </span>
                   </div>
-                  <span class="candidate-confidence">{percent(candidate.confidence)}</span>
+                  <span
+                    class="candidate-confidence"
+                    title={candidate.components?.localPreference
+                      ? `Base confidence; local ranking adds ${percent(candidate.components.localPreference)} for a ${percent(candidate.components.preferenceScore)} preference score`
+                      : "Provider-neutral match confidence"}
+                  >
+                    <strong>{percent(candidate.confidence)}</strong>
+                    <small>confidence</small>
+                  </span>
                   <div class="score-components">
                     {#each scoreComponents(candidate) as [name, value]}
-                      <span><small>{name.replaceAll("_", " ")}</small><strong>{percent(value)}</strong></span>
+                      <span title={name === "localPreference" ? "Default preference for Jellyfin-local tracks" : undefined}>
+                        <small>{name === "localPreference"
+                          ? "local preference"
+                          : name === "preferenceScore"
+                            ? "preference score"
+                            : name.replaceAll("_", " ")}</small>
+                        <strong>{percent(value)}</strong>
+                      </span>
                     {/each}
                     {#if match.sourceArtworkUrl && candidate.backendItemId}
                       <ArtworkSimilarity
                         source={match.sourceArtworkUrl}
-                        candidate={candidateArtwork(candidate.backendItemId)}
+                        candidate={candidateArtwork(candidate)}
                       />
                     {/if}
                   </div>

@@ -3904,7 +3904,7 @@ namespace allstarr.Core.Storage.Migrations
                         {
                             t.HasCheckConstraint("CK_track_matches_confidence", "\"Confidence\" >= 0 AND \"Confidence\" <= 1 AND \"Threshold\" >= 0 AND \"Threshold\" <= 1");
 
-                            t.HasCheckConstraint("CK_track_matches_selected_shape", "(\"State\" IN ('Accepted', 'Pinned') AND \"LibraryTrackId\" IS NOT NULL) OR (\"State\" IN ('Unresolved', 'Suggested', 'Rejected', 'Ambiguous') AND \"LibraryTrackId\" IS NULL)");
+                            t.HasCheckConstraint("CK_track_matches_selected_shape", "(\"State\" = 'Accepted' AND (\"LibraryTrackId\" IS NOT NULL OR \"CanonicalRecordingId\" IS NOT NULL)) OR (\"State\" = 'Pinned' AND \"LibraryTrackId\" IS NOT NULL) OR (\"State\" IN ('Unresolved', 'Suggested', 'Rejected', 'Ambiguous') AND \"LibraryTrackId\" IS NULL)");
 
                             t.HasCheckConstraint("CK_track_matches_version", "\"DecisionVersion\" > 0");
                         });

@@ -335,7 +335,11 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         var score = Assert.Single(decision.Candidates);
         Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
         Assert.Equal(1, score.Confidence);
-        Assert.Equal(["artist", "title"], score.Components!.Keys.Order());
+        Assert.Contains("artist", score.Components!.Keys);
+        Assert.Contains("title", score.Components.Keys);
+        Assert.DoesNotContain("album", score.Components.Keys);
+        Assert.DoesNotContain("albumArtist", score.Components.Keys);
+        Assert.DoesNotContain("duration", score.Components.Keys);
         Assert.Null(score.AlbumEvidence);
     }
 
@@ -621,6 +625,42 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         Assert.Equal(0.88, decision.AcceptThreshold);
         Assert.Equal(0.72, decision.SuggestThreshold);
         Assert.Contains("below_suggestion_threshold", decision.Warnings);
+    }
+
+    [Fact]
+    public void Local_candidates_receive_the_default_seven_point_preference()
+    {
+        var scope = Scope();
+        var external = Candidate(scope) with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            Title = "A Songs",
+            DurationMilliseconds = null,
+            Album = null,
+            AlbumArtist = null,
+            IsLocal = false
+        };
+        var local = external with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "local-preferred",
+            IsLocal = true
+        };
+
+        var scores = new TrackMatchDecisionEngine()
+            .ScoreCandidates(Source(), [external, local])
+            .ToDictionary(item => item.LibraryTrackId);
+
+        Assert.Equal(
+            scores[external.LibraryTrackId].Confidence,
+            scores[local.LibraryTrackId].Confidence);
+        Assert.Equal(0.07, scores[local.LibraryTrackId].Components!["localPreference"]);
+        Assert.Equal(
+            Math.Min(1, scores[local.LibraryTrackId].Confidence + 0.07),
+            scores[local.LibraryTrackId].Components!["preferenceScore"]);
+        Assert.DoesNotContain(
+            "localPreference",
+            scores[external.LibraryTrackId].Components?.Keys ?? []);
     }
 
     [Fact]

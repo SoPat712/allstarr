@@ -71,6 +71,7 @@ if (isStorageOperatorCommand)
 }
 
 builder.Services.AddPlatformIdentity(builder.Configuration);
+builder.Services.AddSingleton<TrackMatchPolicy>();
 builder.Services.AddHostedService<DefaultTenantRuntimeSettingsProjector>();
 builder.Services.AddProtocolExecution(builder.Configuration);
 builder.Services.AddScoped<ProtocolExecutionContextFilter>();

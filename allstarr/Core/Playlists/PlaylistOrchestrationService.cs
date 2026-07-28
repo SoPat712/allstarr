@@ -775,6 +775,42 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 storedByExternalId[stored.ExternalSnapshotId] = stored;
         }
 
+        var rematchedExternal = false;
+        if (_trackMatches.SupportsExternalMatching)
+        {
+            foreach (var stored in storedByExternalId.Values.Where(item =>
+                         item.State is TrackMatchState.Unresolved or
+                             TrackMatchState.Suggested or
+                             TrackMatchState.Ambiguous))
+            {
+                if (allManualOverrides.TryGetValue(stored.ExternalSnapshotId, out var manual) &&
+                    (manual.Decision == ManualOverrideDecision.Pin ||
+                     manual.Decision == ManualOverrideDecision.Reject && !manual.LibraryTrackId.HasValue))
+                    continue;
+                var rematch = await _trackMatches.RematchSnapshotAsync(
+                    execution,
+                    stored.ExternalSnapshotId,
+                    execution.CorrelationId,
+                    link.PolicyVersion,
+                    cancellationToken);
+                rematchedExternal |= rematch.Succeeded;
+            }
+        }
+        if (rematchedExternal)
+        {
+            resolution = await _trackMatches.GetResolutionDataAsync(
+                new TrackMatchActor(
+                    actor.TenantId,
+                    actor.EffectiveUserId ?? link.OwnerUserId,
+                    actor.Kind == ProviderActorKind.Administrator),
+                link.OwnerUserId,
+                link.LibraryScopeId,
+                externalIds,
+                cancellationToken);
+            storedByExternalId = resolution.LatestDecisions
+                .ToDictionary(item => item.ExternalSnapshotId);
+        }
+
         var decisions = new List<PersistedPlaylistMatchDecision>(entries.Count);
         var decisionIds = new Dictionary<Guid, Guid?>(entries.Count);
 

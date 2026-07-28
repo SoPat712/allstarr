@@ -8,6 +8,7 @@ using allstarr.Core.Operations;
 using allstarr.Core.Playlists;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Models.Domain;
 using allstarr.Services.Spotify;
 using Microsoft.EntityFrameworkCore;
 
@@ -105,6 +106,8 @@ public sealed record TrackRematchCommandResult(
 
 public interface ITrackMatchRepository
 {
+    bool SupportsExternalMatching => false;
+
     Task<int> EnsureSourceSnapshotsAsync(
         IReadOnlyCollection<SourceTrackSeed> sourceTracks,
         CancellationToken cancellationToken = default);
@@ -197,6 +200,13 @@ public interface ITrackMatchRepository
         string correlationId,
         CancellationToken cancellationToken = default);
 
+    Task<TrackRematchCommandResult> RematchSnapshotAsync(
+        ProtocolExecutionContext context,
+        Guid externalSnapshotId,
+        string correlationId,
+        string policyVersion,
+        CancellationToken cancellationToken = default);
+
     Task<TrackMatchCommandResult> ClearSpotifyAsync(
         TrackMatchActor actor,
         string spotifyId,
@@ -222,8 +232,11 @@ public sealed class TrackMatchCommandService(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     TrackMatchDecisionEngine decisionEngine,
     ProviderAccountResolver accountResolver,
-    IPlatformClock clock) : ITrackMatchRepository
+    IPlatformClock clock,
+    PlaylistPlayableSearchService? playableSearch = null) : ITrackMatchRepository
 {
+    public bool SupportsExternalMatching => playableSearch != null;
+
     public async Task<ExternalMetadataSnapshotRecord> CaptureSnapshotAsync(
         ProtocolExecutionContext context,
         ExternalSnapshotInput input,
@@ -1301,6 +1314,36 @@ public sealed class TrackMatchCommandService(
         Guid externalSnapshotId,
         string correlationId,
         CancellationToken cancellationToken = default)
+        => await RematchSnapshotAsync(
+            actor, externalSnapshotId, correlationId, "manual-rematch-v3", null, cancellationToken);
+
+    public async Task<TrackRematchCommandResult> RematchSnapshotAsync(
+        ProtocolExecutionContext context,
+        Guid externalSnapshotId,
+        string correlationId,
+        string policyVersion,
+        CancellationToken cancellationToken = default)
+    {
+        var actor = context.RequireActor();
+        return await RematchSnapshotAsync(
+            new TrackMatchActor(
+                actor.TenantId,
+                actor.EffectiveUserId ?? throw new UnauthorizedAccessException("A user owner is required."),
+                actor.Kind == ProviderActorKind.Administrator),
+            externalSnapshotId,
+            correlationId,
+            policyVersion,
+            context,
+            cancellationToken);
+    }
+
+    private async Task<TrackRematchCommandResult> RematchSnapshotAsync(
+        TrackMatchActor actor,
+        Guid externalSnapshotId,
+        string correlationId,
+        string policyVersion,
+        ProtocolExecutionContext? execution,
+        CancellationToken cancellationToken)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var snapshot = await db.ExternalMetadataSnapshots.SingleOrDefaultAsync(
@@ -1312,11 +1355,22 @@ public sealed class TrackMatchCommandService(
             return new(false, TrackMatchCommandFailure.Forbidden, "Track snapshot is outside your account");
 
         var source = snapshot.ProviderTrackIdentityId.HasValue
-            ? await db.ProviderTrackIdentities.AsNoTracking().SingleOrDefaultAsync(
+            ? await db.ProviderTrackIdentities.SingleOrDefaultAsync(
                 item => item.Id == snapshot.ProviderTrackIdentityId.Value &&
                         item.TenantId == actor.TenantId,
                 cancellationToken)
             : null;
+        source ??= await db.ProviderTrackIdentities
+            .Where(item => item.TenantId == actor.TenantId &&
+                           item.ProviderId == snapshot.ProviderId &&
+                           item.ResourceKind == ProviderResourceKind.Track &&
+                           item.ExternalIdHash == snapshot.ExternalIdHash &&
+                           (item.Scope == ProviderIdentityScope.Catalog ||
+                            item.ProviderAccountId == snapshot.ProviderAccountId))
+            .OrderByDescending(item => item.ProviderAccountId == snapshot.ProviderAccountId)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (source != null && !snapshot.ProviderTrackIdentityId.HasValue)
+            snapshot.ProviderTrackIdentityId = source.Id;
         var candidates = await db.LibraryTracks.AsNoTracking()
             .Where(item =>
                 item.TenantId == actor.TenantId &&
@@ -1371,17 +1425,90 @@ public sealed class TrackMatchCommandService(
                     new HashSet<Guid> { manual.LibraryTrackId.Value })
                 : null;
         var decision = decisionEngine.Decide(scope, sourceTrack, localCandidates, rejectedOverride);
+        PlayableTrackMatch? playable = null;
+        if (execution != null &&
+            playableSearch != null &&
+            manual?.Decision is not ManualOverrideDecision.Pin &&
+            !(manual?.Decision == ManualOverrideDecision.Reject && !manual.LibraryTrackId.HasValue) &&
+            decision.State is not (TrackMatchReviewState.Accepted or TrackMatchReviewState.Pinned))
+        {
+            var cachedRoutes = source == null
+                ? []
+                : await db.ProviderTrackIdentities.AsNoTracking()
+                    .Where(item =>
+                        item.TenantId == source.TenantId &&
+                        item.CanonicalRecordingId == source.CanonicalRecordingId &&
+                        item.Id != source.Id &&
+                        item.ResourceKind == ProviderResourceKind.Track &&
+                        item.VerificationMethod != "source-snapshot-hash" &&
+                        (item.Verification == ProviderIdentityVerification.Verified ||
+                         item.Verification == ProviderIdentityVerification.Pinned))
+                    .ToArrayAsync(cancellationToken);
+            playable = source == null
+                ? null
+                : await playableSearch.ReuseAsync(
+                    execution, sourceTrack, scope, cachedRoutes, cancellationToken);
+            playable ??= await playableSearch.MatchAsync(
+                execution,
+                sourceTrack,
+                scope,
+                candidates.Select(ToLocalCandidate).ToArray(),
+                rejectedOverride,
+                cancellationToken);
+            decision = playable.Decision;
+        }
         var selected = decision.SelectedLibraryTrackId.HasValue
             ? candidates.SingleOrDefault(item => item.Id == decision.SelectedLibraryTrackId.Value)
             : null;
-        var input = MatchDecisionInput.FromDecision(
-            snapshot.Id,
-            selected?.CanonicalRecordingId,
-            decision,
-            latestVersion + 1,
-            snapshot.SnapshotVersion,
-            libraryIndexRevision,
-            "manual-rematch-v2");
+        var externalAccepted =
+            decision.State == TrackMatchReviewState.Accepted &&
+            playable != null &&
+            selected == null;
+        var selectedExternal = externalAccepted ? playable!.SelectedExternal : null;
+        Guid? canonicalRecordingId = selected?.CanonicalRecordingId ?? source?.CanonicalRecordingId;
+        if (externalAccepted && selectedExternal != null)
+        {
+            if (source == null)
+            {
+                var canonical = new CanonicalRecordingRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    TenantId = actor.TenantId,
+                    CreatedByUserId = actor.UserId,
+                    Isrc = payload.Isrc,
+                    CreatedAt = clock.UtcNow,
+                    UpdatedAt = clock.UtcNow
+                };
+                db.CanonicalRecordings.Add(canonical);
+                source = AddSourceSnapshotIdentity(
+                    db, snapshot, canonical.Id, latestVersion + 1, clock.UtcNow);
+            }
+            canonicalRecordingId = await LinkExternalIdentitiesAsync(
+                db,
+                source,
+                selectedExternal,
+                playable!.AcceptedExternalCandidates,
+                latestVersion + 1,
+                clock.UtcNow,
+                cancellationToken);
+        }
+        var input = externalAccepted && canonicalRecordingId.HasValue
+            ? MatchDecisionInput.FromExternalDecision(
+                snapshot.Id,
+                canonicalRecordingId.Value,
+                decision,
+                latestVersion + 1,
+                snapshot.SnapshotVersion,
+                libraryIndexRevision,
+                policyVersion)
+            : MatchDecisionInput.FromDecision(
+                snapshot.Id,
+                canonicalRecordingId,
+                decision,
+                latestVersion + 1,
+                snapshot.SnapshotVersion,
+                libraryIndexRevision,
+                policyVersion);
         var record = ToRecord(
             input, actor.TenantId, snapshot.OwnerUserId, snapshot.LibraryScopeId,
             correlationId, clock.UtcNow);
@@ -1414,6 +1541,85 @@ public sealed class TrackMatchCommandService(
             Confidence: decision.Confidence,
             CandidateCount: decision.Candidates.Count,
             DecisionVersion: record.DecisionVersion);
+    }
+
+    private static async Task<Guid> LinkExternalIdentitiesAsync(
+        AllstarrDbContext db,
+        ProviderTrackIdentityRecord source,
+        Song selected,
+        IReadOnlyList<Song> accepted,
+        int decisionVersion,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var canonicalRecordingId = await LinkExternalIdentityAsync(
+            db, source, selected, source.CanonicalRecordingId, true, decisionVersion, now, cancellationToken);
+        foreach (var alternate in accepted.Where(song =>
+                     !string.Equals(song.ExternalProvider, selected.ExternalProvider, StringComparison.OrdinalIgnoreCase) ||
+                     !string.Equals(song.ExternalId, selected.ExternalId, StringComparison.Ordinal)))
+        {
+            await LinkExternalIdentityAsync(
+                db, source, alternate, canonicalRecordingId, false, decisionVersion, now, cancellationToken);
+        }
+        return canonicalRecordingId;
+    }
+
+    private static async Task<Guid> LinkExternalIdentityAsync(
+        AllstarrDbContext db,
+        ProviderTrackIdentityRecord source,
+        Song song,
+        Guid canonicalRecordingId,
+        bool primary,
+        int decisionVersion,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var providerId = song.ExternalProvider!.Trim().ToLowerInvariant() switch
+        {
+            "applemusic" => "apple-download",
+            var value => value
+        };
+        var externalId = song.ExternalId!.Trim();
+        var externalHash = Hash(externalId);
+        var identity = await db.ProviderTrackIdentities.SingleOrDefaultAsync(item =>
+            item.TenantId == source.TenantId &&
+            item.ProviderId == providerId &&
+            item.ResourceKind == ProviderResourceKind.Track &&
+            item.CatalogNamespace == "default" &&
+            item.Scope == ProviderIdentityScope.Catalog &&
+            item.ExternalIdHash == externalHash,
+            cancellationToken);
+        if (identity != null)
+        {
+            if (primary)
+                canonicalRecordingId = identity.CanonicalRecordingId;
+            if (source.CanonicalRecordingId != canonicalRecordingId)
+            {
+                source.CanonicalRecordingId = canonicalRecordingId;
+                source.UpdatedAt = now;
+            }
+            return canonicalRecordingId;
+        }
+
+        db.ProviderTrackIdentities.Add(new ProviderTrackIdentityRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = source.TenantId,
+            CanonicalRecordingId = canonicalRecordingId,
+            ProviderId = providerId,
+            ResourceKind = ProviderResourceKind.Track,
+            CatalogNamespace = "default",
+            Scope = ProviderIdentityScope.Catalog,
+            ExternalId = externalId,
+            ExternalIdHash = externalHash,
+            Verification = ProviderIdentityVerification.Verified,
+            VerificationMethod = "automatic-match",
+            DecisionVersion = decisionVersion,
+            VerifiedAt = now,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        return canonicalRecordingId;
     }
 
     public async Task<TrackMatchCommandResult> ClearSpotifyAsync(
@@ -1657,26 +1863,8 @@ public sealed class TrackMatchCommandService(
 
             if (sourceIdentity == null)
             {
-                sourceIdentity = new ProviderTrackIdentityRecord
-                {
-                    Id = Guid.CreateVersion7(),
-                    TenantId = actor.TenantId,
-                    CanonicalRecordingId = canonicalId.Value,
-                    ProviderAccountId = snapshot.ProviderAccountId,
-                    ProviderId = snapshot.ProviderId,
-                    ResourceKind = ProviderResourceKind.Track,
-                    CatalogNamespace = "default",
-                    Scope = ProviderIdentityScope.Account,
-                    ExternalId = snapshot.ExternalIdHash,
-                    ExternalIdHash = snapshot.ExternalIdHash,
-                    Verification = ProviderIdentityVerification.Verified,
-                    VerificationMethod = "source-snapshot-hash",
-                    DecisionVersion = decisionVersion,
-                    VerifiedAt = now,
-                    CreatedAt = now,
-                    UpdatedAt = now
-                };
-                db.ProviderTrackIdentities.Add(sourceIdentity);
+                sourceIdentity = AddSourceSnapshotIdentity(
+                    db, snapshot, canonicalId.Value, decisionVersion, now);
             }
 
             var externalHash = Hash(externalId);
@@ -1729,6 +1917,37 @@ public sealed class TrackMatchCommandService(
         return TrackMatchCommandResult.Success(snapshot.Id);
     }
 
+    private static ProviderTrackIdentityRecord AddSourceSnapshotIdentity(
+        AllstarrDbContext db,
+        ExternalMetadataSnapshotRecord snapshot,
+        Guid canonicalRecordingId,
+        int decisionVersion,
+        DateTimeOffset now)
+    {
+        var identity = new ProviderTrackIdentityRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = snapshot.TenantId,
+            CanonicalRecordingId = canonicalRecordingId,
+            ProviderAccountId = snapshot.ProviderAccountId,
+            ProviderId = snapshot.ProviderId,
+            ResourceKind = ProviderResourceKind.Track,
+            CatalogNamespace = "default",
+            Scope = ProviderIdentityScope.Account,
+            ExternalId = snapshot.ExternalIdHash,
+            ExternalIdHash = snapshot.ExternalIdHash,
+            Verification = ProviderIdentityVerification.Verified,
+            VerificationMethod = "source-snapshot-hash",
+            DecisionVersion = decisionVersion,
+            VerifiedAt = now,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        db.ProviderTrackIdentities.Add(identity);
+        snapshot.ProviderTrackIdentityId = identity.Id;
+        return identity;
+    }
+
     private static string CleanReason(string? value, string fallback)
     {
         var reason = string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
@@ -1751,7 +1970,8 @@ public sealed class TrackMatchCommandService(
         PersistenceGuard.ValidateSafeJson(input.ReasonsJson, nameof(input.ReasonsJson));
         PersistenceGuard.ValidateSafeJson(input.WarningsJson, nameof(input.WarningsJson));
         if (input.State is TrackMatchState.Accepted or TrackMatchState.Pinned &&
-                !input.LibraryTrackId.HasValue ||
+                !input.LibraryTrackId.HasValue &&
+                !input.CanonicalRecordingId.HasValue ||
             input.State is TrackMatchState.Unresolved or TrackMatchState.Suggested or
                 TrackMatchState.Rejected or TrackMatchState.Ambiguous &&
                 input.LibraryTrackId.HasValue)

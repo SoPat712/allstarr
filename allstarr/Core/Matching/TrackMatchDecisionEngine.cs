@@ -57,7 +57,8 @@ public sealed record LocalTrackMatchCandidate(
     string? Isrc,
     string? MusicBrainzRecordingId,
     bool? IsExplicit,
-    IReadOnlyDictionary<string, string>? ProviderTrackIds = null);
+    IReadOnlyDictionary<string, string>? ProviderTrackIds = null,
+    bool IsLocal = true);
 
 public sealed record ScopedTrackMatchOverride(
     Guid TenantId,
@@ -105,6 +106,8 @@ public sealed record TrackMatchDecision(
 
 public sealed class TrackMatchPolicy
 {
+    public double LocalPreferenceBoost { get; set; } = 0.07;
+
     public double AcceptThreshold { get; init; } = 0.88;
 
     public double SuggestThreshold { get; init; } = 0.72;
@@ -115,7 +118,8 @@ public sealed class TrackMatchPolicy
 
     public void Validate()
     {
-        if (AcceptThreshold is <= 0 or > 1 ||
+        if (LocalPreferenceBoost is < 0 or > 1 ||
+            AcceptThreshold is <= 0 or > 1 ||
             SuggestThreshold is < 0 or > 1 ||
             SuggestThreshold > AcceptThreshold ||
             AmbiguityDelta is < 0 or > 1 ||
@@ -128,7 +132,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "normalized-v5";
+    public const string AlgorithmVersion = "normalized-v6";
 
     private readonly TrackMatchPolicy _policy;
 
@@ -154,6 +158,7 @@ public sealed class TrackMatchDecisionEngine
                 candidate.Isrc,
                 candidate.MusicBrainzRecordingId,
                 candidate.IsExplicit,
+                candidate.IsLocal,
                 ProviderTrackIds = candidate.ProviderTrackIds?.OrderBy(item => item.Key)
             }));
         return BinaryPrimitives.ReadInt64BigEndian(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
@@ -173,11 +178,42 @@ public sealed class TrackMatchDecisionEngine
         ArgumentNullException.ThrowIfNull(candidates);
         ValidateSource(source);
         return candidates
-            .Select(candidate => ScoreCandidate(source, candidate))
-            .OrderByDescending(candidate => candidate.Confidence)
+            .Select(candidate => ApplyLocalPreference(
+                ScoreCandidate(source, candidate),
+                candidate.IsLocal))
+            .OrderByDescending(PreferenceScore)
+            .ThenByDescending(candidate => candidate.Confidence)
             .ThenBy(candidate => candidate.LibraryTrackId)
             .ToArray();
     }
+
+    private TrackMatchCandidateScore ApplyLocalPreference(
+        TrackMatchCandidateScore score,
+        bool isLocal)
+    {
+        if (!isLocal || _policy.LocalPreferenceBoost == 0)
+        {
+            return score;
+        }
+
+        var components = new Dictionary<string, double>(
+            score.Components ?? new Dictionary<string, double>())
+        {
+            ["localPreference"] = _policy.LocalPreferenceBoost,
+            ["preferenceScore"] = Math.Min(1, score.Confidence + _policy.LocalPreferenceBoost)
+        };
+        return score with
+        {
+            Components = components,
+            Reasons = score.Reasons
+                .Append("local_preference_boost")
+                .Distinct(StringComparer.Ordinal)
+                .ToArray()
+        };
+    }
+
+    private static double PreferenceScore(TrackMatchCandidateScore score) =>
+        score.Components?.GetValueOrDefault("preferenceScore") ?? score.Confidence;
 
     public TrackMatchDecision Decide(
         TrackMatchScope scope,
@@ -251,9 +287,16 @@ public sealed class TrackMatchDecisionEngine
 
         var best = scores[0];
         var selected = visible.Single(candidate => candidate.LibraryTrackId == best.LibraryTrackId);
+        var runnerUpDelta = scores.Count > 1 &&
+                            best.Components?.ContainsKey("localPreference") ==
+                            scores[1].Components?.ContainsKey("localPreference")
+            ? best.Confidence - scores[1].Confidence
+            : scores.Count > 1
+                ? PreferenceScore(best) - PreferenceScore(scores[1])
+                : double.MaxValue;
         if (scores.Count > 1 &&
-            best.Confidence >= _policy.SuggestThreshold &&
-            best.Confidence - scores[1].Confidence <= _policy.AmbiguityDelta)
+            PreferenceScore(best) >= _policy.SuggestThreshold &&
+            runnerUpDelta <= _policy.AmbiguityDelta)
         {
             return Result(
                 TrackMatchReviewState.Ambiguous,

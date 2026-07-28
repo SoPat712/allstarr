@@ -1467,9 +1467,9 @@ test("Sidebar uses an integrated expander and deterministic slim breakpoint", as
   await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("link")).toHaveCount(6);
   const libraryIcon = page.getByRole("navigation", { name: "Primary" })
     .getByRole("link", { name: "Library" }).locator("svg");
-  const menuMarks = expander.locator(".menu-icon > span");
+  const menuMarks = expander.locator(".menu-line");
   const expandedIcon = await libraryIcon.boundingBox();
-  const expandedMark = await menuMarks.first().boundingBox();
+  const expandedPath = await menuMarks.first().getAttribute("d");
   await expander.click();
   await expect(shell).toHaveClass(/slim/);
   await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
@@ -1477,12 +1477,10 @@ test("Sidebar uses an integrated expander and deterministic slim breakpoint", as
   const collapsedIcon = await libraryIcon.boundingBox();
   expect(Math.abs((expandedIcon!.x + expandedIcon!.width / 2) -
     (collapsedIcon!.x + collapsedIcon!.width / 2))).toBeLessThanOrEqual(0.5);
-  const collapsedMark = await page.getByRole("button", { name: "Expand sidebar" })
-    .locator(".menu-icon > span").first().boundingBox();
-  expect(collapsedMark!.width).toBeLessThanOrEqual(2);
-  expect(expandedMark!.width).toBeGreaterThanOrEqual(15);
-  expect(Math.abs((expandedMark!.x + expandedMark!.width / 2) -
-    (collapsedMark!.x + collapsedMark!.width / 2))).toBeLessThanOrEqual(0.5);
+  const collapsedPath = await page.getByRole("button", { name: "Expand sidebar" })
+    .locator(".menu-line").first().getAttribute("d");
+  expect(expandedPath).toBe("M4 5h12l4 4");
+  expect(collapsedPath).toBe("M4 5h16");
   const library = page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Library" });
   await expect.poll(async () => {
     const [link, icon] = await Promise.all([library.boundingBox(), library.locator("svg").boundingBox()]);
