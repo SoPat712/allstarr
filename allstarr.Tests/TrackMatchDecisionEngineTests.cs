@@ -241,6 +241,66 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void DurationEvidenceBreaksOtherwiseExactLongFormTie()
+    {
+        var scope = Scope();
+        var closer = Candidate(scope) with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "closer",
+            CanonicalRecordingId = Guid.CreateVersion7(),
+            DurationMilliseconds = 327_000,
+            IsLocal = false
+        };
+        var farther = closer with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "farther",
+            CanonicalRecordingId = Guid.CreateVersion7(),
+            DurationMilliseconds = 405_000
+        };
+
+        var decision = new TrackMatchDecisionEngine().Decide(
+            scope,
+            Source() with { DurationMilliseconds = 338_000 },
+            [farther, closer]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(closer.LibraryTrackId, decision.SelectedLibraryTrackId);
+        Assert.True(decision.Candidates[0].Confidence > decision.Candidates[1].Confidence);
+    }
+
+    [Fact]
+    public void StableRecordingEvidenceCanCollapseDuplicateInternalCanonicalIds()
+    {
+        var scope = Scope();
+        var first = Candidate(scope) with
+        {
+            CanonicalRecordingId = Guid.CreateVersion7(),
+            MusicBrainzRecordingId = "571c58f1-fba5-4e02-94c9-b54ff0e2d52f",
+            DurationMilliseconds = 239_000
+        };
+        var second = first with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "duplicate",
+            CanonicalRecordingId = Guid.CreateVersion7(),
+            MusicBrainzRecordingId = null,
+            DurationMilliseconds = 241_000
+        };
+
+        var decision = new TrackMatchDecisionEngine().Decide(
+            scope, Source(), [first, second]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Contains(decision.SelectedLibraryTrackId, new Guid?[]
+        {
+            first.LibraryTrackId,
+            second.LibraryTrackId
+        });
+    }
+
+    [Fact]
     public void DuplicateCopiesWithoutStrongIdentityDoNotBlockBestMatch()
     {
         var scope = Scope();

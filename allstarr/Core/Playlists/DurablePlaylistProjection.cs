@@ -179,11 +179,15 @@ public sealed class DurablePlaylistProjectionReader(
                            (item.Verification == ProviderIdentityVerification.Verified ||
                             item.Verification == ProviderIdentityVerification.Pinned))
             .ToListAsync(cancellationToken);
-        var providerOrder = providerGateway?.GetProviderOrder(ProviderCapabilityKind.Streaming) ??
-                            identities.Select(item => item.ProviderId)
-                                .Distinct(StringComparer.Ordinal)
-                                .Order(StringComparer.Ordinal)
-                                .ToArray();
+        var providerOrder = providerGateway == null
+            ? identities.Select(item => item.ProviderId)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .ToArray()
+            : (providerGateway.GetProviderOrder(ProviderCapabilityKind.Streaming) ?? [])
+                .Concat(providerGateway.GetProviderOrder(ProviderCapabilityKind.Download) ?? [])
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
         var publishedMatchIds = entries
             .Where(item => item.PublishedTrackMatchId.HasValue)
             .Select(item => item.PublishedTrackMatchId!.Value)

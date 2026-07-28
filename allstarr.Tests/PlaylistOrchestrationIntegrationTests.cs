@@ -938,7 +938,9 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
 
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
-            .Returns(["qobuz", "deezer"]);
+            .Returns(["deezer"]);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
+            .Returns(["qobuz"]);
         var projection = await new DurablePlaylistProjectionReader(_factory, gateway.Object)
             .ReadByNameAsync(_tenant, _user, "Provider Mix");
 

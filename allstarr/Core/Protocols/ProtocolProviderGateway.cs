@@ -183,12 +183,12 @@ public sealed class ProtocolProviderGateway(
     {
         ArgumentNullException.ThrowIfNull(protocol);
         limit = Math.Clamp(limit, 1, 200);
-        var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Streaming)
+        var configuredProviderOrder = ResolveProviderOrder(ProviderCapabilityKind.Streaming)
             .Concat(ResolveProviderOrder(ProviderCapabilityKind.Download))
             .Select(NormalizeProvider)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        if (providerOrder.Length == 0) return [];
+        if (configuredProviderOrder.Length == 0) return [];
 
         if (protocol.Actor is null)
         {
@@ -196,13 +196,16 @@ public sealed class ProtocolProviderGateway(
                 query, limit, protocol.CancellationToken);
             return publicLegacy
                 .Where(item => IsPublicMetadataProvider(item.ExternalProvider))
-                .Where(item => providerOrder.Contains(
+                .Where(item => configuredProviderOrder.Contains(
                     NormalizeProvider(item.ExternalProvider), StringComparer.Ordinal))
                 .Take(limit)
                 .ToArray();
         }
 
         var actor = protocol.RequireActor();
+        var providerOrder = await ResolvePlayableProviderOrderAsync(
+            protocol, actor, configuredProviderOrder);
+        if (providerOrder.Count == 0) return [];
         var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(
             protocol,
             actor,
@@ -253,6 +256,44 @@ public sealed class ProtocolProviderGateway(
             item => Key(item.ExternalProvider, item.ExternalId, item.Id),
             item => item.ExternalProvider,
             providerOrder);
+    }
+
+    private async Task<IReadOnlyList<string>> ResolvePlayableProviderOrderAsync(
+        ProtocolExecutionContext protocol,
+        ProviderActorContext actor,
+        IReadOnlyList<string> configuredProviderOrder)
+    {
+        var streaming = await router.PlanAsync<IProviderStreamingCapability>(Request(
+            protocol,
+            actor,
+            ProviderCapabilityKind.Streaming,
+            "protocol-playable-provider-check",
+            configuredProviderOrder,
+            sourceTrackId: null));
+        var download = await router.PlanAsync<IProviderDownloadCapability>(Request(
+            protocol,
+            actor,
+            ProviderCapabilityKind.Download,
+            "protocol-playable-provider-check",
+            configuredProviderOrder,
+            sourceTrackId: null,
+            allowManagedDownloads: true,
+            idempotencyKey: $"playable-search:{protocol.CorrelationId}"));
+        var allowed = streaming.Candidates.Select(item => item.Provider.Id)
+            .Concat(download.Candidates.Select(item => item.Provider.Id))
+            .Select(NormalizeProvider)
+            .ToHashSet(StringComparer.Ordinal);
+        var typed = registry.FindByCapability(ProviderCapabilityKind.Streaming)
+            .Concat(registry.FindByCapability(ProviderCapabilityKind.Download))
+            .Select(item => NormalizeProvider(item.Id))
+            .ToHashSet(StringComparer.Ordinal);
+        var compatibility = (await ResolveAllowedCompatibilityProvidersAsync(
+                protocol, actor, ProviderCapabilityKind.Streaming))
+            .Concat(await ResolveAllowedCompatibilityProvidersAsync(
+                protocol, actor, ProviderCapabilityKind.Download))
+            .Where(providerId => !typed.Contains(providerId));
+        allowed.UnionWith(compatibility);
+        return configuredProviderOrder.Where(allowed.Contains).ToArray();
     }
 
     public async Task<Song?> GetSongAsync(
@@ -682,7 +723,9 @@ public sealed class ProtocolProviderGateway(
         IEnumerable<string> providerIds,
         ProviderExternalResourceId? sourceTrackId,
         ProviderAudioQuality quality = ProviderAudioQuality.Any,
-        bool allowFallback = false) => new(
+        bool allowFallback = false,
+        bool allowManagedDownloads = false,
+        string? idempotencyKey = null) => new(
         capability,
         actor,
         new ProviderExecutionPolicy(
@@ -692,7 +735,7 @@ public sealed class ProtocolProviderGateway(
             ProviderExplicitContentPolicy.Allow,
             allowFallback,
             allowSharedAccount: true,
-            allowManagedDownloads: false,
+            allowManagedDownloads,
             providerIds),
         operationId,
         protocol.CorrelationId,
@@ -711,6 +754,7 @@ public sealed class ProtocolProviderGateway(
             ? null
             : new ProviderLibraryContext(actor.TenantId, protocol.LibraryScopeId),
         sourceTrackId: sourceTrackId,
+        idempotencyKey: idempotencyKey,
         cancellationToken: protocol.CancellationToken);
 
     private static long? ParseRangeStart(string? rangeHeader)

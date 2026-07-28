@@ -201,6 +201,74 @@ public sealed class PlaylistPlayableSearchServiceTests
         Assert.Equal("tentative", result.SelectedExternal!.ExternalId);
     }
 
+    [Fact]
+    public async Task EquivalentProviderEditionsAreOneCandidateWithFallbackRoutes()
+    {
+        var tenant = Guid.CreateVersion7();
+        var user = Guid.CreateVersion7();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
+            .Returns(["deezer"]);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
+            .Returns(["apple-download"]);
+        gateway.Setup(item => item.SearchPlayableSongsAsync(
+                It.IsAny<ProtocolExecutionContext>(),
+                "Serenade No. 13 in G Major Wiener Philharmoniker",
+                60))
+            .ReturnsAsync(
+            [
+                new Song
+                {
+                    ExternalProvider = "apple-download",
+                    ExternalId = "apple-serenade",
+                    Title = "Serenade No. 13 in G Major",
+                    Artist = "Wiener Philharmoniker",
+                    Album = "Mozart: Eine kleine Nachtmusik",
+                    Duration = 400
+                },
+                new Song
+                {
+                    ExternalProvider = "deezer",
+                    ExternalId = "deezer-serenade",
+                    Title = "Serenade No. 13 in G Major: Serenade No. 13 in G Major",
+                    Artist = "Wiener Philharmoniker",
+                    Album = "Mozart: Eine kleine Nachtmusik",
+                    Duration = 401
+                }
+            ]);
+        var service = new PlaylistPlayableSearchService(
+            gateway.Object,
+            new TrackMatchDecisionEngine(),
+            null!,
+            new IdentityOptions(),
+            Options.Create(new JellyfinSettings()),
+            NullLogger<PlaylistPlayableSearchService>.Instance);
+
+        var result = await service.MatchAsync(
+            Context(tenant, user),
+            new ExternalTrackMatchSnapshot(
+                "source",
+                "spotify",
+                "source-track",
+                "Serenade No. 13 in G Major",
+                "Wiener Philharmoniker",
+                "Mozart: Eine kleine Nachtmusik",
+                null,
+                400_000,
+                null,
+                null,
+                null),
+            new TrackMatchScope(
+                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1),
+            [],
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
+        Assert.Single(result.Decision.Candidates);
+        Assert.Equal(2, result.RoutableExternalCandidates.Count);
+    }
+
     private static ProtocolExecutionContext Context(Guid tenant, Guid user) => new(
         ProtocolKind.Jellyfin,
         "main",

@@ -132,7 +132,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "normalized-v8";
+    public const string AlgorithmVersion = "normalized-v9";
 
     private readonly TrackMatchPolicy _policy;
 
@@ -467,13 +467,15 @@ public sealed class TrackMatchDecisionEngine
         }
 
         var delta = Math.Abs(source.Value - candidate.Value) / 1000d;
+        var duration = Math.Max(source.Value, candidate.Value) / 1000d;
         return delta == 0
             ? 1
             : delta <= 2
                 ? 0.95
                 : delta <= _policy.DurationToleranceSeconds
                     ? 1 - (0.5 * delta / _policy.DurationToleranceSeconds)
-                    : 0;
+                    : Math.Max(0, 0.5 -
+                        ((delta - _policy.DurationToleranceSeconds) / Math.Max(1, duration)));
     }
 
     private static double Similarity(string? left, string? right) =>
@@ -543,8 +545,9 @@ public sealed class TrackMatchDecisionEngine
         LocalTrackMatchCandidate left,
         LocalTrackMatchCandidate right)
     {
-        if (left.CanonicalRecordingId.HasValue && right.CanonicalRecordingId.HasValue)
-            return left.CanonicalRecordingId == right.CanonicalRecordingId;
+        if (left.CanonicalRecordingId.HasValue &&
+            left.CanonicalRecordingId == right.CanonicalRecordingId)
+            return true;
 
         var leftRecording = RecordingIdentity(left);
         var rightRecording = RecordingIdentity(right);
@@ -552,17 +555,35 @@ public sealed class TrackMatchDecisionEngine
             !string.IsNullOrWhiteSpace(rightRecording))
             return EqualsNormalized(leftRecording, rightRecording);
 
-        return FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(left.Title))
-                   .Equals(
-                       FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(right.Title)),
-                       StringComparison.Ordinal) &&
-               FuzzyMatcher.NormalizeForMatching(left.Artist)
-                   .Equals(FuzzyMatcher.NormalizeForMatching(right.Artist), StringComparison.Ordinal) &&
-               FuzzyMatcher.SemanticVersionTags(left.Title)
-                   .SetEquals(FuzzyMatcher.SemanticVersionTags(right.Title)) &&
-               left.DurationMilliseconds.HasValue &&
-               right.DurationMilliseconds.HasValue &&
-               Math.Abs(left.DurationMilliseconds.Value - right.DurationMilliseconds.Value) <= 2_000;
+        if (left.CanonicalRecordingId.HasValue &&
+            right.CanonicalRecordingId.HasValue &&
+            string.IsNullOrWhiteSpace(leftRecording) &&
+            string.IsNullOrWhiteSpace(rightRecording))
+            return false;
+        if (!FuzzyMatcher.SemanticVersionTags(left.Title)
+                .SetEquals(FuzzyMatcher.SemanticVersionTags(right.Title)) ||
+            !left.DurationMilliseconds.HasValue ||
+            !right.DurationMilliseconds.HasValue ||
+            Math.Abs(left.DurationMilliseconds.Value - right.DurationMilliseconds.Value) > 3_000)
+            return false;
+
+        var leftTitle = FuzzyMatcher.NormalizeForMatching(
+            FuzzyMatcher.StripDecorators(left.Title));
+        var rightTitle = FuzzyMatcher.NormalizeForMatching(
+            FuzzyMatcher.StripDecorators(right.Title));
+        var sameTitle = leftTitle.Equals(rightTitle, StringComparison.Ordinal);
+        var sameArtist = FuzzyMatcher.NormalizeForMatching(left.Artist)
+            .Equals(FuzzyMatcher.NormalizeForMatching(right.Artist), StringComparison.Ordinal);
+        var sameAlbum = !string.IsNullOrWhiteSpace(left.Album) &&
+                        !string.IsNullOrWhiteSpace(right.Album) &&
+                        FuzzyMatcher.NormalizeForMatching(left.Album)
+                            .Equals(
+                                FuzzyMatcher.NormalizeForMatching(right.Album),
+                                StringComparison.Ordinal);
+        return sameTitle && (sameArtist || sameAlbum) ||
+               Similarity(leftTitle, rightTitle) >= 0.9 &&
+               ArtistSimilarity(left.Artist, right.Artist) >= 0.85 &&
+               ComparableSimilarity(left.Album, right.Album) >= 0.9;
     }
 
     private static string? RecordingIdentity(LocalTrackMatchCandidate candidate) =>

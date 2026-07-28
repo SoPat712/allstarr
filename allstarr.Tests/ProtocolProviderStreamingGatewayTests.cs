@@ -41,6 +41,14 @@ public sealed class ProtocolProviderStreamingGatewayTests
                 ])));
         var registry = MetadataRegistry(failing.Object, healthy.Object);
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(
+                It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) =>
+                EmptyPlan<IProviderStreamingCapability>(request));
+        router.Setup(item => item.PlanAsync<IProviderDownloadCapability>(
+                It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) =>
+                EmptyPlan<IProviderDownloadCapability>(request));
         router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(
                 It.Is<ProviderRouteRequest>(request =>
                     request.Capability == ProviderCapabilityKind.Metadata &&
@@ -63,6 +71,79 @@ public sealed class ProtocolProviderStreamingGatewayTests
         Assert.Equal("track-1", Assert.Single(songs).ExternalId);
         failing.VerifyAll();
         healthy.VerifyAll();
+    }
+
+    [Fact]
+    public async Task PlayableSearch_ExcludesProviderWithoutAUsablePlaybackAccount()
+    {
+        var metadata = new Mock<IProviderMetadataCapability>();
+        metadata.SetupGet(item => item.ProviderId).Returns("qobuz");
+        metadata.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        var requiredScopes = new[]
+        {
+            ProviderAccountScope.Global,
+            ProviderAccountScope.User,
+            ProviderAccountScope.Library
+        };
+        var registry = new ProviderRegistry(
+        [
+            new ProviderRegistration(
+                new ProviderDescriptor(
+                    "qobuz",
+                    "Qobuz",
+                    "Test provider",
+                    ProviderOrigin.BuiltIn,
+                    "1",
+                    "1",
+                    [
+                        new ProviderCapabilityDescriptor(
+                            ProviderCapabilityKind.Metadata,
+                            ProviderCapabilitySupportState.Supported,
+                            ProviderAccountRequirement.None,
+                            "1",
+                            ["searchTracks", "getTrack"]),
+                        new ProviderCapabilityDescriptor(
+                            ProviderCapabilityKind.Streaming,
+                            ProviderCapabilitySupportState.ConfiguredOnly,
+                            ProviderAccountRequirement.Required,
+                            "1",
+                            allowedAccountScopes: requiredScopes),
+                        new ProviderCapabilityDescriptor(
+                            ProviderCapabilityKind.Download,
+                            ProviderCapabilitySupportState.ConfiguredOnly,
+                            ProviderAccountRequirement.Required,
+                            "1",
+                            allowedAccountScopes: requiredScopes)
+                    ],
+                    new ProviderPermissionDescriptor()),
+                [metadata.Object])
+        ]);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(
+                It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) =>
+                EmptyPlan<IProviderStreamingCapability>(request));
+        router.Setup(item => item.PlanAsync<IProviderDownloadCapability>(
+                It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) =>
+                EmptyPlan<IProviderDownloadCapability>(request));
+        var accounts = new Mock<IProviderRouteAccountResolver>();
+        accounts.Setup(item => item.ResolveAsync(
+                It.IsAny<ProviderRouteAccountRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderRouteAccountResolution?)null);
+        var legacy = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        var gateway = new ProtocolProviderGateway(
+            router.Object,
+            registry,
+            accounts.Object,
+            legacy.Object,
+            new HttpClientFactory());
+
+        var songs = await gateway.SearchPlayableSongsAsync(
+            Context(), "Track Artist", 10);
+
+        Assert.Empty(songs);
     }
 
     [Fact]
@@ -255,6 +336,19 @@ public sealed class ProtocolProviderStreamingGatewayTests
                     item.Priority == 0 ? "selected" : "eligible-fallback",
                     item.Priority)).ToArray()));
     }
+
+    private static ProviderRoutePlan<TCapability> EmptyPlan<TCapability>(
+        ProviderRouteRequest request)
+        where TCapability : class, IProviderCapability =>
+        new(
+            request,
+            [],
+            new ProviderRouteDecisionRecord(
+                request.CorrelationId,
+                request.Capability,
+                null,
+                null,
+                []));
 
     private static ProtocolExecutionContext Context()
     {
