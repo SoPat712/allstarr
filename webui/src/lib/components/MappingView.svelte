@@ -369,24 +369,6 @@
                 {#if match.sourceArtworkUrl && match.candidateArtworkUrl}
                   <ArtworkSimilarity source={match.sourceArtworkUrl} candidate={match.candidateArtworkUrl} />
                 {/if}
-                <details>
-                  <summary>Scoring and technical details</summary>
-                  <dl>
-                    {#if candidate}
-                      {#each scoreComponents(candidate) as [name, value]}
-                        <div><dt>{name.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ")}</dt><dd>{percent(value)}</dd></div>
-                      {/each}
-                    {/if}
-                    <div><dt>Source snapshot</dt><dd>{match.externalSnapshotId}</dd></div>
-                    {#if match.canonicalRecordingId}<div><dt>Canonical recording</dt><dd>{match.canonicalRecordingId}</dd></div>{/if}
-                    {#if match.libraryTrackId}<div><dt>Library track</dt><dd>{match.libraryTrackId}</dd></div>{/if}
-                    {#if match.isrc}<div><dt>ISRC</dt><dd>{match.isrc}</dd></div>{/if}
-                    {#if match.algorithmVersion}<div><dt>Algorithm</dt><dd>{match.algorithmVersion}</dd></div>{/if}
-                    {#each match.providerIdentities as identity}
-                      <div><dt>{providerName(identity.providerId)}</dt><dd>{identity.externalId} · {identity.verification}</dd></div>
-                    {/each}
-                  </dl>
-                </details>
               </div>
 
               <div class="mapping-row-actions">
@@ -416,6 +398,25 @@
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
               </div>
+
+              <details class="mapping-details">
+                <summary>Scoring and technical details</summary>
+                <dl>
+                  {#if candidate}
+                    {#each scoreComponents(candidate) as [name, value]}
+                      <div><dt>{name.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ")}</dt><dd>{percent(value)}</dd></div>
+                    {/each}
+                  {/if}
+                  <div><dt>Source snapshot</dt><dd>{match.externalSnapshotId}</dd></div>
+                  {#if match.canonicalRecordingId}<div><dt>Canonical recording</dt><dd>{match.canonicalRecordingId}</dd></div>{/if}
+                  {#if match.libraryTrackId}<div><dt>Library track</dt><dd>{match.libraryTrackId}</dd></div>{/if}
+                  {#if match.isrc}<div><dt>ISRC</dt><dd>{match.isrc}</dd></div>{/if}
+                  {#if match.algorithmVersion}<div><dt>Algorithm</dt><dd>{match.algorithmVersion}</dd></div>{/if}
+                  {#each match.providerIdentities as identity}
+                    <div><dt>{providerName(identity.providerId)}</dt><dd>{identity.externalId} · {identity.verification}</dd></div>
+                  {/each}
+                </dl>
+              </details>
             </div>
           </article>
         {:else}

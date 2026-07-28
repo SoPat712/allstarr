@@ -2671,10 +2671,10 @@
   }
 
   .mapping-row-footer {
-    display: flex;
+    display: grid;
     min-width: 0;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    justify-content: space-between;
     gap: 1rem;
   }
 
@@ -2694,19 +2694,19 @@
     font-size: 0.62rem;
   }
 
-  .mapping-evidence details {
-    position: relative;
+  .mapping-details {
+    min-width: 0;
+    grid-column: 1 / -1;
   }
 
-  .mapping-evidence summary {
+  .mapping-details summary {
     color: var(--color-ink-muted);
     cursor: pointer;
     font-size: 0.6rem;
   }
 
-  .mapping-evidence dl {
+  .mapping-details dl {
     display: grid;
-    min-width: min(38rem, 80vw);
     gap: 0;
     margin: 0.55rem 0 0;
     border: 1px solid var(--color-edge);
@@ -2715,7 +2715,7 @@
     padding: 0.5rem;
   }
 
-  .mapping-evidence dl > div {
+  .mapping-details dl > div {
     display: grid;
     grid-template-columns: minmax(8rem, 0.4fr) minmax(0, 1fr);
     gap: 0.5rem;
@@ -2723,16 +2723,16 @@
     padding: 0.35rem;
   }
 
-  .mapping-evidence dl > div:last-child {
+  .mapping-details dl > div:last-child {
     border-bottom: 0;
   }
 
-  .mapping-evidence dt {
+  .mapping-details dt {
     color: var(--color-ink-muted);
     font-size: 0.58rem;
   }
 
-  .mapping-evidence dd {
+  .mapping-details dd {
     overflow-wrap: anywhere;
     margin: 0;
     font-family: ui-monospace, monospace;
@@ -3398,13 +3398,17 @@
   }
 
   .mapping-row-footer {
-    align-items: stretch;
-    flex-direction: column;
+    grid-template-columns: 1fr;
   }
 
   .mapping-row-actions {
+    grid-row: 2;
     justify-content: flex-start;
     flex-wrap: wrap;
+  }
+
+  .mapping-details {
+    grid-row: 3;
   }
 
   .target-search {
