@@ -29,10 +29,16 @@ public sealed class ProtocolProviderStreamingGatewayTests
                 It.Is<ProviderMetadataSearchRequest>(request => request.Query == "Track Artist")))
             .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new(
                 "deezer",
-                [new ProviderTrackMetadata(
-                    new("deezer", ProviderResourceKind.Track, "track-1"),
-                    "Track",
-                    [new("Artist")])])));
+                [
+                    new ProviderTrackMetadata(
+                        new("deezer", ProviderResourceKind.Track, "track-1"),
+                        "Track",
+                        [new("Artist")]),
+                    new ProviderTrackMetadata(
+                        new("musicbrainz", ProviderResourceKind.Track, "metadata-only"),
+                        "Metadata only",
+                        [new("Artist")])
+                ])));
         var registry = MetadataRegistry(failing.Object, healthy.Object);
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
         router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(

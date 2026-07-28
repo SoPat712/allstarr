@@ -290,14 +290,18 @@ public sealed class TrackMatchDecisionEngine
 
         var best = scores[0];
         var selected = visible.Single(candidate => candidate.LibraryTrackId == best.LibraryTrackId);
-        var runnerUpDelta = scores.Count > 1 &&
+        var runnerUp = scores.Skip(1).FirstOrDefault(score =>
+            !SameRecordingIdentity(
+                selected,
+                visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId)));
+        var runnerUpDelta = runnerUp != null &&
                             best.Components?.ContainsKey("localPreference") ==
-                            scores[1].Components?.ContainsKey("localPreference")
-            ? best.Confidence - scores[1].Confidence
-            : scores.Count > 1
-                ? PreferenceScore(best) - PreferenceScore(scores[1])
+                            runnerUp.Components?.ContainsKey("localPreference")
+            ? best.Confidence - runnerUp.Confidence
+            : runnerUp != null
+                ? PreferenceScore(best) - PreferenceScore(runnerUp)
                 : double.MaxValue;
-        if (scores.Count > 1 &&
+        if (runnerUp != null &&
             PreferenceScore(best) >= _policy.SuggestThreshold &&
             runnerUpDelta <= _policy.AmbiguityDelta)
         {
@@ -534,6 +538,13 @@ public sealed class TrackMatchDecisionEngine
             .Equals(
                 right.Replace("-", string.Empty, StringComparison.Ordinal),
                 StringComparison.OrdinalIgnoreCase);
+
+    private static bool SameRecordingIdentity(
+        LocalTrackMatchCandidate left,
+        LocalTrackMatchCandidate right) =>
+        left.CanonicalRecordingId.HasValue &&
+        left.CanonicalRecordingId == right.CanonicalRecordingId ||
+        EqualsNormalized(left.MusicBrainzRecordingId, right.MusicBrainzRecordingId);
 
     private static bool IsVisible(TrackMatchScope scope, LocalTrackMatchCandidate candidate) =>
         candidate.TenantId == scope.TenantId &&

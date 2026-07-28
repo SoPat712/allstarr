@@ -236,7 +236,9 @@ public sealed class ProtocolProviderGateway(
         var routed = (await Task.WhenAll(tasks))
             .Where(outcome => outcome?.IsSuccess == true)
             .SelectMany(outcome => outcome!.RequireValue().Items)
-            .Select(Map);
+            .Select(Map)
+            .Where(item => providerOrder.Contains(
+                NormalizeProvider(item.ExternalProvider), StringComparer.Ordinal));
         var legacy = await legacyMetadata.SearchPlayableSongsAsync(
             query, limit, protocol.CancellationToken);
         var allowedCompatibilityProviders = await ResolveAllowedCompatibilityProvidersAsync(

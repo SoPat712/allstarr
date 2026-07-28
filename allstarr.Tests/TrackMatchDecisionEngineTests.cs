@@ -210,6 +210,7 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         {
             LibraryTrackId = Guid.CreateVersion7(),
             BackendItemId = "local-2",
+            CanonicalRecordingId = Guid.CreateVersion7(),
             DurationMilliseconds = 242_000
         };
 
@@ -218,6 +219,33 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         Assert.Equal(TrackMatchReviewState.Ambiguous, decision.State);
         Assert.Null(decision.SelectedLibraryTrackId);
         Assert.Contains("ambiguous_top_candidates", decision.Warnings);
+    }
+
+    [Fact]
+    public void SameMusicBrainzRecordingCandidates_DoNotTriggerAmbiguity()
+    {
+        var scope = Scope();
+        var first = Candidate(scope) with
+        {
+            CanonicalRecordingId = null,
+            MusicBrainzRecordingId = "16ba7915-2acf-42b2-8c87-ed67090dca91"
+        };
+        var second = first with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "local-2",
+            MusicBrainzRecordingId = "16BA79152ACF42B28C87ED67090DCA91"
+        };
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, Source(), [first, second]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Contains(decision.SelectedLibraryTrackId, new Guid?[]
+        {
+            first.LibraryTrackId,
+            second.LibraryTrackId
+        });
+        Assert.Equal(2, decision.Candidates.Count);
     }
 
     [Fact]
