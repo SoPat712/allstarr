@@ -305,71 +305,78 @@
               ? `/api/admin/downloads/artwork/${encodeURIComponent(candidate.backendItemId)}`
               : ""}
           <article class:needs-attention={isAttention(match.state)} class="mapping-row">
-            <div class="mapping-track-copy">
-              <div class="mapping-source">
+            <div class="mapping-comparison">
+              <div class="mapping-party">
                 <span class="media-art mapping-art">
                   <ProviderMark id={match.providerId} definition={provider(match.providerId)} />
                   {#if match.sourceArtworkUrl || match.artworkUrl}
                     <img src={match.sourceArtworkUrl || match.artworkUrl || ""} alt="" loading="lazy" onerror={(event) => event.currentTarget.remove()} />
                   {/if}
                 </span>
-                <span>
+                <span class="mapping-party-copy">
+                  <span class="mapping-provider">
+                    <ProviderMark id={match.providerId} definition={provider(match.providerId)} />
+                    {providerName(match.providerId)} source
+                  </span>
                   <strong>{match.title || "Unknown track"}</strong>
                   <small>{match.artist || "Unknown artist"}{match.album ? ` · ${match.album}` : ""} · {formatDuration(match.durationMilliseconds)}{match.isrc ? ` · ${match.isrc}` : ""}</small>
                 </span>
               </div>
 
-              <div class="mapping-route">
-                <span class="mapping-route-node">
-                  <ProviderMark id={match.providerId} definition={provider(match.providerId)} />
-                  <span><small>Source</small><strong>{providerName(match.providerId)}</strong></span>
-                </span>
-                <span class="mapping-arrow" aria-hidden="true">→</span>
-                <span class:unresolved={!target && !candidate} class="mapping-route-node">
-                  {#if target || candidate}
-                    {#if match.candidateArtworkUrl || candidateArtwork}
-                      <MediaArtwork class="mapping-art" url={match.candidateArtworkUrl || candidateArtwork} />
-                    {:else}
+              <span class="mapping-arrow" aria-hidden="true">→</span>
+
+              <div class:unresolved={!target && !candidate} class="mapping-party">
+                {#if target || candidate}
+                  <MediaArtwork
+                    class="mapping-art"
+                    url={target?.artworkUrl || match.candidateArtworkUrl || candidateArtwork}
+                  />
+                {:else}
+                  <span class="mapping-route-missing" aria-hidden="true">?</span>
+                {/if}
+                <span class="mapping-party-copy">
+                  <span class="mapping-provider">
+                    {#if target || candidate}
                       <ProviderMark
                         id={(target?.providerId ?? candidateProviderId) === "local" ? backend.toLowerCase() : (target?.providerId ?? candidateProviderId)}
                         definition={provider(target?.providerId ?? candidateProviderId)}
                         label={providerName(target?.providerId ?? candidateProviderId)}
                       />
                     {/if}
-                  {:else}
-                    <span class="mapping-route-missing" aria-hidden="true">?</span>
-                  {/if}
-                  <span>
-                    <small>{target ? "Current match" : candidate ? "Best candidate" : "Match status"}</small>
-                    <strong>{target?.title || candidate?.title || "Unmatched"}</strong>
-                    <em>{target
-                      ? `${providerName(target.providerId)} · ${target.detail}`
+                    {target
+                      ? `${providerName(target.providerId)} match`
                       : candidate
-                        ? `${providerName(candidateProviderId)} · ${candidate.artist || candidate.album || "Scored candidate"}`
-                        : "No candidate retained"}</em>
+                        ? `${providerName(candidateProviderId)} candidate`
+                        : "No candidate"}
                   </span>
+                  <strong>{target?.title || candidate?.title || "Unmatched"}</strong>
+                  <small>{target?.detail || candidate?.artist || candidate?.album || "Rematch or search interactively"}</small>
                 </span>
               </div>
+            </div>
 
+            <div class="mapping-row-footer">
               <div class="mapping-evidence">
                 <span class={`status-pill ${match.state}`}>{match.state.replaceAll("_", " ")}</span>
-                <span>{percent(match.confidence)} confidence</span>
-                {#if match.threshold != null}<span>{percent(match.threshold)} threshold</span>{/if}
-                <span>{relativeTime(match.decidedAt)}</span>
-                {#each [...match.reasons, ...match.warnings].slice(0, 3) as reason}
-                  <span>{reason.replaceAll("_", " ")}</span>
-                {/each}
-                {#if candidate}
-                  {#each scoreComponents(candidate) as [name, value]}
-                    <span>{name.replaceAll("_", " ")} {percent(value)}</span>
-                  {/each}
-                {/if}
+                <span class="mapping-evidence-summary">
+                  {candidate || target ? `${percent(match.confidence)} confidence` : "Not scored"}
+                  {#if match.threshold != null} · {percent(match.threshold)} auto threshold{/if}
+                  · {relativeTime(match.decidedAt)}
+                  {#if match.reasons.length || match.warnings.length}
+                    · {[...match.reasons, ...match.warnings].slice(0, 2).map((reason) => reason.replaceAll("_", " ")).join(" · ")}
+                  {/if}
+                </span>
                 {#if match.sourceArtworkUrl && match.candidateArtworkUrl}
                   <ArtworkSimilarity source={match.sourceArtworkUrl} candidate={match.candidateArtworkUrl} />
                 {/if}
                 <details>
-                  <summary>Technical details</summary>
+                  <summary>Scoring and technical details</summary>
                   <dl>
+                    {#if candidate}
+                      {#each scoreComponents(candidate) as [name, value]}
+                        <div><dt>{name.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ")}</dt><dd>{percent(value)}</dd></div>
+                      {/each}
+                    {/if}
                     <div><dt>Source snapshot</dt><dd>{match.externalSnapshotId}</dd></div>
                     {#if match.canonicalRecordingId}<div><dt>Canonical recording</dt><dd>{match.canonicalRecordingId}</dd></div>{/if}
                     {#if match.libraryTrackId}<div><dt>Library track</dt><dd>{match.libraryTrackId}</dd></div>{/if}
@@ -381,34 +388,34 @@
                   </dl>
                 </details>
               </div>
-            </div>
 
-            <div class="mapping-row-actions">
-              {#if !target && resolution}
-                <span class="mapping-action-confidence">
-                  <strong>{percent(candidate?.confidence ?? match.confidence)}</strong>
-                  <small>Confidence</small>
-                </span>
-                <button class="button-primary" type="button" disabled={action === match.externalSnapshotId} onclick={() => void accept(match)}>Accept</button>
-              {/if}
-              {#if !target}
-                <button class="button-secondary" type="button" disabled={action === match.externalSnapshotId} onclick={() => void rematch(match)}>Rematch</button>
-              {/if}
-              <button class="button-primary" type="button" onclick={() => openMatch(match)}>
-                {target ? "Review match" : "Interactive search"}
-              </button>
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger class="track-menu-trigger" aria-label={`More actions for ${match.title || "track"}`}>•••</DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content class="bits-menu" sideOffset={4} align="end">
-                    <DropdownMenu.Item class="bits-menu-item" onSelect={() => void rematch(match)}>Rematch</DropdownMenu.Item>
-                    <DropdownMenu.Item class="bits-menu-item danger-item" onSelect={() => confirm("reject", match)}>Reject candidate</DropdownMenu.Item>
-                    {#if match.overrideId}
-                      <DropdownMenu.Item class="bits-menu-item danger-item" onSelect={() => confirm("clear", match)}>Clear manual review</DropdownMenu.Item>
-                    {/if}
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
+              <div class="mapping-row-actions">
+                {#if !target && resolution}
+                  <span class="mapping-action-confidence">
+                    <strong>{percent(candidate?.confidence ?? match.confidence)}</strong>
+                    <small>Confidence</small>
+                  </span>
+                  <button class="button-primary" type="button" disabled={action === match.externalSnapshotId} onclick={() => void accept(match)}>Accept</button>
+                {/if}
+                {#if !target}
+                  <button class="button-secondary" type="button" disabled={action === match.externalSnapshotId} onclick={() => void rematch(match)}>Rematch</button>
+                {/if}
+                <button class="button-primary" type="button" onclick={() => openMatch(match)}>
+                  {target ? "Review match" : "Interactive search"}
+                </button>
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger class="track-menu-trigger" aria-label={`More actions for ${match.title || "track"}`}>•••</DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content class="bits-menu" sideOffset={4} align="end">
+                      <DropdownMenu.Item class="bits-menu-item" onSelect={() => void rematch(match)}>Rematch</DropdownMenu.Item>
+                      <DropdownMenu.Item class="bits-menu-item danger-item" onSelect={() => confirm("reject", match)}>Reject candidate</DropdownMenu.Item>
+                      {#if match.overrideId}
+                        <DropdownMenu.Item class="bits-menu-item danger-item" onSelect={() => confirm("clear", match)}>Clear manual review</DropdownMenu.Item>
+                      {/if}
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+              </div>
             </div>
           </article>
         {:else}
