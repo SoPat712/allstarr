@@ -372,18 +372,25 @@
     top: 1rem;
     left: 1rem;
     display: grid;
-    width: var(--control-lg);
-    height: 1.8rem;
+    width: 2.5rem;
+    height: 2.5rem;
     place-items: center;
     border: 0;
-    border-radius: 50%;
+    border-radius: var(--radius-md);
     background: transparent;
     color: var(--color-ink-muted);
     cursor: pointer;
+    transition: background 160ms ease, color 160ms ease;
+  }
+
+  .sidebar-expander:hover,
+  .sidebar-expander:focus-visible {
+    background: var(--color-panel-raised);
+    color: var(--color-signal);
   }
 
   .menu-icon {
-    width: 1.15rem;
+    width: 1.5rem;
     fill: none;
     stroke: currentColor;
     stroke-width: 2;
@@ -391,7 +398,7 @@
     stroke-linejoin: round;
   }
 
-  .menu-line {
+  .sidebar-arrow {
     transition: d 160ms ease;
   }
 

@@ -276,9 +276,12 @@
         onclick={() => sidebarSlim = !sidebarSlim}
       >
         <svg class="menu-icon" aria-hidden="true" viewBox="0 0 24 24">
-          <path class="menu-line" d={sidebarSlim ? "M4 5h16" : "M4 5h12l4 4"} />
-          <path class="menu-line menu-line-middle" d="M4 12h16" />
-          <path class="menu-line" d={sidebarSlim ? "M4 19h16" : "M4 19h12l4-4"} />
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <path d="M9 3v18" />
+          <path
+            class="sidebar-arrow"
+            d={sidebarSlim ? "M14 9l3 3-3 3" : "M17 9l-3 3 3 3"}
+          />
         </svg>
       </button>
 
