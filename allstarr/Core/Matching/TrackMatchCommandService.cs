@@ -235,6 +235,8 @@ public sealed class TrackMatchCommandService(
     IPlatformClock clock,
     PlaylistPlayableSearchService? playableSearch = null) : ITrackMatchRepository
 {
+    private const int ConcurrentWriteRetries = 3;
+
     public bool SupportsExternalMatching => playableSearch != null;
 
     public async Task<ExternalMetadataSnapshotRecord> CaptureSnapshotAsync(
@@ -1315,7 +1317,8 @@ public sealed class TrackMatchCommandService(
         string correlationId,
         CancellationToken cancellationToken = default)
         => await RematchSnapshotAsync(
-            actor, externalSnapshotId, correlationId, "manual-rematch-v3", null, cancellationToken);
+            actor, externalSnapshotId, correlationId, "manual-rematch-v3", null,
+            ConcurrentWriteRetries, cancellationToken);
 
     public async Task<TrackRematchCommandResult> RematchSnapshotAsync(
         ProtocolExecutionContext context,
@@ -1334,6 +1337,7 @@ public sealed class TrackMatchCommandService(
             correlationId,
             policyVersion,
             context,
+            ConcurrentWriteRetries,
             cancellationToken);
     }
 
@@ -1343,6 +1347,7 @@ public sealed class TrackMatchCommandService(
         string correlationId,
         string policyVersion,
         ProtocolExecutionContext? execution,
+        int retriesRemaining,
         CancellationToken cancellationToken)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
@@ -1516,7 +1521,7 @@ public sealed class TrackMatchCommandService(
         {
             await db.SaveChangesAsync(cancellationToken);
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException exception)
         {
             db.ChangeTracker.Clear();
             var winner = await db.TrackMatches.AsNoTracking().SingleOrDefaultAsync(item =>
@@ -1526,12 +1531,28 @@ public sealed class TrackMatchCommandService(
                 item.ExternalSnapshotId == snapshot.Id &&
                 item.DecisionVersion == input.DecisionVersion,
                 cancellationToken);
-            if (winner == null || !MatchesImmutableDecision(winner, input))
+            var comparable = winner?.CanonicalRecordingId.HasValue == true &&
+                             input.CanonicalRecordingId.HasValue &&
+                             !input.LibraryTrackId.HasValue
+                ? input with { CanonicalRecordingId = winner.CanonicalRecordingId }
+                : input;
+            if (winner != null && MatchesImmutableDecision(winner, comparable))
             {
-                throw;
+                record = winner;
             }
-
-            record = winner;
+            else
+            {
+                if (retriesRemaining <= 0 || !IsConcurrentMatchWrite(exception))
+                    throw;
+                return await RematchSnapshotAsync(
+                    actor,
+                    externalSnapshotId,
+                    correlationId,
+                    policyVersion,
+                    execution,
+                    retriesRemaining - 1,
+                    cancellationToken);
+            }
         }
 
         return new(
@@ -2014,6 +2035,24 @@ public sealed class TrackMatchCommandService(
         record.CandidateResultsJson == input.CandidateResultsJson &&
         record.ReasonsJson == input.ReasonsJson &&
         record.WarningsJson == input.WarningsJson;
+
+    private static bool IsConcurrentMatchWrite(Exception exception)
+    {
+        for (var current = exception; current != null; current = current.InnerException)
+        {
+            if (current is not Npgsql.PostgresException
+                {
+                    SqlState: Npgsql.PostgresErrorCodes.UniqueViolation
+                } postgres)
+                continue;
+            if (postgres.ConstraintName is
+                "IX_provider_track_identity_account_exact" or
+                "IX_provider_track_identity_catalog_exact" or
+                "IX_track_match_scoped_decision")
+                return true;
+        }
+        return false;
+    }
 
     private static TrackMatchRecord ToRecord(
         MatchDecisionInput input,

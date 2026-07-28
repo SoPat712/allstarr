@@ -590,6 +590,104 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     }
 
     [Fact]
+    public async Task Concurrent_external_rematches_coalesce_identity_and_decision_writes()
+    {
+        var sourceHash = Hash("concurrent-external-source");
+        var snapshotIds = new[] { Guid.CreateVersion7(), Guid.CreateVersion7() };
+        var payload = """
+            {"Title":"Concurrent external","Artist":"Artist","Album":"Album","DurationMilliseconds":180000}
+            """;
+        await using (var setup = await _factory.CreateDbContextAsync())
+        {
+            setup.ExternalMetadataSnapshots.AddRange(snapshotIds.Select((id, index) =>
+                new ExternalMetadataSnapshotRecord
+                {
+                    Id = id,
+                    TenantId = _tenant,
+                    OwnerUserId = _user,
+                    ProviderAccountId = _account,
+                    LibraryScopeId = "music",
+                    BackendInstanceId = "backend",
+                    BackendPrincipalId = "principal",
+                    Protocol = "jellyfin",
+                    ProviderId = "fixture",
+                    ResourceKind = "track",
+                    ExternalIdHash = sourceHash,
+                    SnapshotVersion = index + 1,
+                    ProviderRevision = $"concurrent-{index + 1}",
+                    PayloadJson = payload,
+                    PayloadSha256 = Hash(payload),
+                    CorrelationId = "concurrent-external",
+                    RetrievedAt = _now
+                }));
+            await setup.SaveChangesAsync();
+        }
+
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
+            .Returns(["apple-download"]);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
+            .Returns(["apple-download"]);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = 0;
+        gateway.Setup(item => item.SearchPlayableSongsAsync(
+                It.IsAny<ProtocolExecutionContext>(), "Concurrent external Artist", 60))
+            .Returns(async () =>
+            {
+                if (Interlocked.Increment(ref entered) == 8)
+                    release.SetResult();
+                await release.Task;
+                return
+                [
+                    new Song
+                    {
+                        ExternalProvider = "apple-download",
+                        ExternalId = "apple-concurrent",
+                        Title = "Concurrent external",
+                        Artist = "Artist",
+                        Album = "Album",
+                        Duration = 180
+                    }
+                ];
+            });
+        var matcher = new TrackMatchDecisionEngine();
+        var trackMatches = new TrackMatchCommandService(
+            _factory,
+            matcher,
+            new ProviderAccountResolver(_factory, new ProviderPolicyOptions()),
+            new Clock(_now),
+            new PlaylistPlayableSearchService(
+                gateway.Object,
+                matcher,
+                null!,
+                new IdentityOptions(),
+                Options.Create(new JellyfinSettings()),
+                NullLogger<PlaylistPlayableSearchService>.Instance));
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(index =>
+            trackMatches.RematchSnapshotAsync(
+                Context(),
+                snapshotIds[index % snapshotIds.Length],
+                $"concurrent-external-{index}",
+                "concurrent-policy")));
+
+        Assert.All(results, result =>
+        {
+            Assert.True(result.Succeeded);
+            Assert.Equal(1, result.DecisionVersion);
+        });
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(2, await verify.TrackMatches.CountAsync());
+        Assert.Equal(1, await verify.ProviderTrackIdentities.CountAsync(item =>
+            item.Scope == ProviderIdentityScope.Account &&
+            item.ExternalIdHash == sourceHash));
+        Assert.Equal(1, await verify.ProviderTrackIdentities.CountAsync(item =>
+            item.Scope == ProviderIdentityScope.Catalog &&
+            item.ProviderId == "apple-download" &&
+            item.ExternalIdHash == Hash("apple-concurrent")));
+    }
+
+    [Fact]
     public async Task Reconcile_writes_order_records_skips_propagates_credential_and_same_generation_is_idempotent()
     {
         _source.Snapshot = Snapshot("revision-reconcile", Entry(0, "entry-0", "source-2", "Two"), Entry(1, "entry-1", "source-1", "One"), Entry(2, "entry-2", "missing", "Missing"));
