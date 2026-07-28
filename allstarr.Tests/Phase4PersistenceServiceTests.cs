@@ -96,6 +96,17 @@ public sealed class Phase4PersistenceServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SearchLocalTracks_MatchesArtistAndTitleAcrossFields()
+    {
+        var tracks = await _matches.SearchLocalTracksAsync(
+            new TrackMatchActor(_tenant, _userA, false),
+            "Artist Local",
+            "music");
+
+        Assert.Equal(_localTrack, Assert.Single(tracks).Id);
+    }
+
+    [Fact]
     public async Task OwnerTenantConcurrencyAndPayloadGuards_DenyUnsafeAccess()
     {
         var context = Context(_userA, "principal-a");

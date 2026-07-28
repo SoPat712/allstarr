@@ -744,18 +744,22 @@ public sealed class TrackMatchCommandService(
         CancellationToken cancellationToken = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var pattern = $"%{query.Trim().Replace("%", "\\%").Replace("_", "\\_")}%";
+        var patterns = query.Split((char[]?)null,
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(term => $"%{term.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_")}%")
+            .ToArray();
         var tracks = db.LibraryTracks.AsNoTracking()
             .Where(item => item.TenantId == actor.TenantId);
         if (!actor.IsAdministrator)
             tracks = tracks.Where(item => item.OwnerUserId == actor.UserId);
         if (!string.IsNullOrWhiteSpace(libraryScopeId))
             tracks = tracks.Where(item => item.LibraryScopeId == libraryScopeId.Trim());
-        return await tracks
-            .Where(item =>
+        foreach (var pattern in patterns)
+            tracks = tracks.Where(item =>
                 EF.Functions.ILike(item.Title, pattern, "\\") ||
                 EF.Functions.ILike(item.Artist, pattern, "\\") ||
-                item.Album != null && EF.Functions.ILike(item.Album, pattern, "\\"))
+                item.Album != null && EF.Functions.ILike(item.Album, pattern, "\\"));
+        return await tracks
             .OrderBy(item => item.Artist)
             .ThenBy(item => item.Title)
             .Take(Math.Clamp(limit, 1, 50))

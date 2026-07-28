@@ -19,9 +19,12 @@ export function providerResultCounts(targets: MatchTarget[]) {
     const providerId = target.externalProvider || "local";
     counts.set(providerId, (counts.get(providerId) ?? 0) + 1);
     return counts;
-  }, new Map<string, number>())]
+  }, new Map<string, number>([["local", 0]]))]
     .map(([providerId, count]) => ({ providerId, count }))
-    .toSorted((left, right) => right.count - left.count || left.providerId.localeCompare(right.providerId));
+    .toSorted((left, right) =>
+      Number(right.providerId === "local") - Number(left.providerId === "local") ||
+      right.count - left.count ||
+      left.providerId.localeCompare(right.providerId));
 }
 
 export function rankedTargets(targets: MatchTarget[]) {

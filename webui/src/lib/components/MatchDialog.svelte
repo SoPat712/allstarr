@@ -283,7 +283,7 @@
         </form>
 
         {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
-        {#if resultProviders.length}
+        {#if searched}
           <div class="provider-result-summary" aria-label="Providers with results">
             {#each resultProviders as resultProvider}
               <button

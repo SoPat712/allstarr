@@ -38,10 +38,11 @@ describe("mapping review presentation", () => {
       { id: "3", title: "Three", externalProvider: "apple-download" },
       { id: "4", title: "Four" },
     ])).toEqual([
+      { providerId: "local", count: 1 },
       { providerId: "apple-download", count: 2 },
       { providerId: "deezer", count: 1 },
-      { providerId: "local", count: 1 },
     ]);
+    expect(providerResultCounts([])).toEqual([{ providerId: "local", count: 0 }]);
   });
 
   it("orders unified results by match confidence", () => {
