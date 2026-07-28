@@ -267,7 +267,7 @@
           <span>Needs attention</span><strong>{data.stats.attention}</strong>
         </button>
         <button class="metric-card" aria-pressed={stateFilter === "suggested"} onclick={() => setState("suggested")}>
-          <span>Suggested / High likelihood</span><strong>{data.stats.suggested}</strong>
+          <span>Suggested</span><strong>{data.stats.suggested}</strong>
         </button>
         <button class="metric-card" aria-pressed={stateFilter === "matched"} onclick={() => setState("matched")}>
           <span>Matched</span><strong>{data.stats.matched}</strong>
