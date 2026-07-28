@@ -101,7 +101,7 @@ public sealed record TrackMatchDecision(
     long SourceSnapshotVersion,
     double AcceptThreshold = 0.88,
     double SuggestThreshold = 0.72,
-    double AmbiguityDelta = 0.03,
+    double AmbiguityDelta = 0.005,
     bool RequiresReview = false);
 
 public sealed class TrackMatchPolicy
@@ -112,7 +112,7 @@ public sealed class TrackMatchPolicy
 
     public double SuggestThreshold { get; init; } = 0.72;
 
-    public double AmbiguityDelta { get; init; } = 0.03;
+    public double AmbiguityDelta { get; init; } = 0.005;
 
     public int DurationToleranceSeconds { get; init; } = 8;
 
@@ -132,7 +132,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "normalized-v7";
+    public const string AlgorithmVersion = "normalized-v8";
 
     private readonly TrackMatchPolicy _policy;
 
@@ -539,12 +539,31 @@ public sealed class TrackMatchDecisionEngine
                 right.Replace("-", string.Empty, StringComparison.Ordinal),
                 StringComparison.OrdinalIgnoreCase);
 
-    private static bool SameRecordingIdentity(
+    internal static bool SameRecordingIdentity(
         LocalTrackMatchCandidate left,
-        LocalTrackMatchCandidate right) =>
-        left.CanonicalRecordingId.HasValue &&
-        left.CanonicalRecordingId == right.CanonicalRecordingId ||
-        EqualsNormalized(RecordingIdentity(left), RecordingIdentity(right));
+        LocalTrackMatchCandidate right)
+    {
+        if (left.CanonicalRecordingId.HasValue && right.CanonicalRecordingId.HasValue)
+            return left.CanonicalRecordingId == right.CanonicalRecordingId;
+
+        var leftRecording = RecordingIdentity(left);
+        var rightRecording = RecordingIdentity(right);
+        if (!string.IsNullOrWhiteSpace(leftRecording) &&
+            !string.IsNullOrWhiteSpace(rightRecording))
+            return EqualsNormalized(leftRecording, rightRecording);
+
+        return FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(left.Title))
+                   .Equals(
+                       FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(right.Title)),
+                       StringComparison.Ordinal) &&
+               FuzzyMatcher.NormalizeForMatching(left.Artist)
+                   .Equals(FuzzyMatcher.NormalizeForMatching(right.Artist), StringComparison.Ordinal) &&
+               FuzzyMatcher.SemanticVersionTags(left.Title)
+                   .SetEquals(FuzzyMatcher.SemanticVersionTags(right.Title)) &&
+               left.DurationMilliseconds.HasValue &&
+               right.DurationMilliseconds.HasValue &&
+               Math.Abs(left.DurationMilliseconds.Value - right.DurationMilliseconds.Value) <= 2_000;
+    }
 
     private static string? RecordingIdentity(LocalTrackMatchCandidate candidate) =>
         TryGetProviderTrackId(candidate.ProviderTrackIds, "musicbrainzrecording", out var recordingId)

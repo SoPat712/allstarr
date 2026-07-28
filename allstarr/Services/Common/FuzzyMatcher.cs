@@ -20,7 +20,7 @@ public static partial class FuzzyMatcher
     [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\[\(]((?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?|single version|album version|bonus(?: track)?|deluxe(?: edition)?|official|audio|video|lyric)[^\]\)]*[\]\)]", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex TypeDecoratorRegex();
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"\b(live|acoustic|remix|radio edit|extended(?: mix)?|original mix|clean|explicit)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    [System.Text.RegularExpressions.GeneratedRegex(@"\b(live|acoustic|instrumental|stripped|remix|radio edit|extended(?: mix)?|original mix|clean|explicit)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex SemanticVersionRegex();
 
     [System.Text.RegularExpressions.GeneratedRegex(@"[^\w\s]")]

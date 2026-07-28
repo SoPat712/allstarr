@@ -215,7 +215,9 @@ public sealed class PlaylistPlayableSearchService(
         {
             var candidate = ToCandidate(song, scope);
             var group = groups.FirstOrDefault(existing =>
-                SameRecording(ToCandidate(existing[0], scope), candidate));
+                TrackMatchDecisionEngine.SameRecordingIdentity(
+                    ToCandidate(existing[0], scope),
+                    candidate));
             if (group == null)
                 groups.Add([song]);
             else
@@ -223,21 +225,6 @@ public sealed class PlaylistPlayableSearchService(
         }
         return groups.Select(group => group.ToArray()).ToList();
     }
-
-    private static bool SameRecording(
-        LocalTrackMatchCandidate left,
-        LocalTrackMatchCandidate right) =>
-        FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(left.Title))
-            .Equals(
-                FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(right.Title)),
-                StringComparison.Ordinal) &&
-        FuzzyMatcher.NormalizeForMatching(left.Artist)
-            .Equals(FuzzyMatcher.NormalizeForMatching(right.Artist), StringComparison.Ordinal) &&
-        FuzzyMatcher.SemanticVersionTags(left.Title)
-            .SetEquals(FuzzyMatcher.SemanticVersionTags(right.Title)) &&
-        (!left.DurationMilliseconds.HasValue ||
-         !right.DurationMilliseconds.HasValue ||
-         Math.Abs(left.DurationMilliseconds.Value - right.DurationMilliseconds.Value) <= 2_000);
 
     private async Task<AllstarrPrincipal?> ResolvePrincipalAsync(CancellationToken cancellationToken)
     {

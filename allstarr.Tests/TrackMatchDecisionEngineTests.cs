@@ -211,7 +211,7 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
             LibraryTrackId = Guid.CreateVersion7(),
             BackendItemId = "local-2",
             CanonicalRecordingId = Guid.CreateVersion7(),
-            DurationMilliseconds = 242_000
+            DurationMilliseconds = 240_000
         };
 
         var decision = new TrackMatchDecisionEngine().Decide(scope, Source(), [first, second]);
@@ -219,6 +219,44 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         Assert.Equal(TrackMatchReviewState.Ambiguous, decision.State);
         Assert.Null(decision.SelectedLibraryTrackId);
         Assert.Contains("ambiguous_top_candidates", decision.Warnings);
+    }
+
+    [Fact]
+    public void HigherScoringCandidateOutsideNarrowMarginWins()
+    {
+        var scope = Scope();
+        var first = Candidate(scope);
+        var second = first with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "local-2",
+            CanonicalRecordingId = Guid.CreateVersion7(),
+            DurationMilliseconds = 242_000
+        };
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, Source(), [first, second]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(first.LibraryTrackId, decision.SelectedLibraryTrackId);
+    }
+
+    [Fact]
+    public void DuplicateCopiesWithoutStrongIdentityDoNotBlockBestMatch()
+    {
+        var scope = Scope();
+        var first = Candidate(scope);
+        var second = first with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "local-2",
+            CanonicalRecordingId = null,
+            DurationMilliseconds = 241_000
+        };
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, Source(), [first, second]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(first.LibraryTrackId, decision.SelectedLibraryTrackId);
     }
 
     [Fact]
@@ -409,6 +447,8 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     [InlineData("A Song (Live)", "A Song")]
     [InlineData("A Song", "A Song (Acoustic)")]
     [InlineData("A Song (Remix)", "A Song")]
+    [InlineData("A Song (Instrumental)", "A Song")]
+    [InlineData("A Song", "A Song (Stripped)")]
     [InlineData("A Song (Clean)", "A Song (Explicit)")]
     public void SemanticVersionsRemainNegativeEvidence(string sourceTitle, string candidateTitle)
     {
