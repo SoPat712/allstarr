@@ -2343,11 +2343,11 @@
   }
 
   .mapping-metrics .metric-card {
-    display: grid;
+    display: flex;
     min-height: 5rem;
-    grid-template-rows: minmax(2.2rem, auto) 1fr;
-    align-content: stretch;
+    flex-direction: column;
     align-items: stretch;
+    justify-content: stretch;
     border: 1px solid var(--color-edge);
     border-radius: 0.75rem;
     background: transparent;
@@ -2377,6 +2377,7 @@
 
   .mapping-metrics .metric-card > span {
     display: flex;
+    min-height: 2.3rem;
     align-items: center;
     border-bottom: 1px solid var(--color-edge);
     color: var(--color-ink-muted);
@@ -2387,8 +2388,11 @@
   }
 
   .mapping-metrics .metric-card strong {
-    display: grid;
-    place-items: center;
+    display: flex;
+    min-height: 2.4rem;
+    flex: 1;
+    align-items: center;
+    justify-content: center;
     font-family: var(--font-display);
     font-size: 1.3rem;
     padding: 0.45rem 0.7rem;
