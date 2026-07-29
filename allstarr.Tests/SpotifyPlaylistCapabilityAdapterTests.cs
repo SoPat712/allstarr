@@ -40,6 +40,12 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         Assert.Equal(context.Account!.AccountId, secrets.AccountIds.Single());
         Assert.Equal("sp_dc=account-cookie-secret", handler.CookieHeader);
         Assert.All(handler.ApiAuthorizationHeaders, value => Assert.Equal("Bearer account-access-token", value));
+        Assert.All(handler.WebPlayerProfiles, profile =>
+        {
+            Assert.Equal(SpotifyWebRequestProfile.UserAgent, profile.UserAgent);
+            Assert.Equal(SpotifyWebRequestProfile.AppPlatform, profile.AppPlatform);
+            Assert.Equal(SpotifyWebRequestProfile.AppVersion, profile.AppVersion);
+        });
 
         var serialized = JsonSerializer.Serialize(page);
         Assert.DoesNotContain("account-cookie-secret", serialized, StringComparison.Ordinal);
@@ -143,6 +149,51 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         Assert.Equal(3, handler.Paths.Count);
         Assert.Equal("The provider rejected the selected account credentials.", unauthorized.Error.SafeMessage);
         Assert.DoesNotContain("cookie", unauthorized.Error.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Anonymous_expired_and_forbidden_token_exchanges_fail_without_pathfinder_fallback()
+    {
+        var handler = new SpotifyFakeHandler { TokenIsAnonymous = true };
+        var adapter = new SpotifyPlaylistCapabilityAdapter(
+            new HttpClient(handler),
+            new FakeSecretAccessor("cookie"));
+
+        var anonymous = await adapter.GetUserPlaylistsAsync(Context(), new(new ProviderPageRequest()));
+        Assert.Equal(ProviderErrorKind.Unauthorized, anonymous.Error!.Kind);
+        Assert.Empty(handler.ApiPaths);
+
+        handler.TokenIsAnonymous = false;
+        handler.TokenExpirationTimestampMs = 0;
+        var expired = await adapter.GetUserPlaylistsAsync(Context(), new(new ProviderPageRequest()));
+        Assert.Equal(ProviderErrorKind.Unauthorized, expired.Error!.Kind);
+        Assert.Empty(handler.ApiPaths);
+
+        handler.TokenExpirationTimestampMs = null;
+        handler.TokenStatus = HttpStatusCode.Forbidden;
+        var forbidden = await adapter.GetUserPlaylistsAsync(Context(), new(new ProviderPageRequest()));
+        Assert.Equal(ProviderErrorKind.Forbidden, forbidden.Error!.Kind);
+        Assert.Empty(handler.ApiPaths);
+    }
+
+    [Fact]
+    public async Task Incompatible_raw_track_slot_fails_closed_instead_of_publishing_a_partial_page()
+    {
+        var handler = new SpotifyFakeHandler { ReturnMalformedTrack = true };
+        var adapter = new SpotifyPlaylistCapabilityAdapter(
+            new HttpClient(handler),
+            new FakeSecretAccessor("cookie"));
+        var playlist = new ProviderExternalResourceId(
+            "spotify",
+            ProviderResourceKind.Playlist,
+            "playlist-opaque");
+
+        var outcome = await adapter.GetPlaylistTracksAsync(
+            Context(),
+            new(playlist, new ProviderPageRequest(2, "2")));
+
+        Assert.False(outcome.IsSuccess);
+        Assert.Equal("provider-contract-changed", outcome.Error!.Code);
     }
 
     [Fact]
@@ -294,10 +345,21 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         public bool UseRetryAfterDate { get; set; }
         public bool ReturnPersistedQueryError { get; set; }
         public bool ReturnAlternativeLibraryEnvelope { get; set; }
+        public bool ReturnMalformedTrack { get; set; }
+        public bool TokenIsAnonymous { get; set; }
+        public long? TokenExpirationTimestampMs { get; set; }
+        public List<RequestProfile> WebPlayerProfiles { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Paths.Add(request.RequestUri!.PathAndQuery);
+            if (request.RequestUri.Host is "open.spotify.com" or "api-partner.spotify.com")
+            {
+                WebPlayerProfiles.Add(new(
+                    request.Headers.UserAgent.ToString(),
+                    request.Headers.GetValues("app-platform").Single(),
+                    request.Headers.GetValues("spotify-app-version").Single()));
+            }
             if (request.RequestUri.Host == "raw.githubusercontent.com")
                 return Task.FromResult(Json(HttpStatusCode.OK, new[] { new { version = 1, secret = Enumerable.Range(1, 32).ToArray() } }));
             if (request.RequestUri.Host == "i.scdn.co")
@@ -317,7 +379,12 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
                     return Task.FromResult(time);
                 }
                 CookieHeader = request.Headers.GetValues("Cookie").Single();
-                return Task.FromResult(Json(TokenStatus, new { accessToken = "account-access-token" }));
+                return Task.FromResult(Json(TokenStatus, new
+                {
+                    accessToken = "account-access-token",
+                    isAnonymous = TokenIsAnonymous,
+                    accessTokenExpirationTimestampMs = TokenExpirationTimestampMs
+                }));
             }
 
             ApiAuthorizationHeaders.Add(request.Headers.Authorization!.ToString());
@@ -449,7 +516,7 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
             }
         };
 
-        private static object PlaylistResponse() => new
+        private object PlaylistResponse() => new
         {
             data = new
             {
@@ -475,7 +542,9 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
                     content = new
                     {
                         totalCount = 8,
-                        items = new[]
+                        items = ReturnMalformedTrack
+                            ? new object[] { new { itemV2 = new { } }, Track("track-a", "Duplicate") }
+                            : new object[]
                         {
                             Track("track-a", "First"),
                             Track("track-a", "Duplicate")
@@ -527,5 +596,10 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         {
             Content = new StringContent(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json")
         };
+
+        public sealed record RequestProfile(
+            string UserAgent,
+            string AppPlatform,
+            string AppVersion);
     }
 }

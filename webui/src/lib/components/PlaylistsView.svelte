@@ -27,6 +27,7 @@
     filterTracks,
     formatDuration,
     providerColor,
+    runBounded,
     type PlaylistSort,
     type TrackSort,
   } from "$lib/playlists";
@@ -224,18 +225,18 @@
     if (action || refreshing || !ids.length) return;
     action = "refresh-sources";
     feedback = "";
-    let failed = 0;
-    for (const [index, id] of ids.entries()) {
-      bulkProgress = `${index + 1}/${ids.length}`;
-      try {
-        await playlistLinks.refresh(id);
-      } catch {
-        failed++;
-      }
-    }
+    const started = performance.now();
+    const results = await runBounded(
+      ids,
+      3,
+      async (id) => { await playlistLinks.refresh(id); },
+      (completed, total) => bulkProgress = `${completed}/${total}`,
+    );
+    const failed = results.filter((result) => result.status === "rejected").length;
+    const elapsed = ((performance.now() - started) / 1_000).toFixed(1);
     feedback = failed
-      ? `${ids.length - failed} playlists refreshed; ${failed} failed.`
-      : `${ids.length} playlists refreshed.`;
+      ? `${ids.length - failed} playlists refreshed; ${failed} failed in ${elapsed}s.`
+      : `${ids.length} playlists refreshed in ${elapsed}s.`;
     bulkProgress = "";
     action = "";
     await refresh();
@@ -245,17 +246,19 @@
     if (action || refreshing || !playlists.length) return;
     action = "rematch-all";
     feedback = "";
+    const started = performance.now();
     let queued = 0;
-    let failed = 0;
-    for (const [index, playlist] of playlists.entries()) {
-      bulkProgress = `${index + 1}/${playlists.length}`;
-      try {
+    const results = await runBounded(
+      playlists,
+      3,
+      async (playlist) => {
         if ((await playlistLinks.run(playlist.id)).created) queued++;
-      } catch {
-        failed++;
-      }
-    }
-    feedback = `${queued} rematches queued${failed ? `; ${failed} failed` : ""}.`;
+      },
+      (completed, total) => bulkProgress = `${completed}/${total}`,
+    );
+    const failed = results.filter((result) => result.status === "rejected").length;
+    const elapsed = ((performance.now() - started) / 1_000).toFixed(1);
+    feedback = `${queued} rematches queued${failed ? `; ${failed} failed` : ""} in ${elapsed}s.`;
     bulkProgress = "";
     action = "";
     await refresh();
@@ -442,6 +445,10 @@
             <p>
               {details.trackCount} tracks · {formatDuration(details.durationMs)}
               {#if details.unknownDurationCount} · {details.unknownDurationCount} unknown duration{/if}
+              · Snapshot v{details.snapshotVersion}
+              {#if details.hasNewerSourceGeneration}
+                · newer source generation pending
+              {/if}
             </p>
             <div class="hero-route">
               <ProviderMark id={details.sourceProviderId} definition={provider(details.sourceProviderId)} />
@@ -469,6 +476,23 @@
           />
         </div>
 
+        {#if details.reconciliation && (
+          details.reconciliation.addedPositions.length ||
+          details.reconciliation.removedPositions.length ||
+          details.reconciliation.movedPositions.length ||
+          details.reconciliation.duplicatedPositions.length ||
+          details.reconciliation.changedPositions.length
+        )}
+          <p class="action-feedback">
+            Source changes from snapshot v{Math.max(1, details.snapshotVersion - 1)}:
+            {details.reconciliation.addedPositions.length} added,
+            {details.reconciliation.removedPositions.length} removed,
+            {details.reconciliation.movedPositions.length} moved,
+            {details.reconciliation.duplicatedPositions.length} duplicated,
+            {details.reconciliation.changedPositions.length} changed.
+          </p>
+        {/if}
+
         <div class="playlist-stat-grid">
           <div><strong>{details.localCount}</strong><small>Local</small></div>
           <div><strong>{details.externalCount}</strong><small>External</small></div>
@@ -476,6 +500,10 @@
           <div><strong>{relativeTime(details.retrievedAt)}</strong><small>Source refreshed</small></div>
           <div><strong>{relativeTime(details.lastRematchedAt)}</strong><small>Last rematch</small></div>
           <div><strong>{relativeTime(details.completedAt)}</strong><small>Last target sync</small></div>
+          <div>
+            <strong>v{details.snapshotVersion}</strong>
+            <small>{details.hasNewerSourceGeneration ? `Generation v${details.latestSourceSnapshotVersion} pending` : "Current published snapshot"}</small>
+          </div>
           <div class="playlist-schedule-stat">
             <strong title={details.schedule?.nextRunAt ? new Date(details.schedule.nextRunAt).toLocaleString() : undefined}>
               {details.schedule?.enabled ? relativeTime(details.schedule.nextRunAt) : details.schedule ? "Paused" : "Manual"}

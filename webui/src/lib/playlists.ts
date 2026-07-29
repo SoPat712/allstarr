@@ -60,7 +60,7 @@ export function filterTracks(
         return (left.routeProviderId ?? left.routeKind).localeCompare(
           right.routeProviderId ?? right.routeKind,
         );
-      return left.position - right.position;
+      return left.sourcePosition - right.sourcePosition;
     });
 }
 
@@ -98,6 +98,32 @@ export function providerColor(providerId: string) {
 
 export function resizedColumnWidth(start: number, delta: number, min: number, max: number) {
   return Math.min(max, Math.max(min, start + delta));
+}
+
+export async function runBounded<T>(
+  items: T[],
+  concurrency: number,
+  task: (item: T) => Promise<void>,
+  progress?: (completed: number, total: number) => void,
+) {
+  const results = Array<PromiseSettledResult<void>>(items.length);
+  let next = 0;
+  let completed = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, async () => {
+      while (next < items.length) {
+        const index = next++;
+        try {
+          await task(items[index]);
+          results[index] = { status: "fulfilled", value: undefined };
+        } catch (reason) {
+          results[index] = { status: "rejected", reason };
+        }
+        progress?.(++completed, items.length);
+      }
+    }),
+  );
+  return results;
 }
 
 export function orderPlaylistSources(

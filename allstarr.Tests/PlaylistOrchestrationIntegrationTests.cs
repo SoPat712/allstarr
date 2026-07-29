@@ -17,6 +17,7 @@ using allstarr.Models.Settings;
 using allstarr.Services.Spotify;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -42,6 +43,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     private Guid _canonical;
     private Guid _trackOne;
     private Guid _trackTwo;
+    private readonly List<string> _logs = [];
     private readonly DateTimeOffset _now = new(2026, 7, 12, 5, 0, 0, TimeSpan.Zero);
 
     public async Task InitializeAsync()
@@ -58,7 +60,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             accountResolver,
             clock);
         _service = new(_factory, _source, new FakeTargetResolver(_target), new PlaylistMaterializationPlanner(),
-            new TrackMatchDecisionEngine(), _trackMatches, clock);
+            new TrackMatchDecisionEngine(), _trackMatches, clock,
+            new CollectingLogger<PlaylistOrchestrationService>(_logs));
         await using var db = await _factory.CreateDbContextAsync();
         await db.Database.MigrateAsync();
         _identity = Guid.CreateVersion7(); _canonical = Guid.CreateVersion7();
@@ -262,6 +265,91 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.Equal(2, external.Count);
         Assert.DoesNotContain("DurationMilliseconds\":180000", external[0].PayloadJson);
         Assert.Contains("DurationMilliseconds\":180000", external[1].PayloadJson);
+    }
+
+    [Fact]
+    public async Task Refresh_reuses_identical_content_when_only_provider_revision_changes()
+    {
+        var entry = Entry(0, "stable-entry", "source-1", "One");
+        _source.Snapshot = Snapshot("revision-a", entry);
+        var first = await _service.RefreshAsync(Context(), _link);
+
+        _source.Snapshot = Snapshot("revision-b", entry);
+        var second = await _service.RefreshAsync(Context(), _link);
+
+        Assert.Equal(first.SnapshotId, second.SnapshotId);
+        Assert.Equal(first.SnapshotVersion, second.SnapshotVersion);
+        Assert.Equal("revision-a", second.SourceRevision);
+    }
+
+    [Fact]
+    public async Task Failed_collection_logs_retained_last_good_without_private_metadata()
+    {
+        _source.Snapshot = Snapshot(
+            "retained-revision",
+            Entry(0, "retained-entry", "source-1", "Private title"));
+        var retained = await _service.RefreshAsync(Context(), _link);
+        _source.FailureCode = "capability-unavailable";
+
+        await Assert.ThrowsAsync<PlaylistSourceUnavailableException>(
+            () => _service.RefreshAsync(Context(), _link));
+
+        var message = Assert.Single(_logs, item =>
+            item.Contains("retained-last-good", StringComparison.Ordinal));
+        Assert.Contains($"SnapshotVersion: {retained.SnapshotVersion}", message);
+        Assert.Contains("ReasonCode: capability-unavailable", message);
+        Assert.DoesNotContain("Private title", message);
+        Assert.DoesNotContain(_account.ToString(), message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Same_revision_replacement_and_reorder_create_new_snapshot_and_materialization_key()
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot(
+            "stable-revision",
+            Entry(0, "entry-a", "source-1", "One"),
+            Entry(1, "entry-b", "source-2", "Two"),
+            Entry(2, "entry-c", "source-3", "Three"));
+        var first = await _service.RefreshAsync(Context(), _link);
+
+        _source.Snapshot = Snapshot(
+            "stable-revision",
+            Entry(0, "entry-c-moved", "source-3", "Three"),
+            Entry(1, "entry-new", "source-new", "New"),
+            Entry(2, "entry-a-moved", "source-1", "One"));
+        var second = await _service.RefreshAsync(Context(), _link);
+        var repeated = await _service.RefreshAsync(Context(), _link);
+        var firstPlan = await _service.RunAsync(Context(), new(_link, 1, first.SnapshotId));
+        var secondPlan = await _service.RunAsync(Context(), new(_link, 2, second.SnapshotId));
+
+        Assert.NotEqual(first.SnapshotId, second.SnapshotId);
+        Assert.Equal(first.SnapshotVersion + 1, second.SnapshotVersion);
+        Assert.Equal(second.SnapshotId, repeated.SnapshotId);
+        Assert.True(firstPlan.Plan.SourceSnapshotIsStale);
+        Assert.False(secondPlan.Plan.SourceSnapshotIsStale);
+        Assert.NotEqual(firstPlan.Plan.IdempotencyKey, secondPlan.Plan.IdempotencyKey);
+
+        var projection = await new DurablePlaylistProjectionReader(_factory)
+            .ReadByLinkIdAsync(_tenant, _user, _link);
+        var reconciliation = Assert.IsType<DurablePlaylistReconciliation>(
+            projection!.Reconciliation);
+        Assert.Equal(3, reconciliation.ProviderAdvertisedRows);
+        Assert.Equal(3, reconciliation.RawRows);
+        Assert.Equal(3, reconciliation.MappedRows);
+        Assert.Equal(3, reconciliation.PersistedSourceRows);
+        Assert.Equal(3, reconciliation.PublishedRows);
+        Assert.Equal([1], reconciliation.AddedPositions);
+        Assert.Equal([1], reconciliation.RemovedPositions);
+        Assert.Equal([0, 2], reconciliation.MovedPositions);
+        Assert.Equal([0, 1, 2], reconciliation.ChangedPositions);
+        Assert.Equal(
+            reconciliation.PublishedRows,
+            reconciliation.Accepted +
+            reconciliation.Tentative +
+            reconciliation.Rejected +
+            reconciliation.Unresolved);
+        Assert.Equal(reconciliation.PlayableRoutes, reconciliation.ProtocolVisibleRows);
     }
 
     [Fact]
@@ -906,6 +994,33 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     }
 
     [Fact]
+    public async Task Duplicate_provider_track_rows_keep_their_own_raw_metadata_provenance()
+    {
+        _source.Snapshot = Snapshot(
+            "duplicate-provenance",
+            Entry(0, "duplicate-entry-0", "same-provider-track", "First metadata"),
+            Entry(1, "duplicate-entry-1", "same-provider-track", "Second metadata"));
+
+        var result = await _service.RefreshAsync(Context(), _link);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var entries = await db.PlaylistSourceEntries.AsNoTracking()
+            .Where(item => item.PlaylistSourceSnapshotId == result.SnapshotId)
+            .OrderBy(item => item.SourcePosition)
+            .ToListAsync();
+        var externalIds = entries.Select(item => item.ExternalMetadataSnapshotId).ToArray();
+        var externals = await db.ExternalMetadataSnapshots.AsNoTracking()
+            .Where(item => externalIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id);
+
+        Assert.Equal(2, entries.Count);
+        Assert.NotEqual(entries[0].ExternalMetadataSnapshotId, entries[1].ExternalMetadataSnapshotId);
+        Assert.Contains("First metadata", externals[entries[0].ExternalMetadataSnapshotId].PayloadJson);
+        Assert.Contains("Second metadata", externals[entries[1].ExternalMetadataSnapshotId].PayloadJson);
+        Assert.All(externals.Values, item => Assert.Equal(Hash("same-provider-track"), item.ExternalIdHash));
+    }
+
+    [Fact]
     public async Task Durable_projection_classifies_each_source_row_once()
     {
         var externalCanonical = Guid.CreateVersion7();
@@ -1040,6 +1155,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         var active = await reader.ReadByNameAsync(_tenant, _user, "Provider Mix");
         Assert.NotNull(active);
         Assert.Equal(first.SnapshotId, active.SnapshotId);
+        Assert.True(active.HasNewerSourceGeneration);
+        Assert.Equal(building.SnapshotVersion, active.LatestSourceSnapshotVersion);
         Assert.Equal("local", Assert.Single(active.Entries).RouteKind);
         Assert.Equal("provider-artwork:stable:key", active.ArtworkReferenceKey);
 
@@ -1055,6 +1172,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         active = await reader.ReadByNameAsync(_tenant, _user, "Provider Mix");
         Assert.NotNull(active);
         Assert.Equal(building.Id, active.SnapshotId);
+        Assert.False(active.HasNewerSourceGeneration);
         var publishedEntry = Assert.Single(active.Entries);
         Assert.Equal("external", publishedEntry.RouteKind);
         Assert.Equal(TrackMatchState.Rejected, publishedEntry.MatchState);
@@ -1351,12 +1469,29 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     private sealed class FakeSource : IProviderPlaylistSourceGateway
     {
         public CollectedPlaylistSourceSnapshot Snapshot { get; set; } = null!;
+        public string? FailureCode { get; set; }
         public ProviderOutcome<ProviderPlaylistArtwork> Artwork { get; set; } =
             ProviderOutcome<ProviderPlaylistArtwork>.Failure(new ProviderError(ProviderErrorKind.CapabilityUnavailable));
-        public Task<CollectedPlaylistSourceSnapshot> CollectAsync(ProtocolExecutionContext context, PlaylistLinkRecord link, CancellationToken cancellationToken) => Task.FromResult(Snapshot);
+        public Task<CollectedPlaylistSourceSnapshot> CollectAsync(ProtocolExecutionContext context, PlaylistLinkRecord link, CancellationToken cancellationToken) =>
+            FailureCode == null
+                ? Task.FromResult(Snapshot)
+                : Task.FromException<CollectedPlaylistSourceSnapshot>(
+                    new PlaylistSourceUnavailableException(FailureCode));
         public Task<ProviderOutcome<ProviderPlaylistArtwork>> ResolveArtworkAsync(
             ProtocolExecutionContext context, PlaylistLinkRecord link, ProviderPlaylistArtworkRequest request,
             CancellationToken cancellationToken) => Task.FromResult(Artwork);
+    }
+    private sealed class CollectingLogger<T>(List<string> messages) : ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            messages.Add(formatter(state, exception));
     }
     private sealed class FakeTargetResolver(FakeTarget target) : IBackendPlaylistTargetResolver
     {

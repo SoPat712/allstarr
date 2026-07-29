@@ -170,6 +170,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     private readonly TrackMatchDecisionEngine _matcher;
     private readonly ITrackMatchRepository _trackMatches;
     private readonly IPlatformClock _clock;
+    private readonly ILogger<PlaylistOrchestrationService>? _logger;
 
     public PlaylistOrchestrationService(
         IDbContextFactory<AllstarrDbContext> factory,
@@ -178,9 +179,10 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         PlaylistMaterializationPlanner planner,
         TrackMatchDecisionEngine matcher,
         ITrackMatchRepository trackMatches,
-        IPlatformClock clock) =>
-        (_factory, _source, _targets, _planner, _matcher, _trackMatches, _clock) =
-        (factory, source, targets, planner, matcher, trackMatches, clock);
+        IPlatformClock clock,
+        ILogger<PlaylistOrchestrationService>? logger = null) =>
+        (_factory, _source, _targets, _planner, _matcher, _trackMatches, _clock, _logger) =
+        (factory, source, targets, planner, matcher, trackMatches, clock, logger);
 
     public async Task<PlaylistOrchestrationResult> RunAsync(
         ProtocolExecutionContext execution,
@@ -199,10 +201,12 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
 
         var snapshot = request.SourceSnapshotId.HasValue
             ? await LoadSnapshotAsync(initial, link, request.SourceSnapshotId.Value, cancellationToken)
-            : await CollectAndPersistAsync(execution, link, request.JobId, cancellationToken);
+            : await CollectWithRetentionLogAsync(
+                execution, link, request.JobId, cancellationToken);
         var (source, decisions, decisionIds) = await MatchAndLoadAsync(
             execution, link, snapshot, request.Progress, cancellationToken);
         await PublishGenerationAsync(link, snapshot, decisionIds, cancellationToken);
+        await LogReconciliationAsync(link, cancellationToken);
         var mode = link.Mode == PlaylistLinkMode.Virtual
             ? PlaylistPlanMode.Virtual
             : link.MaterializationMode == PlaylistMaterializationMode.Recreate
@@ -216,7 +220,20 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             owned, link.SyncName, link.SyncDescription, link.SyncArtwork);
         var planningTarget = new PlaylistPlanningTarget(
             link.TargetProtocol, link.TargetBackendInstanceId, link.TargetPlaylistId);
-        var plan = _planner.Plan(mode, source, decisions, planningTarget, rules);
+        var latestPublishedSnapshotId = await initial.PlaylistSourceSnapshots.AsNoTracking()
+            .Where(item => item.TenantId == link.TenantId &&
+                           item.PlaylistLinkId == link.Id &&
+                           item.PublishedAt.HasValue)
+            .OrderByDescending(item => item.SnapshotVersion)
+            .Select(item => (Guid?)item.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+        var plan = _planner.Plan(
+            mode,
+            source,
+            decisions,
+            planningTarget,
+            rules,
+            latestPublishedSnapshotId);
         if (!plan.RequiresBackendWrite)
             return new(plan, null, null, false, false);
 
@@ -338,10 +355,88 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         PersistenceGuard.RequireOwner(actor, link.OwnerUserId);
         PersistenceGuard.RequireLibrary(execution, link.LibraryScopeId);
         if (!link.Enabled) throw new InvalidOperationException("The playlist is paused. Resume it before refreshing.");
-        var snapshot = await CollectAndPersistAsync(execution, link, jobId, cancellationToken);
+        var snapshot = await CollectWithRetentionLogAsync(
+            execution, link, jobId, cancellationToken);
         var (_, _, decisionIds) = await MatchAndLoadAsync(execution, link, snapshot, null, cancellationToken);
         await PublishGenerationAsync(link, snapshot, decisionIds, cancellationToken);
+        await LogReconciliationAsync(link, cancellationToken);
         return new PlaylistRefreshResult(snapshot.Id, snapshot.SnapshotVersion, snapshot.ProviderRevision);
+    }
+
+    private async Task LogReconciliationAsync(
+        PlaylistLinkRecord link,
+        CancellationToken cancellationToken)
+    {
+        if (_logger == null) return;
+        var projection = await new DurablePlaylistProjectionReader(_factory)
+            .ReadByLinkIdAsync(
+                link.TenantId,
+                link.OwnerUserId,
+                link.Id,
+                cancellationToken);
+        var value = projection?.Reconciliation;
+        if (projection == null || value == null) return;
+        _logger.LogInformation(
+            "Playlist reconciliation completed. PlaylistLink: {PlaylistLink}. SnapshotVersion: {SnapshotVersion}. ProviderRows: {ProviderRows}. RawRows: {RawRows}. MappedRows: {MappedRows}. PersistedRows: {PersistedRows}. PublishedRows: {PublishedRows}. Accepted: {Accepted}. Tentative: {Tentative}. Rejected: {Rejected}. Unresolved: {Unresolved}. PlayableRoutes: {PlayableRoutes}. MaterializedRows: {MaterializedRows}. ProtocolVisibleRows: {ProtocolVisibleRows}. AddedPositions: {AddedPositions}. RemovedPositions: {RemovedPositions}. MovedPositions: {MovedPositions}. DuplicatedPositions: {DuplicatedPositions}. ChangedPositions: {ChangedPositions}",
+            Hash(link.Id.ToString("N"))[..12],
+            projection.SnapshotVersion,
+            value.ProviderAdvertisedRows,
+            value.RawRows,
+            value.MappedRows,
+            value.PersistedSourceRows,
+            value.PublishedRows,
+            value.Accepted,
+            value.Tentative,
+            value.Rejected,
+            value.Unresolved,
+            value.PlayableRoutes,
+            value.MaterializedTargetRows,
+            value.ProtocolVisibleRows,
+            string.Join(',', value.AddedPositions),
+            string.Join(',', value.RemovedPositions),
+            string.Join(',', value.MovedPositions),
+            string.Join(',', value.DuplicatedPositions),
+            string.Join(',', value.ChangedPositions));
+    }
+
+    private async Task<PlaylistSourceSnapshotRecord> CollectWithRetentionLogAsync(
+        ProtocolExecutionContext execution,
+        PlaylistLinkRecord link,
+        Guid? jobId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await CollectAndPersistAsync(
+                execution, link, jobId, cancellationToken);
+        }
+        catch (PlaylistSourceUnavailableException exception)
+        {
+            await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+            var retained = await db.PlaylistSourceSnapshots.AsNoTracking()
+                .Where(item => item.TenantId == link.TenantId &&
+                               item.PlaylistLinkId == link.Id &&
+                               item.PublishedAt.HasValue)
+                .OrderByDescending(item => item.SnapshotVersion)
+                .FirstOrDefaultAsync(cancellationToken);
+            var persistedCount = retained == null
+                ? 0
+                : await db.PlaylistSourceEntries.AsNoTracking().CountAsync(
+                    item => item.PlaylistSourceSnapshotId == retained.Id,
+                    cancellationToken);
+            _logger?.LogWarning(
+                "Provider playlist snapshot decision. Account: {Account}. PlaylistLink: {PlaylistLink}. ProviderRevision: {ProviderRevision}. ContentFingerprint: {ContentFingerprint}. SnapshotVersion: {SnapshotVersion}. MappedCount: {MappedCount}. PersistedCount: {PersistedCount}. Decision: {Decision}. ReasonCode: {ReasonCode}",
+                Hash(link.ProviderAccountId.ToString("N"))[..12],
+                Hash(link.Id.ToString("N"))[..12],
+                retained == null ? "none" : Hash(retained.ProviderRevision)[..12],
+                retained?.PayloadSha256[..Math.Min(12, retained.PayloadSha256.Length)] ?? "none",
+                retained?.SnapshotVersion,
+                0,
+                persistedCount,
+                "retained-last-good",
+                exception.Code);
+            throw;
+        }
     }
 
     private async Task PublishGenerationAsync(
@@ -391,13 +486,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             $"SELECT pg_advisory_xact_lock(hashtextextended(CAST({link.ProviderAccountId} AS text), 0))",
             cancellationToken);
         var now = _clock.UtcNow;
-        var distinctEntries = collected.Entries
-            .OrderBy(item => item.SourcePosition)
-            .GroupBy(item => item.ProviderTrackIdHash, StringComparer.Ordinal)
-            .Select(group => group.First())
-            .ToArray();
-        var payloads = distinctEntries.ToDictionary(
-            entry => entry.ProviderTrackIdHash,
+        var payloads = collected.Entries.ToDictionary(
+            entry => entry.SourceEntryIdHash,
             entry =>
             {
                 var payload = JsonSerializer.Serialize(new
@@ -418,7 +508,6 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             StringComparer.Ordinal);
         var playlistPayload = JsonSerializer.Serialize(new
         {
-            collected.SourceRevision,
             collected.Name,
             collected.Description,
             collected.ArtworkReferenceKey,
@@ -427,13 +516,12 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 item.SourcePosition,
                 item.SourceEntryIdHash,
                 item.ProviderTrackIdHash,
-                metadataSha256 = payloads[item.ProviderTrackIdHash].PayloadHash
+                metadataSha256 = payloads[item.SourceEntryIdHash].PayloadHash
             })
         });
         var playlistPayloadHash = Hash(playlistPayload);
         var existing = await db.PlaylistSourceSnapshots.AsNoTracking().Where(item =>
                 item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id &&
-                item.ProviderRevision == collected.SourceRevision &&
                 item.PayloadSha256 == playlistPayloadHash)
             .OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(cancellationToken);
         if (existing != null && await db.PlaylistSourceEntries.AsNoTracking()
@@ -444,14 +532,29 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     external.LibraryScopeId == link.LibraryScopeId &&
                     external.BackendInstanceId == link.TargetBackendInstanceId &&
                     external.Protocol == link.TargetProtocol), cancellationToken))
+        {
+            _logger?.LogInformation(
+                "Provider playlist snapshot decision. Account: {Account}. PlaylistLink: {PlaylistLink}. ProviderRevision: {ProviderRevision}. ContentFingerprint: {ContentFingerprint}. SnapshotVersion: {SnapshotVersion}. MappedCount: {MappedCount}. PersistedCount: {PersistedCount}. Decision: {Decision}",
+                Hash(link.ProviderAccountId.ToString("N"))[..12],
+                Hash(link.Id.ToString("N"))[..12],
+                Hash(collected.SourceRevision)[..12],
+                playlistPayloadHash[..12],
+                existing.SnapshotVersion,
+                collected.Entries.Count,
+                collected.Entries.Count,
+                "reused");
             return existing;
+        }
         var version = (await db.PlaylistSourceSnapshots.Where(item =>
                 item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id)
             .MaxAsync(item => (int?)item.SnapshotVersion, cancellationToken) ?? 0) + 1;
-        var externalByTrack = new Dictionary<string, ExternalMetadataSnapshotRecord>(StringComparer.Ordinal);
         var externalBySourceEntry = new Dictionary<string, ExternalMetadataSnapshotRecord>(StringComparer.Ordinal);
         var storedExternals = new List<ExternalMetadataSnapshotRecord>();
-        foreach (var hashes in payloads.Keys.Chunk(500))
+        var providerTrackHashes = collected.Entries
+            .Select(item => item.ProviderTrackIdHash)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        foreach (var hashes in providerTrackHashes.Chunk(500))
         {
             storedExternals.AddRange(await db.ExternalMetadataSnapshots.AsNoTracking()
                 .Where(item => item.TenantId == link.TenantId &&
@@ -465,13 +568,12 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                            item.LibraryScopeId == link.LibraryScopeId &&
                            item.BackendInstanceId == link.TargetBackendInstanceId &&
                            item.Protocol == link.TargetProtocol &&
-                           item.ProviderRevision == collected.SourceRevision)
-            .GroupBy(item => (item.ExternalIdHash, item.ProviderRevision, item.PayloadSha256))
+                           item.PayloadSha256 != null)
+            .GroupBy(item => (item.ExternalIdHash, item.PayloadSha256))
             .ToDictionary(group => group.Key, group => group.OrderByDescending(item => item.SnapshotVersion).First());
         var latestVersions = storedExternals
             .GroupBy(item => item.ExternalIdHash, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Max(item => item.SnapshotVersion), StringComparer.Ordinal);
-        var providerTrackHashes = payloads.Keys.ToArray();
         var providerIdentities = await db.ProviderTrackIdentities.AsNoTracking()
             .Where(item =>
                 item.TenantId == link.TenantId &&
@@ -490,15 +592,13 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     .ThenByDescending(item => item.VerifiedAt)
                     .First(),
                 StringComparer.Ordinal);
+        var newExternals = new Dictionary<(string Track, string Payload), ExternalMetadataSnapshotRecord>();
         foreach (var entry in collected.Entries.OrderBy(item => item.SourcePosition))
         {
-            if (externalByTrack.TryGetValue(entry.ProviderTrackIdHash, out var duplicateExternal))
-            {
-                externalBySourceEntry[entry.SourceEntryIdHash] = duplicateExternal;
-                continue;
-            }
-            var (payload, payloadHash) = payloads[entry.ProviderTrackIdHash];
-            exactExternals.TryGetValue((entry.ProviderTrackIdHash, collected.SourceRevision, payloadHash), out var external);
+            var (payload, payloadHash) = payloads[entry.SourceEntryIdHash];
+            var contentKey = (entry.ProviderTrackIdHash, payloadHash);
+            exactExternals.TryGetValue(contentKey, out var external);
+            external ??= newExternals.GetValueOrDefault(contentKey);
             if (external == null)
             {
                 var externalVersion = latestVersions.GetValueOrDefault(entry.ProviderTrackIdHash) + 1;
@@ -526,8 +626,9 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     RetrievedAt = now
                 };
                 db.ExternalMetadataSnapshots.Add(external);
+                newExternals[contentKey] = external;
+                latestVersions[entry.ProviderTrackIdHash] = externalVersion;
             }
-            externalByTrack[entry.ProviderTrackIdHash] = external;
             externalBySourceEntry[entry.SourceEntryIdHash] = external;
         }
         var snapshot = new PlaylistSourceSnapshotRecord
@@ -561,6 +662,16 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             }));
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        _logger?.LogInformation(
+            "Provider playlist snapshot decision. Account: {Account}. PlaylistLink: {PlaylistLink}. ProviderRevision: {ProviderRevision}. ContentFingerprint: {ContentFingerprint}. SnapshotVersion: {SnapshotVersion}. MappedCount: {MappedCount}. PersistedCount: {PersistedCount}. Decision: {Decision}",
+            Hash(link.ProviderAccountId.ToString("N"))[..12],
+            Hash(link.Id.ToString("N"))[..12],
+            Hash(collected.SourceRevision)[..12],
+            playlistPayloadHash[..12],
+            snapshot.SnapshotVersion,
+            collected.Entries.Count,
+            collected.Entries.Count,
+            "created");
         return snapshot;
     }
 

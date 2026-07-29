@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -83,7 +84,11 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
         (token, cancellationToken) =>
         {
             context.RequireResourceOwner(request.PlaylistId, ProviderResourceKind.Playlist);
-            return _pathfinder.GetPlaylistTracksAsync(token, request, cancellationToken);
+            return _pathfinder.GetPlaylistTracksAsync(
+                token,
+                request,
+                cancellationToken,
+                AccountFingerprint(context.Account!.AccountId));
         });
 
     public Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> SearchPlaylistsAsync(
@@ -187,11 +192,18 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
     {
         var result = await SpotifyWebTokenExchange.ExchangeAsync(_http, SpotifySessionCookie.Normalize(cookie)!, cancellationToken);
         if (result.Success) return new(ProviderOutcome<byte[]>.Success([]), result.AccessToken);
-        var kind = result.ReasonCode is "provider_unauthorized" or "anonymous_session"
-            ? ProviderErrorKind.Unauthorized
-            : ProviderErrorKind.TransientFailure;
+        var kind = result.ReasonCode switch
+        {
+            "provider_unauthorized" or "anonymous_session" or "expired_session" =>
+                ProviderErrorKind.Unauthorized,
+            "provider_forbidden" => ProviderErrorKind.Forbidden,
+            _ => ProviderErrorKind.TransientFailure
+        };
         return new(ProviderOutcome<byte[]>.Failure(new ProviderError(kind)), null);
     }
+
+    private static string AccountFingerprint(Guid accountId) =>
+        Convert.ToHexString(SHA256.HashData(accountId.ToByteArray())).ToLowerInvariant()[..12];
 
     private static ProviderError Error(HttpResponseMessage response) => response.StatusCode switch
     {

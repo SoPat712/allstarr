@@ -185,7 +185,7 @@ public sealed class PlaylistMaterializationPlanner
         IEnumerable<PersistedPlaylistMatchDecision> persistedDecisions,
         PlaylistPlanningTarget target,
         PlaylistPlanningRules rules,
-        string? latestKnownSourceRevision = null)
+        Guid? latestKnownSourceSnapshotId = null)
     {
         if (!Enum.IsDefined(mode)) throw new ArgumentOutOfRangeException(nameof(mode));
         ArgumentNullException.ThrowIfNull(source);
@@ -226,8 +226,8 @@ public sealed class PlaylistMaterializationPlanner
             preview.Add(assessed);
         }
 
-        var stale = latestKnownSourceRevision != null &&
-                    !latestKnownSourceRevision.Equals(source.SourceRevision, StringComparison.Ordinal);
+        var stale = latestKnownSourceSnapshotId.HasValue &&
+                    latestKnownSourceSnapshotId.Value != source.SnapshotId;
         return new(
             mode,
             source.PlaylistLinkId,
@@ -258,7 +258,7 @@ public sealed class PlaylistMaterializationPlanner
             source.PlaylistLinkId.ToString("N"),
             target.Protocol,
             target.BackendInstanceId,
-            source.SourceRevision,
+            source.SnapshotId.ToString("N"),
             rules.RuleVersion,
             rules.RunGeneration.ToString(CultureInfo.InvariantCulture)
         };

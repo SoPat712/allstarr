@@ -46,6 +46,37 @@ public sealed class ProviderPlaylistSnapshotCollectorTests
     }
 
     [Fact]
+    public async Task Row_identity_does_not_change_when_only_provider_revision_changes()
+    {
+        var playlist = PlaylistId("playlist");
+        var first = Summary(playlist, 1);
+        var second = new ProviderPlaylistSummary(
+            playlist,
+            first.Name,
+            first.Owner,
+            "revision-18",
+            first.Description,
+            first.Artwork,
+            first.TrackCount,
+            "etag-18");
+        var collector = new ProviderPlaylistSnapshotCollector();
+
+        var a = await collector.CollectAsync(
+            new FakePlaylistCapability("spotify", Page(first, [Track(0, "track")])),
+            Context("spotify"),
+            new(playlist));
+        var b = await collector.CollectAsync(
+            new FakePlaylistCapability("spotify", Page(second, [Track(0, "track")])),
+            Context("spotify"),
+            new(playlist));
+
+        Assert.NotEqual(a.Snapshot!.SourceRevision, b.Snapshot!.SourceRevision);
+        Assert.Equal(
+            Assert.Single(a.Snapshot.Entries).SourceEntryIdHash,
+            Assert.Single(b.Snapshot.Entries).SourceEntryIdHash);
+    }
+
+    [Fact]
     public async Task Collector_requires_exactly_one_explicit_matching_provider_account()
     {
         var playlist = PlaylistId("playlist");

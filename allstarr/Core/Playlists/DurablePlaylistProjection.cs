@@ -24,6 +24,25 @@ public sealed record DurablePlaylistEntryProjection(
     string? RouteProviderId,
     IReadOnlyList<DurableProviderRoute> ProviderRoutes);
 
+public sealed record DurablePlaylistReconciliation(
+    int ProviderAdvertisedRows,
+    int RawRows,
+    int MappedRows,
+    int PersistedSourceRows,
+    int PublishedRows,
+    int Accepted,
+    int Tentative,
+    int Rejected,
+    int Unresolved,
+    int PlayableRoutes,
+    int MaterializedTargetRows,
+    int ProtocolVisibleRows,
+    IReadOnlyList<int> AddedPositions,
+    IReadOnlyList<int> RemovedPositions,
+    IReadOnlyList<int> MovedPositions,
+    IReadOnlyList<int> DuplicatedPositions,
+    IReadOnlyList<int> ChangedPositions);
+
 public sealed record DurablePlaylistProjection(
     Guid LinkId,
     Guid SnapshotId,
@@ -51,6 +70,9 @@ public sealed record DurablePlaylistProjection(
     public Guid? RunId { get; init; }
     public long? Generation { get; init; }
     public int MaterializedCount { get; init; }
+    public int LatestSourceSnapshotVersion { get; init; }
+    public bool HasNewerSourceGeneration => LatestSourceSnapshotVersion > SnapshotVersion;
+    public DurablePlaylistReconciliation? Reconciliation { get; init; }
     public int TotalCount => Entries.Count;
     public int LocalCount => Entries.Count(item => item.RouteKind == "local");
     public int ExternalCount => Entries.Count(item => item.RouteKind == "external");
@@ -244,6 +266,46 @@ public sealed class DurablePlaylistProjectionReader(
                 .Select(item => item.PlaylistSourceEntryId)
                 .Distinct()
                 .CountAsync(cancellationToken);
+        var latestSourceSnapshotVersion = await database.PlaylistSourceSnapshots.AsNoTracking()
+            .Where(item => item.TenantId == tenantId &&
+                           item.PlaylistLinkId == link.Id)
+            .MaxAsync(item => (int?)item.SnapshotVersion, cancellationToken)
+            ?? snapshot.SnapshotVersion;
+        var previousSnapshot = await database.PlaylistSourceSnapshots.AsNoTracking()
+            .Where(item => item.TenantId == tenantId &&
+                           item.PlaylistLinkId == link.Id &&
+                           item.PublishedAt.HasValue &&
+                           item.SnapshotVersion < snapshot.SnapshotVersion)
+            .OrderByDescending(item => item.SnapshotVersion)
+            .FirstOrDefaultAsync(cancellationToken);
+        var previousEntries = previousSnapshot == null
+            ? []
+            : await database.PlaylistSourceEntries.AsNoTracking()
+                .Where(item => item.PlaylistSourceSnapshotId == previousSnapshot.Id)
+                .OrderBy(item => item.SourcePosition)
+                .ToListAsync(cancellationToken);
+        var previousExternalIds = previousEntries
+            .Select(item => item.ExternalMetadataSnapshotId)
+            .Distinct()
+            .ToArray();
+        var previousExternal = previousExternalIds.Length == 0
+            ? new Dictionary<Guid, ExternalMetadataSnapshotRecord>()
+            : await database.ExternalMetadataSnapshots.AsNoTracking()
+                .Where(item => previousExternalIds.Contains(item.Id))
+                .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var projectedEntries = entries.Select(entry => ProjectEntry(
+                entry,
+                external[entry.ExternalMetadataSnapshotId],
+                sourceIdentities,
+                identities,
+                providerOrder,
+                entry.PublishedTrackMatchId is { } matchId
+                    ? publishedMatches.GetValueOrDefault(matchId)
+                    : null,
+                overrides,
+                library,
+                playableLibraryTrackIds))
+            .ToArray();
 
         return new(
             link.Id,
@@ -259,19 +321,7 @@ public sealed class DurablePlaylistProjectionReader(
             snapshot.RetrievedAt,
             lastSuccessfulSyncAt,
             run?.State,
-            entries.Select(entry => ProjectEntry(
-                    entry,
-                    external[entry.ExternalMetadataSnapshotId],
-                    sourceIdentities,
-                    identities,
-                    providerOrder,
-                    entry.PublishedTrackMatchId is { } matchId
-                        ? publishedMatches.GetValueOrDefault(matchId)
-                        : null,
-                    overrides,
-                    library,
-                    playableLibraryTrackIds))
-                .ToArray(),
+            projectedEntries,
             run?.PlannedTargetTrackCount,
             run?.PlannedTargetDurationMilliseconds,
             run?.VerifiedTargetTrackCount,
@@ -285,8 +335,96 @@ public sealed class DurablePlaylistProjectionReader(
                 : publishedMatches.Values.Max(item => item.DecidedAt),
             RunId = run?.Id,
             Generation = run?.Generation,
-            MaterializedCount = materializedCount
+            MaterializedCount = materializedCount,
+            LatestSourceSnapshotVersion = latestSourceSnapshotVersion,
+            Reconciliation = BuildReconciliation(
+                entries,
+                external,
+                previousEntries,
+                previousExternal,
+                projectedEntries,
+                materializedCount)
         };
+    }
+
+    private static DurablePlaylistReconciliation BuildReconciliation(
+        IReadOnlyList<PlaylistSourceEntryRecord> entries,
+        IReadOnlyDictionary<Guid, ExternalMetadataSnapshotRecord> external,
+        IReadOnlyList<PlaylistSourceEntryRecord> previousEntries,
+        IReadOnlyDictionary<Guid, ExternalMetadataSnapshotRecord> previousExternal,
+        IReadOnlyList<DurablePlaylistEntryProjection> projected,
+        int materializedCount)
+    {
+        var currentRows = entries.Select(item => (
+            item.SourcePosition,
+            External: external[item.ExternalMetadataSnapshotId])).ToArray();
+        var priorRows = previousEntries.Select(item => (
+            item.SourcePosition,
+            External: previousExternal[item.ExternalMetadataSnapshotId])).ToArray();
+        var added = new List<int>();
+        var removed = new List<int>();
+        var moved = new List<int>();
+        foreach (var hash in currentRows.Select(item => item.External.ExternalIdHash)
+                     .Concat(priorRows.Select(item => item.External.ExternalIdHash))
+                     .Distinct(StringComparer.Ordinal))
+        {
+            var currentPositions = currentRows
+                .Where(item => item.External.ExternalIdHash == hash)
+                .Select(item => item.SourcePosition)
+                .Order()
+                .ToArray();
+            var priorPositions = priorRows
+                .Where(item => item.External.ExternalIdHash == hash)
+                .Select(item => item.SourcePosition)
+                .Order()
+                .ToArray();
+            var paired = Math.Min(currentPositions.Length, priorPositions.Length);
+            moved.AddRange(currentPositions.Take(paired)
+                .Zip(priorPositions.Take(paired))
+                .Where(pair => pair.First != pair.Second)
+                .Select(pair => pair.First));
+            added.AddRange(currentPositions.Skip(paired));
+            removed.AddRange(priorPositions.Skip(paired));
+        }
+        var priorByPosition = priorRows.ToDictionary(item => item.SourcePosition);
+        var changed = currentRows
+            .Where(item => priorByPosition.TryGetValue(item.SourcePosition, out var prior) &&
+                           (item.External.ExternalIdHash != prior.External.ExternalIdHash ||
+                            item.External.PayloadSha256 != prior.External.PayloadSha256))
+            .Select(item => item.SourcePosition)
+            .Order()
+            .ToArray();
+        var duplicated = currentRows
+            .GroupBy(item => item.External.ExternalIdHash, StringComparer.Ordinal)
+            .SelectMany(group => group.OrderBy(item => item.SourcePosition).Skip(1))
+            .Select(item => item.SourcePosition)
+            .Order()
+            .ToArray();
+        var accepted = projected.Count(item =>
+            item.MatchState is TrackMatchState.Accepted or TrackMatchState.Pinned);
+        var tentative = projected.Count(item =>
+            item.MatchState is TrackMatchState.Suggested or TrackMatchState.Ambiguous);
+        var rejected = projected.Count(item => item.MatchState == TrackMatchState.Rejected);
+        var unresolved = projected.Count - accepted - tentative - rejected;
+        var playable = projected.Count(item => item.RouteKind != "unmatched");
+        return new(
+            entries.Count,
+            entries.Count,
+            entries.Count,
+            entries.Count,
+            entries.Count,
+            accepted,
+            tentative,
+            rejected,
+            unresolved,
+            playable,
+            materializedCount,
+            playable,
+            added.Order().ToArray(),
+            removed.Order().ToArray(),
+            moved.Distinct().Order().ToArray(),
+            duplicated,
+            changed);
     }
 
     private static DurablePlaylistEntryProjection ProjectEntry(

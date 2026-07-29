@@ -162,7 +162,8 @@ public sealed class SpotifyPathfinderPlaylistClient
     public async Task<ProviderOutcome<ProviderPlaylistTrackPage>> GetPlaylistTracksAsync(
         string token,
         ProviderPlaylistTracksRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? accountFingerprint = null)
     {
         if (!TryOffset(request.Page.Cursor, out var offset))
             return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(
@@ -180,37 +181,82 @@ public sealed class SpotifyPathfinderPlaylistClient
             variables,
             cancellationToken);
         if (!response.Outcome.IsSuccess)
+        {
+            LogPlaylistPage(
+                request, accountFingerprint, offset, response,
+                response.Outcome.Error!.Code);
             return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(response.Outcome.Error!);
+        }
 
         try
         {
             using var document = JsonDocument.Parse(response.Body!);
             if (GraphQlFailure(document.RootElement, PlaylistOperation) is { } failure)
+            {
+                LogPlaylistPage(
+                    request, accountFingerprint, offset, response,
+                    failure.Code);
                 return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(failure);
+            }
             if (!TryPath(document.RootElement, out var playlist, "data", "playlistV2"))
+            {
+                LogPlaylistPage(
+                    request, accountFingerprint, offset, response,
+                    "missing_playlist_envelope");
                 return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(
                     new ProviderError(ProviderErrorKind.CapabilityUnavailable));
+            }
 
             var summary = MapSummary(playlist, request.PlaylistId.Value);
             if (summary == null)
+            {
+                LogPlaylistPage(
+                    request, accountFingerprint, offset, response,
+                    "invalid_playlist_summary");
                 return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(
                     new ProviderError(ProviderErrorKind.CapabilityUnavailable));
+            }
             if (request.ExpectedRevision != null &&
                 !request.ExpectedRevision.Equals(summary.SourceRevision, StringComparison.Ordinal))
+            {
+                LogPlaylistPage(
+                    request, accountFingerprint, offset, response,
+                    "provider_revision_changed");
                 return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(
                     new ProviderError(ProviderErrorKind.PermanentFailure));
+            }
             if (ArtworkUri(playlist) is { } artwork)
                 await CacheArtworkAsync(request.PlaylistId.Value, summary.SourceRevision, artwork);
 
-            var content = TryPath(playlist, out var contentValue, "content")
-                ? contentValue
-                : default;
+            if (!TryPath(playlist, out var content, "content"))
+            {
+                LogPlaylistPage(
+                    request, accountFingerprint, offset, response,
+                    "missing_playlist_content");
+                return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(
+                    ProviderError.CompatibilityContractChanged());
+            }
             var rawItems = Array(content, "items");
             var tracks = new List<ProviderPlaylistTrack>(rawItems.Count);
             for (var index = 0; index < rawItems.Count; index++)
             {
-                if (MapTrack(rawItems[index], offset + index) is { } track)
-                    tracks.Add(track);
+                var position = offset + index;
+                if (MapTrack(rawItems[index], position, out var reasonCode) is not { } track)
+                {
+                    LogPlaylistPage(
+                        request,
+                        accountFingerprint,
+                        offset,
+                        response,
+                        reasonCode,
+                        Integer(content, "totalCount") ?? summary.TrackCount,
+                        rawItems.Count,
+                        tracks.Count,
+                        position);
+                    return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(
+                        ProviderError.CompatibilityContractChanged());
+                }
+                tracks.Add(track);
             }
 
             var consumed = rawItems.Count;
@@ -219,6 +265,22 @@ public sealed class SpotifyPathfinderPlaylistClient
             var hasNext = consumed > 0 && (total == null
                 ? consumed >= request.Page.Limit
                 : nextOffset < total);
+            logger?.LogInformation(
+                "Spotify Pathfinder page completed. Operation: {Operation}. QueryVersion: {QueryVersion}. QueryHash: {QueryHash}. Account: {Account}. Playlist: {Playlist}. Offset: {Offset}. Limit: {Limit}. HttpOutcome: {HttpOutcome}. ElapsedMilliseconds: {ElapsedMilliseconds}. DeclaredCount: {DeclaredCount}. RawCount: {RawCount}. MappedCount: {MappedCount}. NextOffset: {NextOffset}. ResponseByteCount: {ResponseByteCount}",
+                PlaylistOperation,
+                PlaylistQuery.Version,
+                PlaylistQuery.Sha256Hash[..12],
+                accountFingerprint ?? "unavailable",
+                ProviderPlaylistSnapshotCollector.HashResource(request.PlaylistId)[..12],
+                offset,
+                request.Page.Limit,
+                response.HttpStatusCode,
+                response.ElapsedMilliseconds,
+                total,
+                rawItems.Count,
+                tracks.Count,
+                nextOffset,
+                response.Body!.Length);
             return ProviderOutcome<ProviderPlaylistTrackPage>.Success(new(
                 summary,
                 new ProviderPage<ProviderPlaylistTrack>(
@@ -230,9 +292,43 @@ public sealed class SpotifyPathfinderPlaylistClient
         }
         catch (JsonException)
         {
+            LogPlaylistPage(
+                request, accountFingerprint, offset, response,
+                "invalid_json");
             return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(
                 new ProviderError(ProviderErrorKind.CapabilityUnavailable));
         }
+    }
+
+    private void LogPlaylistPage(
+        ProviderPlaylistTracksRequest request,
+        string? accountFingerprint,
+        int offset,
+        PathfinderResponse response,
+        string reasonCode,
+        int? declaredCount = null,
+        int rawCount = 0,
+        int mappedCount = 0,
+        int? failingSourcePosition = null)
+    {
+        logger?.LogWarning(
+            "Spotify Pathfinder page completed. Operation: {Operation}. QueryVersion: {QueryVersion}. QueryHash: {QueryHash}. Account: {Account}. Playlist: {Playlist}. Offset: {Offset}. Limit: {Limit}. HttpOutcome: {HttpOutcome}. ElapsedMilliseconds: {ElapsedMilliseconds}. DeclaredCount: {DeclaredCount}. RawCount: {RawCount}. MappedCount: {MappedCount}. NextOffset: {NextOffset}. ReasonCode: {ReasonCode}. FailingSourcePosition: {SourcePosition}. ResponseByteCount: {ResponseByteCount}",
+            PlaylistOperation,
+            PlaylistQuery.Version,
+            PlaylistQuery.Sha256Hash[..12],
+            accountFingerprint ?? "unavailable",
+            ProviderPlaylistSnapshotCollector.HashResource(request.PlaylistId)[..12],
+            offset,
+            request.Page.Limit,
+            response.HttpStatusCode,
+            response.ElapsedMilliseconds,
+            declaredCount,
+            rawCount,
+            mappedCount,
+            offset + rawCount,
+            reasonCode,
+            failingSourcePosition,
+            response.Body?.Length ?? 0);
     }
 
     public async Task<ProviderOutcome<Uri>> GetPlaylistArtworkUriAsync(
@@ -277,6 +373,7 @@ public sealed class SpotifyPathfinderPlaylistClient
         object variables,
         CancellationToken cancellationToken)
     {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var extensions = JsonSerializer.Serialize(new
         {
             persistedQuery = new { version = operation.Version, sha256Hash = operation.Sha256Hash }
@@ -291,15 +388,23 @@ public sealed class SpotifyPathfinderPlaylistClient
             $"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(pair.Value)}"));
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri($"{Endpoint}?{query}"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        request.Headers.TryAddWithoutValidation("app-platform", "WebPlayer");
+        SpotifyWebRequestProfile.Apply(request);
 
         try
         {
             using var response = await http.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
-                return new(ProviderOutcome<byte[]>.Failure(HttpFailure(response)), null);
+                return new(
+                    ProviderOutcome<byte[]>.Failure(HttpFailure(response)),
+                    null,
+                    (int)response.StatusCode,
+                    stopwatch.ElapsedMilliseconds);
             var body = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-            return new(ProviderOutcome<byte[]>.Success(body), body);
+            return new(
+                ProviderOutcome<byte[]>.Success(body),
+                body,
+                (int)response.StatusCode,
+                stopwatch.ElapsedMilliseconds);
         }
         catch (OperationCanceledException)
         {
@@ -309,7 +414,9 @@ public sealed class SpotifyPathfinderPlaylistClient
         {
             return new(
                 ProviderOutcome<byte[]>.Failure(new ProviderError(ProviderErrorKind.TransientFailure)),
-                null);
+                null,
+                null,
+                stopwatch.ElapsedMilliseconds);
         }
     }
 
@@ -328,20 +435,15 @@ public sealed class SpotifyPathfinderPlaylistClient
         var errors = Array(root, "errors");
         if (errors.Count == 0)
             return null;
-        var diagnostics = errors
-            .Select(error => String(error, "message"))
-            .Where(message => !string.IsNullOrWhiteSpace(message))
-            .Select(message => message!.Length > 240 ? message[..240] : message)
-            .Take(3)
-            .ToArray();
-        logger?.LogWarning(
-            "Spotify Pathfinder operation {Operation} returned GraphQL errors: {Diagnostics}",
-            operation,
-            diagnostics.Length == 0 ? "No message supplied" : string.Join(" | ", diagnostics));
         var staleHash = errors.Any(error =>
             String(error, "message")?.Contains("persisted", StringComparison.OrdinalIgnoreCase) == true ||
             (TryPath(error, out var extensions, "extensions") &&
              String(extensions, "code")?.Contains("persisted", StringComparison.OrdinalIgnoreCase) == true));
+        logger?.LogWarning(
+            "Spotify Pathfinder operation {Operation} returned {ErrorCount} GraphQL errors. ReasonCode: {ReasonCode}",
+            operation,
+            errors.Count,
+            staleHash ? "persisted_query_changed" : "graphql_error");
         return staleHash
             ? ProviderError.CompatibilityContractChanged()
             : new ProviderError(ProviderErrorKind.PermanentFailure);
@@ -406,14 +508,28 @@ public sealed class SpotifyPathfinderPlaylistClient
             ? string.Join(", ", value.EnumerateObject().Select(property => property.Name).Take(12))
             : "none";
 
-    private static ProviderPlaylistTrack? MapTrack(JsonElement item, int position)
+    private static ProviderPlaylistTrack? MapTrack(
+        JsonElement item,
+        int position,
+        out string reasonCode)
     {
         if (!TryPath(item, out var data, "itemV2", "data"))
+        {
+            reasonCode = "missing_item_data";
             return null;
+        }
         var id = SpotifyId(String(data, "uri"), "track");
         var title = String(data, "name");
-        if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(title))
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            reasonCode = "unsupported_item_identity";
             return null;
+        }
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            reasonCode = "missing_title";
+            return null;
+        }
 
         var artists = new List<ProviderArtistCredit>();
         if (TryPath(data, out var artistItems, "artists", "items") &&
@@ -435,7 +551,10 @@ public sealed class SpotifyPathfinderPlaylistClient
             }
         }
         if (artists.Count == 0)
+        {
+            reasonCode = "missing_named_artist";
             return null;
+        }
 
         ProviderExternalResourceId? albumId = null;
         string? albumTitle = null;
@@ -465,6 +584,7 @@ public sealed class SpotifyPathfinderPlaylistClient
             durationMs is null ? null : TimeSpan.FromMilliseconds(durationMs.Value),
             isExplicit: explicitValue,
             artwork: artwork == null ? null : new ProviderArtworkReference(publicUri: artwork));
+        reasonCode = "ok";
         return new ProviderPlaylistTrack(position, trackId, metadata: metadata);
     }
 
@@ -703,7 +823,11 @@ public sealed class SpotifyPathfinderPlaylistClient
             : null;
     }
 
-    private sealed record PathfinderResponse(ProviderOutcome<byte[]> Outcome, byte[]? Body);
+    private sealed record PathfinderResponse(
+        ProviderOutcome<byte[]> Outcome,
+        byte[]? Body,
+        int? HttpStatusCode,
+        long ElapsedMilliseconds);
     private sealed record ArtworkCacheEntry(string Uri);
     private sealed record LibraryPlaylistEntry(
         JsonElement Playlist,

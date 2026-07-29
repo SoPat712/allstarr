@@ -866,7 +866,6 @@ public class ProviderStatusManager
             return new ProbeOutcome(false, "account_needs_configuration");
         }
         using var client = _httpClientFactory.CreateClient();
-        client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
         var result = await allstarr.Core.Providers.Spotify.SpotifyWebTokenExchange.ExchangeAsync(client, sessionCookie, cancellationToken);
         return new ProbeOutcome(result.Success, result.ReasonCode);
     }

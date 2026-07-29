@@ -120,8 +120,10 @@ public sealed class PlaylistMaterializationPlannerTests(ITestOutputHelper output
         var source = Source(Entry(0, "one"));
         var decisions = new[] { Accepted(source.Entries[0], "local-1") };
 
-        var current = Planner().Plan(PlaylistPlanMode.Virtual, source, decisions, Target(), Rules(), source.SourceRevision);
-        var stale = Planner().Plan(PlaylistPlanMode.Virtual, source, decisions, Target(), Rules(), "provider-revision-newer");
+        var current = Planner().Plan(
+            PlaylistPlanMode.Virtual, source, decisions, Target(), Rules(), source.SnapshotId);
+        var stale = Planner().Plan(
+            PlaylistPlanMode.Virtual, source, decisions, Target(), Rules(), Guid.CreateVersion7());
 
         Assert.False(current.SourceSnapshotIsStale);
         Assert.True(stale.SourceSnapshotIsStale);
@@ -145,6 +147,27 @@ public sealed class PlaylistMaterializationPlannerTests(ITestOutputHelper output
         Assert.NotEqual(first.IdempotencyKey, later.IdempotencyKey);
         Assert.NotEqual(first.IdempotencyKey, differentRule.IdempotencyKey);
         Assert.StartsWith("playlist-materialize:", first.IdempotencyKey, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Same_provider_revision_with_a_new_snapshot_identity_gets_new_materialization_work()
+    {
+        var first = Source(Entry(0, "one"));
+        var second = new ImmutablePlaylistSourceSnapshot(
+            Guid.CreateVersion7(),
+            first.PlaylistLinkId,
+            first.SourceRevision,
+            first.Name,
+            first.Entries,
+            first.Description,
+            first.ArtworkReference);
+
+        var firstKey = PlaylistMaterializationPlanner.ComputeIdempotencyKey(
+            first, Target(), Rules());
+        var secondKey = PlaylistMaterializationPlanner.ComputeIdempotencyKey(
+            second, Target(), Rules());
+
+        Assert.NotEqual(firstKey, secondKey);
     }
 
     [Fact]

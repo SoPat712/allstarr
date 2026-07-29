@@ -7,6 +7,7 @@ import {
   orderPlaylistSources,
   providerColor,
   resizedColumnWidth,
+  runBounded,
 } from "./playlists";
 
 const playlist = (values: Partial<PlaylistLink>): PlaylistLink => ({
@@ -60,8 +61,8 @@ describe("playlist presentation", () => {
 
   it("keeps source order by default and formats durations", () => {
     const tracks = [
-      { position: 2, externalSnapshotId: "b", title: "B", artists: [], routeKind: "external", providerRoutes: [] },
-      { position: 1, externalSnapshotId: "a", title: "A", artists: [], routeKind: "local", providerRoutes: [] },
+      { sourcePosition: 1, position: 2, externalSnapshotId: "b", title: "B", artists: [], routeKind: "external", providerRoutes: [] },
+      { sourcePosition: 0, position: 1, externalSnapshotId: "a", title: "A", artists: [], routeKind: "local", providerRoutes: [] },
     ] satisfies PlaylistTrack[];
     expect(filterTracks(tracks, "", "all", "position").map((item) => item.position)).toEqual([1, 2]);
     expect(formatDuration(3_723_000)).toBe("1:02:03");
@@ -79,5 +80,29 @@ describe("playlist presentation", () => {
     ).map((item) => item.providerId)).toEqual([
       "jellyfin", "subsonic", "spotify", "extension", "qobuz",
     ]);
+  });
+
+  it("bounds bulk work and isolates failures", async () => {
+    let active = 0;
+    let peak = 0;
+    const progress: number[] = [];
+    const results = await runBounded(
+      [1, 2, 3, 4, 5],
+      2,
+      async (value) => {
+        active++;
+        peak = Math.max(peak, active);
+        await Promise.resolve();
+        active--;
+        if (value === 3) throw new Error("fixture failure");
+      },
+      (completed) => progress.push(completed),
+    );
+
+    expect(peak).toBe(2);
+    expect(results.map((result) => result.status)).toEqual([
+      "fulfilled", "fulfilled", "rejected", "fulfilled", "fulfilled",
+    ]);
+    expect(progress).toEqual([1, 2, 3, 4, 5]);
   });
 });

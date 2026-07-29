@@ -884,7 +884,9 @@ public sealed class TrackMatchesController(
                 components = Element(item, "components", "Components"),
                 reasons = Element(item, "reasons", "Reasons"),
                 warnings = Element(item, "warnings", "Warnings")
-            }).Where(item => item.libraryTrackId != null).Cast<object>().ToArray();
+            }).Where(item => item.libraryTrackId != null || HasProviderTrackId(item.providerTrackIds))
+                .Cast<object>()
+                .ToArray();
         }
         catch (JsonException) { return []; }
     }
@@ -893,6 +895,12 @@ public sealed class TrackMatchesController(
         root.TryGetProperty(camelName, out var value) || root.TryGetProperty(pascalName, out value)
             ? value.Clone()
             : null;
+
+    private static bool HasProviderTrackId(JsonElement? value) =>
+        value is { ValueKind: JsonValueKind.Object } &&
+        value.Value.EnumerateObject().Any(item =>
+            item.Value.ValueKind == JsonValueKind.String &&
+            !string.IsNullOrWhiteSpace(item.Value.GetString()));
 
     private static double? Number(JsonElement root, string name) => root.ValueKind == JsonValueKind.Object &&
         root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number &&

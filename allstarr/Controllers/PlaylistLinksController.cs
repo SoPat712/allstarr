@@ -1067,6 +1067,8 @@ public sealed class PlaylistLinksController(
         id = value.LinkId,
         snapshotId = value.SnapshotId,
         snapshotVersion = value.SnapshotVersion,
+        latestSourceSnapshotVersion = value.LatestSourceSnapshotVersion,
+        hasNewerSourceGeneration = value.HasNewerSourceGeneration,
         name = value.Name,
         sourceProviderId = value.SourceProviderId,
         targetProtocol = value.TargetProtocol,
@@ -1092,6 +1094,26 @@ public sealed class PlaylistLinksController(
         }),
         durationMs = value.DurationMilliseconds,
         unknownDurationCount = value.UnknownDurationCount,
+        reconciliation = value.Reconciliation == null ? null : new
+        {
+            providerAdvertisedRows = value.Reconciliation.ProviderAdvertisedRows,
+            rawRows = value.Reconciliation.RawRows,
+            mappedRows = value.Reconciliation.MappedRows,
+            persistedSourceRows = value.Reconciliation.PersistedSourceRows,
+            publishedRows = value.Reconciliation.PublishedRows,
+            accepted = value.Reconciliation.Accepted,
+            tentative = value.Reconciliation.Tentative,
+            rejected = value.Reconciliation.Rejected,
+            unresolved = value.Reconciliation.Unresolved,
+            playableRoutes = value.Reconciliation.PlayableRoutes,
+            materializedTargetRows = value.Reconciliation.MaterializedTargetRows,
+            protocolVisibleRows = value.Reconciliation.ProtocolVisibleRows,
+            addedPositions = value.Reconciliation.AddedPositions,
+            removedPositions = value.Reconciliation.RemovedPositions,
+            movedPositions = value.Reconciliation.MovedPositions,
+            duplicatedPositions = value.Reconciliation.DuplicatedPositions,
+            changedPositions = value.Reconciliation.ChangedPositions
+        },
         schedule = schedule == null ? null : ToScheduleDto(schedule),
         materializationVerification = value.VerificationCode == null ? null : new
         {
@@ -1104,7 +1126,8 @@ public sealed class PlaylistLinksController(
         },
         tracks = value.Entries.Select(item => new
         {
-            position = item.Position,
+            sourcePosition = item.Position,
+            position = item.Position + 1,
             externalSnapshotId = item.ExternalSnapshotId,
             title = item.Title,
             artists = item.Artists,
@@ -1150,7 +1173,7 @@ public sealed class PlaylistLinksController(
         string? ArtworkResourceId,
         string? ArtworkRevision);
     private static object ToScheduleDto(JobScheduleRecord value) => new { id = value.Id, cronExpression = value.CronExpression, timeZoneId = value.TimeZoneId, overlapPolicy = value.OverlapPolicy.ToString().ToLowerInvariant(), misfirePolicy = LowerCamel(value.MisfirePolicy.ToString()), enabled = value.Enabled, nextRunAt = value.NextRunAt, revision = value.Revision };
-    private static object ToPreviewDto(PlaylistPreview value) => new { linkId = value.LinkId, snapshotId = value.SnapshotId, name = value.Name, description = value.Description, artworkReferenceKey = value.ArtworkReferenceKey, entries = value.Entries.Select(item => new { position = item.Position, externalSnapshotId = item.ExternalSnapshotId, state = item.State.ToString().ToLowerInvariant(), libraryTrackId = item.LibraryTrackId, @override = item.Override?.ToString().ToLowerInvariant() }) };
+    private static object ToPreviewDto(PlaylistPreview value) => new { linkId = value.LinkId, snapshotId = value.SnapshotId, name = value.Name, description = value.Description, artworkReferenceKey = value.ArtworkReferenceKey, entries = value.Entries.Select(item => new { sourcePosition = item.Position, position = item.Position + 1, externalSnapshotId = item.ExternalSnapshotId, state = item.State.ToString().ToLowerInvariant(), libraryTrackId = item.LibraryTrackId, @override = item.Override?.ToString().ToLowerInvariant() }) };
     private static object ToCredentialDto(SecretReferenceInfo value) => new { referenceId = value.Id, targetProtocol = "subsonic", purpose = value.Purpose, activeVersion = value.ActiveVersion, updatedAt = value.UpdatedAt };
     private static string LowerCamel(string value) => char.ToLowerInvariant(value[0]) + value[1..];
 }

@@ -312,6 +312,7 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
     if (url.pathname === "/api/admin/playlist-links/playlist-link")
       body = {
         id: "playlist-link", snapshotId: "playlist-snapshot", snapshotVersion: 1,
+        latestSourceSnapshotVersion: 1, hasNewerSourceGeneration: false,
         name: "Test playlist", sourceProviderId: "lumen-audio", targetProtocol: "jellyfin",
         artworkUrl: "/missing-playlist-art",
         retrievedAt: "2026-01-01", completedAt: "2026-01-01", trackCount: 2,
@@ -319,7 +320,7 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
         matchedCount: 0, reviewCount: 1, rejectedCount: 0, playableCount: 1,
         routeCoverage: [{ providerId: "lumen-audio", count: 1 }],
         unknownDurationCount: 0, tracks: [{
-          position: 1, externalSnapshotId: "snapshot", title: "Test song",
+          sourcePosition: 0, position: 1, externalSnapshotId: "snapshot", title: "Test song",
           artists: ["Artist"], album: "Album", isrc: "US-AAA-26-00001",
           artworkUrl: "/missing-track-art",
           durationMs: 180_000, routeKind: "external", routeProviderId: "lumen-audio",

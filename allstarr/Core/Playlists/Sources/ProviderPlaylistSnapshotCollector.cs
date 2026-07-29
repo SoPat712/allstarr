@@ -108,7 +108,7 @@ public sealed class ProviderPlaylistSnapshotCollector
                 pageSnapshotVersion ??= page.Tracks.SnapshotVersion;
                 foreach (var track in page.Tracks.Items)
                 {
-                    entries.Add(ToCollectedEntry(request.PlaylistId, summary.SourceRevision, track));
+                    entries.Add(ToCollectedEntry(request.PlaylistId, track));
                 }
 
                 cursor = page.Tracks.NextCursor;
@@ -183,11 +183,10 @@ public sealed class ProviderPlaylistSnapshotCollector
 
     private static CollectedPlaylistSourceEntry ToCollectedEntry(
         ProviderExternalResourceId playlistId,
-        string revision,
         ProviderPlaylistTrack track)
     {
         var metadata = track.Metadata;
-        var sourceEntryHash = HashText($"{HashResource(playlistId)}\u001f{revision}\u001f{track.Position}\u001f{HashResource(track.TrackId)}");
+        var sourceEntryHash = HashText($"{HashResource(playlistId)}\u001f{track.Position}\u001f{HashResource(track.TrackId)}");
         return new(
             track.Position,
             sourceEntryHash,

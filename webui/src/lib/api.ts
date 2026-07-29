@@ -467,6 +467,7 @@ export type PlaylistLink = {
 };
 
 export type PlaylistTrack = {
+  sourcePosition: number;
   position: number;
   externalSnapshotId: string;
   title: string;
@@ -498,6 +499,8 @@ export type PlaylistDetails = {
   id: string;
   snapshotId: string;
   snapshotVersion: number;
+  latestSourceSnapshotVersion: number;
+  hasNewerSourceGeneration: boolean;
   name: string;
   sourceProviderId: string;
   targetProtocol: string;
@@ -518,6 +521,25 @@ export type PlaylistDetails = {
   routeCoverage: Array<{ providerId: string; count: number }>;
   durationMs?: number | null;
   unknownDurationCount: number;
+  reconciliation?: {
+    providerAdvertisedRows: number;
+    rawRows: number;
+    mappedRows: number;
+    persistedSourceRows: number;
+    publishedRows: number;
+    accepted: number;
+    tentative: number;
+    rejected: number;
+    unresolved: number;
+    playableRoutes: number;
+    materializedTargetRows: number;
+    protocolVisibleRows: number;
+    addedPositions: number[];
+    removedPositions: number[];
+    movedPositions: number[];
+    duplicatedPositions: number[];
+    changedPositions: number[];
+  } | null;
   schedule?: PlaylistSchedule | null;
   tracks: PlaylistTrack[];
 };

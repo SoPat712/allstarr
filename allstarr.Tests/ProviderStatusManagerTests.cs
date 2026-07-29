@@ -386,7 +386,7 @@ public sealed class ProviderStatusManagerTests
         var result = await manager.TestProviderCapabilityAsync("spotify", ProviderCapabilities.Playlist);
 
         Assert.Equal(ProviderHealthState.Degraded, result.Health);
-        Assert.Equal("provider_unauthorized", result.ReasonCode);
+        Assert.Equal("provider_forbidden", result.ReasonCode);
         Assert.DoesNotContain("valid-looking-cookie", result.ReasonCode, StringComparison.Ordinal);
     }
 
