@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Dialog } from "bits-ui";
+  import { Dialog } from "$lib/components/ui/dialog";
+  import { X } from "lucide-svelte";
   import { sources, type ProviderAccount, type ProviderDefinition } from "$lib/api";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
@@ -84,7 +85,7 @@
             ? "Replace the encrypted account details. Existing credentials are never displayed."
             : "Credentials are encrypted before this connection is enabled."}</Dialog.Description>
         </div>
-        <Dialog.Close class="icon-button" aria-label="Close source connection dialog">×</Dialog.Close>
+        <Dialog.Close class="icon-button" aria-label="Close source connection dialog"><X size={18} aria-hidden="true" /></Dialog.Close>
       </header>
 
       {#if selected}

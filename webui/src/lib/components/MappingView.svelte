@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { DropdownMenu } from "bits-ui";
+  import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
+  import { ArrowRight, MoreHorizontal } from "lucide-svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import {
     home,
@@ -321,7 +322,7 @@
                 </span>
               </div>
 
-              <span class="mapping-arrow" aria-hidden="true">→</span>
+              <ArrowRight class="mapping-arrow" size={20} aria-hidden="true" />
 
               <div class:unresolved={!target && !candidate} class="mapping-party">
                 {#if target || candidate}
@@ -391,7 +392,7 @@
                   {target ? "Review match" : "Interactive search"}
                 </button>
                 <DropdownMenu.Root>
-                  <DropdownMenu.Trigger class="track-menu-trigger" aria-label={`More actions for ${match.title || "track"}`}>•••</DropdownMenu.Trigger>
+                  <DropdownMenu.Trigger class="track-menu-trigger" aria-label={`More actions for ${match.title || "track"}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
                   <DropdownMenu.Portal>
                     <DropdownMenu.Content class="bits-menu" sideOffset={4} align="end">
                       <DropdownMenu.Item class="bits-menu-item" onSelect={() => void rematch(match)}>Rematch</DropdownMenu.Item>

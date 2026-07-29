@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { AlertDialog, Dialog, DropdownMenu } from "bits-ui";
+  import { AlertDialog } from "$lib/components/ui/alert-dialog";
+  import { Dialog } from "$lib/components/ui/dialog";
+  import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
+  import { X } from "lucide-svelte";
   import {
     extensions,
     type ExtensionLog,
@@ -9,7 +12,7 @@
     type ExtensionRegistry,
     type ExtensionStoreItem,
   } from "$lib/api";
-  import Badge from "$lib/components/Badge.svelte";
+  import { Badge } from "$lib/components/ui/badge";
   import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -342,7 +345,7 @@
 
   <Dialog.Root bind:open={installOpen}>
     <Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog extension-install-dialog">
-      <header class="dialog-heading"><div><Dialog.Title>Install extension</Dialog.Title><Dialog.Description>Use a registry package or provide a verified HTTPS package and checksum.</Dialog.Description></div><Dialog.Close class="icon-button" aria-label="Close installer">×</Dialog.Close></header>
+      <header class="dialog-heading"><div><Dialog.Title>Install extension</Dialog.Title><Dialog.Description>Use a registry package or provide a verified HTTPS package and checksum.</Dialog.Description></div><Dialog.Close class="icon-button" aria-label="Close installer"><X size={18} aria-hidden="true" /></Dialog.Close></header>
       <form class="settings-fields" onsubmit={(event) => void stageDirect(event)}>
         <label class="setting-field"><span><strong>Package URL</strong></span><input name="downloadUrl" type="url" required pattern="https://.*" autocomplete="off" /></label>
         <label class="setting-field"><span><strong>SHA-256 checksum</strong></span><input name="sha256" required minlength="64" maxlength="64" pattern="[A-Fa-f0-9]{64}" autocomplete="off" spellcheck="false" /></label>

@@ -15,7 +15,8 @@
     "check:budgets": "node scripts/check-budgets.mjs"
   },
   "dependencies": {
-    "bits-ui": "^2.18.1"
+    "bits-ui": "^2.18.1",
+    "lucide-svelte": "^0.544.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.0",

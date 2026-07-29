@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AlertDialog } from "bits-ui";
+  import { AlertDialog } from "$lib/components/ui/alert-dialog";
 
   let {
     open = $bindable(false),

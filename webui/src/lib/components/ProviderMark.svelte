@@ -21,7 +21,7 @@
   });
 </script>
 
-<span class="provider-mark" style={`--route-color:${providerColor(id)}`} title={label}>
+<span class="provider-mark" style={`--route-color:${providerColor(id)}`}>
   {#if !failed}
     <img src={source} alt="" onerror={() => { failed = true; }} />
   {:else}

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Select } from "bits-ui";
+  import { Select } from "$lib/components/ui/select";
+  import { Check, ChevronDown } from "lucide-svelte";
 
   type Option = string | { value: string; label: string; disabled?: boolean };
 
@@ -42,16 +43,14 @@
   >
     <Select.Trigger class={`select-trigger ${className}`.trim()} aria-label={label}>
       <Select.Value {placeholder} />
-      <svg class="select-chevron" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="m6 9 6 6 6-6"></path>
-      </svg>
+      <ChevronDown class="select-chevron" size={16} aria-hidden="true" />
     </Select.Trigger>
     <Select.Portal>
       <Select.Content class="select-content" sideOffset={6}>
         <Select.Viewport>
           {#each items as item}
             <Select.Item class="select-item" value={item.value} label={item.label} disabled={item.disabled}>
-              <span>{item.label}</span><span class="select-check" aria-hidden="true">✓</span>
+              <span>{item.label}</span><Check class="select-check" size={16} aria-hidden="true" />
             </Select.Item>
           {/each}
         </Select.Viewport>

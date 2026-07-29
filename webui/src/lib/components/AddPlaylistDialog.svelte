@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Dialog } from "bits-ui";
+  import { Dialog } from "$lib/components/ui/dialog";
+  import { X } from "lucide-svelte";
   import {
     playlistLinks,
     type MediaTarget,
@@ -222,7 +223,7 @@
           <Dialog.Title>Link a playlist</Dialog.Title>
           <Dialog.Description>Choose the Jellyfin playlist first, then connect its source and sync rules.</Dialog.Description>
         </div>
-        <Dialog.Close class="icon-button" aria-label="Close playlist setup">×</Dialog.Close>
+        <Dialog.Close class="icon-button" aria-label="Close playlist setup"><X size={18} aria-hidden="true" /></Dialog.Close>
       </header>
 
       <nav class="playlist-add-steps" aria-label="Playlist setup progress">

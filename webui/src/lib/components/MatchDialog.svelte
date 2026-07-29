@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Dialog } from "bits-ui";
+  import { Dialog } from "$lib/components/ui/dialog";
+  import { X } from "lucide-svelte";
   import {
     matchReview,
     type MatchReviewItem,
@@ -180,7 +181,7 @@
             <Dialog.Title>{match.title || "Unknown track"}</Dialog.Title>
             <Dialog.Description>{match.artist || "Unknown artist"} · {providerName(match.providerId)}</Dialog.Description>
           </div>
-          <Dialog.Close class="icon-button" aria-label="Close match dialog">×</Dialog.Close>
+          <Dialog.Close class="icon-button" aria-label="Close match dialog"><X size={18} aria-hidden="true" /></Dialog.Close>
         </header>
 
         <section class="mapping-source">
@@ -241,16 +242,13 @@
                   </div>
                   <span
                     class="candidate-confidence"
-                    title={candidate.components?.localPreference
-                      ? `Base confidence; local ranking adds ${percent(candidate.components.localPreference)} for a ${percent(candidate.components.preferenceScore)} preference score`
-                      : "Provider-neutral match confidence"}
                   >
                     <strong>{percent(candidate.confidence)}</strong>
                     <small>confidence</small>
                   </span>
                   <div class="score-components">
                     {#each scoreComponents(candidate) as [name, value]}
-                      <span title={name === "localPreference" ? "Default preference for Jellyfin-local tracks" : undefined}>
+                      <span>
                         <small>{name === "localPreference"
                           ? "local preference"
                           : name === "preferenceScore"

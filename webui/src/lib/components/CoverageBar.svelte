@@ -29,15 +29,18 @@
   class="coverage-bar"
   aria-label={`${width(total - unresolved)} percent playable`}
 >
+  <span class="sr-only">{routes
+    .filter((route) => route.providerId !== "unresolved")
+    .map((route) => `${providerName(route.providerId)}: ${route.count}`)
+    .concat(unresolved ? [`Unresolved: ${unresolved}`] : [])
+    .join(", ")}</span>
   {#each routes.filter((route) => route.providerId !== "unresolved") as route}
     <span
-      title={`${providerName(route.providerId)}: ${route.count}`}
       style={`width:${routeWidth(route.count)}%;--route-color:${providerColor(route.providerId)}`}
     ></span>
   {/each}
   {#if unresolved}
     <span
-      title={`Unresolved: ${unresolved}`}
       style={`width:${width(unresolved)}%;--route-color:${providerColor("unresolved")}`}
     ></span>
   {/if}

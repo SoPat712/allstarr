@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Dialog } from "bits-ui";
+  import { Dialog } from "$lib/components/ui/dialog";
+  import { X } from "lucide-svelte";
   import { sources, type ProviderAccount } from "$lib/api";
   import { audienceLabel } from "$lib/sources";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
@@ -94,7 +95,7 @@
             <Dialog.Title>{account.sourceDisplayName || account.displayName}</Dialog.Title>
             <Dialog.Description>Current audience: {audienceLabel(account)}</Dialog.Description>
           </div>
-          <Dialog.Close class="icon-button" aria-label="Close access editor">×</Dialog.Close>
+          <Dialog.Close class="icon-button" aria-label="Close access editor"><X size={18} aria-hidden="true" /></Dialog.Close>
         </header>
         <form onsubmit={(event) => { event.preventDefault(); submit(); }}>
           <fieldset class="audience-options">

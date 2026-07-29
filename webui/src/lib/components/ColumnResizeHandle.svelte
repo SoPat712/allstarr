@@ -53,7 +53,6 @@
   class:active
   class="column-resize-handle"
   aria-label={`Resize ${label} column`}
-  title={`Resize ${label} column`}
   onpointerdown={begin}
   onpointermove={move}
   onpointerup={end}

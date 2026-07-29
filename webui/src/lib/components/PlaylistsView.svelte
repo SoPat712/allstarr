@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Dialog, Popover } from "bits-ui";
+  import { Dialog } from "$lib/components/ui/dialog";
+  import { Popover } from "$lib/components/ui/popover";
+  import { ArrowRight, MoreHorizontal, X } from "lucide-svelte";
   import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
   import ColumnResizeHandle from "$lib/components/ColumnResizeHandle.svelte";
   import CoverageBar from "$lib/components/CoverageBar.svelte";
@@ -385,7 +387,7 @@
                 <small class="route-pair">
                   <ProviderMark id={playlist.sourceProviderId} definition={provider(playlist.sourceProviderId)} />
                   <span>{providerName(playlist.sourceProviderId)}</span>
-                  <span aria-hidden="true">→</span>
+                  <ArrowRight size={18} aria-hidden="true" />
                   <ProviderMark id={playlist.targetProtocol} definition={provider(playlist.targetProtocol)} />
                   <span>{providerName(playlist.targetProtocol)}</span>
                 </small>
@@ -453,12 +455,12 @@
             <div class="hero-route">
               <ProviderMark id={details.sourceProviderId} definition={provider(details.sourceProviderId)} />
               <span>{providerName(details.sourceProviderId)}</span>
-              <span aria-hidden="true">→</span>
+              <ArrowRight size={18} aria-hidden="true" />
               <ProviderMark id={details.targetProtocol} definition={provider(details.targetProtocol)} />
               <span>{providerName(details.targetProtocol)}</span>
             </div>
           </div>
-          <Dialog.Close class="icon-button playlist-dialog-close" aria-label="Close playlist details">×</Dialog.Close>
+          <Dialog.Close class="icon-button playlist-dialog-close" aria-label="Close playlist details"><X size={18} aria-hidden="true" /></Dialog.Close>
           <div class="playlist-actions" aria-label="Playlist actions">
             <button class="button-secondary" disabled={Boolean(action) || !selected.enabled} type="button" onclick={() => void run("sync")}>Sync</button>
             <button class="button-secondary" disabled={Boolean(action) || !selected.enabled} type="button" onclick={() => void run("rematch")}>Rematch</button>
@@ -505,10 +507,10 @@
             <small>{details.hasNewerSourceGeneration ? `Generation v${details.latestSourceSnapshotVersion} pending` : "Current published snapshot"}</small>
           </div>
           <div class="playlist-schedule-stat">
-            <strong title={details.schedule?.nextRunAt ? new Date(details.schedule.nextRunAt).toLocaleString() : undefined}>
+            <strong>
               {details.schedule?.enabled ? relativeTime(details.schedule.nextRunAt) : details.schedule ? "Paused" : "Manual"}
             </strong>
-            <small>{details.schedule?.cronExpression ?? "No automatic schedule"}</small>
+            <small>{details.schedule?.cronExpression ?? "No automatic schedule"}{details.schedule?.nextRunAt ? ` · ${new Date(details.schedule.nextRunAt).toLocaleString()}` : ""}</small>
             <Popover.Root bind:open={scheduleEditorOpen}>
               <Popover.Trigger class="schedule-edit-button" onclick={editSchedule}>Edit</Popover.Trigger>
               <Popover.Portal>
@@ -590,7 +592,7 @@
                 <span class="track-duration">{formatDuration(track.durationMs)}</span>
                 <span class="track-menu">
                   <Popover.Root>
-                    <Popover.Trigger class="track-menu-trigger" aria-label={`Technical details for ${track.title}`}>•••</Popover.Trigger>
+                    <Popover.Trigger class="track-menu-trigger" aria-label={`Technical details for ${track.title}`}><MoreHorizontal size={18} aria-hidden="true" /></Popover.Trigger>
                     <Popover.Portal>
                       <Popover.Content class="bits-menu track-details-menu" sideOffset={4} align="end">
                         <div class="track-technical">

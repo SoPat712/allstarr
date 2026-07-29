@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { ArrowRight, ChevronRight } from "lucide-svelte";
   import {
     eventLog,
     home,
@@ -253,7 +254,7 @@
                     {#if first.providerId}<ProviderMark id={first.providerId} definition={provider(first.providerId)} />{/if}
                     <span><small>{providerName(first.providerId)}</small><strong>{first.sourceTitle || first.detail}</strong></span>
                   </span>
-                  <i aria-hidden="true">→</i>
+                  <ArrowRight size={14} aria-hidden="true" />
                   <span class:unresolved={!first.targetProviderId}>
                     {#if first.targetProviderId}
                       <ProviderMark id={first.targetProviderId === "library" ? backend.toLowerCase() : first.targetProviderId} definition={provider(first.targetProviderId)} label={providerName(first.targetProviderId)} />
@@ -267,7 +268,7 @@
             </span>
             <span class={`status-pill ${outcomeClass(groupState)}`}>{humanize(groupState)}</span>
             <time datetime={first.occurredAt}>{relativeTime(first.occurredAt)}</time>
-            <span class="event-chevron" aria-hidden="true">›</span>
+            <ChevronRight class="event-chevron" size={18} aria-hidden="true" />
           </summary>
 
           <div class="event-children">
@@ -285,7 +286,7 @@
                     <p>{item.sourceArtist ? `${item.sourceArtist} · ` : ""}{item.sourceTitle || item.detail}</p>
                     <div class="event-child-route">
                       <span>{providerName(item.providerId)}</span>
-                      <i aria-hidden="true">→</i>
+                      <ArrowRight size={14} aria-hidden="true" />
                       <strong>{item.targetTitle || "No playable match"}</strong>
                       {#if item.confidenceLabel}<span>{item.confidenceLabel}</span>{/if}
                     </div>

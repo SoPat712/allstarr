@@ -58,6 +58,7 @@
   let purgeOpen = $state(false);
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
   let dragging = $state<{ groupId: string; index: number } | null>(null);
+  let loadedSection = $state("");
 
   const active = $derived(tabs.some((item) => item.id === section) ? section : "general");
   const generalSections = $derived.by(() => {
@@ -74,6 +75,14 @@
   const cacheDiskCeiling = $derived(
     Number((config.cache as Record<string, unknown> | undefined)?.mediaMaximumMegabytes ?? 512),
   );
+
+  $effect(() => {
+    const section = active;
+    if (section === loadedSection) return;
+    const hadSection = loadedSection.length > 0;
+    loadedSection = section;
+    if (hadSection) void refresh();
+  });
 
   function provider(id: string) {
     return schema?.providers.find((item) => item.id.toLowerCase() === id.toLowerCase());

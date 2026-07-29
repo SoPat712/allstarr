@@ -7,6 +7,7 @@
   import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import UiIcon from "$lib/components/UiIcon.svelte";
+  import { PanelLeftClose, PanelLeftOpen } from "lucide-svelte";
 
   const destinations = [
     { href: "#/", label: "Home", icon: "home" },
@@ -275,14 +276,8 @@
         aria-expanded={!sidebarSlim}
         onclick={() => sidebarSlim = !sidebarSlim}
       >
-        <svg class="menu-icon" aria-hidden="true" viewBox="0 0 24 24">
-          <rect x="3" y="3" width="18" height="18" rx="2" />
-          <path d="M9 3v18" />
-          <path
-            class="sidebar-arrow"
-            d={sidebarSlim ? "M14 9l3 3-3 3" : "M17 9l-3 3 3 3"}
-          />
-        </svg>
+        {#if sidebarSlim}<PanelLeftOpen class="menu-icon" size={20} aria-hidden="true" />
+        {:else}<PanelLeftClose class="menu-icon" size={20} aria-hidden="true" />{/if}
       </button>
 
       <nav aria-label="Primary" data-active={destinations.indexOf(activeDestination)}>

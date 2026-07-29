@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Dialog } from "bits-ui";
+  import { Dialog } from "$lib/components/ui/dialog";
+  import { Check, X } from "lucide-svelte";
   import { appleDownload, type AppleDownloadStatus } from "$lib/api";
   import { humanize } from "$lib/sources";
 
@@ -89,7 +90,7 @@
           <Dialog.Title>Apple Music - Gamdl</Dialog.Title>
           <Dialog.Description>Install the gateway package, then authenticate its Apple Music session.</Dialog.Description>
         </div>
-        <Dialog.Close class="icon-button" aria-label="Close Apple Music - Gamdl manager">×</Dialog.Close>
+        <Dialog.Close class="icon-button" aria-label="Close Apple Music - Gamdl manager"><X size={18} aria-hidden="true" /></Dialog.Close>
       </header>
 
       <div class="apple-manager-body">
@@ -102,13 +103,13 @@
 
         <ol class="apple-setup-progress" aria-label="Apple download setup progress">
           <li class:complete={packageReady} class:active={!packageReady}>
-            <span>{packageReady ? "✓" : "1"}</span><span><strong>Package</strong><small>{upload?.fileName || (packageReady ? "Installed" : "APK or APKM required")}</small></span>
+            <span>{#if packageReady}<Check size={16} aria-hidden="true" />{:else}1{/if}</span><span><strong>Package</strong><small>{upload?.fileName || (packageReady ? "Installed" : "APK or APKM required")}</small></span>
           </li>
           <li class:complete={gatewayReady} class:active={packageReady && !gatewayReady}>
-            <span>{gatewayReady ? "✓" : "2"}</span><span><strong>Gateway</strong><small>{gatewayReady ? "Running" : packageReady ? "Run host installer" : "Waiting for package"}</small></span>
+            <span>{#if gatewayReady}<Check size={16} aria-hidden="true" />{:else}2{/if}</span><span><strong>Gateway</strong><small>{gatewayReady ? "Running" : packageReady ? "Run host installer" : "Waiting for package"}</small></span>
           </li>
           <li class:complete={Boolean(status?.logged_in)} class:active={gatewayReady && !status?.logged_in}>
-            <span>{status?.logged_in ? "✓" : "3"}</span><span><strong>Session</strong><small>{status?.logged_in ? "Authenticated" : gatewayReady ? "Login required" : "Waiting for gateway"}</small></span>
+            <span>{#if status?.logged_in}<Check size={16} aria-hidden="true" />{:else}3{/if}</span><span><strong>Session</strong><small>{status?.logged_in ? "Authenticated" : gatewayReady ? "Login required" : "Waiting for gateway"}</small></span>
           </li>
         </ol>
 

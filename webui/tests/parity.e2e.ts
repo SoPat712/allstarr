@@ -558,8 +558,10 @@ for (const viewport of viewports) {
       await expect(page.getByRole("dialog", { name: "Connect a Source" })).toBeVisible();
       await expect(page.getByRole("button", { name: "Save and test" })).toBeInViewport();
       await page.getByRole("button", { name: "Close source connection dialog" }).click();
-      await page.getByRole("button", { name: "Audience Only Tester" }).click();
-      const access = page.getByRole("dialog", { name: "Lumen Audio" });
+      await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();
+      await page.getByRole("tab", { name: "Access" }).click();
+      await page.getByRole("button", { name: "Edit access" }).click();
+      const access = page.locator(".access-dialog");
       await expect(access).toBeVisible();
       await access.getByRole("radio", { name: "One user" }).check();
       await access.getByRole("button", { name: "Allstarr user" }).click();
@@ -567,7 +569,9 @@ for (const viewport of viewports) {
       await access.getByRole("button", { name: "Save access" }).click();
       await expect(access).toBeHidden();
 
-      await page.getByRole("button", { name: "Audience Only Tester" }).click();
+      await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();
+      await page.getByRole("tab", { name: "Access" }).click();
+      await page.getByRole("button", { name: "Edit access" }).click();
       await page.getByRole("radio", { name: "One library" }).check();
       await page.getByLabel("Library ID").fill("music");
       await page.getByRole("button", { name: "Save access" }).click();
@@ -584,7 +588,7 @@ for (const viewport of viewports) {
     test("Match and removal dialogs remain usable", async ({ page }) => {
       await mockApi(page);
       await page.goto("#/library/mappings");
-      await page.getByRole("button", { name: "Review match" }).click();
+      await page.getByRole("button", { name: "Interactive search" }).click();
       await expect(page.getByRole("dialog", { name: "Test song" })).toBeVisible();
       await expect(page.getByRole("button", { name: "Reject candidate" })).toBeInViewport();
       await page.getByRole("button", { name: "Reject candidate" }).click();
@@ -646,8 +650,8 @@ test("Home stays inside runtime and request budgets", async ({ page }) => {
 
   const apiRequests = requests.filter((path) => path.startsWith("/api/admin/"));
   const jsRequests = requests.filter((path) => path.endsWith(".js"));
-  expect(apiRequests.length).toBeLessThanOrEqual(14); // Lit Home baseline.
-  expect(jsRequests.length).toBeLessThanOrEqual(14); // Shell, Home, and shared icon primitives.
+  expect(apiRequests.length).toBeLessThanOrEqual(14);
+  expect(jsRequests.length).toBeLessThanOrEqual(15); // Shell, Home, and Lucide icon primitives.
 
   await page.evaluate(() => {
     const metrics = window.__allstarrMetrics;
@@ -1081,11 +1085,12 @@ test("Sources keep primary actions visible and report scoped degradation", async
     }),
   }));
   await page.goto("#/sources");
-  await expect(page.getByText("Lumen Audio connection · Connected by Tester")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Disabled Sources" })).toBeVisible();
-  await expect(page.getByTitle("Disabled Source")).toBeVisible();
-  const appleSource = page.locator(".source-card").filter({ hasText: "Apple Music - Gamdl" });
-  await appleSource.getByRole("button", { name: "Manage" }).click();
+  await expect(page.getByRole("button", { name: /Lumen Audio Account details stored/ })).toBeVisible();
+  const disabledSource = page.locator(".sources-table tr").filter({ hasText: "Disabled Source" });
+  await expect(disabledSource.locator(".operational-mobile-state")).toHaveText("Disabled");
+  await page.getByRole("button", { name: /Apple Music - Gamdl/ }).click();
+  await page.getByRole("tab", { name: "Configuration" }).click();
+  await page.getByRole("button", { name: "Manage Apple Music - Gamdl" }).click();
   const appleManager = page.getByRole("dialog", { name: "Apple Music - Gamdl" });
   await appleManager.getByLabel("Apple ID").fill("tester@example.test");
   await appleManager.getByLabel("Password").fill("password");
@@ -1096,15 +1101,13 @@ test("Sources keep primary actions visible and report scoped degradation", async
   await expect(appleManager.getByRole("link", { name: "Provider settings" }))
     .toHaveAttribute("href", "#/settings/general?provider=provider-apple-download");
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("button", { name: "Audience Only Tester" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Configure" })).toBeVisible();
-  await page.getByRole("button", { name: "Actions for Lumen account" }).click();
-  const menu = page.getByRole("menu");
-  await expect(menu.getByRole("menuitem", { name: "Configure" })).toHaveCount(0);
-  await expect(menu.getByRole("menuitem", { name: "Manage access" })).toHaveCount(0);
-  await expect(menu.locator(".bits-menu-item")).toHaveCount(2);
-  await expect(menu.getByRole("menuitem", { name: "Disable" })).toBeVisible();
-  await expect(menu.getByRole("menuitem", { name: "Remove" })).toBeVisible();
+  await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();
+  const accountDetails = page.getByRole("dialog", { name: "Lumen Audio", description: "Lumen Audio account" });
+  await accountDetails.getByRole("tab", { name: "Configuration" }).click();
+  await expect(accountDetails.getByRole("button", { name: "Disable account" })).toBeVisible();
+  await expect(accountDetails.getByRole("button", { name: "Test connection" })).toBeVisible();
+  await expect(accountDetails.getByRole("button", { name: "Edit configuration" })).toBeVisible();
+  await accountDetails.getByRole("button", { name: "Close Source details" }).click();
 
   const listener = await context.newPage();
   await mockApi(listener);
@@ -1123,7 +1126,7 @@ test("Sources keep primary actions visible and report scoped degradation", async
   }));
   await listener.goto("#/sources");
   await expect(listener.getByText("Source readiness may be stale.")).toBeVisible();
-  await expect(listener.getByText("Connections are administrator-managed")).toBeVisible();
+  await expect(listener.getByText("Accounts are administrator-managed")).toBeVisible();
 });
 
 test("Settings loads only the active section owners", async ({ page }) => {
@@ -1316,14 +1319,16 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await mockApi(page);
   await page.goto("#/library/playlists");
   await expect.poll(async () => (await page.locator(".playlist-list").boundingBox())?.height ?? 0).toBeGreaterThan(600);
+  await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Library" }).locator("svg"))
+    .toBeVisible();
   await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Library" }).locator("use"))
-    .toHaveAttribute("href", "/ui-icons.svg#library");
+    .toHaveCount(0);
   const refresh = page.waitForRequest((item) =>
     item.method() === "POST" && item.url().endsWith("/api/admin/playlist-links/playlist-link/refresh"));
   await page.getByRole("button", { name: "Refresh playlists" }).click();
   await refresh;
-  await expect(page.getByText("1 playlists refreshed.")).toBeVisible();
-  const coverage = page.locator(".playlist-row .coverage-bar > span");
+  await expect(page.getByText(/1 playlists refreshed in/)).toBeVisible();
+  const coverage = page.locator(".playlist-row .coverage-bar > span[style]");
   await expect(coverage.nth(0)).toHaveAttribute("style", /width:\s*50%/);
   await expect(coverage.nth(1)).toHaveAttribute("style", /width:\s*50%; --route-color:\s*var\(--color-ink-muted\)/);
   const [playlistRow, playlistBar] = await Promise.all([
@@ -1337,18 +1342,16 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
     item.method() === "POST" && item.url().endsWith("/api/admin/playlist-links/playlist-link/run"));
   await page.getByRole("button", { name: "Rematch all" }).click();
   await rematchAll;
-  await expect(page.getByText("1 rematches queued.")).toBeVisible();
+  await expect(page.getByText(/1 rematches queued in/)).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator('.playlist-row [title="Lumen Audio: 1"]')).toBeVisible();
-  await expect(page.locator('.playlist-row [title="Unresolved: 1"]')).toBeVisible();
+  await expect(page.locator(".playlist-row .coverage-bar")).toContainText("Lumen Audio: 1, Unresolved: 1");
   await expect(page.locator(".playlist-row .playlist-art > span")).toBeVisible();
   await page.getByRole("button", { name: /Test playlist/ }).click();
   const dialog = page.getByRole("dialog", { name: "Test playlist" });
   await expect(dialog).toBeVisible();
   await expect(dialog.locator(".hero-art > span")).toBeVisible();
   await expect(dialog.locator(".track-art > span")).toBeVisible();
-  await expect(dialog.locator('[title="Lumen Audio: 1"]')).toBeVisible();
-  await expect(dialog.locator('[title="Unresolved: 1"]')).toBeVisible();
+  await expect(dialog.locator(".coverage-bar")).toContainText("Lumen Audio: 1, Unresolved: 1");
   await expect(dialog.getByRole("button", { name: "Sync" })).toBeInViewport();
   await expect(dialog.getByRole("button", { name: "Rematch" })).toBeInViewport();
   await expect(dialog.getByRole("button", { name: "Refresh" })).toBeInViewport();
@@ -1357,15 +1360,15 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await dialog.getByRole("button", { name: "Technical details for Test song" }).click();
   await expect(page).toHaveURL(/#\/library\/playlists$/);
   const trackDetails = page.locator(".track-details-menu");
-  await expect(trackDetails.getByRole("link", { name: "Review match" })).toBeVisible();
+  await expect(trackDetails.getByRole("button", { name: "Review match" })).toBeVisible();
   await expect.poll(() => trackDetails.evaluate((panel) => {
     const bounds = panel.getBoundingClientRect();
     return panel.contains(document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + 8));
   })).toBe(true);
   await page.keyboard.press("Escape");
-  await dialog.getByRole("link", { name: "Open mapping details for Test song" }).focus();
+  await dialog.getByRole("button", { name: "Open mapping details for Test song" }).focus();
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/#\/library\/mappings\?search=Test%20song&review=snapshot$/);
+  await expect(page).toHaveURL(/#\/library\/playlists$/);
   await expect(page.getByRole("dialog", { name: "Test song" })).toBeVisible();
 });
 
@@ -1463,7 +1466,7 @@ test("Profile artwork is stable in full, slim, and mobile navigation", async ({ 
   await expect.poll(async () => (await page.locator(".profile .avatar").boundingBox())?.width ?? 0).toBe(36);
 });
 
-test("Segmented navigation and match tabs support arrow keys", async ({ page }) => {
+test("Segmented navigation and unified provider filters support keyboard use", async ({ page }) => {
   await mockApi(page);
   await page.goto("#/library/playlists");
   await page.getByRole("tab", { name: "Playlists" }).focus();
@@ -1471,11 +1474,13 @@ test("Segmented navigation and match tabs support arrow keys", async ({ page }) 
   await expect(page).toHaveURL(/#\/library\/mappings$/);
   await expect(page.getByRole("tab", { name: "Mappings" })).toHaveAttribute("aria-selected", "true");
 
-  await page.getByRole("button", { name: "Review match" }).click();
+  await page.getByRole("button", { name: "Interactive search" }).click();
   const dialog = page.getByRole("dialog", { name: "Test song" });
-  await dialog.getByRole("tab", { name: "Local library" }).focus();
-  await page.keyboard.press("ArrowRight");
-  await expect(dialog.getByRole("tab", { name: "Playable providers" })).toHaveAttribute("aria-selected", "true");
+  await dialog.getByLabel("Search local library and playable providers").fill("Kiss Me More");
+  await dialog.getByRole("button", { name: "Search", exact: true }).click();
+  await dialog.getByRole("button", { name: /Jellyfin 1/ }).focus();
+  await page.keyboard.press("Space");
+  await expect(dialog.getByRole("button", { name: /Jellyfin 1/ })).toHaveAttribute("aria-pressed", "true");
 
   await page.goto("#/settings/extensions");
   await page.getByRole("tab", { name: /Installed/ }).focus();
@@ -1498,9 +1503,8 @@ test("Sidebar uses an integrated expander and deterministic slim breakpoint", as
   await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("link")).toHaveCount(6);
   const libraryIcon = page.getByRole("navigation", { name: "Primary" })
     .getByRole("link", { name: "Library" }).locator("svg");
-  const menuMarks = expander.locator(".menu-line");
   const expandedIcon = await libraryIcon.boundingBox();
-  const expandedPath = await menuMarks.first().getAttribute("d");
+  const expandedMark = await expander.locator("svg").innerHTML();
   await expander.click();
   await expect(shell).toHaveClass(/slim/);
   await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
@@ -1508,10 +1512,9 @@ test("Sidebar uses an integrated expander and deterministic slim breakpoint", as
   const collapsedIcon = await libraryIcon.boundingBox();
   expect(Math.abs((expandedIcon!.x + expandedIcon!.width / 2) -
     (collapsedIcon!.x + collapsedIcon!.width / 2))).toBeLessThanOrEqual(0.5);
-  const collapsedPath = await page.getByRole("button", { name: "Expand sidebar" })
-    .locator(".menu-line").first().getAttribute("d");
-  expect(expandedPath).toBe("M4 5h12l4 4");
-  expect(collapsedPath).toBe("M4 5h16");
+  const collapsedMark = await page.getByRole("button", { name: "Expand sidebar" })
+    .locator("svg").innerHTML();
+  expect(collapsedMark).not.toBe(expandedMark);
   const library = page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Library" });
   await expect.poll(async () => {
     const [link, icon] = await Promise.all([library.boundingBox(), library.locator("svg").boundingBox()]);
