@@ -1282,8 +1282,17 @@ test("Settings preserves dirty drafts during live refresh and scrolls mobile tab
     return { height: box.height, fontSize: Number.parseFloat(getComputedStyle(item).fontSize) };
   }));
   expect(tabSizes.every(({ height, fontSize }) => height >= 44 && fontSize >= 14)).toBe(true);
+  const generalTab = tabs.getByRole("tab", { name: "General" });
+  const selectedBackground = await generalTab.evaluate((element) => getComputedStyle(element).backgroundColor);
+  await generalTab.hover();
+  await expect.poll(() => generalTab.evaluate((element) => getComputedStyle(element).backgroundColor))
+    .toBe(selectedBackground);
   await tabs.getByRole("tab", { name: "Maintenance" }).click();
   await expect(tabs.getByRole("tab", { name: "Maintenance" })).toHaveAttribute("aria-selected", "true");
+  const maintenanceTab = tabs.getByRole("tab", { name: "Maintenance" });
+  await maintenanceTab.hover();
+  await expect.poll(() => maintenanceTab.evaluate((element) => getComputedStyle(element).backgroundColor))
+    .toBe(selectedBackground);
   await expect.poll(() => tabs.evaluate((element) => {
     const active = element.querySelector<HTMLElement>('[aria-selected="true"]');
     if (!active) return false;

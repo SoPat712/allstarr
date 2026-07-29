@@ -2278,6 +2278,7 @@
 
 @layer components {
   .segmented-tabs {
+    --segmented-selected-background: transparent;
     position: relative;
     display: grid;
     grid-template-columns: repeat(var(--tab-count), minmax(0, 1fr));
@@ -2315,7 +2316,7 @@
   }
 
   .segmented-tabs :is(a, button)[aria-selected="true"] {
-    background: transparent;
+    background: var(--segmented-selected-background);
     color: var(--color-signal-text);
   }
 
@@ -2325,7 +2326,7 @@
   }
 
   .segmented-tabs :is(a, button)[aria-selected="true"]:is(:hover, :focus-visible, :active) {
-    background: transparent;
+    background: var(--segmented-selected-background);
     color: var(--color-signal-text);
   }
 
@@ -5754,6 +5755,7 @@
 
 @media (max-width: 650px) {
   .settings-tabs {
+    --segmented-selected-background: var(--color-signal-muted);
     display: flex;
     overflow-x: auto;
     overscroll-behavior-inline: contain;
@@ -5771,10 +5773,6 @@
     font-size: var(--text-sm);
     line-height: 1.25;
     scroll-snap-align: nearest;
-  }
-
-  .settings-tabs :is(a, button)[aria-selected="true"] {
-    background: var(--color-signal-muted);
   }
 
   .settings-fields {
