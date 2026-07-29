@@ -1584,17 +1584,19 @@
   }
 
   .playlist-detail-coverage {
-    padding: 0.65rem 1rem 0;
+    padding: 0;
   }
 
   .playlist-detail-coverage .coverage-bar {
-    height: 0.42rem;
+    width: 100%;
+    height: 0.5rem;
     margin: 0;
+    border-radius: 0;
   }
 
   .playlist-stat-grid {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     border-bottom: 1px solid var(--color-edge);
   }
 
@@ -1617,8 +1619,57 @@
   }
 
   .playlist-stat-grid small {
+    overflow: hidden;
     color: var(--color-ink-muted);
     font-size: 0.62rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .playlist-schedule-stat {
+    position: relative;
+    padding-right: 3.6rem !important;
+  }
+
+  .schedule-edit-button {
+    position: absolute;
+    top: 0.55rem;
+    right: 0.65rem;
+    border: 0;
+    background: transparent;
+    color: var(--color-signal);
+    cursor: pointer;
+    font-size: 0.65rem;
+    font-weight: 750;
+  }
+
+  .schedule-editor {
+    width: min(20rem, calc(100vw - 2rem));
+    padding: 0.75rem;
+  }
+
+  .schedule-editor form {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .schedule-editor .field input {
+    min-height: 2.5rem;
+    font-family: inherit;
+  }
+
+  .schedule-enabled {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--color-ink-muted);
+    font-size: 0.72rem;
+  }
+
+  .schedule-editor .field-error {
+    margin: 0;
+    color: var(--color-danger);
+    font-size: 0.7rem;
   }
 
   .action-feedback {
@@ -2085,17 +2136,12 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .playlist-stat-grid > div:nth-child(even),
-  .playlist-stat-grid > div:last-child {
+  .playlist-stat-grid > div:nth-child(even) {
     border-right: 0;
   }
 
   .playlist-stat-grid > div:nth-child(-n + 4) {
     border-bottom: 1px solid var(--color-edge);
-  }
-
-  .playlist-stat-grid > div:last-child {
-    grid-column: 1 / -1;
   }
 
   .playlist-row {

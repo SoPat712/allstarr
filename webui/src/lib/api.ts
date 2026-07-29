@@ -483,6 +483,17 @@ export type PlaylistTrack = {
   providerRoutes: Array<{ providerId: string; externalId: string; pinned: boolean }>;
 };
 
+export type PlaylistSchedule = {
+  id: string;
+  cronExpression: string;
+  timeZoneId: string;
+  overlapPolicy: "skip" | "queue";
+  misfirePolicy: "skip" | "runOnce";
+  enabled: boolean;
+  nextRunAt?: string | null;
+  revision: number;
+};
+
 export type PlaylistDetails = {
   id: string;
   snapshotId: string;
@@ -506,6 +517,7 @@ export type PlaylistDetails = {
   routeCoverage: Array<{ providerId: string; count: number }>;
   durationMs?: number | null;
   unknownDurationCount: number;
+  schedule?: PlaylistSchedule | null;
   tracks: PlaylistTrack[];
 };
 
@@ -1231,11 +1243,28 @@ export const playlistLinks = {
     overlapPolicy: "skip" | "queue";
     misfirePolicy: "skip" | "runOnce";
     enabled?: boolean;
-  }) => json(`/api/admin/playlist-links/${encodeURIComponent(id)}/schedules`, {
+  }) => json<PlaylistSchedule>(`/api/admin/playlist-links/${encodeURIComponent(id)}/schedules`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   }),
+  updateSchedule: (schedule: PlaylistSchedule, input: {
+    cronExpression: string;
+    timeZoneId: string;
+    enabled: boolean;
+  }) => json<PlaylistSchedule>(
+    `/api/admin/playlist-links/schedules/${encodeURIComponent(schedule.id)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...input,
+        overlapPolicy: schedule.overlapPolicy,
+        misfirePolicy: schedule.misfirePolicy,
+        expectedRevision: schedule.revision,
+      }),
+    },
+  ),
 };
 
 export const matchReview = {

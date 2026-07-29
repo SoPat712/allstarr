@@ -522,13 +522,20 @@ public sealed class PlaylistLinksController(
     {
         return await Execute(async session =>
         {
-            await LoadScopedLink(session, id, cancellationToken);
+            var link = await LoadScopedLink(session, id, cancellationToken);
             var projection = await projections.ReadByLinkIdAsync(
                 session.TenantId!.Value,
                 session.IsAdministrator ? null : session.AllstarrUserId,
                 id,
                 cancellationToken);
-            return projection == null ? NotFound() : Ok(ToProjectionDto(projection));
+            if (projection == null) return NotFound();
+            await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+            var schedule = link.ScheduleId is { } scheduleId
+                ? await db.JobSchedules.AsNoTracking().SingleOrDefaultAsync(
+                    item => item.Id == scheduleId && item.TenantId == link.TenantId,
+                    cancellationToken)
+                : null;
+            return Ok(ToProjectionDto(projection, schedule));
         });
     }
 
@@ -1055,7 +1062,7 @@ public sealed class PlaylistLinksController(
         },
         virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id)
     };
-    private static object ToProjectionDto(DurablePlaylistProjection value) => new
+    private static object ToProjectionDto(DurablePlaylistProjection value, JobScheduleRecord? schedule = null) => new
     {
         id = value.LinkId,
         snapshotId = value.SnapshotId,
@@ -1084,6 +1091,7 @@ public sealed class PlaylistLinksController(
         }),
         durationMs = value.DurationMilliseconds,
         unknownDurationCount = value.UnknownDurationCount,
+        schedule = schedule == null ? null : ToScheduleDto(schedule),
         materializationVerification = value.VerificationCode == null ? null : new
         {
             code = value.VerificationCode,

@@ -63,6 +63,12 @@
   let matchLoading = $state("");
   let trackColumnWidth = $state(0);
   let routeColumnWidth = $state(0);
+  let scheduleEditorOpen = $state(false);
+  let scheduleCron = $state("");
+  let scheduleTimeZone = $state("");
+  let scheduleEnabled = $state(true);
+  let scheduleSaving = $state(false);
+  let scheduleError = $state("");
 
   const visiblePlaylists = $derived(filterPlaylists(playlists, query, stateFilter, sort));
   const pageCount = $derived(Math.max(1, Math.ceil(visiblePlaylists.length / 20)));
@@ -84,7 +90,7 @@
   }
 
   function relativeTime(value?: string | null) {
-    if (!value) return "Never";
+    if (!value) return "Not yet";
     const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1_000);
     const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
     if (Math.abs(seconds) < 60) return formatter.format(seconds, "second");
@@ -93,6 +99,45 @@
     const hours = Math.round(minutes / 60);
     if (Math.abs(hours) < 24) return formatter.format(hours, "hour");
     return formatter.format(Math.round(hours / 24), "day");
+  }
+
+  function editSchedule() {
+    if (!details) return;
+    scheduleCron = details.schedule?.cronExpression ?? "0 3 * * *";
+    scheduleTimeZone =
+      details.schedule?.timeZoneId || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    scheduleEnabled = details.schedule?.enabled ?? true;
+    scheduleError = "";
+  }
+
+  async function saveSchedule(event: SubmitEvent) {
+    event.preventDefault();
+    if (!details || scheduleSaving) return;
+    scheduleSaving = true;
+    scheduleError = "";
+    try {
+      const next = details.schedule
+        ? await playlistLinks.updateSchedule(details.schedule, {
+            cronExpression: scheduleCron,
+            timeZoneId: scheduleTimeZone,
+            enabled: scheduleEnabled,
+          })
+        : await playlistLinks.createSchedule(details.id, {
+            cronExpression: scheduleCron,
+            timeZoneId: scheduleTimeZone,
+            overlapPolicy: "skip",
+            misfirePolicy: "runOnce",
+            enabled: scheduleEnabled,
+          });
+      details = { ...details, schedule: next };
+      scheduleEditorOpen = false;
+      feedback = "Automatic sync schedule saved.";
+      await refresh();
+    } catch (cause) {
+      scheduleError = cause instanceof Error ? cause.message : "The schedule could not be saved.";
+    } finally {
+      scheduleSaving = false;
+    }
   }
 
   async function loadDetails(id: string) {
@@ -429,7 +474,38 @@
           <div><strong>{details.externalCount}</strong><small>External</small></div>
           <div class:attention={details.unresolvedCount > 0}><strong>{details.unresolvedCount}</strong><small>Unmatched</small></div>
           <div><strong>{relativeTime(details.retrievedAt)}</strong><small>Source refreshed</small></div>
-          <div><strong>{relativeTime(details.completedAt)}</strong><small>Last synced</small></div>
+          <div><strong>{relativeTime(details.completedAt)}</strong><small>Last target sync</small></div>
+          <div class="playlist-schedule-stat">
+            <strong title={details.schedule?.nextRunAt ? new Date(details.schedule.nextRunAt).toLocaleString() : undefined}>
+              {details.schedule?.enabled ? relativeTime(details.schedule.nextRunAt) : details.schedule ? "Paused" : "Manual"}
+            </strong>
+            <small>{details.schedule?.cronExpression ?? "No automatic schedule"}</small>
+            <Popover.Root bind:open={scheduleEditorOpen}>
+              <Popover.Trigger class="schedule-edit-button" onclick={editSchedule}>Edit</Popover.Trigger>
+              <Popover.Portal>
+                <Popover.Content class="bits-menu schedule-editor" sideOffset={6} align="end">
+                  <form onsubmit={saveSchedule}>
+                    <label class="field">
+                      <span>Cron schedule</span>
+                      <input bind:value={scheduleCron} required spellcheck="false" />
+                    </label>
+                    <label class="field">
+                      <span>Time zone</span>
+                      <input bind:value={scheduleTimeZone} required spellcheck="false" />
+                    </label>
+                    <label class="schedule-enabled">
+                      <input type="checkbox" bind:checked={scheduleEnabled} />
+                      Automatic sync enabled
+                    </label>
+                    {#if scheduleError}<p class="field-error" role="alert">{scheduleError}</p>{/if}
+                    <button class="button-primary" type="submit" disabled={scheduleSaving}>
+                      {scheduleSaving ? "Saving…" : "Save schedule"}
+                    </button>
+                  </form>
+                </Popover.Content>
+              </Popover.Portal>
+            </Popover.Root>
+          </div>
         </div>
 
         {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}

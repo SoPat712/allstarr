@@ -895,6 +895,13 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             Assert.Equal("jellyfin", item.DurationProvenance);
             Assert.Equal(_now, item.DurationRetrievedAt);
         });
+
+        _source.Snapshot = Snapshot(
+            "revision-after-sync",
+            Entry(0, "entry-after-sync", "source-1", "One"));
+        await _service.RefreshAsync(Context(), _link);
+        var refreshed = await reader.ReadByLinkIdAsync(_tenant, _user, _link);
+        Assert.Equal(_now, refreshed!.CompletedAt);
     }
 
     [Fact]

@@ -226,6 +226,13 @@ public sealed class DurablePlaylistProjectionReader(
                            item.State != PlaylistSyncState.Running)
             .OrderByDescending(item => item.Generation)
             .FirstOrDefaultAsync(cancellationToken);
+        var lastSuccessfulSyncAt = await database.PlaylistSyncRuns.AsNoTracking()
+            .Where(item => item.PlaylistLinkId == link.Id &&
+                           (item.State == PlaylistSyncState.Succeeded ||
+                            item.State == PlaylistSyncState.PartiallySucceeded))
+            .OrderByDescending(item => item.CompletedAt)
+            .Select(item => item.CompletedAt)
+            .FirstOrDefaultAsync(cancellationToken);
         var materializedCount = run == null
             ? 0
             : await database.PlaylistSyncEntryResults.AsNoTracking()
@@ -249,7 +256,7 @@ public sealed class DurablePlaylistProjectionReader(
             link.TargetPlaylistId,
             snapshot.ArtworkReferenceKey,
             snapshot.RetrievedAt,
-            run?.CompletedAt,
+            lastSuccessfulSyncAt,
             run?.State,
             entries.Select(entry => ProjectEntry(
                     entry,
