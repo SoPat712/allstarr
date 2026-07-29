@@ -95,6 +95,16 @@ public sealed class JellyfinMusicEndpointPolicyTests
         Assert.Equal(expected, JellyfinMusicEndpointPolicy.IsMusicItemType(itemType));
     }
 
+    [Theory]
+    [InlineData("ext-spotify-song-123", true)]
+    [InlineData("vplaylist-legacy", true)]
+    [InlineData("allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0", true)]
+    [InlineData("opaque-jellyfin-id", false)]
+    public void SynthesizedMusicItemIds_BypassBackendTypeLookup(string itemId, bool expected)
+    {
+        Assert.Equal(expected, JellyfinMusicEndpointPolicy.IsSynthesizedMusicItemId(itemId));
+    }
+
     private static JellyfinEndpointDecision Evaluate(string method, string target)
     {
         var uri = new Uri("http://localhost" + target);

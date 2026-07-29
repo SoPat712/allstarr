@@ -50,8 +50,7 @@ public sealed class JellyfinMusicEndpointPolicyMiddleware(
         IApplicationCache cache)
     {
         // All synthesized resources use explicit music resource identifiers.
-        if (itemId.StartsWith("ext-", StringComparison.OrdinalIgnoreCase) ||
-            itemId.StartsWith("vplaylist-", StringComparison.OrdinalIgnoreCase)) return true;
+        if (JellyfinMusicEndpointPolicy.IsSynthesizedMusicItemId(itemId)) return true;
 
         var cacheKey = CacheKeyBuilder.BuildJellyfinItemTypeKey(itemId);
         var cached = await cache.GetAsync<ItemTypeCacheEntry>(cacheKey);

@@ -104,6 +104,11 @@ public static class JellyfinMusicEndpointPolicy
     public static bool IsMusicItemType(string? itemType) =>
         !string.IsNullOrWhiteSpace(itemType) && MusicItemTypes.Contains(itemType);
 
+    public static bool IsSynthesizedMusicItemId(string itemId) =>
+        itemId.StartsWith("ext-", StringComparison.OrdinalIgnoreCase) ||
+        itemId.StartsWith("vplaylist-", StringComparison.OrdinalIgnoreCase) ||
+        itemId.StartsWith("allstarr-vpl-", StringComparison.OrdinalIgnoreCase);
+
     public static bool ContainsOnlyMusicItemTypes(string? rawTypes)
     {
         if (string.IsNullOrWhiteSpace(rawTypes)) return false;
