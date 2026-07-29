@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 declare global {
   interface Window {
     __allstarrMetrics: { cls: number; lcp: number; inp: number; navigation: number };
+    __emitAllstarrUpdate?: () => void;
   }
 }
 
@@ -680,6 +681,75 @@ test("Home stays inside runtime and request budgets", async ({ page }) => {
   expect(metrics.navigation).toBeLessThanOrEqual(100);
 });
 
+test("Shared visual tokens meet typography, geometry, and contrast floors", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("#/");
+  const contract = await page.evaluate(() => {
+    const root = getComputedStyle(document.documentElement);
+    const primarySample = document.createElement("button");
+    primarySample.className = "button-primary";
+    const eyebrowSample = document.createElement("p");
+    eyebrowSample.className = "eyebrow";
+    document.body.append(primarySample, eyebrowSample);
+    const primary = getComputedStyle(primarySample);
+    const eyebrow = getComputedStyle(eyebrowSample);
+    const resolveColor = (value: string) => {
+      const sample = document.createElement("span");
+      sample.style.color = value;
+      document.body.append(sample);
+      const color = getComputedStyle(sample).color;
+      sample.remove();
+      return color;
+    };
+    const channels = (value: string) =>
+      (value.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+    const luminance = (value: string) => {
+      const [red, green, blue] = channels(value).map((channel) => {
+        const normalized = channel / 255;
+        return normalized <= 0.04045
+          ? normalized / 12.92
+          : ((normalized + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+    };
+    const contrast = (foreground: string, background: string) => {
+      const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+      return (values[0] + 0.05) / (values[1] + 0.05);
+    };
+    const canvas = resolveColor("var(--color-canvas)");
+    const result = {
+      spacing: ["--space-1", "--space-2", "--space-3", "--space-4"].map((token) =>
+        Number.parseFloat(root.getPropertyValue(token)) * 16),
+      controls: ["--control-sm", "--control-md", "--control-lg"].map((token) =>
+        Number.parseFloat(root.getPropertyValue(token)) * 16),
+      icons: ["--icon-sm", "--icon-md", "--icon-lg", "--icon-xl"].map((token) =>
+        Number.parseFloat(root.getPropertyValue(token)) * 16),
+      radii: ["--radius-sm", "--radius-md", "--radius-lg"].map((token) =>
+        Number.parseFloat(root.getPropertyValue(token)) * 16),
+      fonts: [Number.parseFloat(primary.fontSize), Number.parseFloat(eyebrow.fontSize)],
+      contrast: {
+        body: contrast(getComputedStyle(document.body).color, canvas),
+        metadata: contrast(eyebrow.color, canvas),
+        primary: contrast(primary.color, primary.backgroundColor),
+        focus: contrast(resolveColor("var(--focus-ring)"), canvas),
+      },
+    };
+    primarySample.remove();
+    eyebrowSample.remove();
+    return result;
+  });
+  expect(contract.spacing).toEqual([4, 8, 12, 16]);
+  expect(contract.controls).toEqual([36, 44, 48]);
+  expect(contract.icons).toEqual([16, 18, 20, 24]);
+  expect(contract.radii).toEqual([8, 12, 16]);
+  expect(contract.fonts[0]).toBeGreaterThanOrEqual(14);
+  expect(contract.fonts[1]).toBeGreaterThanOrEqual(12);
+  expect(contract.contrast.body).toBeGreaterThanOrEqual(4.5);
+  expect(contract.contrast.metadata).toBeGreaterThanOrEqual(4.5);
+  expect(contract.contrast.primary).toBeGreaterThanOrEqual(4.5);
+  expect(contract.contrast.focus).toBeGreaterThanOrEqual(3);
+});
+
 test("Slim sidebar centers navigation and profile controls", async ({ page }) => {
   await page.setViewportSize({ width: 835, height: 762 });
   await mockApi(page);
@@ -1151,6 +1221,78 @@ test("Settings loads only the active section owners", async ({ page }) => {
   expect(requests).not.toContain("/api/admin/provider-accounts");
 });
 
+test("Settings preserves dirty drafts during live refresh and scrolls mobile tabs", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.addInitScript(() => {
+    class TestEventSource {
+      static instance: TestEventSource | undefined;
+      listeners = new Map<string, EventListener[]>();
+
+      constructor() {
+        TestEventSource.instance = this;
+      }
+
+      addEventListener(type: string, listener: EventListener) {
+        this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+      }
+
+      close() {}
+    }
+
+    Object.defineProperty(window, "EventSource", { value: TestEventSource });
+    window.__emitAllstarrUpdate = () => {
+      const event = {
+        data: JSON.stringify({ resource: "config", resourceId: "runtime", revision: 2 }),
+        lastEventId: "settings-2",
+      };
+      for (const listener of TestEventSource.instance?.listeners.get("update") ?? [])
+        listener(event as unknown as Event);
+    };
+  });
+  await mockApi(page);
+  let serverValue = 1;
+  await page.route("**/api/admin/config", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      ...(responses["/api/admin/config"] as Record<string, unknown>),
+      cache: { searchResultsMinutes: serverValue, mediaMaximumMegabytes: 512 },
+    }),
+  }));
+  await page.goto("#/settings/general");
+  const cache = page.locator(".settings-disclosure").filter({ hasText: "Cache" });
+  await cache.locator("summary").click();
+  const input = cache.getByLabel("Search results minutes");
+  await input.fill("27");
+  await input.evaluate((element) => element.setAttribute("data-instance", "draft"));
+  await input.focus();
+  serverValue = 9;
+  await page.evaluate(() => window.__emitAllstarrUpdate?.());
+
+  await expect(page.getByText("Your unsaved edits are preserved.")).toBeVisible();
+  await expect(cache).toHaveAttribute("open", "");
+  await expect(input).toHaveValue("27");
+  await expect(input).toHaveAttribute("data-instance", "draft");
+  await expect(input).toBeFocused();
+  await page.getByRole("button", { name: "Reload server values" }).click();
+  await expect(input).toHaveValue("9");
+
+  const tabs = page.locator(".settings-tabs");
+  const tabSizes = await tabs.getByRole("tab").evaluateAll((items) => items.map((item) => {
+    const box = item.getBoundingClientRect();
+    return { height: box.height, fontSize: Number.parseFloat(getComputedStyle(item).fontSize) };
+  }));
+  expect(tabSizes.every(({ height, fontSize }) => height >= 44 && fontSize >= 14)).toBe(true);
+  await tabs.getByRole("tab", { name: "Maintenance" }).click();
+  await expect(tabs.getByRole("tab", { name: "Maintenance" })).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() => tabs.evaluate((element) => {
+    const active = element.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!active) return false;
+    const container = element.getBoundingClientRect();
+    const item = active.getBoundingClientRect();
+    return item.left >= container.left - 1 && item.right <= container.right + 1;
+  })).toBe(true);
+});
+
 test("Maintenance previews, retries, and applies a legacy import on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
@@ -1346,7 +1488,22 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator(".playlist-row .coverage-bar")).toContainText("Lumen Audio: 1, Unresolved: 1");
   await expect(page.locator(".playlist-row .playlist-art > span")).toBeVisible();
-  await page.getByRole("button", { name: /Test playlist/ }).click();
+  const openPlaylist = page.getByRole("button", { name: "Open Test playlist playlist details", exact: true });
+  await expect(openPlaylist).toBeVisible();
+  await expect(page.getByRole("group", { name: "50% playable, 1 of 2 tracks, 1 unresolved" })).toBeVisible();
+  const metricsFit = await page.locator(".playlist-summary").evaluate((summary) => {
+    const parent = summary.getBoundingClientRect();
+    const children = [...summary.children].map((child) => child.getBoundingClientRect());
+    const inside = children.every((child) =>
+      child.left >= parent.left - 1 && child.right <= parent.right + 1 &&
+      child.top >= parent.top - 1 && child.bottom <= parent.bottom + 1);
+    const separate = children.every((item, index) => children.slice(index + 1).every((other) =>
+      item.right <= other.left || other.right <= item.left ||
+      item.bottom <= other.top || other.bottom <= item.top));
+    return inside && separate;
+  });
+  expect(metricsFit).toBe(true);
+  await openPlaylist.click();
   const dialog = page.getByRole("dialog", { name: "Test playlist" });
   await expect(dialog).toBeVisible();
   await expect(dialog.locator(".hero-art > span")).toBeVisible();
@@ -1371,6 +1528,107 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await expect(page).toHaveURL(/#\/library\/playlists$/);
   await expect(page.getByRole("dialog", { name: "Test song" })).toBeVisible();
 });
+
+for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }]) {
+  test(`Playlist sync preserves reading position at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await mockApi(page);
+    const first = (responses["/api/admin/playlist-links"] as {
+      playlistLinks: Record<string, unknown>[];
+    }).playlistLinks[0];
+    await page.route("**/api/admin/playlist-links", async (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          playlistLinks: [
+            { ...first, trackCount: 60, playableCount: 60, unmatchedCount: 0 },
+            { ...first, id: "playlist-link-two", name: "Second playlist", trackCount: 60, playableCount: 60, unmatchedCount: 0 },
+          ],
+        }),
+      });
+    });
+
+    const detail = (id: string, name: string) => ({
+      id,
+      snapshotId: `${id}-snapshot`,
+      snapshotVersion: 1,
+      latestSourceSnapshotVersion: 1,
+      hasNewerSourceGeneration: false,
+      name,
+      sourceProviderId: "lumen-audio",
+      targetProtocol: "jellyfin",
+      retrievedAt: "2026-01-01",
+      completedAt: "2026-01-01",
+      trackCount: 60,
+      localCount: 60,
+      externalCount: 0,
+      unresolvedCount: 0,
+      durationMs: 10_800_000,
+      matchedCount: 60,
+      reviewCount: 0,
+      rejectedCount: 0,
+      playableCount: 60,
+      routeCoverage: [{ providerId: "jellyfin", count: 60 }],
+      unknownDurationCount: 0,
+      tracks: Array.from({ length: 60 }, (_, index) => ({
+        sourcePosition: index,
+        position: index + 1,
+        externalSnapshotId: `${id}-track-${index}`,
+        title: `Track ${index + 1}`,
+        artists: ["Artist"],
+        album: "Album",
+        durationMs: 180_000,
+        routeKind: "local",
+        routeProviderId: "jellyfin",
+        matchState: "accepted",
+        providerRoutes: [],
+      })),
+    });
+    let detailRequests = 0;
+    let releaseRefresh!: () => void;
+    const refreshHeld = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    await page.route("**/api/admin/playlist-links/playlist-link", async (route) => {
+      detailRequests++;
+      if (detailRequests === 2) await refreshHeld;
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify(detail("playlist-link", "Test playlist")) });
+    });
+    await page.route("**/api/admin/playlist-links/playlist-link-two", (route) => route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(detail("playlist-link-two", "Second playlist")),
+    }));
+
+    await page.goto("#/library/playlists");
+    await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
+    const dialog = page.getByRole("dialog", { name: "Test playlist" });
+    const scroll = dialog.locator(".track-scroll");
+    await scroll.evaluate((element) => {
+      element.setAttribute("data-instance", "reading-position");
+      element.scrollTop = 600;
+    });
+    const filter = dialog.getByLabel("Filter tracks");
+    await filter.fill("Track");
+    await filter.focus();
+    const before = await scroll.evaluate((element) => element.scrollTop);
+    await dialog.getByRole("button", { name: "Sync" }).evaluate((button: HTMLButtonElement) => button.click());
+    await expect.poll(() => detailRequests).toBe(2);
+
+    await expect(dialog.getByText("Loading playlist tracks…")).toHaveCount(0);
+    await expect(scroll).toHaveAttribute("data-instance", "reading-position");
+    await expect(filter).toHaveValue("Track");
+    await expect(filter).toBeFocused();
+    expect(Math.abs(await scroll.evaluate((element) => element.scrollTop) - before)).toBeLessThanOrEqual(1);
+    releaseRefresh();
+    await expect(dialog.getByText("Sync queued.")).toBeVisible();
+    await expect(scroll).toHaveAttribute("data-instance", "reading-position");
+    expect(Math.abs(await scroll.evaluate((element) => element.scrollTop) - before)).toBeLessThanOrEqual(1);
+
+    await dialog.getByRole("button", { name: "Close playlist details" }).click();
+    await page.getByRole("button", { name: "Open Second playlist playlist details" }).click();
+    await expect(page.getByRole("dialog", { name: "Second playlist" }).locator(".track-scroll"))
+      .toHaveJSProperty("scrollTop", 0);
+  });
+}
 
 test("Playlist operations show durable progress and confirm cancellation", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -1486,6 +1744,72 @@ test("Segmented navigation and unified provider filters support keyboard use", a
   await page.getByRole("tab", { name: /Installed/ }).focus();
   await page.keyboard.press("ArrowRight");
   await expect(page.getByRole("tab", { name: /Available/ })).toHaveAttribute("aria-selected", "true");
+});
+
+test("Responsive boundaries preserve navigation and download identity", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("#/");
+  for (const width of [760, 761, 900, 901]) {
+    await page.setViewportSize({ width, height: 844 });
+    const navigation = page.getByRole("navigation", { name: "Primary" });
+    await expect(navigation.getByRole("link")).toHaveCount(width <= 760 ? 5 : 6);
+    await expect(page.locator(".sidebar")).toHaveCSS("position", width <= 760 ? "fixed" : "sticky");
+    if (width === 900)
+      await expect.poll(async () => (await page.locator(".sidebar").boundingBox())?.width ?? 0).toBe(80);
+    if (width === 901)
+      await expect.poll(async () => (await page.locator(".sidebar").boundingBox())?.width ?? 0).toBe(248);
+    if (width === 760) {
+      const boxes = await navigation.getByRole("link").evaluateAll((links) =>
+        links.map((link) => link.getBoundingClientRect().height));
+      expect(boxes.every((height) => height >= 44)).toBe(true);
+    }
+    await expect.poll(() => page.evaluate(() =>
+      document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  }
+
+  for (const width of [800, 801, 1050, 1051, 1100, 1101]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("#/library/cached");
+    const row = page.locator(".download-row");
+    await expect(row.locator(".download-provider strong", { hasText: "Lumen Audio" })).toBeVisible();
+    await expect(row.getByRole("link", { name: "Download" })).toBeVisible();
+    await expect.poll(() => page.evaluate(() =>
+      document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  }
+});
+
+test("Playlist columns and nested dialogs retain interaction ownership", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await mockApi(page);
+  await page.goto("#/library/playlists");
+  const opener = page.getByRole("button", { name: "Open Test playlist playlist details" });
+  await opener.click();
+  const playlist = page.getByRole("dialog", { name: "Test playlist" });
+  await expect(page.locator("body")).toHaveCSS("overflow", "hidden");
+  const resize = playlist.getByRole("button", { name: "Resize track column" });
+  const before = (await resize.locator("..").boundingBox())!.width;
+  await resize.focus();
+  await page.keyboard.press("ArrowRight");
+  const after = (await resize.locator("..").boundingBox())!.width;
+  expect(Math.abs(after - Math.min(before + 16, 520))).toBeLessThanOrEqual(1);
+
+  const review = playlist.getByRole("button", { name: "Open mapping details for Test song" });
+  await review.click();
+  const match = page.getByRole("dialog", { name: "Test song" });
+  await expect(match).toBeVisible();
+  const layers = await page.evaluate(() => ({
+    parent: Number.parseInt(getComputedStyle(document.querySelector(".playlist-detail-dialog")!).zIndex),
+    nestedOverlay: Number.parseInt(getComputedStyle(document.querySelector(".match-dialog-overlay")!).zIndex),
+    nested: Number.parseInt(getComputedStyle(document.querySelector(".match-dialog")!).zIndex),
+  }));
+  expect(layers.parent).toBeLessThan(layers.nestedOverlay);
+  expect(layers.nestedOverlay).toBeLessThan(layers.nested);
+  await page.keyboard.press("Escape");
+  await expect(match).toBeHidden();
+  await expect(playlist).toBeVisible();
+  await expect(review).toBeFocused();
+  await playlist.getByRole("button", { name: "Close playlist details" }).click();
+  await expect(opener).toBeFocused();
 });
 
 test("Sidebar uses an integrated expander and deterministic slim breakpoint", async ({ page }) => {

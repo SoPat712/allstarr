@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { ArrowDown, ArrowUp } from "lucide-svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import {
     home,
@@ -59,6 +60,9 @@
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
   let dragging = $state<{ groupId: string; index: number } | null>(null);
   let loadedSection = $state("");
+  let dirtyOwners = $state<string[]>([]);
+  let serverChanged = $state(false);
+  let openSections = $state(["general"]);
 
   const active = $derived(tabs.some((item) => item.id === section) ? section : "general");
   const generalSections = $derived.by(() => {
@@ -88,6 +92,21 @@
     return schema?.providers.find((item) => item.id.toLowerCase() === id.toLowerCase());
   }
 
+  function markDirty(owner: string) {
+    if (!dirtyOwners.includes(owner)) dirtyOwners = [...dirtyOwners, owner];
+  }
+
+  function markSaved(owner: string) {
+    dirtyOwners = dirtyOwners.filter((item) => item !== owner);
+    if (!dirtyOwners.length) serverChanged = false;
+  }
+
+  function disclosureToggled(event: Event, id: string) {
+    const open = (event.currentTarget as HTMLDetailsElement).open;
+    if (open && !openSections.includes(id)) openSections = [...openSections, id];
+    if (!open) openSections = openSections.filter((item) => item !== id);
+  }
+
   async function refresh() {
     if (refreshing) return;
     refreshing = true;
@@ -106,7 +125,10 @@
       if (result.status !== "fulfilled") return;
       const label = requests[index][0];
       if (label === "schema") schema = result.value as UiSchema;
-      if (label === "config") config = result.value as Record<string, unknown>;
+      if (label === "config") {
+        if (dirtyOwners.length) serverChanged = true;
+        else config = result.value as Record<string, unknown>;
+      }
       if (label === "accounts")
         accounts = (result.value as Awaited<ReturnType<typeof sources.accounts>>).accounts;
       if (label === "storage")
@@ -116,7 +138,7 @@
       if (label === "cachePreview")
         cachePreview = result.value as Awaited<ReturnType<typeof settings.cachePreview>>;
     });
-    if (schema) {
+    if (schema && !dirtyOwners.length) {
       orders = Object.fromEntries((schema.priorityGroups ?? [])
         .map((group) => [group.id, routingOrder(config, group)]));
     }
@@ -148,6 +170,7 @@
       ]));
     try {
       await settings.save(updates);
+      markSaved(item.id);
       feedback = `${item.label} saved.`;
       await refresh();
     } catch (cause) {
@@ -162,6 +185,7 @@
     action = group.id;
     try {
       await settings.save({ [group.envKey]: (orders[group.id] ?? []).join(",") });
+      markSaved(group.id);
       feedback = `${group.label} saved.`;
       await refresh();
     } catch (cause) {
@@ -172,7 +196,11 @@
   }
 
   function moveProvider(group: PriorityGroup, index: number, direction: -1 | 1) {
-    orders = { ...orders, [group.id]: move(orders[group.id] ?? [], index, direction) };
+    const order = orders[group.id] ?? [];
+    const providerId = order[index];
+    orders = { ...orders, [group.id]: move(order, index, direction) };
+    markDirty(group.id);
+    feedback = `${provider(providerId)?.name ?? humanize(providerId)} moved to position ${index + direction + 1}.`;
   }
 
   function dropProvider(group: PriorityGroup, index: number) {
@@ -181,6 +209,8 @@
     const [providerId] = order.splice(dragging.index, 1);
     order.splice(index, 0, providerId);
     orders = { ...orders, [group.id]: order };
+    markDirty(group.id);
+    feedback = `${provider(providerId)?.name ?? humanize(providerId)} moved to position ${index + 1}.`;
     dragging = null;
   }
 
@@ -214,6 +244,8 @@
   }
 
   onMount(() => {
+    if (initialPanel && !openSections.includes(initialPanel))
+      openSections = [...openSections, initialPanel];
     void refresh();
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
@@ -243,14 +275,24 @@
       </div>
     {/if}
     {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
+    {#if serverChanged}
+      <div class="degraded-banner" role="status">
+        <p><strong>Server settings changed.</strong> Your unsaved edits are preserved.</p>
+        <button type="button" onclick={() => { dirtyOwners = []; serverChanged = false; void refresh(); }}>Reload server values</button>
+      </div>
+    {/if}
 
     {#if active === "general"}
       <div class="settings-stack">
         <header class="settings-intro"><p class="eyebrow">Runtime configuration</p><h2>General</h2><p>Durable settings apply immediately. Deployment-owned values are identified but cannot be edited here.</p></header>
         {#each generalSections as item}
-          <details class="panel settings-disclosure" open={item.id === "general" || item.id === initialPanel}>
+          <details
+            class="panel settings-disclosure"
+            open={openSections.includes(item.id)}
+            ontoggle={(event) => disclosureToggled(event, item.id)}
+          >
             <summary><span><strong>{item.label}</strong><small>{item.fields.filter((field) => !field.readOnly).length} editable</small></span></summary>
-            <form class="settings-fields" onsubmit={(event) => void saveSection(event, item)}>
+            <form class="settings-fields" oninput={() => markDirty(item.id)} onsubmit={(event) => void saveSection(event, item)}>
               {#each item.fields as field}
                 <label class="setting-field" class:read-only={field.readOnly || field.ownership === "deployment"}>
                   <span><strong>{field.label}</strong>{#if field.ownership === "deployment"}<small>Deployment-owned</small>{/if}</span>
@@ -262,6 +304,7 @@
                       label={field.label}
                       value={String(fieldValue(config, field))}
                       options={field.options ?? []}
+                      onchange={() => markDirty(item.id)}
                     />
                   {:else if field.type === "toggle"}
                     <input name={field.key} type="checkbox" checked={Boolean(fieldValue(config, field))} />
@@ -337,8 +380,8 @@
                     <ProviderArtwork id={providerId} definition={definition} />
                     <span><strong>{definition?.name ?? humanize(providerId)}</strong><small>{definition?.categories?.map(humanize).join(" · ") || "Provider Source"}</small></span>
                     <span class="routing-actions">
-                      <button type="button" aria-label={`Move ${definition?.name ?? providerId} up`} disabled={index === 0} onclick={() => moveProvider(group, index, -1)}>↑</button>
-                      <button type="button" aria-label={`Move ${definition?.name ?? providerId} down`} disabled={index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}>↓</button>
+                      <button type="button" aria-label={`Move ${definition?.name ?? providerId} up`} disabled={index === 0} onclick={() => moveProvider(group, index, -1)}><ArrowUp size={18} aria-hidden="true" /></button>
+                      <button type="button" aria-label={`Move ${definition?.name ?? providerId} down`} disabled={index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></button>
                     </span>
                   </li>
                 {/each}

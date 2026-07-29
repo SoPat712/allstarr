@@ -65,6 +65,7 @@
   --color-ink: var(--text-950);
   --color-ink-muted: var(--text-600);
   --color-signal: var(--accent-600);
+  --color-signal-text: var(--accent-700);
   --color-signal-muted: var(--accent-200);
   --color-success: var(--success);
   --color-warning: var(--warning);
@@ -142,6 +143,15 @@
     --focus-ring: var(--color-signal);
     --overlay: rgb(3 7 14 / 72%);
     --disabled-opacity: 0.45;
+    --layer-content: 1;
+    --layer-control: 2;
+    --layer-navigation: 10;
+    --layer-overlay: 40;
+    --layer-dialog: 41;
+    --layer-nested-overlay: 42;
+    --layer-nested-dialog: 43;
+    --layer-menu: 50;
+    --layer-tooltip: 60;
     --space-1: 0.25rem;
     --space-2: 0.5rem;
     --space-3: 0.75rem;
@@ -246,8 +256,10 @@
 
   button,
   input,
-  select {
+  select,
+  textarea {
     font: inherit;
+    font-size: var(--text-sm);
   }
 
   button,
@@ -256,8 +268,17 @@
   }
 
   :focus-visible {
-    outline: 2px solid var(--color-signal);
+    outline: 2px solid var(--focus-ring);
     outline-offset: 3px;
+  }
+
+  :is(small, dt, dd, th, .badge, .status-pill) {
+    font-size: var(--text-xs);
+  }
+
+  :is(button, input, select, textarea):disabled {
+    opacity: var(--disabled-opacity);
+    cursor: not-allowed;
   }
 }
 
@@ -277,7 +298,7 @@
     place-items: center;
     border-radius: 0.9rem;
     background: var(--color-signal);
-    color: var(--color-ink);
+    color: var(--color-canvas);
     font-family: var(--font-display);
     font-weight: 800;
     box-shadow: 0 0 2rem color-mix(in srgb, var(--color-signal) 15%, transparent);
@@ -285,7 +306,7 @@
 
   .eyebrow {
     color: var(--color-ink-muted);
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
     font-weight: 700;
     letter-spacing: 0.14em;
     text-transform: uppercase;
@@ -314,7 +335,7 @@
     border: 0;
     border-radius: var(--radius-md);
     background: var(--color-signal);
-    color: var(--color-ink);
+    color: var(--color-canvas);
     cursor: pointer;
     padding-inline: var(--space-4);
     font-size: var(--text-sm);
@@ -353,7 +374,6 @@
     display: grid;
     min-height: 100vh;
     grid-template-columns: 15.5rem minmax(0, 1fr);
-    transition: grid-template-columns 160ms ease;
   }
 
   .sidebar {
@@ -388,7 +408,7 @@
   .sidebar-expander:hover,
   .sidebar-expander:focus-visible {
     background: var(--color-panel-raised);
-    color: var(--color-signal);
+    color: var(--color-signal-text);
   }
 
   .menu-icon {
@@ -487,7 +507,7 @@
     display: block;
     margin-top: 0.1rem;
     color: var(--color-ink-muted);
-    font-size: 0.68rem;
+    font-size: var(--text-xs);
   }
 
   .sidebar nav {
@@ -529,7 +549,7 @@
 
   .sidebar nav a {
     position: relative;
-    z-index: 1;
+    z-index: var(--layer-content);
     display: grid;
     width: 100%;
     min-height: var(--control-lg);
@@ -547,7 +567,7 @@
   }
 
   .sidebar nav a.active {
-    color: var(--color-signal);
+    color: var(--color-signal-text);
   }
 
   .nav-icon {
@@ -602,7 +622,7 @@
     border-radius: 50%;
     clip-path: circle(50%);
     background: var(--color-panel-raised);
-    color: var(--color-signal);
+    color: var(--color-signal-text);
     font-weight: 800;
     text-decoration: none;
     justify-self: center;
@@ -724,7 +744,7 @@
     border: 1px solid var(--color-edge);
     border-radius: 50%;
     background: var(--color-panel-raised);
-    color: var(--color-signal);
+    color: var(--color-signal-text);
     font-size: 1.4rem;
   }
 
@@ -754,7 +774,7 @@
     place-items: center;
     border-radius: 0.75rem;
     background: color-mix(in srgb, var(--color-signal) 11%, transparent);
-    color: var(--color-signal);
+    color: var(--color-signal-text);
   }
 
   .metric-icon.playlists {
@@ -775,7 +795,7 @@
   .metric-card p {
     margin: 0.15rem 0 0.25rem;
     color: var(--color-ink-muted);
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -790,8 +810,8 @@
   .metric-card > small {
     grid-column: 1 / -1;
     align-self: end;
-    color: var(--color-signal);
-    font-size: 0.73rem;
+    color: var(--color-signal-text);
+    font-size: var(--text-xs);
   }
 
   .metric-card > small.attention,
@@ -843,7 +863,7 @@
 
   .home-panel header > a,
   .compact-empty a {
-    color: var(--color-signal);
+    color: var(--color-signal-text);
     font-size: 0.78rem;
     font-weight: 750;
     text-decoration: none;
@@ -892,11 +912,11 @@
   .provider-result small {
     margin-top: 0.2rem;
     color: var(--color-ink-muted);
-    font-size: 0.68rem;
+    font-size: var(--text-xs);
   }
 
   .provider-result {
-    color: var(--color-signal);
+    color: var(--color-signal-text);
     font-size: 0.76rem;
     font-weight: 750;
     text-align: right;
@@ -921,7 +941,7 @@
     place-items: center;
     border-radius: 0.65rem;
     background: var(--color-signal-muted);
-    color: var(--color-signal);
+    color: var(--color-signal-text);
     font-size: 1rem;
     font-weight: 800;
   }
@@ -933,7 +953,7 @@
 
   .activity-line time {
     color: var(--color-ink-muted);
-    font-size: 0.67rem;
+    font-size: var(--text-xs);
   }
 
   .compact-empty {
@@ -1046,6 +1066,11 @@
 }
 
 @media (max-width: 760px) {
+  :is(button, input, select, textarea, [role="button"], [role="tab"], [role="option"]) {
+    min-height: var(--control-md);
+    font-size: var(--text-md);
+  }
+
   .app-shell,
   .app-shell.slim {
     grid-template-columns: 1fr;
@@ -1055,7 +1080,7 @@
   .sidebar {
     position: fixed;
     display: grid;
-    z-index: 10;
+    z-index: var(--layer-navigation);
     top: auto;
     right: 0;
     bottom: 0;
@@ -1141,7 +1166,7 @@
     justify-content: center;
     gap: 0.15rem;
     padding: 0.2rem;
-    font-size: 0.65rem;
+    font-size: var(--text-xs);
   }
 
   .app-shell.slim .sidebar nav a {
@@ -1149,7 +1174,7 @@
     grid-template-columns: none;
     min-height: 3.4rem;
     padding: 0.2rem;
-    font-size: 0.65rem;
+    font-size: var(--text-xs);
   }
 
   .sidebar .nav-label,
@@ -1202,13 +1227,24 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  html {
     scroll-behavior: auto !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+  }
+
+  :is(
+    .skeleton,
+    .select-content,
+    .bits-menu,
+    .segmented-tabs::before,
+    .sidebar nav::before,
+    .sidebar-expander,
+    .nav-label,
+    .brand > span:last-child,
+    .profile > div:nth-child(2),
+    .icon-button
+  ) {
+    animation: none !important;
+    transition: none !important;
   }
 }
 
@@ -1235,7 +1271,7 @@
 
   .playlist-detail-dialog {
     position: fixed;
-    z-index: 41;
+    z-index: var(--layer-dialog);
     top: 50%;
     left: 50%;
     width: min(calc(100% - 2rem), 72rem);
@@ -1323,7 +1359,7 @@
 
   .search-input svg {
     position: absolute;
-    z-index: 1;
+    z-index: var(--layer-content);
     top: 50%;
     left: 0.7rem;
     width: 0.85rem;
@@ -1366,7 +1402,16 @@
   }
 
   .playlist-row.active {
-    box-shadow: inset 3px 0 var(--color-signal);
+    background: var(--color-signal-muted);
+  }
+
+  .playlist-open-button {
+    position: absolute;
+    z-index: var(--layer-content);
+    inset: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
   }
 
   .media-art {
@@ -1433,7 +1478,7 @@
   .route-cell small {
     overflow: hidden;
     color: var(--color-ink-muted);
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1462,7 +1507,7 @@
     border-radius: 50%;
     background: color-mix(in srgb, var(--route-color) 15%, var(--color-panel-raised));
     color: var(--route-color);
-    font-size: 0.53rem;
+    font-size: var(--text-xs);
     font-style: normal;
     font-weight: 850;
   }
@@ -1490,7 +1535,7 @@
   }
 
   .playlist-coverage small {
-    font-size: 0.58rem;
+    font-size: var(--text-xs);
     font-weight: 750;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -1554,7 +1599,7 @@
   .playlist-hero-copy > p:not(.eyebrow) {
     margin: 0.35rem 0 0;
     color: var(--color-ink-muted);
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
   }
 
   .hero-route {
@@ -1623,7 +1668,7 @@
   .playlist-stat-grid small {
     overflow: hidden;
     color: var(--color-ink-muted);
-    font-size: 0.62rem;
+    font-size: var(--text-xs);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1639,9 +1684,9 @@
     right: 0.65rem;
     border: 0;
     background: transparent;
-    color: var(--color-signal);
+    color: var(--color-signal-text);
     cursor: pointer;
-    font-size: 0.65rem;
+    font-size: var(--text-xs);
     font-weight: 750;
   }
 
@@ -1665,22 +1710,22 @@
     align-items: center;
     gap: 0.5rem;
     color: var(--color-ink-muted);
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
   }
 
   .schedule-editor .field-error {
     margin: 0;
     color: var(--color-danger);
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
   }
 
   .action-feedback {
     margin: 0;
     border-bottom: 1px solid var(--color-edge);
     background: color-mix(in srgb, var(--color-signal) 7%, transparent);
-    color: var(--color-signal);
+    color: var(--color-signal-text);
     padding: 0.55rem 1rem;
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
   }
 
   .operation-console {
@@ -1717,7 +1762,7 @@
   }
 
   .operation-console summary strong {
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
     text-transform: capitalize;
   }
 
@@ -1725,7 +1770,7 @@
   .operation-facts small,
   .operation-console li small {
     color: var(--color-ink-muted);
-    font-size: 0.62rem;
+    font-size: var(--text-xs);
   }
 
   .operation-console-body {
@@ -1763,7 +1808,7 @@
 
   .operation-facts strong {
     overflow: hidden;
-    font-size: 0.68rem;
+    font-size: var(--text-xs);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1783,7 +1828,7 @@
     gap: 0.75rem;
     border-top: 1px solid var(--color-edge);
     padding: 0.4rem 0;
-    font-size: 0.68rem;
+    font-size: var(--text-xs);
   }
 
   .operation-console li span {
@@ -1809,7 +1854,7 @@
     min-height: 2rem;
     border-bottom: 1px solid var(--color-edge);
     color: var(--color-ink-muted);
-    font-size: 0.6rem;
+    font-size: var(--text-xs);
     font-weight: 750;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -1871,7 +1916,7 @@
 
   .track-row-link {
     position: absolute;
-    z-index: 1;
+    z-index: var(--layer-content);
     inset: 0;
     border: 0;
     background: transparent;
@@ -1895,7 +1940,7 @@
 
   .track-menu {
     position: relative;
-    z-index: 2;
+    z-index: var(--layer-control);
   }
 
   @media (min-width: 761px) {
@@ -1910,7 +1955,7 @@
   .track-duration {
     color: var(--color-ink-muted);
     font-variant-numeric: tabular-nums;
-    font-size: 0.68rem;
+    font-size: var(--text-xs);
     text-align: center;
   }
 
@@ -1931,7 +1976,7 @@
     place-items: center;
     border-radius: 0.55rem;
     background: var(--color-panel-raised);
-    color: var(--color-signal);
+    color: var(--color-signal-text);
   }
 
   .track-art img {
@@ -1968,7 +2013,7 @@
   }
 
   .score {
-    color: var(--color-signal);
+    color: var(--color-signal-text);
     font-size: var(--text-xs);
     font-weight: 800;
   }
@@ -1991,7 +2036,7 @@
 
   .route-cell strong {
     overflow: hidden;
-    font-size: 0.67rem;
+    font-size: var(--text-xs);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -2021,11 +2066,11 @@
   .track-menu-trigger:hover {
     border-color: color-mix(in srgb, var(--color-signal) 38%, var(--color-edge));
     background: color-mix(in srgb, var(--color-signal) 10%, var(--color-panel-raised));
-    color: var(--color-signal);
+    color: var(--color-signal-text);
   }
 
   .bits-menu {
-    z-index: 50;
+    z-index: var(--layer-menu);
     display: grid;
     min-width: 10rem;
     gap: 0.15rem;
@@ -2102,7 +2147,7 @@
     border-top: 1px solid var(--color-edge);
     padding: 0.45rem 0.7rem;
     color: var(--color-ink-muted);
-    font-size: 0.65rem;
+    font-size: var(--text-xs);
   }
 
   .playlist-pagination button {
@@ -2113,7 +2158,7 @@
     color: var(--color-ink);
     cursor: pointer;
     padding: 0 0.6rem;
-    font-size: 0.65rem;
+    font-size: var(--text-xs);
   }
 
   .playlist-pagination button:disabled {
@@ -2155,7 +2200,7 @@
 
   .playlist-add-steps button {
     gap: 0.25rem;
-    font-size: 0.56rem;
+    font-size: var(--text-xs);
   }
 
   .playlist-add-search {
@@ -2212,8 +2257,10 @@
 
   .playlist-summary {
     grid-column: 2;
-    grid-template-columns: repeat(3, auto);
-    place-items: baseline start;
+    display: flex;
+    width: 100%;
+    flex-wrap: wrap;
+    align-items: baseline;
     justify-content: start;
     gap: 0.35rem 0.8rem;
   }
@@ -2253,7 +2300,7 @@
 
   .segmented-tabs :is(a, button) {
     position: relative;
-    z-index: 1;
+    z-index: var(--layer-content);
     display: grid;
     grid-auto-flow: column;
     gap: 0.4rem;
@@ -2262,14 +2309,14 @@
     border: 0;
     background: transparent;
     color: var(--color-ink-muted);
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
     font-weight: 750;
     text-decoration: none;
   }
 
   .segmented-tabs :is(a, button)[aria-selected="true"] {
     background: transparent;
-    color: var(--color-signal);
+    color: var(--color-signal-text);
   }
 
   .segmented-tabs :is(a, button):not([aria-selected="true"]):hover {
@@ -2279,7 +2326,7 @@
 
   .segmented-tabs :is(a, button)[aria-selected="true"]:is(:hover, :focus-visible, :active) {
     background: transparent;
-    color: var(--color-signal);
+    color: var(--color-signal-text);
   }
 
   .segmented-tabs button:disabled,
@@ -2328,7 +2375,7 @@
   .badge-accent {
     border-color: color-mix(in srgb, var(--color-signal) 45%, var(--color-edge));
     background: var(--color-signal-muted);
-    color: var(--color-signal);
+    color: var(--color-signal-text);
   }
 
   .badge-success {
@@ -2376,7 +2423,7 @@
   }
 
   .select-content {
-    z-index: 100;
+    z-index: var(--layer-menu);
     min-width: var(--bits-select-anchor-width);
     overflow: hidden;
     border: 1px solid var(--color-edge);
@@ -2415,7 +2462,7 @@
 
   .select-item[data-highlighted] {
     background: var(--color-signal-muted);
-    color: var(--color-signal);
+    color: var(--color-signal-text);
   }
 
   .select-item[data-disabled] {
@@ -2424,7 +2471,7 @@
 
   .select-check {
     visibility: hidden;
-    color: var(--color-signal);
+    color: var(--color-signal-text);
   }
 
   .select-item[data-selected] .select-check {
@@ -2499,7 +2546,7 @@
     align-items: center;
     border-bottom: 1px solid var(--color-edge);
     color: var(--color-ink-muted);
-    font-size: 0.65rem;
+    font-size: var(--text-xs);
     font-weight: 750;
     padding: 0.45rem 0.7rem;
     text-transform: uppercase;
@@ -2529,7 +2576,7 @@
   .mapping-heading p:last-child {
     margin: 0.35rem 0 0;
     color: var(--color-ink-muted);
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
   }
 
   .mapping-filters {
@@ -2542,7 +2589,7 @@
     display: grid;
     gap: 0.3rem;
     color: var(--color-ink-muted);
-    font-size: 0.63rem;
+    font-size: var(--text-xs);
     font-weight: 700;
   }
 
@@ -2555,7 +2602,7 @@
     background: var(--color-panel-raised);
     color: var(--color-ink);
     padding: 0 0.7rem;
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
   }
 
   .mapping-filters > button {
@@ -2619,7 +2666,7 @@
   .mapping-source :is(small, div > span) {
     overflow: hidden;
     color: var(--color-ink-muted);
-    font-size: 0.68rem;
+    font-size: var(--text-xs);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -2644,7 +2691,7 @@
   .mapping-party small {
     overflow: hidden;
     color: var(--color-ink-muted);
-    font-size: 0.68rem;
+    font-size: var(--text-xs);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -2655,7 +2702,7 @@
     align-items: center;
     gap: 0.35rem;
     color: var(--color-ink-muted);
-    font-size: 0.58rem;
+    font-size: var(--text-xs);
     font-weight: 700;
     text-transform: uppercase;
   }
@@ -2705,7 +2752,7 @@
     background: rgb(255 255 255 / 7%);
     color: var(--color-ink-muted);
     padding: 0 0.5rem;
-    font-size: 0.55rem;
+    font-size: var(--text-xs);
     font-weight: 800;
     text-transform: capitalize;
   }
@@ -2715,7 +2762,7 @@
   .status-pill.healthy,
   .status-pill.configured {
     background: color-mix(in srgb, var(--color-signal) 10%, transparent);
-    color: var(--color-signal);
+    color: var(--color-signal-text);
   }
 
   .status-pill.unresolved,
@@ -2744,7 +2791,7 @@
   .mapping-row-actions :is(.button-primary, .button-secondary) {
     min-height: 2.25rem;
     padding: 0 0.65rem;
-    font-size: 0.65rem;
+    font-size: var(--text-xs);
   }
 
   .mapping-action-confidence {
@@ -2755,14 +2802,14 @@
   }
 
   .mapping-action-confidence strong {
-    color: var(--color-signal);
+    color: var(--color-signal-text);
     font-size: 0.85rem;
   }
 
   .mapping-action-confidence small {
     margin-top: 0.2rem;
     color: var(--color-ink-muted);
-    font-size: 0.5rem;
+    font-size: var(--text-xs);
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -2785,7 +2832,7 @@
     border-radius: 999px;
     color: var(--color-ink-muted);
     padding: 0.3rem 0.55rem;
-    font-size: 0.68rem;
+    font-size: var(--text-xs);
   }
 
   .mapping-row-footer {
@@ -2799,7 +2846,7 @@
   .mapping-evidence-summary {
     overflow: hidden;
     color: var(--color-ink-muted);
-    font-size: 0.65rem;
+    font-size: var(--text-xs);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -2809,7 +2856,7 @@
     align-items: baseline;
     gap: 0.25rem;
     color: var(--color-ink-muted);
-    font-size: 0.62rem;
+    font-size: var(--text-xs);
   }
 
   .mapping-details {
@@ -2820,14 +2867,14 @@
   .mapping-details summary {
     color: var(--color-ink-muted);
     cursor: pointer;
-    font-size: 0.6rem;
+    font-size: var(--text-xs);
   }
 
   .mapping-details > p {
     max-width: 75ch;
     margin: 0.55rem 0 0;
     color: var(--color-ink-muted);
-    font-size: 0.65rem;
+    font-size: var(--text-xs);
     line-height: 1.5;
   }
 
@@ -2855,33 +2902,33 @@
 
   .mapping-details dt {
     color: var(--color-ink-muted);
-    font-size: 0.58rem;
+    font-size: var(--text-xs);
   }
 
   .mapping-details dd {
     overflow-wrap: anywhere;
     margin: 0;
     font-family: ui-monospace, monospace;
-    font-size: 0.58rem;
+    font-size: var(--text-xs);
   }
 
   .dialog-overlay {
     position: fixed;
-    z-index: 40;
+    z-index: var(--layer-overlay);
     inset: 0;
-    background: rgb(4 6 10 / 78%);
+    background: var(--overlay);
     backdrop-filter: blur(0.45rem);
   }
 
   .match-dialog-overlay {
-    z-index: 42;
+    z-index: var(--layer-nested-overlay);
   }
 
   .match-dialog,
   .source-dialog,
   .confirm-dialog {
     position: fixed;
-    z-index: 41;
+    z-index: var(--layer-dialog);
     top: 50%;
     left: 50%;
     width: min(calc(100% - 2rem), 52rem);
@@ -2895,7 +2942,7 @@
   }
 
   .match-dialog {
-    z-index: 43;
+    z-index: var(--layer-nested-dialog);
   }
 
   .match-dialog > header,
@@ -2922,7 +2969,7 @@
     display: block;
     margin-top: 0.3rem;
     color: var(--color-ink-muted);
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
   }
 
   .playlist-add-dialog {
@@ -2956,7 +3003,7 @@
     border: 0;
     background: transparent;
     color: var(--color-ink-muted);
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
     font-weight: 750;
   }
 
@@ -2967,18 +3014,18 @@
     place-items: center;
     border: 1px solid var(--color-edge);
     border-radius: 50%;
-    font-size: 0.58rem;
+    font-size: var(--text-xs);
   }
 
   .playlist-add-steps button.active {
-    color: var(--color-signal);
+    color: var(--color-signal-text);
   }
 
   .playlist-add-steps button.active span,
   .playlist-add-steps button.complete span {
-    border-color: var(--color-signal);
+    border-color: var(--color-signal-text);
     background: var(--color-signal-muted);
-    color: var(--color-signal);
+    color: var(--color-signal-text);
   }
 
   .playlist-add-step {
@@ -3075,7 +3122,7 @@
   .playlist-sync-settings .setting-field > span small {
     background: transparent;
     padding: 0;
-    font-size: 0.6rem;
+    font-size: var(--text-xs);
   }
 
   .playlist-sync-fields {
@@ -3090,7 +3137,7 @@
 
   .playlist-sync-fields legend {
     padding: 0 0.3rem;
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
     font-weight: 750;
   }
 
@@ -3099,13 +3146,13 @@
     align-items: center;
     gap: 0.45rem;
     color: var(--color-ink-muted);
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
   }
 
   .playlist-sync-fields input {
     width: 1rem;
     height: 1rem;
-    accent-color: var(--color-signal);
+    accent-color: var(--color-signal-text);
   }
 
   .playlist-add-footer {
@@ -3136,7 +3183,7 @@
   .match-technical summary {
     color: var(--color-ink-muted);
     cursor: pointer;
-    font-size: 0.65rem;
+    font-size: var(--text-xs);
   }
 
   .match-technical dl {
@@ -3161,14 +3208,14 @@
 
   .match-technical dt {
     color: var(--color-ink-muted);
-    font-size: 0.58rem;
+    font-size: var(--text-xs);
   }
 
   .match-technical dd {
     overflow-wrap: anywhere;
     margin: 0;
     font-family: ui-monospace, monospace;
-    font-size: 0.58rem;
+    font-size: var(--text-xs);
   }
 
   .dialog-section-heading {
@@ -3190,7 +3237,7 @@
   .dialog-section-heading small,
   .dialog-empty {
     color: var(--color-ink-muted);
-    font-size: 0.62rem;
+    font-size: var(--text-xs);
   }
 
   .dialog-section-heading > span {
@@ -3200,7 +3247,7 @@
     place-items: center;
     border-radius: 999px;
     background: var(--color-panel-raised);
-    font-size: 0.65rem;
+    font-size: var(--text-xs);
   }
 
   .candidate-list {
@@ -3233,12 +3280,12 @@
   }
 
   .candidate-copy strong {
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
   }
 
   .candidate-copy small {
     color: var(--color-ink-muted);
-    font-size: 0.6rem;
+    font-size: var(--text-xs);
   }
 
   .candidate-provider {
@@ -3246,19 +3293,19 @@
     align-items: center;
     gap: 0.35rem;
     color: var(--color-ink-muted);
-    font-size: 0.6rem;
+    font-size: var(--text-xs);
   }
 
   .candidate-provider .provider-mark {
     width: 1rem;
     height: 1rem;
-    font-size: 0.42rem;
+    font-size: var(--text-xs);
   }
 
   .candidate-confidence {
     display: grid;
     justify-items: end;
-    color: var(--color-signal);
+    color: var(--color-signal-text);
     line-height: 1;
   }
 
@@ -3270,7 +3317,7 @@
   .candidate-confidence small {
     margin-top: 0.18rem;
     color: var(--color-ink-muted);
-    font-size: 0.48rem;
+    font-size: var(--text-xs);
     font-weight: 750;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -3286,7 +3333,7 @@
     color: var(--color-ink);
     cursor: pointer;
     padding: 0 0.65rem;
-    font-size: 0.62rem;
+    font-size: var(--text-xs);
     font-weight: 750;
   }
 
@@ -3305,7 +3352,7 @@
     border-radius: 0.4rem;
     background: var(--color-panel-raised);
     padding: 0.3rem 0.45rem;
-    font-size: 0.55rem;
+    font-size: var(--text-xs);
   }
 
   .score-components small {
@@ -3313,7 +3360,7 @@
   }
 
   .score-components strong {
-    font-size: 0.62rem;
+    font-size: var(--text-xs);
   }
 
   .target-search {
@@ -3355,14 +3402,14 @@
     color: var(--color-ink-muted);
     cursor: pointer;
     padding: 0.25rem 0.55rem;
-    font-size: 0.62rem;
+    font-size: var(--text-xs);
   }
 
   .provider-result-summary button:hover,
   .provider-result-summary button[aria-pressed="true"] {
-    border-color: var(--color-signal);
+    border-color: var(--color-signal-text);
     background: var(--color-signal-muted);
-    color: var(--color-signal);
+    color: var(--color-signal-text);
   }
 
   .provider-result-summary .provider-mark {
@@ -3411,18 +3458,18 @@
   }
 
   .target-copy strong {
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
   }
 
   .target-copy small,
   .target-meta small {
     color: var(--color-ink-muted);
-    font-size: 0.6rem;
+    font-size: var(--text-xs);
   }
 
   .target-meta {
     justify-items: end;
-    font-size: 0.65rem;
+    font-size: var(--text-xs);
   }
 
   .target-score {
@@ -3432,15 +3479,15 @@
   }
 
   .target-score strong {
-    color: var(--color-signal);
-    font-size: 0.72rem;
+    color: var(--color-signal-text);
+    font-size: var(--text-xs);
     font-variant-numeric: tabular-nums;
     font-weight: 750;
   }
 
   .target-score small {
     color: var(--color-ink-muted);
-    font-size: 0.5rem;
+    font-size: var(--text-xs);
     white-space: nowrap;
   }
 
@@ -3484,7 +3531,7 @@
   .confirm-dialog [data-alert-dialog-description] {
     margin-top: 0.55rem;
     color: var(--color-ink-muted);
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
     line-height: 1.55;
   }
 }
@@ -3627,7 +3674,7 @@
   .event-log-heading p:last-child {
     margin: 0.35rem 0 0;
     color: var(--color-ink-muted);
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
   }
 
   .event-log-filters {
@@ -3639,7 +3686,7 @@
     display: grid;
     gap: 0.3rem;
     color: var(--color-ink-muted);
-    font-size: 0.63rem;
+    font-size: var(--text-xs);
     font-weight: 700;
   }
 
@@ -3651,13 +3698,13 @@
     border-bottom: 1px solid var(--color-edge);
     color: var(--color-ink-muted);
     padding: 0.35rem 0.75rem;
-    font-size: 0.62rem;
+    font-size: var(--text-xs);
   }
 
   .event-log-count button {
     border: 0;
     background: transparent;
-    color: var(--color-signal);
+    color: var(--color-signal-text);
     cursor: pointer;
     font-size: inherit;
     font-weight: 750;
@@ -3701,7 +3748,7 @@
     border: 1px solid var(--color-edge);
     border-radius: 0.7rem;
     background: var(--color-panel-raised);
-    color: var(--color-signal);
+    color: var(--color-signal-text);
     font-size: 1.15rem;
     overflow: hidden;
   }
@@ -3749,14 +3796,14 @@
     background: var(--color-panel-raised);
     color: var(--color-ink-muted);
     padding: 0.2rem 0.4rem;
-    font-size: 0.55rem;
+    font-size: var(--text-xs);
   }
 
   .event-summary-copy > small,
   .event-log-group > summary > time {
     overflow: hidden;
     color: var(--color-ink-muted);
-    font-size: 0.62rem;
+    font-size: var(--text-xs);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -3795,12 +3842,12 @@
 
   .event-route small {
     color: var(--color-ink-muted);
-    font-size: 0.53rem;
+    font-size: var(--text-xs);
   }
 
   .event-route strong {
     overflow: hidden;
-    font-size: 0.63rem;
+    font-size: var(--text-xs);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -3821,7 +3868,7 @@
     place-items: center;
     border-radius: 50%;
     background: var(--color-panel-raised);
-    font-size: 0.55rem;
+    font-size: var(--text-xs);
   }
 
   .event-children {
@@ -3863,7 +3910,7 @@
 
   .event-child-copy > header strong {
     overflow: hidden;
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -3871,7 +3918,7 @@
   .event-child-copy > header time,
   .event-child-copy > p {
     color: var(--color-ink-muted);
-    font-size: 0.6rem;
+    font-size: var(--text-xs);
   }
 
   .event-child-copy > p {
@@ -3889,7 +3936,7 @@
     flex-wrap: wrap;
     gap: 0.4rem;
     color: var(--color-ink-muted);
-    font-size: 0.6rem;
+    font-size: var(--text-xs);
   }
 
   .event-child-route strong {
@@ -3906,7 +3953,7 @@
   }
 
   .event-child-meta a {
-    color: var(--color-signal);
+    color: var(--color-signal-text);
     font-weight: 700;
     text-decoration: none;
   }
@@ -3915,7 +3962,7 @@
     width: max-content;
     color: var(--color-ink-muted);
     cursor: pointer;
-    font-size: 0.6rem;
+    font-size: var(--text-xs);
   }
 
   .event-technical dl {
@@ -3941,14 +3988,14 @@
 
   .event-technical dt {
     color: var(--color-ink-muted);
-    font-size: 0.58rem;
+    font-size: var(--text-xs);
   }
 
   .event-technical dd {
     overflow-wrap: anywhere;
     margin: 0;
     font-family: ui-monospace, monospace;
-    font-size: 0.58rem;
+    font-size: var(--text-xs);
   }
 
   .event-log-empty {
@@ -4036,7 +4083,7 @@
     max-width: 42rem;
     margin: 0.35rem 0 0;
     color: var(--color-ink-muted);
-    font-size: 0.68rem;
+    font-size: var(--text-xs);
     line-height: 1.45;
   }
 
@@ -4063,7 +4110,7 @@
   .download-quality small {
     overflow: hidden;
     color: var(--color-ink-muted);
-    font-size: 0.6rem;
+    font-size: var(--text-xs);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -4084,7 +4131,7 @@
   .download-head {
     border-bottom: 1px solid var(--color-edge);
     color: var(--color-ink-muted);
-    font-size: 0.56rem;
+    font-size: var(--text-xs);
     font-weight: 750;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -4124,7 +4171,7 @@
   .download-provider strong,
   .download-quality strong {
     overflow: hidden;
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -4148,7 +4195,7 @@
   .download-row > span[role="cell"]:nth-child(4),
   .download-row > span[role="cell"]:nth-child(5) {
     color: var(--color-ink-muted);
-    font-size: 0.64rem;
+    font-size: var(--text-xs);
   }
 
   .download-actions {
@@ -4162,7 +4209,7 @@
     min-height: 2rem;
     place-items: center;
     padding: 0 0.55rem;
-    font-size: 0.6rem;
+    font-size: var(--text-xs);
     text-decoration: none;
     white-space: nowrap;
   }
@@ -4184,7 +4231,7 @@
   }
 }
 
-@media (max-width: 800px) {
+@media (max-width: 1100px) {
   .downloads-heading,
   .downloads-heading-actions {
     align-items: stretch;
@@ -4216,14 +4263,17 @@
   }
 
   .download-track,
-  .download-provider,
-  .download-quality,
   .download-actions {
     grid-column: 1 / -1;
   }
 
   .download-provider {
     display: flex;
+    grid-column: 1;
+  }
+
+  .download-quality {
+    grid-column: 2;
   }
 
   .download-row > span[role="cell"]:nth-child(4)::before,
@@ -4231,7 +4281,7 @@
     display: block;
     margin-bottom: 0.15rem;
     color: var(--color-ink-muted);
-    font-size: 0.53rem;
+    font-size: var(--text-xs);
     font-weight: 750;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -4315,7 +4365,7 @@
     place-items: center;
     border-radius: 999px;
     background: var(--color-signal-muted);
-    color: var(--color-signal);
+    color: var(--color-signal-text);
     font-size: 0.78rem;
     font-weight: 800;
   }
@@ -4342,7 +4392,7 @@
 
   .operational-table th {
     color: var(--color-ink-muted);
-    font-size: 0.68rem;
+    font-size: var(--text-xs);
     font-weight: 750;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -4405,7 +4455,7 @@
 
   .source-detail-dialog {
     position: fixed;
-    z-index: 110;
+    z-index: var(--layer-dialog);
     top: 50%;
     left: 50%;
     display: grid;
@@ -4460,7 +4510,7 @@
   .source-detail-data dt,
   .source-detail-capabilities small {
     color: var(--color-ink-muted);
-    font-size: 0.68rem;
+    font-size: var(--text-xs);
   }
 
   .source-detail-data dd {
@@ -4561,14 +4611,14 @@
     border-radius: 999px;
     color: var(--color-ink-muted);
     padding: 0.3rem 0.55rem;
-    font-size: 0.68rem;
+    font-size: var(--text-xs);
     font-weight: 700;
   }
 
   .source-capabilities > span.ready {
     border-color: color-mix(in srgb, var(--color-signal) 22%, transparent);
     background: color-mix(in srgb, var(--color-signal) 7%, transparent);
-    color: var(--color-signal);
+    color: var(--color-signal-text);
   }
 
   .source-metrics {
@@ -4602,7 +4652,7 @@
 
   .source-metrics dt {
     color: var(--color-ink-muted);
-    font-size: 0.62rem;
+    font-size: var(--text-xs);
     text-transform: uppercase;
   }
 
@@ -4658,7 +4708,7 @@
   .connectivity-bars small {
     margin-left: 0.25rem;
     color: var(--color-ink-muted);
-    font-size: 0.68rem;
+    font-size: var(--text-xs);
   }
 
   .connections-empty {
@@ -4723,7 +4773,7 @@
   }
 
   .apple-setup-progress li.active {
-    border-color: var(--color-signal);
+    border-color: var(--color-signal-text);
   }
 
   .apple-setup-progress li.complete > span:first-child {
@@ -4787,12 +4837,12 @@
   .source-dialog .field input,
   .source-dialog .field select {
     min-height: 2.6rem;
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
   }
 
   .source-dialog .field small {
     color: var(--color-ink-muted);
-    font-size: 0.58rem;
+    font-size: var(--text-xs);
     font-weight: 400;
     line-height: 1.45;
   }
@@ -4813,7 +4863,7 @@
     border-radius: 0.7rem;
     background: var(--color-panel-raised);
     padding: 0.65rem;
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
   }
 
   .source-setting-grid {
@@ -4836,7 +4886,7 @@
 
   .audience-options legend {
     margin-bottom: 0.4rem;
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
     font-weight: 750;
   }
 
@@ -4861,13 +4911,13 @@
   }
 
   .audience-options strong {
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
   }
 
   .audience-options small,
   .credential-safety {
     color: var(--color-ink-muted);
-    font-size: 0.58rem;
+    font-size: var(--text-xs);
     line-height: 1.5;
   }
 
@@ -4921,7 +4971,7 @@
     display: block;
     margin-top: var(--space-2);
     color: var(--color-ink-muted);
-    font-size: 0.68rem;
+    font-size: var(--text-xs);
   }
 
   .operational-mobile-state {
@@ -4972,13 +5022,19 @@
     gap: 1rem;
   }
 
+  .settings-workspace > nav {
+    min-width: 0;
+    max-width: 100%;
+  }
+
   .settings-tabs {
     width: min(100%, 46rem);
+    max-width: 100%;
   }
 
   .settings-tabs a {
     min-height: 2.6rem;
-    font-size: 0.64rem;
+    font-size: var(--text-xs);
     text-align: center;
   }
 
@@ -4996,7 +5052,7 @@
     max-width: 46rem;
     margin: 0.4rem 0 0;
     color: var(--color-ink-muted);
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
     line-height: 1.55;
   }
 
@@ -5028,7 +5084,7 @@
 
   .settings-disclosure > summary small {
     color: var(--color-ink-muted);
-    font-size: 0.58rem;
+    font-size: var(--text-xs);
   }
 
   .settings-fields {
@@ -5052,7 +5108,7 @@
     border-top: 1px solid var(--color-edge);
     padding: 0.75rem;
     color: var(--color-ink-muted);
-    font-size: 0.62rem;
+    font-size: var(--text-xs);
     line-height: 1.5;
   }
 
@@ -5069,7 +5125,7 @@
   }
 
   .setting-field strong {
-    font-size: 0.68rem;
+    font-size: var(--text-xs);
   }
 
   .setting-field > span small {
@@ -5077,7 +5133,7 @@
     background: rgb(255 255 255 / 6%);
     color: var(--color-ink-muted);
     padding: 0.2rem 0.4rem;
-    font-size: 0.5rem;
+    font-size: var(--text-xs);
   }
 
   .setting-field input:not([type="checkbox"]),
@@ -5092,18 +5148,18 @@
     background: var(--color-panel-raised);
     color: var(--color-ink);
     padding: 0 0.65rem;
-    font-size: 0.68rem;
+    font-size: var(--text-xs);
   }
 
   .setting-field input[type="checkbox"] {
     width: 1rem;
     height: 1rem;
-    accent-color: var(--color-signal);
+    accent-color: var(--color-signal-text);
   }
 
   .setting-field > small {
     color: var(--color-ink-muted);
-    font-size: 0.55rem;
+    font-size: var(--text-xs);
     line-height: 1.45;
   }
 
@@ -5146,7 +5202,7 @@
   .settings-account-panel > header small,
   .settings-account-panel article small {
     color: var(--color-ink-muted);
-    font-size: 0.58rem;
+    font-size: var(--text-xs);
   }
 
   .settings-account-panel > header a {
@@ -5154,7 +5210,7 @@
     min-height: 2.4rem;
     place-items: center;
     padding: 0 0.8rem;
-    font-size: 0.65rem;
+    font-size: var(--text-xs);
     text-decoration: none;
   }
 
@@ -5177,7 +5233,7 @@
 
   .settings-account-panel article strong {
     overflow: hidden;
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -5209,12 +5265,12 @@
   }
 
   .routing-group > header strong {
-    font-size: 0.74rem;
+    font-size: var(--text-xs);
   }
 
   .routing-group > header small {
     color: var(--color-ink-muted);
-    font-size: 0.57rem;
+    font-size: var(--text-xs);
     line-height: 1.45;
   }
 
@@ -5222,7 +5278,7 @@
     min-height: 2.1rem;
     flex: none;
     padding: 0 0.6rem;
-    font-size: 0.56rem;
+    font-size: var(--text-xs);
   }
 
   .routing-group ol {
@@ -5264,13 +5320,13 @@
   }
 
   .routing-group li strong {
-    font-size: 0.67rem;
+    font-size: var(--text-xs);
   }
 
   .routing-group li small {
     overflow: hidden;
     color: var(--color-ink-muted);
-    font-size: 0.54rem;
+    font-size: var(--text-xs);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -5342,7 +5398,7 @@
   .maintenance-card > header small,
   .maintenance-card > p {
     color: var(--color-ink-muted);
-    font-size: 0.57rem;
+    font-size: var(--text-xs);
     line-height: 1.5;
   }
 
@@ -5357,7 +5413,7 @@
     gap: 1rem;
     border-bottom: 1px solid var(--color-edge);
     padding: 0.45rem 0;
-    font-size: 0.62rem;
+    font-size: var(--text-xs);
   }
 
   .maintenance-card dt {
@@ -5373,7 +5429,7 @@
   .maintenance-actions > button {
     min-height: 2.4rem;
     padding: 0 0.7rem;
-    font-size: 0.62rem;
+    font-size: var(--text-xs);
   }
 
   .maintenance-actions {
@@ -5415,14 +5471,14 @@
 
   .cache-activity strong {
     overflow: hidden;
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
     text-overflow: ellipsis;
   }
 
   .cache-activity small,
   .cache-details small {
     color: var(--color-ink-muted);
-    font-size: 0.55rem;
+    font-size: var(--text-xs);
   }
 
   .cache-details {
@@ -5454,7 +5510,7 @@
     gap: 0.75rem;
     border-bottom: 1px solid var(--color-edge);
     padding: 0.65rem 0.7rem;
-    font-size: 0.6rem;
+    font-size: var(--text-xs);
   }
 
   .cache-category-list article:last-child {
@@ -5469,7 +5525,7 @@
     margin: 0;
     padding: 0 0.7rem 0.7rem;
     color: var(--warning);
-    font-size: 0.58rem;
+    font-size: var(--text-xs);
   }
 
   .cache-actions {
@@ -5501,7 +5557,7 @@
   .transfer-file-summary label > span {
     margin-bottom: 0.35rem;
     color: var(--color-ink-muted);
-    font-size: 0.57rem;
+    font-size: var(--text-xs);
   }
 
   .transfer-categories label {
@@ -5511,7 +5567,7 @@
     border: 1px solid var(--color-edge);
     border-radius: 999px;
     padding: 0.4rem 0.6rem;
-    font-size: 0.6rem;
+    font-size: var(--text-xs);
   }
 
   .transfer-actions,
@@ -5532,7 +5588,7 @@
     display: grid;
     place-items: center;
     padding: 0 0.7rem;
-    font-size: 0.62rem;
+    font-size: var(--text-xs);
     cursor: pointer;
   }
 
@@ -5562,7 +5618,7 @@
   .transfer-progress,
   .transfer-report {
     color: var(--color-ink-muted);
-    font-size: 0.6rem;
+    font-size: var(--text-xs);
   }
 
   .transfer-progress progress {
@@ -5619,7 +5675,7 @@
     gap: 0.15rem;
     border-top: 1px solid var(--color-edge);
     padding: 0.5rem 0;
-    font-size: 0.58rem;
+    font-size: var(--text-xs);
   }
 
   .migration-items small,
@@ -5659,7 +5715,7 @@
   .setup-checklist p {
     margin: 0;
     color: var(--color-ink-muted);
-    font-size: 0.65rem;
+    font-size: var(--text-xs);
     line-height: 1.5;
   }
 
@@ -5684,7 +5740,7 @@
     max-width: 52rem;
     margin: 0;
     color: var(--color-ink-muted);
-    font-size: 0.58rem;
+    font-size: var(--text-xs);
     line-height: 1.5;
   }
 }
@@ -5697,10 +5753,28 @@
 }
 
 @media (max-width: 650px) {
-  .settings-tabs a {
-    min-height: 2.8rem;
-    font-size: 0.52rem;
-    line-height: 1.15;
+  .settings-tabs {
+    display: flex;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: inline proximity;
+  }
+
+  .settings-tabs::before {
+    display: none;
+  }
+
+  .settings-tabs :is(a, button) {
+    min-height: var(--control-md);
+    flex: 0 0 auto;
+    padding-inline: var(--space-4);
+    font-size: var(--text-sm);
+    line-height: 1.25;
+    scroll-snap-align: nearest;
+  }
+
+  .settings-tabs :is(a, button)[aria-selected="true"] {
+    background: var(--color-signal-muted);
   }
 
   .settings-fields {
@@ -5918,7 +5992,7 @@
   }
 
   .extension-registry-form label span {
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
     font-weight: 700;
   }
 
@@ -5950,7 +6024,7 @@
   .extension-registry-list em,
   .extension-permissions em {
     color: var(--warning);
-    font-size: 0.7rem;
+    font-size: var(--text-xs);
     font-style: normal;
   }
 
@@ -5987,7 +6061,7 @@
 
   .extension-activity time {
     color: var(--text-muted);
-    font-size: 0.72rem;
+    font-size: var(--text-xs);
   }
 
   .extension-activity details > p {

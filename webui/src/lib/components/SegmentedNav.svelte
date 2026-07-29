@@ -15,6 +15,15 @@
     onchange?: (id: string) => void;
   } = $props();
   const activeIndex = $derived(Math.max(0, items.findIndex((item) => item.id === active)));
+  let tablist = $state<HTMLElement>();
+
+  $effect(() => {
+    active;
+    if (typeof document === "undefined") return;
+    queueMicrotask(() => tablist
+      ?.querySelector<HTMLElement>('[aria-selected="true"]')
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" }));
+  });
 
   function navigate(event: KeyboardEvent) {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
@@ -34,6 +43,7 @@
 
 <nav aria-label={label}>
   <div
+    bind:this={tablist}
     class={`segmented-tabs ${className}`}
     role="tablist"
     tabindex="-1"

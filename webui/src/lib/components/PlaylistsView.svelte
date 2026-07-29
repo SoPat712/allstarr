@@ -56,7 +56,12 @@
   let feedback = $state("");
   let action = $state("");
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let refreshQueued = false;
   let detailRequest = 0;
+  let detailWasOpen = false;
+  let detailReturnFocus: HTMLElement | null = null;
+  let matchWasOpen = false;
+  let matchReturnFocus: HTMLElement | null = null;
   let page = $state(1);
   let addOpen = $state(false);
   let operationJobId = $state("");
@@ -83,6 +88,38 @@
     details ? filterTracks(details.tracks, trackQuery, routeFilter, trackSort) : [],
   );
   const selected = $derived(playlists.find((playlist) => playlist.id === selectedId));
+
+  $effect(() => {
+    if (detailOpen) {
+      detailWasOpen = true;
+      return;
+    }
+    if (!detailWasOpen) return;
+    detailWasOpen = false;
+    selectedId = "";
+    details = null;
+    detailLoading = false;
+    detailRequest++;
+    const returnFocus = detailReturnFocus;
+    detailReturnFocus = null;
+    queueMicrotask(() => {
+      if (returnFocus?.isConnected) returnFocus.focus();
+    });
+  });
+
+  $effect(() => {
+    if (matchOpen) {
+      matchWasOpen = true;
+      return;
+    }
+    if (!matchWasOpen) return;
+    matchWasOpen = false;
+    const returnFocus = matchReturnFocus;
+    matchReturnFocus = null;
+    queueMicrotask(() => {
+      if (returnFocus?.isConnected) returnFocus.focus();
+    });
+  });
 
   function provider(providerId: string) {
     return providers.find((item) => item.id.toLowerCase() === providerId.toLowerCase());
@@ -143,15 +180,17 @@
     }
   }
 
-  async function loadDetails(id: string) {
+  async function loadDetails(id: string, returnFocus?: HTMLElement) {
+    const changingPlaylist = id !== selectedId;
+    if (returnFocus) detailReturnFocus = returnFocus;
     selectedId = id;
-    details = null;
+    if (changingPlaylist) details = null;
     detailOpen = true;
     detailLoading = true;
     const request = ++detailRequest;
     try {
       const next = await playlistLinks.details(id);
-      if (request === detailRequest) details = next;
+      if (request === detailRequest && selectedId === id) details = next;
     } catch (cause) {
       if (request === detailRequest)
         degraded = cause instanceof Error ? cause.message : "Playlist details are unavailable.";
@@ -161,7 +200,10 @@
   }
 
   async function refresh() {
-    if (refreshing) return;
+    if (refreshing) {
+      refreshQueued = true;
+      return;
+    }
     refreshing = true;
     error = "";
     degraded = "";
@@ -187,6 +229,10 @@
     else degraded = "Provider names and artwork are temporarily unavailable.";
     loading = false;
     refreshing = false;
+    if (refreshQueued) {
+      refreshQueued = false;
+      void refresh();
+    }
   }
 
   function scheduleRefresh() {
@@ -271,8 +317,9 @@
     await refresh();
   }
 
-  async function openTrackMatch(externalSnapshotId: string) {
+  async function openTrackMatch(externalSnapshotId: string, returnFocus?: HTMLElement) {
     if (matchLoading) return;
+    if (returnFocus) matchReturnFocus = returnFocus;
     matchLoading = externalSnapshotId;
     try {
       selectedMatch = await matchReview.get(externalSnapshotId);
@@ -374,12 +421,16 @@
       <div class="playlist-rows" aria-label="Playlists">
         {#each pagePlaylists as playlist}
           {@const playablePercent = Math.round(coverage(playlist) * 100)}
-          <button
+          <div
             class:active={playlist.id === selectedId}
             class="playlist-row"
-            type="button"
-            onclick={() => void loadDetails(playlist.id)}
           >
+            <button
+              class="playlist-open-button"
+              type="button"
+              aria-label={`Open ${playlist.name} playlist details`}
+              onclick={(event) => void loadDetails(playlist.id, event.currentTarget)}
+            ></button>
             <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
             <span class="playlist-copy">
               <span class="playlist-title-line">
@@ -398,7 +449,11 @@
                 <span>{playlist.materializedCount} materialized</span>
               </small>
             </span>
-            <span class="playlist-summary">
+            <span
+              class="playlist-summary"
+              role="group"
+              aria-label={`${playablePercent}% playable, ${playlist.playableCount} of ${playlist.trackCount} tracks, ${playlist.enabled ? `${playlist.unmatchedCount} unresolved` : "paused"}`}
+            >
               <span class="playlist-coverage">
                 <strong>{playablePercent}%</strong>
                 <small>playable</small>
@@ -415,7 +470,7 @@
               {providerName}
               compact
             />
-          </button>
+          </div>
         {:else}
           <div class="compact-empty">
             <strong>No playlists match these filters</strong>
@@ -436,7 +491,7 @@
       <Dialog.Portal>
         <Dialog.Overlay class="dialog-overlay" />
         <Dialog.Content class="panel playlist-detail playlist-detail-dialog">
-      {#if detailLoading}
+      {#if detailLoading && !details}
         <div class="detail-loading" aria-busy="true">Loading playlist tracks…</div>
       {:else if details && selected}
         <header class="playlist-hero">
@@ -561,6 +616,7 @@
         <div
           class="track-table"
           aria-label={`${details.name} tracks`}
+          aria-busy={detailLoading}
           style={`--track-name-width:${trackColumnWidth ? `${trackColumnWidth}px` : "1fr"};--track-route-width:${routeColumnWidth ? `${routeColumnWidth}px` : "0.55fr"}`}
         >
           <div class="track-head">
@@ -578,7 +634,7 @@
                   class="track-row-link"
                   aria-label={`Open mapping details for ${track.title}`}
                   disabled={matchLoading === track.externalSnapshotId}
-                  onclick={() => void openTrackMatch(track.externalSnapshotId)}
+                  onclick={(event) => void openTrackMatch(track.externalSnapshotId, event.currentTarget)}
                 ></button>
                 <span class="track-index">{track.position}</span>
                 <span class="track-identity">
@@ -605,7 +661,7 @@
                           <button
                             type="button"
                             class="button-secondary"
-                            onclick={() => void openTrackMatch(track.externalSnapshotId)}
+                            onclick={(event) => void openTrackMatch(track.externalSnapshotId, event.currentTarget)}
                           >Review match</button>
                         </div>
                       </Popover.Content>
