@@ -387,6 +387,9 @@ public sealed class TrackMatchesController(
             durationMilliseconds = item.DurationMilliseconds,
             isrc = item.Isrc,
             confidence = scores.GetValueOrDefault(item.Id)?.Confidence,
+            components = scores.GetValueOrDefault(item.Id)?.Components,
+            reasons = scores.GetValueOrDefault(item.Id)?.Reasons,
+            warnings = scores.GetValueOrDefault(item.Id)?.Warnings,
             artworkUrl = item.CoverArtReference == null ? null : LocalArtworkUrl(item.BackendItemId)
         }).OrderByDescending(item => item.confidence).ThenBy(item => item.title).ToArray();
         return Ok(new { tracks = values });
@@ -456,6 +459,7 @@ public sealed class TrackMatchesController(
             .Select(item => new
             {
                 item.Song,
+                item.Candidate,
                 Confidence = scores.GetValueOrDefault(item.Candidate.LibraryTrackId)?.Confidence
             })
             .OrderByDescending(item => item.Confidence)
@@ -481,7 +485,10 @@ public sealed class TrackMatchesController(
                         : ExternalArtworkUrl(song.ExternalProvider ?? provider, song.ExternalId!),
                     durationMilliseconds = song.Duration * 1000,
                     isrc = song.Isrc,
-                    confidence = item.Confidence
+                    confidence = item.Confidence,
+                    components = scores.GetValueOrDefault(item.Candidate.LibraryTrackId)?.Components,
+                    reasons = scores.GetValueOrDefault(item.Candidate.LibraryTrackId)?.Reasons,
+                    warnings = scores.GetValueOrDefault(item.Candidate.LibraryTrackId)?.Warnings
                 };
             }),
             providers = playableProviders
@@ -881,6 +888,7 @@ public sealed class TrackMatchesController(
                 durationDeltaMilliseconds = Number(item, "durationDeltaMilliseconds") ??
                                             Number(item, "DurationDeltaMilliseconds") ??
                                             (Number(item, "durationDeltaSeconds") ?? Number(item, "DurationDeltaSeconds")) * 1000,
+                isLocal = Boolean(item, "isLocal") ?? Boolean(item, "IsLocal"),
                 providerTrackIds = Element(item, "providerTrackIds", "ProviderTrackIds"),
                 components = Element(item, "components", "Components"),
                 reasons = Element(item, "reasons", "Reasons"),
@@ -906,6 +914,11 @@ public sealed class TrackMatchesController(
     private static double? Number(JsonElement root, string name) => root.ValueKind == JsonValueKind.Object &&
         root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number &&
         value.TryGetDouble(out var number) ? number : null;
+
+    private static bool? Boolean(JsonElement root, string name) => root.ValueKind == JsonValueKind.Object &&
+        root.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.GetBoolean()
+            : null;
 
     private bool TrySession(out AdminAuthSession? session, out IActionResult? error)
     {

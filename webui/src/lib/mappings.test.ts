@@ -45,15 +45,26 @@ describe("mapping review presentation", () => {
       { providerId: "apple-download", count: 2 },
       { providerId: "deezer", count: 1 },
     ]);
-    expect(providerResultCounts([])).toEqual([{ providerId: "local", count: 0 }]);
+    expect(providerResultCounts([])).toEqual([]);
   });
 
   it("orders unified results by match confidence", () => {
     expect(rankedTargets([
       { id: "1", title: "Weak", confidence: 0.45 },
       { id: "2", title: "Best", externalProvider: "deezer", confidence: 0.98 },
+      {
+        id: "4",
+        title: "Preferred local",
+        confidence: 0.93,
+        components: { localPreference: 0.07, preferenceScore: 1 },
+      },
       { id: "3", title: "Unknown" },
-    ]).map((target) => target.title)).toEqual(["Best", "Weak", "Unknown"]);
+    ]).map((target) => target.title)).toEqual([
+      "Preferred local",
+      "Best",
+      "Weak",
+      "Unknown",
+    ]);
   });
 
   it("only accepts a concrete local or non-source provider candidate", () => {
@@ -62,6 +73,8 @@ describe("mapping review presentation", () => {
       libraryTrackId: "local-1",
     });
     expect(candidateResolution({
+      isLocal: false,
+      libraryTrackId: "synthetic-external-id",
       providerTrackIds: { spotify: "source", deezer: "candidate" },
     }, "spotify")).toEqual({
       targetType: "provider",

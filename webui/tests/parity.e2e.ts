@@ -309,6 +309,25 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
         stats: { total: 1, matched: 0, accepted: 0, unresolved: 0, suggested: 1, review: 1, rejected: 0, attention: 1 },
         pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
       };
+    if (url.pathname === "/api/admin/track-matches/targets/local")
+      body = {
+        tracks: [{
+          id: "jellyfin-kiss-me-more", backendItemId: "jellyfin-kiss-me-more",
+          title: "Kiss Me More", artist: "Doja Cat feat. SZA", album: "Planet Her",
+          durationMilliseconds: 208_000, confidence: 0.91,
+          components: { localPreference: 0.07, preferenceScore: 0.98 },
+        }],
+      };
+    if (url.pathname === "/api/admin/track-matches/targets/provider")
+      body = {
+        tracks: [{
+          id: "provider-kiss-me-more", externalId: "provider-kiss-me-more",
+          externalProvider: "lumen-audio", title: "Kiss Me More",
+          artist: "Doja Cat feat. SZA", album: "Planet Her",
+          durationMilliseconds: 208_000, confidence: 0.94,
+        }],
+        providers: ["lumen-audio", "qobuz"],
+      };
     if (url.pathname === "/api/admin/playlist-links/playlist-link")
       body = {
         id: "playlist-link", snapshotId: "playlist-snapshot", snapshotVersion: 1,
@@ -886,6 +905,14 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await expect(dialog.getByText("ISRC US-AAA-26-00001")).toHaveCount(2);
   await expect(dialog.locator(".candidate-provider")).toContainText("Lumen Audio");
   await expect(dialog.locator(".candidate-card .mapping-art > span")).toBeVisible();
+  await dialog.getByLabel("Search local library and playable providers").fill("Kiss Me More");
+  await dialog.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: /Jellyfin 1/ })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /Lumen Audio 1/ })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /Qobuz/ })).toHaveCount(0);
+  await expect(dialog.getByText("Planet Her")).toHaveCount(2);
+  await expect(dialog.getByText("base evidence")).toHaveCount(2);
+  await expect(dialog.getByText("rank #1")).toBeVisible();
   await dialog.getByRole("button", { name: "Close match dialog" }).click();
 
   const request = page.waitForRequest((item) =>

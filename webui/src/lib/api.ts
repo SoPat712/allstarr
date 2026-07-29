@@ -593,6 +593,7 @@ export type MatchCandidate = {
   artistOverlap?: number | null;
   albumEvidence?: number | null;
   durationDeltaMilliseconds?: number | null;
+  isLocal?: boolean | null;
   providerTrackIds?: Record<string, string> | null;
   components?: Record<string, number> | null;
   reasons?: string[] | null;
@@ -675,6 +676,9 @@ export type MatchTarget = {
   durationMilliseconds?: number | null;
   confidence?: number | null;
   isrc?: string | null;
+  components?: Record<string, number> | null;
+  reasons?: string[];
+  warnings?: string[];
 };
 
 export type ManagedDownload = {

@@ -10,6 +10,7 @@
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import {
+    candidateResolution,
     percent,
     providerResultCounts,
     rankedTargets,
@@ -76,12 +77,15 @@
   }
 
   function providerName(providerId?: string | null) {
-    if (!providerId || providerId === "local") return backend;
+    if (!providerId || providerId === "local")
+      return backend.toLowerCase() === "jellyfin" ? "Jellyfin" : backend;
     return provider(providerId)?.name ?? providerId;
   }
 
   function candidateProvider(candidate: MatchReviewItem["candidates"][number]) {
-    return Object.keys(candidate.providerTrackIds ?? {})[0] ?? "";
+    const providers = Object.keys(candidate.providerTrackIds ?? {});
+    return providers.find((providerId) =>
+      providerId.toLowerCase() !== match?.providerId.toLowerCase()) ?? providers[0] ?? "";
   }
 
   function candidateArtwork(candidate: MatchReviewItem["candidates"][number]) {
@@ -101,7 +105,7 @@
     searched = true;
     error = "";
     try {
-      const [local, external] = await Promise.all([
+      const [local, external] = await Promise.allSettled([
         matchReview.searchLocal(
           targetQuery.trim(),
           match.libraryScopeId,
@@ -113,7 +117,12 @@
           match.externalSnapshotId,
         ),
       ]);
-      results = rankedTargets([...local.tracks, ...external.tracks]);
+      results = rankedTargets([
+        ...(local.status === "fulfilled" ? local.value.tracks : []),
+        ...(external.status === "fulfilled" ? external.value.tracks : []),
+      ]);
+      if (local.status === "rejected" || external.status === "rejected")
+        error = "Some providers could not be searched. Available results are shown.";
     } catch (cause) {
       results = [];
       error = cause instanceof Error ? cause.message : "Candidate search failed.";
@@ -209,6 +218,7 @@
           {#if match.candidates.length}
             <div class="candidate-list">
               {#each match.candidates.slice(0, 5) as candidate}
+                {@const resolution = candidateResolution(candidate, match.providerId)}
                 <article class="candidate-card">
                   <MediaArtwork
                     class="mapping-art"
@@ -261,8 +271,15 @@
                       <span>{reason.replaceAll("_", " ")}</span>
                     {/each}
                   </div>
-                  {#if candidate.libraryTrackId}
-                    <button type="button" disabled={saving} onclick={() => void chooseLocal(candidate.libraryTrackId!, "Selected from automatic candidate evidence")}>Choose candidate</button>
+                  {#if resolution?.targetType === "local"}
+                    <button type="button" disabled={saving} onclick={() => void chooseLocal(resolution.libraryTrackId, "Selected from automatic candidate evidence")}>Choose candidate</button>
+                  {:else if resolution}
+                    <button type="button" disabled={saving} onclick={() => void chooseProvider({
+                      id: resolution.externalId,
+                      externalId: resolution.externalId,
+                      externalProvider: resolution.externalProvider,
+                      title: candidate.title || candidate.backendItemId || "Provider track",
+                    })}>Choose candidate</button>
                   {/if}
                 </article>
               {/each}
@@ -314,17 +331,31 @@
                   ? void chooseProvider(target)
                   : void chooseLocal(target.id, "Selected from indexed library search")}
             >
-              <span class="media-art mapping-art">
-                {#if target.artworkUrl}<img src={target.artworkUrl} alt="" loading="lazy" />{:else}
-                  <ProviderMark id={target.externalProvider || backend.toLowerCase()} definition={provider(target.externalProvider || "")} label={providerName(target.externalProvider)} />
-                {/if}
+              <MediaArtwork class="mapping-art" url={target.artworkUrl} />
+              <span class="target-copy">
+                <span class="candidate-provider">
+                  <ProviderMark
+                    id={target.externalProvider || backend.toLowerCase()}
+                    definition={provider(target.externalProvider || "")}
+                  />
+                  {providerName(target.externalProvider)}
+                </span>
+                <strong>{target.title}</strong>
+                <small>{target.artist || "Unknown artist"}</small>
+                <small>{target.album || "Unknown album"}</small>
               </span>
-              <span><strong>{target.title}</strong><small>{target.artist || "Unknown artist"}{target.album ? ` · ${target.album}` : ""}</small></span>
               <span class="target-meta">
                 <strong>{formatDuration(target.durationMilliseconds)}</strong>
-                <small>{target.externalProvider ? providerName(target.externalProvider) : backend}</small>
+                <small>{target.externalId || target.backendItemId || target.id}</small>
               </span>
-              <span>{percent(target.confidence)}</span>
+              <span class="target-score">
+                <strong>{percent(target.confidence)}</strong>
+                <small>base evidence</small>
+                {#if target.components?.localPreference}
+                  <small>+{percent(target.components.localPreference)} local</small>
+                {/if}
+                <small>rank #{results.indexOf(target) + 1}</small>
+              </span>
             </button>
           {:else}
             {#if searched && !loading}

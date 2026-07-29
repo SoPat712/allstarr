@@ -3323,25 +3323,26 @@
     background: rgb(255 255 255 / 4%);
   }
 
-  .target-results > button > span:nth-child(2),
+  .target-copy,
   .target-meta {
     display: grid;
     min-width: 0;
     gap: 0.15rem;
   }
 
-  .target-results > button > span:nth-child(2) strong,
-  .target-results > button > span:nth-child(2) small {
+  .target-copy strong,
+  .target-copy small,
+  .target-meta small {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .target-results > button > span:nth-child(2) strong {
+  .target-copy strong {
     font-size: 0.72rem;
   }
 
-  .target-results > button > span:nth-child(2) small,
+  .target-copy small,
   .target-meta small {
     color: var(--color-ink-muted);
     font-size: 0.6rem;
@@ -3352,11 +3353,23 @@
     font-size: 0.65rem;
   }
 
-  .target-results > button > span:last-child {
+  .target-score {
+    display: grid;
+    justify-items: end;
+    gap: 0.12rem;
+  }
+
+  .target-score strong {
     color: var(--color-signal);
     font-size: 0.72rem;
     font-variant-numeric: tabular-nums;
     font-weight: 750;
+  }
+
+  .target-score small {
+    color: var(--color-ink-muted);
+    font-size: 0.5rem;
+    white-space: nowrap;
   }
 
   .match-dialog > footer,

@@ -87,7 +87,8 @@ public sealed record TrackMatchCandidateScore(
     string? NormalizedCandidateTitle = null,
     double? ArtistOverlap = null,
     double? AlbumEvidence = null,
-    long? DurationDeltaMilliseconds = null);
+    long? DurationDeltaMilliseconds = null,
+    bool IsLocal = true);
 
 public sealed record TrackMatchDecision(
     TrackMatchReviewState State,
@@ -682,7 +683,8 @@ public sealed class TrackMatchDecisionEngine
         AlbumEvidence(source, candidate),
         source.DurationMilliseconds.HasValue && candidate.DurationMilliseconds.HasValue
             ? Math.Abs(source.DurationMilliseconds.Value - candidate.DurationMilliseconds.Value)
-            : null);
+            : null,
+        candidate.IsLocal);
 
     private static double? AlbumEvidence(
         ExternalTrackMatchSnapshot source,

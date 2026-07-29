@@ -25,7 +25,7 @@ export function providerResultCounts(targets: MatchTarget[]) {
     const providerId = target.externalProvider || "local";
     counts.set(providerId, (counts.get(providerId) ?? 0) + 1);
     return counts;
-  }, new Map<string, number>([["local", 0]]))]
+  }, new Map<string, number>())]
     .map(([providerId, count]) => ({ providerId, count }))
     .toSorted((left, right) =>
       Number(right.providerId === "local") - Number(left.providerId === "local") ||
@@ -35,6 +35,8 @@ export function providerResultCounts(targets: MatchTarget[]) {
 
 export function rankedTargets(targets: MatchTarget[]) {
   return targets.toSorted((left, right) =>
+    (right.components?.preferenceScore ?? right.confidence ?? -1) -
+      (left.components?.preferenceScore ?? left.confidence ?? -1) ||
     (right.confidence ?? -1) - (left.confidence ?? -1) ||
     left.title.localeCompare(right.title));
 }
@@ -94,11 +96,13 @@ export function currentTarget(match: MatchReviewItem) {
 }
 
 export function candidateResolution(candidate: MatchCandidate | undefined, sourceProviderId: string) {
-  if (candidate?.libraryTrackId)
-    return { targetType: "local" as const, libraryTrackId: candidate.libraryTrackId };
   const provider = Object.entries(candidate?.providerTrackIds ?? {}).find(
     ([providerId]) => providerId.toLowerCase() !== sourceProviderId.toLowerCase(),
   );
+  if (candidate?.isLocal === false && provider)
+    return { targetType: "provider" as const, externalProvider: provider[0], externalId: provider[1] };
+  if (candidate?.libraryTrackId)
+    return { targetType: "local" as const, libraryTrackId: candidate.libraryTrackId };
   return provider
     ? { targetType: "provider" as const, externalProvider: provider[0], externalId: provider[1] }
     : null;
