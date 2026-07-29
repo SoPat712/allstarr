@@ -57,4 +57,28 @@ public class JellyfinControllerSearchLimitTests
 
         Assert.Equal(expected, (int)method!.Invoke(null, [startIndex, limit])!);
     }
+
+    [Theory]
+    [InlineData(22, 20, 0, 20, 0, 0)]
+    [InlineData(22, 2, 20, 20, 0, 18)]
+    [InlineData(22, 0, 40, 20, 18, 20)]
+    [InlineData(0, 0, 0, 20, 0, 20)]
+    public void VirtualPlaylistPage_FollowsBackendRowsWithoutBreakingPaging(
+        int backendTotal,
+        int backendReturned,
+        int startIndex,
+        int limit,
+        int expectedStart,
+        int expectedTake)
+    {
+        var method = typeof(JellyfinController).GetMethod(
+            "GetVirtualPlaylistPage",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        var result = ((int Start, int Take))method!.Invoke(
+            null, [backendTotal, backendReturned, startIndex, limit])!;
+
+        Assert.Equal(expectedStart, result.Start);
+        Assert.Equal(expectedTake, result.Take);
+    }
 }

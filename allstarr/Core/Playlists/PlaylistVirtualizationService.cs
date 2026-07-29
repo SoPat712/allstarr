@@ -30,6 +30,10 @@ public sealed record VirtualPlaylistReadModel(
 
 public interface IPlaylistVirtualizationService
 {
+    Task<IReadOnlyList<VirtualPlaylistReadModel>> ListAsync(
+        ProtocolExecutionContext context,
+        CancellationToken cancellationToken = default);
+
     Task<VirtualPlaylistReadModel?> ReadAsync(
         ProtocolExecutionContext context,
         string protocolId,
@@ -53,6 +57,46 @@ public sealed class PlaylistVirtualizationService(
         linkId = default;
         return value?.StartsWith(IdPrefix, StringComparison.OrdinalIgnoreCase) == true &&
                Guid.TryParseExact(value[IdPrefix.Length..], "N", out linkId);
+    }
+
+    public async Task<IReadOnlyList<VirtualPlaylistReadModel>> ListAsync(
+        ProtocolExecutionContext context,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (context.Actor == null) return [];
+
+        var actor = context.Actor;
+        Guid[] linkIds;
+        await using (var db = await contextFactory.CreateDbContextAsync(cancellationToken))
+        {
+            linkIds = await db.PlaylistLinks.AsNoTracking()
+                .Where(item =>
+                    item.TenantId == actor.TenantId &&
+                    item.OwnerUserId == actor.EffectiveUserId &&
+                    item.TargetBackendInstanceId == context.BackendInstanceId &&
+                    (context.Protocol == ProtocolKind.Jellyfin
+                        ? item.TargetProtocol == "jellyfin"
+                        : item.TargetProtocol == "subsonic" ||
+                          item.TargetProtocol == "opensubsonic" ||
+                          item.TargetProtocol == "navidrome") &&
+                    item.Enabled &&
+                    (item.Mode == PlaylistLinkMode.Virtual || item.Mode == PlaylistLinkMode.Hybrid) &&
+                    (string.IsNullOrEmpty(context.LibraryScopeId) ||
+                     item.LibraryScopeId == context.LibraryScopeId))
+                .OrderBy(item => item.CreatedAt)
+                .Select(item => item.Id)
+                .ToArrayAsync(cancellationToken);
+        }
+
+        var result = new List<VirtualPlaylistReadModel>(linkIds.Length);
+        // ponytail: one scoped read per visible link; batch only if measured browse latency requires it.
+        foreach (var linkId in linkIds)
+        {
+            var playlist = await ReadAsync(context, CreateProtocolId(linkId), cancellationToken);
+            if (playlist != null) result.Add(playlist);
+        }
+        return result;
     }
 
     public async Task<VirtualPlaylistReadModel?> ReadAsync(

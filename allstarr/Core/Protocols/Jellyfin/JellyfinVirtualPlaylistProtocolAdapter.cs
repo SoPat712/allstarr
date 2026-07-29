@@ -23,12 +23,24 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter
     public bool IsVirtualPlaylistId(string? value) =>
         PlaylistVirtualizationService.TryParseProtocolId(value, out _);
 
+    public async Task<IReadOnlyList<Dictionary<string, object?>>> ListItemsAsync(
+        ProtocolExecutionContext context,
+        CancellationToken cancellationToken)
+    {
+        var visible = await playlists.ListAsync(context, cancellationToken);
+        return visible.Select(ToItem).ToArray();
+    }
+
     public async Task<IActionResult?> ReadItemAsync(
         ProtocolExecutionContext context, string id, CancellationToken cancellationToken)
     {
         var playlist = await playlists.ReadAsync(context, id, cancellationToken);
         if (playlist == null) return null;
-        return new JsonResult(new Dictionary<string, object?>
+        return new JsonResult(ToItem(playlist));
+    }
+
+    private Dictionary<string, object?> ToItem(VirtualPlaylistReadModel playlist) =>
+        new()
         {
             ["Name"] = playlist.Name,
             ["Overview"] = playlist.Description,
@@ -46,8 +58,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter
             {
                 [playlist.SourceProviderId] = playlist.SourceRevision
             }
-        });
-    }
+        };
 
     public async Task<IActionResult?> ReadItemsAsync(
         ProtocolExecutionContext context, string id, CancellationToken cancellationToken)

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text;
 using System.Globalization;
 using allstarr.Models.Domain;
@@ -281,6 +282,12 @@ public partial class JellyfinController
             if (ShouldProcessSpotifyPlaylistCounts(browseResult, includeItemTypes))
             {
                 _logger.LogDebug("Browse result has Items, checking for Spotify playlists to update counts");
+            }
+
+            if (requestedTypes?.Contains("Playlist", StringComparer.OrdinalIgnoreCase) == true)
+            {
+                return await MergeVirtualPlaylistBrowseAsync(
+                    browseResult, limit, startIndex, HttpContext.RequestAborted);
             }
 
             var result = JsonSerializer.Deserialize<object>(browseResult.RootElement.GetRawText());
@@ -1015,6 +1022,43 @@ public partial class JellyfinController
                 }
             }
         }
+    }
+
+    private async Task<IActionResult> MergeVirtualPlaylistBrowseAsync(
+        JsonDocument backendResult,
+        int limit,
+        int startIndex,
+        CancellationToken cancellationToken)
+    {
+        var root = JsonNode.Parse(backendResult.RootElement.GetRawText()) as JsonObject ?? new JsonObject();
+        var items = root["Items"] as JsonArray;
+        if (items == null)
+        {
+            items = [];
+            root["Items"] = items;
+        }
+        var backendTotal = root["TotalRecordCount"]?.GetValue<int>() ?? items.Count;
+        var virtualItems = await _virtualPlaylistProtocolAdapter.ListItemsAsync(
+            HttpContext.RequireProtocolExecutionContext(), cancellationToken);
+        var virtualPage = GetVirtualPlaylistPage(backendTotal, items.Count, startIndex, limit);
+        foreach (var item in virtualItems.Skip(virtualPage.Start).Take(virtualPage.Take))
+            items.Add(JsonSerializer.SerializeToNode(item));
+        root["TotalRecordCount"] = backendTotal + virtualItems.Count;
+        root["StartIndex"] = startIndex;
+        return Content(root.ToJsonString(), "application/json");
+    }
+
+    private static (int Start, int Take) GetVirtualPlaylistPage(
+        int backendTotal,
+        int backendReturned,
+        int startIndex,
+        int limit)
+    {
+        var requestedLimit = Math.Max(0, limit);
+        var backendEnd = startIndex + backendReturned;
+        return backendEnd < backendTotal || backendReturned >= requestedLimit
+            ? (0, 0)
+            : (Math.Max(0, backendEnd - backendTotal), requestedLimit - backendReturned);
     }
 
     #endregion

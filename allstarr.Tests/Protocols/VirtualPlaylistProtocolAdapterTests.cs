@@ -31,6 +31,23 @@ public sealed class VirtualPlaylistProtocolAdapterTests
     }
 
     [Fact]
+    public async Task JellyfinList_PublishesCompleteDiscoverablePlaylistSummaries()
+    {
+        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(new StubVirtualizationService(Model()));
+
+        var item = Assert.Single(await adapter.ListItemsAsync(
+            Context(ProtocolKind.Jellyfin), CancellationToken.None));
+
+        Assert.Equal(ProtocolId, item["Id"]);
+        Assert.Equal("Road Trip", item["Name"]);
+        Assert.Equal("Playlist", item["Type"]);
+        Assert.Equal("Audio", item["MediaType"]);
+        Assert.Equal(2, item["ChildCount"]);
+        Assert.True((long)item["RunTimeTicks"]! > 0);
+        Assert.NotEmpty(Assert.IsType<Dictionary<string, string>>(item["ProviderIds"]));
+    }
+
+    [Fact]
     public async Task SubsonicRead_ShapesJsonAndXmlWithoutExternalStreamIds()
     {
         var adapter = new SubsonicVirtualPlaylistProtocolAdapter(
@@ -76,6 +93,10 @@ public sealed class VirtualPlaylistProtocolAdapterTests
 
     private sealed class StubVirtualizationService(VirtualPlaylistReadModel? model) : IPlaylistVirtualizationService
     {
+        public Task<IReadOnlyList<VirtualPlaylistReadModel>> ListAsync(
+            ProtocolExecutionContext context, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<VirtualPlaylistReadModel>>(model == null ? [] : [model]);
+
         public Task<VirtualPlaylistReadModel?> ReadAsync(
             ProtocolExecutionContext context, string protocolId, CancellationToken cancellationToken = default) =>
             Task.FromResult(model);
