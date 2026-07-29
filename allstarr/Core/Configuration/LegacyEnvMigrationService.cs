@@ -242,7 +242,7 @@ public sealed class LegacyEnvMigrationService
                     ? "import_playlist_links"
                     : "requires_target_selection";
                 reason = action == "import_playlist_links"
-                    ? "Create durable disabled playlist links and schedules for administrator review."
+                    ? "Create active durable playlist links and schedules."
                     : "At least one playlist still needs an explicit source account, backend target, or behavior review.";
             }
             if (entry.Disposition == LegacyEnvDisposition.DurableSetting)
@@ -666,7 +666,11 @@ public sealed class LegacyEnvMigrationService
                         MisfirePolicy = ScheduleMisfirePolicy.RunOnce,
                         RetryPolicyJson = """{"policy":"standard"}""",
                         PayloadTemplateJson = "{}",
-                        Enabled = false,
+                        Enabled = true,
+                        NextRunAt = DurableScheduleEngine.GetNextOccurrence(
+                            playlist.SyncSchedule,
+                            "UTC",
+                            _clock.UtcNow),
                         CreatedAt = _clock.UtcNow,
                         UpdatedAt = _clock.UtcNow,
                         Revision = 1
@@ -678,7 +682,7 @@ public sealed class LegacyEnvMigrationService
                         OwnerUserId = state.ActorUserId.Value,
                         ProviderAccountId = spotifyAccount.Id,
                         ScheduleId = schedule.Id,
-                        Enabled = false,
+                        Enabled = true,
                         LibraryScopeId = playlist.LibraryScopeId,
                         SourceProviderId = "spotify",
                         SourcePlaylistId = playlist.SourcePlaylistId,
@@ -1100,7 +1104,7 @@ public sealed class LegacyEnvMigrationService
             return item with
             {
                 Action = "import_playlist_link",
-                Reason = "Create a disabled durable playlist link and schedule for administrator review.",
+                Reason = "Create an active durable playlist link and schedule.",
                 TargetProtocol = identity.BackendType,
                 TargetBackendInstanceId = identity.BackendInstanceId
             };

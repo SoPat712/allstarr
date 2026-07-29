@@ -1074,6 +1074,7 @@ public sealed class PlaylistLinksController(
         artworkUrl = value.ArtworkReferenceKey == null ? null :
             $"/api/admin/playlist-sources/{value.ProviderAccountId}/playlists/{Uri.EscapeDataString(value.SourcePlaylistId)}/artwork",
         retrievedAt = value.RetrievedAt,
+        lastRematchedAt = value.LastMatchedAt,
         completedAt = value.CompletedAt,
         syncState = value.SyncState?.ToString().ToLowerInvariant(),
         trackCount = value.TotalCount,

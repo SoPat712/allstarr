@@ -902,6 +902,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         await _service.RefreshAsync(Context(), _link);
         var refreshed = await reader.ReadByLinkIdAsync(_tenant, _user, _link);
         Assert.Equal(_now, refreshed!.CompletedAt);
+        Assert.Equal(_now, refreshed.LastMatchedAt);
     }
 
     [Fact]

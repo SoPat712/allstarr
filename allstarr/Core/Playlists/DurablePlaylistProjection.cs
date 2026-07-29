@@ -47,6 +47,7 @@ public sealed record DurablePlaylistProjection(
     DateTimeOffset? VerifiedAt = null)
 {
     public string? Description { get; init; }
+    public DateTimeOffset? LastMatchedAt { get; init; }
     public Guid? RunId { get; init; }
     public long? Generation { get; init; }
     public int MaterializedCount { get; init; }
@@ -279,6 +280,9 @@ public sealed class DurablePlaylistProjectionReader(
             run?.VerifiedAt)
         {
             Description = snapshot.Description,
+            LastMatchedAt = publishedMatches.Count == 0
+                ? null
+                : publishedMatches.Values.Max(item => item.DecidedAt),
             RunId = run?.Id,
             Generation = run?.Generation,
             MaterializedCount = materializedCount

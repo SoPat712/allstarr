@@ -1,4 +1,5 @@
 using allstarr.Core.Configuration;
+using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -232,6 +233,100 @@ public sealed class DurableStorageTests : IAsyncLifetime
         Assert.Equal(TrackMatchState.Unresolved, await context.TrackMatches
             .Select(item => item.State)
             .SingleAsync());
+    }
+
+    [Fact]
+    public async Task ImportedPlaylistScheduleMigration_ActivatesLegacyLinksIdempotently()
+    {
+        await using var context = await Factory().CreateDbContextAsync();
+        var migrator = context.GetService<IMigrator>();
+        await migrator.MigrateAsync("20260727234500_AllowSuggestedTrackTargets");
+        var now = DateTimeOffset.UtcNow;
+        var tenantId = Guid.CreateVersion7();
+        var userId = Guid.CreateVersion7();
+        var accountId = Guid.CreateVersion7();
+        var scheduleId = Guid.CreateVersion7();
+        context.AddRange(
+            new TenantRecord
+            {
+                Id = tenantId,
+                Slug = "legacy-playlist",
+                Name = "Legacy playlist",
+                CreatedAt = now
+            },
+            new PlatformUserRecord
+            {
+                Id = userId,
+                TenantId = tenantId,
+                DisplayName = "User",
+                Status = PlatformUserStatus.Active,
+                CreatedAt = now,
+                UpdatedAt = now
+            },
+            new ProviderAccountRecord
+            {
+                Id = accountId,
+                TenantId = tenantId,
+                OwnerUserId = userId,
+                ProviderId = "spotify",
+                DisplayName = "Spotify",
+                Scope = ProviderAccountScope.User,
+                Enabled = true,
+                CreatedAt = now,
+                UpdatedAt = now
+            },
+            new JobScheduleRecord
+            {
+                Id = scheduleId,
+                TenantId = tenantId,
+                OwnerUserId = userId,
+                LibraryScopeId = "music",
+                JobType = DurableScheduleEngine.PlaylistSyncJobType,
+                CronExpression = "0 8 * * *",
+                TimeZoneId = "UTC",
+                OverlapPolicy = ScheduleOverlapPolicy.Skip,
+                MisfirePolicy = ScheduleMisfirePolicy.RunOnce,
+                RetryPolicyJson = "{}",
+                PayloadTemplateJson = "{}",
+                Enabled = false,
+                CreatedAt = now,
+                UpdatedAt = now,
+                Revision = 1
+            });
+        context.PlaylistLinks.Add(new PlaylistLinkRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            ProviderAccountId = accountId,
+            ScheduleId = scheduleId,
+            Enabled = false,
+            LibraryScopeId = "music",
+            SourceProviderId = "spotify",
+            SourcePlaylistId = "source",
+            SourcePlaylistIdHash = new string('a', 64),
+            TargetProtocol = "jellyfin",
+            TargetBackendInstanceId = "primary",
+            Mode = PlaylistLinkMode.Materialized,
+            MaterializationMode = PlaylistMaterializationMode.Reconcile,
+            RuleVersion = LegacyEnvMigrationService.MigrationSchemaVersion,
+            PolicyVersion = LegacyEnvMigrationService.MigrationSchemaVersion,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Revision = 1
+        });
+        await context.SaveChangesAsync();
+
+        await migrator.MigrateAsync();
+        context.ChangeTracker.Clear();
+
+        var link = await context.PlaylistLinks.SingleAsync();
+        var schedule = await context.JobSchedules.SingleAsync();
+        Assert.True(link.Enabled);
+        Assert.True(schedule.Enabled);
+        Assert.NotNull(schedule.NextRunAt);
+        Assert.Equal(2, link.Revision);
+        Assert.Equal(2, schedule.Revision);
     }
 
     [Fact]

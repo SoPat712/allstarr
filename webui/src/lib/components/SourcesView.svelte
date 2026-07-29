@@ -26,6 +26,7 @@
     sourceMetrics,
     sourceNeedsAccount,
     sourceStatus,
+    supportsStreamingDiagnostic,
   } from "$lib/sources";
   import { liveUpdates } from "$lib/live-updates.svelte";
 
@@ -413,7 +414,7 @@
               <button class="button-secondary" type="button" disabled={!account.enabled || Boolean(action)} onclick={() => void test(account)}>
                 {action === `${account.id}:all` ? "Testing…" : "Test connection"}
               </button>
-              {#if administrator && (definition?.categories ?? []).includes("streaming")}
+              {#if administrator && supportsStreamingDiagnostic(capabilities)}
                 <button class="button-secondary" type="button" disabled={!account.enabled || Boolean(action)} onclick={() => void measure(account)}>
                   {action === `${account.id}:cts` ? "Measuring…" : "Measure CTS"}
                 </button>

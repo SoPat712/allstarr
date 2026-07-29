@@ -123,7 +123,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Apply_ImportsBackendIdentityPlaylistLinkAndDisabledScheduleWhenExplicit()
+    public async Task Apply_ImportsBackendIdentityPlaylistLinkAndActiveScheduleWhenExplicit()
     {
         var service = CreateService();
         var preview = await service.PreviewAsync(Source("""
@@ -156,11 +156,11 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         Assert.Equal("primary", identity.BackendInstanceId);
         Assert.Equal("jellyfin-user-id", identity.PrincipalId);
         var schedule = Assert.Single(await db.JobSchedules.ToListAsync());
-        Assert.False(schedule.Enabled);
-        Assert.Null(schedule.NextRunAt);
+        Assert.True(schedule.Enabled);
+        Assert.True(schedule.NextRunAt > DateTimeOffset.UtcNow.AddMinutes(-1));
         Assert.Equal("0 8 * * *", schedule.CronExpression);
         var link = Assert.Single(await db.PlaylistLinks.ToListAsync());
-        Assert.False(link.Enabled);
+        Assert.True(link.Enabled);
         Assert.Equal(schedule.Id, link.ScheduleId);
         Assert.Equal("source-id", link.SourcePlaylistId);
         Assert.Equal("target-id", link.TargetPlaylistId);

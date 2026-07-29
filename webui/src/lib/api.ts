@@ -504,6 +504,7 @@ export type PlaylistDetails = {
   targetPlaylistId?: string | null;
   artworkUrl?: string | null;
   retrievedAt: string;
+  lastRematchedAt?: string | null;
   completedAt?: string | null;
   syncState?: string | null;
   trackCount: number;
@@ -765,10 +766,22 @@ async function request(input: RequestInfo | URL, init?: RequestInit) {
   });
 
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { error?: string; message?: string } | null;
-    throw new Error(body?.error || body?.message || `${response.status} ${response.statusText}`);
+    const body = normalizeResponse(await response.json().catch(() => null));
+    throw new ApiError(response.status, response.statusText, body);
   }
   return response;
+}
+
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    statusText: string,
+    readonly details: unknown,
+  ) {
+    const body = details as { error?: string; message?: string; stage?: string } | null;
+    const message = body?.error || body?.message || `${status} ${statusText}`;
+    super(body?.stage ? `${body.stage}: ${message}` : message);
+  }
 }
 
 async function json<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {

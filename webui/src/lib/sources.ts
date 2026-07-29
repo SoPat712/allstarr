@@ -62,6 +62,9 @@ export function sourceMetrics(
   };
 }
 
+export const supportsStreamingDiagnostic = (health: ProviderHealth[]) =>
+  health.some((item) => item.capability.toLowerCase() === "streaming" && item.supported);
+
 const builtInSettings: Record<string, ProviderSetting[]> = {
   spotify: [{
     key: "sessionCookie",

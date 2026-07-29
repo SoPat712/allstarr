@@ -474,6 +474,7 @@
           <div><strong>{details.externalCount}</strong><small>External</small></div>
           <div class:attention={details.unresolvedCount > 0}><strong>{details.unresolvedCount}</strong><small>Unmatched</small></div>
           <div><strong>{relativeTime(details.retrievedAt)}</strong><small>Source refreshed</small></div>
+          <div><strong>{relativeTime(details.lastRematchedAt)}</strong><small>Last rematch</small></div>
           <div><strong>{relativeTime(details.completedAt)}</strong><small>Last target sync</small></div>
           <div class="playlist-schedule-stat">
             <strong title={details.schedule?.nextRunAt ? new Date(details.schedule.nextRunAt).toLocaleString() : undefined}>

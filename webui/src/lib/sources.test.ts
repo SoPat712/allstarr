@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderAccount, ProviderDefinition, ProviderHealth } from "./api";
-import { accountSettings, audienceLabel, sourceMetrics, sourceNeedsAccount, sourceStatus } from "./sources";
+import {
+  accountSettings,
+  audienceLabel,
+  sourceMetrics,
+  sourceNeedsAccount,
+  sourceStatus,
+  supportsStreamingDiagnostic,
+} from "./sources";
 
 const account = (scope: ProviderAccount["scope"] = "User"): ProviderAccount => ({
   id: "account-1",
@@ -79,5 +86,26 @@ describe("source presentation", () => {
       passing: 2,
       failed: 0,
     });
+  });
+
+  it("offers CTS only for a typed streaming capability", () => {
+    const streaming = {
+      provider: "future-extension",
+      providerAccountId: "account-1",
+      providerAccountName: "My source",
+      capability: "streaming",
+      accountScope: "user",
+      supported: true,
+      enabled: true,
+      configuration: "configured",
+      health: "healthy",
+      ready: true,
+      canAttempt: true,
+      canTest: true,
+    } satisfies ProviderHealth;
+
+    expect(supportsStreamingDiagnostic([streaming])).toBe(true);
+    expect(supportsStreamingDiagnostic([{ ...streaming, supported: false }])).toBe(false);
+    expect(supportsStreamingDiagnostic([{ ...streaming, capability: "metadata" }])).toBe(false);
   });
 });
