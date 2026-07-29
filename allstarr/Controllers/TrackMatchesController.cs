@@ -343,7 +343,7 @@ public sealed class TrackMatchesController(
                 suggested = allRows.Count(item => item.State == TrackMatchState.Suggested),
                 review = allRows.Count(item => item.State is TrackMatchState.Suggested or TrackMatchState.Ambiguous),
                 rejected = allRows.Count(item => item.State == TrackMatchState.Rejected),
-                attention = allRows.Count(item => item.State is TrackMatchState.Unresolved or
+                attention = allRows.Count(item => item.State is
                     TrackMatchState.Suggested or TrackMatchState.Ambiguous or TrackMatchState.Rejected)
             },
             pagination = new { page, pageSize, total, totalPages = Math.Max(1, (int)Math.Ceiling(total / (double)pageSize)) }
@@ -566,7 +566,8 @@ public sealed class TrackMatchesController(
 
     private static bool MatchesStateFilter(TrackMatchState state, string? filter) =>
         string.IsNullOrWhiteSpace(filter) ||
-        (filter.Equals("attention", StringComparison.OrdinalIgnoreCase) && state is TrackMatchState.Unresolved or TrackMatchState.Suggested or TrackMatchState.Ambiguous or TrackMatchState.Rejected) ||
+        (filter.Equals("attention", StringComparison.OrdinalIgnoreCase) && state is
+            TrackMatchState.Suggested or TrackMatchState.Ambiguous or TrackMatchState.Rejected) ||
         (filter.Equals("matched", StringComparison.OrdinalIgnoreCase) && state is TrackMatchState.Accepted or TrackMatchState.Pinned) ||
         state.ToString().Equals(filter, StringComparison.OrdinalIgnoreCase);
 

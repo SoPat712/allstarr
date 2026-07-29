@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
 using allstarr.Controllers;
+using allstarr.Core.Storage;
 
 namespace allstarr.Tests;
 
@@ -26,5 +27,23 @@ public sealed class TrackMatchesControllerContractTests
         Assert.Contains("Local", projected);
         Assert.Contains("External", projected);
         Assert.DoesNotContain("Metadata only", projected);
+    }
+
+    [Fact]
+    public void Attention_filter_is_disjoint_from_matched_and_unresolved()
+    {
+        var matches = typeof(TrackMatchesController).GetMethod(
+            "MatchesStateFilter",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+        bool Filter(TrackMatchState state, string value) =>
+            (bool)matches.Invoke(null, [state, value])!;
+
+        Assert.True(Filter(TrackMatchState.Suggested, "attention"));
+        Assert.True(Filter(TrackMatchState.Ambiguous, "attention"));
+        Assert.True(Filter(TrackMatchState.Rejected, "attention"));
+        Assert.False(Filter(TrackMatchState.Unresolved, "attention"));
+        Assert.False(Filter(TrackMatchState.Accepted, "attention"));
+        Assert.True(Filter(TrackMatchState.Unresolved, "unresolved"));
+        Assert.True(Filter(TrackMatchState.Accepted, "matched"));
     }
 }

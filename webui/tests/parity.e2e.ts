@@ -878,13 +878,13 @@ test("Add playlist links a Jellyfin playlist before its Source on mobile", async
   await expect(dialog).toBeHidden();
 });
 
-test("Suggested mappings sort by confidence and deep links open review", async ({ page }) => {
+test("Tentative mappings sort by confidence and deep links open review", async ({ page }) => {
   await mockApi(page);
   await page.goto("#/library/mappings?search=Test%20song&review=snapshot");
   const dialog = page.getByRole("dialog", { name: "Test song" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("ISRC US-AAA-26-00001")).toHaveCount(2);
-  await expect(dialog.getByText("Lumen Audio · provider-track")).toBeVisible();
+  await expect(dialog.locator(".candidate-provider")).toContainText("Lumen Audio");
   await expect(dialog.locator(".candidate-card .mapping-art > span")).toBeVisible();
   await dialog.getByRole("button", { name: "Close match dialog" }).click();
 
@@ -897,10 +897,13 @@ test("Suggested mappings sort by confidence and deep links open review", async (
   const unresolved = page.waitForRequest((item) =>
     item.url().includes("/api/admin/track-matches") &&
     new URL(item.url()).searchParams.get("state") === "unresolved");
-  await page.getByRole("button", { name: "Status" }).click();
-  await page.getByRole("option", { name: "Unresolved" }).click();
+  await page.getByRole("button", { name: "Unresolved 0" }).click();
   await unresolved;
-  await page.getByRole("button", { name: /Suggested.*High likelihood/ }).click();
+  const attention = page.waitForRequest((item) =>
+    item.url().includes("/api/admin/track-matches") &&
+    new URL(item.url()).searchParams.get("state") === "attention");
+  await page.getByRole("button", { name: "Needs attention 1" }).click();
+  await attention;
   await expect(page.getByRole("button", { name: "Accept" })).toBeVisible();
 });
 

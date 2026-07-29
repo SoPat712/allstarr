@@ -4,6 +4,12 @@ export function isAttention(state: string) {
   return ["unresolved", "suggested", "ambiguous", "rejected"].includes(state.toLowerCase());
 }
 
+export function reviewStateLabel(state: string) {
+  return state.toLowerCase() === "suggested"
+    ? "Tentative"
+    : state.replaceAll("_", " ");
+}
+
 export function percent(value?: number | null) {
   return value == null || !Number.isFinite(value) ? "—" : `${Math.round(value * 1_000) / 10}%`;
 }
@@ -61,17 +67,26 @@ export function currentTarget(match: MatchReviewItem) {
   if (match.localTrack)
     return {
       title: match.localTrack.title,
-      detail: match.localTrack.artist || match.localTrack.backendItemId,
+      artist: match.localTrack.artist,
+      album: match.localTrack.album,
+      durationMilliseconds: match.localTrack.durationMilliseconds,
+      identity: match.localTrack.id,
       providerId: "local",
       artworkUrl: match.localTrack.artworkUrl,
     };
   const route = match.providerIdentities.find(
     (identity) => identity.providerId.toLowerCase() !== match.providerId.toLowerCase(),
   );
+  const candidate = route && match.candidates.find(
+    (item) => item.providerTrackIds?.[route.providerId] === route.externalId,
+  );
   return route
     ? {
-        title: route.externalId,
-        detail: route.verification,
+        title: candidate?.title || "Metadata unavailable",
+        artist: candidate?.artist || "Unknown artist",
+        album: candidate?.album,
+        durationMilliseconds: candidate?.durationMilliseconds,
+        identity: route.externalId,
         providerId: route.providerId,
         artworkUrl: null,
       }

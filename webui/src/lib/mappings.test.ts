@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   candidateResolution,
+  currentTarget,
   differenceHash,
   hashSimilarity,
   isAttention,
   percent,
   providerResultCounts,
   rankedTargets,
+  reviewStateLabel,
   scoreComponents,
 } from "./mappings";
 
@@ -24,6 +26,7 @@ describe("mapping review presentation", () => {
   it("keeps scoring evidence ordered and state semantics stable", () => {
     expect(isAttention("Ambiguous")).toBe(true);
     expect(isAttention("accepted")).toBe(false);
+    expect(reviewStateLabel("suggested")).toBe("Tentative");
     expect(percent(0.9346)).toBe("93.5%");
     expect(scoreComponents({ components: { title: 0.9, artist: 0.75 } })).toEqual([
       ["title", 0.9],
@@ -66,5 +69,36 @@ describe("mapping review presentation", () => {
       externalId: "candidate",
     });
     expect(candidateResolution({ providerTrackIds: { spotify: "source" } }, "spotify")).toBeNull();
+  });
+
+  it("projects external target metadata instead of reducing the match to a provider id", () => {
+    const target = currentTarget({
+      externalSnapshotId: "snapshot",
+      providerId: "spotify",
+      libraryScopeId: "music",
+      state: "accepted",
+      decisionSource: "track_match_decision",
+      providerIdentities: [
+        { providerId: "spotify", externalId: "source", scope: "catalog", verification: "verified" },
+        { providerId: "qobuz", externalId: "target", scope: "catalog", verification: "verified" },
+      ],
+      candidates: [{
+        title: "Target title",
+        artist: "Target artist",
+        album: "Target album",
+        durationMilliseconds: 180_000,
+        providerTrackIds: { qobuz: "target" },
+      }],
+      reasons: [],
+      warnings: [],
+    });
+
+    expect(target).toMatchObject({
+      providerId: "qobuz",
+      identity: "target",
+      title: "Target title",
+      artist: "Target artist",
+      album: "Target album",
+    });
   });
 });

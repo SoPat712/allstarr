@@ -21,6 +21,7 @@
     currentTarget,
     isAttention,
     percent,
+    reviewStateLabel,
     scoreComponents,
   } from "$lib/mappings";
   import { formatDuration } from "$lib/playlists";
@@ -260,20 +261,17 @@
       </header>
 
       <div class="mapping-metrics" aria-label="Match totals">
-        <button class="metric-card" aria-pressed={stateFilter === ""} onclick={() => setState("")}>
-          <span>Total</span><strong>{data.stats.total}</strong>
+        <button class="metric-card" aria-pressed={stateFilter === "matched"} onclick={() => setState("matched")}>
+          <span>Matched</span><strong>{data.stats.matched}</strong>
         </button>
         <button class="metric-card attention-card" aria-pressed={stateFilter === "attention"} onclick={() => setState("attention")}>
           <span>Needs attention</span><strong>{data.stats.attention}</strong>
         </button>
-        <button class="metric-card" aria-pressed={stateFilter === "suggested"} onclick={() => setState("suggested")}>
-          <span>Suggested</span><strong>{data.stats.suggested}</strong>
-        </button>
-        <button class="metric-card" aria-pressed={stateFilter === "matched"} onclick={() => setState("matched")}>
-          <span>Matched</span><strong>{data.stats.matched}</strong>
-        </button>
         <button class="metric-card" aria-pressed={stateFilter === "unresolved"} onclick={() => setState("unresolved")}>
           <span>Unresolved</span><strong>{data.stats.unresolved}</strong>
+        </button>
+        <button class="metric-card" aria-pressed={stateFilter === ""} onclick={() => setState("")}>
+          <span>Total</span><strong>{data.stats.total}</strong>
         </button>
       </div>
 
@@ -307,19 +305,19 @@
           <article class:needs-attention={isAttention(match.state)} class="mapping-row">
             <div class="mapping-comparison">
               <div class="mapping-party">
-                <span class="media-art mapping-art">
-                  <ProviderMark id={match.providerId} definition={provider(match.providerId)} />
-                  {#if match.sourceArtworkUrl || match.artworkUrl}
-                    <img src={match.sourceArtworkUrl || match.artworkUrl || ""} alt="" loading="lazy" onerror={(event) => event.currentTarget.remove()} />
-                  {/if}
-                </span>
+                <MediaArtwork
+                  class="mapping-art"
+                  url={match.sourceArtworkUrl || match.artworkUrl}
+                />
                 <span class="mapping-party-copy">
                   <span class="mapping-provider">
                     <ProviderMark id={match.providerId} definition={provider(match.providerId)} />
                     {providerName(match.providerId)} source
                   </span>
                   <strong>{match.title || "Unknown track"}</strong>
-                  <small>{match.artist || "Unknown artist"}{match.album ? ` · ${match.album}` : ""} · {formatDuration(match.durationMilliseconds)}{match.isrc ? ` · ${match.isrc}` : ""}</small>
+                  <small>{match.artist || "Unknown artist"}</small>
+                  <small>{match.album || "Unknown album"}</small>
+                  <small>{formatDuration(match.durationMilliseconds)} · Snapshot {match.externalSnapshotId}</small>
                 </span>
               </div>
 
@@ -350,14 +348,21 @@
                         : "No candidate"}
                   </span>
                   <strong>{target?.title || candidate?.title || "Unmatched"}</strong>
-                  <small>{target?.detail || candidate?.artist || candidate?.album || "Rematch or search interactively"}</small>
+                  <small>{target?.artist || candidate?.artist || "No playable candidate"}</small>
+                  <small>{target?.album || candidate?.album || "Rematch or search interactively"}</small>
+                  <small>
+                    {formatDuration(target?.durationMilliseconds ?? candidate?.durationMilliseconds)}
+                    {#if target?.identity || candidate?.libraryTrackId || candidateExternalId}
+                      · {target?.identity || candidate?.libraryTrackId || candidateExternalId}
+                    {/if}
+                  </small>
                 </span>
               </div>
             </div>
 
             <div class="mapping-row-footer">
               <div class="mapping-evidence">
-                <span class={`status-pill ${match.state}`}>{match.state.replaceAll("_", " ")}</span>
+                <span class={`status-pill ${match.state}`}>{reviewStateLabel(match.state)}</span>
                 <span class="mapping-evidence-summary">
                   {candidate || target ? `${percent(match.confidence)} confidence` : "Not scored"}
                   {#if match.threshold != null} · {percent(match.threshold)} auto threshold{/if}
@@ -400,7 +405,14 @@
               </div>
 
               <details class="mapping-details">
-                <summary>Scoring and technical details</summary>
+                <summary>Why this score?</summary>
+                <p>
+                  Base evidence uses available title, artist, album, duration, ISRC, artwork,
+                  and verified provider identity. Missing evidence is omitted rather than
+                  scored as zero. The acceptance threshold is {percent(match.threshold)};
+                  ambiguity and warnings keep a close result in review. Local candidates add
+                  the configured 7% preference only after compatible evidence is scored.
+                </p>
                 <dl>
                   {#if candidate}
                     {#each scoreComponents(candidate) as [name, value]}
