@@ -30,7 +30,7 @@ The parser classifies recognized input rather than copying arbitrary keys.
 | Spotify playlist | Create a disabled durable link and schedule only when its Spotify account, owner, backend target, and ordering behavior are unambiguous. |
 | Obsolete or unknown | Report and leave behind. |
 
-The exact recognized aliases and dispositions are owned by `allstarr/Core/Configuration/LegacyEnvParser.cs`. Validation and durable application are owned by `LegacyEnvMigrationService.cs`. Tests in `allstarr.Tests/LegacyEnvParserTests.cs` and `LegacyEnvMigrationServiceTests.cs` are the executable contract.
+The exact recognized aliases and dispositions are owned by `allstarr/Core/Configuration/LegacyEnvParser.cs`. Validation and durable application are owned by `LegacyEnvMigrationService.cs`. Tests in `allstarr.Tests/Configuration/LegacyEnvParserTests.cs` and `allstarr.Tests/Configuration/LegacyEnvMigrationServiceTests.cs` are the executable contract.
 
 Legacy Redis/Valkey, SQLite, mapping-file, cache-file, AIO, and Compose-overlay values are recognized only so the preview can explain that they are obsolete. Their data is not imported as runtime state.
 

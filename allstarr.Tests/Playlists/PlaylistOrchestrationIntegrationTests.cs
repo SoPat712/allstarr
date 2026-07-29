@@ -396,6 +396,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             var ambiguousOne = Local(ambiguousOneId, "ambiguous-1", "unused-2", "Ambiguous");
             var ambiguousTwo = Local(ambiguousTwoId, "ambiguous-2", "unused-3", "Ambiguous");
             ambiguousOne.ProviderIdsJson = ambiguousTwo.ProviderIdsJson = "{}";
+            ambiguousOne.MusicBrainzRecordingId = Guid.CreateVersion7().ToString();
+            ambiguousTwo.MusicBrainzRecordingId = Guid.CreateVersion7().ToString();
             db.LibraryTracks.AddRange(suggestedCandidate, ambiguousOne, ambiguousTwo);
             await db.SaveChangesAsync();
         }
@@ -1079,14 +1081,14 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.Equal(["local", "external", "unmatched"],
             projection.Entries.Select(item => item.RouteKind));
         Assert.Equal(TrackMatchState.Accepted, projection.Entries[1].MatchState);
-        Assert.Equal("qobuz", projection.Entries[1].RouteProviderId);
-        Assert.Equal(["qobuz", "deezer"],
+        Assert.Equal("deezer", projection.Entries[1].RouteProviderId);
+        Assert.Equal(["deezer", "qobuz"],
             projection.Entries[1].ProviderRoutes.Select(item => item.ProviderId));
         var virtualPlaylist = await new PlaylistVirtualizationService(
                 _factory, new DurablePlaylistProjectionReader(_factory, gateway.Object))
             .ReadAsync(Context(), PlaylistVirtualizationService.CreateProtocolId(_link));
         Assert.Equal(projection.PlayableCount, virtualPlaylist!.Tracks.Count);
-        Assert.Equal("ext-qobuz-song-qobuz-external",
+        Assert.Equal("ext-deezer-song-deezer-external",
             virtualPlaylist.Tracks.Single(item => item.SourcePosition == 1).BackendItemId);
     }
 

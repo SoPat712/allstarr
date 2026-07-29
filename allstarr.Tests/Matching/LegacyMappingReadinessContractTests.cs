@@ -50,7 +50,7 @@ public sealed class LegacyMappingReadinessContractTests
         Assert.Contains("IProtocolProviderGateway", controller, StringComparison.Ordinal);
         Assert.Contains("ProviderCapabilityKind.Streaming", controller, StringComparison.Ordinal);
         Assert.Contains("ProviderCapabilityKind.Download", controller, StringComparison.Ordinal);
-        Assert.Contains("providerGateway.SearchAsync", controller, StringComparison.Ordinal);
+        Assert.Contains("providerGateway.SearchPlayableSongsAsync", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("PerProviderTrackMatcher.SearchPlayableAsync", controller, StringComparison.Ordinal);
     }
 
