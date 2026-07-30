@@ -416,6 +416,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         {
             var suggestedCandidate = Local(suggestedId, "suggested", "unused-1", "Suggestion");
             suggestedCandidate.ProviderIdsJson = "{}";
+            suggestedCandidate.Title = "Suggestion Song";
             suggestedCandidate.Album = null;
             suggestedCandidate.DurationMilliseconds = 999_000;
             var ambiguousOne = Local(ambiguousOneId, "ambiguous-1", "unused-2", "Ambiguous");

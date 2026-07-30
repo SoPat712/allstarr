@@ -1066,7 +1066,7 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   const request = page.waitForRequest((item) =>
     item.url().includes("/api/admin/track-matches") &&
     new URL(item.url()).searchParams.get("sort") === "confidence_desc");
-  await page.getByRole("button", { name: "Confidence" }).click();
+  await page.getByRole("button", { name: "Confidence", exact: true }).click();
   await page.getByRole("option", { name: "Highest first" }).click();
   await request;
   const unresolved = page.waitForRequest((item) =>
