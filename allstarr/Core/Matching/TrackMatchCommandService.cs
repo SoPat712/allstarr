@@ -137,6 +137,7 @@ public interface ITrackMatchRepository
         string query,
         string? libraryScopeId = null,
         int limit = 20,
+        ExternalTrackMatchSnapshot? source = null,
         CancellationToken cancellationToken = default);
 
     Task<TrackMatchActivityData> GetActivityDataAsync(
@@ -741,9 +742,11 @@ public sealed class TrackMatchCommandService(
         string query,
         string? libraryScopeId = null,
         int limit = 20,
+        ExternalTrackMatchSnapshot? source = null,
         CancellationToken cancellationToken = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        limit = Math.Clamp(limit, 1, 50);
         var patterns = query.Split((char[]?)null,
                 StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(term => $"%{term.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_")}%")
@@ -754,16 +757,28 @@ public sealed class TrackMatchCommandService(
             tracks = tracks.Where(item => item.OwnerUserId == actor.UserId);
         if (!string.IsNullOrWhiteSpace(libraryScopeId))
             tracks = tracks.Where(item => item.LibraryScopeId == libraryScopeId.Trim());
+        IReadOnlyList<LibraryTrackRecord> indexed = source == null
+            ? []
+            : await tracks.ToListAsync(cancellationToken);
+        HashSet<Guid> automatic = source == null
+            ? []
+            : decisionEngine.PrepareCandidates(indexed.Select(ToLocalCandidate))
+                .Select(source)
+                .Select(item => item.LibraryTrackId)
+                .ToHashSet();
         foreach (var pattern in patterns)
             tracks = tracks.Where(item =>
                 EF.Functions.ILike(item.Title, pattern, "\\") ||
                 EF.Functions.ILike(item.Artist, pattern, "\\") ||
                 item.Album != null && EF.Functions.ILike(item.Album, pattern, "\\"));
-        return await tracks
+        var searched = await tracks
             .OrderBy(item => item.Artist)
             .ThenBy(item => item.Title)
-            .Take(Math.Clamp(limit, 1, 50))
+            .Take(limit)
             .ToListAsync(cancellationToken);
+        if (automatic.Count == 0) return searched;
+        var selected = indexed.Where(item => automatic.Contains(item.Id));
+        return selected.Concat(searched).DistinctBy(item => item.Id).Take(limit).ToArray();
     }
 
     public async Task<TrackMatchActivityData> GetActivityDataAsync(

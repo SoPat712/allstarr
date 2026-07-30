@@ -379,13 +379,18 @@ public sealed class TrackMatchesController(
 
         var tenantId = session!.TenantId!.Value;
         var userId = session.AllstarrUserId!.Value;
+        var source = await ReviewSourceAsync(session!, externalSnapshotId, cancellationToken);
+        var sourceCandidates = source != null &&
+                               query.Equals($"{source.Artist} {source.Title}", StringComparison.OrdinalIgnoreCase)
+            ? source
+            : null;
         var tracks = await trackMatchCommands.SearchLocalTracksAsync(
             new TrackMatchActor(tenantId, userId, session.IsAdministrator),
             query,
             libraryScopeId,
             limit,
+            sourceCandidates,
             cancellationToken);
-        var source = await ReviewSourceAsync(session!, externalSnapshotId, cancellationToken);
         var scores = source == null
             ? []
             : matcher.ScoreCandidates(source, tracks.Select(ToCandidate))

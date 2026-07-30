@@ -581,6 +581,35 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void CandidateIndexFindsDecoratedSpotifyTitleInLocalJellyfinLibrary()
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            Title = "Link Up (Metro Boomin & Don Toliver, Wizkid feat. BEAM & Toian) - Spider-Verse Remix (Spider-Man: Across the Spider-Verse )",
+            Artist = "Metro Boomin, Don Toliver, Wizkid, BEAM, Toian",
+            Album = "METRO BOOMIN PRESENTS SPIDER-MAN: ACROSS THE SPIDER-VERSE (SOUNDTRACK FROM AND INSPIRED BY THE MOTION PICTURE)",
+            DurationMilliseconds = 195_386
+        };
+        var local = Candidate(scope) with
+        {
+            Title = "Link Up (Spider-Verse remix)",
+            Artist = "Metro Boomin, Don Toliver, Wizkid, BEAM, Toian",
+            Album = "METRO BOOMIN PRESENTS SPIDER‐MAN: ACROSS THE SPIDER‐VERSE: SOUNDTRACK FROM AND INSPIRED BY THE MOTION PICTURE",
+            AlbumArtist = "Metro Boomin",
+            DurationMilliseconds = 195_386,
+            Isrc = null,
+            CanonicalRecordingId = null
+        };
+
+        var selected = new TrackMatchCandidateIndex([local]).Select(source);
+        var score = Assert.Single(new TrackMatchDecisionEngine().ScoreCandidates(source, selected));
+
+        Assert.Equal(local.LibraryTrackId, score.LibraryTrackId);
+        Assert.Equal(0.07, score.Components!["localPreference"]);
+    }
+
+    [Fact]
     public void ScopedManualPinWinsButCannotCrossTenantOrInvisibleLibrary()
     {
         var scope = Scope();

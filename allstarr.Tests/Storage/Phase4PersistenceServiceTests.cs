@@ -102,8 +102,16 @@ public sealed class Phase4PersistenceServiceTests : IAsyncLifetime
             new TrackMatchActor(_tenant, _userA, false),
             "Artist Local",
             "music");
+        var sourceAware = await _matches.SearchLocalTracksAsync(
+            new TrackMatchActor(_tenant, _userA, false),
+            "words absent from the library",
+            "music",
+            source: new ExternalTrackMatchSnapshot(
+                "source", "spotify", "track", "Local", "Artist", null, null,
+                1_000, null, null, null));
 
         Assert.Equal(_localTrack, Assert.Single(tracks).Id);
+        Assert.Equal(_localTrack, Assert.Single(sourceAware).Id);
     }
 
     [Fact]

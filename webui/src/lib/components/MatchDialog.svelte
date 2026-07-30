@@ -252,17 +252,18 @@
                   >
                     <strong>{percent(candidate.confidence)}</strong>
                     <small>confidence</small>
+                    {#if resolution?.targetType === "local" && candidate.components?.localPreference}
+                      <small>+{percent(candidate.components.localPreference)} local</small>
+                    {/if}
                   </span>
                   <div class="score-components">
                     {#each scoreComponents(candidate) as [name, value]}
-                      <span>
-                        <small>{name === "localPreference"
-                          ? "local preference"
-                          : name === "preferenceScore"
-                            ? "preference score"
-                            : name.replaceAll("_", " ")}</small>
-                        <strong>{percent(value)}</strong>
-                      </span>
+                      {#if name !== "localPreference" && name !== "preferenceScore"}
+                        <span>
+                          <small>{name.replaceAll("_", " ")}</small>
+                          <strong>{percent(value)}</strong>
+                        </span>
+                      {/if}
                     {/each}
                     {#if match.sourceArtworkUrl && candidate.backendItemId}
                       <ArtworkSimilarity

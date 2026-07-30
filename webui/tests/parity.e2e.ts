@@ -309,7 +309,12 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
             libraryTrackId: "metadata-only", isLocal: false, title: "MusicBrainz album",
             artist: "Metadata only", providerTrackIds: { musicbrainzalbum: "release-id" },
             confidence: 0.99, durationMilliseconds: 180_000,
-          }],
+          }, ...(url.searchParams.get("search") === "Test song" ? [{
+            libraryTrackId: "jellyfin-track", backendItemId: "jellyfin-track", isLocal: true,
+            title: "Test song", artist: "Artist", album: "Album",
+            confidence: 0.82, durationMilliseconds: 180_000,
+            components: { title: 1, localPreference: 0.07, preferenceScore: 0.89 },
+          }] : [])],
         }],
         stats: { total: 1, matched: 0, accepted: 0, unresolved: 0, suggested: 1, review: 1, rejected: 0, attention: 1 },
         pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
@@ -1025,9 +1030,11 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   const dialog = page.getByRole("dialog", { name: "Test song" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("ISRC US-AAA-26-00001")).toHaveCount(2);
-  await expect(dialog.locator(".candidate-provider")).toContainText("Apple Music - Gamdl");
+  await expect(dialog.locator(".candidate-provider").filter({ hasText: "Apple Music - Gamdl" })).toBeVisible();
   await expect(dialog.getByText("MusicBrainz album")).toHaveCount(0);
-  await expect(dialog.locator(".candidate-card .mapping-art > span")).toBeVisible();
+  await expect(dialog.locator(".candidate-card .mapping-art > span").first()).toBeVisible();
+  await expect(dialog.locator(".automatic-candidates").getByText("+7% local")).toBeVisible();
+  await expect(dialog.locator(".automatic-candidates").getByText("preference score")).toHaveCount(0);
   await dialog.getByLabel("Search local library and playable providers").fill("Kiss Me More");
   await dialog.getByRole("button", { name: "Search", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "Searching…" })).toBeVisible();
@@ -1038,7 +1045,7 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await expect(dialog.getByRole("button", { name: /Qobuz/ })).toHaveCount(0);
   await expect(dialog.getByText("Planet Her")).toHaveCount(2);
   await expect(dialog.getByText("base evidence")).toHaveCount(2);
-  await expect(dialog.getByText("+7% local")).toHaveCount(1);
+  await expect(dialog.locator(".target-results").getByText("+7% local")).toHaveCount(1);
   await expect(dialog.getByText("rank #1")).toBeVisible();
   await dialog.getByLabel("Search local library and playable providers").fill("No local copy");
   await dialog.getByRole("button", { name: "Search", exact: true }).click();
