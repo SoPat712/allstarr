@@ -2308,6 +2308,7 @@
     min-height: 2.4rem;
     place-items: center;
     border: 0;
+    border-radius: calc(0.8rem - 1px);
     background: transparent;
     color: var(--color-ink-muted);
     font-size: var(--text-xs);

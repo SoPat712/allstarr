@@ -773,7 +773,11 @@ test("Shared selects and settings tabs animate without remounting", async ({ pag
   await page.keyboard.press("Escape");
   const tabs = page.locator(".settings-tabs");
   await tabs.evaluate((element) => element.setAttribute("data-instance", "stable"));
-  await page.getByRole("tab", { name: "Accounts" }).click();
+  const accounts = page.getByRole("tab", { name: "Accounts" });
+  await accounts.hover();
+  expect(await accounts.evaluate((element) => getComputedStyle(element).borderTopLeftRadius))
+    .toBe(await tabs.evaluate((element) => getComputedStyle(element, "::before").borderTopLeftRadius));
+  await accounts.click();
   await expect(tabs).toHaveAttribute("data-instance", "stable");
   await expect(tabs).toHaveCSS("overflow", "hidden");
 });
