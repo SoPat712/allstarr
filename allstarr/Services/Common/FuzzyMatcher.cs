@@ -58,6 +58,16 @@ public static partial class FuzzyMatcher
         return cleaned;
     }
 
+    public static string SearchQuery(string title)
+    {
+        var cleaned = StripDecorators(title);
+        var dash = cleaned.IndexOf(" - ", StringComparison.Ordinal);
+        var bracket = cleaned.IndexOfAny(['(', '[']);
+        var end = Math.Min(dash < 0 ? cleaned.Length : dash, bracket < 0 ? cleaned.Length : bracket);
+        var query = cleaned[..end].Trim();
+        return query.Length >= 2 ? query : cleaned;
+    }
+
     /// <summary>
     /// Calculates similarity score following OPTIMAL ORDER:
     /// 1. Strip decorators (already done by caller)

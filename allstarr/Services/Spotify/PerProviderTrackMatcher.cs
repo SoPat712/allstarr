@@ -327,7 +327,7 @@ public sealed class PerProviderTrackWalker
             return PerProviderTrackMatcher.FromLocal(localMatch, localMatchScore ?? 100);
         }
 
-        var titleStripped = FuzzyMatcher.StripDecorators(source.Title);
+        var titleStripped = FuzzyMatcher.SearchQuery(source.Title);
         var primaryArtist = source.Artists.FirstOrDefault() ?? string.Empty;
         var artistQuery = $"{titleStripped} {primaryArtist}".Trim();
         var titleOnlyQuery = titleStripped;

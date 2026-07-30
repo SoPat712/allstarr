@@ -381,7 +381,7 @@ public sealed class TrackMatchesController(
         var userId = session.AllstarrUserId!.Value;
         var source = await ReviewSourceAsync(session!, externalSnapshotId, cancellationToken);
         var sourceCandidates = source != null &&
-                               query.Equals($"{source.Artist} {source.Title}", StringComparison.OrdinalIgnoreCase)
+                               query.Equals(FuzzyMatcher.SearchQuery(source.Title), StringComparison.OrdinalIgnoreCase)
             ? source
             : null;
         var tracks = await trackMatchCommands.SearchLocalTracksAsync(
@@ -683,6 +683,7 @@ public sealed class TrackMatchesController(
             overrideId = manual?.Id,
             overrideRevision = manual?.Revision,
             title = metadata.Title,
+            searchQuery = FuzzyMatcher.SearchQuery(metadata.Title ?? string.Empty),
             artist = metadata.Artist,
             album = metadata.Album,
             artworkUrl = sourceArtworkUrl ?? candidateArtworkUrl,

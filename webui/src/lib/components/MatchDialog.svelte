@@ -71,7 +71,7 @@
     }
     if (!match || preparedId === match.externalSnapshotId) return;
     preparedId = match.externalSnapshotId;
-    targetQuery = [match.artist, match.title].filter(Boolean).join(" ");
+    targetQuery = match.searchQuery || match.title || "";
     providerFilter = "";
     results = [];
     searched = false;

@@ -47,7 +47,7 @@ public sealed class PlaylistPlayableSearchServiceTests
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["apple-download", "deezer"]);
         gateway.Setup(item => item.SearchPlayableSongsAsync(
-                It.IsAny<ProtocolExecutionContext>(), "Feels Calvin Harris", 60))
+                It.IsAny<ProtocolExecutionContext>(), "Feels", 60))
             .ReturnsAsync(
                 [
                     new Song
@@ -181,7 +181,7 @@ public sealed class PlaylistPlayableSearchServiceTests
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["apple-download"]);
         gateway.Setup(item => item.SearchPlayableSongsAsync(
-                It.IsAny<ProtocolExecutionContext>(), "Feels Calvin Harris", 60))
+                It.IsAny<ProtocolExecutionContext>(), "Feels", 60))
             .ReturnsAsync(
                 [
                     new Song
@@ -235,7 +235,7 @@ public sealed class PlaylistPlayableSearchServiceTests
             .Returns(["apple-download"]);
         gateway.Setup(item => item.SearchPlayableSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(),
-                "Serenade No. 13 in G Major Wiener Philharmoniker",
+                "Serenade No. 13 in G Major",
                 60))
             .ReturnsAsync(
             [

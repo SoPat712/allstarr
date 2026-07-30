@@ -147,7 +147,7 @@ public sealed class PerProviderTrackWalkerTests
         Assert.Contains(result.Walked, attempt => attempt.Provider == "qobuz"
             && attempt.Outcome == PerProviderTrackMatcher.OutcomeEmpty);
         Assert.Equal(2, result.Walked.Count(attempt =>
-            attempt.Query == FuzzyMatcher.StripDecorators(source.Title)));
+            attempt.Query == FuzzyMatcher.SearchQuery(source.Title)));
     }
 
     [Fact]

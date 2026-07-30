@@ -61,8 +61,7 @@ public sealed class PlaylistPlayableSearchService(
         ScopedTrackMatchOverride? manualOverride,
         CancellationToken cancellationToken)
     {
-        var query = string.Join(' ', new[] { source.Title, source.Artist }
-            .Where(value => !string.IsNullOrWhiteSpace(value)));
+        var query = FuzzyMatcher.SearchQuery(source.Title);
         var songs = (await gateway.SearchPlayableSongsAsync(context, query, 60))
             .Where(IsPlayable)
             .Where(song => !string.IsNullOrWhiteSpace(song.ExternalProvider) &&

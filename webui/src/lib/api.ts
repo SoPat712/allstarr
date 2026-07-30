@@ -619,6 +619,7 @@ export type MatchReviewItem = {
   overrideId?: string | null;
   overrideRevision?: number | null;
   title?: string | null;
+  searchQuery?: string | null;
   artist?: string | null;
   album?: string | null;
   artworkUrl?: string | null;

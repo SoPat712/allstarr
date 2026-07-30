@@ -298,7 +298,7 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
         matches: [{
           externalSnapshotId: "snapshot", providerId: "lumen-audio", libraryScopeId: "library",
           state: "suggested", decisionSource: "automatic", confidence: 0.82, threshold: 0.9,
-          title: "Test song", artist: "Artist", album: "Album", isrc: "US-AAA-26-00001",
+          title: "Test song - Remix", searchQuery: "Test song", artist: "Artist", album: "Album", isrc: "US-AAA-26-00001",
           durationMilliseconds: 180_000,
           providerIdentities: [], reasons: ["title_match"], warnings: [], candidates: [{
             libraryTrackId: "local-track", backendItemId: "backend-track", title: "Test song",
@@ -1029,6 +1029,7 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await page.goto("#/library/mappings?search=Test%20song&review=snapshot");
   const dialog = page.getByRole("dialog", { name: "Test song" });
   await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel("Search local library and playable providers")).toHaveValue("Test song");
   await expect(dialog.getByText("ISRC US-AAA-26-00001")).toHaveCount(2);
   await expect(dialog.locator(".candidate-provider").filter({ hasText: "Apple Music - Gamdl" })).toBeVisible();
   await expect(dialog.getByText("MusicBrainz album")).toHaveCount(0);

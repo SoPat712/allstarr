@@ -5,6 +5,13 @@ namespace allstarr.Tests;
 
 public class FuzzyMatcherTests
 {
+    [Theory]
+    [InlineData("Link Up (Metro Boomin & Don Toliver, Wizkid feat. BEAM & Toian) - Spider-Verse Remix (Spider-Man: Across the Spider-Verse)", "Link Up")]
+    [InlineData("Feels", "Feels")]
+    public void SearchQuery_UsesTheBaseTitle(string title, string expected)
+    {
+        Assert.Equal(expected, FuzzyMatcher.SearchQuery(title));
+    }
 
     [Theory]
     [InlineData("Mr. Brightside", "Mr. Brightside", 100)]
