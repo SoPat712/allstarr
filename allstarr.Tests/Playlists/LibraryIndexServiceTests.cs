@@ -17,6 +17,7 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
     private Guid _userB;
     private Guid _identityA;
     private Guid _identityB;
+    private FakeClock _clock = null!;
 
     public async Task InitializeAsync()
     {
@@ -52,7 +53,8 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
 
         var state = new DurableStorageState(options);
         state.Set(DurableStorageReadiness.Ready, "fixture");
-        _service = new LibraryIndexService(_factory, state, new FakeClock(now));
+        _clock = new FakeClock(now);
+        _service = new LibraryIndexService(_factory, state, _clock);
     }
 
     [Fact]
@@ -69,11 +71,13 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         };
 
         var created = await _service.UpsertAsync(context, input);
+        _clock.UtcNow = _clock.UtcNow.AddMinutes(15);
         var updated = await _service.UpsertAsync(context, input with { Title = "Updated title" });
         var listed = await _service.ListAsync(context, "music");
         var candidates = await _service.GetMatchCandidatesAsync(context, "music");
 
         Assert.Equal(created.Id, updated.Id);
+        Assert.Equal(_clock.UtcNow, updated.IndexedAt);
         var item = Assert.Single(listed);
         Assert.Equal("Updated title", item.Title);
         Assert.Equal("/media/music/artist/song.flac", item.FilePath);
@@ -215,7 +219,7 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
 
     private sealed class FakeClock(DateTimeOffset now) : IPlatformClock
     {
-        public DateTimeOffset UtcNow { get; } = now;
+        public DateTimeOffset UtcNow { get; set; } = now;
     }
 
     private sealed class TestDbContextFactory(DbContextOptions<AllstarrDbContext> options)

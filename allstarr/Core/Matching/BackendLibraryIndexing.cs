@@ -263,8 +263,7 @@ public sealed class LibraryIndexMaintenanceService(
     DurableStorageState storageState,
     ILogger<LibraryIndexMaintenanceService> logger) : BackgroundService
 {
-    private static readonly TimeSpan CheckInterval = TimeSpan.FromHours(1);
-    private static readonly TimeSpan MaximumIndexAge = TimeSpan.FromHours(12);
+    private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(15);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -284,7 +283,7 @@ public sealed class LibraryIndexMaintenanceService(
                 logger.LogWarning(exception, "Durable Jellyfin audio index maintenance failed; it will retry");
             }
 
-            await Task.Delay(CheckInterval, stoppingToken);
+            await Task.Delay(RefreshInterval, stoppingToken);
         }
     }
 
@@ -304,13 +303,9 @@ public sealed class LibraryIndexMaintenanceService(
                 .Where(track => track.TenantId == identity.TenantId && track.OwnerUserId == identity.UserId &&
                     track.BackendInstanceId == identity.BackendInstanceId && track.LibraryScopeId == "music")
                 .MaxAsync(track => (DateTimeOffset?)track.IndexedAt, cancellationToken);
-            if (lastIndexedAt.HasValue && now - lastIndexedAt.Value < MaximumIndexAge) continue;
+            if (lastIndexedAt.HasValue && now - lastIndexedAt.Value < RefreshInterval) continue;
 
-            // An empty index may be the result of a transient backend/schema problem. Give it
-            // a fresh hourly idempotency bucket so a corrected deployment can recover promptly;
-            // populated indexes retain the quieter twelve-hour refresh cadence.
-            var generationWindow = lastIndexedAt.HasValue ? MaximumIndexAge : CheckInterval;
-            var generation = now.UtcTicks / generationWindow.Ticks;
+            var generation = now.UtcTicks / RefreshInterval.Ticks;
             var result = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<LibraryIndexJobPayload>(
                 "library.index",
                 $"library-index:auto:{identity.TenantId:N}:{identity.UserId:N}:{identity.BackendInstanceId}:music:{generation}",

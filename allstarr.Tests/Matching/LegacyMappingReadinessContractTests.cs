@@ -92,6 +92,7 @@ public sealed class LegacyMappingReadinessContractTests
         Assert.Contains("AddHostedService<LibraryIndexMaintenanceService>()", indexing, StringComparison.Ordinal);
         Assert.Contains("IncludeItemTypes=Audio", indexing, StringComparison.Ordinal);
         Assert.Contains("library.index", indexing, StringComparison.Ordinal);
+        Assert.Contains("TimeSpan.FromMinutes(15)", indexing, StringComparison.Ordinal);
     }
 
     [Fact]

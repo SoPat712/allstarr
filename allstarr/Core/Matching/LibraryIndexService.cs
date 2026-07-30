@@ -145,6 +145,7 @@ public sealed class LibraryIndexService : ILibraryIndexService
         record.AcceptedDecisionVersion = input.AcceptedDecisionVersion;
         record.CoverArtReference = ValidateReference(input.CoverArtReference);
         record.SourceModifiedAt = input.SourceModifiedAt;
+        record.IndexedAt = now;
         record.UpdatedAt = now;
         if (created)
         {
