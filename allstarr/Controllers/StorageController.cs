@@ -28,9 +28,17 @@ public sealed class StorageController : ControllerBase
     public async Task<IActionResult> Get(CancellationToken cancellationToken = default)
     {
         var storage = _storageState.GetSnapshot();
+        var storageResponse = new
+        {
+            provider = storage.Provider.ToString(),
+            readiness = storage.Readiness.ToString(),
+            storage.SchemaVersion,
+            storage.ErrorCode,
+            storage.CheckedAt
+        };
         if (storage.Readiness != DurableStorageReadiness.Ready)
         {
-            return Ok(new { storage, backups = Array.Empty<object>() });
+            return Ok(new { storage = storageResponse, backups = Array.Empty<object>() });
         }
 
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
@@ -51,7 +59,7 @@ public sealed class StorageController : ControllerBase
                 item.RestoreVerifiedAt
             })
             .ToListAsync(cancellationToken);
-        return Ok(new { storage, backups });
+        return Ok(new { storage = storageResponse, backups });
     }
 
     [HttpPost("backups")]
