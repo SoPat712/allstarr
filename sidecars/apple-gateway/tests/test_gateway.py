@@ -50,6 +50,9 @@ class FakeCatalog:
     async def song(self, song_id: str) -> dict[str, Any] | None:
         return None if song_id == "404" else song(song_id, "Fixture")
 
+    async def song_url(self, song_id: str) -> str | None:
+        return None if song_id == "404" else f"https://music.apple.com/us/album/fixture/1?i={song_id}"
+
 
 class FakeRunner:
     def __init__(self):
@@ -158,14 +161,14 @@ def test_song_download_uses_safe_id_quality_mapping_and_flac_contract(client):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("audio/flac")
     assert response.content == b"fLaCfixture"
-    assert client[2].calls == [("https://music.apple.com/us/song/101", "alac")]
+    assert client[2].calls == [("https://music.apple.com/us/album/fixture/1?i=101", "alac")]
     assert client[2].transcodes == ["file"]
     streamed = client[0].get("/api/stream/102", params={"quality": "aac-320"})
     assert streamed.status_code == 200
     assert streamed.headers["content-type"].startswith("audio/flac")
     assert streamed.content == b"fLaCfixture"
     assert client[2].transcodes == ["file", "stream"]
-    assert client[2].calls[-1] == ("https://music.apple.com/us/song/102", "aac")
+    assert client[2].calls[-1] == ("https://music.apple.com/us/album/fixture/1?i=102", "aac")
     assert client[0].get("/api/download/not-an-id").status_code == 400
 
 
@@ -368,6 +371,7 @@ async def test_catalog_mapping_is_deterministic():
             "trackTimeMillis": 123900,
             "artworkUrl100": "https://img/100x100.jpg",
             "releaseDate": "2026-01-02T00:00:00Z",
+            "trackViewUrl": "https://music.apple.com/us/album/fixture/1?i=101",
         }]})
 
     http_client = httpx.AsyncClient(base_url="https://itunes.apple.com/", transport=httpx.MockTransport(handler))
@@ -375,4 +379,5 @@ async def test_catalog_mapping_is_deterministic():
     result = await catalog.search_songs("Fixture", 1)
     assert result[0]["duration"] == 123
     assert result[0]["cover_url"] == "https://img/1200x1200.jpg"
+    assert await catalog.song_url("101") == "https://music.apple.com/us/album/fixture/1?i=101"
     await http_client.aclose()

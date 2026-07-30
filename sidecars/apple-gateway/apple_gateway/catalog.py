@@ -34,10 +34,17 @@ class CatalogClient:
         return [self._map(item) for item in response.json().get("results", []) if item.get("trackId")]
 
     async def song(self, song_id: str) -> dict[str, Any] | None:
+        item = await self._song(song_id)
+        return self._map(item) if item else None
+
+    async def song_url(self, song_id: str) -> str | None:
+        item = await self._song(song_id)
+        return str(item.get("trackViewUrl") or "") or None if item else None
+
+    async def _song(self, song_id: str) -> dict[str, Any] | None:
         response = await self._client.get("lookup", params={"id": song_id, "country": self._storefront})
         response.raise_for_status()
-        item = next((item for item in response.json().get("results", []) if item.get("trackId")), None)
-        return self._map(item) if item else None
+        return next((item for item in response.json().get("results", []) if item.get("trackId")), None)
 
     @staticmethod
     def _map(item: dict[str, Any]) -> dict[str, Any]:

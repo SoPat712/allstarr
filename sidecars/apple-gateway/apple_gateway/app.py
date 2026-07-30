@@ -17,7 +17,7 @@ from .config import Settings
 from .jobs import DownloadJobManager
 from .models import DownloadJobRequest, DownloadJobView, Login2faRequest, LoginRequest
 from .runner import BoundedProcessRunner, ProcessFailure
-from .security import safe_files, song_url
+from .security import safe_apple_url, safe_files, song_url
 from .wrapper import WrapperClient, WrapperResponse
 
 API_VERSION = "1.0.0"
@@ -163,9 +163,15 @@ def create_app(
 
     async def prepare_song(song_id: str, quality: str) -> tuple[Path, Path]:
         try:
-            url = song_url(config.storefront, song_id)
+            song_url(config.storefront, song_id)
+            canonical_url = await catalog_client.song_url(song_id)
+            if canonical_url is None:
+                raise HTTPException(status_code=404, detail="song_not_found")
+            url, _ = safe_apple_url(canonical_url)
         except ValueError:
             raise HTTPException(status_code=400, detail="invalid_song_id") from None
+        except httpx.HTTPError:
+            raise HTTPException(status_code=502, detail="catalog_unavailable") from None
         request_id = uuid.uuid4().hex
         root = config.data_root / "artifacts" / request_id
         try:
