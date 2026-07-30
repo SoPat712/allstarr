@@ -59,8 +59,7 @@ public sealed class JellyfinMusicEndpointPolicyMiddleware(
         // Resolve the item type with Allstarr's internal Jellyfin credential. Public
         // artwork requests intentionally have no client token, while authenticated
         // requests are still checked by JellyfinAuthFilter after this policy gate.
-        var (item, statusCode) = await proxyService.GetJsonAsyncInternal(
-            $"Items/{Uri.EscapeDataString(itemId)}");
+        var (item, statusCode) = await proxyService.GetItemAsync(Uri.EscapeDataString(itemId));
         using (item)
         {
             var isMusic = statusCode == StatusCodes.Status200OK && item != null &&

@@ -285,6 +285,7 @@ public class JellyfinProxyServiceTests
         // Assert
         Assert.NotNull(captured);
         Assert.Contains("/Items/abc-123", captured!.RequestUri!.ToString());
+        Assert.Contains("userId=user-guid-here", captured.RequestUri.ToString());
         Assert.NotNull(body);
         Assert.Equal(200, statusCode);
     }
