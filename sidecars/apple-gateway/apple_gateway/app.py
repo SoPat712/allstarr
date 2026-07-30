@@ -17,7 +17,7 @@ from .config import Settings
 from .jobs import DownloadJobManager
 from .models import DownloadJobRequest, DownloadJobView, Login2faRequest, LoginRequest
 from .runner import BoundedProcessRunner, ProcessFailure
-from .security import safe_apple_url, safe_files, song_url
+from .security import safe_apple_url, song_url
 from .wrapper import WrapperClient, WrapperResponse
 
 API_VERSION = "1.0.0"
@@ -161,7 +161,11 @@ def create_app(
             raise HTTPException(status_code=404, detail="song_not_found")
         return result
 
-    async def prepare_song(song_id: str, quality: str) -> tuple[Path, Path]:
+    async def prepare_song(
+        song_id: str,
+        quality: str,
+        fallback_quality: str | None = None,
+    ) -> tuple[Path, Path]:
         try:
             song_url(config.storefront, song_id)
             canonical_url = await catalog_client.song_url(song_id)
@@ -175,8 +179,18 @@ def create_app(
         request_id = uuid.uuid4().hex
         root = config.data_root / "artifacts" / request_id
         try:
-            artifacts = await process_runner.download(url, _codec(quality), root / "output", root / "temporary")
-            lyrics = safe_files(root / "output", {".lrc"})
+            try:
+                artifacts = await process_runner.download(url, _codec(quality), root / "output", root / "temporary")
+            except ProcessFailure as exc:
+                if fallback_quality is None or exc.code not in {"artifact_missing", "gamdl_failed"}:
+                    raise
+                artifacts = await process_runner.download(
+                    url,
+                    _codec(fallback_quality),
+                    root / "output-fallback",
+                    root / "temporary-fallback",
+                )
+            lyrics = [artifact for artifact in artifacts if artifact.suffix.lower() == ".lrc"]
             if lyrics:
                 lyrics_root = config.data_root / "lyrics"
                 lyrics_root.mkdir(exist_ok=True, mode=0o750)
@@ -184,7 +198,7 @@ def create_app(
                 partial = lyrics_root / f"{song_id}.lrc.partial"
                 shutil.copyfile(lyrics[0], partial)
                 partial.replace(target)
-            audio = safe_files(root / "output", {".m4a", ".flac"})
+            audio = [artifact for artifact in artifacts if artifact.suffix.lower() in {".m4a", ".flac"}]
             if not audio:
                 raise ProcessFailure("audio_artifact_missing")
             return root, audio[0]
@@ -217,7 +231,7 @@ def create_app(
 
     @application.get("/api/stream/{song_id}")
     async def stream_song(song_id: str, quality: str = "alac-16-44") -> StreamingResponse:
-        root, source = await prepare_song(song_id, quality)
+        root, source = await prepare_song(song_id, quality, "aac-web")
         return StreamingResponse(
             process_runner.stream_flac(source),
             media_type="audio/flac",

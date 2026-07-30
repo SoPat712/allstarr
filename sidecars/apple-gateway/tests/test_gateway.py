@@ -172,6 +172,27 @@ def test_song_download_uses_safe_id_quality_mapping_and_flac_contract(client):
     assert client[0].get("/api/download/not-an-id").status_code == 400
 
 
+def test_song_stream_falls_back_to_web_aac_when_lossless_is_unavailable(settings):
+    class FallbackRunner(FakeRunner):
+        async def download(self, url: str, quality: str, output: Path, temporary: Path) -> list[Path]:
+            self.calls.append((url, quality))
+            if quality == "alac":
+                raise ProcessFailure("artifact_missing")
+            output.mkdir(parents=True, exist_ok=False)
+            temporary.mkdir(parents=True, exist_ok=False)
+            artifact = output / "fixture.m4a"
+            artifact.write_bytes(b"source")
+            return [artifact]
+
+    runner = FallbackRunner()
+    app = create_app(settings, FakeWrapper(), FakeCatalog(), runner)
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/stream/102", params={"quality": "alac-16-44"})
+
+    assert response.status_code == 200
+    assert [quality for _, quality in runner.calls] == ["alac", "aac-web"]
+
+
 def test_song_lyrics_use_gamdl_artifact_and_cache(client):
     response = client[0].get("/api/lyrics/103")
     assert response.status_code == 200
