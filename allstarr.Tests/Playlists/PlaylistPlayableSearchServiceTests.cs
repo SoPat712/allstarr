@@ -96,6 +96,66 @@ public sealed class PlaylistPlayableSearchServiceTests
     }
 
     [Fact]
+    public async Task Concise_search_query_keeps_full_title_scoring()
+    {
+        var tenant = Guid.CreateVersion7();
+        var user = Guid.CreateVersion7();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
+            .Returns(["jellyfin"]);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
+            .Returns([]);
+        gateway.Setup(item => item.SearchPlayableSongsAsync(
+                It.IsAny<ProtocolExecutionContext>(), "Link Up", 60))
+            .ReturnsAsync(
+            [
+                new Song
+                {
+                    ExternalProvider = "jellyfin",
+                    ExternalId = "base-edition",
+                    Title = "Link Up",
+                    Artist = "Metro Boomin, Don Toliver, Wizkid, BEAM, Toian",
+                    Album = "Spider-Man: Across the Spider-Verse",
+                    Duration = 195
+                }
+            ]);
+        var service = new PlaylistPlayableSearchService(
+            gateway.Object,
+            new TrackMatchDecisionEngine(),
+            null!,
+            new IdentityOptions(),
+            Options.Create(new JellyfinSettings()),
+            NullLogger<PlaylistPlayableSearchService>.Instance);
+
+        var result = await service.MatchAsync(
+            Context(tenant, user),
+            new ExternalTrackMatchSnapshot(
+                "source",
+                "spotify",
+                "source-track",
+                "Link Up (Spider-Verse Remix)",
+                "Metro Boomin, Don Toliver, Wizkid, BEAM, Toian",
+                "Spider-Man: Across the Spider-Verse",
+                null,
+                195_000,
+                null,
+                null,
+                null),
+            new TrackMatchScope(
+                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1),
+            [],
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(TrackMatchReviewState.Suggested, result.Decision.State);
+        Assert.Contains(
+            "semantic_version_mismatch",
+            Assert.Single(result.Decision.Candidates).Warnings);
+        gateway.Verify(item => item.SearchPlayableSongsAsync(
+            It.IsAny<ProtocolExecutionContext>(), "Link Up", 60), Times.Once);
+    }
+
+    [Fact]
     public async Task Cached_routes_try_the_next_provider_before_searching_again()
     {
         var tenant = Guid.CreateVersion7();

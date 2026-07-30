@@ -1565,10 +1565,10 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await expect(page.locator(".playlist-row .playlist-art > span")).toBeVisible();
   const openPlaylist = page.getByRole("button", { name: "Open Test playlist playlist details", exact: true });
   await expect(openPlaylist).toBeVisible();
-  await expect(page.getByText("1 needs attention", { exact: true })).toBeVisible();
+  await expect(page.getByText("1 to review", { exact: true })).toBeVisible();
   await expect(page.getByText("1 unresolved", { exact: true })).toBeVisible();
   await expect(page.getByText("Not yet synced", { exact: true })).toBeVisible();
-  await expect(page.getByRole("group", { name: "50% playable, 1 of 2 tracks" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "0% confirmed, 1 of 2 playable" })).toBeVisible();
   const metricsFit = await page.locator(".playlist-summary").evaluate((summary) => {
     const parent = summary.getBoundingClientRect();
     const children = [...summary.children].map((child) => child.getBoundingClientRect());
@@ -1586,6 +1586,7 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await expect(dialog).toBeVisible();
   await expect(dialog.locator(".hero-art > span")).toBeVisible();
   await expect(dialog.locator(".track-art > span")).toBeVisible();
+  await expect(dialog.getByRole("table", { name: "Test playlist tracks" })).toBeVisible();
   await expect(dialog.locator(".coverage-bar")).toContainText("Lumen Audio: 1, Unresolved: 1");
   await expect(dialog.getByRole("button", { name: "Actions" })).toBeInViewport();
   await dialog.getByRole("button", { name: "Actions" }).click();
@@ -1595,9 +1596,16 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 1280, height: 800 });
   await expect.poll(async () => (await dialog.boundingBox())?.width ?? 0).toBeGreaterThan(900);
+  await expect(dialog.getByText(/Snapshot v/)).toHaveCount(0);
   await expect(dialog.getByText("Last target sync")).toHaveCount(0);
   await expect(dialog.getByText("Current published snapshot")).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: /Operation details:/ })).toBeVisible();
+  await expect(dialog.getByRole("columnheader", { name: "Artist" })).toBeVisible();
+  await expect(dialog.getByRole("columnheader", { name: "Album" })).toBeVisible();
+  await dialog.getByRole("button", { name: /Choose track columns/ }).click();
+  await page.locator(".track-column-picker").getByLabel("Album", { exact: true }).uncheck();
+  await expect(dialog.getByRole("columnheader", { name: "Album" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
   const density = await dialog.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     const strip = element.querySelector(".playlist-meta-strip")!;
@@ -1890,12 +1898,11 @@ test("Playlist columns and nested dialogs retain interaction ownership", async (
   await opener.click();
   const playlist = page.getByRole("dialog", { name: "Test playlist" });
   await expect(page.locator("body")).toHaveCSS("overflow", "hidden");
-  const resize = playlist.getByRole("button", { name: "Resize track column" });
-  const before = (await resize.locator("..").boundingBox())!.width;
-  await resize.focus();
-  await page.keyboard.press("ArrowRight");
-  const after = (await resize.locator("..").boundingBox())!.width;
-  expect(Math.abs(after - Math.min(before + 16, 520))).toBeLessThanOrEqual(1);
+  await playlist.getByRole("button", { name: /Choose track columns/ }).click();
+  const columns = page.locator(".track-column-picker");
+  await columns.getByLabel("Artist", { exact: true }).uncheck();
+  await expect(playlist.getByRole("columnheader", { name: "Artist" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
 
   const review = playlist.getByRole("button", { name: "Open mapping details for Test song" });
   await review.click();

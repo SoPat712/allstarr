@@ -6,7 +6,6 @@ import {
   formatDuration,
   orderPlaylistSources,
   providerColor,
-  resizedColumnWidth,
   runBounded,
 } from "./playlists";
 
@@ -36,26 +35,35 @@ describe("playlist presentation", () => {
     expect(providerColor("apple-download")).toBe("#fa243c");
   });
 
-  it("keeps resized columns within their usable bounds", () => {
-    expect(resizedColumnWidth(300, -200, 220, 520)).toBe(220);
-    expect(resizedColumnWidth(300, 400, 220, 520)).toBe(520);
-    expect(resizedColumnWidth(300, 40, 220, 520)).toBe(340);
-  });
-
-  it("filters and orders summaries by canonical coverage", () => {
+  it("filters and orders summaries by confirmed coverage", () => {
     const result = filterPlaylists(
       [
-        playlist({ id: "partial", name: "Partial", playableCount: 8, unmatchedCount: 2 }),
-        playlist({ id: "ready", name: "Ready", playableCount: 10, unmatchedCount: 0 }),
-        playlist({ id: "paused", name: "Paused", enabled: false, playableCount: 2 }),
+        playlist({ id: "partial", name: "Partial", matchedCount: 8, unmatchedCount: 2 }),
+        playlist({ id: "ready", name: "Ready", matchedCount: 10, unmatchedCount: 0 }),
+        playlist({ id: "paused", name: "Paused", enabled: false, matchedCount: 2 }),
+        playlist({
+          id: "review",
+          name: "Review",
+          matchedCount: 9,
+          unmatchedCount: 0,
+          metrics: {
+            total: 10,
+            matched: 9,
+            unresolved: 0,
+            review: 1,
+            rejected: 0,
+            playable: 10,
+            materialized: 0,
+          },
+        }),
       ],
       "",
       "all",
       "coverage",
     );
-    expect(result.map((item) => item.id)).toEqual(["ready", "partial", "paused"]);
+    expect(result.map((item) => item.id)).toEqual(["ready", "review", "partial", "paused"]);
     expect(filterPlaylists(result, "source", "attention", "name").map((item) => item.id)).toEqual([
-      "partial",
+      "partial", "review",
     ]);
   });
 

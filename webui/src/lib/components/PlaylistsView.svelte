@@ -5,7 +5,6 @@
   import { Popover } from "$lib/components/ui/popover";
   import { ArrowRight, ChevronDown, MoreHorizontal, X } from "lucide-svelte";
   import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
-  import ColumnResizeHandle from "$lib/components/ColumnResizeHandle.svelte";
   import CoverageBar from "$lib/components/CoverageBar.svelte";
   import MatchDialog from "$lib/components/MatchDialog.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
@@ -25,7 +24,7 @@
   } from "$lib/api";
   import { humanize } from "$lib/activity";
   import {
-    coverage,
+    confirmationCoverage,
     filterPlaylists,
     filterTracks,
     formatDuration,
@@ -70,8 +69,22 @@
   let matchOpen = $state(false);
   let selectedMatch = $state<MatchReviewItem | null>(null);
   let matchLoading = $state("");
-  let trackColumnWidth = $state(0);
-  let routeColumnWidth = $state(0);
+  const trackColumnOptions = [
+    { id: "position", label: "Playlist number" },
+    { id: "artist", label: "Artist" },
+    { id: "album", label: "Album" },
+    { id: "route", label: "Route" },
+    { id: "duration", label: "Duration" },
+  ] as const;
+  type TrackColumn = (typeof trackColumnOptions)[number]["id"];
+  const defaultTrackColumns: Record<TrackColumn, boolean> = {
+    position: true,
+    artist: true,
+    album: true,
+    route: true,
+    duration: true,
+  };
+  let trackColumns = $state<Record<TrackColumn, boolean>>({ ...defaultTrackColumns });
   let scheduleEditorOpen = $state(false);
   let scheduleCron = $state("");
   let scheduleTimeZone = $state("");
@@ -89,6 +102,17 @@
     details ? filterTracks(details.tracks, trackQuery, routeFilter, trackSort) : [],
   );
   const selected = $derived(playlists.find((playlist) => playlist.id === selectedId));
+  const visibleTrackColumnCount = $derived(
+    trackColumnOptions.filter((column) => trackColumns[column.id]).length,
+  );
+  const trackTableMinWidth = $derived(
+    20 +
+      (trackColumns.position ? 3 : 0) +
+      (trackColumns.artist ? 12 : 0) +
+      (trackColumns.album ? 14 : 0) +
+      (trackColumns.route ? 9 : 0) +
+      (trackColumns.duration ? 4.5 : 0),
+  );
 
   $effect(() => {
     if (detailOpen) {
@@ -335,10 +359,30 @@
 
   async function matchSaved(message: string) {
     feedback = message;
-    if (selectedId) await loadDetails(selectedId);
+    await refresh();
+  }
+
+  function setTrackColumn(column: TrackColumn, visible: boolean) {
+    trackColumns = { ...trackColumns, [column]: visible };
+    localStorage.setItem("allstarr.playlist-track-columns", JSON.stringify(trackColumns));
   }
 
   onMount(() => {
+    try {
+      const saved = JSON.parse(
+        localStorage.getItem("allstarr.playlist-track-columns") ?? "{}",
+      ) as Partial<Record<TrackColumn, boolean>>;
+      trackColumns = Object.fromEntries(
+        trackColumnOptions.map((column) => [
+          column.id,
+          typeof saved[column.id] === "boolean"
+            ? saved[column.id]
+            : defaultTrackColumns[column.id],
+        ]),
+      ) as Record<TrackColumn, boolean>;
+    } catch {
+      trackColumns = { ...defaultTrackColumns };
+    }
     selectedId = initialId;
     void refresh();
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
@@ -421,7 +465,7 @@
 
       <div class="playlist-rows" aria-label="Playlists">
         {#each pagePlaylists as playlist}
-          {@const playablePercent = Math.round(coverage(playlist) * 100)}
+          {@const confirmedPercent = Math.round(confirmationCoverage(playlist) * 100)}
           <div
             class:active={playlist.id === selectedId}
             class="playlist-row"
@@ -445,8 +489,8 @@
                 </small>
               </span>
               <small class="playlist-metrics">
-                <span>{playlist.matchedCount} matched</span>
-                <span>{playlist.metrics.review} {playlist.metrics.review === 1 ? "needs" : "need"} attention</span>
+                <span>{playlist.matchedCount} confirmed</span>
+                <span>{playlist.metrics.review} to review</span>
                 <span>{playlist.unmatchedCount} unresolved</span>
                 <span>{playlist.lastRunAt ? `${playlist.materializedCount} synced` : "Not yet synced"}</span>
               </small>
@@ -454,13 +498,13 @@
             <span
               class="playlist-summary"
               role="group"
-              aria-label={`${playablePercent}% playable, ${playlist.playableCount} of ${playlist.trackCount} tracks${playlist.enabled ? "" : ", paused"}`}
+              aria-label={`${confirmedPercent}% confirmed, ${playlist.playableCount} of ${playlist.trackCount} playable${playlist.enabled ? "" : ", paused"}`}
             >
               <span class="playlist-coverage">
-                <strong>{playablePercent}%</strong>
-                <small>playable</small>
+                <strong>{confirmedPercent}%</strong>
+                <small>confirmed</small>
               </span>
-              <small>{playlist.playableCount} of {playlist.trackCount} tracks</small>
+              <small>{playlist.playableCount} of {playlist.trackCount} playable</small>
               {#if !playlist.enabled}<small class="attention">Paused</small>{/if}
             </span>
             <CoverageBar
@@ -502,9 +546,8 @@
             <p>
               {details.trackCount} tracks · {formatDuration(details.durationMs)}
               {#if details.unknownDurationCount} · {details.unknownDurationCount} unknown duration{/if}
-              · Snapshot v{details.snapshotVersion}
               {#if details.hasNewerSourceGeneration}
-                · newer source generation pending
+                · New source refresh waiting
               {/if}
             </p>
             <div class="hero-route">
@@ -549,7 +592,7 @@
           details.reconciliation.changedPositions.length
         )}
           <p class="action-feedback">
-            Source changes from snapshot v{Math.max(1, details.snapshotVersion - 1)}:
+            Changes since the previous source refresh:
             {details.reconciliation.addedPositions.length} added,
             {details.reconciliation.removedPositions.length} removed,
             {details.reconciliation.movedPositions.length} moved,
@@ -559,9 +602,11 @@
         {/if}
 
         <div class="playlist-meta-strip" aria-label="Playlist status">
+          <span><strong>{details.matchedCount}</strong> confirmed</span>
+          <span class:attention={details.reviewCount > 0}><strong>{details.reviewCount}</strong> to review</span>
           <span><strong>{details.localCount}</strong> local</span>
           <span><strong>{details.externalCount}</strong> external</span>
-          <span class:attention={details.unresolvedCount > 0}><strong>{details.unresolvedCount}</strong> unmatched</span>
+          <span class:attention={details.unresolvedCount > 0}><strong>{details.unresolvedCount}</strong> unresolved</span>
           <span>Refreshed <strong>{relativeTime(details.retrievedAt)}</strong></span>
           <span>Rematched <strong>{relativeTime(details.lastRematchedAt)}</strong></span>
           <span>
@@ -612,67 +657,130 @@
             { value: "position", label: "Playlist order" }, { value: "title", label: "Title" },
             { value: "duration", label: "Duration" }, { value: "route", label: "Route" },
           ]} />
+          <Popover.Root>
+            <Popover.Trigger
+              class="button-secondary track-column-trigger"
+              aria-label={`Choose track columns, ${visibleTrackColumnCount} optional columns shown`}
+            >
+              Columns <ChevronDown size={16} aria-hidden="true" />
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Content class="bits-menu track-column-picker" sideOffset={6} align="end">
+                <strong>Show columns</strong>
+                {#each trackColumnOptions as column}
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={trackColumns[column.id]}
+                      onchange={(event) => setTrackColumn(column.id, event.currentTarget.checked)}
+                    />
+                    {column.label}
+                  </label>
+                {/each}
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover.Root>
         </div>
 
-        <div
-          class="track-table"
-          aria-label={`${details.name} tracks`}
-          aria-busy={detailLoading}
-          style={`--track-name-width:${trackColumnWidth ? `${trackColumnWidth}px` : "1fr"};--track-route-width:${routeColumnWidth ? `${routeColumnWidth}px` : "0.55fr"}`}
-        >
-          <div class="track-head">
-            <span>#</span>
-            <span class="track-column-heading">Track<ColumnResizeHandle bind:value={trackColumnWidth} label="track" min={220} max={520} /></span>
-            <span class="track-column-heading">Route<ColumnResizeHandle bind:value={routeColumnWidth} label="route" min={120} max={300} /></span>
-            <span>Time</span>
-            <span><span class="sr-only">Details</span></span>
-          </div>
+        <div class="track-table" aria-busy={detailLoading}>
           <div class="track-scroll">
-            {#each visibleTracks as track}
-              <div class="track-row">
-                <button
-                  type="button"
-                  class="track-row-link"
-                  aria-label={`Open mapping details for ${track.title}`}
-                  disabled={matchLoading === track.externalSnapshotId}
-                  onclick={(event) => void openTrackMatch(track.externalSnapshotId, event.currentTarget)}
-                ></button>
-                <span class="track-index">{track.position}</span>
-                <span class="track-identity">
-                  <MediaArtwork class="track-art" url={track.artworkUrl} />
-                  <span><strong>{track.title}</strong><small>{track.artists.join(", ") || "Unknown artist"}{track.album ? ` · ${track.album}` : ""}</small></span>
-                </span>
-                <span class="route-cell">
-                  <i style={`--route-color:${providerColor(track.routeProviderId ?? track.routeKind)}`}></i>
-                  <span><strong>{providerName(track.routeProviderId ?? (track.routeKind === "local" ? details.targetProtocol : null))}</strong><small>{track.routeKind}</small></span>
-                </span>
-                <span class="track-duration">{formatDuration(track.durationMs)}</span>
-                <span class="track-menu">
-                  <Popover.Root>
-                    <Popover.Trigger class="track-menu-trigger" aria-label={`Technical details for ${track.title}`}><MoreHorizontal size={18} aria-hidden="true" /></Popover.Trigger>
-                    <Popover.Portal>
-                      <Popover.Content class="bits-menu track-details-menu" sideOffset={4} align="end">
-                        <div class="track-technical">
-                          <strong>{track.matchState ?? "unmatched"}</strong>
-                          {#if track.isrc}<small>ISRC {track.isrc}</small>{/if}
-                          {#if track.backendItemId}<small>Backend {track.backendItemId}</small>{/if}
-                          {#each track.providerRoutes as route}
-                            <small>{providerName(route.providerId)} · {route.externalId}{route.pinned ? " · pinned" : ""}</small>
-                          {/each}
-                          <button
-                            type="button"
-                            class="button-secondary"
-                            onclick={(event) => void openTrackMatch(track.externalSnapshotId, event.currentTarget)}
-                          >Review match</button>
-                        </div>
-                      </Popover.Content>
-                    </Popover.Portal>
-                  </Popover.Root>
-                </span>
-              </div>
-            {:else}
-              <div class="compact-empty"><strong>No tracks match these filters</strong></div>
-            {/each}
+            <table
+              class="track-data-table"
+              aria-label={`${details.name} tracks`}
+              style={`--track-table-min:${trackTableMinWidth}rem`}
+            >
+              <colgroup>
+                {#if trackColumns.position}<col class="track-position-column" />{/if}
+                <col class="track-title-column" />
+                {#if trackColumns.artist}<col class="track-artist-column" />{/if}
+                {#if trackColumns.album}<col class="track-album-column" />{/if}
+                {#if trackColumns.route}<col class="track-route-column" />{/if}
+                {#if trackColumns.duration}<col class="track-duration-column" />{/if}
+                <col class="track-actions-column" />
+              </colgroup>
+              <thead>
+                <tr>
+                  {#if trackColumns.position}<th scope="col">#</th>{/if}
+                  <th scope="col">Track</th>
+                  {#if trackColumns.artist}<th scope="col">Artist</th>{/if}
+                  {#if trackColumns.album}<th scope="col">Album</th>{/if}
+                  {#if trackColumns.route}<th scope="col">Route</th>{/if}
+                  {#if trackColumns.duration}<th scope="col">Time</th>{/if}
+                  <th scope="col"><span class="sr-only">Details</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each visibleTracks as track}
+                  <tr>
+                    {#if trackColumns.position}
+                      <td class="track-index">{track.position}</td>
+                    {/if}
+                    <th scope="row" class="track-identity-cell">
+                      <span class="track-identity">
+                        <MediaArtwork class="track-art" url={track.artworkUrl} />
+                        <button
+                          type="button"
+                          class="track-title-button"
+                          aria-label={`Open mapping details for ${track.title}`}
+                          disabled={matchLoading === track.externalSnapshotId}
+                          onclick={(event) => void openTrackMatch(track.externalSnapshotId, event.currentTarget)}
+                        >
+                          {track.title}
+                        </button>
+                      </span>
+                    </th>
+                    {#if trackColumns.artist}
+                      <td class="track-text-cell">{track.artists.join(", ") || "Unknown artist"}</td>
+                    {/if}
+                    {#if trackColumns.album}
+                      <td class="track-text-cell">{track.album || "—"}</td>
+                    {/if}
+                    {#if trackColumns.route}
+                      <td>
+                        <span class="route-cell">
+                          <i style={`--route-color:${providerColor(track.routeProviderId ?? track.routeKind)}`}></i>
+                          <span>
+                            <strong>{providerName(track.routeProviderId ?? (track.routeKind === "local" ? details.targetProtocol : null))}</strong>
+                            <small>{track.routeKind}</small>
+                          </span>
+                        </span>
+                      </td>
+                    {/if}
+                    {#if trackColumns.duration}
+                      <td class="track-duration">{formatDuration(track.durationMs)}</td>
+                    {/if}
+                    <td class="track-menu">
+                      <Popover.Root>
+                        <Popover.Trigger class="track-menu-trigger" aria-label={`Technical details for ${track.title}`}><MoreHorizontal size={18} aria-hidden="true" /></Popover.Trigger>
+                        <Popover.Portal>
+                          <Popover.Content class="bits-menu track-details-menu" sideOffset={4} align="end">
+                            <div class="track-technical">
+                              <strong>{track.matchState ?? "unmatched"}</strong>
+                              {#if track.isrc}<small>ISRC {track.isrc}</small>{/if}
+                              {#if track.backendItemId}<small>Backend {track.backendItemId}</small>{/if}
+                              {#each track.providerRoutes as route}
+                                <small>{providerName(route.providerId)} · {route.externalId}{route.pinned ? " · pinned" : ""}</small>
+                              {/each}
+                              <button
+                                type="button"
+                                class="button-secondary"
+                                onclick={(event) => void openTrackMatch(track.externalSnapshotId, event.currentTarget)}
+                              >Review match</button>
+                            </div>
+                          </Popover.Content>
+                        </Popover.Portal>
+                      </Popover.Root>
+                    </td>
+                  </tr>
+                {:else}
+                  <tr>
+                    <td class="track-empty" colspan={2 + visibleTrackColumnCount}>
+                      <strong>No tracks match these filters</strong>
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
           </div>
         </div>
       {:else}

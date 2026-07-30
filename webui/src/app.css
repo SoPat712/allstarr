@@ -1341,6 +1341,10 @@
     padding: 1rem 1.4rem;
   }
 
+  .track-toolbar {
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+  }
+
   .playlist-filters input,
   .playlist-filters select,
   .track-toolbar input,
@@ -1353,6 +1357,45 @@
     color: var(--color-ink);
     padding: 0 0.8rem;
     font-size: 0.78rem;
+  }
+
+  .track-column-trigger {
+    display: flex;
+    min-height: 2.75rem;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding-inline: 0.8rem;
+  }
+
+  .track-column-picker {
+    min-width: 13rem;
+    padding: 0.55rem;
+  }
+
+  .track-column-picker > strong {
+    padding: 0.35rem 0.45rem;
+    font-size: var(--text-xs);
+  }
+
+  .track-column-picker label {
+    display: flex;
+    min-height: 2.25rem;
+    align-items: center;
+    gap: 0.55rem;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    padding: 0.35rem 0.45rem;
+  }
+
+  .track-column-picker label:hover {
+    background: rgb(255 255 255 / 6%);
+  }
+
+  .track-column-picker input {
+    width: 1rem;
+    height: 1rem;
+    accent-color: var(--color-signal);
   }
 
   .search-input {
@@ -1837,113 +1880,83 @@
     flex-direction: column;
   }
 
-  .track-head,
-  .track-row {
-    display: grid;
-    grid-template-columns: 2.5rem minmax(12rem, var(--track-name-width, 1fr)) minmax(7rem, var(--track-route-width, 0.55fr)) 3.5rem 2.75rem;
-    align-items: center;
-  }
-
-  .track-head {
-    min-height: 2rem;
-    border-bottom: 1px solid var(--color-edge);
-    color: var(--color-ink-muted);
-    font-size: var(--text-xs);
-    font-weight: 750;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  .track-head > span:first-child,
-  .track-head > span:nth-last-child(-n + 2) {
-    text-align: center;
-  }
-
-  .track-column-heading {
-    position: relative;
-    display: flex;
-    height: 100%;
-    align-items: center;
-  }
-
-  .column-resize-handle {
-    position: absolute;
-    top: 0;
-    right: -0.4rem;
-    width: 0.8rem;
-    height: 100%;
-    border: 0;
-    background: transparent;
-    cursor: col-resize;
-    padding: 0;
-    touch-action: none;
-  }
-
-  .column-resize-handle::after {
-    position: absolute;
-    top: 22%;
-    bottom: 22%;
-    left: calc(50% - 1px);
-    width: 2px;
-    border-radius: 999px;
-    background: var(--color-edge);
-    content: "";
-  }
-
-  .column-resize-handle:hover::after,
-  .column-resize-handle:focus-visible::after,
-  .column-resize-handle.active::after {
-    background: var(--color-signal);
-  }
-
   .track-scroll {
     min-height: 0;
     flex: 1;
     overflow: auto;
   }
 
-  .track-row {
-    position: relative;
-    min-height: 3.7rem;
+  .track-data-table {
+    width: 100%;
+    min-width: max(100%, var(--track-table-min));
+    border-spacing: 0;
+    table-layout: fixed;
+  }
+
+  .track-position-column {
+    width: 3rem;
+  }
+
+  .track-artist-column {
+    width: 12rem;
+  }
+
+  .track-album-column {
+    width: 14rem;
+  }
+
+  .track-route-column {
+    width: 9rem;
+  }
+
+  .track-duration-column {
+    width: 4.5rem;
+  }
+
+  .track-actions-column {
+    width: 3.25rem;
+  }
+
+  .track-data-table th,
+  .track-data-table td {
+    overflow: hidden;
     border-bottom: 1px solid var(--color-edge);
-    padding: 0.35rem 0;
+    padding: 0.45rem 0.75rem;
+    vertical-align: middle;
   }
 
-  .track-row-link {
-    position: absolute;
+  .track-data-table thead th {
+    position: sticky;
     z-index: var(--layer-content);
-    inset: 0;
-    border: 0;
-    background: transparent;
-    cursor: pointer;
-    padding: 0;
+    top: 0;
+    height: 2.25rem;
+    background: var(--color-panel);
+    color: var(--color-ink-muted);
+    font-size: var(--text-xs);
+    font-weight: 750;
+    letter-spacing: 0.08em;
+    text-align: left;
+    text-transform: uppercase;
   }
 
-  .track-row-link:disabled {
-    cursor: wait;
+  .track-data-table thead th:first-child,
+  .track-data-table thead th:last-child {
+    text-align: center;
   }
 
-  .track-row:has(.track-row-link:hover),
-  .track-row:has(.track-row-link:focus-visible) {
+  .track-data-table tbody tr {
+    height: 3.7rem;
+    transition: background 140ms ease;
+  }
+
+  .track-data-table tbody tr:hover,
+  .track-data-table tbody tr:focus-within {
     background: rgb(255 255 255 / 3%);
   }
 
-  .track-row-link:focus-visible {
-    outline: 2px solid var(--color-signal);
-    outline-offset: -2px;
-  }
-
-  .track-menu {
-    position: relative;
-    z-index: var(--layer-control);
-  }
-
-  @media (min-width: 761px) {
-    .track-head > span:not(:first-child),
-    .track-row > span:not(:first-child) {
-      border-left: 1px solid var(--color-edge);
-      padding-left: 0.75rem;
-    }
+  .track-identity-cell {
+    font-weight: 400;
+    text-align: left;
   }
 
   .track-index,
@@ -1961,6 +1974,58 @@
     align-items: center;
     gap: 0.55rem;
     padding-right: 0.55rem;
+  }
+
+  .track-title-button {
+    overflow: hidden;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    color: var(--color-ink);
+    cursor: pointer;
+    padding: 0.35rem 0;
+    font: inherit;
+    font-size: 0.86rem;
+    font-weight: 750;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .track-title-button:hover {
+    color: var(--color-signal-text);
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+  }
+
+  .track-title-button:focus-visible {
+    border-radius: 0.3rem;
+    outline: 2px solid var(--color-signal);
+    outline-offset: 2px;
+  }
+
+  .track-title-button:disabled {
+    cursor: wait;
+    opacity: var(--disabled-opacity);
+  }
+
+  .track-text-cell {
+    color: var(--color-ink-muted);
+    font-size: var(--text-xs);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .track-empty {
+    height: 8rem;
+    color: var(--color-ink-muted);
+    font-size: var(--text-xs);
+    text-align: center;
+  }
+
+  .track-menu {
+    position: relative;
+    z-index: var(--layer-control);
   }
 
   .track-art {
@@ -2213,6 +2278,11 @@
     grid-column: 1 / -1;
   }
 
+  .track-column-trigger {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
   .playlist-hero {
     align-items: center;
   }
@@ -2239,15 +2309,6 @@
     gap: 0.35rem 0.8rem;
   }
 
-  .track-head,
-  .track-row {
-    grid-template-columns: 2.1rem minmax(0, 1fr) 3.4rem 2.5rem;
-  }
-
-  .track-head > span:nth-child(3),
-  .route-cell {
-    display: none;
-  }
 }
 
 @layer components {

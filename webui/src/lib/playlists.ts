@@ -3,8 +3,10 @@ import type { PlaylistLink, PlaylistSourceAccount, PlaylistTrack } from "./api";
 export type PlaylistSort = "name" | "tracks" | "coverage" | "updated";
 export type TrackSort = "position" | "title" | "duration" | "route";
 
-export function coverage(playlist: Pick<PlaylistLink, "trackCount" | "playableCount">) {
-  return playlist.trackCount ? playlist.playableCount / playlist.trackCount : 0;
+export function confirmationCoverage(
+  playlist: Pick<PlaylistLink, "trackCount" | "matchedCount">,
+) {
+  return playlist.trackCount ? playlist.matchedCount / playlist.trackCount : 0;
 }
 
 export function filterPlaylists(
@@ -24,13 +26,22 @@ export function filterPlaylists(
       const matchesState =
         state === "all" ||
         (state === "paused" && !playlist.enabled) ||
-        (state === "ready" && playlist.enabled && playlist.unmatchedCount === 0) ||
-        (state === "attention" && playlist.enabled && playlist.unmatchedCount > 0);
+        (state === "ready" &&
+          playlist.enabled &&
+          playlist.unmatchedCount === 0 &&
+          playlist.metrics.review === 0 &&
+          playlist.metrics.rejected === 0) ||
+        (state === "attention" &&
+          playlist.enabled &&
+          (playlist.unmatchedCount > 0 ||
+            playlist.metrics.review > 0 ||
+            playlist.metrics.rejected > 0));
       return matchesQuery && matchesState;
     })
     .toSorted((left, right) => {
       if (sort === "tracks") return right.trackCount - left.trackCount;
-      if (sort === "coverage") return coverage(right) - coverage(left);
+      if (sort === "coverage")
+        return confirmationCoverage(right) - confirmationCoverage(left);
       if (sort === "updated")
         return Date.parse(right.lastRunAt ?? "") - Date.parse(left.lastRunAt ?? "");
       return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
@@ -94,10 +105,6 @@ export function providerColor(providerId: string) {
   let hash = 0;
   for (const character of normalized) hash = (hash * 31 + character.codePointAt(0)!) >>> 0;
   return `hsl(${hash % 360} 72% 58%)`;
-}
-
-export function resizedColumnWidth(start: number, delta: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, start + delta));
 }
 
 export async function runBounded<T>(
