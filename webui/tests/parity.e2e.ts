@@ -120,9 +120,9 @@ const responses: Record<string, unknown> = {
       sourceProviderId: "lumen-audio", targetProtocol: "jellyfin",
       materializationMode: "reconcile", revision: 1, artworkUrl: "/missing-playlist-art",
       trackCount: 2,
-      matchedCount: 0, unmatchedCount: 1, playableCount: 1, materializedCount: 1,
+      matchedCount: 0, unmatchedCount: 1, playableCount: 1, materializedCount: 0,
       routeCoverage: [{ providerId: "lumen-audio", count: 1 }],
-      metrics: { total: 2, matched: 0, unresolved: 1, review: 1, rejected: 0, playable: 1, materialized: 1 },
+      metrics: { total: 2, matched: 0, unresolved: 1, review: 1, rejected: 0, playable: 1, materialized: 0 },
     }],
   },
   "/api/admin/playlist-sources": {
@@ -1537,7 +1537,10 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await expect(page.locator(".playlist-row .playlist-art > span")).toBeVisible();
   const openPlaylist = page.getByRole("button", { name: "Open Test playlist playlist details", exact: true });
   await expect(openPlaylist).toBeVisible();
-  await expect(page.getByRole("group", { name: "50% playable, 1 of 2 tracks, 1 unresolved" })).toBeVisible();
+  await expect(page.getByText("1 needs attention", { exact: true })).toBeVisible();
+  await expect(page.getByText("1 unresolved", { exact: true })).toBeVisible();
+  await expect(page.getByText("Not yet synced", { exact: true })).toBeVisible();
+  await expect(page.getByRole("group", { name: "50% playable, 1 of 2 tracks" })).toBeVisible();
   const metricsFit = await page.locator(".playlist-summary").evaluate((summary) => {
     const parent = summary.getBoundingClientRect();
     const children = [...summary.children].map((child) => child.getBoundingClientRect());

@@ -446,23 +446,22 @@
               </span>
               <small class="playlist-metrics">
                 <span>{playlist.matchedCount} matched</span>
-                <span>{playlist.metrics.review} to review</span>
-                <span>{playlist.materializedCount} materialized</span>
+                <span>{playlist.metrics.review} {playlist.metrics.review === 1 ? "needs" : "need"} attention</span>
+                <span>{playlist.unmatchedCount} unresolved</span>
+                <span>{playlist.lastRunAt ? `${playlist.materializedCount} synced` : "Not yet synced"}</span>
               </small>
             </span>
             <span
               class="playlist-summary"
               role="group"
-              aria-label={`${playablePercent}% playable, ${playlist.playableCount} of ${playlist.trackCount} tracks, ${playlist.enabled ? `${playlist.unmatchedCount} unresolved` : "paused"}`}
+              aria-label={`${playablePercent}% playable, ${playlist.playableCount} of ${playlist.trackCount} tracks${playlist.enabled ? "" : ", paused"}`}
             >
               <span class="playlist-coverage">
                 <strong>{playablePercent}%</strong>
                 <small>playable</small>
               </span>
               <small>{playlist.playableCount} of {playlist.trackCount} tracks</small>
-              <small class:attention={playlist.unmatchedCount > 0}>
-                {playlist.enabled ? `${playlist.unmatchedCount} unresolved` : "Paused"}
-              </small>
+              {#if !playlist.enabled}<small class="attention">Paused</small>{/if}
             </span>
             <CoverageBar
               routes={playlist.routeCoverage}
