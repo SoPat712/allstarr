@@ -660,7 +660,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["apple-download", "deezer"]);
         gateway.Setup(item => item.SearchPlayableSongsAsync(
-                It.IsAny<ProtocolExecutionContext>(), "Feels Artist", 60))
+                It.IsAny<ProtocolExecutionContext>(), "Feels", 60))
             .ReturnsAsync(
             [
                 new Song
@@ -773,7 +773,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var entered = 0;
         gateway.Setup(item => item.SearchPlayableSongsAsync(
-                It.IsAny<ProtocolExecutionContext>(), "Concurrent external Artist", 60))
+                It.IsAny<ProtocolExecutionContext>(), "Concurrent external", 60))
             .Returns(async () =>
             {
                 if (Interlocked.Increment(ref entered) == 8)
