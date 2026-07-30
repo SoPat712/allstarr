@@ -561,7 +561,7 @@
     text-decoration: none;
   }
 
-  .sidebar nav a:hover {
+  .sidebar nav a:not(.active):hover {
     background: var(--color-panel);
     color: var(--color-ink);
   }

@@ -768,6 +768,12 @@ test("Slim sidebar centers navigation and profile controls", async ({ page }) =>
 test("Shared selects and settings tabs animate without remounting", async ({ page }) => {
   await mockApi(page);
   await page.goto("#/settings/general");
+  const selectedNav = page.getByRole("navigation", { name: "Primary" })
+    .getByRole("link", { name: "Settings", exact: true });
+  const selectedNavBackground = await selectedNav.evaluate((element) =>
+    getComputedStyle(element).backgroundColor);
+  await selectedNav.hover();
+  await expect(selectedNav).toHaveCSS("background-color", selectedNavBackground);
   await page.getByRole("button", { name: "Theme", exact: true }).click();
   await expect(page.locator(".select-content")).toHaveCSS("animation-name", "dropdown-in");
   await page.keyboard.press("Escape");
