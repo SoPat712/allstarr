@@ -1092,28 +1092,12 @@ public sealed class LegacyEnvMigrationService
         IReadOnlyDictionary<string, bool> existingTargets) =>
         playlists.Select(item =>
         {
-            if (!spotifyAccountReady)
-            {
-                return item with
-                {
-                    Action = "requires_source_account",
-                    Reason = "A Spotify provider account must be imported or selected before this playlist can become a durable link."
-                };
-            }
             if (!identity.Ready)
             {
                 return item with
                 {
                     Action = "requires_target_selection",
                     Reason = "An explicit durable backend identity is required before this playlist can become a durable link."
-                };
-            }
-            if (item.LocalTracksPosition == "last")
-            {
-                return item with
-                {
-                    Action = "requires_behavior_review",
-                    Reason = "The current playlist model preserves manual entries but cannot safely infer the legacy 'local tracks last' ordering rule."
                 };
             }
             if (existingTargets.TryGetValue(PlaylistTargetKey(
@@ -1129,6 +1113,22 @@ public sealed class LegacyEnvMigrationService
                         : "Attach the imported schedule to the matching durable playlist link.",
                     TargetProtocol = identity.BackendType,
                     TargetBackendInstanceId = identity.BackendInstanceId
+                };
+            }
+            if (item.LocalTracksPosition == "last")
+            {
+                return item with
+                {
+                    Action = "requires_behavior_review",
+                    Reason = "The current playlist model preserves manual entries but cannot safely infer the legacy 'local tracks last' ordering rule."
+                };
+            }
+            if (!spotifyAccountReady)
+            {
+                return item with
+                {
+                    Action = "requires_source_account",
+                    Reason = "A Spotify provider account must be imported or selected before this playlist can become a durable link."
                 };
             }
             return item with
