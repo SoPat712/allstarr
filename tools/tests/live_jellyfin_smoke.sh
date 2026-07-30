@@ -802,15 +802,25 @@ compare_projection "native playlist stable data" \
 if [[ -n "$playlist_id" ]]; then
     check_json "playlist entries music only" "$ALLSTARR_BASE/Playlists/$playlist_id/Items?UserId=$best_user_id&Limit=100" \
         '(.Items | type == "array") and all(.Items[]; .Type == "Audio")'
-    check_json "playlist definition required DTO" "$ALLSTARR_BASE/Playlists/$playlist_id?UserId=$best_user_id" \
-        '(.Shares | type == "array") and (.ItemIds | type == "array")'
-    compare_structure "playlist definition structure" \
-        "$DIRECT_BASE/Playlists/$playlist_id?UserId=$best_user_id" \
-        "$ALLSTARR_BASE/Playlists/$playlist_id?UserId=$best_user_id"
-    compare_projection "playlist definition stable data" \
-        "$DIRECT_BASE/Playlists/$playlist_id?UserId=$best_user_id" \
-        "$ALLSTARR_BASE/Playlists/$playlist_id?UserId=$best_user_id" \
-        '{OpenAccess,Shares,ItemIds}'
+    direct_playlist_definition_code="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
+        -o /dev/null -w '%{http_code}' \
+        "$DIRECT_BASE/Playlists/$playlist_id?UserId=$best_user_id" || true)"
+    if [[ "$direct_playlist_definition_code" == 200 ]]; then
+        check_json "playlist definition required DTO" "$ALLSTARR_BASE/Playlists/$playlist_id?UserId=$best_user_id" \
+            '(.Shares | type == "array") and (.ItemIds | type == "array")'
+        compare_structure "playlist definition structure" \
+            "$DIRECT_BASE/Playlists/$playlist_id?UserId=$best_user_id" \
+            "$ALLSTARR_BASE/Playlists/$playlist_id?UserId=$best_user_id"
+        compare_projection "playlist definition stable data" \
+            "$DIRECT_BASE/Playlists/$playlist_id?UserId=$best_user_id" \
+            "$ALLSTARR_BASE/Playlists/$playlist_id?UserId=$best_user_id" \
+            '{OpenAccess,Shares,ItemIds}'
+    else
+        echo "BLOCKED playlist-definition-upstream=status-$direct_playlist_definition_code"
+        check_code "playlist definition status parity" \
+            "$direct_playlist_definition_code" GET \
+            "$ALLSTARR_BASE/Playlists/$playlist_id?UserId=$best_user_id"
+    fi
     compare_structure "playlist entries structure" \
         "$DIRECT_BASE/Playlists/$playlist_id/Items?UserId=$best_user_id&Limit=100" \
         "$ALLSTARR_BASE/Playlists/$playlist_id/Items?UserId=$best_user_id&Limit=100"
