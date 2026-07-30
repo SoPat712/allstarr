@@ -1051,6 +1051,8 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await expect(dialog.getByText("Planet Her")).toHaveCount(2);
   await expect(dialog.locator(".target-results").getByText("confidence")).toHaveCount(2);
   await expect(dialog.locator(".target-results").getByText("· +7% local boost")).toHaveCount(1);
+  await expect(dialog.locator(".target-results")).toHaveCSS("overflow-y", "visible");
+  await expect(dialog.locator(":scope > footer")).toHaveCSS("position", "sticky");
   await expect(
     dialog.locator(".target-results > button").filter({ hasText: "Jellyfin" })
       .locator(".target-score").getByText("98%"),
