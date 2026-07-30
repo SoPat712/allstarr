@@ -1274,9 +1274,12 @@
     z-index: var(--layer-dialog);
     top: 50%;
     left: 50%;
+    display: flex;
     width: min(calc(100% - 2rem), 72rem);
+    height: min(92dvh, 58rem);
     max-height: min(92vh, 58rem);
-    overflow: auto;
+    flex-direction: column;
+    overflow: hidden;
     box-shadow: 0 2rem 8rem rgb(0 0 0 / 55%);
     transform: translate(-50%, -50%);
   }
@@ -1575,13 +1578,15 @@
 
   .playlist-hero {
     align-items: flex-start;
-    padding-right: 3.5rem;
+    min-height: 0;
+    gap: 0.85rem;
+    padding: 0.9rem 3.5rem 0.9rem 1rem;
   }
 
   .hero-art {
-    width: 4.5rem;
-    height: 4.5rem;
-    border-radius: 0.9rem;
+    width: 3.5rem;
+    height: 3.5rem;
+    border-radius: 0.75rem;
   }
 
   .playlist-hero-copy {
@@ -1603,31 +1608,23 @@
   }
 
   .hero-route {
-    margin-top: 0.55rem;
+    margin-top: 0.4rem;
     color: var(--color-ink-muted);
     font-size: 0.75rem;
   }
 
   .hero-route .provider-mark {
-    width: 1.6rem;
-    height: 1.6rem;
+    width: 1.35rem;
+    height: 1.35rem;
   }
 
-  .playlist-actions {
-    display: grid;
-    width: 7.5rem;
-    align-items: center;
-    gap: 0.35rem;
-  }
-
-  .playlist-actions > button {
-    width: 100%;
+  .playlist-actions-trigger {
+    display: flex;
     min-height: 2.35rem;
-  }
-
-  .playlist-actions button:disabled {
-    cursor: not-allowed;
-    opacity: var(--disabled-opacity);
+    align-items: center;
+    gap: 0.4rem;
+    margin-left: auto;
+    padding-inline: 0.8rem;
   }
 
   .playlist-detail-coverage {
@@ -1641,47 +1638,32 @@
     border-radius: 0;
   }
 
-  .playlist-stat-grid {
-    display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+  .playlist-meta-strip {
+    display: flex;
+    min-height: 2.75rem;
+    align-items: center;
+    gap: 0.75rem;
+    overflow-x: auto;
     border-bottom: 1px solid var(--color-edge);
+    padding: 0.45rem 1rem;
+    white-space: nowrap;
   }
 
-  .playlist-stat-grid > div {
-    display: grid;
-    gap: 0.15rem;
+  .playlist-meta-strip > span {
+    flex: none;
     border-right: 1px solid var(--color-edge);
-    padding: 0.7rem 1rem;
-  }
-
-  .playlist-stat-grid > div:last-child {
-    border-right: 0;
-  }
-
-  .playlist-stat-grid strong {
-    overflow: hidden;
-    font-size: 0.78rem;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .playlist-stat-grid small {
-    overflow: hidden;
     color: var(--color-ink-muted);
+    padding-right: 0.75rem;
     font-size: var(--text-xs);
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
-  .playlist-schedule-stat {
-    position: relative;
-    padding-right: 3.6rem !important;
+  .playlist-meta-strip strong {
+    color: var(--color-ink);
+    font-size: var(--text-xs);
   }
 
   .schedule-edit-button {
-    position: absolute;
-    top: 0.55rem;
-    right: 0.65rem;
+    flex: none;
     border: 0;
     background: transparent;
     color: var(--color-signal-text);
@@ -1728,47 +1710,55 @@
     font-size: var(--text-xs);
   }
 
-  .operation-console {
-    border-bottom: 1px solid var(--color-edge);
-    background: rgb(255 255 255 / 2%);
+  .operation-trigger {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 0.45rem;
+    border: 0;
+    border-radius: 0.5rem;
+    background: transparent;
+    color: var(--color-ink);
+    cursor: pointer;
+    padding: 0.25rem;
+    font-size: var(--text-xs);
+    font-weight: 750;
+    text-transform: capitalize;
   }
 
-  .operation-console summary {
+  .operation-trigger:hover,
+  .operation-trigger[aria-expanded="true"] {
+    background: rgb(255 255 255 / 6%);
+  }
+
+  .operation-popover {
+    width: min(30rem, calc(100vw - 2rem));
+    max-height: min(70vh, 34rem);
+    overflow: auto;
+    padding: 0;
+  }
+
+  .operation-popover > header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
-    min-height: 3.25rem;
-    cursor: pointer;
-    padding: 0.6rem 1rem;
-    list-style: none;
+    padding: 0.75rem 1rem;
   }
 
-  .operation-console summary::-webkit-details-marker {
-    display: none;
-  }
-
-  .operation-console summary > span:first-child {
+  .operation-popover > header > span:first-child {
     display: grid;
     min-width: 0;
     gap: 0.15rem;
   }
 
-  .operation-console summary strong,
-  .operation-console summary small {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .operation-console summary strong {
-    font-size: var(--text-xs);
+  .operation-popover > header strong {
     text-transform: capitalize;
   }
 
-  .operation-console summary small,
+  .operation-popover > header small,
   .operation-facts small,
-  .operation-console li small {
+  .operation-popover li small {
     color: var(--color-ink-muted);
     font-size: var(--text-xs);
   }
@@ -1813,16 +1803,16 @@
     white-space: nowrap;
   }
 
-  .operation-console ol {
+  .operation-popover ol {
     display: grid;
     max-height: 9rem;
     overflow: auto;
     margin: 0;
-    padding: 0;
+    padding: 0.35rem 0;
     list-style: none;
   }
 
-  .operation-console li {
+  .operation-popover li {
     display: flex;
     justify-content: space-between;
     gap: 0.75rem;
@@ -1831,7 +1821,7 @@
     font-size: var(--text-xs);
   }
 
-  .operation-console li span {
+  .operation-popover li span {
     min-width: 0;
   }
 
@@ -1840,7 +1830,11 @@
   }
 
   .track-table {
+    display: flex;
     min-width: 0;
+    min-height: 10rem;
+    flex: 1;
+    flex-direction: column;
   }
 
   .track-head,
@@ -1903,7 +1897,8 @@
   }
 
   .track-scroll {
-    max-height: min(55vh, 40rem);
+    min-height: 0;
+    flex: 1;
     overflow: auto;
   }
 
@@ -2219,28 +2214,7 @@
   }
 
   .playlist-hero {
-    flex-wrap: wrap;
-  }
-
-  .playlist-actions {
-    width: 100%;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  .playlist-actions > button {
-    flex: 1;
-  }
-
-  .playlist-stat-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .playlist-stat-grid > div:nth-child(even) {
-    border-right: 0;
-  }
-
-  .playlist-stat-grid > div:nth-child(-n + 4) {
-    border-bottom: 1px solid var(--color-edge);
+    align-items: center;
   }
 
   .playlist-row {

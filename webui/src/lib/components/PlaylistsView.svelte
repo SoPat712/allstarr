@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { Dialog } from "$lib/components/ui/dialog";
+  import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
   import { Popover } from "$lib/components/ui/popover";
-  import { ArrowRight, MoreHorizontal, X } from "lucide-svelte";
+  import { ArrowRight, ChevronDown, MoreHorizontal, X } from "lucide-svelte";
   import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
   import ColumnResizeHandle from "$lib/components/ColumnResizeHandle.svelte";
   import CoverageBar from "$lib/components/CoverageBar.svelte";
@@ -516,12 +517,20 @@
             </div>
           </div>
           <Dialog.Close class="icon-button playlist-dialog-close" aria-label="Close playlist details"><X size={18} aria-hidden="true" /></Dialog.Close>
-          <div class="playlist-actions" aria-label="Playlist actions">
-            <button class="button-secondary" disabled={Boolean(action) || !selected.enabled} type="button" onclick={() => void run("sync")}>Sync</button>
-            <button class="button-secondary" disabled={Boolean(action) || !selected.enabled} type="button" onclick={() => void run("rematch")}>Rematch</button>
-            <button class="button-secondary" disabled={Boolean(action)} type="button" onclick={() => void refreshSources([selected.id])}>Refresh</button>
-            <button class="button-secondary" disabled={Boolean(action)} type="button" onclick={() => void run("toggle")}>{selected.enabled ? "Pause" : "Resume"}</button>
-          </div>
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger class="button-secondary playlist-actions-trigger">
+              Actions <ChevronDown size={16} aria-hidden="true" />
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
+                <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("sync")}>Sync</DropdownMenu.Item>
+                <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("rematch")}>Rematch</DropdownMenu.Item>
+                <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void refreshSources([selected.id])}>Refresh source</DropdownMenu.Item>
+                <DropdownMenu.Separator />
+                <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run("toggle")}>{selected.enabled ? "Pause" : "Resume"}</DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
         </header>
 
         <div class="playlist-detail-coverage">
@@ -550,56 +559,49 @@
           </p>
         {/if}
 
-        <div class="playlist-stat-grid">
-          <div><strong>{details.localCount}</strong><small>Local</small></div>
-          <div><strong>{details.externalCount}</strong><small>External</small></div>
-          <div class:attention={details.unresolvedCount > 0}><strong>{details.unresolvedCount}</strong><small>Unmatched</small></div>
-          <div><strong>{relativeTime(details.retrievedAt)}</strong><small>Source refreshed</small></div>
-          <div><strong>{relativeTime(details.lastRematchedAt)}</strong><small>Last rematch</small></div>
-          <div><strong>{relativeTime(details.completedAt)}</strong><small>Last target sync</small></div>
-          <div>
-            <strong>v{details.snapshotVersion}</strong>
-            <small>{details.hasNewerSourceGeneration ? `Generation v${details.latestSourceSnapshotVersion} pending` : "Current published snapshot"}</small>
-          </div>
-          <div class="playlist-schedule-stat">
-            <strong>
-              {details.schedule?.enabled ? relativeTime(details.schedule.nextRunAt) : details.schedule ? "Paused" : "Manual"}
-            </strong>
-            <small>{details.schedule?.cronExpression ?? "No automatic schedule"}{details.schedule?.nextRunAt ? ` · ${new Date(details.schedule.nextRunAt).toLocaleString()}` : ""}</small>
-            <Popover.Root bind:open={scheduleEditorOpen}>
-              <Popover.Trigger class="schedule-edit-button" onclick={editSchedule}>Edit</Popover.Trigger>
-              <Popover.Portal>
-                <Popover.Content class="bits-menu schedule-editor" sideOffset={6} align="end">
-                  <form onsubmit={saveSchedule}>
-                    <label class="field">
-                      <span>Cron schedule</span>
-                      <input bind:value={scheduleCron} required spellcheck="false" />
-                    </label>
-                    <label class="field">
-                      <span>Time zone</span>
-                      <input bind:value={scheduleTimeZone} required spellcheck="false" />
-                    </label>
-                    <label class="schedule-enabled">
-                      <input type="checkbox" bind:checked={scheduleEnabled} />
-                      Automatic sync enabled
-                    </label>
-                    {#if scheduleError}<p class="field-error" role="alert">{scheduleError}</p>{/if}
-                    <button class="button-primary" type="submit" disabled={scheduleSaving}>
-                      {scheduleSaving ? "Saving…" : "Save schedule"}
-                    </button>
-                  </form>
-                </Popover.Content>
-              </Popover.Portal>
-            </Popover.Root>
-          </div>
+        <div class="playlist-meta-strip" aria-label="Playlist status">
+          <span><strong>{details.localCount}</strong> local</span>
+          <span><strong>{details.externalCount}</strong> external</span>
+          <span class:attention={details.unresolvedCount > 0}><strong>{details.unresolvedCount}</strong> unmatched</span>
+          <span>Refreshed <strong>{relativeTime(details.retrievedAt)}</strong></span>
+          <span>Rematched <strong>{relativeTime(details.lastRematchedAt)}</strong></span>
+          <span>
+            <strong>{details.schedule?.enabled ? relativeTime(details.schedule.nextRunAt) : details.schedule ? "Paused" : "Manual"}</strong>
+            schedule
+          </span>
+          <Popover.Root bind:open={scheduleEditorOpen}>
+            <Popover.Trigger class="schedule-edit-button" onclick={editSchedule}>Edit schedule</Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Content class="bits-menu schedule-editor" sideOffset={6} align="end">
+                <form onsubmit={saveSchedule}>
+                  <label class="field">
+                    <span>Cron schedule</span>
+                    <input bind:value={scheduleCron} required spellcheck="false" />
+                  </label>
+                  <label class="field">
+                    <span>Time zone</span>
+                    <input bind:value={scheduleTimeZone} required spellcheck="false" />
+                  </label>
+                  <label class="schedule-enabled">
+                    <input type="checkbox" bind:checked={scheduleEnabled} />
+                    Automatic sync enabled
+                  </label>
+                  {#if scheduleError}<p class="field-error" role="alert">{scheduleError}</p>{/if}
+                  <button class="button-primary" type="submit" disabled={scheduleSaving}>
+                    {scheduleSaving ? "Saving…" : "Save schedule"}
+                  </button>
+                </form>
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover.Root>
+          <OperationConsole
+            playlistName={details.name}
+            requestedJobId={operationJobId}
+            onTerminal={refresh}
+          />
         </div>
 
         {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
-        <OperationConsole
-          playlistName={details.name}
-          requestedJobId={operationJobId}
-          onTerminal={refresh}
-        />
 
         <div class="track-toolbar">
           <SearchField bind:value={trackQuery} label="Filter tracks" placeholder="Filter tracks" hiddenLabel />

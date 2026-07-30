@@ -1522,11 +1522,32 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await expect(dialog.locator(".hero-art > span")).toBeVisible();
   await expect(dialog.locator(".track-art > span")).toBeVisible();
   await expect(dialog.locator(".coverage-bar")).toContainText("Lumen Audio: 1, Unresolved: 1");
-  await expect(dialog.getByRole("button", { name: "Sync" })).toBeInViewport();
-  await expect(dialog.getByRole("button", { name: "Rematch" })).toBeInViewport();
-  await expect(dialog.getByRole("button", { name: "Refresh" })).toBeInViewport();
+  await expect(dialog.getByRole("button", { name: "Actions" })).toBeInViewport();
+  await dialog.getByRole("button", { name: "Actions" }).click();
+  await expect(page.getByRole("menuitem", { name: "Sync" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Rematch" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Refresh source" })).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 1280, height: 800 });
   await expect.poll(async () => (await dialog.boundingBox())?.width ?? 0).toBeGreaterThan(900);
+  await expect(dialog.getByText("Last target sync")).toHaveCount(0);
+  await expect(dialog.getByText("Current published snapshot")).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: /Operation details:/ })).toBeVisible();
+  const density = await dialog.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const strip = element.querySelector(".playlist-meta-strip")!;
+    const trackScroll = element.querySelector(".track-scroll")!.getBoundingClientRect();
+    const centers = [...strip.children].map((child) => {
+      const childBounds = child.getBoundingClientRect();
+      return childBounds.top + childBounds.height / 2;
+    });
+    return {
+      trackRatio: trackScroll.height / bounds.height,
+      metadataCenterSpread: Math.max(...centers) - Math.min(...centers),
+    };
+  });
+  expect(density.trackRatio).toBeGreaterThan(0.45);
+  expect(density.metadataCenterSpread).toBeLessThanOrEqual(1);
   await dialog.getByRole("button", { name: "Technical details for Test song" }).click();
   await expect(page).toHaveURL(/#\/library\/playlists$/);
   const trackDetails = page.locator(".track-details-menu");
@@ -1623,7 +1644,9 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await filter.fill("Track");
     await filter.focus();
     const before = await scroll.evaluate((element) => element.scrollTop);
-    await dialog.getByRole("button", { name: "Sync" }).evaluate((button: HTMLButtonElement) => button.click());
+    await dialog.getByRole("button", { name: "Actions" }).click();
+    await page.getByRole("menuitem", { name: "Sync" }).click();
+    await filter.focus();
     await expect.poll(() => detailRequests).toBe(2);
 
     await expect(dialog.getByText("Loading playlist tracks…")).toHaveCount(0);
@@ -1683,14 +1706,17 @@ test("Playlist operations show durable progress and confirm cancellation", async
   const rematch = page.waitForRequest((item) =>
     item.method() === "POST" && item.url().endsWith("/api/admin/playlist-links/playlist-link/run") &&
     Object.keys(item.postDataJSON()).length === 0);
-  await dialog.getByRole("button", { name: "Rematch" }).click();
+  await dialog.getByRole("button", { name: "Actions" }).click();
+  await page.getByRole("menuitem", { name: "Rematch" }).click();
   await rematch;
   await expect(dialog.getByText("Rematch queued.")).toBeVisible();
-  await expect(dialog.locator("summary").getByText("Matching Test song")).toBeVisible();
-  await expect(dialog.getByText("1/2")).toBeVisible();
-  await expect(dialog.getByText("Wait until")).toBeVisible();
-  await expect(dialog.getByText("Deferrals")).toBeVisible();
-  await dialog.getByRole("button", { name: "Cancel operation" }).click();
+  await dialog.getByRole("button", { name: /Operation details:/ }).click();
+  const operation = page.locator(".operation-popover");
+  await expect(operation.getByText("Matching Test song", { exact: true }).first()).toBeVisible();
+  await expect(operation.getByText("1/2")).toBeVisible();
+  await expect(operation.getByText("Wait until")).toBeVisible();
+  await expect(operation.getByText("Deferrals")).toBeVisible();
+  await operation.getByRole("button", { name: "Cancel operation" }).click();
   const confirmation = page.getByRole("alertdialog", { name: "Cancel this operation?" });
   await expect(confirmation).toBeVisible();
   const request = page.waitForRequest((item) =>
