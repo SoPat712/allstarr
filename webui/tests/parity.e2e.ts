@@ -1034,7 +1034,10 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await expect(dialog.locator(".candidate-provider").filter({ hasText: "Apple Music - Gamdl" })).toBeVisible();
   await expect(dialog.getByText("MusicBrainz album")).toHaveCount(0);
   await expect(dialog.locator(".candidate-card .mapping-art > span").first()).toBeVisible();
-  await expect(dialog.locator(".automatic-candidates").getByText("· +7% local boost")).toBeVisible();
+  await expect(
+    dialog.locator(".automatic-candidates .candidate-provider")
+      .filter({ hasText: "Jellyfin · +7% local boost" }),
+  ).toBeVisible();
   await expect(dialog.locator(".automatic-candidates .candidate-confidence").getByText("89%")).toBeVisible();
   await expect(dialog.locator(".automatic-candidates").getByText("preference score")).toHaveCount(0);
   await dialog.getByLabel("Search local library and playable providers").fill("Kiss Me More");

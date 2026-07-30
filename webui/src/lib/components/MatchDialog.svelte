@@ -242,9 +242,7 @@
                         id={candidateProvider(candidate) || backend.toLowerCase()}
                         definition={provider(candidateProvider(candidate))}
                       />
-                      {candidateProvider(candidate)
-                        ? providerName(candidateProvider(candidate))
-                        : backend}
+                      {providerName(candidateProvider(candidate))}
                       {#if resolution?.targetType === "local" && candidate.components?.localPreference}
                         <span>· +{percent(candidate.components.localPreference)} local boost</span>
                       {/if}
