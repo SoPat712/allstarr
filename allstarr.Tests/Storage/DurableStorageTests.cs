@@ -361,6 +361,29 @@ public sealed class DurableStorageTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DownloadedSongMappingRepair_UpgradesLegacyLowercaseIdWithoutDataLoss()
+    {
+        await using var context = await Factory().CreateDbContextAsync();
+        var migrator = context.GetService<IMigrator>();
+        await migrator.MigrateAsync("20260729010000_ActivateImportedPlaylistSchedules");
+        await context.Database.ExecuteSqlRawAsync(
+            """ALTER TABLE downloaded_song_mappings RENAME COLUMN "Id" TO id""");
+        var mappingId = Guid.CreateVersion7();
+        await context.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO downloaded_song_mappings
+                (id, "ProviderId", "ExternalId", "LocalPath", "Title", "Artist", "Album", "DownloadedAt", "Revision")
+            VALUES
+                ({mappingId}, {"test"}, {"external"}, {"/music/test.flac"}, {"Test"}, {"Artist"}, {"Album"}, {DateTimeOffset.UtcNow.UtcTicks}, {1L})
+            """);
+
+        await migrator.MigrateAsync();
+
+        Assert.True(await ColumnExists(context, "downloaded_song_mappings", "Id"));
+        Assert.False(await ColumnExists(context, "downloaded_song_mappings", "id"));
+        Assert.Equal(mappingId, await context.DownloadedSongMappings.Select(item => item.Id).SingleAsync());
+    }
+
+    [Fact]
     public async Task SchemaCompatibility_RejectsCaseDivergentMigrationId()
     {
         await using var context = await Factory().CreateDbContextAsync();
