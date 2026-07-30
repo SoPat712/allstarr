@@ -2,6 +2,11 @@ import type { PlaylistLink, PlaylistSourceAccount, PlaylistTrack } from "./api";
 
 export type PlaylistSort = "name" | "tracks" | "coverage" | "updated";
 export type TrackSort = "position" | "title" | "duration" | "route";
+export type TrackRouteFilter = "all" | PlaylistTrack["routeKind"] | "review";
+
+export function isReviewTrack(track: Pick<PlaylistTrack, "matchState">) {
+  return track.matchState === "suggested" || track.matchState === "ambiguous";
+}
 
 export function confirmationCoverage(
   playlist: Pick<PlaylistLink, "trackCount" | "matchedCount">,
@@ -51,14 +56,14 @@ export function filterPlaylists(
 export function filterTracks(
   tracks: PlaylistTrack[],
   query: string,
-  route: "all" | PlaylistTrack["routeKind"],
+  route: TrackRouteFilter,
   sort: TrackSort,
 ) {
   const needle = query.trim().toLocaleLowerCase();
   return tracks
     .filter(
       (track) =>
-        (route === "all" || track.routeKind === route) &&
+        (route === "all" || (route === "review" ? isReviewTrack(track) : track.routeKind === route)) &&
         (!needle ||
           `${track.title} ${track.artists.join(" ")} ${track.album ?? ""} ${track.routeProviderId ?? ""}`
             .toLocaleLowerCase()
@@ -73,6 +78,15 @@ export function filterTracks(
         );
       return left.sourcePosition - right.sourcePosition;
     });
+}
+
+export function scheduleCadence(cronExpression: string) {
+  const known: Record<string, string> = {
+    "0 * * * *": "Every hour",
+    "0 3 * * *": "Every day at 03:00",
+    "0 3 * * 1": "Every Monday at 03:00",
+  };
+  return known[cronExpression] ?? `Cron ${cronExpression}`;
 }
 
 export function formatDuration(milliseconds?: number | null) {

@@ -28,9 +28,12 @@
     filterPlaylists,
     filterTracks,
     formatDuration,
+    isReviewTrack,
     providerColor,
     runBounded,
+    scheduleCadence,
     type PlaylistSort,
+    type TrackRouteFilter,
     type TrackSort,
   } from "$lib/playlists";
   import { liveUpdates } from "$lib/live-updates.svelte";
@@ -46,7 +49,7 @@
   let stateFilter = $state<"all" | "ready" | "attention" | "paused">("all");
   let sort = $state<PlaylistSort>("name");
   let trackQuery = $state("");
-  let routeFilter = $state<"all" | "local" | "external" | "unmatched">("all");
+  let routeFilter = $state<TrackRouteFilter>("all");
   let trackSort = $state<TrackSort>("position");
   let loading = $state(true);
   let detailLoading = $state(false);
@@ -603,18 +606,37 @@
 
         <div class="playlist-meta-strip" aria-label="Playlist status">
           <span><strong>{details.matchedCount}</strong> confirmed</span>
-          <span class:attention={details.reviewCount > 0}><strong>{details.reviewCount}</strong> to review</span>
+          <button
+            type="button"
+            class="meta-filter-button"
+            class:attention={details.reviewCount > 0}
+            class:active={routeFilter === "review"}
+            disabled={details.reviewCount === 0}
+            aria-label={`Show ${details.reviewCount} ${details.reviewCount === 1 ? "track" : "tracks"} needing review`}
+            onclick={() => routeFilter = "review"}
+          ><strong>{details.reviewCount}</strong> to review</button>
           <span><strong>{details.localCount}</strong> local</span>
           <span><strong>{details.externalCount}</strong> external</span>
           <span class:attention={details.unresolvedCount > 0}><strong>{details.unresolvedCount}</strong> unresolved</span>
           <span>Refreshed <strong>{relativeTime(details.retrievedAt)}</strong></span>
           <span>Rematched <strong>{relativeTime(details.lastRematchedAt)}</strong></span>
           <span>
-            <strong>{details.schedule?.enabled ? relativeTime(details.schedule.nextRunAt) : details.schedule ? "Paused" : "Manual"}</strong>
-            schedule
+            {#if details.schedule?.enabled}
+              <strong>{scheduleCadence(details.schedule.cronExpression)}</strong>
+              · next {relativeTime(details.schedule.nextRunAt)}
+              · {details.schedule.timeZoneId}
+            {:else if details.schedule}
+              <strong>Automatic sync paused</strong>
+              · {scheduleCadence(details.schedule.cronExpression)}
+              · {details.schedule.timeZoneId}
+            {:else}
+              <strong>No automatic sync</strong>
+            {/if}
           </span>
           <Popover.Root bind:open={scheduleEditorOpen}>
-            <Popover.Trigger class="schedule-edit-button" onclick={editSchedule}>Edit schedule</Popover.Trigger>
+            <Popover.Trigger class="schedule-edit-button" onclick={editSchedule}>
+              {details.schedule ? "Edit schedule" : "Set schedule"}
+            </Popover.Trigger>
             <Popover.Portal>
               <Popover.Content class="bits-menu schedule-editor" sideOffset={6} align="end">
                 <form onsubmit={saveSchedule}>
@@ -652,6 +674,7 @@
           <SelectField bind:value={routeFilter} label="Track route" options={[
             { value: "all", label: "All routes" }, { value: "local", label: providerName(details.targetProtocol) },
             { value: "external", label: "External" }, { value: "unmatched", label: "Unresolved" },
+            { value: "review", label: `To review (${details.reviewCount})` },
           ]} />
           <SelectField bind:value={trackSort} label="Sort tracks" options={[
             { value: "position", label: "Playlist order" }, { value: "title", label: "Title" },
@@ -727,6 +750,9 @@
                         >
                           {track.title}
                         </button>
+                        {#if isReviewTrack(track)}
+                          <small class="track-review-badge">Needs review</small>
+                        {/if}
                       </span>
                     </th>
                     {#if trackColumns.artist}

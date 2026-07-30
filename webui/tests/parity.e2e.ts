@@ -1588,6 +1588,10 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await expect(dialog.locator(".track-art > span")).toBeVisible();
   await expect(dialog.getByRole("table", { name: "Test playlist tracks" })).toBeVisible();
   await expect(dialog.locator(".coverage-bar")).toContainText("Lumen Audio: 1, Unresolved: 1");
+  await expect(dialog.getByText("Needs review", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("No automatic sync", { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "Show 1 track needing review" }).click();
+  await expect(dialog.getByRole("button", { name: "Track route" })).toContainText("To review (1)");
   await expect(dialog.getByRole("button", { name: "Actions" })).toBeInViewport();
   await dialog.getByRole("button", { name: "Actions" }).click();
   await expect(page.getByRole("menuitem", { name: "Sync" })).toBeVisible();

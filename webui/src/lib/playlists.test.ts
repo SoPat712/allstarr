@@ -4,9 +4,11 @@ import {
   filterPlaylists,
   filterTracks,
   formatDuration,
+  isReviewTrack,
   orderPlaylistSources,
   providerColor,
   runBounded,
+  scheduleCadence,
 } from "./playlists";
 
 const playlist = (values: Partial<PlaylistLink>): PlaylistLink => ({
@@ -69,13 +71,21 @@ describe("playlist presentation", () => {
 
   it("keeps source order by default and formats durations", () => {
     const tracks = [
-      { sourcePosition: 1, position: 2, externalSnapshotId: "b", title: "B", artists: [], routeKind: "external", providerRoutes: [] },
+      { sourcePosition: 1, position: 2, externalSnapshotId: "b", title: "B", artists: [], routeKind: "external", matchState: "suggested", providerRoutes: [] },
       { sourcePosition: 0, position: 1, externalSnapshotId: "a", title: "A", artists: [], routeKind: "local", providerRoutes: [] },
     ] satisfies PlaylistTrack[];
     expect(filterTracks(tracks, "", "all", "position").map((item) => item.position)).toEqual([1, 2]);
+    expect(filterTracks(tracks, "", "review", "position").map((item) => item.position)).toEqual([2]);
+    expect(isReviewTrack(tracks[0])).toBe(true);
     expect(formatDuration(3_723_000)).toBe("1:02:03");
     expect(formatDuration(null)).toBe("—");
     expect(providerColor("any-extension")).toMatch(/^hsl\(\d+ 72% 58%\)$/);
+  });
+
+  it("describes common sync schedules and preserves custom cron expressions", () => {
+    expect(scheduleCadence("0 * * * *")).toBe("Every hour");
+    expect(scheduleCadence("0 3 * * *")).toBe("Every day at 03:00");
+    expect(scheduleCadence("15 4 * * 2")).toBe("Cron 15 4 * * 2");
   });
 
   it("orders local targets, Spotify, then configured playlist Sources", () => {
