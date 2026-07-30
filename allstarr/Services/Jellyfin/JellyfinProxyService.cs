@@ -759,13 +759,23 @@ public class JellyfinProxyService
     public async Task<(JsonDocument? Body, int StatusCode)> GetItemAsync(string itemId, IHeaderDictionary? clientHeaders = null)
     {
         var queryParams = new Dictionary<string, string>();
+        IHeaderDictionary? effectiveHeaders = clientHeaders;
 
         if (!string.IsNullOrEmpty(_settings.UserId))
         {
             queryParams["userId"] = _settings.UserId;
         }
 
-        return await GetJsonAsync($"Items/{itemId}", queryParams, clientHeaders);
+        if ((effectiveHeaders == null || effectiveHeaders.Count == 0) &&
+            !string.IsNullOrWhiteSpace(_settings.ApiKey))
+        {
+            effectiveHeaders = new HeaderDictionary
+            {
+                ["X-Emby-Token"] = _settings.ApiKey
+            };
+        }
+
+        return await GetJsonAsync($"Items/{itemId}", queryParams, effectiveHeaders);
     }
 
     /// <summary>
