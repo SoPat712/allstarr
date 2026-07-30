@@ -66,9 +66,8 @@ public partial class JellyfinController
             });
         }
 
-        var (body, statusCode) = await _proxyService.GetJsonAsync(
-            $"Items/{Uri.EscapeDataString(musicLibraryId)}",
-            null,
+        var (body, statusCode) = await _proxyService.GetItemAsync(
+            Uri.EscapeDataString(musicLibraryId),
             Request.Headers);
         return HandleProxyResponse(body, statusCode);
     }

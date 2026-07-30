@@ -216,6 +216,34 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task JellyfinMusicRoot_UsesConfiguredUserScope()
+    {
+        var observedRequests = new List<string>();
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request =>
+            {
+                observedRequests.Add(request.RequestUri!.PathAndQuery);
+                return request.RequestUri.AbsolutePath == "/Users/Me"
+                    ? Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}""")
+                    : Json(StatusCodes.Status200OK, """{"Id":"music-1","Type":"CollectionFolder","CollectionType":"music"}""");
+            },
+            configuration: new Dictionary<string, string?>
+            {
+                ["Jellyfin:LibraryId"] = "music-1",
+                ["Jellyfin:UserId"] = "user-1"
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/Items/Root?api_key=fixture-key");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            ["/Users/Me?api_key=fixture-key", "/Items/music-1?userId=user-1"],
+            observedRequests);
+    }
+
+    [Fact]
     public async Task JellyfinSearchAdapter_PreservesFixtureStatusBodyAndPaging()
     {
         using var fixture = ReadFixture("jellyfin-search-shaping.json");
@@ -1630,6 +1658,7 @@ public sealed class ProtocolRouteFixtureTests
         private readonly string _backend;
         private readonly Func<HttpRequestMessage, HttpResponseMessage> _responder;
         private readonly Action<IServiceCollection>? _configureServices;
+        private readonly IReadOnlyDictionary<string, string?>? _configuration;
         private readonly string _stateRoot = Path.Combine(
             Path.GetTempPath(),
             "allstarr-tests",
@@ -1638,11 +1667,13 @@ public sealed class ProtocolRouteFixtureTests
         public ProtocolFactory(
             string backend,
             Func<HttpRequestMessage, HttpResponseMessage> responder,
-            Action<IServiceCollection>? configureServices = null)
+            Action<IServiceCollection>? configureServices = null,
+            IReadOnlyDictionary<string, string?>? configuration = null)
         {
             _backend = backend;
             _responder = responder;
             _configureServices = configureServices;
+            _configuration = configuration;
         }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -1661,6 +1692,7 @@ public sealed class ProtocolRouteFixtureTests
                     ["Cache:GenreDirectory"] = Path.Combine(_stateRoot, "genres"),
                     ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = "applemusic,deezer,qobuz,squidwtf,spotify"
                 });
+                if (_configuration != null) configuration.AddInMemoryCollection(_configuration);
             });
             builder.ConfigureServices(services =>
             {
