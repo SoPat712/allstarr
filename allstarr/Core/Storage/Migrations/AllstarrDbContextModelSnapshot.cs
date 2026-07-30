@@ -2372,7 +2372,7 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasIndex("TenantId", "ActorUserId");
 
-                    b.HasIndex("TenantId", "SourceSha256")
+                    b.HasIndex("TenantId", "SourceSha256", "SchemaVersion")
                         .IsUnique();
 
                     b.ToTable("legacy_env_imports", (string)null);

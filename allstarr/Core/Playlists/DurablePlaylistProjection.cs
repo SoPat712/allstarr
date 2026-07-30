@@ -357,43 +357,39 @@ public sealed class DurablePlaylistProjectionReader(
     {
         var currentRows = entries.Select(item => (
             item.SourcePosition,
-            External: external[item.ExternalMetadataSnapshotId])).ToArray();
+            External: external[item.ExternalMetadataSnapshotId],
+            Metadata: ReadMetadata(external[item.ExternalMetadataSnapshotId].PayloadJson))).ToArray();
         var priorRows = previousEntries.Select(item => (
             item.SourcePosition,
-            External: previousExternal[item.ExternalMetadataSnapshotId])).ToArray();
+            External: previousExternal[item.ExternalMetadataSnapshotId],
+            Metadata: ReadMetadata(previousExternal[item.ExternalMetadataSnapshotId].PayloadJson))).ToArray();
         var added = new List<int>();
         var removed = new List<int>();
         var moved = new List<int>();
+        var changed = new List<int>();
         foreach (var hash in currentRows.Select(item => item.External.ExternalIdHash)
                      .Concat(priorRows.Select(item => item.External.ExternalIdHash))
                      .Distinct(StringComparer.Ordinal))
         {
-            var currentPositions = currentRows
+            var currentTracks = currentRows
                 .Where(item => item.External.ExternalIdHash == hash)
-                .Select(item => item.SourcePosition)
-                .Order()
+                .OrderBy(item => item.SourcePosition)
                 .ToArray();
-            var priorPositions = priorRows
+            var priorTracks = priorRows
                 .Where(item => item.External.ExternalIdHash == hash)
-                .Select(item => item.SourcePosition)
-                .Order()
+                .OrderBy(item => item.SourcePosition)
                 .ToArray();
-            var paired = Math.Min(currentPositions.Length, priorPositions.Length);
-            moved.AddRange(currentPositions.Take(paired)
-                .Zip(priorPositions.Take(paired))
-                .Where(pair => pair.First != pair.Second)
-                .Select(pair => pair.First));
-            added.AddRange(currentPositions.Skip(paired));
-            removed.AddRange(priorPositions.Skip(paired));
+            var paired = Math.Min(currentTracks.Length, priorTracks.Length);
+            var pairs = currentTracks.Take(paired).Zip(priorTracks.Take(paired)).ToArray();
+            moved.AddRange(pairs
+                .Where(pair => pair.First.SourcePosition != pair.Second.SourcePosition)
+                .Select(pair => pair.First.SourcePosition));
+            changed.AddRange(pairs
+                .Where(pair => !SameMetadata(pair.First.Metadata, pair.Second.Metadata))
+                .Select(pair => pair.First.SourcePosition));
+            added.AddRange(currentTracks.Skip(paired).Select(item => item.SourcePosition));
+            removed.AddRange(priorTracks.Skip(paired).Select(item => item.SourcePosition));
         }
-        var priorByPosition = priorRows.ToDictionary(item => item.SourcePosition);
-        var changed = currentRows
-            .Where(item => priorByPosition.TryGetValue(item.SourcePosition, out var prior) &&
-                           (item.External.ExternalIdHash != prior.External.ExternalIdHash ||
-                            item.External.PayloadSha256 != prior.External.PayloadSha256))
-            .Select(item => item.SourcePosition)
-            .Order()
-            .ToArray();
         var duplicated = currentRows
             .GroupBy(item => item.External.ExternalIdHash, StringComparer.Ordinal)
             .SelectMany(group => group.OrderBy(item => item.SourcePosition).Skip(1))
@@ -424,8 +420,15 @@ public sealed class DurablePlaylistProjectionReader(
             removed.Order().ToArray(),
             moved.Distinct().Order().ToArray(),
             duplicated,
-            changed);
+            changed.Order().ToArray());
     }
+
+    private static bool SameMetadata(EntryMetadata current, EntryMetadata prior) =>
+        current.Title == prior.Title &&
+        current.Artists.SequenceEqual(prior.Artists, StringComparer.Ordinal) &&
+        current.Album == prior.Album &&
+        current.Isrc == prior.Isrc &&
+        current.DurationMilliseconds == prior.DurationMilliseconds;
 
     private static DurablePlaylistEntryProjection ProjectEntry(
         PlaylistSourceEntryRecord entry,

@@ -96,7 +96,7 @@ public sealed class LegacyEnvMigrationService
 {
     private static readonly TimeSpan PreviewLifetime = TimeSpan.FromMinutes(15);
     private const int MaximumPreviewCount = 64;
-    internal const string MigrationSchemaVersion = "legacy-env-import-v1";
+    internal const string MigrationSchemaVersion = "legacy-env-import-v2";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly IDbContextFactory<AllstarrDbContext> _factory;
@@ -159,7 +159,8 @@ public sealed class LegacyEnvMigrationService
         HashSet<string> existingProviders = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> existingUserProviders = new(StringComparer.OrdinalIgnoreCase);
         IReadOnlyList<BackendIdentityRecord> existingBackendIdentities = [];
-        HashSet<string> existingPlaylistTargets = new(StringComparer.Ordinal);
+        IReadOnlyDictionary<string, bool> existingPlaylistTargets =
+            new Dictionary<string, bool>(StringComparer.Ordinal);
         if (tenantId.HasValue)
         {
             existingSettings = await _settings.GetManyAsync(
@@ -193,14 +194,20 @@ public sealed class LegacyEnvMigrationService
                         {
                             item.SourcePlaylistIdHash,
                             item.TargetProtocol,
-                            item.TargetBackendInstanceId
+                            item.TargetBackendInstanceId,
+                            item.ScheduleId
                         })
                         .ToListAsync(cancellationToken))
-                    .Select(item => PlaylistTargetKey(
-                        item.SourcePlaylistIdHash,
-                        item.TargetProtocol,
-                        item.TargetBackendInstanceId))
-                    .ToHashSet(StringComparer.Ordinal);
+                    .GroupBy(
+                        item => PlaylistTargetKey(
+                            item.SourcePlaylistIdHash,
+                            item.TargetProtocol,
+                            item.TargetBackendInstanceId),
+                        StringComparer.Ordinal)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group.Any(item => item.ScheduleId.HasValue),
+                        StringComparer.Ordinal);
             }
         }
 
@@ -238,11 +245,11 @@ public sealed class LegacyEnvMigrationService
             else if (entry.Disposition == LegacyEnvDisposition.PlaylistHandoff)
             {
                 action = document.Playlists.All(item =>
-                    item.Action is "import_playlist_link" or "conflict_existing")
+                    item.Action is "import_playlist_link" or "attach_schedule" or "conflict_existing")
                     ? "import_playlist_links"
                     : "requires_target_selection";
                 reason = action == "import_playlist_links"
-                    ? "Create active durable playlist links and schedules."
+                    ? "Create or restore active durable playlist schedules."
                     : "At least one playlist still needs an explicit source account, backend target, or behavior review.";
             }
             if (entry.Disposition == LegacyEnvDisposition.DurableSetting)
@@ -356,7 +363,8 @@ public sealed class LegacyEnvMigrationService
         {
             BackendIdentityCount = identityPlan.Create ? 1 : 0,
             PlaylistLinkCount = document.Playlists.Count(item => item.Action == "import_playlist_link"),
-            ScheduleCount = document.Playlists.Count(item => item.Action == "import_playlist_link")
+            ScheduleCount = document.Playlists.Count(item =>
+                item.Action is "import_playlist_link" or "attach_schedule")
         };
     }
 
@@ -630,9 +638,10 @@ public sealed class LegacyEnvMigrationService
                 var createdSchedules = new List<JobScheduleRecord>();
                 var createdPlaylistLinks = new List<PlaylistLinkRecord>();
                 foreach (var playlist in state.Document.Playlists.Where(item =>
-                             item.Action == "import_playlist_link"))
+                             item.Action is "import_playlist_link" or "attach_schedule"))
                 {
-                    if (spotifyAccount == null || !state.ActorUserId.HasValue)
+                    if (!state.ActorUserId.HasValue ||
+                        (playlist.Action == "import_playlist_link" && spotifyAccount == null))
                     {
                         throw new LegacyEnvMigrationException(
                             "playlist_prerequisite_changed",
@@ -640,15 +649,23 @@ public sealed class LegacyEnvMigrationService
                     }
 
                     var sourceHash = HashToken(playlist.SourcePlaylistId);
-                    if (await db.PlaylistLinks.AnyAsync(item =>
-                            item.TenantId == state.TenantId.Value &&
-                            item.OwnerUserId == state.ActorUserId.Value &&
-                            item.LibraryScopeId == playlist.LibraryScopeId &&
-                            item.ProviderAccountId == spotifyAccount.Id &&
-                            item.SourcePlaylistIdHash == sourceHash &&
-                            item.TargetProtocol == playlist.TargetProtocol &&
-                            item.TargetBackendInstanceId == playlist.TargetBackendInstanceId,
-                            cancellationToken))
+                    var existingLink = await db.PlaylistLinks.SingleOrDefaultAsync(item =>
+                        item.TenantId == state.TenantId.Value &&
+                        item.OwnerUserId == state.ActorUserId.Value &&
+                        item.LibraryScopeId == playlist.LibraryScopeId &&
+                        item.SourceProviderId == "spotify" &&
+                        item.SourcePlaylistIdHash == sourceHash &&
+                        item.TargetProtocol == playlist.TargetProtocol &&
+                        item.TargetBackendInstanceId == playlist.TargetBackendInstanceId,
+                        cancellationToken);
+                    if (playlist.Action == "attach_schedule" && existingLink == null)
+                    {
+                        throw new LegacyEnvMigrationException(
+                            "playlist_prerequisite_changed",
+                            "A matching playlist link was removed after preview.");
+                    }
+                    if ((playlist.Action == "import_playlist_link" && existingLink != null) ||
+                        (playlist.Action == "attach_schedule" && existingLink?.ScheduleId != null))
                     {
                         continue;
                     }
@@ -675,39 +692,50 @@ public sealed class LegacyEnvMigrationService
                         UpdatedAt = _clock.UtcNow,
                         Revision = 1
                     };
-                    var link = new PlaylistLinkRecord
+                    PlaylistLinkRecord link;
+                    if (existingLink != null)
                     {
-                        Id = Guid.CreateVersion7(),
-                        TenantId = state.TenantId.Value,
-                        OwnerUserId = state.ActorUserId.Value,
-                        ProviderAccountId = spotifyAccount.Id,
-                        ScheduleId = schedule.Id,
-                        Enabled = true,
-                        LibraryScopeId = playlist.LibraryScopeId,
-                        SourceProviderId = "spotify",
-                        SourcePlaylistId = playlist.SourcePlaylistId,
-                        SourcePlaylistIdHash = sourceHash,
-                        TargetProtocol = playlist.TargetProtocol!,
-                        TargetBackendInstanceId = playlist.TargetBackendInstanceId!,
-                        TargetPlaylistId = string.IsNullOrWhiteSpace(playlist.JellyfinTargetPlaylistId)
-                            ? null
-                            : playlist.JellyfinTargetPlaylistId,
-                        Mode = PlaylistLinkMode.Materialized,
-                        MaterializationMode = PlaylistMaterializationMode.Reconcile,
-                        PreserveManualEntries = true,
-                        SyncName = true,
-                        SyncDescription = true,
-                        SyncArtwork = true,
-                        RuleVersion = MigrationSchemaVersion,
-                        PolicyVersion = MigrationSchemaVersion,
-                        CreatedAt = _clock.UtcNow,
-                        UpdatedAt = _clock.UtcNow,
-                        Revision = 1
-                    };
+                        link = existingLink;
+                        link.ScheduleId = schedule.Id;
+                        link.UpdatedAt = _clock.UtcNow;
+                        link.Revision++;
+                    }
+                    else
+                    {
+                        link = new PlaylistLinkRecord
+                        {
+                            Id = Guid.CreateVersion7(),
+                            TenantId = state.TenantId.Value,
+                            OwnerUserId = state.ActorUserId.Value,
+                            ProviderAccountId = spotifyAccount!.Id,
+                            ScheduleId = schedule.Id,
+                            Enabled = true,
+                            LibraryScopeId = playlist.LibraryScopeId,
+                            SourceProviderId = "spotify",
+                            SourcePlaylistId = playlist.SourcePlaylistId,
+                            SourcePlaylistIdHash = sourceHash,
+                            TargetProtocol = playlist.TargetProtocol!,
+                            TargetBackendInstanceId = playlist.TargetBackendInstanceId!,
+                            TargetPlaylistId = string.IsNullOrWhiteSpace(playlist.JellyfinTargetPlaylistId)
+                                ? null
+                                : playlist.JellyfinTargetPlaylistId,
+                            Mode = PlaylistLinkMode.Materialized,
+                            MaterializationMode = PlaylistMaterializationMode.Reconcile,
+                            PreserveManualEntries = true,
+                            SyncName = true,
+                            SyncDescription = true,
+                            SyncArtwork = true,
+                            RuleVersion = MigrationSchemaVersion,
+                            PolicyVersion = MigrationSchemaVersion,
+                            CreatedAt = _clock.UtcNow,
+                            UpdatedAt = _clock.UtcNow,
+                            Revision = 1
+                        };
+                        db.PlaylistLinks.Add(link);
+                        createdPlaylistLinks.Add(link);
+                    }
                     db.JobSchedules.Add(schedule);
-                    db.PlaylistLinks.Add(link);
                     createdSchedules.Add(schedule);
-                    createdPlaylistLinks.Add(link);
                 }
 
                 var appliedAt = _clock.UtcNow;
@@ -1061,7 +1089,7 @@ public sealed class LegacyEnvMigrationService
         IReadOnlyList<LegacyPlaylistHandoff> playlists,
         LegacyBackendIdentityPlan identity,
         bool spotifyAccountReady,
-        IReadOnlySet<string> existingTargets) =>
+        IReadOnlyDictionary<string, bool> existingTargets) =>
         playlists.Select(item =>
         {
             if (!spotifyAccountReady)
@@ -1088,15 +1116,17 @@ public sealed class LegacyEnvMigrationService
                     Reason = "The current playlist model preserves manual entries but cannot safely infer the legacy 'local tracks last' ordering rule."
                 };
             }
-            if (existingTargets.Contains(PlaylistTargetKey(
+            if (existingTargets.TryGetValue(PlaylistTargetKey(
                     HashToken(item.SourcePlaylistId),
                     identity.BackendType!,
-                    identity.BackendInstanceId)))
+                    identity.BackendInstanceId), out var hasSchedule))
             {
                 return item with
                 {
-                    Action = "conflict_existing",
-                    Reason = "The matching durable playlist link already exists and will not be duplicated.",
+                    Action = hasSchedule ? "conflict_existing" : "attach_schedule",
+                    Reason = hasSchedule
+                        ? "The matching durable playlist link and schedule already exist."
+                        : "Attach the imported schedule to the matching durable playlist link.",
                     TargetProtocol = identity.BackendType,
                     TargetBackendInstanceId = identity.BackendInstanceId
                 };
@@ -1173,7 +1203,9 @@ public sealed class LegacyEnvMigrationService
     {
         var receipt = await db.LegacyEnvImports.AsNoTracking()
             .SingleOrDefaultAsync(
-                item => item.TenantId == tenantId && item.SourceSha256 == sourceSha256,
+                item => item.TenantId == tenantId &&
+                        item.SourceSha256 == sourceSha256 &&
+                        item.SchemaVersion == MigrationSchemaVersion,
                 cancellationToken);
         if (receipt == null)
         {
@@ -1182,10 +1214,6 @@ public sealed class LegacyEnvMigrationService
 
         try
         {
-            if (!receipt.SchemaVersion.Equals(MigrationSchemaVersion, StringComparison.Ordinal))
-            {
-                throw new JsonException();
-            }
             using var provenance = JsonDocument.Parse(receipt.ProvenanceJson);
             if (provenance.RootElement.ValueKind != JsonValueKind.Object ||
                 !provenance.RootElement.TryGetProperty("settings", out var settings) ||

@@ -309,8 +309,8 @@ public sealed class DurableStorageTests : IAsyncLifetime
             TargetBackendInstanceId = "primary",
             Mode = PlaylistLinkMode.Materialized,
             MaterializationMode = PlaylistMaterializationMode.Reconcile,
-            RuleVersion = LegacyEnvMigrationService.MigrationSchemaVersion,
-            PolicyVersion = LegacyEnvMigrationService.MigrationSchemaVersion,
+            RuleVersion = "legacy-env-import-v1",
+            PolicyVersion = "legacy-env-import-v1",
             CreatedAt = now,
             UpdatedAt = now,
             Revision = 1

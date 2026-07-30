@@ -342,7 +342,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.Equal([1], reconciliation.AddedPositions);
         Assert.Equal([1], reconciliation.RemovedPositions);
         Assert.Equal([0, 2], reconciliation.MovedPositions);
-        Assert.Equal([0, 1, 2], reconciliation.ChangedPositions);
+        Assert.Empty(reconciliation.ChangedPositions);
         Assert.Equal(
             reconciliation.PublishedRows,
             reconciliation.Accepted +
@@ -350,6 +350,31 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             reconciliation.Rejected +
             reconciliation.Unresolved);
         Assert.Equal(reconciliation.PlayableRoutes, reconciliation.ProtocolVisibleRows);
+    }
+
+    [Fact]
+    public async Task Reconciliation_ignores_artwork_refreshes_but_reports_metadata_changes()
+    {
+        _source.Snapshot = Snapshot(
+            "stable-revision",
+            Entry(0, "entry-a", "source-1", "One") with { ArtworkUrl = "https://art/old" });
+        await _service.RefreshAsync(Context(), _link);
+
+        _source.Snapshot = Snapshot(
+            "stable-revision",
+            Entry(0, "entry-a", "source-1", "One") with { ArtworkUrl = "https://art/new" });
+        await _service.RefreshAsync(Context(), _link);
+        var artworkOnly = await new DurablePlaylistProjectionReader(_factory)
+            .ReadByLinkIdAsync(_tenant, _user, _link);
+        Assert.Empty(artworkOnly!.Reconciliation!.ChangedPositions);
+
+        _source.Snapshot = Snapshot(
+            "stable-revision",
+            Entry(0, "entry-a", "source-1", "Renamed") with { ArtworkUrl = "https://art/new" });
+        await _service.RefreshAsync(Context(), _link);
+        var renamed = await new DurablePlaylistProjectionReader(_factory)
+            .ReadByLinkIdAsync(_tenant, _user, _link);
+        Assert.Equal([0], renamed!.Reconciliation!.ChangedPositions);
     }
 
     [Fact]

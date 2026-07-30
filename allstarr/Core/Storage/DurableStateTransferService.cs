@@ -707,7 +707,7 @@ public sealed class DurableStateTransferService
         var tenantIds = tenants.Select(item => item.Id).ToHashSet();
         var usersById = users.ToDictionary(item => item.Id);
         var auditsById = audits.ToDictionary(item => item.Id);
-        var sources = new HashSet<(Guid TenantId, string SourceSha256)>();
+        var sources = new HashSet<(Guid TenantId, string SourceSha256, string SchemaVersion)>();
         foreach (var receipt in imports)
         {
             LegacyEnvMigrationApplyResult? result = null;
@@ -731,9 +731,9 @@ public sealed class DurableStateTransferService
                              audit.Action == "legacy-env.apply" && audit.Outcome == "succeeded";
             if (receipt.Id == Guid.Empty || !tenantIds.Contains(receipt.TenantId) ||
                 !IsNormalizedSha256(receipt.SourceSha256) ||
-                receipt.SchemaVersion != LegacyEnvMigrationService.MigrationSchemaVersion ||
+                receipt.SchemaVersion is not ("legacy-env-import-v1" or LegacyEnvMigrationService.MigrationSchemaVersion) ||
                 !validProvenance ||
-                !sources.Add((receipt.TenantId, receipt.SourceSha256)) ||
+                !sources.Add((receipt.TenantId, receipt.SourceSha256, receipt.SchemaVersion)) ||
                 receipt.ActorUserId is { } actorId &&
                 (!usersById.TryGetValue(actorId, out var actor) || actor.TenantId != receipt.TenantId) ||
                 !validAudit || receipt.AppliedAt == default || result == null || !result.Success ||

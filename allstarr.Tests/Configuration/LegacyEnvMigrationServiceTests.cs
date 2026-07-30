@@ -225,6 +225,95 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Apply_revision_attaches_imported_schedule_to_existing_unscheduled_link()
+    {
+        var source = Source("""
+            SPOTIFY_IMPORT_PLAYLISTS=[["Discover Weekly","source-id","target-id","first","0 8 * * *"]]
+            """);
+        var spotifyAccountId = Guid.CreateVersion7();
+        var linkId = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.ProviderAccounts.Add(new ProviderAccountRecord
+            {
+                Id = spotifyAccountId,
+                ProviderId = "spotify",
+                DisplayName = "Spotify",
+                Scope = ProviderAccountScope.Global,
+                Enabled = true,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
+                Revision = 1
+            });
+            db.BackendIdentities.Add(new BackendIdentityRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = _tenantId,
+                UserId = _userId,
+                BackendType = "jellyfin",
+                BackendInstanceId = "primary",
+                PrincipalId = "jellyfin-user-id",
+                CreatedAt = DateTimeOffset.UtcNow,
+                LastSeenAt = DateTimeOffset.UtcNow
+            });
+            db.PlaylistLinks.Add(new PlaylistLinkRecord
+            {
+                Id = linkId,
+                TenantId = _tenantId,
+                OwnerUserId = _userId,
+                ProviderAccountId = spotifyAccountId,
+                Enabled = true,
+                LibraryScopeId = "music",
+                SourceProviderId = "spotify",
+                SourcePlaylistId = "source-id",
+                SourcePlaylistIdHash = Sha256("source-id"),
+                TargetProtocol = "jellyfin",
+                TargetBackendInstanceId = "primary",
+                TargetPlaylistId = "target-id",
+                Mode = PlaylistLinkMode.Materialized,
+                MaterializationMode = PlaylistMaterializationMode.Reconcile,
+                RuleVersion = "playlist-rules-v1",
+                PolicyVersion = "playlist-policy-v1",
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
+                Revision = 1
+            });
+            var auditId = Guid.CreateVersion7();
+            db.AuditEvents.Add(MigrationAudit(auditId, _tenantId, _userId));
+            db.LegacyEnvImports.Add(new LegacyEnvImportRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = _tenantId,
+                SourceSha256 = LegacyEnvParser.Parse(source).SourceSha256,
+                SchemaVersion = "legacy-env-import-v1",
+                ActorUserId = _userId,
+                AuditEventId = auditId,
+                AppliedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var service = CreateService();
+        var preview = await service.PreviewAsync(source, Actor());
+        Assert.Equal("attach_schedule", Assert.Single(preview.PlaylistHandoffs).Action);
+        Assert.Equal(0, preview.PlaylistLinkCount);
+        Assert.Equal(1, preview.ScheduleCount);
+
+        var result = await service.ApplyAsync(
+            preview.PreviewToken, preview.Revision, true, Actor());
+
+        Assert.Equal(0, result.PlaylistLinksCreated);
+        Assert.Equal(1, result.SchedulesCreated);
+        await using var verification = await _factory.CreateDbContextAsync();
+        var link = await verification.PlaylistLinks.SingleAsync(item => item.Id == linkId);
+        var schedule = await verification.JobSchedules.SingleAsync();
+        Assert.Equal(schedule.Id, link.ScheduleId);
+        Assert.Equal("0 8 * * *", schedule.CronExpression);
+        Assert.True(schedule.Enabled);
+        Assert.Equal(2, await verification.LegacyEnvImports.CountAsync());
+    }
+
+    [Fact]
     public async Task PreviewAndApply_DuplicateAssignmentsUseLastValueAndOnlyWarnWithSourceLines()
     {
         var service = CreateService();
@@ -300,7 +389,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
             var receipt = Assert.Single(await db.LegacyEnvImports.ToListAsync());
             Assert.Equal(_tenantId, receipt.TenantId);
             Assert.Equal(result.SourceFingerprint, receipt.SourceSha256);
-            Assert.Equal("legacy-env-import-v1", receipt.SchemaVersion);
+            Assert.Equal("legacy-env-import-v2", receipt.SchemaVersion);
             using var provenance = JsonDocument.Parse(receipt.ProvenanceJson);
             var settingProvenance = Assert.Single(
                 provenance.RootElement.GetProperty("settings").EnumerateArray());
@@ -632,6 +721,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
                 TenantId = _tenantId,
                 ActorUserId = _userId,
                 SourceSha256 = result.SourceFingerprint,
+                SchemaVersion = "legacy-env-import-v2",
                 AuditEventId = auditId,
                 ResultJson = JsonSerializer.Serialize(result),
                 AppliedAt = DateTimeOffset.UtcNow
@@ -740,6 +830,8 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
     };
 
     private static byte[] Source(string value) => Encoding.UTF8.GetBytes(value);
+    private static string Sha256(string value) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
     private void WriteKeyRing()
     {

@@ -1592,6 +1592,9 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await expect(dialog.getByText("No automatic sync", { exact: true })).toBeVisible();
   await dialog.getByRole("button", { name: "Show 1 track needing review" }).click();
   await expect(dialog.getByRole("button", { name: "Track route" })).toContainText("To review (1)");
+  await dialog.getByRole("button", { name: "Close playlist details" }).click();
+  await openPlaylist.click();
+  await expect(dialog.getByRole("button", { name: "Track route" })).toContainText("All routes");
   await expect(dialog.getByRole("button", { name: "Actions" })).toBeInViewport();
   await dialog.getByRole("button", { name: "Actions" }).click();
   await expect(page.getByRole("menuitem", { name: "Sync" })).toBeVisible();

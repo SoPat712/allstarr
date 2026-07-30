@@ -212,7 +212,11 @@
     const changingPlaylist = id !== selectedId;
     if (returnFocus) detailReturnFocus = returnFocus;
     selectedId = id;
-    if (changingPlaylist) details = null;
+    if (changingPlaylist) {
+      details = null;
+      trackQuery = "";
+      routeFilter = "all";
+    }
     detailOpen = true;
     detailLoading = true;
     const request = ++detailRequest;
