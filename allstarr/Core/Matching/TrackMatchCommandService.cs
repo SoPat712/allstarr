@@ -777,7 +777,11 @@ public sealed class TrackMatchCommandService(
             .Take(limit)
             .ToListAsync(cancellationToken);
         if (automatic.Count == 0) return searched;
-        var selected = indexed.Where(item => automatic.Contains(item.Id));
+        var indexedById = indexed.ToDictionary(item => item.Id);
+        var selected = decisionEngine.ScoreCandidates(
+                source!,
+                indexed.Where(item => automatic.Contains(item.Id)).Select(ToLocalCandidate))
+            .Select(item => indexedById[item.LibraryTrackId]);
         return selected.Concat(searched).DistinctBy(item => item.Id).Take(limit).ToArray();
     }
 
