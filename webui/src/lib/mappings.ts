@@ -1,4 +1,4 @@
-import type { MatchCandidate, MatchReviewItem, MatchTarget } from "./api";
+import type { MatchCandidate, MatchReviewItem, MatchTarget, ProviderDefinition } from "./api";
 
 export function isAttention(state: string) {
   return ["unresolved", "suggested", "ambiguous", "rejected"].includes(state.toLowerCase());
@@ -25,12 +25,25 @@ export function providerResultCounts(targets: MatchTarget[]) {
     const providerId = target.externalProvider || "local";
     counts.set(providerId, (counts.get(providerId) ?? 0) + 1);
     return counts;
-  }, new Map<string, number>())]
+  }, new Map<string, number>([["local", 0]]))]
     .map(([providerId, count]) => ({ providerId, count }))
     .toSorted((left, right) =>
       Number(right.providerId === "local") - Number(left.providerId === "local") ||
       right.count - left.count ||
       left.providerId.localeCompare(right.providerId));
+}
+
+export function playableProviderIds(providers: ProviderDefinition[]) {
+  return new Set(providers
+    .filter((provider) => [
+      ...(provider.categories ?? []),
+      ...(provider.runtimeCapabilities ?? [])
+        .filter((capability) => capability.supported !== false)
+        .map((capability) => capability.id),
+      ...(provider.capabilityRoutes ?? []).flatMap((route) => route.capabilities),
+    ].some((capability) =>
+      ["stream", "streaming", "download", "downloads"].includes(capability.toLowerCase())))
+    .map((provider) => provider.id.toLowerCase()));
 }
 
 export function rankedTargets(targets: MatchTarget[]) {
@@ -95,13 +108,17 @@ export function currentTarget(match: MatchReviewItem) {
     : null;
 }
 
-export function candidateResolution(candidate: MatchCandidate | undefined, sourceProviderId: string) {
+export function candidateResolution(
+  candidate: MatchCandidate | undefined,
+  sourceProviderId: string,
+  playableProviders: ReadonlySet<string>,
+) {
   const provider = Object.entries(candidate?.providerTrackIds ?? {}).find(
-    ([providerId]) => providerId.toLowerCase() !== sourceProviderId.toLowerCase(),
+    ([providerId]) =>
+      providerId.toLowerCase() !== sourceProviderId.toLowerCase() &&
+      playableProviders.has(providerId.toLowerCase()),
   );
-  if (candidate?.isLocal === false && provider)
-    return { targetType: "provider" as const, externalProvider: provider[0], externalId: provider[1] };
-  if (candidate?.libraryTrackId)
+  if (candidate?.isLocal !== false && candidate?.libraryTrackId)
     return { targetType: "local" as const, libraryTrackId: candidate.libraryTrackId };
   return provider
     ? { targetType: "provider" as const, externalProvider: provider[0], externalId: provider[1] }

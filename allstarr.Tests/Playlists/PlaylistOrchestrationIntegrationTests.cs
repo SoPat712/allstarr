@@ -596,6 +596,58 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     }
 
     [Fact]
+    public async Task Provider_selection_rejects_metadata_only_routes()
+    {
+        _source.Snapshot = Snapshot(
+            "revision-metadata-only-review",
+            Entry(0, "entry-metadata-only-review", "unindexed-source", "Manual target"));
+        var refresh = await _service.RefreshAsync(Context(), _link);
+        Guid externalSnapshotId;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            externalSnapshotId = await db.PlaylistSourceEntries
+                .Where(item => item.PlaylistSourceSnapshotId == refresh.SnapshotId)
+                .Select(item => item.ExternalMetadataSnapshotId)
+                .SingleAsync();
+        }
+
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
+            .Returns(["deezer"]);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
+            .Returns(["apple-download"]);
+        var matcher = new TrackMatchDecisionEngine();
+        var matches = new TrackMatchCommandService(
+            _factory,
+            matcher,
+            new ProviderAccountResolver(_factory, new ProviderPolicyOptions()),
+            new Clock(_now),
+            new PlaylistPlayableSearchService(
+                gateway.Object,
+                matcher,
+                null!,
+                new IdentityOptions(),
+                Options.Create(new JellyfinSettings()),
+                NullLogger<PlaylistPlayableSearchService>.Instance));
+
+        var result = await matches.ResolveSnapshotAsync(
+            new TrackMatchActor(_tenant, _user, false),
+            externalSnapshotId,
+            new ResolveTrackMatchCommand(
+                "provider",
+                ExternalProvider: "musicbrainz",
+                ExternalId: "release-id"),
+            "manual-metadata-only-review");
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(TrackMatchCommandFailure.Invalid, result.Failure);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.DoesNotContain(
+            await verify.ProviderTrackIdentities.ToListAsync(),
+            item => item.ProviderId == "musicbrainz");
+    }
+
+    [Fact]
     public async Task Automatic_suggestion_persists_ranked_provider_fallbacks_as_one_playable_track()
     {
         await SetLink(mode: PlaylistLinkMode.Virtual);

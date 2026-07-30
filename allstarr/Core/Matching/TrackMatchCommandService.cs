@@ -1878,7 +1878,8 @@ public sealed class TrackMatchCommandService(
                 return TrackMatchCommandResult.Fail(
                     TrackMatchCommandFailure.Invalid,
                     "ExternalProvider and ExternalId are required for a provider match");
-            if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(providerId))
+            if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(providerId) ||
+                playableSearch?.CanUseProvider(providerId) == false)
                 return TrackMatchCommandResult.Fail(
                     TrackMatchCommandFailure.Invalid,
                     "That provider cannot supply playback audio");

@@ -11,6 +11,7 @@ using allstarr.Filters;
 using allstarr.Models.Domain;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
+using allstarr.Services.Spotify;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -291,6 +292,10 @@ public sealed class TrackMatchesController(
         var sourceIdentities = review.ProviderIdentities.ToDictionary(item => item.Id);
         var identities = review.ProviderIdentities
             .GroupBy(item => item.CanonicalRecordingId).ToDictionary(group => group.Key, group => group.ToArray());
+        var playableProviders = providerGateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
+            .Concat(providerGateway.GetProviderOrder(ProviderCapabilityKind.Download))
+            .Select(ExternalTrackPlaybackPolicy.Normalize)
+            .ToHashSet(StringComparer.Ordinal);
 
         var allRows = review.Snapshots
             .GroupBy(snapshot => new
@@ -319,7 +324,15 @@ public sealed class TrackMatchesController(
                 var sourceIdentity = snapshot.ProviderTrackIdentityId.HasValue
                     ? sourceIdentities.GetValueOrDefault(snapshot.ProviderTrackIdentityId.Value)
                     : null;
-                return Row(snapshot, decision, manual, sourceIdentity, library, libraryByCanonical, identities);
+                return Row(
+                    snapshot,
+                    decision,
+                    manual,
+                    sourceIdentity,
+                    library,
+                    libraryByCanonical,
+                    identities,
+                    playableProviders);
             })
             .ToArray();
         var filteredRows = allRows.Where(row => MatchesStateFilter(row.State, state));
@@ -588,7 +601,8 @@ public sealed class TrackMatchesController(
         ManualTrackOverrideRecord? manual, ProviderTrackIdentityRecord? sourceIdentity,
         IReadOnlyDictionary<Guid, LibraryTrackRecord> library,
         IReadOnlyDictionary<Guid, LibraryTrackRecord> libraryByCanonical,
-        IReadOnlyDictionary<Guid, ProviderTrackIdentityRecord[]> identities)
+        IReadOnlyDictionary<Guid, ProviderTrackIdentityRecord[]> identities,
+        IReadOnlySet<string> playableProviders)
     {
         var routeCanonicalId = decision?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId;
         var routeIdentities = routeCanonicalId.HasValue &&
@@ -690,7 +704,7 @@ public sealed class TrackMatchesController(
                 providerIds = ParseObject(track.ProviderIdsJson)
             },
             providerIdentities,
-            candidates = ParseCandidates(decision?.CandidateResultsJson),
+            candidates = ParseCandidates(decision?.CandidateResultsJson, playableProviders),
             reasons = decision == null && sourceIdentity != null
                 ? ["Existing canonical provider identity is available."]
                 : ParseArray(decision?.ReasonsJson),
@@ -862,7 +876,7 @@ public sealed class TrackMatchesController(
         };
     }
 
-    private static object[] ParseCandidates(string? json)
+    private static object[] ParseCandidates(string? json, IReadOnlySet<string> playableProviders)
     {
         try
         {
@@ -893,7 +907,8 @@ public sealed class TrackMatchesController(
                 components = Element(item, "components", "Components"),
                 reasons = Element(item, "reasons", "Reasons"),
                 warnings = Element(item, "warnings", "Warnings")
-            }).Where(item => item.libraryTrackId != null || HasProviderTrackId(item.providerTrackIds))
+            }).Where(item => item.isLocal != false && item.libraryTrackId != null ||
+                             HasProviderTrackId(item.providerTrackIds, playableProviders))
                 .Cast<object>()
                 .ToArray();
         }
@@ -905,9 +920,12 @@ public sealed class TrackMatchesController(
             ? value.Clone()
             : null;
 
-    private static bool HasProviderTrackId(JsonElement? value) =>
+    private static bool HasProviderTrackId(
+        JsonElement? value,
+        IReadOnlySet<string> playableProviders) =>
         value is { ValueKind: JsonValueKind.Object } &&
         value.Value.EnumerateObject().Any(item =>
+            playableProviders.Contains(ExternalTrackPlaybackPolicy.Normalize(item.Name)) &&
             item.Value.ValueKind == JsonValueKind.String &&
             !string.IsNullOrWhiteSpace(item.Value.GetString()));
 

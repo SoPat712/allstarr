@@ -13,6 +13,7 @@
   import {
     candidateResolution,
     percent,
+    playableProviderIds,
     providerResultCounts,
     rankedTargets,
     scoreComponents,
@@ -48,6 +49,11 @@
   let saving = $state(false);
   let error = $state("");
 
+  const playbackProviders = $derived(playableProviderIds(providers));
+  const eligibleCandidates = $derived(
+    match?.candidates.filter((candidate) =>
+      candidateResolution(candidate, match.providerId, playbackProviders)) ?? [],
+  );
   const resultProviders = $derived(providerResultCounts(results));
   const visibleResults = $derived(
     providerFilter
@@ -84,9 +90,10 @@
   }
 
   function candidateProvider(candidate: MatchReviewItem["candidates"][number]) {
-    const providers = Object.keys(candidate.providerTrackIds ?? {});
-    return providers.find((providerId) =>
-      providerId.toLowerCase() !== match?.providerId.toLowerCase()) ?? providers[0] ?? "";
+    const resolution = match
+      ? candidateResolution(candidate, match.providerId, playbackProviders)
+      : null;
+    return resolution?.targetType === "provider" ? resolution.externalProvider : "";
   }
 
   function candidateArtwork(candidate: MatchReviewItem["candidates"][number]) {
@@ -214,12 +221,12 @@
         <section class="automatic-candidates">
           <div class="dialog-section-heading">
             <div><strong>Automatic candidates</strong><small>Same scores used by automatic matching</small></div>
-            <span>{match.candidates.length}</span>
+            <span>{eligibleCandidates.length}</span>
           </div>
-          {#if match.candidates.length}
+          {#if eligibleCandidates.length}
             <div class="candidate-list">
-              {#each match.candidates.slice(0, 5) as candidate}
-                {@const resolution = candidateResolution(candidate, match.providerId)}
+              {#each eligibleCandidates.slice(0, 5) as candidate}
+                {@const resolution = candidateResolution(candidate, match.providerId, playbackProviders)}
                 <article class="candidate-card">
                   <MediaArtwork
                     class="mapping-art"

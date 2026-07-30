@@ -6,6 +6,7 @@ import {
   hashSimilarity,
   isAttention,
   percent,
+  playableProviderIds,
   providerResultCounts,
   rankedTargets,
   reviewStateLabel,
@@ -45,7 +46,7 @@ describe("mapping review presentation", () => {
       { providerId: "apple-download", count: 2 },
       { providerId: "deezer", count: 1 },
     ]);
-    expect(providerResultCounts([])).toEqual([]);
+    expect(providerResultCounts([])).toEqual([{ providerId: "local", count: 0 }]);
   });
 
   it("orders unified results by match confidence", () => {
@@ -68,7 +69,8 @@ describe("mapping review presentation", () => {
   });
 
   it("only accepts a concrete local or non-source provider candidate", () => {
-    expect(candidateResolution({ libraryTrackId: "local-1" }, "spotify")).toEqual({
+    const playable = new Set(["deezer"]);
+    expect(candidateResolution({ libraryTrackId: "local-1" }, "spotify", playable)).toEqual({
       targetType: "local",
       libraryTrackId: "local-1",
     });
@@ -76,12 +78,33 @@ describe("mapping review presentation", () => {
       isLocal: false,
       libraryTrackId: "synthetic-external-id",
       providerTrackIds: { spotify: "source", deezer: "candidate" },
-    }, "spotify")).toEqual({
+    }, "spotify", playable)).toEqual({
       targetType: "provider",
       externalProvider: "deezer",
       externalId: "candidate",
     });
-    expect(candidateResolution({ providerTrackIds: { spotify: "source" } }, "spotify")).toBeNull();
+    expect(candidateResolution({
+      isLocal: false,
+      libraryTrackId: "metadata-only",
+      providerTrackIds: { musicbrainzalbum: "release" },
+    }, "spotify", playable)).toBeNull();
+    expect(candidateResolution(
+      { providerTrackIds: { spotify: "source" } },
+      "spotify",
+      playable,
+    )).toBeNull();
+  });
+
+  it("derives selectable providers only from playback capabilities", () => {
+    expect([...playableProviderIds([
+      { id: "musicbrainz", name: "MusicBrainz", categories: ["metadata"] },
+      { id: "jellyfin", name: "Jellyfin", categories: ["streaming"] },
+      {
+        id: "extension",
+        name: "Extension",
+        capabilityRoutes: [{ capabilities: ["metadata", "download"] }],
+      },
+    ])]).toEqual(["jellyfin", "extension"]);
   });
 
   it("projects external target metadata instead of reducing the match to a provider id", () => {

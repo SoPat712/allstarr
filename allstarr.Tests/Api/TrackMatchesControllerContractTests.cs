@@ -15,6 +15,7 @@ public sealed class TrackMatchesControllerContractTests
             [
               { "libraryTrackId": "local", "title": "Local" },
               { "providerTrackIds": { "qobuz": "external" }, "title": "External" },
+              { "providerTrackIds": { "musicbrainzalbum": "release" }, "title": "MusicBrainz album" },
               { "providerTrackIds": {}, "title": "Metadata only" }
             ]
             """;
@@ -22,10 +23,13 @@ public sealed class TrackMatchesControllerContractTests
             "ParseCandidates",
             BindingFlags.Static | BindingFlags.NonPublic)!;
 
-        var projected = JsonSerializer.Serialize(parse.Invoke(null, [candidates]));
+        var projected = JsonSerializer.Serialize(parse.Invoke(
+            null,
+            [candidates, new HashSet<string>(["qobuz"])]));
 
         Assert.Contains("Local", projected);
         Assert.Contains("External", projected);
+        Assert.DoesNotContain("MusicBrainz album", projected);
         Assert.DoesNotContain("Metadata only", projected);
     }
 

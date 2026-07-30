@@ -15,6 +15,28 @@ namespace allstarr.Tests;
 public sealed class PlaylistPlayableSearchServiceTests
 {
     [Fact]
+    public void Provider_eligibility_comes_from_streaming_and_download_routes()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
+            .Returns(["jellyfin", "stream-extension"]);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
+            .Returns(["download-extension"]);
+        var service = new PlaylistPlayableSearchService(
+            gateway.Object,
+            new TrackMatchDecisionEngine(),
+            null!,
+            new IdentityOptions(),
+            Options.Create(new JellyfinSettings()),
+            NullLogger<PlaylistPlayableSearchService>.Instance);
+
+        Assert.True(service.CanUseProvider("stream-extension"));
+        Assert.True(service.CanUseProvider("download_extension"));
+        Assert.False(service.CanUseProvider("musicbrainz"));
+        Assert.False(service.CanUseProvider("metadata-extension"));
+    }
+
+    [Fact]
     public async Task Automatic_search_scores_all_playable_providers_and_selects_the_best()
     {
         var tenant = Guid.CreateVersion7();

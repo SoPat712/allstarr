@@ -159,14 +159,19 @@ public sealed class PlaylistPlayableSearchService(
         return null;
     }
 
+    public bool CanUseProvider(string? providerId)
+    {
+        var normalized = ExternalTrackPlaybackPolicy.Normalize(providerId);
+        return normalized.Length > 0 &&
+               gateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
+                   .Concat(gateway.GetProviderOrder(ProviderCapabilityKind.Download))
+                   .Any(provider => ExternalTrackPlaybackPolicy.Normalize(provider) == normalized);
+    }
+
     private bool IsPlayable(Song song)
     {
-        var playable = gateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
-            .Concat(gateway.GetProviderOrder(ProviderCapabilityKind.Download))
-            .Select(ExternalTrackPlaybackPolicy.Normalize)
-            .ToHashSet(StringComparer.Ordinal);
         return ExternalTrackPlaybackPolicy.CanUseForPlayback(song) &&
-               playable.Contains(ExternalTrackPlaybackPolicy.Normalize(song.ExternalProvider));
+               CanUseProvider(song.ExternalProvider);
     }
 
     private static LocalTrackMatchCandidate ToCandidate(Song song, TrackMatchScope scope) => new(

@@ -21,6 +21,7 @@
     candidateResolution,
     currentTarget,
     isAttention,
+    playableProviderIds,
     percent,
     reviewStateLabel,
     scoreComponents,
@@ -45,6 +46,7 @@
   let refreshing = $state(false);
   let error = $state("");
   let degraded = $state("");
+  const playbackProviders = $derived(playableProviderIds(providers));
   let feedback = $state("");
   let action = $state("");
   let loadVersion = 0;
@@ -167,7 +169,9 @@
   }
 
   async function accept(match: MatchReviewItem) {
-    const resolution = candidateResolution(match.candidates[0], match.providerId);
+    const candidate = match.candidates.find((item) =>
+      candidateResolution(item, match.providerId, playbackProviders));
+    const resolution = candidateResolution(candidate, match.providerId, playbackProviders);
     if (!resolution || action) return openMatch(match);
     action = match.externalSnapshotId;
     try {
@@ -294,8 +298,9 @@
       <div class="mapping-rows">
         {#each data.matches as match}
           {@const target = currentTarget(match)}
-          {@const candidate = match.candidates[0]}
-          {@const resolution = candidateResolution(candidate, match.providerId)}
+          {@const candidate = match.candidates.find((item) =>
+            candidateResolution(item, match.providerId, playbackProviders))}
+          {@const resolution = candidateResolution(candidate, match.providerId, playbackProviders)}
           {@const candidateProviderId = resolution?.targetType === "provider" ? resolution.externalProvider : "local"}
           {@const candidateExternalId = resolution?.targetType === "provider" ? resolution.externalId : null}
           {@const candidateArtwork = candidateExternalId

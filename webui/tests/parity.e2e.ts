@@ -305,6 +305,10 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
             artist: "Artist", album: "Album", candidateIsrc: "US-AAA-26-00001",
             providerTrackIds: { "lumen-audio": "provider-track" },
             confidence: 0.82, durationMilliseconds: 180_000, components: { title: 1 },
+          }, {
+            libraryTrackId: "metadata-only", isLocal: false, title: "MusicBrainz album",
+            artist: "Metadata only", providerTrackIds: { musicbrainzalbum: "release-id" },
+            confidence: 0.99, durationMilliseconds: 180_000,
           }],
         }],
         stats: { total: 1, matched: 0, accepted: 0, unresolved: 0, suggested: 1, review: 1, rejected: 0, attention: 1 },
@@ -983,20 +987,44 @@ test("Add playlist links a Jellyfin playlist before its Source on mobile", async
 
 test("Tentative mappings sort by confidence and deep links open review", async ({ page }) => {
   await mockApi(page);
+  let localSearches = 0;
+  await page.route("**/api/admin/track-matches/targets/local?*", (route) => {
+    localSearches += 1;
+    const hasLocalResult = new URL(route.request().url()).searchParams.get("query") === "Kiss Me More";
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        tracks: hasLocalResult ? [{
+          id: "jellyfin-kiss-me-more", backendItemId: "jellyfin-kiss-me-more",
+          title: "Kiss Me More", artist: "Doja Cat feat. SZA", album: "Planet Her",
+          durationMilliseconds: 208_000, confidence: 0.91,
+          components: { localPreference: 0.07, preferenceScore: 0.98 },
+        }] : [],
+      }),
+    });
+  });
   await page.goto("#/library/mappings?search=Test%20song&review=snapshot");
   const dialog = page.getByRole("dialog", { name: "Test song" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("ISRC US-AAA-26-00001")).toHaveCount(2);
-  await expect(dialog.locator(".candidate-provider")).toContainText("Lumen Audio");
+  await expect(dialog.locator(".candidate-provider")).toContainText("Jellyfin");
+  await expect(dialog.getByText("MusicBrainz album")).toHaveCount(0);
   await expect(dialog.locator(".candidate-card .mapping-art > span")).toBeVisible();
   await dialog.getByLabel("Search local library and playable providers").fill("Kiss Me More");
   await dialog.getByRole("button", { name: "Search", exact: true }).click();
+  await expect.poll(() => localSearches).toBe(1);
   await expect(dialog.getByRole("button", { name: /Jellyfin 1/ })).toBeVisible();
   await expect(dialog.getByRole("button", { name: /Lumen Audio 1/ })).toBeVisible();
   await expect(dialog.getByRole("button", { name: /Qobuz/ })).toHaveCount(0);
   await expect(dialog.getByText("Planet Her")).toHaveCount(2);
   await expect(dialog.getByText("base evidence")).toHaveCount(2);
   await expect(dialog.getByText("rank #1")).toBeVisible();
+  await dialog.getByLabel("Search local library and playable providers").fill("No local copy");
+  await dialog.getByRole("button", { name: "Search", exact: true }).click();
+  await expect.poll(() => localSearches).toBe(2);
+  await expect(dialog.getByRole("button", { name: /Jellyfin 0/ })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /Lumen Audio 1/ })).toBeVisible();
   await dialog.getByRole("button", { name: "Close match dialog" }).click();
 
   const request = page.waitForRequest((item) =>
