@@ -231,6 +231,50 @@ public sealed class PlaylistPlayableSearchServiceTests
     }
 
     [Fact]
+    public async Task Tentative_routes_are_freshly_searched_instead_of_reused()
+    {
+        var tenant = Guid.CreateVersion7();
+        var user = Guid.CreateVersion7();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
+            .Returns(["deezer"]);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
+            .Returns([]);
+        var service = new PlaylistPlayableSearchService(
+            gateway.Object,
+            new TrackMatchDecisionEngine(),
+            null!,
+            new IdentityOptions(),
+            Options.Create(new JellyfinSettings()),
+            NullLogger<PlaylistPlayableSearchService>.Instance);
+
+        var result = await service.ReuseAsync(
+            Context(tenant, user),
+            new ExternalTrackMatchSnapshot(
+                "source", "spotify", "source-track", "Winter Wind",
+                "Frédéric Chopin", null, null, 225_000, null, null, null),
+            new TrackMatchScope(
+                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1),
+            [
+                new ProviderTrackIdentityRecord
+                {
+                    TenantId = tenant,
+                    CanonicalRecordingId = Guid.CreateVersion7(),
+                    ProviderId = "deezer",
+                    ResourceKind = ProviderResourceKind.Track,
+                    ExternalId = "stale-suggestion",
+                    Verification = ProviderIdentityVerification.Verified,
+                    VerificationMethod = "automatic-suggestion"
+                }
+            ],
+            CancellationToken.None);
+
+        Assert.Null(result);
+        gateway.Verify(item => item.GetSongAsync(
+            It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
     public async Task Unique_suggestion_is_used_but_keeps_review_warning()
     {
         var tenant = Guid.CreateVersion7();

@@ -101,6 +101,7 @@ public sealed class PlaylistPlayableSearchService(
             .GroupBy(item => item.Provider, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Min(item => item.Index), StringComparer.Ordinal);
         var cachedRoutes = identities
+            .Where(identity => identity.VerificationMethod != "automatic-suggestion")
             .Where(identity => order.ContainsKey(
                 ExternalTrackPlaybackPolicy.Normalize(identity.ProviderId)))
             .OrderBy(identity => order[ExternalTrackPlaybackPolicy.Normalize(identity.ProviderId)])
@@ -124,18 +125,6 @@ public sealed class PlaylistPlayableSearchService(
             if (song == null) continue;
 
             var candidate = ToCandidate(song, scope);
-            if (cached.VerificationMethod == "automatic-suggestion")
-            {
-                var suggested = matcher.Decide(scope, source, [candidate], null);
-                if (suggested.State is not (
-                        TrackMatchReviewState.Accepted or TrackMatchReviewState.Suggested))
-                    continue;
-                return new(
-                    suggested,
-                    new Dictionary<Guid, Song> { [candidate.LibraryTrackId] = song },
-                    new Dictionary<Guid, IReadOnlyList<Song>> { [candidate.LibraryTrackId] = [song] });
-            }
-
             var score = matcher.ScoreCandidates(source, [candidate]).Single();
             var reasons = score.Reasons
                 .Prepend("verified_provider_identity")
