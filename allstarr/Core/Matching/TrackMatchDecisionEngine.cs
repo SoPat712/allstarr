@@ -316,9 +316,13 @@ public sealed class TrackMatchDecisionEngine
                 scope);
         }
 
-        var state = best.Confidence >= _policy.AcceptThreshold
+        var decisionScore = PreferenceScore(best);
+        var strongArtistEvidence = best.Components == null ||
+                                   !best.Components.TryGetValue("artist", out var artistScore) ||
+                                   artistScore >= 0.7;
+        var state = decisionScore >= _policy.AcceptThreshold && strongArtistEvidence
             ? TrackMatchReviewState.Accepted
-            : best.Confidence >= _policy.SuggestThreshold
+            : decisionScore >= _policy.SuggestThreshold
                 ? TrackMatchReviewState.Suggested
                 : TrackMatchReviewState.Unresolved;
         return Result(
@@ -326,11 +330,12 @@ public sealed class TrackMatchDecisionEngine
             state is TrackMatchReviewState.Accepted or TrackMatchReviewState.Suggested
                 ? selected
                 : null,
-            best.Confidence,
+            decisionScore,
             scores,
             best.Reasons,
             state switch
             {
+                TrackMatchReviewState.Suggested when !strongArtistEvidence => ["weak_artist_evidence_review"],
                 TrackMatchReviewState.Suggested => ["below_accept_threshold_review"],
                 TrackMatchReviewState.Unresolved => ["below_suggestion_threshold"],
                 _ => []

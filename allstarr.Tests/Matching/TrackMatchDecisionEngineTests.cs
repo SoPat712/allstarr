@@ -611,6 +611,31 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void LocalPreferenceBoostCountsTowardAutomaticAcceptance()
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            Title = "Silk & Cologne (EI8HT & Offset) - Spider-Verse Remix",
+            Artist = "EI8HT, Offset"
+        };
+        var candidate = Candidate(scope) with
+        {
+            Title = "Silk and Cologne (Spider-Verse remix)",
+            Artist = "Ei8ht, OFFSET"
+        };
+        var engine = new TrackMatchDecisionEngine();
+
+        var score = Assert.Single(engine.ScoreCandidates(source, [candidate]));
+        var decision = engine.Decide(scope, source, [candidate]);
+
+        Assert.True(score.Confidence < decision.AcceptThreshold);
+        Assert.True(score.Components!["preferenceScore"] >= decision.AcceptThreshold);
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(score.Components["preferenceScore"], decision.Confidence);
+    }
+
+    [Fact]
     public void ScopedManualPinWinsButCannotCrossTenantOrInvisibleLibrary()
     {
         var scope = Scope();
