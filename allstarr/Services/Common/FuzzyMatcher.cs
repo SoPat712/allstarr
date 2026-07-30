@@ -11,6 +11,9 @@ public static partial class FuzzyMatcher
     [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\(\[]?\s*(feat\.?|ft\.?|with|featuring)\s+[^\)\]]+[\)\]]?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex FeatDecoratorRegex();
 
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\(\[][^\)\]]*\b(feat\.?|ft\.?|with|featuring)\s+[^\)\]]+[\)\]]", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex ParenthesizedCreditsRegex();
+
     [System.Text.RegularExpressions.GeneratedRegex(@"\s*-\s*from\s+[""']?[^""']+[""']?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex FromAlbumDecoratorRegex();
 
@@ -44,6 +47,7 @@ public static partial class FuzzyMatcher
 
         var cleaned = title;
 
+        cleaned = ParenthesizedCreditsRegex().Replace(cleaned, "");
         cleaned = FeatDecoratorRegex().Replace(cleaned, "");
         cleaned = FromAlbumDecoratorRegex().Replace(cleaned, "");
         cleaned = VersionDecoratorRegex().Replace(cleaned, "");

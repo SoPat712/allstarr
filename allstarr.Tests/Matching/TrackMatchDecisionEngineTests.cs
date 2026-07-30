@@ -606,6 +606,7 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         var score = Assert.Single(new TrackMatchDecisionEngine().ScoreCandidates(source, selected));
 
         Assert.Equal(local.LibraryTrackId, score.LibraryTrackId);
+        Assert.True(score.Confidence >= 0.9);
         Assert.Equal(0.07, score.Components!["localPreference"]);
     }
 
