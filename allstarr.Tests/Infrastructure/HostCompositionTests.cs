@@ -209,6 +209,16 @@ public sealed class HostCompositionTests
         Assert.Equal(ProviderCapabilityKind.Metadata, capability.Capability);
     }
 
+    [Fact]
+    public void LyricsFallbackClients_HaveBoundedProviderTimeouts()
+    {
+        using var factory = new AllstarrFactory("Jellyfin");
+        var clients = factory.Services.GetRequiredService<IHttpClientFactory>();
+
+        Assert.All(new[] { "Odesli", "LyricsPlus", "Lrclib" }, name =>
+            Assert.Equal(TimeSpan.FromSeconds(5), clients.CreateClient(name).Timeout));
+    }
+
     private static ControllerContext Context(bool administrator)
     {
         var httpContext = new DefaultHttpContext();

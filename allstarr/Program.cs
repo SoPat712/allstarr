@@ -240,6 +240,9 @@ builder.Services.AddControllers()
     });
 
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("Odesli", client => client.Timeout = TimeSpan.FromSeconds(5));
+builder.Services.AddHttpClient("LyricsPlus", client => client.Timeout = TimeSpan.FromSeconds(5));
+builder.Services.AddHttpClient("Lrclib", client => client.Timeout = TimeSpan.FromSeconds(5));
 builder.Services.AddHttpClient("ExtensionSdkV1")
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {

@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
 using allstarr.Core.Protocols;
@@ -191,7 +192,9 @@ public class JellyfinProxyService
         ForwardRelayRequestHeaders(incoming.Headers, request);
 
         if (MethodCanHaveBody(method) &&
-            (incoming.ContentLength is > 0 || incoming.Headers.ContainsKey("Transfer-Encoding")))
+            (incoming.HttpContext.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true ||
+             incoming.ContentLength is > 0 ||
+             incoming.Headers.ContainsKey("Transfer-Encoding")))
         {
             request.Content = new StreamContent(incoming.Body);
             if (!string.IsNullOrWhiteSpace(incoming.ContentType))

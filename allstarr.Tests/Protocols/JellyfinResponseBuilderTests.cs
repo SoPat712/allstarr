@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
 using allstarr.Models.Domain;
 using allstarr.Models.Subsonic;
 using allstarr.Models.Settings;
@@ -198,7 +199,7 @@ public class JellyfinResponseBuilderTests
     }
 
     [Fact]
-    public void ConvertSongToJellyfinItem_DeezerPlaylistMatch_LabelsFallbackArtist()
+    public void ConvertSongToJellyfinItem_DeezerPlaylistMatch_KeepsDisplayArtistWithoutInventingId()
     {
         var matchedSong = new Song
         {
@@ -218,7 +219,38 @@ public class JellyfinResponseBuilderTests
         var artists = Assert.IsType<string[]>(result["Artists"]);
         Assert.Equal(["Matched Artist [D]"], artists);
         var artistItems = Assert.IsType<Dictionary<string, object?>[]>(result["ArtistItems"]);
-        Assert.Equal("Matched Artist [D]", artistItems[0]["Name"]);
+        Assert.Empty(artistItems);
+        Assert.Empty(Assert.IsType<Dictionary<string, object?>[]>(result["AlbumArtists"]));
+    }
+
+    [Fact]
+    public void SynthesizedRelationships_OmitMismatchedOrMissingIds()
+    {
+        var song = _builder.ConvertSongToJellyfinItem(new Song
+        {
+            Id = "ext-deezer-song-1",
+            Title = "Track",
+            Artist = "Primary",
+            Artists = ["Primary", "Feature"],
+            ArtistIds = ["ext-deezer-artist-1"],
+            IsLocal = false,
+            ExternalProvider = "deezer"
+        });
+        var album = _builder.ConvertAlbumToJellyfinItem(new Album
+        {
+            Id = "ext-deezer-album-1",
+            Title = "Album",
+            Artist = "Primary",
+            IsLocal = false,
+            ExternalProvider = "deezer"
+        });
+
+        Assert.Equal(["Primary [D]", "Feature [D]"], Assert.IsType<string[]>(song["Artists"]));
+        Assert.Empty(Assert.IsType<Dictionary<string, object?>[]>(song["ArtistItems"]));
+        Assert.Empty(Assert.IsType<Dictionary<string, object?>[]>(song["AlbumArtists"]));
+        Assert.Equal(["Primary"], Assert.IsType<string[]>(album["Artists"]));
+        Assert.Empty(Assert.IsType<Dictionary<string, object?>[]>(album["ArtistItems"]));
+        Assert.Empty(Assert.IsType<Dictionary<string, object?>[]>(album["AlbumArtists"]));
     }
 
     [Theory]
@@ -457,7 +489,62 @@ public class JellyfinResponseBuilderTests
 
         // Assert
         var jsonResult = Assert.IsType<JsonResult>(result);
-        Assert.NotNull(jsonResult.Value);
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
+        Assert.All(document.RootElement.GetProperty("SearchHints").EnumerateArray(), hint =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(hint.GetProperty("Id").GetString()));
+            Assert.Equal(hint.GetProperty("Id").GetString(), hint.GetProperty("ItemId").GetString());
+        });
+    }
+
+    [Fact]
+    public void CreateSearchHintsResponse_PreservesNativeFieldsAndNormalizesBothIds()
+    {
+        using var native = JsonDocument.Parse(
+            """
+            {
+              "SearchHints": [
+                {
+                  "ItemId": "native-1",
+                  "Name": "Native",
+                  "Type": "Audio",
+                  "AlbumId": "album-1",
+                  "PrimaryImageTag": "image-1",
+                  "IndexNumber": 7
+                }
+              ]
+            }
+            """);
+
+        var result = _builder.CreateSearchHintsResponse([], [], [], native);
+
+        var jsonResult = Assert.IsType<JsonResult>(result);
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
+        var hint = Assert.Single(document.RootElement.GetProperty("SearchHints").EnumerateArray());
+        Assert.Equal("native-1", hint.GetProperty("Id").GetString());
+        Assert.Equal("native-1", hint.GetProperty("ItemId").GetString());
+        Assert.Equal("album-1", hint.GetProperty("AlbumId").GetString());
+        Assert.Equal("image-1", hint.GetProperty("PrimaryImageTag").GetString());
+        Assert.Equal(7, hint.GetProperty("IndexNumber").GetInt32());
+    }
+
+    [Fact]
+    public void CreateSearchHintsResponse_AppliesLimitAfterMergingNativeAndExternalHints()
+    {
+        using var native = JsonDocument.Parse(
+            """{"SearchHints":[{"Id":"native-1","Name":"Native","Type":"Audio"}]}""");
+
+        var result = _builder.CreateSearchHintsResponse(
+            [new Song { Id = "song-1", Title = "Song", Artist = "Artist" }],
+            [new Album { Id = "album-1", Title = "Album", Artist = "Artist" }],
+            [new Artist { Id = "artist-1", Name = "Artist" }],
+            native,
+            2);
+
+        var jsonResult = Assert.IsType<JsonResult>(result);
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
+        Assert.Equal(2, document.RootElement.GetProperty("SearchHints").GetArrayLength());
+        Assert.Equal(2, document.RootElement.GetProperty("TotalRecordCount").GetInt32());
     }
 
     [Fact]

@@ -20,7 +20,7 @@ public class LrclibService
         IManualLyricsMappingStore mappingStore,
         ILogger<LrclibService> logger)
     {
-        _httpClient = httpClientFactory.CreateClient();
+        _httpClient = httpClientFactory.CreateClient("Lrclib");
         _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.3 (https://github.com/SoPat712/allstarr)");
         _cache = cache;
         _mappingStore = mappingStore;

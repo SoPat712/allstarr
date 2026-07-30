@@ -23,6 +23,7 @@ using allstarr.Core.Protocols.Jellyfin;
 using allstarr.Core.Protocols;
 using allstarr.Core.Favorites;
 using allstarr.Core.Playback;
+using SkiaSharp;
 
 namespace allstarr.Controllers;
 
@@ -214,6 +215,13 @@ public partial class JellyfinController : ControllerBase
 
         if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(itemId))
         {
+            var targetId = await ResolveWritablePlaylistTargetAsync(itemId);
+            if (targetId != null)
+            {
+                return await RelayCurrentRequestToPlaylistTargetAsync(
+                    Request.Path.Value!.TrimStart('/'), itemId, targetId);
+            }
+
             return await _virtualPlaylistProtocolAdapter.ReadItemAsync(
                        HttpContext.RequireProtocolExecutionContext(), itemId, HttpContext.RequestAborted)
                    ?? _responseBuilder.CreateError(404, "Playlist not found");
@@ -692,91 +700,42 @@ public partial class JellyfinController : ControllerBase
     /// </summary>
     [HttpGet("Items/{itemId}/Images/{imageType}")]
     [HttpGet("Items/{itemId}/Images/{imageType}/{imageIndex}")]
+    [HttpHead("Items/{itemId}/Images/{imageType}")]
+    [HttpHead("Items/{itemId}/Images/{imageType}/{imageIndex}")]
     public async Task<IActionResult> GetImage(
         string itemId,
         string imageType,
         int imageIndex = 0,
         [FromQuery] int? maxWidth = null,
         [FromQuery] int? maxHeight = null,
-        [FromQuery(Name = "tag")] string? tag = null)
+        [FromQuery(Name = "tag")] string? tag = null,
+        [FromQuery(Name = "format")] string? requestedFormat = null)
     {
         if (string.IsNullOrWhiteSpace(itemId))
         {
             return NotFound();
         }
 
+        if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(itemId))
+        {
+            var sourceId = await _virtualPlaylistProtocolAdapter.GetImageSourceIdAsync(
+                HttpContext.GetProtocolExecutionContext(), itemId, HttpContext.RequestAborted);
+            return sourceId == null
+                ? NotFound()
+                : await GetPlaylistImage(sourceId, maxWidth, maxHeight, requestedFormat);
+        }
+
         // Check for external playlist
         if (PlaylistIdHelper.IsExternalPlaylist(itemId))
         {
-            return await GetPlaylistImage(itemId);
+            return await GetPlaylistImage(itemId, maxWidth, maxHeight, requestedFormat);
         }
 
         var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(itemId);
 
         if (!isExternal)
         {
-            var effectiveImageTag = tag;
-            if (string.IsNullOrWhiteSpace(effectiveImageTag) &&
-                _spotifySettings.IsSpotifyPlaylist(itemId))
-            {
-                effectiveImageTag = await ResolveCurrentSpotifyPlaylistImageTagAsync(itemId, imageType);
-            }
-
-            // Proxy image from Jellyfin for local content
-            var (imageBytes, contentType) = await _proxyService.GetImageAsync(
-                itemId,
-                imageType,
-                maxWidth,
-                maxHeight,
-                effectiveImageTag,
-                Request.Headers);
-
-            if (imageBytes == null || contentType == null)
-            {
-                // Try to get the item details to find fallback image (album/parent)
-                var (itemResult, itemStatus) = await _proxyService.GetJsonAsync($"Items/{itemId}", null, Request.Headers);
-
-                if (itemResult != null && itemStatus == 200)
-                {
-                    var item = itemResult.RootElement;
-                    string? fallbackItemId = null;
-
-                    // Check for album image fallback (for songs)
-                    if (item.TryGetProperty("AlbumId", out var albumIdProp))
-                    {
-                        fallbackItemId = albumIdProp.GetString();
-                    }
-                    // Check for parent primary image fallback
-                    else if (item.TryGetProperty("ParentPrimaryImageItemId", out var parentIdProp))
-                    {
-                        fallbackItemId = parentIdProp.GetString();
-                    }
-
-                    // Try to fetch the fallback image
-                    if (!string.IsNullOrEmpty(fallbackItemId))
-                    {
-                        _logger.LogDebug("Item {ItemId} has no {ImageType} image, trying fallback from {FallbackId}",
-                            itemId, imageType, fallbackItemId);
-
-                        var (fallbackBytes, fallbackContentType) = await _proxyService.GetImageAsync(
-                            fallbackItemId,
-                            imageType,
-                            maxWidth,
-                            maxHeight,
-                            clientHeaders: Request.Headers);
-
-                        if (fallbackBytes != null && fallbackContentType != null)
-                        {
-                            return CreateConditionalImageResponse(fallbackBytes, fallbackContentType);
-                        }
-                    }
-                }
-
-                // Return placeholder if no fallback found
-                return await GetPlaceholderImageAsync();
-            }
-
-            return CreateConditionalImageResponse(imageBytes, contentType);
+            return await RelayCurrentRequestAsync(Request.Path.Value!.TrimStart('/'));
         }
 
         // Get external cover art URL
@@ -818,12 +777,13 @@ public partial class JellyfinController : ControllerBase
             var safeCoverUri = validatedCoverUri!;
             _logger.LogDebug("Fetching external image from host {Host}", safeCoverUri.Host);
             var asset = await ResolveExternalImageAsync(
-                provider!, type!, externalId!, safeCoverUri, retryTransientFailures: true);
+                provider!, type!, externalId!, safeCoverUri, retryTransientFailures: true,
+                maxWidth, maxHeight);
             if (asset == null)
             {
                 return await GetPlaceholderImageAsync();
             }
-            return CreateConditionalImageResponse(asset.Bytes, asset.ContentType);
+            return CreateFormattedImageResponse(asset, requestedFormat);
         }
         catch (Exception ex)
         {
@@ -833,12 +793,28 @@ public partial class JellyfinController : ControllerBase
         }
     }
 
+    [HttpGet("Items/{itemId}/Images/{imageType}/{imageIndex}/{tag}/{format}/{maxWidth}/{maxHeight}/{percentPlayed}/{unplayedCount}")]
+    [HttpHead("Items/{itemId}/Images/{imageType}/{imageIndex}/{tag}/{format}/{maxWidth}/{maxHeight}/{percentPlayed}/{unplayedCount}")]
+    public Task<IActionResult> GetImageByPath(
+        string itemId,
+        string imageType,
+        int imageIndex,
+        string tag,
+        string format,
+        int maxWidth,
+        int maxHeight,
+        double percentPlayed,
+        int unplayedCount) =>
+        GetImage(itemId, imageType, imageIndex, maxWidth, maxHeight, tag, format);
+
     private async Task<ResolvedMediaAsset?> ResolveExternalImageAsync(
         string provider,
         string resourceKind,
         string resourceId,
         Uri coverUri,
-        bool retryTransientFailures = false)
+        bool retryTransientFailures = false,
+        int? width = null,
+        int? height = null)
     {
         var actor = HttpContext.GetProtocolExecutionContext()?.Actor;
         return await _mediaAssets.ResolveAsync(
@@ -848,7 +824,9 @@ public partial class JellyfinController : ControllerBase
                 null,
                 provider,
                 resourceKind,
-                resourceId),
+                resourceId,
+                Width: width > 0 ? width : null,
+                Height: height > 0 ? height : null),
             async token =>
             {
                 async Task<MediaAssetSource?> Fetch()
@@ -880,6 +858,69 @@ public partial class JellyfinController : ControllerBase
             MaximumArtworkBytes,
             HttpContext.RequestAborted);
     }
+
+    private IActionResult CreateFormattedImageResponse(
+        ResolvedMediaAsset asset,
+        string? requestedFormat)
+    {
+        var format = requestedFormat?.ToLowerInvariant() switch
+        {
+            "jpg" or "jpeg" => SKEncodedImageFormat.Jpeg,
+            "png" => SKEncodedImageFormat.Png,
+            "webp" => SKEncodedImageFormat.Webp,
+            _ => (SKEncodedImageFormat?)null
+        };
+        if (format == null)
+            return CreateConditionalImageResponse(asset.Bytes, asset.ContentType);
+        var contentType = format == SKEncodedImageFormat.Jpeg
+            ? "image/jpeg"
+            : format == SKEncodedImageFormat.Png
+                ? "image/png"
+                : "image/webp";
+        if (HasEncodedImageSignature(asset.Bytes, format.Value))
+            return CreateConditionalImageResponse(asset.Bytes, contentType);
+
+        try
+        {
+            using var data = SKData.CreateCopy(asset.Bytes);
+            using var codec = SKCodec.Create(data);
+            var info = codec?.Info;
+            if (info is not { Width: > 0, Height: > 0 })
+                return StatusCode(StatusCodes.Status415UnsupportedMediaType);
+            if ((long)info.Value.Width * info.Value.Height > MediaAssetResolver.MaximumDecodedPixels)
+                return StatusCode(StatusCodes.Status413PayloadTooLarge);
+            using var bitmap = SKBitmap.Decode(codec);
+            using var image = bitmap == null ? null : SKImage.FromBitmap(bitmap);
+            using var encoded = image?.Encode(format.Value, 90);
+            var bytes = encoded?.ToArray();
+            if (bytes is { Length: > 0 } && bytes.Length <= MaximumArtworkBytes)
+            {
+                return CreateConditionalImageResponse(bytes, contentType);
+            }
+        }
+        catch (Exception exception)
+        {
+            _logger.LogDebug(exception, "Unable to encode requested Jellyfin image format {Format}", requestedFormat);
+        }
+
+        return StatusCode(StatusCodes.Status415UnsupportedMediaType);
+    }
+
+    private static bool HasEncodedImageSignature(
+        ReadOnlySpan<byte> bytes,
+        SKEncodedImageFormat format) =>
+        format switch
+        {
+            SKEncodedImageFormat.Jpeg => bytes.Length >= 3 &&
+                                         bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF,
+            SKEncodedImageFormat.Png => bytes.Length >= 8 &&
+                                        bytes[..8].SequenceEqual(
+                                            new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }),
+            SKEncodedImageFormat.Webp => bytes.Length >= 12 &&
+                                         bytes[..4].SequenceEqual("RIFF"u8) &&
+                                         bytes.Slice(8, 4).SequenceEqual("WEBP"u8),
+            _ => false
+        };
 
     private static string DetectImageContentType(ReadOnlySpan<byte> bytes)
     {
@@ -1005,12 +1046,10 @@ public partial class JellyfinController : ControllerBase
         }
 
         // Check if this is an external song/album
-        var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
+        var (isExternal, _, _, _) =
+            _localLibraryService.ParseExternalId(itemId);
         if (isExternal)
         {
-            // Check if it's an album by parsing the full ID with type
-            var (_, _, type, _) = _localLibraryService.ParseExternalId(itemId);
-
             if (CanRunOptionalUserScopedWork())
             {
                 await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Favorite);
@@ -1057,7 +1096,8 @@ public partial class JellyfinController : ControllerBase
             userId, itemId, Request.Path);
 
         // External favorite state is logical only. Managed-file removal is a separate explicit action.
-        var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
+        var (isExternal, _, _, _) =
+            _localLibraryService.ParseExternalId(itemId);
         if (isExternal || PlaylistIdHelper.IsExternalPlaylist(itemId))
         {
             if (CanRunOptionalUserScopedWork())
@@ -1254,10 +1294,23 @@ public partial class JellyfinController : ControllerBase
         [FromQuery] string? fields = null,
         [FromQuery] string? userId = null)
     {
-        var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
+        if (JellyfinMusicEndpointPolicy.IsSynthesizedPlaylistId(itemId))
+        {
+            return await RelaySynthesizedPlaylistTargetAsync(
+                Request.Path.Value!.TrimStart('/'),
+                itemId);
+        }
+
+        var (isExternal, provider, resourceType, externalId) =
+            _localLibraryService.ParseExternalId(itemId);
 
         if (isExternal)
         {
+            if (resourceType is not ("song" or "album" or "artist"))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden);
+            }
+
             if (!CanRunOptionalUserScopedWork())
             {
                 return CreateProtocolResponse(_interactionProtocolAdapter.ShapeInstantMix([]));
@@ -1265,49 +1318,76 @@ public partial class JellyfinController : ControllerBase
 
             try
             {
-                // Get the original song
-                var song = await GetProviderSongAsync(provider!, externalId!);
-                if (song == null)
-                {
-                    return _responseBuilder.CreateJsonResponse(new
-                    {
-                        Items = Array.Empty<object>(),
-                        TotalRecordCount = 0
-                    });
-                }
-
-                // Get artist's albums to build a mix
                 var mixSongs = new List<Song>();
-
-                // Try to get artist albums
-                if (!string.IsNullOrEmpty(song.ExternalProvider) && !string.IsNullOrEmpty(song.ArtistId))
+                string? artistName;
+                if (resourceType?.Equals("album", StringComparison.OrdinalIgnoreCase) == true)
                 {
-                    var artistExternalId = song.ArtistId.Replace($"ext-{song.ExternalProvider}-artist-", "");
-                    var albums = await _metadataService.GetArtistAlbumsAsync(song.ExternalProvider, artistExternalId);
-
-                    // Get songs from a few albums
+                    var album = await GetProviderAlbumAsync(
+                        provider!, externalId!, HttpContext.RequestAborted);
+                    if (album == null) return CreateProtocolResponse(
+                        _interactionProtocolAdapter.ShapeInstantMix([]));
+                    mixSongs.AddRange(album.Songs);
+                    artistName = album.Artist;
+                }
+                else if (resourceType?.Equals("artist", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    var artist = await GetProviderArtistAsync(
+                        provider!, externalId!, HttpContext.RequestAborted);
+                    if (artist == null) return CreateProtocolResponse(
+                        _interactionProtocolAdapter.ShapeInstantMix([]));
+                    artistName = artist.Name;
+                    var albums = await _metadataService.GetArtistAlbumsAsync(
+                        provider!, externalId!, HttpContext.RequestAborted);
                     foreach (var album in albums.Take(3))
                     {
-                        var fullAlbum = await GetProviderAlbumAsync(song.ExternalProvider, album.ExternalId!);
-                        if (fullAlbum != null)
-                        {
-                            mixSongs.AddRange(fullAlbum.Songs);
-                        }
-
+                        if (string.IsNullOrWhiteSpace(album.ExternalId)) continue;
+                        var fullAlbum = await GetProviderAlbumAsync(
+                            provider!, album.ExternalId, HttpContext.RequestAborted);
+                        if (fullAlbum != null) mixSongs.AddRange(fullAlbum.Songs);
                         if (mixSongs.Count >= limit) break;
                     }
                 }
-
-                // If we don't have enough songs, search for more by the artist
-                if (mixSongs.Count < limit)
+                else
                 {
-                    var searchResult = await _metadataService.SearchSongsAsync(song.Artist, limit);
-                    mixSongs.AddRange(searchResult.Where(s => !mixSongs.Any(m => m.Id == s.Id)));
+                    var song = await GetProviderSongAsync(
+                        provider!, externalId!, HttpContext.RequestAborted);
+                    if (song == null) return CreateProtocolResponse(
+                        _interactionProtocolAdapter.ShapeInstantMix([]));
+                    artistName = song.Artist;
+                    if (!string.IsNullOrEmpty(song.ExternalProvider) &&
+                        !string.IsNullOrEmpty(song.ArtistId))
+                    {
+                        var artistExternalId = song.ArtistId.Replace(
+                            $"ext-{song.ExternalProvider}-artist-", "");
+                        var albums = await _metadataService.GetArtistAlbumsAsync(
+                            song.ExternalProvider,
+                            artistExternalId,
+                            HttpContext.RequestAborted);
+                        foreach (var album in albums.Take(3))
+                        {
+                            if (string.IsNullOrWhiteSpace(album.ExternalId)) continue;
+                            var fullAlbum = await GetProviderAlbumAsync(
+                                song.ExternalProvider,
+                                album.ExternalId,
+                                HttpContext.RequestAborted);
+                            if (fullAlbum != null) mixSongs.AddRange(fullAlbum.Songs);
+                            if (mixSongs.Count >= limit) break;
+                        }
+                    }
+                }
+
+                if (mixSongs.Count < limit && !string.IsNullOrWhiteSpace(artistName))
+                {
+                    var searchResult = await _metadataService.SearchSongsAsync(
+                        artistName, limit, HttpContext.RequestAborted);
+                    mixSongs.AddRange(searchResult.Where(song =>
+                        mixSongs.All(existing => existing.Id != song.Id)));
                 }
 
                 // Keep the same seed stable across retries and process restarts.
                 var shuffledMix = mixSongs
-                    .Where(s => s.Id != itemId) // Exclude the seed song
+                    .Where(song => resourceType is "album" or "artist" ||
+                                   song.Id != itemId && song.ExternalId != externalId)
                     .OrderBy(songItem => StableInstantMixOrder(itemId, songItem.Id), StringComparer.Ordinal)
                     .Take(limit)
                     .Select(s => _responseBuilder.ConvertSongToJellyfinItem(s))
@@ -1337,6 +1417,33 @@ public partial class JellyfinController : ControllerBase
         var (result, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
 
         return HandleProxyResponse(result, statusCode);
+    }
+
+    [HttpGet("MusicGenres/InstantMix")]
+    public Task<IActionResult> GetMusicGenreInstantMixById(
+        [FromQuery] string id,
+        [FromQuery] int limit = 50,
+        [FromQuery] string? fields = null,
+        [FromQuery] string? userId = null)
+    {
+        var (isExternal, _, _, _) = _localLibraryService.ParseExternalId(id);
+        return isExternal || JellyfinMusicEndpointPolicy.IsSynthesizedPlaylistId(id)
+            ? Task.FromResult<IActionResult>(StatusCode(StatusCodes.Status403Forbidden))
+            : GetInstantMix(id, limit, fields, userId);
+    }
+
+    [HttpGet("Artists/InstantMix", Order = 1)]
+    public Task<IActionResult> GetArtistInstantMixById(
+        [FromQuery] string id,
+        [FromQuery] int limit = 50,
+        [FromQuery] string? fields = null,
+        [FromQuery] string? userId = null)
+    {
+        var (isExternal, _, resourceType, _) = _localLibraryService.ParseExternalId(id);
+        return JellyfinMusicEndpointPolicy.IsSynthesizedPlaylistId(id) ||
+               isExternal && resourceType != "artist"
+            ? Task.FromResult<IActionResult>(StatusCode(StatusCodes.Status403Forbidden))
+            : GetInstantMix(id, limit, fields, userId);
     }
 
     private static string StableInstantMixOrder(string seedItemId, string candidateItemId) =>
@@ -1385,6 +1492,65 @@ public partial class JellyfinController : ControllerBase
     public async Task<IActionResult> ProxyRootRequest()
     {
         return await ProxyRequest("web/index.html");
+    }
+
+    private async Task<IActionResult> RelayCurrentRequestAsync(string path)
+    {
+        var endpoint = Request.QueryString.HasValue
+            ? $"{path}{Request.QueryString.Value}"
+            : path;
+        var upstream = await _proxyService.SendPassthroughResponseAsync(
+            Request,
+            endpoint,
+            HttpContext.RequestAborted);
+        return new ProtocolRelayResponseResult(upstream);
+    }
+
+    private async Task<string?> ResolveWritablePlaylistTargetAsync(string playlistId)
+    {
+        var route = await _virtualPlaylistProtocolAdapter.ResolveMutationAsync(
+            HttpContext.RequireProtocolExecutionContext(),
+            playlistId,
+            HttpContext.RequestAborted);
+        return route?.Writable == true && !string.IsNullOrWhiteSpace(route.TargetPlaylistId)
+            ? route.TargetPlaylistId
+            : null;
+    }
+
+    private Task<IActionResult> RelayCurrentRequestToPlaylistTargetAsync(
+        string path,
+        string playlistId,
+        string targetPlaylistId)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var index = Array.FindIndex(segments, segment =>
+            segment.Equals(playlistId, StringComparison.OrdinalIgnoreCase));
+        if (index < 0) return Task.FromResult<IActionResult>(BadRequest());
+        segments[index] = Uri.EscapeDataString(targetPlaylistId);
+        return RelayCurrentRequestAsync(string.Join('/', segments));
+    }
+
+    private async Task<IActionResult> RelaySynthesizedPlaylistTargetAsync(
+        string path,
+        string playlistId)
+    {
+        if (!_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(playlistId))
+        {
+            return Conflict(new { error = "Playlist is read-only." });
+        }
+
+        var route = await _virtualPlaylistProtocolAdapter.ResolveMutationAsync(
+            HttpContext.RequireProtocolExecutionContext(),
+            playlistId,
+            HttpContext.RequestAborted);
+        if (route == null) return NotFound();
+        if (!route.Writable || string.IsNullOrWhiteSpace(route.TargetPlaylistId))
+        {
+            return Conflict(new { error = "Playlist is read-only." });
+        }
+
+        return await RelayCurrentRequestToPlaylistTargetAsync(
+            path, playlistId, route.TargetPlaylistId);
     }
 
     /// <summary>
@@ -1449,20 +1615,8 @@ public partial class JellyfinController : ControllerBase
             });
         }
 
-        async Task<IActionResult> RelayRawAsync()
-        {
-            var endpoint = Request.QueryString.HasValue
-                ? $"{path}{Request.QueryString.Value}"
-                : path;
-            var upstream = await _proxyService.SendPassthroughResponseAsync(
-                Request,
-                endpoint,
-                HttpContext.RequestAborted);
-            return new ProtocolRelayResponseResult(upstream);
-        }
-
         var playlistItemsRequestId = GetExactPlaylistItemsRequestId(path);
-        if (!string.IsNullOrEmpty(playlistItemsRequestId))
+        if (HttpMethods.IsGet(Request.Method) && !string.IsNullOrEmpty(playlistItemsRequestId))
         {
             if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(playlistItemsRequestId))
             {
@@ -1504,6 +1658,14 @@ public partial class JellyfinController : ControllerBase
             return await ProxyMusicItemsResponseAsync(playlistItemsPath);
         }
 
+        var playlistRequestId = GetPlaylistRequestId(path);
+        if (!string.IsNullOrEmpty(playlistRequestId) &&
+            JellyfinMusicEndpointPolicy.IsSynthesizedPlaylistId(playlistRequestId) &&
+            JellyfinMusicEndpointPolicy.SupportsSynthesizedPlaylistRoute(Request, playlistRequestId))
+        {
+            return await RelaySynthesizedPlaylistTargetAsync(path, playlistRequestId);
+        }
+
         // Handle non-JSON responses (images, robots.txt, etc.)
         if (path.Contains("/Images/", StringComparison.OrdinalIgnoreCase) ||
             path.EndsWith(".txt", StringComparison.OrdinalIgnoreCase) ||
@@ -1517,7 +1679,7 @@ public partial class JellyfinController : ControllerBase
             path.EndsWith(".m3u", StringComparison.OrdinalIgnoreCase) ||
             path.EndsWith(".ts", StringComparison.OrdinalIgnoreCase))
         {
-            return await RelayRawAsync();
+            return await RelayCurrentRequestAsync(path);
         }
 
         // Check if this is a search request that should be handled by specific endpoints
@@ -1561,7 +1723,7 @@ public partial class JellyfinController : ControllerBase
                     .Contains("Playlist", StringComparison.OrdinalIgnoreCase);
             if (!needsPlaylistCountRewrite)
             {
-                return await RelayRawAsync();
+                return await RelayCurrentRequestAsync(path);
             }
 
             // Include query string in the path

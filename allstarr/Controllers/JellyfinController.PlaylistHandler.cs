@@ -8,6 +8,43 @@ public partial class JellyfinController
 {
     #region Playlists
 
+    [HttpGet("Playlists/{playlistId}", Order = 1)]
+    public async Task<IActionResult> GetPlaylistDefinition(string playlistId)
+    {
+        if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(playlistId))
+        {
+            var targetId = await ResolveWritablePlaylistTargetAsync(playlistId);
+            if (targetId != null)
+            {
+                return await RelayCurrentRequestToPlaylistTargetAsync(
+                    Request.Path.Value!.TrimStart('/'), playlistId, targetId);
+            }
+
+            return await _virtualPlaylistProtocolAdapter.ReadDefinitionAsync(
+                       HttpContext.RequireProtocolExecutionContext(), playlistId, HttpContext.RequestAborted)
+                   ?? NotFound();
+        }
+
+        if (PlaylistIdHelper.IsExternalPlaylist(playlistId))
+        {
+            var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
+            var tracks = _providerGateway != null
+                ? await _providerGateway.GetPlaylistTracksAsync(
+                    HttpContext.RequireProtocolExecutionContext(), provider, externalId)
+                : await _metadataService.GetPlaylistTracksAsync(provider, externalId);
+            return new JsonResult(new
+            {
+                OpenAccess = false,
+                Shares = Array.Empty<object>(),
+                ItemIds = tracks.Select(track => track.Id).ToArray()
+            });
+        }
+
+        var endpoint = $"Playlists/{playlistId}{Request.QueryString.Value}";
+        var (result, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
+        return HandleProxyResponse(result, statusCode);
+    }
+
     /// <summary>
     /// Gets playlist tracks displayed as an album.
     /// </summary>
@@ -50,6 +87,13 @@ public partial class JellyfinController
 
             if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(playlistId))
             {
+                var targetId = await ResolveWritablePlaylistTargetAsync(playlistId);
+                if (targetId != null)
+                {
+                    return await RelayCurrentRequestToPlaylistTargetAsync(
+                        Request.Path.Value!.TrimStart('/'), playlistId, targetId);
+                }
+
                 return await _virtualPlaylistProtocolAdapter.ReadItemsAsync(
                            HttpContext.RequireProtocolExecutionContext(), playlistId, HttpContext.RequestAborted)
                        ?? _responseBuilder.CreateError(404, "Playlist not found");
@@ -109,14 +153,18 @@ public partial class JellyfinController
     /// <summary>
     /// Gets a playlist cover image.
     /// </summary>
-    private async Task<IActionResult> GetPlaylistImage(string playlistId)
+    private async Task<IActionResult> GetPlaylistImage(
+        string playlistId,
+        int? width = null,
+        int? height = null,
+        string? requestedFormat = null)
     {
         try
         {
             var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
-            var playlist = _providerGateway != null
-                ? await _providerGateway.GetPlaylistAsync(
-                    HttpContext.RequireProtocolExecutionContext(), provider, externalId)
+            var protocol = HttpContext.GetProtocolExecutionContext();
+            var playlist = _providerGateway != null && protocol != null
+                ? await _providerGateway.GetPlaylistAsync(protocol, provider, externalId)
                 : await _metadataService.GetPlaylistAsync(provider, externalId);
 
             if (playlist == null || string.IsNullOrEmpty(playlist.CoverUrl))
@@ -133,8 +181,9 @@ public partial class JellyfinController
             }
 
             var asset = await ResolveExternalImageAsync(
-                provider, "playlist", externalId, validatedCoverUri);
-            return asset == null ? NotFound() : File(asset.Bytes, asset.ContentType);
+                provider, "playlist", externalId, validatedCoverUri,
+                width: width, height: height);
+            return asset == null ? NotFound() : CreateFormattedImageResponse(asset, requestedFormat);
         }
         catch (Exception ex)
         {

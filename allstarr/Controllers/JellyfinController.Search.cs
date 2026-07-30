@@ -668,23 +668,22 @@ public partial class JellyfinController
         var (jellyfinResult, _) = await jellyfinTask;
         var externalResult = await externalTask;
 
-        var (localSongs, localAlbums, localArtists) = _modelMapper.ParseSearchHintsResponse(jellyfinResult);
-
-        // NO deduplication - merge all results and take top matches
-        var allSongs = includesSongs
-            ? localSongs.Concat(externalResult.Songs).Take(limit).ToList()
+        var externalSongs = includesSongs
+            ? externalResult.Songs.Take(limit).ToList()
             : new List<Song>();
-        var allAlbums = includesAlbums
-            ? localAlbums.Concat(externalResult.Albums).Take(limit).ToList()
+        var externalAlbums = includesAlbums
+            ? externalResult.Albums.Take(limit).ToList()
             : new List<Album>();
-        var allArtists = includesArtists
-            ? localArtists.Concat(externalResult.Artists).Take(limit).ToList()
+        var externalArtists = includesArtists
+            ? externalResult.Artists.Take(limit).ToList()
             : new List<Artist>();
 
         return _responseBuilder.CreateSearchHintsResponse(
-            allSongs.Take(limit).ToList(),
-            allAlbums.Take(limit).ToList(),
-            allArtists.Take(limit).ToList());
+            externalSongs,
+            externalAlbums,
+            externalArtists,
+            jellyfinResult,
+            limit);
     }
 
     private async Task<(JsonDocument? Body, int StatusCode)> GetLocalSearchHintsResultForCurrentRequest(

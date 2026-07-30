@@ -106,6 +106,15 @@ public partial class JellyfinController
         return parts[1];
     }
 
+    private static string? GetPlaylistRequestId(string path)
+    {
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2 &&
+               parts[0].Equals("playlists", StringComparison.OrdinalIgnoreCase)
+            ? parts[1]
+            : null;
+    }
+
     private static string? ExtractImageTag(JsonElement item, string imageType)
     {
         if (item.TryGetProperty("ImageTags", out var imageTags) &&

@@ -7,36 +7,40 @@ namespace allstarr.Tests;
 public sealed class JellyfinApiKeyUserAuthTests
 {
     [Fact]
-    public void ExplicitRouteUser_IsUsedForCredentialVerification()
+    public void CurrentUserVerification_DoesNotTrustDeclaredUser()
     {
         var context = new DefaultHttpContext();
         context.Request.RouteValues["userId"] = "1635cd7d23144ba08251ebe22a56119e";
+        context.Request.QueryString = new QueryString("?api_key=fixture");
 
         var endpoint = InvokeBuildCurrentUserEndpoint(context.Request);
 
-        Assert.Equal("Users/1635cd7d23144ba08251ebe22a56119e", endpoint);
+        Assert.Equal("Users/Me?api_key=fixture", endpoint);
     }
 
     [Fact]
-    public void ExplicitQueryUser_IsUsedForCredentialVerification()
+    public void ExplicitRouteOrQueryUser_IsAvailableOnlyForUnboundApiKeyFallback()
     {
-        var context = new DefaultHttpContext();
-        context.Request.QueryString = new QueryString("?UserId=backend-user-1");
+        var routeContext = new DefaultHttpContext();
+        routeContext.Request.RouteValues["userId"] = "backend-user-1";
+        var queryContext = new DefaultHttpContext();
+        queryContext.Request.QueryString = new QueryString("?UserId=backend-user-2&api_key=fixture");
 
-        var endpoint = InvokeBuildCurrentUserEndpoint(context.Request);
-
-        Assert.Equal("Users/backend-user-1", endpoint);
+        Assert.Equal("Users/backend-user-1", InvokeBuildExplicitUserEndpoint(routeContext.Request));
+        Assert.Equal(
+            "Users/backend-user-2?api_key=fixture",
+            InvokeBuildExplicitUserEndpoint(queryContext.Request));
     }
 
     [Fact]
-    public void UnsafeOrMissingUser_FallsBackToCurrentUser()
+    public void UnsafeOrMissingExplicitUser_HasNoFallback()
     {
         var unsafeContext = new DefaultHttpContext();
         unsafeContext.Request.RouteValues["userId"] = "../admin";
         var missingContext = new DefaultHttpContext();
 
-        Assert.Equal("Users/Me", InvokeBuildCurrentUserEndpoint(unsafeContext.Request));
-        Assert.Equal("Users/Me", InvokeBuildCurrentUserEndpoint(missingContext.Request));
+        Assert.Null(InvokeBuildExplicitUserEndpoint(unsafeContext.Request));
+        Assert.Null(InvokeBuildExplicitUserEndpoint(missingContext.Request));
     }
 
     private static string InvokeBuildCurrentUserEndpoint(HttpRequest request)
@@ -46,5 +50,14 @@ public sealed class JellyfinApiKeyUserAuthTests
             BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(method);
         return (string)method!.Invoke(null, [request])!;
+    }
+
+    private static string? InvokeBuildExplicitUserEndpoint(HttpRequest request)
+    {
+        var method = typeof(JellyfinAuthFilter).GetMethod(
+            "BuildExplicitUserEndpoint",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+        return (string?)method!.Invoke(null, [request]);
     }
 }

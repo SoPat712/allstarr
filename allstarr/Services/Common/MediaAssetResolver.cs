@@ -113,10 +113,10 @@ public sealed class MediaAssetResolver(
                 !source.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
                 return null;
             var policy = ApplicationCachePolicyRegistry.Resolve(ApplicationCacheCategory.Artwork);
-            if (!await StorePayloadAsync(bytes, policy))
-                return Asset(source, false);
-
             var selected = CreateVariant(source, identity, maximumBytes);
+            if (!await StorePayloadAsync(bytes, policy))
+                return Asset(selected, false);
+
             if (!bytes.AsSpan().SequenceEqual(selected.Bytes))
             {
                 var originalSha256 = Convert.ToHexStringLower(SHA256.HashData(bytes));

@@ -24,9 +24,12 @@ public sealed record VirtualPlaylistReadModel(
     string? Description,
     string? ArtworkReferenceKey,
     string SourceProviderId,
+    string SourcePlaylistId,
     string SourceRevision,
     PlaylistLinkMode Mode,
     IReadOnlyList<VirtualPlaylistTrack> Tracks);
+
+public sealed record VirtualPlaylistArtworkSource(string ProviderId, string PlaylistId);
 
 public interface IPlaylistVirtualizationService
 {
@@ -36,6 +39,10 @@ public interface IPlaylistVirtualizationService
 
     Task<VirtualPlaylistReadModel?> ReadAsync(
         ProtocolExecutionContext context,
+        string protocolId,
+        CancellationToken cancellationToken = default);
+
+    Task<VirtualPlaylistArtworkSource?> ResolvePublicArtworkSourceAsync(
         string protocolId,
         CancellationToken cancellationToken = default);
 }
@@ -148,7 +155,26 @@ public sealed class PlaylistVirtualizationService(
             .ToList();
         return new VirtualPlaylistReadModel(protocolId, link.Id, projection.SnapshotId, projection.Name,
             projection.Description, projection.ArtworkReferenceKey, link.SourceProviderId,
-            snapshot.ProviderRevision, link.Mode, tracks);
+            link.SourcePlaylistId, snapshot.ProviderRevision, link.Mode, tracks);
+    }
+
+    public async Task<VirtualPlaylistArtworkSource?> ResolvePublicArtworkSourceAsync(
+        string protocolId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TryParseProtocolId(protocolId, out var linkId)) return null;
+
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        return await db.PlaylistLinks.AsNoTracking()
+            .Where(item =>
+                item.Id == linkId &&
+                item.TargetProtocol == "jellyfin" &&
+                item.Enabled &&
+                (item.Mode == PlaylistLinkMode.Virtual || item.Mode == PlaylistLinkMode.Hybrid))
+            .Select(item => new VirtualPlaylistArtworkSource(
+                item.SourceProviderId,
+                item.SourcePlaylistId))
+            .SingleOrDefaultAsync(cancellationToken);
     }
 
     private static VirtualPlaylistTrack? ToVirtualTrack(

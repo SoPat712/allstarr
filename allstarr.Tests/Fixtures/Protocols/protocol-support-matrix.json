@@ -7,7 +7,7 @@
     "authBoundary": "Transparent Users/AuthenticateByName relay; non-public controller actions verify client credentials with Users/Me, resolve any linked canonical identity, and create a secret-free ProtocolExecutionContext before execution.",
     "fixture": "jellyfin-authentication.json",
     "testLocation": "ProtocolRouteFixtureTests; ProxyResponseResultFactoryTests; HostCompositionTests",
-    "notes": "The verification request forwards client auth headers plus api_key/access_token only and never substitutes the configured server credential."
+    "notes": "The verification request forwards client auth headers plus api_key/access_token only and never substitutes the configured server credential. Users/Me is authoritative; the pre-12 API-key fallback can relay as an explicit user but never binds that declared user to a provider actor."
   },
   {
     "protocol": "jellyfin",
@@ -17,7 +17,7 @@
     "authBoundary": "Users/Me verifies a backend principal and the shared protocol filter creates a ProtocolExecutionContext before the action can read cache or call local/external search; unresolved users remain transparent but cannot authorize user-owned work.",
     "fixture": "jellyfin-auth-boundary.json; jellyfin-search-shaping.json",
     "testLocation": "ProtocolRouteFixtureTests; JellyfinSearchResponseSerializationTests; JellyfinSearchInterleaveTests; JellyfinControllerSearchLimitTests; ProtocolProviderGatewayContractTests",
-    "notes": "Auth failures preserve status/body and make zero provider calls. Merged-result status, body, content type, ordering, and paging are fixture-covered behind the Jellyfin search protocol adapter. Typed metadata providers route through ProtocolProviderGateway and ProviderRouter; compatibility-only providers remain explicit until migrated. Public accountless metadata remains available to verified but unlinked backend users. Integrated search applies the requested page once."
+    "notes": "Auth failures preserve status/body and make zero provider calls. Merged-result status, body, content type, ordering, and paging are fixture-covered behind the Jellyfin search protocol adapter. Typed metadata providers route through ProtocolProviderGateway and ProviderRouter; compatibility-only providers remain explicit until migrated. Public accountless metadata remains available to verified but unlinked backend users. Integrated search and Search/Hints apply the requested page or limit once after the final merge."
   },
   {
     "protocol": "jellyfin",
@@ -25,9 +25,9 @@
     "currentStatus": "explicit-partial",
     "target": "Typed external IDs and client-compatible metadata/images without fabricated stream facts.",
     "authBoundary": "Direct local and external item actions require Users/Me verification; admin artwork uses a separately protected server credential adapter.",
-    "fixture": "jellyfin-auth-boundary.json; jellyfin-item-image-shaping.json",
+    "fixture": "jellyfin-auth-boundary.json; jellyfin-item-image-shaping.json; jellyfin-openapi-qualification.json",
     "testLocation": "ProtocolRouteFixtureTests; JellyfinItemLyricsImageProtocolAdapterTests; JellyfinResponseStructureTests; JellyfinImageTagExtractionTests; JellyfinPlaybackMetadataResolverTests; ProtocolProviderGatewayContractTests",
-    "notes": "External typed metadata lookups pass through ProviderRouter; compatibility-only providers require an allowed durable account unless their metadata contract is explicitly public and accountless. Placeholder image, ETag, and conditional 304 shaping are fixture-covered. External codec/size/path facts are never fabricated."
+    "notes": "External typed metadata lookups pass through ProviderRouter; compatibility-only providers require an allowed durable account unless their metadata contract is explicitly public and accountless. Placeholder image, ETag, conditional 304, bounded resizing, and JPG/PNG/WebP long-route shaping are covered. Synthetic non-primary, overlay, and unsupported-format routes deny. External codec/size/path facts are never fabricated."
   },
   {
     "protocol": "jellyfin",
@@ -54,10 +54,10 @@
     "feature": "playlists",
     "currentStatus": "explicit-partial",
     "target": "Tenant-scoped virtual/materialized/hybrid playlist links with paging and idempotent writes.",
-    "authBoundary": "Provider-neutral virtual and hybrid links require the verified backend principal to resolve to the exact tenant owner, library, protocol, and backend instance before persisted snapshots or matches are read.",
-    "fixture": "jellyfin-playlist-order.json; provider-neutral-virtual-playlists.json",
-    "testLocation": "ProtocolRouteFixtureTests; JellyfinPlaylistRouteMatchingTests; VirtualPlaylistProtocolAdapterTests",
-    "notes": "External compatibility reads and provider-neutral virtual/hybrid reads preserve source order. The provider-neutral path exposes accepted or pinned local matches only and never invokes a backend playlist target."
+    "authBoundary": "Provider-neutral virtual and hybrid links require the verified backend principal to resolve to the exact enabled tenant owner, library, protocol, and backend instance before snapshots are read or a writable target is selected.",
+    "fixture": "jellyfin-playlist-order.json; provider-neutral-virtual-playlists.json; jellyfin-openapi-qualification.json",
+    "testLocation": "ProtocolRouteFixtureTests; JellyfinPlaylistRouteMatchingTests; VirtualPlaylistProtocolAdapterTests; SubsonicPlaylistMutationTests",
+    "notes": "Pure virtual reads preserve source order and expose accepted or pinned local matches only. Writable hybrid aliases are omitted from browse results, and their read, update, membership, reorder, sharing, ACL, and instant-mix routes rewrite only the exact scoped target playlist ID. Pure virtual/provider-only links return 409. Native DELETE /Items/{id} requires backend Type=Playlist."
   },
   {
     "protocol": "jellyfin",
@@ -83,11 +83,21 @@
     "protocol": "jellyfin",
     "feature": "instant-mix",
     "currentStatus": "explicit-partial",
-    "target": "All six OpenAPI item classes with deterministic recommendation policy.",
+    "target": "Every 12.0 and 10.11 instant-mix route with typed resources and deterministic recommendation policy.",
     "authBoundary": "All routes require Users/Me verification; external synthesized provider work also requires a resolved canonical actor and cannot trust query userId.",
     "fixture": "jellyfin-instant-mix-paths.json",
     "testLocation": "ProtocolRouteFixtureTests; ProtocolSupportMatrixTests; JellyfinItemLyricsImageProtocolAdapterTests",
-    "notes": "All six pinned OpenAPI route classes are explicit and preserve local backend paths, queries, statuses, and bodies. The legacy external compatibility mix uses stable seed ordering; habit-aware generated recommendations remain owned by the separate intelligence workflow."
+    "notes": "All seven 12.0 routes plus the 10.11 Artists/InstantMix?id form preserve local paths, queries, statuses, and bodies. External song, album, and artist IDs use their matching provider lookup; sibling resource types and synthesized genres are rejected. Compatibility mixes use stable seed ordering."
+  },
+  {
+    "protocol": "jellyfin",
+    "feature": "openapi-music-boundary",
+    "currentStatus": "explicit",
+    "target": "Classify every pinned Jellyfin 12.0 and 10.11.11 operation and every synthesized resource mode.",
+    "authBoundary": "Unreviewed operations deny by default; opaque native items require backend type verification and synthesized IDs are admitted only on implemented client routes.",
+    "fixture": "jellyfin-openapi-qualification.json; jellyfin-openapi-10.11-qualification.json",
+    "testLocation": "ProtocolSupportMatrixTests; JellyfinMusicEndpointPolicyTests; JellyfinImageAuthenticationContractTests",
+    "notes": "All 364 v12 operations are checked: 114 are explicitly allowed and 250 denied. All 388 v10.11 operations are checked: 124 allowed and 264 denied. Typed synthetic resources and playlist operations are separately partitioned into supported, target-required, controller-denied, policy-denied, and not-applicable modes. Intentional differences, DTO identifiers, safe live modes, and the unavailable Jellyfin 12 runtime are recorded."
   },
   {
     "protocol": "jellyfin",

@@ -3,6 +3,7 @@ using System.Text;
 using allstarr.Core.Identity;
 using allstarr.Core.Playlists;
 using allstarr.Core.Protocols;
+using allstarr.Core.Protocols.Jellyfin;
 using allstarr.Core.Protocols.Subsonic;
 using allstarr.Core.Storage;
 using allstarr.Services.Subsonic;
@@ -136,10 +137,81 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
         Assert.Null(await resolver.ResolveAsync(Context(), ProtocolId(linkId)));
     }
 
+    [Fact]
+    public async Task Resolver_RejectsDisabledSubsonicLink()
+    {
+        var resolver = new SubsonicPlaylistMutationResolver(_factory);
+        var linkId = await AddLinkAsync(
+            PlaylistLinkMode.Hybrid,
+            "backend-playlist",
+            enabled: false);
+
+        Assert.Null(await resolver.ResolveAsync(Context(), ProtocolId(linkId)));
+    }
+
+    [Fact]
+    public async Task JellyfinResolver_ReturnsOnlyExactScopedEnabledWritableTarget()
+    {
+        var resolver = new JellyfinPlaylistMutationResolver(_factory);
+        var linkId = await AddLinkAsync(
+            PlaylistLinkMode.Hybrid,
+            " backend-playlist ",
+            targetProtocol: "jellyfin");
+
+        var route = await resolver.ResolveAsync(
+            Context(protocol: ProtocolKind.Jellyfin),
+            ProtocolId(linkId));
+
+        Assert.NotNull(route);
+        Assert.True(route.Writable);
+        Assert.Equal("backend-playlist", route.TargetPlaylistId);
+        Assert.Null(await resolver.ResolveAsync(
+            Context(protocol: ProtocolKind.Jellyfin, userId: _otherUserId),
+            ProtocolId(linkId)));
+        Assert.Null(await resolver.ResolveAsync(
+            Context(protocol: ProtocolKind.Jellyfin, backend: "other-backend"),
+            ProtocolId(linkId)));
+        Assert.Null(await resolver.ResolveAsync(
+            Context(protocol: ProtocolKind.Jellyfin, library: "other-library"),
+            ProtocolId(linkId)));
+    }
+
+    [Theory]
+    [InlineData(PlaylistLinkMode.Virtual, "backend-playlist", true)]
+    [InlineData(PlaylistLinkMode.Hybrid, null, true)]
+    [InlineData(PlaylistLinkMode.Hybrid, "backend-playlist", false)]
+    public async Task JellyfinResolver_LeavesVirtualUnmaterializedOrDisabledLinksUnavailable(
+        PlaylistLinkMode mode,
+        string? targetPlaylistId,
+        bool enabled)
+    {
+        var resolver = new JellyfinPlaylistMutationResolver(_factory);
+        var linkId = await AddLinkAsync(
+            mode,
+            targetPlaylistId,
+            targetProtocol: "jellyfin",
+            enabled: enabled);
+
+        var route = await resolver.ResolveAsync(
+            Context(protocol: ProtocolKind.Jellyfin),
+            ProtocolId(linkId));
+
+        if (!enabled)
+        {
+            Assert.Null(route);
+            return;
+        }
+
+        Assert.NotNull(route);
+        Assert.False(route.Writable);
+        Assert.Null(route.TargetPlaylistId);
+    }
+
     private async Task<Guid> AddLinkAsync(
         PlaylistLinkMode mode,
         string? targetPlaylistId,
-        string targetProtocol = "navidrome")
+        string targetProtocol = "navidrome",
+        bool enabled = true)
     {
         var id = Guid.CreateVersion7();
         await using var db = await _factory.CreateDbContextAsync();
@@ -156,6 +228,7 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
             TargetProtocol = targetProtocol,
             TargetBackendInstanceId = "backend",
             TargetPlaylistId = targetPlaylistId,
+            Enabled = enabled,
             Mode = mode,
             MaterializationMode = PlaylistMaterializationMode.Reconcile,
             PreserveManualEntries = true,
@@ -175,18 +248,19 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
         Guid? tenantId = null,
         Guid? userId = null,
         string backend = "backend",
-        string library = "music")
+        string library = "music",
+        ProtocolKind protocol = ProtocolKind.Subsonic)
     {
         var tenant = tenantId ?? _tenantId;
         var user = userId ?? _ownerId;
         return new ProtocolExecutionContext(
-            ProtocolKind.Subsonic,
+            protocol,
             backend,
             "principal",
             new AllstarrPrincipal(
                 tenant,
                 user,
-                "subsonic",
+                protocol.ToString().ToLowerInvariant(),
                 backend,
                 "principal",
                 "Fixture user",

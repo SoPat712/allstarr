@@ -46,6 +46,7 @@ public sealed class SubsonicPlaylistMutationResolver(
             (item.TargetProtocol == "subsonic" ||
              item.TargetProtocol == "opensubsonic" ||
              item.TargetProtocol == "navidrome") &&
+            item.Enabled &&
             (context.LibraryScopeId == null || item.LibraryScopeId == context.LibraryScopeId),
             cancellationToken);
         if (link == null) return null;

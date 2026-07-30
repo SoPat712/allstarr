@@ -17,7 +17,9 @@ public sealed class VirtualPlaylistProtocolAdapterTests
     [Fact]
     public async Task JellyfinRead_PreservesSourceOrderAndUsesOnlyLocalBackendIds()
     {
-        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(new StubVirtualizationService(Model()));
+        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(
+            new StubVirtualizationService(Model()),
+            new StubJellyfinMutationResolver(null));
         var result = Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(
             Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
@@ -28,12 +30,22 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         Assert.Equal(3, items[0].GetProperty("IndexNumber").GetInt32());
         Assert.Equal("jellyfin-local-a", items[1].GetProperty("Id").GetString());
         Assert.All(items.EnumerateArray(), item => Assert.Equal(ProtocolId, item.GetProperty("ParentId").GetString()));
+        Assert.All(items.EnumerateArray(), item =>
+        {
+            var id = item.GetProperty("Id").GetString();
+            var userData = item.GetProperty("UserData");
+            Assert.Equal(id, userData.GetProperty("ItemId").GetString());
+            Assert.Equal(id, userData.GetProperty("Key").GetString());
+        });
+        Assert.All(items.EnumerateArray(), item => Assert.False(item.TryGetProperty("ArtistItems", out _)));
     }
 
     [Fact]
     public async Task JellyfinList_PublishesCompleteDiscoverablePlaylistSummaries()
     {
-        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(new StubVirtualizationService(Model()));
+        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(
+            new StubVirtualizationService(Model()),
+            new StubJellyfinMutationResolver(null));
 
         var item = Assert.Single(await adapter.ListItemsAsync(
             Context(ProtocolKind.Jellyfin), CancellationToken.None));
@@ -44,7 +56,38 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         Assert.Equal("Audio", item["MediaType"]);
         Assert.Equal(2, item["ChildCount"]);
         Assert.True((long)item["RunTimeTicks"]! > 0);
+        var userData = Assert.IsType<Dictionary<string, object>>(item["UserData"]);
+        Assert.Equal(ProtocolId, userData["ItemId"]);
+        Assert.Equal(ProtocolId, userData["Key"]);
         Assert.NotEmpty(Assert.IsType<Dictionary<string, string>>(item["ProviderIds"]));
+        var definitionResult = Assert.IsType<JsonResult>(await adapter.ReadDefinitionAsync(
+            Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
+        using var definition = JsonDocument.Parse(JsonSerializer.Serialize(definitionResult.Value));
+        Assert.False(definition.RootElement.GetProperty("OpenAccess").GetBoolean());
+        Assert.Empty(definition.RootElement.GetProperty("Shares").EnumerateArray());
+        Assert.Equal(
+            ["jellyfin-local-b", "jellyfin-local-a"],
+            definition.RootElement.GetProperty("ItemIds").EnumerateArray()
+                .Select(value => value.GetString()!).ToArray());
+        Assert.Equal(
+            "ext-apple-music-playlist-source-playlist",
+            await adapter.GetImageSourceIdAsync(
+                Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
+        Assert.Equal(
+            "ext-apple-music-playlist-source-playlist",
+            await adapter.GetImageSourceIdAsync(null, ProtocolId, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task JellyfinList_OmitsWritableHybridAliasServedByNativeTarget()
+    {
+        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(
+            new StubVirtualizationService(Model()),
+            new StubJellyfinMutationResolver(
+                new JellyfinPlaylistMutationRoute(true, "backend-playlist")));
+
+        Assert.Empty(await adapter.ListItemsAsync(
+            Context(ProtocolKind.Jellyfin), CancellationToken.None));
     }
 
     [Fact]
@@ -72,7 +115,9 @@ public sealed class VirtualPlaylistProtocolAdapterTests
     public async Task Adapters_ReturnNullForUnlinkedOrUnknownVirtualPlaylist()
     {
         var service = new StubVirtualizationService(null);
-        Assert.Null(await new JellyfinVirtualPlaylistProtocolAdapter(service).ReadItemAsync(
+        Assert.Null(await new JellyfinVirtualPlaylistProtocolAdapter(
+            service,
+            new StubJellyfinMutationResolver(null)).ReadItemAsync(
             Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
         Assert.Null(await new SubsonicVirtualPlaylistProtocolAdapter(service, new StubMutationResolver(null)).ReadAsync(
             Context(ProtocolKind.Subsonic), ProtocolId, "json", CancellationToken.None));
@@ -81,7 +126,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
 
     private static VirtualPlaylistReadModel Model() => new(
         ProtocolId, LinkId, Guid.CreateVersion7(), "Road Trip", "Source description", "artwork-key",
-        "apple-music", "revision-7", PlaylistLinkMode.Hybrid,
+        "apple-music", "source-playlist", "revision-7", PlaylistLinkMode.Hybrid,
         [
             new(2, "jellyfin-local-b", "Second", "Artist B", "Album B", null, 2000, "cover-b", TrackMatchState.Accepted),
             new(8, "jellyfin-local-a", "Ninth", "Artist A", "Album A", "Artist A", 3000, null, TrackMatchState.Pinned)
@@ -100,12 +145,28 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         public Task<VirtualPlaylistReadModel?> ReadAsync(
             ProtocolExecutionContext context, string protocolId, CancellationToken cancellationToken = default) =>
             Task.FromResult(model);
+
+        public Task<VirtualPlaylistArtworkSource?> ResolvePublicArtworkSourceAsync(
+            string protocolId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(model == null
+                ? null
+                : new VirtualPlaylistArtworkSource(model.SourceProviderId, model.SourcePlaylistId));
     }
 
     private sealed class StubMutationResolver(SubsonicPlaylistMutationRoute? route)
         : ISubsonicPlaylistMutationResolver
     {
         public Task<SubsonicPlaylistMutationRoute?> ResolveAsync(
+            ProtocolExecutionContext context,
+            string protocolId,
+            CancellationToken cancellationToken = default) => Task.FromResult(route);
+    }
+
+    private sealed class StubJellyfinMutationResolver(JellyfinPlaylistMutationRoute? route)
+        : IJellyfinPlaylistMutationResolver
+    {
+        public Task<JellyfinPlaylistMutationRoute?> ResolveAsync(
             ProtocolExecutionContext context,
             string protocolId,
             CancellationToken cancellationToken = default) => Task.FromResult(route);

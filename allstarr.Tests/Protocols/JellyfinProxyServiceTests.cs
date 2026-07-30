@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -636,6 +637,32 @@ public class JellyfinProxyServiceTests
         Assert.Equal(["MediaBrowser Token=\"client-token\""], observedAuth);
         Assert.Equal(["gapless"], observedClientHeader);
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task SendPassthroughResponseAsync_ForwardsDetectedBodyWithoutLength()
+    {
+        string? observedBody = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((request, _) =>
+                observedBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.NoContent));
+        var context = new DefaultHttpContext();
+        var bodyFeature = new Mock<IHttpRequestBodyDetectionFeature>();
+        bodyFeature.SetupGet(feature => feature.CanHaveBody).Returns(true);
+        context.Features.Set(bodyFeature.Object);
+        context.Request.Method = HttpMethods.Post;
+        context.Request.Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(
+            """{"Name":"HTTP/2"}"""));
+
+        using var response = await _service.SendPassthroughResponseAsync(
+            context.Request, "Playlists/playlist-1");
+
+        Assert.Equal("""{"Name":"HTTP/2"}""", observedBody);
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
     }
 
     private void SetupMockResponse(HttpStatusCode statusCode, string content, string contentType)

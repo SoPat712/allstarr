@@ -18,6 +18,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Moq;
+using SkiaSharp;
 
 namespace allstarr.Tests;
 
@@ -91,6 +92,161 @@ public sealed class ProtocolRouteFixtureTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(["/System/Info/Public"], observedRequests);
+    }
+
+    [Fact]
+    public async Task JellyfinAuthenticatedSystemInfo_VerifiesAndRelaysWithoutReshaping()
+    {
+        const string systemInfo = """{"Id":"server-1","ServerName":"Fixture Server","Version":"12.0.0"}""";
+        var observedRequests = new List<string>();
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            observedRequests.Add(request.RequestUri!.PathAndQuery);
+            return request.RequestUri.AbsolutePath == "/Users/Me"
+                ? Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}""")
+                : Json(StatusCodes.Status200OK, systemInfo);
+        });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/System/Info?api_key=fixture-key");
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            ["/Users/Me?api_key=fixture-key", "/System/Info?api_key=fixture-key"],
+            observedRequests);
+        Assert.Equal(
+            JsonDocument.Parse(systemInfo).RootElement.GetRawText(),
+            JsonDocument.Parse(body).RootElement.GetRawText());
+    }
+
+    [Fact]
+    public async Task JellyfinAuthenticatedSystemInfo_FallsBackForUnboundApiKeyOnPreTwelveServers()
+    {
+        var observedRequests = new List<string>();
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            observedRequests.Add(request.RequestUri!.PathAndQuery);
+            return request.RequestUri.AbsolutePath switch
+            {
+                "/Users/Me" => Json(StatusCodes.Status400BadRequest, """{"error":"API key has no current user"}"""),
+                "/Users/user-1" => Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}"""),
+                _ => Json(StatusCodes.Status200OK, """{"Id":"server-1","Version":"10.11.11"}""")
+            };
+        });
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/System/Info");
+        request.Headers.TryAddWithoutValidation(
+            "X-Emby-Authorization",
+            """MediaBrowser Client="Fixture", Device="Tests", DeviceId="test-1", Version="1", UserId="user-1", Token="fixture-token" """);
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(["/Users/Me", "/Users/user-1", "/System/Info"], observedRequests);
+    }
+
+    [Fact]
+    public async Task JellyfinApiKeyFallback_DoesNotBindDeclaredUserToProviderActor()
+    {
+        var interaction = new RecordingInteractionAdapter();
+        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request => request.RequestUri!.AbsolutePath switch
+            {
+                "/Users/Me" => Json(StatusCodes.Status400BadRequest, """{"error":"API key has no current user"}"""),
+                "/Users/user-1" => Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}"""),
+                _ => throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}")
+            },
+            services =>
+            {
+                services.RemoveAll<IMusicMetadataService>();
+                services.AddSingleton(metadata.Object);
+                services.RemoveAll<IJellyfinInteractionProtocolAdapter>();
+                services.AddSingleton<IJellyfinInteractionProtocolAdapter>(interaction);
+            });
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            "/Items/ext-deezer-song-1/InstantMix");
+        request.Headers.TryAddWithoutValidation(
+            "X-Emby-Authorization",
+            """MediaBrowser Client="Fixture", Device="Tests", DeviceId="test-1", Version="1", UserId="user-1", Token="fixture-token" """);
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(interaction.LastContext);
+        Assert.Equal("user-1", interaction.LastContext!.VerifiedBackendPrincipalId);
+        Assert.Null(interaction.LastContext.Actor);
+        metadata.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task JellyfinAuthorizationHeader_UsesUsersMeInsteadOfDeclaredVictim()
+    {
+        var interaction = new RecordingInteractionAdapter();
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request => request.RequestUri!.AbsolutePath == "/Users/Me"
+                ? Json(StatusCodes.Status200OK, """{"Id":"attacker","Name":"Current User"}""")
+                : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
+            services =>
+            {
+                services.RemoveAll<IJellyfinInteractionProtocolAdapter>();
+                services.AddSingleton<IJellyfinInteractionProtocolAdapter>(interaction);
+            });
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            "/Items/ext-deezer-song-1/InstantMix");
+        request.Headers.TryAddWithoutValidation(
+            "X-Emby-Authorization",
+            """MediaBrowser Client="Fixture", Device="Tests", DeviceId="test-1", Version="1", UserId="victim", Token="fixture-token" """);
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("attacker", interaction.LastContext?.VerifiedBackendPrincipalId);
+        Assert.NotEqual("victim", interaction.LastContext?.VerifiedBackendPrincipalId);
+    }
+
+    [Theory]
+    [InlineData("/Search/Hints?SearchTerm=fixture&Limit=2&api_key=fixture-key")]
+    [InlineData("/Users/user-1/Search/Hints?SearchTerm=fixture&Limit=2&api_key=fixture-key")]
+    public async Task JellyfinSearchHints_AppliesOneGlobalLimitAfterMerging(string path)
+    {
+        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        metadata.Setup(service => service.SearchAllAsync(
+                "fixture", 2, 2, 2, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SearchResult
+            {
+                Songs = [new Song { Id = "external-song", Title = "Song", Artist = "Artist" }],
+                Albums = [new Album { Id = "external-album", Title = "Album", Artist = "Artist" }],
+                Artists = [new Artist { Id = "external-artist", Name = "Artist" }]
+            });
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request => request.RequestUri!.AbsolutePath == "/Users/Me"
+                ? Json(StatusCodes.Status200OK, """{"Id":"user-1"}""")
+                : Json(StatusCodes.Status200OK,
+                    """{"SearchHints":[{"Id":"native-1","Type":"Audio"},{"Id":"native-2","Type":"Audio"}],"TotalRecordCount":2}"""),
+            services =>
+            {
+                services.RemoveAll<IMusicMetadataService>();
+                services.AddSingleton(metadata.Object);
+                services.RemoveAll<IProtocolProviderGateway>();
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(path);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, body.RootElement.GetProperty("SearchHints").GetArrayLength());
+        Assert.Equal(2, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        metadata.VerifyAll();
     }
 
     [Fact]
@@ -176,13 +332,15 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task JellyfinApiKey_UserPathVerifiesTheExplicitUserBeforeRelay()
+    public async Task JellyfinApiKey_UserPathFallsBackBeforeNativeRelay()
     {
         var observedRequests = new List<string>();
         using var factory = new ProtocolFactory("Jellyfin", request =>
         {
             observedRequests.Add(request.RequestUri!.PathAndQuery);
-            return Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User","Policy":{"IsDisabled":false}}""");
+            return request.RequestUri!.AbsolutePath == "/Users/Me"
+                ? Json(StatusCodes.Status400BadRequest, """{"error":"API key has no current user"}""")
+                : Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User","Policy":{"IsDisabled":false}}""");
         });
         using var client = factory.CreateClient();
 
@@ -190,7 +348,11 @@ public sealed class ProtocolRouteFixtureTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(
-            ["/Users/user-1?api_key=fixture-key", "/Users/user-1?api_key=fixture-key"],
+            [
+                "/Users/Me?api_key=fixture-key",
+                "/Users/user-1?api_key=fixture-key",
+                "/Users/user-1?api_key=fixture-key"
+            ],
             observedRequests);
     }
 
@@ -360,6 +522,22 @@ public sealed class ProtocolRouteFixtureTests
         using var conditionalResponse = await client.SendAsync(conditionalRequest);
         Assert.Equal(expectedImage.GetProperty("conditionalStatus").GetInt32(), (int)conditionalResponse.StatusCode);
         Assert.Empty(await conditionalResponse.Content.ReadAsByteArrayAsync());
+
+        using var headRequest = new HttpRequestMessage(
+            HttpMethod.Head,
+            imageFixture.GetProperty("requestPath").GetString());
+        using var headResponse = await client.SendAsync(headRequest);
+        Assert.Equal(HttpStatusCode.OK, headResponse.StatusCode);
+        Assert.Equal(expectedImage.GetProperty("contentType").GetString(),
+            headResponse.Content.Headers.ContentType?.MediaType);
+        Assert.Empty(await headResponse.Content.ReadAsByteArrayAsync());
+
+        using var pathImageResponse = await client.GetAsync(
+            "/Items/ext-deezer-song-no-art/Images/Primary/0/no-art/png/300/300/0/0?api_key=fixture-key");
+        Assert.Equal(HttpStatusCode.OK, pathImageResponse.StatusCode);
+        Assert.Equal(
+            expectedImage.GetProperty("length").GetInt32(),
+            (await pathImageResponse.Content.ReadAsByteArrayAsync()).Length);
     }
 
     [Fact]
@@ -421,6 +599,61 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task JellyfinSynthesizedLongImageRoute_HonorsSizeAndFormat()
+    {
+        using var bitmap = new SKBitmap(new SKImageInfo(
+            8, 4, SKColorType.Rgba8888, SKAlphaType.Opaque));
+        bitmap.Erase(SKColors.Red);
+        using var sourceImage = SKImage.FromBitmap(bitmap);
+        using var sourceData = sourceImage.Encode(SKEncodedImageFormat.Png, 100);
+        var sourceBytes = sourceData.ToArray();
+        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        metadata.Setup(service => service.GetAlbumAsync(
+                "deezer", "42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Album
+            {
+                Id = "ext-deezer-album-42",
+                ExternalProvider = "deezer",
+                ExternalId = "42",
+                Title = "Fixture Album",
+                CoverArtUrl = "https://images.example.test/cover.png"
+            });
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request => request.RequestUri!.AbsolutePath switch
+            {
+                "/Users/Me" => Json(StatusCodes.Status200OK, """{"Id":"user-1"}"""),
+                "/cover.png" => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(sourceBytes)
+                    {
+                        Headers = { ContentType = new("image/png") }
+                    }
+                },
+                _ => throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}")
+            },
+            services =>
+            {
+                services.RemoveAll<IMusicMetadataService>();
+                services.AddSingleton(metadata.Object);
+                services.RemoveAll<IProtocolProviderGateway>();
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/Items/ext-deezer-album-42/Images/Primary/0/revision/jpg/2/2/0/0?api_key=fixture-key");
+        var resultBytes = await response.Content.ReadAsByteArrayAsync();
+        using var resultBitmap = SKBitmap.Decode(resultBytes);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("image/jpeg", response.Content.Headers.ContentType?.MediaType);
+        Assert.NotNull(resultBitmap);
+        Assert.Equal(2, resultBitmap.Width);
+        Assert.Equal(1, resultBitmap.Height);
+        metadata.VerifyAll();
+    }
+
+    [Fact]
     public async Task JellyfinExternalSongImage_WithoutPlayerToken_UsesMetadataFallback()
     {
         var artworkBytes = new byte[] { 0xFF, 0xD8, 0x01, 0x02, 0xFF, 0xD9 };
@@ -462,6 +695,58 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("image/jpeg", response.Content.Headers.ContentType?.MediaType);
         Assert.Equal(artworkBytes, await response.Content.ReadAsByteArrayAsync());
+        metadata.VerifyAll();
+    }
+
+    [Fact]
+    public async Task JellyfinVirtualPlaylistImage_WithoutPlayerToken_UsesPublicArtworkSource()
+    {
+        const string virtualId = "allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0";
+        var artworkBytes = new byte[] { 0xFF, 0xD8, 0x01, 0x02, 0xFF, 0xD9 };
+        var virtualization = new Mock<IPlaylistVirtualizationService>(MockBehavior.Strict);
+        virtualization.Setup(service => service.ResolvePublicArtworkSourceAsync(
+                virtualId,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VirtualPlaylistArtworkSource("deezer", "source-list"));
+        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        metadata.Setup(service => service.GetPlaylistAsync(
+                "deezer",
+                "source-list",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExternalPlaylist
+            {
+                Id = "ext-deezer-playlist-source-list",
+                ExternalId = "source-list",
+                Provider = "deezer",
+                Name = "Source",
+                CoverUrl = "https://fixture-cdn.example/playlist.jpg"
+            });
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request => request.RequestUri!.Host == "fixture-cdn.example"
+                ? new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(artworkBytes)
+                    {
+                        Headers = { ContentType = new("image/jpeg") }
+                    }
+                }
+                : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
+            services =>
+            {
+                services.RemoveAll<IPlaylistVirtualizationService>();
+                services.AddSingleton(virtualization.Object);
+                services.RemoveAll<IMusicMetadataService>();
+                services.AddSingleton(metadata.Object);
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync($"/Items/{virtualId}/Images/Primary");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("image/jpeg", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(artworkBytes, await response.Content.ReadAsByteArrayAsync());
+        virtualization.VerifyAll();
         metadata.VerifyAll();
     }
 
@@ -560,6 +845,63 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal(artworkBytes, await response.Content.ReadAsByteArrayAsync());
         Assert.True(playerTokenReachedVerification);
         Assert.True(playerTokenReachedArtwork);
+    }
+
+    [Theory]
+    [InlineData("GET")]
+    [InlineData("HEAD")]
+    public async Task JellyfinNativeLongImageRelay_PreservesRangeValidatorsAndDecimalPath(string method)
+    {
+        const string imagePath =
+            "/Items/local-song/Images/Primary/0/art-v1/jpg/300/300/12.5/0?quality=90";
+        var observed = new List<(string Method, string PathAndQuery, string? Range, string? IfRange)>();
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            observed.Add((
+                request.Method.Method,
+                request.RequestUri!.PathAndQuery,
+                request.Headers.TryGetValues("Range", out var ranges) ? ranges.Single() : null,
+                request.Headers.TryGetValues("If-Range", out var validators) ? validators.Single() : null));
+            if (request.RequestUri.AbsolutePath == "/Items/local-song")
+                return Json(StatusCodes.Status200OK, """{"Id":"local-song","Type":"Audio"}""");
+            if (request.RequestUri.AbsolutePath == "/Users/Me")
+                return Json(StatusCodes.Status400BadRequest, """{"error":"API key has no current user"}""");
+            if (request.RequestUri.AbsolutePath == "/Users/user-1")
+                return Json(StatusCodes.Status200OK, """{"Id":"user-1"}""");
+
+            Assert.Equal(imagePath, request.RequestUri.PathAndQuery);
+            var response = new HttpResponseMessage(HttpStatusCode.PartialContent)
+            {
+                Content = new ByteArrayContent([8, 9, 10, 11])
+            };
+            response.Content.Headers.ContentType = new("image/jpeg");
+            response.Content.Headers.ContentRange = new(8, 11, 32);
+            response.Headers.AcceptRanges.Add("bytes");
+            response.Headers.ETag = new("\"art-v1\"");
+            return response;
+        });
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(new HttpMethod(method), imagePath);
+        request.Headers.TryAddWithoutValidation(
+            "X-Emby-Authorization",
+            """MediaBrowser Client="Fixture", Device="Tests", DeviceId="test-1", Version="1", UserId="user-1", Token="fixture-token" """);
+        request.Headers.TryAddWithoutValidation("Range", "bytes=8-11");
+        request.Headers.TryAddWithoutValidation("If-Range", "\"art-v1\"");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.PartialContent, response.StatusCode);
+        Assert.Equal("image/jpeg", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("bytes 8-11/32", response.Content.Headers.ContentRange?.ToString());
+        Assert.Equal("\"art-v1\"", response.Headers.ETag?.Tag);
+        Assert.Equal("bytes", response.Headers.AcceptRanges.Single());
+        Assert.Equal(method == "HEAD" ? Array.Empty<byte>() : new byte[] { 8, 9, 10, 11 },
+            await response.Content.ReadAsByteArrayAsync());
+        Assert.Equal(["/Items/local-song", "/Users/Me", "/Users/user-1", imagePath],
+            observed.Select(item => item.PathAndQuery));
+        Assert.Equal(method, observed[^1].Method);
+        Assert.Equal("bytes=8-11", observed[^1].Range);
+        Assert.Equal("\"art-v1\"", observed[^1].IfRange);
     }
 
     [Fact]
@@ -737,7 +1079,7 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task JellyfinInstantMix_PreservesAllSixPinnedRouteClassesAndBackendResponses()
+    public async Task JellyfinInstantMix_PreservesPinnedRouteClassesAcrossSupportedVersions()
     {
         using var fixtures = ReadFixture("jellyfin-instant-mix-paths.json");
         foreach (var fixture in fixtures.RootElement.EnumerateArray())
@@ -756,8 +1098,12 @@ public sealed class ProtocolRouteFixtureTests
             });
             using var client = factory.CreateClient();
             var path = fixture.GetProperty("path").GetString()!;
+            var query = fixture.TryGetProperty("query", out var fixtureQuery)
+                ? fixtureQuery.GetString() + "&"
+                : string.Empty;
+            var requestPath = $"{path}?{query}api_key=fixture-key&Limit=2";
 
-            using var response = await client.GetAsync($"{path}?api_key=fixture-key&Limit=2");
+            using var response = await client.GetAsync(requestPath);
             var body = await response.Content.ReadAsStringAsync();
 
             Assert.Equal(fixture.GetProperty("status").GetInt32(), (int)response.StatusCode);
@@ -765,8 +1111,8 @@ public sealed class ProtocolRouteFixtureTests
                 CanonicalJson(fixture.GetProperty("body")),
                 CanonicalJson(JsonDocument.Parse(body).RootElement));
             var expectedPaths = path.Equals("/Items/item-1/InstantMix", StringComparison.Ordinal)
-                ? new[] { "/Items/item-1", "/Users/Me?api_key=fixture-key", $"{path}?api_key=fixture-key&Limit=2" }
-                : new[] { "/Users/Me?api_key=fixture-key", $"{path}?api_key=fixture-key&Limit=2" };
+                ? new[] { "/Items/item-1", "/Users/Me?api_key=fixture-key", requestPath }
+                : new[] { "/Users/Me?api_key=fixture-key", requestPath };
             Assert.Equal(expectedPaths, observedPaths);
         }
 
@@ -788,6 +1134,137 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal(
             "{\"Items\":[],\"TotalRecordCount\":0}",
             await unresolvedResponse.Content.ReadAsStringAsync());
+        metadata.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData("/Albums/ext-deezer-album-42/InstantMix?Limit=2&api_key=fixture-key", "album")]
+    [InlineData("/Artists/ext-deezer-artist-42/InstantMix?Limit=2&api_key=fixture-key", "artist")]
+    [InlineData("/Artists/InstantMix?id=ext-deezer-artist-42&Limit=2&api_key=fixture-key", "artist")]
+    public async Task JellyfinExternalInstantMix_UsesTheTypedProviderResource(
+        string path,
+        string resourceType)
+    {
+        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        var songs = new List<Song>
+        {
+            new() { Id = "mix-1", Title = "First", Artist = "Fixture Artist" },
+            new() { Id = "mix-2", Title = "Second", Artist = "Fixture Artist" }
+        };
+        if (resourceType == "album")
+        {
+            metadata.Setup(service => service.GetAlbumAsync(
+                    "deezer", "42", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new Album
+                {
+                    Id = "ext-deezer-album-42",
+                    ExternalProvider = "deezer",
+                    ExternalId = "42",
+                    Title = "Fixture Album",
+                    Artist = "Fixture Artist",
+                    Songs = songs
+                });
+        }
+        else
+        {
+            metadata.Setup(service => service.GetArtistAsync(
+                    "deezer", "42", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new Artist
+                {
+                    Id = "ext-deezer-artist-42",
+                    ExternalProvider = "deezer",
+                    ExternalId = "42",
+                    Name = "Fixture Artist"
+                });
+            metadata.Setup(service => service.GetArtistAlbumsAsync(
+                    "deezer", "42", It.IsAny<CancellationToken>()))
+                .ReturnsAsync([
+                    new Album
+                    {
+                        Id = "ext-deezer-album-a1",
+                        ExternalProvider = "deezer",
+                        ExternalId = "a1",
+                        Title = "Fixture Album",
+                        Artist = "Fixture Artist"
+                    }
+                ]);
+            metadata.Setup(service => service.GetAlbumAsync(
+                    "deezer", "a1", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new Album
+                {
+                    Id = "ext-deezer-album-a1",
+                    ExternalProvider = "deezer",
+                    ExternalId = "a1",
+                    Title = "Fixture Album",
+                    Artist = "Fixture Artist",
+                    Songs = songs
+                });
+        }
+
+        var interaction = new Mock<IJellyfinInteractionProtocolAdapter>(MockBehavior.Strict);
+        var shaper = new JellyfinInteractionProtocolAdapter();
+        interaction.Setup(adapter => adapter.CanRunOptionalUserWork(
+                It.IsAny<ProtocolExecutionContext?>()))
+            .Returns(true);
+        interaction.Setup(adapter => adapter.ShapeInstantMix(
+                It.IsAny<IReadOnlyList<Dictionary<string, object?>>>()))
+            .Returns((IReadOnlyList<Dictionary<string, object?>> items) =>
+                shaper.ShapeInstantMix(items));
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request => request.RequestUri!.AbsolutePath == "/Users/Me"
+                ? Json(StatusCodes.Status200OK, """{"Id":"user-1"}""")
+                : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
+            services =>
+            {
+                services.RemoveAll<IMusicMetadataService>();
+                services.AddSingleton(metadata.Object);
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.RemoveAll<IJellyfinInteractionProtocolAdapter>();
+                services.AddSingleton(interaction.Object);
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(path);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, body.RootElement.GetProperty("Items").GetArrayLength());
+        Assert.Equal(
+            ["mix-1", "mix-2"],
+            body.RootElement.GetProperty("Items").EnumerateArray()
+                .Select(item => item.GetProperty("Id").GetString()!).Order().ToArray());
+        metadata.VerifyAll();
+        interaction.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData("/Artists/InstantMix?id=ext-deezer-album-42&api_key=fixture-key")]
+    [InlineData("/MusicGenres/InstantMix?id=ext-deezer-song-42&api_key=fixture-key")]
+    [InlineData("/Artists/InstantMix?id=allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0&api_key=fixture-key")]
+    [InlineData("/MusicGenres/InstantMix?id=allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0&api_key=fixture-key")]
+    public async Task JellyfinQueryInstantMix_RejectsMismatchedSynthesizedResourceTypes(string path)
+    {
+        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request => request.RequestUri!.AbsolutePath == "/Users/Me"
+                ? Json(StatusCodes.Status200OK, """{"Id":"user-1"}""")
+                : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
+            services =>
+            {
+                services.RemoveAll<IMusicMetadataService>();
+                services.AddSingleton(metadata.Object);
+                services.RemoveAll<IProtocolProviderGateway>();
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(path);
+        var responseBody = await response.Content.ReadAsStringAsync();
+
+        Assert.True(
+            response.StatusCode == HttpStatusCode.Forbidden,
+            $"Expected 403, got {(int)response.StatusCode}: {responseBody}");
         metadata.VerifyNoOtherCalls();
     }
 
@@ -841,6 +1318,15 @@ public sealed class ProtocolRouteFixtureTests
             fixture.RootElement.GetProperty("expectedParentId").GetString(),
             item.GetProperty("ParentId").GetString()));
         Assert.Equal(items.Count, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+
+        using var definitionResponse = await client.GetAsync(
+            "/Playlists/ext-deezer-playlist-list-7?api_key=fixture-key");
+        using var definition = JsonDocument.Parse(await definitionResponse.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.OK, definitionResponse.StatusCode);
+        Assert.Empty(definition.RootElement.GetProperty("Shares").EnumerateArray());
+        Assert.Equal(
+            fixture.RootElement.GetProperty("expectedItemIds").EnumerateArray().Select(id => id.GetString()),
+            definition.RootElement.GetProperty("ItemIds").EnumerateArray().Select(id => id.GetString()));
         gateway.VerifyAll();
     }
 
@@ -1083,6 +1569,138 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal("Playlist is read-only", error.GetProperty("message").GetString());
         Assert.Single(observedRequests);
         Assert.Equal("/rest/ping.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json", observedRequests[0].PathAndQuery);
+    }
+
+    [Theory]
+    [InlineData("GET", "/Items/allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0?api_key=fixture-key",
+        null, "/Items/backend-target?api_key=fixture-key")]
+    [InlineData("GET", "/Playlists/allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0?api_key=fixture-key",
+        null, "/Playlists/backend-target?api_key=fixture-key")]
+    [InlineData("GET", "/Playlists/allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0/Items?api_key=fixture-key",
+        null, "/Playlists/backend-target/Items?api_key=fixture-key")]
+    [InlineData("POST", "/Playlists/allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0?api_key=fixture-key",
+        """{"Name":"Renamed"}""", "/Playlists/backend-target?api_key=fixture-key")]
+    [InlineData("POST", "/Playlists/allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0/Items?ids=song-a&ids=song-b&api_key=fixture-key",
+        null, "/Playlists/backend-target/Items?ids=song-a&ids=song-b&api_key=fixture-key")]
+    [InlineData("DELETE", "/Playlists/allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0/Items?entryIds=entry-a&api_key=fixture-key",
+        null, "/Playlists/backend-target/Items?entryIds=entry-a&api_key=fixture-key")]
+    [InlineData("POST", "/Playlists/allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0/Items/entry-a/Move/2?api_key=fixture-key",
+        null, "/Playlists/backend-target/Items/entry-a/Move/2?api_key=fixture-key")]
+    [InlineData("GET", "/Playlists/allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0/Users?api_key=fixture-key",
+        null, "/Playlists/backend-target/Users?api_key=fixture-key")]
+    [InlineData("POST", "/Playlists/allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0/Users/user-2?api_key=fixture-key",
+        """{"CanEdit":true}""", "/Playlists/backend-target/Users/user-2?api_key=fixture-key")]
+    [InlineData("DELETE", "/Playlists/allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0/Users/user-2?api_key=fixture-key",
+        null, "/Playlists/backend-target/Users/user-2?api_key=fixture-key")]
+    [InlineData("GET", "/Playlists/allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0/InstantMix?Limit=12&api_key=fixture-key",
+        null, "/Playlists/backend-target/InstantMix?Limit=12&api_key=fixture-key")]
+    public async Task JellyfinLinkedPlaylistOperations_RewriteOnlyTheScopedTargetAndPreserveRelay(
+        string method,
+        string path,
+        string? body,
+        string expectedPath)
+    {
+        var observed = new List<ObservedRequest>();
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request =>
+            {
+                observed.Add(Observe(request));
+                return request.RequestUri!.AbsolutePath == "/Users/Me"
+                    ? Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}""")
+                    : Json(StatusCodes.Status202Accepted, """{"accepted":true}""");
+            },
+            services =>
+            {
+                services.RemoveAll<IJellyfinPlaylistMutationResolver>();
+                services.AddSingleton<IJellyfinPlaylistMutationResolver>(
+                    new FixedJellyfinPlaylistMutationResolver(
+                        new JellyfinPlaylistMutationRoute(true, "backend-target")));
+            });
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(new HttpMethod(method), path);
+        if (body != null)
+        {
+            request.Content = new StringContent(body, Encoding.UTF8, "application/json");
+        }
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal(2, observed.Count);
+        Assert.Equal(method, observed[1].Method);
+        Assert.Equal(expectedPath, observed[1].PathAndQuery);
+        Assert.Equal(body, observed[1].Body);
+    }
+
+    [Theory]
+    [InlineData("allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0")]
+    [InlineData("ext-spotify-playlist-source-1")]
+    public async Task JellyfinReadOnlyPlaylistMutation_ReturnsConflictWithoutBackendMutation(
+        string playlistId)
+    {
+        var observed = new List<ObservedRequest>();
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request =>
+            {
+                observed.Add(Observe(request));
+                return Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}""");
+            },
+            services =>
+            {
+                services.RemoveAll<IJellyfinPlaylistMutationResolver>();
+                services.AddSingleton<IJellyfinPlaylistMutationResolver>(
+                    new FixedJellyfinPlaylistMutationResolver(
+                        new JellyfinPlaylistMutationRoute(false, null)));
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsync(
+            $"/Playlists/{playlistId}/Items?ids=song-a&api_key=fixture-key",
+            content: null);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Single(observed);
+        Assert.Equal("/Users/Me?api_key=fixture-key", observed[0].PathAndQuery);
+    }
+
+    [Theory]
+    [InlineData("Playlist", HttpStatusCode.NoContent, 3)]
+    [InlineData("Audio", HttpStatusCode.Forbidden, 1)]
+    [InlineData("Movie", HttpStatusCode.Forbidden, 1)]
+    public async Task JellyfinDeleteItem_RelaysOnlyNativePlaylists(
+        string itemType,
+        HttpStatusCode expectedStatus,
+        int expectedRequestCount)
+    {
+        var observed = new List<ObservedRequest>();
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            observed.Add(Observe(request));
+            if (request.RequestUri!.AbsolutePath == "/Users/Me")
+                return Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}""");
+            if (request.Method == HttpMethod.Get)
+                return Json(StatusCodes.Status200OK, $$"""{"Id":"item-1","Type":"{{itemType}}"}""");
+            return new HttpResponseMessage(HttpStatusCode.NoContent);
+        });
+        using var client = factory.CreateClient();
+        var itemId = $"{itemType.ToLowerInvariant()}-item";
+        using var request = new HttpRequestMessage(
+            HttpMethod.Delete,
+            $"/Items/{itemId}?api_key=fixture-key");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(expectedStatus, response.StatusCode);
+        Assert.Equal(expectedRequestCount, observed.Count);
+        Assert.Equal($"/Items/{itemId}", observed[0].PathAndQuery);
+        if (itemType == "Playlist")
+        {
+            Assert.Equal("/Users/Me?api_key=fixture-key", observed[1].PathAndQuery);
+            Assert.Equal("DELETE", observed[2].Method);
+            Assert.Equal($"/Items/{itemId}?api_key=fixture-key", observed[2].PathAndQuery);
+        }
     }
 
     [Fact]
@@ -1618,6 +2236,16 @@ public sealed class ProtocolRouteFixtureTests
         {
             return Task.FromResult(route);
         }
+    }
+
+    private sealed class FixedJellyfinPlaylistMutationResolver(JellyfinPlaylistMutationRoute? route)
+        : IJellyfinPlaylistMutationResolver
+    {
+        public Task<JellyfinPlaylistMutationRoute?> ResolveAsync(
+            ProtocolExecutionContext context,
+            string protocolId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(route);
     }
 
     private sealed class RecordingInteractionAdapter : IJellyfinInteractionProtocolAdapter

@@ -89,11 +89,12 @@ public class AuthHeaderHelperTests
         var headers = new HeaderDictionary
         {
             ["X-Emby-Authorization"] =
-                "MediaBrowser Client=\"Feishin\", Device=\"Desktop\", DeviceId=\"dev-123\", Version=\"1.0\", Token=\"abc\""
+                "MediaBrowser Client=\"Feishin\", Device=\"Desktop\", DeviceId=\"dev-123\", Version=\"1.0\", UserId=\"user-7\", Token=\"abc\""
         };
 
         Assert.Equal("dev-123", AuthHeaderHelper.ExtractDeviceId(headers));
         Assert.Equal("Feishin", AuthHeaderHelper.ExtractClientName(headers));
+        Assert.Equal("user-7", AuthHeaderHelper.ExtractUserId(headers));
     }
 
     [Fact]

@@ -1,7 +1,9 @@
 using System.Text.Json;
 using Xunit;
 using allstarr.Models.Domain;
+using allstarr.Models.Subsonic;
 using allstarr.Services.Jellyfin;
+using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Tests;
 
@@ -330,5 +332,119 @@ public class JellyfinResponseStructureTests
         Assert.NotNull(artistUserData);
         Assert.Contains("ItemId", artistUserData.Keys);
         Assert.Equal("artist-id", artistUserData["ItemId"]);
+    }
+
+    [Fact]
+    public void Synthesized_ItemTrees_KeepEveryEmittedRelationshipAndMediaIdComplete()
+    {
+        var song = new Song
+        {
+            Id = "ext-deezer-song-track-1",
+            Title = "Track",
+            Artist = "Artist",
+            Artists = ["Artist"],
+            ArtistId = "ext-deezer-artist-artist-1",
+            ArtistIds = ["ext-deezer-artist-artist-1"],
+            Album = "Album",
+            AlbumId = "ext-deezer-album-album-1",
+            Genre = "Rock",
+            IsLocal = false,
+            ExternalProvider = "deezer",
+            ExternalId = "track-1"
+        };
+        var album = new Album
+        {
+            Id = "ext-deezer-album-album-1",
+            Title = "Album",
+            Artist = "Artist",
+            ArtistId = "ext-deezer-artist-artist-1",
+            Genre = "Rock",
+            IsLocal = false,
+            ExternalProvider = "deezer",
+            ExternalId = "album-1",
+            Songs = [song]
+        };
+        var artist = new Artist
+        {
+            Id = "ext-deezer-artist-artist-1",
+            Name = "Artist",
+            IsLocal = false,
+            ExternalProvider = "deezer",
+            ExternalId = "artist-1"
+        };
+        var playlist = new ExternalPlaylist
+        {
+            Id = "ext-deezer-playlist-list-1",
+            ExternalId = "list-1",
+            Provider = "deezer",
+            Name = "Playlist",
+            CuratorName = "Curator",
+            TrackCount = 1
+        };
+
+        var roots = new object?[]
+        {
+            _builder.ConvertSongToJellyfinItem(song),
+            _builder.ConvertAlbumToJellyfinItem(album),
+            _builder.ConvertArtistToJellyfinItem(artist),
+            _builder.ConvertPlaylistToJellyfinItem(playlist),
+            _builder.ConvertPlaylistToAlbumItem(playlist),
+            Assert.IsType<JsonResult>(_builder.CreatePlaylistAsAlbumResponse(playlist, [song])).Value,
+            Assert.IsType<JsonResult>(_builder.CreateArtistResponse(artist, [album])).Value
+        };
+
+        foreach (var root in roots)
+        {
+            using var document = JsonDocument.Parse(JsonSerializer.Serialize(root));
+            AssertClientItemTree(document.RootElement);
+        }
+    }
+
+    private static void AssertClientItemTree(JsonElement item)
+    {
+        var id = RequiredString(item, "Id");
+        RequiredString(item, "Name");
+        RequiredString(item, "Type");
+
+        var userData = item.GetProperty("UserData");
+        RequiredString(userData, "Key");
+        Assert.Equal(id, RequiredString(userData, "ItemId"));
+
+        foreach (var propertyName in new[] { "ArtistItems", "AlbumArtists", "GenreItems" })
+        {
+            if (!item.TryGetProperty(propertyName, out var relationships)) continue;
+            Assert.Equal(JsonValueKind.Array, relationships.ValueKind);
+            foreach (var relationship in relationships.EnumerateArray())
+            {
+                RequiredString(relationship, "Id");
+                RequiredString(relationship, "Name");
+            }
+        }
+
+        if (item.TryGetProperty("MediaSources", out var mediaSources))
+        {
+            foreach (var mediaSource in mediaSources.EnumerateArray())
+            {
+                RequiredString(mediaSource, "Id");
+                Assert.StartsWith("/Audio/", RequiredString(mediaSource, "DirectStreamUrl"), StringComparison.Ordinal);
+                foreach (var mediaStream in mediaSource.GetProperty("MediaStreams").EnumerateArray())
+                    Assert.Equal(JsonValueKind.Number, mediaStream.GetProperty("Index").ValueKind);
+            }
+        }
+
+        foreach (var childCollection in new[] { "Children", "Albums" })
+        {
+            if (!item.TryGetProperty(childCollection, out var children)) continue;
+            foreach (var child in children.EnumerateArray()) AssertClientItemTree(child);
+        }
+    }
+
+    private static string RequiredString(JsonElement value, string propertyName)
+    {
+        var property = value.GetProperty(propertyName);
+        Assert.Equal(JsonValueKind.String, property.ValueKind);
+        var text = property.GetString();
+        Assert.False(string.IsNullOrWhiteSpace(text), propertyName);
+        return text!;
     }
 }

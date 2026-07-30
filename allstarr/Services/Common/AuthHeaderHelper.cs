@@ -99,6 +99,24 @@ public static class AuthHeaderHelper
         return null;
     }
 
+    public static string? ExtractUserId(IHeaderDictionary headers)
+    {
+        foreach (var name in new[] { "X-Emby-Authorization", "Authorization" })
+        {
+            if (!headers.TryGetValue(name, out var values)) continue;
+            foreach (var value in values)
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(
+                    value ?? string.Empty,
+                    @"(?:^|[,\s])UserId\s*=\s*""([^""]+)""",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (match.Success) return match.Groups[1].Value;
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// Extracts device ID from MediaBrowser auth string.
     /// Format: MediaBrowser Client="...", Device="...", DeviceId="...", Version="...", Token="..."

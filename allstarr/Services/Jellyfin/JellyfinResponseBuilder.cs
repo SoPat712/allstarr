@@ -210,9 +210,29 @@ public class JellyfinResponseBuilder
     public IActionResult CreateSearchHintsResponse(
         List<Song> songs,
         List<Album> albums,
-        List<Artist> artists)
+        List<Artist> artists,
+        JsonDocument? nativeResponse = null,
+        int? limit = null)
     {
         var searchHints = new List<Dictionary<string, object?>>();
+
+        if (nativeResponse?.RootElement.TryGetProperty("SearchHints", out var nativeHints) == true)
+        {
+            foreach (var nativeHint in nativeHints.EnumerateArray())
+            {
+                var id = nativeHint.TryGetProperty("Id", out var idProperty)
+                    ? idProperty.GetString()
+                    : nativeHint.TryGetProperty("ItemId", out var itemIdProperty)
+                        ? itemIdProperty.GetString()
+                        : null;
+                if (string.IsNullOrWhiteSpace(id)) continue;
+
+                var preserved = JsonSerializer.Deserialize<Dictionary<string, object?>>(nativeHint.GetRawText())!;
+                preserved["Id"] = id;
+                preserved["ItemId"] = id;
+                searchHints.Add(preserved);
+            }
+        }
 
         // Add artists first
         foreach (var artist in artists)
@@ -220,6 +240,7 @@ public class JellyfinResponseBuilder
             searchHints.Add(new Dictionary<string, object?>
             {
                 ["Id"] = artist.Id,
+                ["ItemId"] = artist.Id,
                 ["Name"] = artist.Name,
                 ["Type"] = "MusicArtist",
                 ["RunTimeTicks"] = 0,
@@ -237,6 +258,7 @@ public class JellyfinResponseBuilder
             searchHints.Add(new Dictionary<string, object?>
             {
                 ["Id"] = album.Id,
+                ["ItemId"] = album.Id,
                 ["Name"] = album.Title,
                 ["Type"] = "MusicAlbum",
                 ["Album"] = album.Title,
@@ -256,6 +278,7 @@ public class JellyfinResponseBuilder
             searchHints.Add(new Dictionary<string, object?>
             {
                 ["Id"] = song.Id,
+                ["ItemId"] = song.Id,
                 ["Name"] = song.Title,
                 ["Type"] = "Audio",
                 ["Album"] = song.Album,
@@ -269,10 +292,14 @@ public class JellyfinResponseBuilder
             });
         }
 
+        var limitedHints = limit.HasValue
+            ? searchHints.Take(Math.Max(0, limit.Value)).ToList()
+            : searchHints;
+
         return CreateJsonResponse(new
         {
-            SearchHints = searchHints,
-            TotalRecordCount = searchHints.Count
+            SearchHints = limitedHints,
+            TotalRecordCount = limitedHints.Count
         });
     }
 
@@ -323,6 +350,41 @@ public class JellyfinResponseBuilder
         }
 
         var primaryImageTag = song.IsLocal ? song.Id : $"{song.Id}-art-v2";
+        Dictionary<string, object?>[] artistItems =
+            artistNames.Count > 0 && song.ArtistIds.Count == artistNames.Count
+            ? artistNames
+                .Select((name, index) => (Name: name, Id: song.ArtistIds[index]))
+                .Where(artist => !string.IsNullOrWhiteSpace(artist.Name) &&
+                                 !string.IsNullOrWhiteSpace(artist.Id))
+                .Select(artist => new Dictionary<string, object?>
+                {
+                    ["Name"] = artist.Name,
+                    ["Id"] = artist.Id
+                })
+                .ToArray()
+            : !string.IsNullOrWhiteSpace(artistName) && !string.IsNullOrWhiteSpace(song.ArtistId)
+                ?
+                [
+                    new Dictionary<string, object?>
+                    {
+                        ["Name"] = artistName,
+                        ["Id"] = song.ArtistId
+                    }
+                ]
+                : [];
+        var albumArtistName = song.AlbumArtist ?? artistName;
+        Dictionary<string, object?>[] albumArtists =
+            !string.IsNullOrWhiteSpace(albumArtistName) &&
+            !string.IsNullOrWhiteSpace(song.ArtistId)
+            ?
+            [
+                new Dictionary<string, object?>
+                {
+                    ["Name"] = albumArtistName,
+                    ["Id"] = song.ArtistId
+                }
+            ]
+            : [];
 
         var item = new Dictionary<string, object?>
         {
@@ -374,33 +436,13 @@ public class JellyfinResponseBuilder
                 ["ItemId"] = song.Id
             },
             ["Artists"] = artistNames.Count > 0 ? artistNames.ToArray() : new[] { artistName ?? "" },
-            ["ArtistItems"] = artistNames.Count > 0 && song.ArtistIds.Count == artistNames.Count
-                ? artistNames.Select((name, index) => new Dictionary<string, object?>
-                {
-                    ["Name"] = name,
-                    ["Id"] = song.ArtistIds[index]
-                }).ToArray()
-                : new[]
-                {
-                    new Dictionary<string, object?>
-                    {
-                        ["Id"] = song.ArtistId ?? song.Id,
-                        ["Name"] = artistName ?? ""
-                    }
-                },
+            ["ArtistItems"] = artistItems,
             ["Album"] = albumName,
             ["AlbumId"] = song.AlbumId ?? song.Id,
             ["AlbumPrimaryImageTag"] = song.AlbumId ?? song.Id,
             ["PrimaryImageAspectRatio"] = 1.0,
-            ["AlbumArtist"] = song.AlbumArtist ?? artistName,
-            ["AlbumArtists"] = new[]
-            {
-                new Dictionary<string, object?>
-                {
-                    ["Name"] = song.AlbumArtist ?? artistName ?? "",
-                    ["Id"] = song.ArtistId ?? song.Id
-                }
-            },
+            ["AlbumArtist"] = albumArtistName,
+            ["AlbumArtists"] = albumArtists,
             ["ImageTags"] = new Dictionary<string, string>
             {
                 ["Primary"] = primaryImageTag
@@ -577,6 +619,18 @@ public class JellyfinResponseBuilder
             albumName = AppendExternalSourceLabel(album.Title, album.ExternalProvider);
         }
 
+        Dictionary<string, object?>[] albumArtistItems =
+            !string.IsNullOrWhiteSpace(album.Artist) &&
+            !string.IsNullOrWhiteSpace(album.ArtistId)
+            ?
+            [
+                new Dictionary<string, object?>
+                {
+                    ["Name"] = album.Artist,
+                    ["Id"] = album.ArtistId
+                }
+            ]
+            : [];
         var item = new Dictionary<string, object?>
         {
             ["Name"] = albumName,
@@ -617,23 +671,9 @@ public class JellyfinResponseBuilder
                 ["ItemId"] = album.Id
             },
             ["Artists"] = new[] { album.Artist },
-            ["ArtistItems"] = new[]
-            {
-                new Dictionary<string, object?>
-                {
-                    ["Name"] = album.Artist,
-                    ["Id"] = album.ArtistId ?? album.Id
-                }
-            },
+            ["ArtistItems"] = albumArtistItems,
             ["AlbumArtist"] = album.Artist,
-            ["AlbumArtists"] = new[]
-            {
-                new Dictionary<string, object?>
-                {
-                    ["Name"] = album.Artist,
-                    ["Id"] = album.ArtistId ?? album.Id
-                }
-            },
+            ["AlbumArtists"] = albumArtistItems,
             ["ImageTags"] = new Dictionary<string, string>
             {
                 ["Primary"] = album.Id

@@ -1,0 +1,76 @@
+# Jellyfin compatibility qualification
+
+The reusable Jellyfin kit has deterministic and live layers:
+
+- `ProtocolSupportMatrixTests` evaluates all 364 operations in the pinned
+  Jellyfin 12.0.0 OpenAPI and all 388 operations in the pinned Jellyfin
+  10.11.11 OpenAPI against the executable deny-by-default music policy.
+- `jellyfin-openapi-qualification.json` records the 12.0 allow-list, typed
+  synthesized-resource modes, playlist modes, DTO requirements, intentional
+  differences, and unavailable-live-runtime blockers.
+- `jellyfin-openapi-10.11-qualification.json` records the complete delta from
+  12.0, including legacy audio HLS and query-form artist instant-mix routes.
+- `live_jellyfin_smoke.sh` compares a real Jellyfin instance directly with
+  Allstarr. It covers bootstrap and authentication, native structural/stable
+  data parity, virtual/external DTOs and artwork, lyrics, playlists, security
+  denials, exact bounded stream bytes, and latency.
+
+The source URLs, versions, commits, paths, and SHA-256 hashes for both OpenAPI
+files are locked in `allstarr.Tests/Fixtures/Protocols/protocol-source-lock.json`.
+
+Run the deterministic contract:
+
+```bash
+dotnet test allstarr.Tests/allstarr.Tests.csproj \
+  --filter FullyQualifiedName~ProtocolSupportMatrixTests
+```
+
+Run the safe live suite without putting a token in the command history:
+
+```bash
+read -rs JELLYFIN_TOKEN
+export JELLYFIN_TOKEN
+SAMPLES=5 bash tools/tests/live_jellyfin_smoke.sh | tee /tmp/allstarr-jellyfin-live.log
+unset JELLYFIN_TOKEN
+```
+
+Do not run the live layer while either endpoint is unhealthy. The default live
+suite does not write playlists, favorites, played state, ratings, display
+preferences, or lyrics. It also avoids provider-backed audio downloads. Every
+ranged request has a hard 65,536-byte curl ceiling. A provider that ignores
+`Range: bytes=0-65535` fails the check instead of downloading the whole track.
+
+Add `TEST_EXTERNAL_STREAM=1` only when a bounded cold/cache provider stream is
+intended:
+
+```bash
+TEST_EXTERNAL_STREAM=1 SAMPLES=5 bash tools/tests/live_jellyfin_smoke.sh
+```
+
+Playlist editing is an explicit stateful mode. It creates one uniquely named
+throwaway native playlist, verifies direct visibility, rename, add, reorder,
+remove, ACL read/share/unshare, instant mix, and deletes that exact playlist.
+The exit trap attempts direct cleanup only for the playlist created by the
+current run.
+
+```bash
+TEST_PLAYLIST_WRITES=1 \
+PLAYLIST_WRITE_CONFIRM=create-and-delete-throwaway-playlist \
+SAMPLES=5 bash tools/tests/live_jellyfin_smoke.sh
+```
+
+Favorite, played/unplayed, rating, display-preference, lyric mutation, and
+destructive mapping benchmarks remain blocked by the kit because they need
+exact pre-state capture and restoration. The script prints a `BLOCKED` line for
+each unperformed stateful class.
+
+`stable-data-parity` compares identity and non-volatile values.
+`structural-parity` compares recursive JSON field types. `declared-diff`
+prints native-versus-synthesized differences that are expected and reviewed.
+`BLOCKED` lines name qualification that was not performed rather than silently
+counting it as passed.
+
+Every run prints a UTC start time and unique user agent. Use those two values
+to inspect only the matching bounded server-log window; never copy tokens,
+authorization headers, signed media URLs, or raw private payloads into a
+saved report. Unset and revoke temporary credentials after the run.

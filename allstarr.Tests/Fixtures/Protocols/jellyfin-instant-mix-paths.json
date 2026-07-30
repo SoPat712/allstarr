@@ -1,8 +1,10 @@
 [
   { "path": "/Albums/album-1/InstantMix", "status": 404, "body": { "error": "album missing" } },
   { "path": "/Artists/artist-1/InstantMix", "status": 200, "body": { "Items": [{ "Id": "artist-mix" }], "TotalRecordCount": 1 } },
+  { "path": "/Artists/InstantMix", "query": "id=artist-1", "status": 200, "body": { "Items": [{ "Id": "legacy-artist-mix" }], "TotalRecordCount": 1 } },
   { "path": "/Items/item-1/InstantMix", "status": 200, "body": { "Items": [{ "Id": "item-mix" }], "TotalRecordCount": 1 } },
   { "path": "/MusicGenres/rock/InstantMix", "status": 200, "body": { "Items": [{ "Id": "genre-mix" }], "TotalRecordCount": 1 } },
+  { "path": "/MusicGenres/InstantMix", "query": "id=genre-id", "status": 200, "body": { "Items": [{ "Id": "genre-id-mix" }], "TotalRecordCount": 1 } },
   { "path": "/Playlists/playlist-1/InstantMix", "status": 200, "body": { "Items": [{ "Id": "playlist-mix" }], "TotalRecordCount": 1 } },
   { "path": "/Songs/song-1/InstantMix", "status": 200, "body": { "Items": [{ "Id": "song-mix" }], "TotalRecordCount": 1 } }
 ]

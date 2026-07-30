@@ -19,7 +19,7 @@
       "expected": {
         "status": 200,
         "contentType": "application/json",
-        "body": { "IsFavorite": true, "ItemId": "ext-deezer-song-42" }
+        "body": { "IsFavorite": true, "ItemId": "ext-deezer-song-42", "Key": "ext-deezer-song-42" }
       }
     }
   },

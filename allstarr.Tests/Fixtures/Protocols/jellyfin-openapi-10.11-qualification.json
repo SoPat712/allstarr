@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "openApi": {
+    "version": "10.11.11",
+    "operationCount": 388,
+    "defaultAccess": "Denied",
+    "baseline": "jellyfin-openapi-qualification.json"
+  },
+  "versionOnlyOperations": {
+    "allowed": {
+      "Music": [
+        "GetInstantMixFromArtists2",
+        "GetMusicGenres"
+      ],
+      "RequiresMusicItem": [
+        "GetHlsAudioSegment",
+        "GetHlsAudioSegmentLegacyAac",
+        "GetHlsAudioSegmentLegacyMp3",
+        "GetMasterHlsAudioPlaylist",
+        "GetVariantHlsAudioPlaylist",
+        "HeadMasterHlsAudioPlaylist",
+        "OnPlaybackProgress",
+        "OnPlaybackStart",
+        "OnPlaybackStopped"
+      ]
+    },
+    "denied": [
+      "GetCriticReviews",
+      "GetHlsPlaylistLegacy",
+      "GetHlsVideoSegment",
+      "GetHlsVideoSegmentLegacy",
+      "GetLiveHlsStream",
+      "GetMasterHlsVideoPlaylist",
+      "GetNetworkShares",
+      "GetRecordingGroup",
+      "GetRecordingGroups",
+      "GetRecordingsSeries",
+      "GetVariantHlsVideoPlaylist",
+      "HeadMasterHlsVideoPlaylist",
+      "StopEncodingProcess",
+      "TmdbClientConfiguration"
+    ]
+  },
+  "onlyInTwelve": [
+    "GetItemCollections"
+  ],
+  "synthesizedTypedOperations": {
+    "supported": [
+      {
+        "operationId": "GetInstantMixFromArtists2",
+        "resourceType": "artist",
+        "method": "GET",
+        "path": "/Artists/InstantMix?id=ext-fixture-artist-1"
+      }
+    ]
+  },
+  "compatibilityNotes": [
+    "The complete 10.11.11 operation set is evaluated against the same deny-by-default music policy as 12.0.0.",
+    "Deprecated PlayingItems reports are accepted only after the referenced native item is verified as music; synthesized IDs remain denied.",
+    "Legacy local audio HLS routes are type-checked and relayed. Video HLS and active-encoding control remain denied.",
+    "Playlist create, definition, update, membership, reorder, sharing, instant-mix, and item deletion route shapes are the same in 10.11.11 and 12.0.0."
+  ],
+  "liveEvidence": {
+    "runtimeVersion": "10.11.11",
+    "status": "runtime-available-when-server-healthy",
+    "lastObservedAt": "2026-07-30"
+  }
+}

@@ -21,7 +21,7 @@ public class LyricsPlusService
         IApplicationCache cache,
         ILogger<LyricsPlusService> logger)
     {
-        _httpClient = httpClientFactory.CreateClient();
+        _httpClient = httpClientFactory.CreateClient("LyricsPlus");
         _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.3 (https://github.com/SoPat712/allstarr)");
         _cache = cache;
         _logger = logger;

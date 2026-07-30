@@ -17,7 +17,7 @@ public class OdesliService
         ILogger<OdesliService> logger,
         IApplicationCache cache)
     {
-        _httpClient = httpClientFactory.CreateClient();
+        _httpClient = httpClientFactory.CreateClient("Odesli");
         _logger = logger;
         _cache = cache;
     }

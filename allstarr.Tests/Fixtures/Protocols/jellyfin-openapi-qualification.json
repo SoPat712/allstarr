@@ -1,0 +1,313 @@
+{
+  "schemaVersion": 1,
+  "openApi": {
+    "version": "12.0.0",
+    "operationCount": 364,
+    "defaultAccess": "Denied"
+  },
+  "liveEvidence": {
+    "qualifiedAt": "2026-07-30",
+    "runtimeVersion": "10.11.11",
+    "runtime12Status": "blocked-no-runtime",
+    "note": "The pinned 12.0.0 OpenAPI is covered deterministically. A real Jellyfin 12 runtime was not available for live parity."
+  },
+  "allowedOperations": {
+    "ClientControl": [
+      "AuthenticateUserByName",
+      "AuthenticateWithQuickConnect",
+      "AuthorizeQuickConnect",
+      "GetBitrateTestBytes",
+      "GetCurrentUser",
+      "GetDisplayPreferences",
+      "GetEndpointInfo",
+      "GetGroupingOptions",
+      "GetItemCounts",
+      "GetMediaFolders",
+      "GetPingSystem",
+      "GetPublicSystemInfo",
+      "GetPublicUsers",
+      "GetQuickConnectEnabled",
+      "GetQuickConnectState",
+      "GetRootFolder",
+      "GetSystemInfo",
+      "GetUserById",
+      "GetUserImage",
+      "GetUserViews",
+      "GetUtcTime",
+      "HeadUserImage",
+      "InitiateQuickConnect",
+      "PingPlaybackSession",
+      "PostCapabilities",
+      "PostFullCapabilities",
+      "PostPingSystem",
+      "ReportPlaybackProgress",
+      "ReportPlaybackStart",
+      "ReportPlaybackStopped",
+      "ReportSessionEnded",
+      "UpdateDisplayPreferences"
+    ],
+    "Music": [
+      "AddItemToPlaylist",
+      "CreatePlaylist",
+      "GetAlbumArtists",
+      "GetArtistByName",
+      "GetArtistImage",
+      "GetArtists",
+      "GetGenre",
+      "GetGenreImage",
+      "GetGenreImageByIndex",
+      "GetGenres",
+      "GetInstantMixFromAlbum",
+      "GetInstantMixFromArtists",
+      "GetInstantMixFromMusicGenreById",
+      "GetInstantMixFromMusicGenreByName",
+      "GetInstantMixFromPlaylist",
+      "GetInstantMixFromSong",
+      "GetItems",
+      "GetLatestMedia",
+      "GetMusicAlbumRemoteSearchResults",
+      "GetMusicArtistRemoteSearchResults",
+      "GetMusicGenre",
+      "GetMusicGenreImage",
+      "GetMusicGenreImageByIndex",
+      "GetPlaylist",
+      "GetPlaylistItems",
+      "GetPlaylistUser",
+      "GetPlaylistUsers",
+      "GetQueryFilters",
+      "GetQueryFiltersLegacy",
+      "GetRemoteLyrics",
+      "GetResumeItems",
+      "GetSearchHints",
+      "GetSimilarAlbums",
+      "GetSimilarArtists",
+      "GetSuggestions",
+      "HeadArtistImage",
+      "HeadGenreImage",
+      "HeadGenreImageByIndex",
+      "HeadMusicGenreImage",
+      "HeadMusicGenreImageByIndex",
+      "MoveItem",
+      "RemoveItemFromPlaylist",
+      "RemoveUserFromPlaylist",
+      "UpdatePlaylist",
+      "UpdatePlaylistUser"
+    ],
+    "RequiresMusicItem": [
+      "DeleteUserItemRating",
+      "GetAncestors",
+      "GetAudioStream",
+      "GetAudioStreamByContainer",
+      "GetDownload",
+      "GetExternalIdInfos",
+      "GetFile",
+      "GetInstantMixFromItem",
+      "GetItem",
+      "GetItemCollections",
+      "GetItemImage",
+      "GetItemImage2",
+      "GetItemImageByIndex",
+      "GetItemImageInfos",
+      "GetItemUserData",
+      "GetLyrics",
+      "GetPlaybackInfo",
+      "GetPostedPlaybackInfo",
+      "GetRemoteImageProviders",
+      "GetRemoteImages",
+      "GetSimilarItems",
+      "GetThemeSongs",
+      "GetUniversalAudioStream",
+      "HeadAudioStream",
+      "HeadAudioStreamByContainer",
+      "HeadItemImage",
+      "HeadItemImage2",
+      "HeadItemImageByIndex",
+      "HeadUniversalAudioStream",
+      "MarkFavoriteItem",
+      "MarkPlayedItem",
+      "MarkUnplayedItem",
+      "SearchRemoteLyrics",
+      "UnmarkFavoriteItem",
+      "UpdateItemUserData",
+      "UpdateUserItemRating"
+    ],
+    "RequiresPlaylistItem": [
+      "DeleteItem"
+    ]
+  },
+  "synthesizedDeniedOperations": [
+    "DeleteUserItemRating",
+    "GetAncestors",
+    "GetExternalIdInfos",
+    "GetItemCollections",
+    "GetItemImageInfos",
+    "GetItemUserData",
+    "GetRemoteImageProviders",
+    "GetRemoteImages",
+    "GetThemeSongs",
+    "MarkPlayedItem",
+    "MarkUnplayedItem",
+    "SearchRemoteLyrics",
+    "UpdateItemUserData",
+    "UpdateUserItemRating"
+  ],
+  "synthesizedTypedOperations": {
+    "supported": [
+      { "operationId": "GetArtistByName", "resourceType": "artist", "method": "GET", "path": "/Artists/ext-fixture-artist-1" },
+      { "operationId": "GetInstantMixFromAlbum", "resourceType": "album", "method": "GET", "path": "/Albums/ext-fixture-album-1/InstantMix" },
+      { "operationId": "GetInstantMixFromArtists", "resourceType": "artist", "method": "GET", "path": "/Artists/ext-fixture-artist-1/InstantMix" },
+      { "operationId": "GetInstantMixFromSong", "resourceType": "song", "method": "GET", "path": "/Songs/ext-fixture-song-1/InstantMix" },
+      { "operationId": "GetSimilarArtists", "resourceType": "artist", "method": "GET", "path": "/Artists/ext-fixture-artist-1/Similar" }
+    ],
+    "denied": [
+      { "operationId": "GetArtistImage", "resourceType": "artist", "method": "GET", "path": "/Artists/ext-fixture-artist-1/Images/Primary/0" },
+      { "operationId": "HeadArtistImage", "resourceType": "artist", "method": "HEAD", "path": "/Artists/ext-fixture-artist-1/Images/Primary/0" },
+      { "operationId": "GetGenre", "resourceType": "genre", "method": "GET", "path": "/Genres/ext-fixture-genre-1" },
+      { "operationId": "GetGenreImage", "resourceType": "genre", "method": "GET", "path": "/Genres/ext-fixture-genre-1/Images/Primary" },
+      { "operationId": "HeadGenreImage", "resourceType": "genre", "method": "HEAD", "path": "/Genres/ext-fixture-genre-1/Images/Primary" },
+      { "operationId": "GetGenreImageByIndex", "resourceType": "genre", "method": "GET", "path": "/Genres/ext-fixture-genre-1/Images/Primary/0" },
+      { "operationId": "HeadGenreImageByIndex", "resourceType": "genre", "method": "HEAD", "path": "/Genres/ext-fixture-genre-1/Images/Primary/0" },
+      { "operationId": "GetMusicGenre", "resourceType": "genre", "method": "GET", "path": "/MusicGenres/ext-fixture-genre-1" },
+      { "operationId": "GetMusicGenreImage", "resourceType": "genre", "method": "GET", "path": "/MusicGenres/ext-fixture-genre-1/Images/Primary" },
+      { "operationId": "HeadMusicGenreImage", "resourceType": "genre", "method": "HEAD", "path": "/MusicGenres/ext-fixture-genre-1/Images/Primary" },
+      { "operationId": "GetMusicGenreImageByIndex", "resourceType": "genre", "method": "GET", "path": "/MusicGenres/ext-fixture-genre-1/Images/Primary/0" },
+      { "operationId": "HeadMusicGenreImageByIndex", "resourceType": "genre", "method": "HEAD", "path": "/MusicGenres/ext-fixture-genre-1/Images/Primary/0" },
+      { "operationId": "GetInstantMixFromMusicGenreById", "resourceType": "genre", "method": "GET", "path": "/MusicGenres/InstantMix?id=ext-fixture-genre-1", "enforcement": "controller" },
+      { "operationId": "GetInstantMixFromMusicGenreByName", "resourceType": "genre", "method": "GET", "path": "/MusicGenres/ext-fixture-genre-1/InstantMix" },
+      { "operationId": "GetSimilarAlbums", "resourceType": "album", "method": "GET", "path": "/Albums/ext-fixture-album-1/Similar" }
+    ]
+  },
+  "synthesizedPlaylistOperations": {
+    "projectedReads": [
+      "GetPlaylist",
+      "GetPlaylistItems"
+    ],
+    "targetRequired": [
+      "AddItemToPlaylist",
+      "GetInstantMixFromPlaylist",
+      "GetPlaylistUser",
+      "GetPlaylistUsers",
+      "MoveItem",
+      "RemoveItemFromPlaylist",
+      "RemoveUserFromPlaylist",
+      "UpdatePlaylist",
+      "UpdatePlaylistUser"
+    ],
+    "notApplicable": [
+      "CreatePlaylist"
+    ]
+  },
+  "comparisonClasses": {
+    "native-relay": "Canonical JSON structure and stable identity fields must match the direct Jellyfin response. Volatile user state and timestamps are compared by type.",
+    "constrained-relay": "Every returned native item must retain its direct identity and field types; non-music items, totals, ordering, and injected virtual items may intentionally differ.",
+    "synthesized": "Provider and virtual data values intentionally differ. Client-required identifiers, common field types, routable media URLs, artwork, and nested identifier contracts must match native expectations.",
+    "transformed": "Declared fields may differ while the documented response schema remains compatible, such as Allstarr server identity and music-only counts.",
+    "binary-relay": "Bounded local audio ranges must have matching status, byte count, range headers, media type, and exact bytes. Timing is reported separately.",
+    "denied": "Every OpenAPI operation not explicitly listed above must remain HTTP 403 on the public music proxy."
+  },
+  "clientDtoRequirements": {
+    "item": [
+      "Id is a non-empty string",
+      "Name is a string",
+      "Type is a music item type"
+    ],
+    "namedRelationships": [
+      "ArtistItems, AlbumArtists, and GenreItems are optional",
+      "When emitted by Allstarr, every entry has non-empty Id and Name strings"
+    ],
+    "playlistDefinitionRequired": [
+      "ItemIds",
+      "Shares"
+    ],
+    "userDataRequired": [
+      "Key"
+    ],
+    "userDataCompatibility": [
+      "ItemId is non-empty and equals the containing item Id"
+    ],
+    "mediaSource": [
+      "Id is non-empty",
+      "DirectStreamUrl is an Allstarr audio route",
+      "Container and capability booleans are present",
+      "MediaStreams contains an audio stream with a numeric Index"
+    ],
+    "artwork": [
+      "Advertised external and virtual playlist Primary images resolve to a real image, not the transparent fallback",
+      "Reviewed long Primary image routes honor bounded dimensions and JPG, PNG, or WebP output"
+    ]
+  },
+  "intentionalDifferences": [
+    {
+      "area": "public server info",
+      "class": "transformed",
+      "difference": "ProductName, LocalAddress, server Id, and operating system describe Allstarr while Version and ServerName reflect the backend connection."
+    },
+    {
+      "area": "music browse and search",
+      "class": "constrained-relay",
+      "difference": "Non-music entries are removed and enabled provider or virtual entries may be added, so totals and ordering can differ."
+    },
+    {
+      "area": "library views, root, and counts",
+      "class": "transformed",
+      "difference": "Only the music library is visible and all non-music counts are zero."
+    },
+    {
+      "area": "external and virtual items",
+      "class": "synthesized",
+      "difference": "Ids, ProviderIds, labels, paths, artwork tags, and media URLs identify provider-backed Allstarr resources rather than Jellyfin database rows."
+    },
+    {
+      "area": "synthesized artwork transforms",
+      "class": "synthesized",
+      "difference": "Primary image reads and zero-overlay JPG, PNG, and WebP long routes are supported with bounded resizing. Other image kinds, formats, and nonzero overlays are denied; native image routes remain exact relays."
+    },
+    {
+      "area": "virtual playlist relationships",
+      "class": "synthesized",
+      "difference": "ArtistItems is omitted when no routable artist Id exists; Artists retains display names. Optional relationship objects are never emitted without Id."
+    },
+    {
+      "area": "synthesized playlist writes and sharing",
+      "class": "native-relay",
+      "difference": "Hybrid Allstarr playlist IDs are resolved within the verified tenant, owner, backend, protocol, and library scope before normal Jellyfin mutations, ACL reads/writes, and instant mixes are relayed to their writable target. Pure virtual and provider-only playlists return a read-only conflict instead of leaking synthetic IDs upstream."
+    },
+    {
+      "area": "playlist deletion",
+      "class": "native-relay",
+      "difference": "DELETE /Items/{id} is relayed only after the backend identifies the native item as a Playlist. Synthetic playlist IDs and audio, movie, episode, or other library items remain blocked."
+    },
+    {
+      "area": "sequential live comparisons",
+      "class": "native-relay",
+      "difference": "Playback position, play count, last-played values, request timestamps, and cache validators may change between the direct and proxied request."
+    }
+  ],
+  "liveModes": [
+    {
+      "mode": "default",
+      "coverage": "anonymous bootstrap, authenticated reads, DTO shape, native identity, real non-music denial, artwork, lyrics reads, bounded audio, range bytes, and timing",
+      "status": "required"
+    },
+    {
+      "mode": "stateful-playlist",
+      "coverage": "create one throwaway native playlist; rename, add, reorder, remove, share, unshare, instant mix, and delete it",
+      "status": "blocked-without-explicit-opt-in"
+    },
+    {
+      "mode": "stateful-user-data",
+      "coverage": "favorites, played state, ratings, display preferences, and playback reporting with exact state restoration",
+      "status": "blocked-without-explicit-opt-in"
+    },
+    {
+      "mode": "destructive",
+      "coverage": "item deletion, lyric upload/delete, library/admin/video routes, mapping resets, and clean-slate benchmarks",
+      "status": "blocked-by-policy-or-explicit-authorization"
+    },
+    {
+      "mode": "jellyfin-12-live",
+      "coverage": "the same default live suite against a real 12.x server",
+      "status": "blocked-no-runtime"
+    }
+  ]
+}

@@ -36,13 +36,28 @@
     "expectedBody": "accepted"
   },
   {
-    "name": "delete-empty-response",
+    "name": "delete-playlist-items",
     "request": {
       "method": "DELETE",
-      "path": "/Playlists/list-1/Items/item-2?api_key=fixture-key"
+      "path": "/Playlists/list-1/Items?entryIds=item-2&api_key=fixture-key"
     },
     "verificationPath": "/Users/Me?api_key=fixture-key",
-    "upstreamPath": "/Playlists/list-1/Items/item-2?api_key=fixture-key",
+    "upstreamPath": "/Playlists/list-1/Items?entryIds=item-2&api_key=fixture-key",
+    "upstream": {
+      "status": 204,
+      "contentType": "application/octet-stream",
+      "body": ""
+    },
+    "expectedBody": ""
+  },
+  {
+    "name": "post-playlist-items",
+    "request": {
+      "method": "POST",
+      "path": "/Playlists/list-1/Items?ids=item-2&api_key=fixture-key"
+    },
+    "verificationPath": "/Users/Me?api_key=fixture-key",
+    "upstreamPath": "/Playlists/list-1/Items?ids=item-2&api_key=fixture-key",
     "upstream": {
       "status": 204,
       "contentType": "application/octet-stream",

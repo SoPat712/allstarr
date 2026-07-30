@@ -7,6 +7,15 @@
     "licenseEvidence": "The pinned OpenAPI info object contains no license field.",
     "sha256": "91534097236d67af87df81dc2dabd063b9b5ea5de3386f8f322b2817e2ab47e4"
   },
+  "jellyfinOpenApi10": {
+    "path": "apis/specifications/jellyfin/openapi-10.11.11.json",
+    "version": "10.11.11",
+    "sourceUrl": "https://blr1.mirror.jellyfin.org/files/files/files/openapi/stable/jellyfin-openapi-10.11.11.json",
+    "serverCommit": "1fbd8739292cce610231be93daf43368733edf63",
+    "license": "not-declared-in-artifact",
+    "licenseEvidence": "The pinned OpenAPI info object contains no license field.",
+    "sha256": "e29fc369ecae54676caeb50cbbc006b5c4ee959906c00f1e02f6f83db9c227fb"
+  },
   "octoFiesta": {
     "sourceUrl": "https://github.com/V1ck3s/octo-fiesta",
     "commit": "a1ec833fc9805db6a5170a1a777a39534dae0eef",

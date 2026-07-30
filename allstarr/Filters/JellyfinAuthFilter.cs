@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using allstarr.Services.Jellyfin;
+using allstarr.Services.Common;
 using allstarr.Core.Identity;
 
 namespace allstarr.Filters;
@@ -51,6 +52,18 @@ public class JellyfinAuthFilter : IAsyncActionFilter
                 endpoint,
                 queryParams: null,
                 request.Headers);
+            var actorBound = true;
+            var explicitUserEndpoint = BuildExplicitUserEndpoint(request);
+            if (statusCode is StatusCodes.Status400BadRequest or StatusCodes.Status404NotFound &&
+                explicitUserEndpoint != null)
+            {
+                body?.Dispose();
+                (body, statusCode) = await _proxyService.GetJsonAsync(
+                    explicitUserEndpoint,
+                    queryParams: null,
+                    request.Headers);
+                actorBound = false;
+            }
 
             using (body)
             {
@@ -70,16 +83,24 @@ public class JellyfinAuthFilter : IAsyncActionFilter
                 }
 
                 context.HttpContext.Items[BackendPrincipalIdItemKey] = principalId;
-                var principal = await _identityResolver.ResolveAsync(
-                    new BackendIdentityDescriptor(
-                        "Jellyfin",
-                        principalId,
-                        displayName,
-                        isAdministrator),
-                    request.HttpContext.RequestAborted);
-                if (principal != null)
+                if (actorBound)
                 {
-                    context.HttpContext.Items[BackendIdentityResolver.HttpContextPrincipalItemKey] = principal;
+                    var principal = await _identityResolver.ResolveAsync(
+                        new BackendIdentityDescriptor(
+                            "Jellyfin",
+                            principalId,
+                            displayName,
+                            isAdministrator),
+                        request.HttpContext.RequestAborted);
+                    if (principal != null)
+                    {
+                        context.HttpContext.Items[BackendIdentityResolver.HttpContextPrincipalItemKey] = principal;
+                    }
+                }
+                else
+                {
+                    _logger.LogDebug(
+                        "Verified a Jellyfin API-key request for native relay without binding its declared UserId to an Allstarr actor");
                 }
             }
         }
@@ -121,13 +142,27 @@ public class JellyfinAuthFilter : IAsyncActionFilter
         var path = request.Path.Value?.TrimEnd('/') ?? string.Empty;
 
         if (HttpMethods.IsPost(request.Method) &&
-            path.Equals("/Users/AuthenticateByName", StringComparison.OrdinalIgnoreCase))
+            (path.Equals("/Users/AuthenticateByName", StringComparison.OrdinalIgnoreCase) ||
+             path.Equals("/Users/AuthenticateWithQuickConnect", StringComparison.OrdinalIgnoreCase) ||
+             path.Equals("/QuickConnect/Initiate", StringComparison.OrdinalIgnoreCase)))
         {
             return true;
         }
 
         if ((HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)) &&
-            path.Equals("/System/Info/Public", StringComparison.OrdinalIgnoreCase))
+            (path.Equals("/System/Info/Public", StringComparison.OrdinalIgnoreCase) ||
+             path.Equals("/System/Ping", StringComparison.OrdinalIgnoreCase) ||
+             path.Equals("/GetUtcTime", StringComparison.OrdinalIgnoreCase) ||
+             path.Equals("/Users/Public", StringComparison.OrdinalIgnoreCase) ||
+             path.Equals("/UserImage", StringComparison.OrdinalIgnoreCase) ||
+             path.Equals("/QuickConnect/Enabled", StringComparison.OrdinalIgnoreCase) ||
+             path.Equals("/QuickConnect/Connect", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        if (HttpMethods.IsPost(request.Method) &&
+            path.Equals("/System/Ping", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
@@ -153,8 +188,11 @@ public class JellyfinAuthFilter : IAsyncActionFilter
     {
         var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         return segments.Length >= 4 &&
-               (segments[0].Equals("Items", StringComparison.OrdinalIgnoreCase) ||
-                segments[0].Equals("Users", StringComparison.OrdinalIgnoreCase)) &&
+            (segments[0].Equals("Items", StringComparison.OrdinalIgnoreCase) ||
+             segments[0].Equals("Users", StringComparison.OrdinalIgnoreCase) ||
+             segments[0].Equals("Artists", StringComparison.OrdinalIgnoreCase) ||
+             segments[0].Equals("Genres", StringComparison.OrdinalIgnoreCase) ||
+             segments[0].Equals("MusicGenres", StringComparison.OrdinalIgnoreCase)) &&
                !string.IsNullOrWhiteSpace(segments[1]) &&
                segments[2].Equals("Images", StringComparison.OrdinalIgnoreCase) &&
                !string.IsNullOrWhiteSpace(segments[3]);
@@ -182,27 +220,34 @@ public class JellyfinAuthFilter : IAsyncActionFilter
 
     private static string BuildCurrentUserEndpoint(HttpRequest request)
     {
+        return AddQueryCredentials("Users/Me", request);
+    }
+
+    private static string? BuildExplicitUserEndpoint(HttpRequest request)
+    {
+        var explicitUserId = request.RouteValues.TryGetValue("userId", out var routeUser)
+            ? routeUser?.ToString()
+            : request.Query.TryGetValue("UserId", out var queryUser)
+                ? queryUser.FirstOrDefault()
+                : UserIdFromPath(request.Path.Value) ??
+                  AuthHeaderHelper.ExtractUserId(request.Headers);
+        if (string.IsNullOrWhiteSpace(explicitUserId) || !IsSafeBackendId(explicitUserId))
+            return null;
+
+        return AddQueryCredentials($"Users/{Uri.EscapeDataString(explicitUserId)}", request);
+    }
+
+    private static string AddQueryCredentials(string endpoint, HttpRequest request)
+    {
         var credentials = new List<KeyValuePair<string, string?>>();
         foreach (var name in AllowedQueryCredentialNames)
         {
-            if (!request.Query.TryGetValue(name, out var values))
-            {
-                continue;
-            }
-
+            if (!request.Query.TryGetValue(name, out var values)) continue;
             credentials.AddRange(values
                 .Where(value => !string.IsNullOrWhiteSpace(value))
                 .Select(value => new KeyValuePair<string, string?>(name, value)));
         }
 
-        var explicitUserId = request.RouteValues.TryGetValue("userId", out var routeUser)
-            ? routeUser?.ToString()
-            : request.Query.TryGetValue("UserId", out var queryUser)
-                ? queryUser.FirstOrDefault()
-                : UserIdFromPath(request.Path.Value);
-        var endpoint = !string.IsNullOrWhiteSpace(explicitUserId) && IsSafeBackendId(explicitUserId)
-            ? $"Users/{Uri.EscapeDataString(explicitUserId)}"
-            : "Users/Me";
         return credentials.Count == 0 ? endpoint : $"{endpoint}{QueryString.Create(credentials)}";
     }
 

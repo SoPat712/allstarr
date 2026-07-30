@@ -30,7 +30,7 @@ public sealed class JellyfinInteractionProtocolAdapter : IJellyfinInteractionPro
         return new JellyfinProtocolResponse(
             StatusCodes.Status200OK,
             "application/json",
-            JsonSerializer.Serialize(new JellyfinFavoriteResponse(isFavorite, itemId), SerializerOptions));
+            JsonSerializer.Serialize(new JellyfinFavoriteResponse(isFavorite, itemId, itemId), SerializerOptions));
     }
 
     public int ShapeCapabilitiesStatus(int upstreamStatusCode) => upstreamStatusCode switch
@@ -51,7 +51,7 @@ public sealed class JellyfinInteractionProtocolAdapter : IJellyfinInteractionPro
                 SerializerOptions));
     }
 
-    private sealed record JellyfinFavoriteResponse(bool IsFavorite, string ItemId);
+    private sealed record JellyfinFavoriteResponse(bool IsFavorite, string ItemId, string Key);
 
     private sealed record JellyfinInstantMixResponse(
         IReadOnlyList<Dictionary<string, object?>> Items,
