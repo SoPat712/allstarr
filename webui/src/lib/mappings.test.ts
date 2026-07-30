@@ -84,6 +84,14 @@ describe("mapping review presentation", () => {
       externalId: "candidate",
     });
     expect(candidateResolution({
+      libraryTrackId: "legacy-synthetic-id",
+      providerTrackIds: { spotify: "source", deezer: "legacy-candidate" },
+    }, "spotify", playable)).toEqual({
+      targetType: "provider",
+      externalProvider: "deezer",
+      externalId: "legacy-candidate",
+    });
+    expect(candidateResolution({
       isLocal: false,
       libraryTrackId: "metadata-only",
       providerTrackIds: { musicbrainzalbum: "release" },

@@ -30,7 +30,8 @@ public sealed class DurationProjectionContractTests
             null,
             emptyLibrary,
             emptyLibrary,
-            new Dictionary<Guid, ProviderTrackIdentityRecord[]>()
+            new Dictionary<Guid, ProviderTrackIdentityRecord[]>(),
+            new HashSet<string>()
         ])!);
         Assert.Equal("spotify", source.GetProperty("providerId").GetString());
         Assert.Equal(196_456, source.GetProperty("durationMilliseconds").GetInt64());
@@ -58,7 +59,8 @@ public sealed class DurationProjectionContractTests
             null,
             new Dictionary<Guid, LibraryTrackRecord> { [localId] = local },
             emptyLibrary,
-            new Dictionary<Guid, ProviderTrackIdentityRecord[]>()
+            new Dictionary<Guid, ProviderTrackIdentityRecord[]>(),
+            new HashSet<string>()
         ])!);
         Assert.Equal(200_000, target.GetProperty("durationMilliseconds").GetInt64());
         Assert.Equal("jellyfin", target.GetProperty("durationProvenance").GetString());
@@ -99,9 +101,10 @@ public sealed class DurationProjectionContractTests
             },
             null,
             null,
+            new Dictionary<Guid, LibraryTrackRecord> { [candidateId] = new() { Id = candidateId } },
             new Dictionary<Guid, LibraryTrackRecord>(),
-            new Dictionary<Guid, LibraryTrackRecord>(),
-            new Dictionary<Guid, ProviderTrackIdentityRecord[]>()
+            new Dictionary<Guid, ProviderTrackIdentityRecord[]>(),
+            new HashSet<string>()
         ])!;
 
         Assert.Single(Value(row).GetProperty("candidates").EnumerateArray());

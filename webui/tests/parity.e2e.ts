@@ -303,7 +303,7 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
           providerIdentities: [], reasons: ["title_match"], warnings: [], candidates: [{
             libraryTrackId: "local-track", backendItemId: "backend-track", title: "Test song",
             artist: "Artist", album: "Album", candidateIsrc: "US-AAA-26-00001",
-            providerTrackIds: { "lumen-audio": "provider-track" },
+            providerTrackIds: { "lumen-audio": "provider-track", "apple-download": "apple-track" },
             confidence: 0.82, durationMilliseconds: 180_000, components: { title: 1 },
           }, {
             libraryTrackId: "metadata-only", isLocal: false, title: "MusicBrainz album",
@@ -1004,21 +1004,41 @@ test("Tentative mappings sort by confidence and deep links open review", async (
       }),
     });
   });
+  await page.route("**/api/admin/track-matches/targets/provider?*", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        tracks: [{
+          id: "provider-kiss-me-more", externalId: "provider-kiss-me-more",
+          externalProvider: "lumen-audio", title: "Kiss Me More",
+          artist: "Doja Cat feat. SZA", album: "Planet Her",
+          durationMilliseconds: 208_000, confidence: 0.94,
+          components: { localPreference: 0.07, preferenceScore: 0.98 },
+        }],
+        providers: ["lumen-audio", "qobuz"],
+      }),
+    });
+  });
   await page.goto("#/library/mappings?search=Test%20song&review=snapshot");
   const dialog = page.getByRole("dialog", { name: "Test song" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("ISRC US-AAA-26-00001")).toHaveCount(2);
-  await expect(dialog.locator(".candidate-provider")).toContainText("Jellyfin");
+  await expect(dialog.locator(".candidate-provider")).toContainText("Apple Music - Gamdl");
   await expect(dialog.getByText("MusicBrainz album")).toHaveCount(0);
   await expect(dialog.locator(".candidate-card .mapping-art > span")).toBeVisible();
   await dialog.getByLabel("Search local library and playable providers").fill("Kiss Me More");
   await dialog.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Searching…" })).toBeVisible();
+  await expect(dialog.locator(".provider-result-summary")).toHaveCount(0);
   await expect.poll(() => localSearches).toBe(1);
   await expect(dialog.getByRole("button", { name: /Jellyfin 1/ })).toBeVisible();
   await expect(dialog.getByRole("button", { name: /Lumen Audio 1/ })).toBeVisible();
   await expect(dialog.getByRole("button", { name: /Qobuz/ })).toHaveCount(0);
   await expect(dialog.getByText("Planet Her")).toHaveCount(2);
   await expect(dialog.getByText("base evidence")).toHaveCount(2);
+  await expect(dialog.getByText("+7% local")).toHaveCount(1);
   await expect(dialog.getByText("rank #1")).toBeVisible();
   await dialog.getByLabel("Search local library and playable providers").fill("No local copy");
   await dialog.getByRole("button", { name: "Search", exact: true }).click();

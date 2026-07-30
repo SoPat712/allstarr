@@ -613,13 +613,14 @@ public sealed class TrackMatchesController(
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)
             .ToArray();
+        var indexedLibraryTrackIds = library.Keys.ToHashSet();
         var classification = TrackClassifier.Classify(
             manual,
             decision,
             sourceIdentity,
             routeIdentities,
             providerOrder,
-            library.Keys.ToHashSet());
+            indexedLibraryTrackIds);
         var state = classification.ReviewState;
         var trackId = classification.LibraryTrackId;
         library.TryGetValue(trackId ?? Guid.Empty, out var track);
@@ -704,7 +705,10 @@ public sealed class TrackMatchesController(
                 providerIds = ParseObject(track.ProviderIdsJson)
             },
             providerIdentities,
-            candidates = ParseCandidates(decision?.CandidateResultsJson, playableProviders),
+            candidates = ParseCandidates(
+                decision?.CandidateResultsJson,
+                playableProviders,
+                indexedLibraryTrackIds),
             reasons = decision == null && sourceIdentity != null
                 ? ["Existing canonical provider identity is available."]
                 : ParseArray(decision?.ReasonsJson),
@@ -828,7 +832,8 @@ public sealed class TrackMatchesController(
             : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 [song.ExternalProvider] = song.ExternalId
-            });
+            },
+        IsLocal: false);
 
     private static long? DurationMilliseconds(JsonElement root)
     {
@@ -876,39 +881,52 @@ public sealed class TrackMatchesController(
         };
     }
 
-    private static object[] ParseCandidates(string? json, IReadOnlySet<string> playableProviders)
+    private static object[] ParseCandidates(
+        string? json,
+        IReadOnlySet<string> playableProviders,
+        IReadOnlySet<Guid> indexedLibraryTrackIds)
     {
         try
         {
             using var document = JsonDocument.Parse(json ?? "[]");
             if (document.RootElement.ValueKind != JsonValueKind.Array) return [];
-            return document.RootElement.EnumerateArray().Select(item => new
+            return document.RootElement.EnumerateArray().Select(item =>
             {
-                libraryTrackId = Text(item, "libraryTrackId") ?? Text(item, "LibraryTrackId"),
-                backendItemId = Text(item, "backendItemId") ?? Text(item, "BackendItemId"),
-                confidence = Number(item, "confidence") ?? Number(item, "Confidence"),
-                title = Text(item, "title") ?? Text(item, "Title"),
-                artist = Text(item, "artist") ?? Text(item, "Artist"),
-                album = Text(item, "album") ?? Text(item, "Album"),
-                durationMilliseconds = Number(item, "durationMilliseconds") ??
-                                       Number(item, "DurationMilliseconds") ??
-                                       (Number(item, "durationSeconds") ?? Number(item, "DurationSeconds")) * 1000,
-                sourceIsrc = Text(item, "sourceIsrc") ?? Text(item, "SourceIsrc"),
-                candidateIsrc = Text(item, "candidateIsrc") ?? Text(item, "CandidateIsrc"),
-                normalizedSourceTitle = Text(item, "normalizedSourceTitle") ?? Text(item, "NormalizedSourceTitle"),
-                normalizedCandidateTitle = Text(item, "normalizedCandidateTitle") ?? Text(item, "NormalizedCandidateTitle"),
-                artistOverlap = Number(item, "artistOverlap") ?? Number(item, "ArtistOverlap"),
-                albumEvidence = Number(item, "albumEvidence") ?? Number(item, "AlbumEvidence"),
-                durationDeltaMilliseconds = Number(item, "durationDeltaMilliseconds") ??
-                                            Number(item, "DurationDeltaMilliseconds") ??
-                                            (Number(item, "durationDeltaSeconds") ?? Number(item, "DurationDeltaSeconds")) * 1000,
-                isLocal = Boolean(item, "isLocal") ?? Boolean(item, "IsLocal"),
-                providerTrackIds = Element(item, "providerTrackIds", "ProviderTrackIds"),
-                components = Element(item, "components", "Components"),
-                reasons = Element(item, "reasons", "Reasons"),
-                warnings = Element(item, "warnings", "Warnings")
-            }).Where(item => item.isLocal != false && item.libraryTrackId != null ||
-                             HasProviderTrackId(item.providerTrackIds, playableProviders))
+                var libraryTrackId = Text(item, "libraryTrackId") ?? Text(item, "LibraryTrackId");
+                var providerTrackIds = Element(item, "providerTrackIds", "ProviderTrackIds");
+                var hasPlayableProvider = HasProviderTrackId(providerTrackIds, playableProviders);
+                var isLocal = Boolean(item, "isLocal") ?? Boolean(item, "IsLocal") ??
+                    (Guid.TryParse(libraryTrackId, out var id) && indexedLibraryTrackIds.Contains(id)
+                        ? true
+                        : hasPlayableProvider ? false : null);
+                return new
+                {
+                    libraryTrackId,
+                    backendItemId = Text(item, "backendItemId") ?? Text(item, "BackendItemId"),
+                    confidence = Number(item, "confidence") ?? Number(item, "Confidence"),
+                    title = Text(item, "title") ?? Text(item, "Title"),
+                    artist = Text(item, "artist") ?? Text(item, "Artist"),
+                    album = Text(item, "album") ?? Text(item, "Album"),
+                    durationMilliseconds = Number(item, "durationMilliseconds") ??
+                                           Number(item, "DurationMilliseconds") ??
+                                           (Number(item, "durationSeconds") ?? Number(item, "DurationSeconds")) * 1000,
+                    sourceIsrc = Text(item, "sourceIsrc") ?? Text(item, "SourceIsrc"),
+                    candidateIsrc = Text(item, "candidateIsrc") ?? Text(item, "CandidateIsrc"),
+                    normalizedSourceTitle = Text(item, "normalizedSourceTitle") ?? Text(item, "NormalizedSourceTitle"),
+                    normalizedCandidateTitle = Text(item, "normalizedCandidateTitle") ?? Text(item, "NormalizedCandidateTitle"),
+                    artistOverlap = Number(item, "artistOverlap") ?? Number(item, "ArtistOverlap"),
+                    albumEvidence = Number(item, "albumEvidence") ?? Number(item, "AlbumEvidence"),
+                    durationDeltaMilliseconds = Number(item, "durationDeltaMilliseconds") ??
+                                                Number(item, "DurationDeltaMilliseconds") ??
+                                                (Number(item, "durationDeltaSeconds") ?? Number(item, "DurationDeltaSeconds")) * 1000,
+                    isLocal,
+                    providerTrackIds,
+                    components = Element(item, "components", "Components"),
+                    reasons = Element(item, "reasons", "Reasons"),
+                    warnings = Element(item, "warnings", "Warnings")
+                };
+            }).Where(item => item.isLocal == true && item.libraryTrackId != null ||
+                             item.isLocal == false && HasProviderTrackId(item.providerTrackIds, playableProviders))
                 .Cast<object>()
                 .ToArray();
         }

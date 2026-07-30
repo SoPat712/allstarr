@@ -118,9 +118,11 @@ export function candidateResolution(
       providerId.toLowerCase() !== sourceProviderId.toLowerCase() &&
       playableProviders.has(providerId.toLowerCase()),
   );
-  if (candidate?.isLocal !== false && candidate?.libraryTrackId)
+  if (candidate?.isLocal === true && candidate.libraryTrackId)
     return { targetType: "local" as const, libraryTrackId: candidate.libraryTrackId };
-  return provider
-    ? { targetType: "provider" as const, externalProvider: provider[0], externalId: provider[1] }
+  if (provider)
+    return { targetType: "provider" as const, externalProvider: provider[0], externalId: provider[1] };
+  return candidate?.isLocal !== false && candidate?.libraryTrackId
+    ? { targetType: "local" as const, libraryTrackId: candidate.libraryTrackId }
     : null;
 }

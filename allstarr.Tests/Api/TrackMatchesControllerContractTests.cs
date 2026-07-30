@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using allstarr.Controllers;
 using allstarr.Core.Storage;
+using allstarr.Models.Domain;
 
 namespace allstarr.Tests;
 
@@ -10,12 +11,13 @@ public sealed class TrackMatchesControllerContractTests
     [Fact]
     public void Candidate_projection_keeps_local_and_provider_only_playable_results()
     {
-        const string candidates =
-            """
+        var localId = Guid.NewGuid();
+        var candidates =
+            $$"""
             [
-              { "libraryTrackId": "local", "title": "Local" },
-              { "providerTrackIds": { "qobuz": "external" }, "title": "External" },
-              { "providerTrackIds": { "musicbrainzalbum": "release" }, "title": "MusicBrainz album" },
+              { "libraryTrackId": "{{localId}}", "title": "Local" },
+              { "libraryTrackId": "legacy-external", "providerTrackIds": { "qobuz": "external" }, "title": "External" },
+              { "libraryTrackId": "legacy-metadata", "providerTrackIds": { "musicbrainzalbum": "release" }, "title": "MusicBrainz album" },
               { "providerTrackIds": {}, "title": "Metadata only" }
             ]
             """;
@@ -25,12 +27,31 @@ public sealed class TrackMatchesControllerContractTests
 
         var projected = JsonSerializer.Serialize(parse.Invoke(
             null,
-            [candidates, new HashSet<string>(["qobuz"])]));
+            [candidates, new HashSet<string>(["qobuz"]), new HashSet<Guid>([localId])]));
 
         Assert.Contains("Local", projected);
         Assert.Contains("External", projected);
+        Assert.Contains("\"isLocal\":true", projected);
+        Assert.Contains("\"isLocal\":false", projected);
         Assert.DoesNotContain("MusicBrainz album", projected);
         Assert.DoesNotContain("Metadata only", projected);
+    }
+
+    [Fact]
+    public void Provider_search_candidates_are_not_scored_as_local()
+    {
+        var convert = typeof(TrackMatchesController).GetMethod(
+            "ToCandidate",
+            BindingFlags.Static | BindingFlags.NonPublic,
+            [typeof(Song), typeof(Guid), typeof(Guid), typeof(string)])!;
+        var candidate = convert.Invoke(null, [
+            new Song { Id = "ext-qobuz-track", ExternalProvider = "qobuz", ExternalId = "track" },
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            "music"
+        ])!;
+
+        Assert.False((bool)candidate.GetType().GetProperty("IsLocal")!.GetValue(candidate)!);
     }
 
     [Fact]

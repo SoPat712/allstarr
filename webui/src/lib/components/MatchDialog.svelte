@@ -305,7 +305,7 @@
         </form>
 
         {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
-        {#if searched}
+        {#if searched && !loading}
           <div class="provider-result-summary" aria-label="Providers with results">
             {#each resultProviders as resultProvider}
               <button
@@ -356,7 +356,7 @@
               <span class="target-score">
                 <strong>{percent(target.confidence)}</strong>
                 <small>base evidence</small>
-                {#if target.components?.localPreference}
+                {#if !target.externalProvider && target.components?.localPreference}
                   <small>+{percent(target.components.localPreference)} local</small>
                 {/if}
                 <small>rank #{results.indexOf(target) + 1}</small>
