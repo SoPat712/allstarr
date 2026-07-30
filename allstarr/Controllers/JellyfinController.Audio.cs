@@ -42,7 +42,7 @@ public partial class JellyfinController
         }
 
         // Handle external content
-        return await StreamExternalContent(provider!, externalId!);
+        return await StreamExternalContent(provider!, externalId!, asDownload: true);
     }
 
     /// <summary>
@@ -131,7 +131,11 @@ public partial class JellyfinController
     /// Streams external content, using cache if available or downloading on-demand.
     /// Supports quality override for client-requested "transcoding" of external tracks.
     /// </summary>
-    private async Task<IActionResult> StreamExternalContent(string provider, string externalId, StreamQuality quality = StreamQuality.Original)
+    private async Task<IActionResult> StreamExternalContent(
+        string provider,
+        string externalId,
+        StreamQuality quality = StreamQuality.Original,
+        bool asDownload = false)
     {
         // Check for locally cached file
         var localPath = await _localLibraryService.GetLocalPathForExternalSongAsync(provider, externalId);
@@ -149,7 +153,9 @@ public partial class JellyfinController
             }
 
             var stream = System.IO.File.OpenRead(localPath);
-            return File(stream, GetContentType(localPath), enableRangeProcessing: true);
+            return asDownload
+                ? File(stream, GetContentType(localPath), Path.GetFileName(localPath), enableRangeProcessing: true)
+                : File(stream, GetContentType(localPath), enableRangeProcessing: true);
         }
 
         if (_providerGateway != null)
@@ -202,13 +208,24 @@ public partial class JellyfinController
                 contentType = GetContentType(fs.Name);
             }
 
-            return File(downloadStream, contentType, enableRangeProcessing: downloadStream.CanSeek);
+            return asDownload
+                ? File(downloadStream, contentType, $"track{MediaFileExtension(contentType)}",
+                    enableRangeProcessing: downloadStream.CanSeek)
+                : File(downloadStream, contentType, enableRangeProcessing: downloadStream.CanSeek);
         }
         catch (Exception ex)
         {
             return HandleExternalStreamFailure(provider, externalId, ex);
         }
     }
+
+    private static string MediaFileExtension(string contentType) => contentType.ToLowerInvariant() switch
+    {
+        "audio/flac" or "audio/x-flac" => ".flac",
+        "audio/mp4" or "audio/x-m4a" or "audio/m4a" => ".m4a",
+        "audio/aac" => ".aac",
+        _ => ".mp3"
+    };
 
     private IActionResult HandleExternalStreamFailure(string provider, string externalId, Exception ex)
     {
