@@ -1034,7 +1034,8 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await expect(dialog.locator(".candidate-provider").filter({ hasText: "Apple Music - Gamdl" })).toBeVisible();
   await expect(dialog.getByText("MusicBrainz album")).toHaveCount(0);
   await expect(dialog.locator(".candidate-card .mapping-art > span").first()).toBeVisible();
-  await expect(dialog.locator(".automatic-candidates").getByText("+7% local")).toBeVisible();
+  await expect(dialog.locator(".automatic-candidates").getByText("· +7% local boost")).toBeVisible();
+  await expect(dialog.locator(".automatic-candidates .candidate-confidence").getByText("89%")).toBeVisible();
   await expect(dialog.locator(".automatic-candidates").getByText("preference score")).toHaveCount(0);
   await dialog.getByLabel("Search local library and playable providers").fill("Kiss Me More");
   await dialog.getByRole("button", { name: "Search", exact: true }).click();
@@ -1045,8 +1046,12 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await expect(dialog.getByRole("button", { name: /Lumen Audio 1/ })).toBeVisible();
   await expect(dialog.getByRole("button", { name: /Qobuz/ })).toHaveCount(0);
   await expect(dialog.getByText("Planet Her")).toHaveCount(2);
-  await expect(dialog.getByText("base evidence")).toHaveCount(2);
-  await expect(dialog.locator(".target-results").getByText("+7% local")).toHaveCount(1);
+  await expect(dialog.locator(".target-results").getByText("confidence")).toHaveCount(2);
+  await expect(dialog.locator(".target-results").getByText("· +7% local boost")).toHaveCount(1);
+  await expect(
+    dialog.locator(".target-results > button").filter({ hasText: "Jellyfin" })
+      .locator(".target-score").getByText("98%"),
+  ).toBeVisible();
   await expect(dialog.getByText("rank #1")).toBeVisible();
   await dialog.getByLabel("Search local library and playable providers").fill("No local copy");
   await dialog.getByRole("button", { name: "Search", exact: true }).click();

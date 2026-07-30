@@ -245,16 +245,20 @@
                       {candidateProvider(candidate)
                         ? providerName(candidateProvider(candidate))
                         : backend}
+                      {#if resolution?.targetType === "local" && candidate.components?.localPreference}
+                        <span>· +{percent(candidate.components.localPreference)} local boost</span>
+                      {/if}
                     </span>
                   </div>
                   <span
                     class="candidate-confidence"
                   >
-                    <strong>{percent(candidate.confidence)}</strong>
+                    <strong>{percent(
+                      resolution?.targetType === "local"
+                        ? candidate.components?.preferenceScore ?? candidate.confidence
+                        : candidate.confidence
+                    )}</strong>
                     <small>confidence</small>
-                    {#if resolution?.targetType === "local" && candidate.components?.localPreference}
-                      <small>+{percent(candidate.components.localPreference)} local</small>
-                    {/if}
                   </span>
                   <div class="score-components">
                     {#each scoreComponents(candidate) as [name, value]}
@@ -345,6 +349,9 @@
                     definition={provider(target.externalProvider || "")}
                   />
                   {providerName(target.externalProvider)}
+                  {#if !target.externalProvider && target.components?.localPreference}
+                    <span>· +{percent(target.components.localPreference)} local boost</span>
+                  {/if}
                 </span>
                 <strong>{target.title}</strong>
                 <small>{target.artist || "Unknown artist"}</small>
@@ -355,11 +362,12 @@
                 <small>{target.externalId || target.backendItemId || target.id}</small>
               </span>
               <span class="target-score">
-                <strong>{percent(target.confidence)}</strong>
-                <small>base evidence</small>
-                {#if !target.externalProvider && target.components?.localPreference}
-                  <small>+{percent(target.components.localPreference)} local</small>
-                {/if}
+                <strong>{percent(
+                  !target.externalProvider
+                    ? target.components?.preferenceScore ?? target.confidence
+                    : target.confidence
+                )}</strong>
+                <small>confidence</small>
                 <small>rank #{results.indexOf(target) + 1}</small>
               </span>
             </button>
