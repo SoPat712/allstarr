@@ -38,7 +38,7 @@ public partial class JellyfinController
                 fullPath = $"{fullPath}{Request.QueryString.Value}";
             }
 
-            return await ProxyJellyfinStream(fullPath, itemId);
+            return await ProxyJellyfinStream(fullPath, itemId, useGetForHead: true);
         }
 
         // Handle external content
@@ -84,14 +84,17 @@ public partial class JellyfinController
     /// <summary>
     /// Proxies a stream from Jellyfin with proper header forwarding.
     /// </summary>
-    private async Task<IActionResult> ProxyJellyfinStream(string path, string itemId)
+    private async Task<IActionResult> ProxyJellyfinStream(
+        string path,
+        string itemId,
+        bool useGetForHead = false)
     {
         var jellyfinUrl = $"{_settings.Url?.TrimEnd('/')}/{path}";
 
         try
         {
             var request = new HttpRequestMessage(
-                HttpMethods.IsHead(Request.Method) ? HttpMethod.Head : HttpMethod.Get,
+                HttpMethods.IsHead(Request.Method) && !useGetForHead ? HttpMethod.Head : HttpMethod.Get,
                 jellyfinUrl);
 
             // Forward auth headers

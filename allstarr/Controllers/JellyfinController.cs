@@ -203,8 +203,8 @@ public partial class JellyfinController : ControllerBase
     /// <summary>
     /// Gets a single item by ID.
     /// </summary>
-    [HttpGet("Items/{itemId}")]
-    [HttpGet("Users/{userId}/Items/{itemId}")]
+    [HttpGet("Items/{itemId}", Order = 10)]
+    [HttpGet("Users/{userId}/Items/{itemId}", Order = 10)]
     public async Task<IActionResult> GetItem(string itemId, string? userId = null)
     {
         if (string.IsNullOrWhiteSpace(itemId))

@@ -199,7 +199,7 @@ public class JellyfinAuthFilter : IAsyncActionFilter
             ? routeUser?.ToString()
             : request.Query.TryGetValue("UserId", out var queryUser)
                 ? queryUser.FirstOrDefault()
-                : null;
+                : UserIdFromPath(request.Path.Value);
         var endpoint = !string.IsNullOrWhiteSpace(explicitUserId) && IsSafeBackendId(explicitUserId)
             ? $"Users/{Uri.EscapeDataString(explicitUserId)}"
             : "Users/Me";
@@ -208,6 +208,16 @@ public class JellyfinAuthFilter : IAsyncActionFilter
 
     private static bool IsSafeBackendId(string value) =>
         value.Length <= 128 && value.All(character => char.IsLetterOrDigit(character) || character is '-' or '_');
+
+    private static string? UserIdFromPath(string? path)
+    {
+        var segments = path?.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments is { Length: >= 2 } &&
+               segments[0].Equals("Users", StringComparison.OrdinalIgnoreCase) &&
+               IsSafeBackendId(segments[1])
+            ? segments[1]
+            : null;
+    }
 
     private static IActionResult CreateVerificationFailure(
         System.Text.Json.JsonDocument? body,

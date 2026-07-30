@@ -176,6 +176,46 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task JellyfinApiKey_UserPathVerifiesTheExplicitUserBeforeRelay()
+    {
+        var observedRequests = new List<string>();
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            observedRequests.Add(request.RequestUri!.PathAndQuery);
+            return Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User","Policy":{"IsDisabled":false}}""");
+        });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/Users/user-1?api_key=fixture-key");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            ["/Users/user-1?api_key=fixture-key", "/Users/user-1?api_key=fixture-key"],
+            observedRequests);
+    }
+
+    [Fact]
+    public async Task JellyfinStaticMusicRoute_BeatsParameterizedItemRoute()
+    {
+        var observedRequests = new List<string>();
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            observedRequests.Add(request.RequestUri!.PathAndQuery);
+            return request.RequestUri.AbsolutePath == "/Users/Me"
+                ? Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}""")
+                : Json(StatusCodes.Status200OK, """[{"Id":"album-1","Type":"MusicAlbum"}]""");
+        });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/Items/Latest?api_key=fixture-key&Limit=1");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, observedRequests.Count);
+        Assert.StartsWith("/Items/Latest?", observedRequests[1], StringComparison.Ordinal);
+        Assert.Contains("IncludeItemTypes=", observedRequests[1], StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task JellyfinSearchAdapter_PreservesFixtureStatusBodyAndPaging()
     {
         using var fixture = ReadFixture("jellyfin-search-shaping.json");
@@ -1340,7 +1380,11 @@ public sealed class ProtocolRouteFixtureTests
             Assert.Equal(streamIndex + 1, observedRequests.Count);
             if (streamIndex == 2) Assert.Equal("/Items/local-song", observedRequests[0].PathAndQuery);
             Assert.Equal(fixture.GetProperty("verificationPath").GetString(), observedRequests[streamIndex - 1].PathAndQuery);
-            Assert.Equal(fixture.GetProperty("method").GetString(), observedRequests[streamIndex].Method);
+            Assert.Equal(
+                fixture.TryGetProperty("upstreamMethod", out var upstreamMethod)
+                    ? upstreamMethod.GetString()
+                    : fixture.GetProperty("method").GetString(),
+                observedRequests[streamIndex].Method);
             Assert.Equal(fixture.GetProperty("streamPath").GetString(), observedRequests[streamIndex].PathAndQuery);
             Assert.Equal(fixture.GetProperty("range").GetString(), observedRequests[streamIndex].Range);
             Assert.Equal(fixture.GetProperty("ifRange").GetString(), observedRequests[streamIndex].IfRange);
