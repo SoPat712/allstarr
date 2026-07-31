@@ -24,6 +24,9 @@ public partial class JellyfinController
     /// </summary>
     private async Task LogEndpointUsageAsync(string path, string method)
     {
+        if (HttpContext.RequestServices.GetRequiredService<IHostEnvironment>()
+            .IsEnvironment("Testing")) return;
+
         try
         {
             var execution = HttpContext.GetProtocolExecutionContext();

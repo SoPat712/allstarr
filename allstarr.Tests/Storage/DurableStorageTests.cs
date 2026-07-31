@@ -15,7 +15,7 @@ public sealed class DurableStorageTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await PostgresTestDatabase.CreateAsync(useTemplate: false);
     }
 
     [Fact]

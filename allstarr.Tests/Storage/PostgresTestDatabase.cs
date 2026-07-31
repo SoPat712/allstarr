@@ -7,6 +7,8 @@ namespace allstarr.Tests;
 
 internal sealed class PostgresTestDatabase : IAsyncDisposable
 {
+    private static readonly SemaphoreSlim TemplateGate = new(1, 1);
+    private static string? _templateName;
     private readonly string _adminConnectionString;
 
     private PostgresTestDatabase(
@@ -28,7 +30,7 @@ internal sealed class PostgresTestDatabase : IAsyncDisposable
 
     public DbContextOptions<AllstarrDbContext> Options { get; }
 
-    public static async Task<PostgresTestDatabase> CreateAsync()
+    public static async Task<PostgresTestDatabase> CreateAsync(bool useTemplate = true)
     {
         var configured = Environment.GetEnvironmentVariable("ALLSTARR_TEST_POSTGRES");
         if (string.IsNullOrWhiteSpace(configured))
@@ -49,12 +51,17 @@ internal sealed class PostgresTestDatabase : IAsyncDisposable
             Database = databaseName,
             Pooling = false
         };
+        var templateName = useTemplate
+            ? await EnsureTemplateAsync(configured, admin.ConnectionString)
+            : null;
 
         await using (var connection = new NpgsqlConnection(admin.ConnectionString))
         {
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();
-            command.CommandText = $"CREATE DATABASE {QuoteIdentifier(databaseName)}";
+            command.CommandText = templateName == null
+                ? $"CREATE DATABASE {QuoteIdentifier(databaseName)}"
+                : $"CREATE DATABASE {QuoteIdentifier(databaseName)} TEMPLATE {QuoteIdentifier(templateName)}";
             await command.ExecuteNonQueryAsync();
         }
 
@@ -66,12 +73,73 @@ internal sealed class PostgresTestDatabase : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        NpgsqlConnection.ClearAllPools();
         await using var connection = new NpgsqlConnection(_adminConnectionString);
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = $"DROP DATABASE IF EXISTS {QuoteIdentifier(DatabaseName)} WITH (FORCE)";
         await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task<string> EnsureTemplateAsync(
+        string configured,
+        string adminConnectionString)
+    {
+        if (_templateName != null) return _templateName;
+
+        await TemplateGate.WaitAsync();
+        try
+        {
+            if (_templateName != null) return _templateName;
+
+            var options = new DbContextOptionsBuilder<AllstarrDbContext>()
+                .UseNpgsql(configured)
+                .Options;
+            await using var model = new AllstarrDbContext(options);
+            var latestMigration = model.Database.GetMigrations().Last();
+            var templateName = $"allstarr_test_template_{latestMigration.Split('_', 2)[0]}";
+
+            await using var admin = new NpgsqlConnection(adminConnectionString);
+            await admin.OpenAsync();
+            await using var command = admin.CreateCommand();
+            command.CommandText = "SELECT pg_advisory_lock(hashtext('allstarr-test-template'))";
+            await command.ExecuteNonQueryAsync();
+            try
+            {
+                command.CommandText =
+                    "SELECT EXISTS (SELECT FROM pg_database WHERE datname = @name)";
+                command.Parameters.AddWithValue("name", templateName);
+                var exists = (bool)(await command.ExecuteScalarAsync())!;
+                command.Parameters.Clear();
+                if (!exists)
+                {
+                    command.CommandText = $"CREATE DATABASE {QuoteIdentifier(templateName)}";
+                    await command.ExecuteNonQueryAsync();
+                }
+
+                var templateConnection = new NpgsqlConnectionStringBuilder(configured)
+                {
+                    Database = templateName,
+                    Pooling = false
+                };
+                var templateOptions = new DbContextOptionsBuilder<AllstarrDbContext>()
+                    .UseNpgsql(templateConnection.ConnectionString)
+                    .Options;
+                await using var template = new AllstarrDbContext(templateOptions);
+                await template.Database.MigrateAsync();
+                _templateName = templateName;
+                return templateName;
+            }
+            finally
+            {
+                command.CommandText =
+                    "SELECT pg_advisory_unlock(hashtext('allstarr-test-template'))";
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+        finally
+        {
+            TemplateGate.Release();
+        }
     }
 
     private static string QuoteIdentifier(string identifier) =>

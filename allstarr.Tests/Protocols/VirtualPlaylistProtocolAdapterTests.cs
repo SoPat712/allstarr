@@ -37,7 +37,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         Assert.Empty(unresolved.GetProperty("MediaSources").EnumerateArray());
         Assert.Equal("apple-music",
             unresolved.GetProperty("ProviderIds").GetProperty("AllstarrSource").GetString());
-        Assert.All(items.EnumerateArray(), item => Assert.Equal(ProtocolId, item.GetProperty("ParentId").GetString()));
+        Assert.All(items.EnumerateArray(), item => Assert.False(item.TryGetProperty("ParentId", out _)));
         Assert.All(items.EnumerateArray(), item =>
         {
             var id = item.GetProperty("Id").GetString();

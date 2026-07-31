@@ -14,6 +14,7 @@ using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -390,7 +391,7 @@ public sealed class ProtocolRouteFixtureTests
                 observedRequests.Add(request.RequestUri!.PathAndQuery);
                 return request.RequestUri.AbsolutePath == "/Users/Me"
                     ? Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}""")
-                    : Json(StatusCodes.Status200OK, """{"Id":"music-1","Type":"CollectionFolder","CollectionType":"music"}""");
+                    : ItemLookup("""{"Id":"music-1","Type":"CollectionFolder","CollectionType":"music"}""");
             },
             configuration: new Dictionary<string, string?>
             {
@@ -403,7 +404,7 @@ public sealed class ProtocolRouteFixtureTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(
-            ["/Users/Me?api_key=fixture-key", "/Items/music-1?userId=user-1"],
+            ["/Users/Me?api_key=fixture-key", "/Items?ids=music-1&limit=1"],
             observedRequests);
     }
 
@@ -827,9 +828,9 @@ public sealed class ProtocolRouteFixtureTests
                 };
             }
 
-            if (request.RequestUri.AbsolutePath == "/Items/local-song")
+            if (IsItemLookup(request, "local-song"))
             {
-                return Json(StatusCodes.Status200OK, """{"Id":"local-song","Type":"Audio"}""");
+                return ItemLookup("""{"Id":"local-song","Type":"Audio"}""");
             }
 
             throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}");
@@ -864,8 +865,8 @@ public sealed class ProtocolRouteFixtureTests
                 request.RequestUri!.PathAndQuery,
                 request.Headers.TryGetValues("Range", out var ranges) ? ranges.Single() : null,
                 request.Headers.TryGetValues("If-Range", out var validators) ? validators.Single() : null));
-            if (request.RequestUri.AbsolutePath == "/Items/local-song")
-                return Json(StatusCodes.Status200OK, """{"Id":"local-song","Type":"Audio"}""");
+            if (IsItemLookup(request, "local-song"))
+                return ItemLookup("""{"Id":"local-song","Type":"Audio"}""");
             if (request.RequestUri.AbsolutePath == "/Users/Me")
                 return Json(StatusCodes.Status400BadRequest, """{"error":"API key has no current user"}""");
             if (request.RequestUri.AbsolutePath == "/Users/user-1")
@@ -899,7 +900,7 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal("bytes", response.Headers.AcceptRanges.Single());
         Assert.Equal(method == "HEAD" ? Array.Empty<byte>() : new byte[] { 8, 9, 10, 11 },
             await response.Content.ReadAsByteArrayAsync());
-        Assert.Equal(["/Items/local-song", "/Users/Me", "/Users/user-1", imagePath],
+        Assert.Equal(["/Items?ids=local-song&limit=1", "/Users/Me", "/Users/user-1", imagePath],
             observed.Select(item => item.PathAndQuery));
         Assert.Equal(method, observed[^1].Method);
         Assert.Equal("bytes=8-11", observed[^1].Range);
@@ -938,16 +939,16 @@ public sealed class ProtocolRouteFixtureTests
                             fixture.GetProperty("upstreamLyricsBody").GetRawText());
                     }
 
-                    if (request.RequestUri.AbsolutePath.StartsWith("/Items/", StringComparison.Ordinal) &&
+                    if (request.RequestUri.AbsolutePath == "/Items" &&
                         fixture.TryGetProperty("itemBody", out var itemBody))
                     {
-                        return Json(StatusCodes.Status200OK, itemBody.GetRawText());
+                        return ItemLookup(itemBody.GetRawText());
                     }
 
-                    if (request.RequestUri.AbsolutePath.StartsWith("/Items/", StringComparison.Ordinal))
+                    if (request.RequestUri.AbsolutePath == "/Items")
                     {
-                        var id = request.RequestUri.AbsolutePath.Split('/').Last();
-                        return Json(StatusCodes.Status200OK, $$"""{"Id":"{{id}}","Type":"Audio"}""");
+                        var id = QueryHelpers.ParseQuery(request.RequestUri.Query)["ids"].ToString();
+                        return ItemLookup($$"""{"Id":"{{id}}","Type":"Audio"}""");
                     }
 
                     throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}");
@@ -969,7 +970,9 @@ public sealed class ProtocolRouteFixtureTests
                 Assert.Equal(
                     CanonicalJson(fixture.GetProperty("upstreamLyricsBody")),
                     CanonicalJson(JsonDocument.Parse(body).RootElement));
-                Assert.Equal(["/Items/local-song", "/Users/Me", "/Audio/local-song/Lyrics"], observedPaths);
+                Assert.Equal(
+                    ["/Items", "/Users/Me", "/Audio/local-song/Lyrics"],
+                    observedPaths);
             }
             else
             {
@@ -1002,9 +1005,9 @@ public sealed class ProtocolRouteFixtureTests
                     return Json(StatusCodes.Status200OK, """{"Id":"verified-user","Name":"Fixture User"}""");
                 }
 
-                if (request.RequestUri.AbsolutePath.Equals("/Items/local-song", StringComparison.Ordinal))
+                if (IsItemLookup(request, "local-song"))
                 {
-                    return Json(StatusCodes.Status200OK, """{"Id":"local-song","Type":"Audio"}""");
+                    return ItemLookup("""{"Id":"local-song","Type":"Audio"}""");
                 }
 
                 Assert.Equal(upstream.GetProperty("pathAndQuery").GetString(), request.RequestUri.PathAndQuery);
@@ -1090,9 +1093,9 @@ public sealed class ProtocolRouteFixtureTests
             using var factory = new ProtocolFactory("Jellyfin", request =>
             {
                 observedPaths.Add(request.RequestUri!.PathAndQuery);
-                if (request.RequestUri.AbsolutePath.Equals("/Items/item-1", StringComparison.Ordinal))
+                if (IsItemLookup(request, "item-1"))
                 {
-                    return Json(StatusCodes.Status200OK, """{"Id":"item-1","Type":"Audio"}""");
+                    return ItemLookup("""{"Id":"item-1","Type":"Audio"}""");
                 }
                 return request.RequestUri.AbsolutePath.Equals("/Users/Me", StringComparison.Ordinal)
                     ? Json(StatusCodes.Status200OK, """{"Id":"verified-user"}""")
@@ -1113,7 +1116,7 @@ public sealed class ProtocolRouteFixtureTests
                 CanonicalJson(fixture.GetProperty("body")),
                 CanonicalJson(JsonDocument.Parse(body).RootElement));
             var expectedPaths = path.Equals("/Items/item-1/InstantMix", StringComparison.Ordinal)
-                ? new[] { "/Items/item-1", "/Users/Me?api_key=fixture-key", requestPath }
+                ? new[] { "/Items?ids=item-1&limit=1", "/Users/Me?api_key=fixture-key", requestPath }
                 : new[] { "/Users/Me?api_key=fixture-key", requestPath };
             Assert.Equal(expectedPaths, observedPaths);
         }
@@ -1784,7 +1787,7 @@ public sealed class ProtocolRouteFixtureTests
         Assert.All(playlist.RootElement.GetProperty("Items").EnumerateArray(),
             item => Assert.False(string.IsNullOrWhiteSpace(item.GetProperty("Id").GetString())));
         var first = playlist.RootElement.GetProperty("Items")[0];
-        Assert.Equal(nativeId, first.GetProperty("ParentId").GetString());
+        Assert.False(first.TryGetProperty("ParentId", out _));
         Assert.Equal("source-a", first.GetProperty("MediaSources")[0].GetProperty("Id").GetString());
         Assert.Equal(
             "every-field",
@@ -2397,9 +2400,9 @@ public sealed class ProtocolRouteFixtureTests
                         return Json(StatusCodes.Status200OK, """{"Id":"server-1","Version":"10.11.11"}""");
                     }
 
-                    if (request.RequestUri.AbsolutePath is "/Items/local-song")
+                    if (IsItemLookup(request, "local-song"))
                     {
-                        return Json(StatusCodes.Status200OK, """{"Id":"local-song","Type":"Audio"}""");
+                        return ItemLookup("""{"Id":"local-song","Type":"Audio"}""");
                     }
 
                     if (request.RequestUri.AbsolutePath is "/rest/ping.view")
@@ -2437,10 +2440,11 @@ public sealed class ProtocolRouteFixtureTests
                 ? 3
                 : fixture.GetProperty("protocol").GetString() == "jellyfin" ? 2 : 1;
             Assert.Equal(streamIndex + 1, observedRequests.Count);
-            if (streamIndex == 2) Assert.Equal("/Items/local-song", observedRequests[0].PathAndQuery);
+            if (streamIndex == 2)
+                Assert.Equal("/Items?ids=local-song&limit=1", observedRequests[0].PathAndQuery);
             if (streamIndex == 3)
             {
-                Assert.Equal("/Items/local-song", observedRequests[0].PathAndQuery);
+                Assert.Equal("/Items?ids=local-song&limit=1", observedRequests[0].PathAndQuery);
                 Assert.Equal(fixture.GetProperty("verificationPath").GetString(), observedRequests[1].PathAndQuery);
                 Assert.Equal(
                     fixture.GetProperty("verificationFallbackPath").GetString(),
@@ -2472,7 +2476,8 @@ public sealed class ProtocolRouteFixtureTests
             observed.Add(request.RequestUri!.PathAndQuery);
             return request.RequestUri.AbsolutePath switch
             {
-                "/Items/local-song" => Json(StatusCodes.Status200OK, """{"Id":"local-song","Type":"Audio"}"""),
+                "/Items" when IsItemLookup(request, "local-song") =>
+                    ItemLookup("""{"Id":"local-song","Type":"Audio"}"""),
                 "/Users/Me" => Json(StatusCodes.Status400BadRequest, """{"error":"API key has no current user"}"""),
                 "/System/Info" => Json(StatusCodes.Status401Unauthorized, """{"error":"invalid token"}"""),
                 _ => throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}")
@@ -2485,7 +2490,7 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Equal(
             [
-                "/Items/local-song",
+                "/Items?ids=local-song&limit=1",
                 "/Users/Me?ApiKey=invalid-key",
                 "/System/Info?ApiKey=invalid-key"
             ],
@@ -2585,9 +2590,9 @@ public sealed class ProtocolRouteFixtureTests
                 return Json(StatusCodes.Status200OK, """{"Id":"user-1"}""");
             }
 
-            if (request.RequestUri.AbsolutePath is "/Items/local-song")
+            if (IsItemLookup(request, "local-song"))
             {
-                return Json(StatusCodes.Status200OK, """{"Id":"local-song","Type":"Audio"}""");
+                return ItemLookup("""{"Id":"local-song","Type":"Audio"}""");
             }
 
             if (request.RequestUri.AbsolutePath is "/rest/ping.view")
@@ -2730,6 +2735,15 @@ public sealed class ProtocolRouteFixtureTests
         Content = new StringContent(body, Encoding.UTF8, "application/json")
     };
 
+    private static bool IsItemLookup(HttpRequestMessage request, string itemId) =>
+        request.RequestUri!.AbsolutePath == "/Items" &&
+        QueryHelpers.ParseQuery(request.RequestUri.Query)["ids"] == itemId;
+
+    private static HttpResponseMessage ItemLookup(string item) =>
+        Json(
+            StatusCodes.Status200OK,
+            $$"""{"Items":[{{item}}],"TotalRecordCount":1,"StartIndex":0}""");
+
     private static JsonDocument ReadFixture(string fileName)
     {
         var path = Path.Combine(AppContext.BaseDirectory, "Fixtures", "Protocols", fileName);
@@ -2781,6 +2795,8 @@ public sealed class ProtocolRouteFixtureTests
             {
                 services.RemoveAll<IHostedService>();
                 services.RemoveAll<IHttpClientFactory>();
+                services.RemoveAll<IApplicationCache>();
+                services.AddSingleton<IApplicationCache, TestMemoryApplicationCache>();
                 services.AddSingleton<IHttpClientFactory>(
                     new StubHttpClientFactory(new StubHttpMessageHandler(_responder)));
                 _configureServices?.Invoke(services);
