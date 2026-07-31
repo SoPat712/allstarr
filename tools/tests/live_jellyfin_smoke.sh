@@ -5,6 +5,7 @@ set -euo pipefail
 
 DIRECT_BASE="${DIRECT_BASE:-https://jellyfin.joshpatra.me}"
 ALLSTARR_BASE="${ALLSTARR_BASE:-https://jfm.joshpatra.me}"
+JELLYFIN_USER_ID="${JELLYFIN_USER_ID:-}"
 SAMPLES="${SAMPLES:-3}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-20}"
 TEST_EXTERNAL_STREAM="${TEST_EXTERNAL_STREAM:-0}"
@@ -37,6 +38,10 @@ done
 if [[ -n "$EXTERNAL_SONG_ID" ]]; then
     [[ "$EXTERNAL_SONG_ID" =~ ^ext-[[:alnum:]_-]+-song-[[:alnum:]_.:-]+$ ]] ||
         { echo "EXTERNAL_SONG_ID must be a typed external song ID" >&2; exit 1; }
+fi
+if [[ -n "$JELLYFIN_USER_ID" ]]; then
+    [[ "$JELLYFIN_USER_ID" =~ ^[[:alnum:]_-]{1,128}$ ]] ||
+        { echo "JELLYFIN_USER_ID must be a stable Jellyfin user ID" >&2; exit 1; }
 fi
 if [[ "$TEST_PLAYLIST_WRITES" == 1 &&
       "$PLAYLIST_WRITE_CONFIRM" != create-and-delete-throwaway-playlist ]]; then
@@ -103,6 +108,12 @@ echo "live-smoke-start=$started_at samples=$SAMPLES range_bytes=65536 external_s
 curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" "$DIRECT_BASE/Users" -o "$users_file"
 best_user_id=""
 best_audio_count=-1
+user_candidates="$(jq -r '.[].Id' "$users_file")"
+if [[ -n "$JELLYFIN_USER_ID" ]]; then
+    jq -e --arg id "$JELLYFIN_USER_ID" 'any(.[]; .Id == $id)' "$users_file" >/dev/null ||
+        { echo "JELLYFIN_USER_ID is not visible to this credential" >&2; exit 1; }
+    user_candidates="$JELLYFIN_USER_ID"
+fi
 while IFS= read -r user_id; do
     if ! curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
         "$DIRECT_BASE/Users/$user_id/Items?Recursive=true&IncludeItemTypes=Audio&Limit=1" -o "$response_file"; then
@@ -120,11 +131,18 @@ while IFS= read -r user_id; do
         best_user_id="$user_id"
         best_audio_count="$audio_count"
     fi
-done < <(jq -r '.[].Id' "$users_file")
+done <<<"$user_candidates"
 [[ -n "$best_user_id" && "$best_audio_count" -gt 0 ]] ||
     { echo "No Jellyfin user with audio visible to Allstarr was found" >&2; exit 1; }
 auth=(-H "X-Emby-Authorization: MediaBrowser Client=\"AllstarrLiveSmoke\", Device=\"Qualification\", DeviceId=\"$run_id\", Version=\"1\", UserId=\"$best_user_id\", Token=\"$JELLYFIN_TOKEN\"" \
       -H "User-Agent: AllstarrLiveSmoke/$run_id")
+actor_bound=0
+if curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
+       "$ALLSTARR_BASE/Users/Me" -o "$response_file" 2>/dev/null &&
+   jq -e --arg id "$best_user_id" '.Id == $id' "$response_file" >/dev/null; then
+    actor_bound=1
+fi
+echo "jellyfin-user=$best_user_id actor_bound=$actor_bound"
 
 full_item_fields="AirTime,CanDelete,CanDownload,ChannelInfo,Chapters,Trickplay,ChildCount,CumulativeRunTimeTicks,CustomRating,DateCreated,DateLastMediaAdded,DisplayPreferencesId,Etag,ExternalUrls,Genres,ItemCounts,MediaSourceCount,MediaSources,OriginalTitle,Overview,ParentId,Path,People,PlayAccess,ProductionLocations,ProviderIds,PrimaryImageAspectRatio,RecursiveItemCount,Settings,SeriesStudio,SortName,SpecialEpisodeNumbers,Studios,Taglines,Tags,RemoteTrailers,MediaStreams,SeasonUserData,DateLastRefreshed,DateLastSaved,RefreshState,ChannelImage,EnableMediaSourceDisplay,Width,Height,ExtraIds,LocalTrailerCount,IsHD,SpecialFeatureCount"
 items_query="Recursive=true&IncludeItemTypes=Audio&Limit=100&Fields=PrimaryImageAspectRatio%2CProviderIds%2CMediaSources%2CAlbumId%2CArtistItems%2CGenres"
@@ -491,7 +509,7 @@ check_range_parity() {
 }
 
 run_stateful_playlist_smoke() {
-    local playlist_name renamed_name create_payload update_payload other_user_id
+    local playlist_name renamed_name create_payload other_user_id
     local first_entry_id second_entry_id deleted_playlist_id candidate_playlist_id
 
     playlist_name="Allstarr smoke $run_id ${response_file##*/}"
@@ -515,10 +533,17 @@ run_stateful_playlist_smoke() {
     stateful_playlist_id="$candidate_playlist_id"
     stateful_playlist_name="$playlist_name"
 
-    update_payload="$(jq -cn --arg name "$renamed_name" '{Name:$name}')"
+    if ! curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
+        "$DIRECT_BASE/Items/$stateful_playlist_id?UserId=$best_user_id" |
+        jq --arg name "$renamed_name" '.Name = $name' >"$direct_shape_file"; then
+        checks=$((checks + 1))
+        failures=$((failures + 1))
+        printf 'FAIL %-34s direct-fetch-or-json\n' "stateful playlist rename"
+        return
+    fi
     if ! stateful_call "stateful playlist rename" "204" POST \
-        "$ALLSTARR_BASE/Playlists/$stateful_playlist_id" \
-        -H "Content-Type: application/json" --data-binary "$update_payload"; then
+        "$ALLSTARR_BASE/Items/$stateful_playlist_id" \
+        -H "Content-Type: application/json" --data-binary "@$direct_shape_file"; then
         return
     fi
     stateful_playlist_name="$renamed_name"
@@ -1028,7 +1053,11 @@ fi
 echo "playlist-counts direct=$direct_playlists allstarr=$allstarr_playlists"
 check_json "playlist browse shape" "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query" \
     '(.Items | type == "array") and all(.Items[]; .Type == "Playlist")'
-if [[ -n "$INJECTED_PLAYLIST_ID" ]]; then
+if [[ -n "$INJECTED_PLAYLIST_ID" && "$actor_bound" != 1 ]]; then
+    checks=$((checks + 1))
+    failures=$((failures + 1))
+    echo "FAIL configured alias precondition      requires a user-bound Jellyfin access token; server API keys cannot authorize provider-owned projections"
+elif [[ -n "$INJECTED_PLAYLIST_ID" ]]; then
     injected_items_url="$ALLSTARR_BASE/Playlists/$INJECTED_PLAYLIST_ID/Items?fields=SortName%2CCanDelete%2CMediaSources%2CDateCreated%2CCanDelete&userId=$best_user_id&startIndex=0&limit=200"
     direct_injected_count="$(curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
         "$DIRECT_BASE/Playlists/$INJECTED_PLAYLIST_ID/Items?UserId=$best_user_id&Limit=200" |

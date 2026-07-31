@@ -146,8 +146,7 @@ public sealed class ProtocolSupportMatrixTests
 
             if (expected == JellyfinEndpointAccess.RequiresPlaylistItem)
             {
-                Assert.Equal("DeleteItem", operation.Id);
-                Assert.Equal("DELETE", operation.Method);
+                Assert.Contains(operation.Id, new[] { "DeleteItem", "UpdateItem" });
                 continue;
             }
 

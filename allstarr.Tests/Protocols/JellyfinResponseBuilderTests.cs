@@ -502,6 +502,44 @@ public class JellyfinResponseBuilderTests
     }
 
     [Fact]
+    public void CreateSearchHintsResponse_LabelsExternalResults()
+    {
+        var result = _builder.CreateSearchHintsResponse(
+            [new Song
+            {
+                Id = "ext-apple-download-song-1",
+                Title = "Track",
+                Artist = "Artist",
+                Artists = ["Artist"],
+                Album = "Album",
+                ExternalProvider = "apple-download",
+                ExplicitContentLyrics = 1
+            }],
+            [new Album
+            {
+                Id = "ext-deezer-album-1",
+                Title = "Album",
+                Artist = "Artist",
+                ExternalProvider = "deezer"
+            }],
+            [new Artist
+            {
+                Id = "ext-qobuz-artist-1",
+                Name = "Artist",
+                ExternalProvider = "qobuz"
+            }]);
+
+        var jsonResult = Assert.IsType<JsonResult>(result);
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
+        var hints = document.RootElement.GetProperty("SearchHints").EnumerateArray().ToArray();
+        Assert.Equal("Artist [Q]", hints[0].GetProperty("Name").GetString());
+        Assert.Equal("Album [D]", hints[1].GetProperty("Name").GetString());
+        Assert.Equal("Track [AM] [E]", hints[2].GetProperty("Name").GetString());
+        Assert.Equal("Album [AM]", hints[2].GetProperty("Album").GetString());
+        Assert.Equal("Artist [AM]", hints[2].GetProperty("Artists")[0].GetString());
+    }
+
+    [Fact]
     public void CreateSearchHintsResponse_PreservesNativeFieldsAndNormalizesBothIds()
     {
         using var native = JsonDocument.Parse(

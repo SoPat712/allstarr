@@ -50,6 +50,7 @@ parity checks against matched entries:
 ```bash
 INJECTED_PLAYLIST_ID=ddc3db277be524ad6f54e4b276cc619a \
 INJECTED_PLAYLIST_EXPECTED_COUNT=50 \
+JELLYFIN_USER_ID=1635cd7d23144ba08251ebe22a56119e \
 SAMPLES=5 bash tools/tests/live_jellyfin_smoke.sh
 ```
 
@@ -92,7 +93,8 @@ counting it as passed.
 The injected-playlist live comparison requires a user-bound Jellyfin access
 token. A server API key can qualify native relays but cannot safely establish
 the Allstarr user whose virtual playlists should be exposed, so the kit reports
-that case as blocked.
+that case as a failed precondition instead of silently testing Jellyfin's
+native fallback.
 
 Every run prints a UTC start time and unique user agent. Use those two values
 to inspect only the matching bounded server-log window; never copy tokens,

@@ -241,7 +241,7 @@ public class JellyfinResponseBuilder
             {
                 ["Id"] = artist.Id,
                 ["ItemId"] = artist.Id,
-                ["Name"] = artist.Name,
+                ["Name"] = AppendExternalSourceLabel(artist.Name, artist.ExternalProvider),
                 ["Type"] = "MusicArtist",
                 ["RunTimeTicks"] = 0,
                 ["PrimaryImageAspectRatio"] = 1.0,
@@ -255,14 +255,15 @@ public class JellyfinResponseBuilder
         // Add albums
         foreach (var album in albums)
         {
+            var albumName = AppendExternalSourceLabel(album.Title, album.ExternalProvider);
             searchHints.Add(new Dictionary<string, object?>
             {
                 ["Id"] = album.Id,
                 ["ItemId"] = album.Id,
-                ["Name"] = album.Title,
+                ["Name"] = albumName,
                 ["Type"] = "MusicAlbum",
-                ["Album"] = album.Title,
-                ["AlbumArtist"] = album.Artist,
+                ["Album"] = albumName,
+                ["AlbumArtist"] = AppendExternalSourceLabel(album.Artist, album.ExternalProvider),
                 ["ProductionYear"] = album.Year,
                 ["RunTimeTicks"] = 0,
                 ["ImageTags"] = new Dictionary<string, string>
@@ -279,11 +280,13 @@ public class JellyfinResponseBuilder
             {
                 ["Id"] = song.Id,
                 ["ItemId"] = song.Id,
-                ["Name"] = song.Title,
+                ["Name"] = BuildExternalSongTitle(song),
                 ["Type"] = "Audio",
-                ["Album"] = song.Album,
-                ["AlbumArtist"] = song.Artist,
-                ["Artists"] = song.Artists.Count > 0 ? song.Artists.ToArray() : new[] { song.Artist },
+                ["Album"] = AppendExternalSourceLabel(song.Album, song.ExternalProvider),
+                ["AlbumArtist"] = AppendExternalSourceLabel(song.Artist, song.ExternalProvider),
+                ["Artists"] = (song.Artists.Count > 0 ? song.Artists : [song.Artist])
+                    .Select(name => AppendExternalSourceLabel(name, song.ExternalProvider))
+                    .ToArray(),
                 ["RunTimeTicks"] = (song.Duration ?? 0) * TimeSpan.TicksPerSecond,
                 ["ImageTags"] = new Dictionary<string, string>
                 {

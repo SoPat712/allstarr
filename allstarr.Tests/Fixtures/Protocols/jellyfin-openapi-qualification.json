@@ -132,7 +132,8 @@
       "UpdateUserItemRating"
     ],
     "RequiresPlaylistItem": [
-      "DeleteItem"
+      "DeleteItem",
+      "UpdateItem"
     ]
   },
   "synthesizedDeniedOperations": [

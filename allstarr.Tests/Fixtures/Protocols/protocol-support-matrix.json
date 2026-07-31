@@ -57,7 +57,7 @@
     "authBoundary": "Provider-neutral virtual and hybrid links require the verified backend principal to resolve to the exact enabled tenant owner, library, protocol, and backend instance before snapshots are read or a writable target is selected.",
     "fixture": "jellyfin-playlist-order.json; provider-neutral-virtual-playlists.json; jellyfin-openapi-qualification.json",
     "testLocation": "ProtocolRouteFixtureTests; JellyfinPlaylistRouteMatchingTests; VirtualPlaylistProtocolAdapterTests; SubsonicPlaylistMutationTests",
-    "notes": "Pure virtual reads preserve source order and expose accepted or pinned local matches only. Writable hybrid aliases are omitted from browse results, and their read, update, membership, reorder, sharing, ACL, and instant-mix routes rewrite only the exact scoped target playlist ID. Pure virtual/provider-only links return 409. Native DELETE /Items/{id} requires backend Type=Playlist."
+    "notes": "Pure virtual reads preserve source order and expose accepted or pinned local matches only. Writable hybrid aliases are omitted from browse results, and their read, update, membership, reorder, sharing, ACL, and instant-mix routes rewrite only the exact scoped target playlist ID. Pure virtual/provider-only links return 409. Native POST or DELETE /Items/{id} requires backend Type=Playlist."
   },
   {
     "protocol": "jellyfin",
@@ -97,7 +97,7 @@
     "authBoundary": "Unreviewed operations deny by default; opaque native items require backend type verification and synthesized IDs are admitted only on implemented client routes.",
     "fixture": "jellyfin-openapi-qualification.json; jellyfin-openapi-10.11-qualification.json",
     "testLocation": "ProtocolSupportMatrixTests; JellyfinMusicEndpointPolicyTests; JellyfinImageAuthenticationContractTests",
-    "notes": "All 364 v12 operations are checked: 114 are explicitly allowed and 250 denied. All 388 v10.11 operations are checked: 124 allowed and 264 denied. Typed synthetic resources and playlist operations are separately partitioned into supported, target-required, controller-denied, policy-denied, and not-applicable modes. Intentional differences, DTO identifiers, safe live modes, and the unavailable Jellyfin 12 runtime are recorded."
+    "notes": "All 364 v12 operations are checked: 115 are explicitly allowed and 249 denied. All 388 v10.11 operations are checked: 125 allowed and 263 denied. Typed synthetic resources and playlist operations are separately partitioned into supported, target-required, controller-denied, policy-denied, and not-applicable modes. Intentional differences, DTO identifiers, safe live modes, and the unavailable Jellyfin 12 runtime are recorded."
   },
   {
     "protocol": "jellyfin",

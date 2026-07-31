@@ -2054,10 +2054,14 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Theory]
-    [InlineData("Playlist", HttpStatusCode.NoContent, 3)]
-    [InlineData("Audio", HttpStatusCode.Forbidden, 1)]
-    [InlineData("Movie", HttpStatusCode.Forbidden, 1)]
-    public async Task JellyfinDeleteItem_RelaysOnlyNativePlaylists(
+    [InlineData("DELETE", "Playlist", HttpStatusCode.NoContent, 3)]
+    [InlineData("DELETE", "Audio", HttpStatusCode.Forbidden, 1)]
+    [InlineData("DELETE", "Movie", HttpStatusCode.Forbidden, 1)]
+    [InlineData("POST", "Playlist", HttpStatusCode.NoContent, 3)]
+    [InlineData("POST", "Audio", HttpStatusCode.Forbidden, 1)]
+    [InlineData("POST", "Movie", HttpStatusCode.Forbidden, 1)]
+    public async Task JellyfinItemMutation_RelaysOnlyNativePlaylists(
+        string method,
         string itemType,
         HttpStatusCode expectedStatus,
         int expectedRequestCount)
@@ -2069,25 +2073,38 @@ public sealed class ProtocolRouteFixtureTests
             if (request.RequestUri!.AbsolutePath == "/Users/Me")
                 return Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}""");
             if (request.Method == HttpMethod.Get)
-                return Json(StatusCodes.Status200OK, $$"""{"Id":"item-1","Type":"{{itemType}}"}""");
+                return Json(StatusCodes.Status200OK,
+                    $$"""{"Items":[{"Id":"item-1","Type":"{{itemType}}"}],"TotalRecordCount":1,"StartIndex":0}""");
             return new HttpResponseMessage(HttpStatusCode.NoContent);
         });
         using var client = factory.CreateClient();
         var itemId = $"{itemType.ToLowerInvariant()}-item";
         using var request = new HttpRequestMessage(
-            HttpMethod.Delete,
-            $"/Items/{itemId}?api_key=fixture-key");
+            new HttpMethod(method),
+            $"/Items/{itemId}?api_key=fixture-key")
+        {
+            Content = method == "POST"
+                ? new StringContent(
+                    $$"""{"Id":"{{itemId}}","Name":"Playlist","Type":"Playlist"}""",
+                    Encoding.UTF8,
+                    "application/json")
+                : null
+        };
 
         using var response = await client.SendAsync(request);
 
         Assert.Equal(expectedStatus, response.StatusCode);
         Assert.Equal(expectedRequestCount, observed.Count);
-        Assert.Equal($"/Items/{itemId}", observed[0].PathAndQuery);
+        Assert.Equal($"/Items?ids={itemId}&limit=1", observed[0].PathAndQuery);
         if (itemType == "Playlist")
         {
             Assert.Equal("/Users/Me?api_key=fixture-key", observed[1].PathAndQuery);
-            Assert.Equal("DELETE", observed[2].Method);
+            Assert.Equal(method, observed[2].Method);
             Assert.Equal($"/Items/{itemId}?api_key=fixture-key", observed[2].PathAndQuery);
+            if (method == "POST")
+                Assert.Equal(
+                    $$"""{"Id":"{{itemId}}","Name":"Playlist","Type":"Playlist"}""",
+                    observed[2].Body);
         }
     }
 

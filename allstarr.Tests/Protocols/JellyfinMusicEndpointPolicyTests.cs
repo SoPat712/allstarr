@@ -88,10 +88,12 @@ public sealed class JellyfinMusicEndpointPolicyTests
         Assert.Equal("local-audio-id", JellyfinMusicEndpointPolicy.ReferencedItemId(new Uri("http://localhost" + target).AbsolutePath));
     }
 
-    [Fact]
-    public void Evaluate_RequiresPlaylistValidationBeforeDeletingLibraryItems()
+    [Theory]
+    [InlineData("POST")]
+    [InlineData("DELETE")]
+    public void Evaluate_RequiresPlaylistValidationBeforeMutatingLibraryItems(string method)
     {
-        var decision = Evaluate("DELETE", "/Items/local-playlist-id");
+        var decision = Evaluate(method, "/Items/local-playlist-id");
 
         Assert.Equal(JellyfinEndpointAccess.RequiresPlaylistItem, decision.Access);
         Assert.Equal(

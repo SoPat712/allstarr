@@ -115,7 +115,7 @@ public static class JellyfinMusicEndpointPolicy
 
         if (IsPlaylistItemRoute(method, path))
         {
-            return RequiresPlaylist("Deleting a library item is permitted only when it is a playlist.");
+            return RequiresPlaylist("Updating or deleting a library item is permitted only when it is a playlist.");
         }
 
         if (IsMusicItemRoute(method, path))
@@ -509,7 +509,7 @@ public static class JellyfinMusicEndpointPolicy
 
     private static bool IsPlaylistItemRoute(string method, string path)
     {
-        if (!HttpMethods.IsDelete(method)) return false;
+        if (!HttpMethods.IsPost(method) && !HttpMethods.IsDelete(method)) return false;
         var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         return segments.Length == 2 &&
                segments[0].Equals("items", StringComparison.OrdinalIgnoreCase) &&
