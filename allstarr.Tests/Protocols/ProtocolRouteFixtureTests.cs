@@ -416,7 +416,7 @@ public sealed class ProtocolRouteFixtureTests
         metadata
             .Setup(service => service.SearchAllAsync(
                 "fixture",
-                3,
+                20,
                 0,
                 0,
                 It.IsAny<CancellationToken>()))
@@ -424,7 +424,7 @@ public sealed class ProtocolRouteFixtureTests
         metadata
             .Setup(service => service.SearchPlaylistsAsync(
                 "fixture",
-                3,
+                20,
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
@@ -454,7 +454,7 @@ public sealed class ProtocolRouteFixtureTests
             CanonicalJson(JsonDocument.Parse(body).RootElement));
         metadata.Verify(service => service.SearchAllAsync(
             "fixture",
-            3,
+            20,
             0,
             0,
             It.IsAny<CancellationToken>()), Times.Once);
