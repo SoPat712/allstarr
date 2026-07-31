@@ -182,27 +182,8 @@ public partial class JellyfinController
         try
         {
             var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
-            var protocol = HttpContext.GetProtocolExecutionContext();
-            var playlist = _providerGateway != null && protocol != null
-                ? await _providerGateway.GetPlaylistAsync(protocol, provider, externalId)
-                : await _metadataService.GetPlaylistAsync(provider, externalId);
-
-            if (playlist == null || string.IsNullOrEmpty(playlist.CoverUrl))
-            {
-                return NotFound();
-            }
-
-            if (!OutboundRequestGuard.TryCreateSafeHttpUri(playlist.CoverUrl, out var validatedCoverUri,
-                    out var validationReason) || validatedCoverUri == null)
-            {
-                _logger.LogWarning("Blocked playlist image URL fetch for {PlaylistId}: {Reason}",
-                    playlistId, validationReason);
-                return NotFound();
-            }
-
             var asset = await ResolveExternalImageAsync(
-                provider, "playlist", externalId, validatedCoverUri,
-                width: width, height: height);
+                provider, "playlist", externalId, width: width, height: height);
             return asset == null ? NotFound() : CreateFormattedImageResponse(asset, requestedFormat);
         }
         catch (Exception ex)

@@ -199,6 +199,17 @@ public partial class JellyfinController : ControllerBase
             : _metadataService.GetArtistAsync(provider, externalId, cancellationToken);
     }
 
+    private Task<ExternalPlaylist?> GetProviderPlaylistForImageAsync(
+        string provider,
+        string externalId,
+        CancellationToken cancellationToken = default)
+    {
+        var protocol = HttpContext.GetProtocolExecutionContext();
+        return _providerGateway != null && protocol != null
+            ? _providerGateway.GetPlaylistAsync(protocol, provider, externalId)
+            : _metadataService.GetPlaylistAsync(provider, externalId, cancellationToken);
+    }
+
     #region Items
 
     /// <summary>
@@ -745,46 +756,10 @@ public partial class JellyfinController : ControllerBase
             return await RelayCurrentRequestAsync(Request.Path.Value!.TrimStart('/'));
         }
 
-        // Get external cover art URL
-        string? coverUrl = type switch
-        {
-            "artist" => (await GetProviderArtistForImageAsync(
-                provider!, externalId!, HttpContext.RequestAborted))?.ImageUrl,
-            "album" => (await GetProviderAlbumForImageAsync(
-                provider!, externalId!, HttpContext.RequestAborted))?.CoverArtUrl,
-            "song" => (await GetProviderSongForImageAsync(
-                provider!, externalId!, HttpContext.RequestAborted))?.CoverArtUrl,
-            _ => null
-        };
-
-        _logger.LogDebug("External {Type} {Provider}/{ExternalId} has cover URL: {HasCoverUrl}",
-            type, provider, externalId, !string.IsNullOrEmpty(coverUrl));
-
-        if (string.IsNullOrEmpty(coverUrl))
-        {
-            _logger.LogDebug("No cover URL for external {Type}, returning placeholder", type);
-            // Return placeholder "no image available" image
-            return await GetPlaceholderImageAsync();
-        }
-
-        if (!OutboundRequestGuard.TryCreateSafeHttpUri(coverUrl, out var validatedCoverUri, out var validationReason) ||
-            validatedCoverUri == null)
-        {
-            _logger.LogWarning(
-                "Blocked external image URL for {Type} {Provider}/{ExternalId}: {Reason}",
-                type,
-                provider,
-                externalId,
-                validationReason);
-            return await GetPlaceholderImageAsync();
-        }
-
         try
         {
-            var safeCoverUri = validatedCoverUri!;
-            _logger.LogDebug("Fetching external image from host {Host}", safeCoverUri.Host);
             var asset = await ResolveExternalImageAsync(
-                provider!, type!, externalId!, safeCoverUri, retryTransientFailures: true,
+                provider!, type!, externalId!, retryTransientFailures: true,
                 maxWidth, maxHeight);
             if (asset == null)
             {
@@ -818,7 +793,6 @@ public partial class JellyfinController : ControllerBase
         string provider,
         string resourceKind,
         string resourceId,
-        Uri coverUri,
         bool retryTransientFailures = false,
         int? width = null,
         int? height = null)
@@ -838,6 +812,31 @@ public partial class JellyfinController : ControllerBase
             {
                 async Task<MediaAssetSource?> Fetch()
                 {
+                    var coverUrl = resourceKind switch
+                    {
+                        "artist" => (await GetProviderArtistForImageAsync(
+                            provider, resourceId, token))?.ImageUrl,
+                        "album" => (await GetProviderAlbumForImageAsync(
+                            provider, resourceId, token))?.CoverArtUrl,
+                        "song" => (await GetProviderSongForImageAsync(
+                            provider, resourceId, token))?.CoverArtUrl,
+                        "playlist" => (await GetProviderPlaylistForImageAsync(
+                            provider, resourceId, token))?.CoverUrl,
+                        _ => null
+                    };
+                    if (!OutboundRequestGuard.TryCreateSafeHttpUri(
+                            coverUrl, out var coverUri, out var validationReason) ||
+                        coverUri == null)
+                    {
+                        _logger.LogDebug(
+                            "No usable external image URL for {Type} {Provider}/{ExternalId}: {Reason}",
+                            resourceKind,
+                            provider,
+                            resourceId,
+                            validationReason);
+                        return null;
+                    }
+
                     using var response = await _proxyService.HttpClient.GetAsync(coverUri, token);
                     if (response.StatusCode is System.Net.HttpStatusCode.TooManyRequests or
                         System.Net.HttpStatusCode.ServiceUnavailable)

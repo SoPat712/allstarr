@@ -25,6 +25,28 @@ public sealed class ProtocolProviderGatewayContractTests
     }
 
     [Fact]
+    public void JellyfinExternalArtworkDefersMetadataUntilMediaCacheMiss()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            RepositoryRoot(), "allstarr", "Controllers", "JellyfinController.cs"));
+        var start = source.IndexOf(
+            "private async Task<ResolvedMediaAsset?> ResolveExternalImageAsync",
+            StringComparison.Ordinal);
+        var end = source.IndexOf(
+            "private IActionResult CreateFormattedImageResponse",
+            start,
+            StringComparison.Ordinal);
+        var method = source[start..end];
+
+        Assert.True(
+            method.IndexOf("_mediaAssets.ResolveAsync", StringComparison.Ordinal) <
+            method.IndexOf("GetProviderSongForImageAsync", StringComparison.Ordinal));
+        Assert.True(
+            method.IndexOf("_mediaAssets.ResolveAsync", StringComparison.Ordinal) <
+            method.IndexOf("GetProviderPlaylistForImageAsync", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void SubsonicExternalRoutesUseProviderGatewayWhileNativeAudioRemainsRelay()
     {
         var source = File.ReadAllText(Path.Combine(
