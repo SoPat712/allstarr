@@ -19,7 +19,7 @@ public sealed class MultiProviderDownloadServiceTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["MULTI_PROVIDER_STREAMING_ORDER"] = "apple-download",
-                ["MULTI_PROVIDER_DOWNLOAD_ORDER"] = "deezer"
+                ["MULTI_PROVIDER_DOWNLOAD_ORDER"] = "apple-download"
             })
             .Build();
         var clients = new HttpFactory();

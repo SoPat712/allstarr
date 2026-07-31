@@ -187,8 +187,14 @@ public class MultiProviderDownloadService : IDownloadService
 
     private IReadOnlyList<string> GetPrioritizedStreamingProviders(string sourceProvider)
     {
-        return _statusManager.GetEnabledPlaybackProviders()
-            .OrderBy(provider => ProviderIdsEquivalent(sourceProvider, provider) ? 0 : 1)
+        var source = CanonicalProviderId(sourceProvider);
+        var sourceAvailable =
+            _statusManager.GetStatus(source, ProviderCapabilities.Streaming).CanAttempt ||
+            _statusManager.GetStatus(source, ProviderCapabilities.Download).CanAttempt;
+
+        return (sourceAvailable ? new[] { source } : [])
+            .Concat(_statusManager.GetEnabledPlaybackProviders())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
