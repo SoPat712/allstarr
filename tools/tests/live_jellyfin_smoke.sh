@@ -364,15 +364,21 @@ check_public_image() {
 }
 
 check_range_parity() {
-    local label="$1" direct_url="$2" allstarr_url="$3"
+    local label="$1" direct_url="$2" allstarr_url="$3" credential_mode="${4:-header}"
     local direct_code allstarr_code direct_bytes allstarr_bytes direct_range allstarr_range direct_type allstarr_type
+    local -a request_auth=("${auth[@]}")
+    if [[ "$credential_mode" == query-api-key ]]; then
+        request_auth=(-H "User-Agent: AllstarrLiveSmoke/$run_id")
+        direct_url="$direct_url?ApiKey=$JELLYFIN_TOKEN"
+        allstarr_url="$allstarr_url?ApiKey=$JELLYFIN_TOKEN"
+    fi
     : >"$direct_media_file"
     : >"$allstarr_media_file"
     : >"$direct_headers_file"
     : >"$allstarr_headers_file"
-    direct_code="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" --range 0-65535 --max-filesize 65536 \
+    direct_code="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${request_auth[@]}" --range 0-65535 --max-filesize 65536 \
         -D "$direct_headers_file" -o "$direct_media_file" -w '%{http_code}' "$direct_url" || true)"
-    allstarr_code="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" --range 0-65535 --max-filesize 65536 \
+    allstarr_code="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${request_auth[@]}" --range 0-65535 --max-filesize 65536 \
         -D "$allstarr_headers_file" -o "$allstarr_media_file" -w '%{http_code}' "$allstarr_url" || true)"
     direct_code="${direct_code:-000}"
     allstarr_code="${allstarr_code:-000}"
@@ -761,8 +767,12 @@ if curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
     "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query" -o "$response_file"; then
     allstarr_playlists="$(jq -r '.TotalRecordCount // (.Items | length) // 0' "$response_file")"
     virtual_playlist_id="$(jq -r '
-        (first(.Items[] | select(((.Id // "") | startswith("allstarr-vpl-")) and .ImageTags.Primary != null)) //
-         first(.Items[] | select((.Id // "") | startswith("allstarr-vpl-")))) | .Id // empty' "$response_file")"
+        (first(.Items[] | select(
+            ((.Id // "") | startswith("allstarr-vpl-")) and
+            ((.ChildCount // 0) > 0) and .ImageTags.Primary != null)) //
+         first(.Items[] | select(
+            ((.Id // "") | startswith("allstarr-vpl-")) and
+            ((.ChildCount // 0) > 0)))) | .Id // empty' "$response_file")"
     external_playlist_id="$(jq -r '
         first(.Items[] | select((.Id // "") | test("^ext-.+-playlist-"; "i"))) | .Id // empty' "$response_file")"
 else
@@ -776,8 +786,12 @@ if { [[ -z "$virtual_playlist_id" ]] || [[ -z "$external_playlist_id" ]]; } &&
        "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query&StartIndex=$direct_playlists" \
        -o "$response_file"; then
     [[ -n "$virtual_playlist_id" ]] || virtual_playlist_id="$(jq -r '
-        (first(.Items[] | select(((.Id // "") | startswith("allstarr-vpl-")) and .ImageTags.Primary != null)) //
-         first(.Items[] | select((.Id // "") | startswith("allstarr-vpl-")))) | .Id // empty' "$response_file")"
+        (first(.Items[] | select(
+            ((.Id // "") | startswith("allstarr-vpl-")) and
+            ((.ChildCount // 0) > 0) and .ImageTags.Primary != null)) //
+         first(.Items[] | select(
+            ((.Id // "") | startswith("allstarr-vpl-")) and
+            ((.ChildCount // 0) > 0)))) | .Id // empty' "$response_file")"
     [[ -n "$external_playlist_id" ]] || external_playlist_id="$(jq -r '
         first(.Items[] | select((.Id // "") | test("^ext-.+-playlist-"; "i"))) | .Id // empty' "$response_file")"
 fi
@@ -863,9 +877,19 @@ else
     echo "external playlist checks skipped=no provider-backed playlist result"
 fi
 if [[ -n "$virtual_playlist_id" ]]; then
-    check_json "virtual playlist DTO IDs" \
+    check_json "virtual injected entries/index data" \
         "$ALLSTARR_BASE/Playlists/$virtual_playlist_id/Items?UserId=$best_user_id&Limit=100" \
-        "$item_contract (.Items | type == \"array\") and all(.Items[]; client_item)"
+        "$item_contract
+         (.Items | type == \"array\" and length > 0) and
+         (.TotalRecordCount >= (.Items | length)) and
+         all(.Items[];
+             client_item and
+             .ParentId == \$playlist_id and
+             (.PlaylistItemId | nonempty) and
+             ((.Id | startswith(\"ext-\")) | not) and
+             (.Album | nonempty) and
+             (.Artists | type == \"array\" and length > 0 and all(.[]; nonempty)))" \
+        --arg playlist_id "$virtual_playlist_id"
     check_json "virtual playlist definition" \
         "$ALLSTARR_BASE/Playlists/$virtual_playlist_id?UserId=$best_user_id" \
         '(.Shares | type == "array") and (.ItemIds | type == "array") and
@@ -955,6 +979,10 @@ check_code "stream bounded range" "206" GET \
 check_range_parity "stream exact range parity" \
     "$DIRECT_BASE/Audio/$media_id/stream?static=true&UserId=$best_user_id" \
     "$ALLSTARR_BASE/Audio/$media_id/stream?static=true&UserId=$best_user_id"
+check_range_parity "Finer file ApiKey range parity" \
+    "$DIRECT_BASE/Items/$media_id/File" \
+    "$ALLSTARR_BASE/Items/$media_id/File" \
+    query-api-key
 measure "direct stream-64k" "$DIRECT_BASE/Audio/$media_id/stream?static=true&UserId=$best_user_id" \
     --range 0-65535 --max-filesize 65536
 measure "allstarr stream-64k" "$ALLSTARR_BASE/Audio/$media_id/stream?static=true&UserId=$best_user_id" \

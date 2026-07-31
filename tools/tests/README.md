@@ -12,8 +12,10 @@ The reusable Jellyfin kit has deterministic and live layers:
   12.0, including legacy audio HLS and query-form artist instant-mix routes.
 - `live_jellyfin_smoke.sh` compares a real Jellyfin instance directly with
   Allstarr. It covers bootstrap and authentication, native structural/stable
-  data parity, virtual/external DTOs and artwork, lyrics, playlists, security
-  denials, exact bounded stream bytes, and latency.
+  data parity, non-empty virtual playlist projections with client-indexable
+  track/artist/album fields, virtual/external DTOs and artwork, lyrics,
+  playlists, security denials, exact bounded stream bytes (including Finer's
+  query-only `Items/{id}/File?ApiKey=...` request), and latency.
 
 The source URLs, versions, commits, paths, and SHA-256 hashes for both OpenAPI
 files are locked in `allstarr.Tests/Fixtures/Protocols/protocol-source-lock.json`.

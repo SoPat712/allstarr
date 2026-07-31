@@ -28,6 +28,15 @@
     "ifRange": "\"fixture-etag\""
   },
   {
+    "protocol": "jellyfin",
+    "method": "GET",
+    "path": "/Items/local-song/File?ApiKey=fixture-key",
+    "verificationPath": "/Users/Me?ApiKey=fixture-key",
+    "streamPath": "/Items/local-song/File?ApiKey=fixture-key",
+    "range": "bytes=8-15",
+    "ifRange": "\"fixture-etag\""
+  },
+  {
     "protocol": "subsonic",
     "method": "GET",
     "path": "/rest/stream.view?u=fixture&p=fixture-password&v=1.16.1&c=fixture&id=local-song",

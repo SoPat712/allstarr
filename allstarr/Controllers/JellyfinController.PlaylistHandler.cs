@@ -13,13 +13,6 @@ public partial class JellyfinController
     {
         if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(playlistId))
         {
-            var targetId = await ResolveWritablePlaylistTargetAsync(playlistId);
-            if (targetId != null)
-            {
-                return await RelayCurrentRequestToPlaylistTargetAsync(
-                    Request.Path.Value!.TrimStart('/'), playlistId, targetId);
-            }
-
             return await _virtualPlaylistProtocolAdapter.ReadDefinitionAsync(
                        HttpContext.RequireProtocolExecutionContext(), playlistId, HttpContext.RequestAborted)
                    ?? NotFound();
@@ -87,13 +80,6 @@ public partial class JellyfinController
 
             if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(playlistId))
             {
-                var targetId = await ResolveWritablePlaylistTargetAsync(playlistId);
-                if (targetId != null)
-                {
-                    return await RelayCurrentRequestToPlaylistTargetAsync(
-                        Request.Path.Value!.TrimStart('/'), playlistId, targetId);
-                }
-
                 return await _virtualPlaylistProtocolAdapter.ReadItemsAsync(
                            HttpContext.RequireProtocolExecutionContext(), playlistId, HttpContext.RequestAborted)
                        ?? _responseBuilder.CreateError(404, "Playlist not found");

@@ -1571,13 +1571,79 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal("/rest/ping.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json", observedRequests[0].PathAndQuery);
     }
 
+    [Fact]
+    public async Task JellyfinWritableHybrid_ReadsInjectedProjectionInsteadOfNativeTarget()
+    {
+        const string virtualId = "allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0";
+        var model = new VirtualPlaylistReadModel(
+            virtualId,
+            Guid.Parse("0198a537-719c-7ea8-9e5a-17e1f2f963f0"),
+            Guid.CreateVersion7(),
+            "Injected Mix",
+            "Projected playlist",
+            "artwork-key",
+            "spotify",
+            "source-list",
+            "revision-1",
+            allstarr.Core.Storage.PlaylistLinkMode.Hybrid,
+            [
+                new VirtualPlaylistTrack(
+                    0,
+                    "local-song-a",
+                    "Injected Track",
+                    "Injected Artist",
+                    "Injected Album",
+                    "Injected Artist",
+                    180_000,
+                    "cover-a",
+                    allstarr.Core.Storage.TrackMatchState.Accepted)
+            ]);
+        var virtualization = new Mock<IPlaylistVirtualizationService>(MockBehavior.Strict);
+        virtualization.Setup(service => service.ReadAsync(
+                It.IsAny<ProtocolExecutionContext>(),
+                virtualId,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(model);
+        var observed = new List<string>();
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request =>
+            {
+                observed.Add(request.RequestUri!.PathAndQuery);
+                return request.RequestUri.AbsolutePath == "/Users/Me"
+                    ? Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}""")
+                    : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}");
+            },
+            services =>
+            {
+                services.RemoveAll<IPlaylistVirtualizationService>();
+                services.AddSingleton(virtualization.Object);
+                services.RemoveAll<IJellyfinPlaylistMutationResolver>();
+                services.AddSingleton<IJellyfinPlaylistMutationResolver>(
+                    new FixedJellyfinPlaylistMutationResolver(
+                        new JellyfinPlaylistMutationRoute(true, "backend-target")));
+            });
+        using var client = factory.CreateClient();
+
+        using var itemResponse = await client.GetAsync($"/Items/{virtualId}?api_key=fixture-key");
+        using var definitionResponse = await client.GetAsync($"/Playlists/{virtualId}?api_key=fixture-key");
+        using var tracksResponse = await client.GetAsync($"/Playlists/{virtualId}/Items?api_key=fixture-key");
+        using var item = JsonDocument.Parse(await itemResponse.Content.ReadAsStringAsync());
+        using var definition = JsonDocument.Parse(await definitionResponse.Content.ReadAsStringAsync());
+        using var tracks = JsonDocument.Parse(await tracksResponse.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, itemResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, definitionResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, tracksResponse.StatusCode);
+        Assert.Equal(virtualId, item.RootElement.GetProperty("Id").GetString());
+        Assert.Equal("local-song-a", definition.RootElement.GetProperty("ItemIds")[0].GetString());
+        Assert.Equal("local-song-a", tracks.RootElement.GetProperty("Items")[0].GetProperty("Id").GetString());
+        Assert.Equal(virtualId, tracks.RootElement.GetProperty("Items")[0].GetProperty("ParentId").GetString());
+        Assert.Equal(Enumerable.Repeat("/Users/Me?api_key=fixture-key", 3), observed);
+        virtualization.VerifyAll();
+    }
+
     [Theory]
-    [InlineData("GET", "/Items/allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0?api_key=fixture-key",
-        null, "/Items/backend-target?api_key=fixture-key")]
-    [InlineData("GET", "/Playlists/allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0?api_key=fixture-key",
-        null, "/Playlists/backend-target?api_key=fixture-key")]
-    [InlineData("GET", "/Playlists/allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0/Items?api_key=fixture-key",
-        null, "/Playlists/backend-target/Items?api_key=fixture-key")]
     [InlineData("POST", "/Playlists/allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0?api_key=fixture-key",
         """{"Name":"Renamed"}""", "/Playlists/backend-target?api_key=fixture-key")]
     [InlineData("POST", "/Playlists/allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0/Items?ids=song-a&ids=song-b&api_key=fixture-key",

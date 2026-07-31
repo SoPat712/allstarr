@@ -79,15 +79,17 @@ public sealed class VirtualPlaylistProtocolAdapterTests
     }
 
     [Fact]
-    public async Task JellyfinList_OmitsWritableHybridAliasServedByNativeTarget()
+    public async Task JellyfinList_PublishesWritableHybridProjection()
     {
         var adapter = new JellyfinVirtualPlaylistProtocolAdapter(
             new StubVirtualizationService(Model()),
             new StubJellyfinMutationResolver(
                 new JellyfinPlaylistMutationRoute(true, "backend-playlist")));
 
-        Assert.Empty(await adapter.ListItemsAsync(
-            Context(ProtocolKind.Jellyfin), CancellationToken.None));
+        Assert.Equal(
+            ProtocolId,
+            Assert.Single(await adapter.ListItemsAsync(
+                Context(ProtocolKind.Jellyfin), CancellationToken.None))["Id"]);
     }
 
     [Fact]

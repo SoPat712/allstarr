@@ -13,7 +13,7 @@ public class JellyfinAuthFilter : IAsyncActionFilter
 {
     public const string BackendPrincipalIdItemKey = "allstarr.backend-principal-id";
 
-    private static readonly string[] AllowedQueryCredentialNames = ["api_key", "access_token"];
+    private static readonly string[] AllowedQueryCredentialNames = ["api_key", "access_token", "ApiKey"];
 
     private readonly JellyfinProxyService _proxyService;
     private readonly BackendIdentityResolver _identityResolver;

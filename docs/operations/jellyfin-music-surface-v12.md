@@ -79,12 +79,12 @@ routes are denied for synthesized IDs rather than forwarding an Allstarr-only
 identifier to Jellyfin.
 
 External and virtual playlist IDs are separately checked. Pure virtual reads
-are projected by Allstarr. Writable hybrid aliases are omitted from browse
-results, and their definition, item, update, membership, reorder, ACL, and
-instant-mix routes rewrite only the playlist ID to the native target after exact
-tenant, owner, backend, protocol, library, and enabled-state resolution. Pure
-virtual and provider-only playlists return `409 Playlist is read-only`; unknown
-scoped links return 404. Native writes are
+are projected by Allstarr. Writable hybrid aliases use the same injected
+projection for browse, item detail, definition, and entries; update, membership,
+reorder, ACL, and instant-mix operations rewrite only the playlist ID to the
+native target after exact tenant, owner, backend, protocol, library, and
+enabled-state resolution. Pure virtual and provider-only playlists return
+`409 Playlist is read-only`; unknown scoped links return 404. Native writes are
 method/body/query preserving passthroughs. Native deletion is relayed only
 after the backend reports `Type: Playlist`.
 

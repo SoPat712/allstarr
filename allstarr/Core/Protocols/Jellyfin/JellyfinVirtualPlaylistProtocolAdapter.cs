@@ -78,14 +78,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         CancellationToken cancellationToken)
     {
         var visible = await playlists.ListAsync(context, cancellationToken);
-        var items = new List<Dictionary<string, object?>>(visible.Count);
-        foreach (var playlist in visible)
-        {
-            var route = await mutationResolver.ResolveAsync(
-                context, playlist.ProtocolId, cancellationToken);
-            if (route?.Writable != true) items.Add(ToItem(playlist));
-        }
-        return items;
+        return visible.Select(ToItem).ToArray();
     }
 
     public async Task<IActionResult?> ReadItemAsync(
