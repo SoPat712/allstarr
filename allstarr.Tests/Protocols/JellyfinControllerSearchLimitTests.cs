@@ -43,6 +43,7 @@ public class JellyfinControllerSearchLimitTests
 
     [Theory]
     [InlineData(0, 20, 20)]
+    [InlineData(5, 5, 20)]
     [InlineData(20, 20, 40)]
     [InlineData(480, 50, 500)]
     [InlineData(-1, 20, 20)]

@@ -12,6 +12,28 @@ namespace allstarr.Tests;
 public sealed class ProtocolProviderStreamingGatewayTests
 {
     [Fact]
+    public async Task OpenStream_ActorlessContextDefersToCompatibilityFallback()
+    {
+        var gateway = new ProtocolProviderGateway(
+            Mock.Of<IProviderRouter>(MockBehavior.Strict),
+            new ProviderRegistry([]),
+            Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
+            Mock.Of<IMusicMetadataService>(MockBehavior.Strict),
+            new HttpClientFactory());
+        var context = new ProtocolExecutionContext(
+            ProtocolKind.Jellyfin,
+            "backend",
+            "api-key",
+            null,
+            "stream-test",
+            DateTimeOffset.UtcNow.AddMinutes(1),
+            CancellationToken.None);
+
+        Assert.Null(await gateway.OpenStreamAsync(
+            context, "deezer", "track-1", ProviderAudioQuality.Any, null));
+    }
+
+    [Fact]
     public async Task PlayableSearch_OnlyQueriesTracksAndIsolatesProviderFailures()
     {
         var failing = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);

@@ -765,7 +765,7 @@ public partial class JellyfinController
     }
 
     private static int GetIntegratedSearchFetchLimit(int startIndex, int limit) =>
-        Math.Min(Math.Max(0, startIndex) + Math.Max(0, limit), 500);
+        Math.Min(Math.Max(20, Math.Max(0, startIndex) + Math.Max(0, limit)), 500);
 
     private static IActionResult CreateEmptyItemsResponse(int startIndex)
     {

@@ -506,6 +506,9 @@ public sealed class ProtocolProviderGateway(
         ProviderAudioQuality quality,
         string? rangeHeader)
     {
+        ArgumentNullException.ThrowIfNull(protocol);
+        if (protocol.Actor is null) return null;
+
         var rangeStart = ParseRangeStart(rangeHeader);
         var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Streaming);
         var plan = await router.PlanAsync<IProviderStreamingCapability>(Request(
