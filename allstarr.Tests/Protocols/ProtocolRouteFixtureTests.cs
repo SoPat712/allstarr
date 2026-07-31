@@ -2049,7 +2049,18 @@ public sealed class ProtocolRouteFixtureTests
 
                     if (request.RequestUri.AbsolutePath is "/Users/Me")
                     {
+                        if (fixture.TryGetProperty("verificationFallbackPath", out _))
+                        {
+                            return Json(
+                                StatusCodes.Status400BadRequest,
+                                """{"error":"API key has no current user"}""");
+                        }
                         return Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}""");
+                    }
+
+                    if (request.RequestUri.AbsolutePath is "/System/Info")
+                    {
+                        return Json(StatusCodes.Status200OK, """{"Id":"server-1","Version":"10.11.11"}""");
                     }
 
                     if (request.RequestUri.AbsolutePath is "/Items/local-song")
@@ -2088,10 +2099,25 @@ public sealed class ProtocolRouteFixtureTests
             Assert.Equal("bytes", response.Headers.AcceptRanges.Single());
             Assert.Equal("\"fixture-etag\"", response.Headers.ETag?.Tag);
             Assert.Equal("bytes 8-15/32", response.Content.Headers.ContentRange?.ToString());
-            var streamIndex = fixture.GetProperty("protocol").GetString() == "jellyfin" ? 2 : 1;
+            var streamIndex = fixture.TryGetProperty("verificationFallbackPath", out _)
+                ? 3
+                : fixture.GetProperty("protocol").GetString() == "jellyfin" ? 2 : 1;
             Assert.Equal(streamIndex + 1, observedRequests.Count);
             if (streamIndex == 2) Assert.Equal("/Items/local-song", observedRequests[0].PathAndQuery);
-            Assert.Equal(fixture.GetProperty("verificationPath").GetString(), observedRequests[streamIndex - 1].PathAndQuery);
+            if (streamIndex == 3)
+            {
+                Assert.Equal("/Items/local-song", observedRequests[0].PathAndQuery);
+                Assert.Equal(fixture.GetProperty("verificationPath").GetString(), observedRequests[1].PathAndQuery);
+                Assert.Equal(
+                    fixture.GetProperty("verificationFallbackPath").GetString(),
+                    observedRequests[2].PathAndQuery);
+            }
+            else
+            {
+                Assert.Equal(
+                    fixture.GetProperty("verificationPath").GetString(),
+                    observedRequests[streamIndex - 1].PathAndQuery);
+            }
             Assert.Equal(
                 fixture.TryGetProperty("upstreamMethod", out var upstreamMethod)
                     ? upstreamMethod.GetString()
@@ -2101,6 +2127,35 @@ public sealed class ProtocolRouteFixtureTests
             Assert.Equal(fixture.GetProperty("range").GetString(), observedRequests[streamIndex].Range);
             Assert.Equal(fixture.GetProperty("ifRange").GetString(), observedRequests[streamIndex].IfRange);
         }
+    }
+
+    [Fact]
+    public async Task JellyfinUnboundFileApiKeyFallback_RejectsInvalidCredentialBeforeRelay()
+    {
+        var observed = new List<string>();
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            observed.Add(request.RequestUri!.PathAndQuery);
+            return request.RequestUri.AbsolutePath switch
+            {
+                "/Items/local-song" => Json(StatusCodes.Status200OK, """{"Id":"local-song","Type":"Audio"}"""),
+                "/Users/Me" => Json(StatusCodes.Status400BadRequest, """{"error":"API key has no current user"}"""),
+                "/System/Info" => Json(StatusCodes.Status401Unauthorized, """{"error":"invalid token"}"""),
+                _ => throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}")
+            };
+        });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/Items/local-song/File?ApiKey=invalid-key");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(
+            [
+                "/Items/local-song",
+                "/Users/Me?ApiKey=invalid-key",
+                "/System/Info?ApiKey=invalid-key"
+            ],
+            observed);
     }
 
     [Fact]

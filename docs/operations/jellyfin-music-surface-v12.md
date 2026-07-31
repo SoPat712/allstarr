@@ -14,7 +14,10 @@ that is not classified here is denied by default on the public Jellyfin port.
 3. Verify the caller's Jellyfin session in `JellyfinAuthFilter` (except Jellyfin's
    public bootstrap and public music-artwork routes). Verification uses
    `Users/Me`; the 10.11 API-key fallback may verify an explicit user only for
-   native relay and never binds that declared user to an Allstarr actor.
+   native relay and never binds that declared user to an Allstarr actor. For
+   query-key-only native file/download requests, where 10.11 returns 400 from
+   `Users/Me`, authenticated `System/Info` verifies the key without creating a
+   user or enabling synthesized/provider work.
 4. Intercept Allstarr virtual resources or proxy the constrained request upstream.
 
 The policy executes before the websocket proxy. `/socket` is the only websocket

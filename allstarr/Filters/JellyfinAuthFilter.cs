@@ -53,16 +53,28 @@ public class JellyfinAuthFilter : IAsyncActionFilter
                 queryParams: null,
                 request.Headers);
             var actorBound = true;
+            var unboundNativeFileRelay = false;
             var explicitUserEndpoint = BuildExplicitUserEndpoint(request);
-            if (statusCode is StatusCodes.Status400BadRequest or StatusCodes.Status404NotFound &&
-                explicitUserEndpoint != null)
+            if (statusCode is StatusCodes.Status400BadRequest or StatusCodes.Status404NotFound)
             {
-                body?.Dispose();
-                (body, statusCode) = await _proxyService.GetJsonAsync(
-                    explicitUserEndpoint,
-                    queryParams: null,
-                    request.Headers);
-                actorBound = false;
+                if (explicitUserEndpoint != null)
+                {
+                    body?.Dispose();
+                    (body, statusCode) = await _proxyService.GetJsonAsync(
+                        explicitUserEndpoint,
+                        queryParams: null,
+                        request.Headers);
+                    actorBound = false;
+                }
+                else if (IsNativeFileRelayRequest(request))
+                {
+                    body?.Dispose();
+                    (body, statusCode) = await _proxyService.GetJsonAsync(
+                        AddQueryCredentials("System/Info", request),
+                        queryParams: null,
+                        request.Headers);
+                    unboundNativeFileRelay = true;
+                }
             }
 
             using (body)
@@ -70,6 +82,12 @@ public class JellyfinAuthFilter : IAsyncActionFilter
                 if (statusCode < StatusCodes.Status200OK || statusCode >= StatusCodes.Status300MultipleChoices)
                 {
                     context.Result = CreateVerificationFailure(body, statusCode);
+                    return;
+                }
+
+                if (unboundNativeFileRelay)
+                {
+                    await next();
                     return;
                 }
 
@@ -253,6 +271,19 @@ public class JellyfinAuthFilter : IAsyncActionFilter
 
     private static bool IsSafeBackendId(string value) =>
         value.Length <= 128 && value.All(character => char.IsLetterOrDigit(character) || character is '-' or '_');
+
+    private static bool IsNativeFileRelayRequest(HttpRequest request)
+    {
+        if (!HttpMethods.IsGet(request.Method) && !HttpMethods.IsHead(request.Method)) return false;
+
+        var segments = request.Path.Value?.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments is { Length: 3 } &&
+               segments[0].Equals("Items", StringComparison.OrdinalIgnoreCase) &&
+               IsSafeBackendId(segments[1]) &&
+               !JellyfinMusicEndpointPolicy.IsSynthesizedMusicItemId(segments[1]) &&
+               (segments[2].Equals("File", StringComparison.OrdinalIgnoreCase) ||
+                segments[2].Equals("Download", StringComparison.OrdinalIgnoreCase));
+    }
 
     private static string? UserIdFromPath(string? path)
     {

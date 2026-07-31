@@ -32,6 +32,7 @@
     "method": "GET",
     "path": "/Items/local-song/File?ApiKey=fixture-key",
     "verificationPath": "/Users/Me?ApiKey=fixture-key",
+    "verificationFallbackPath": "/System/Info?ApiKey=fixture-key",
     "streamPath": "/Items/local-song/File?ApiKey=fixture-key",
     "range": "bytes=8-15",
     "ifRange": "\"fixture-etag\""
