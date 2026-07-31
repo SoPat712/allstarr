@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -237,6 +238,9 @@ public sealed class TrackMatchCommandService(
     PlaylistPlayableSearchService? playableSearch = null) : ITrackMatchRepository
 {
     private const int ConcurrentWriteRetries = 3;
+    private readonly ConcurrentDictionary<
+        (Guid TenantId, Guid UserId, bool IsAdministrator, Guid SnapshotId),
+        Lazy<Task<TrackRematchCommandResult>>> _rematches = [];
 
     public bool SupportsExternalMatching => playableSearch != null;
 
@@ -1339,9 +1343,13 @@ public sealed class TrackMatchCommandService(
         Guid externalSnapshotId,
         string correlationId,
         CancellationToken cancellationToken = default)
-        => await RematchSnapshotAsync(
-            actor, externalSnapshotId, correlationId, "manual-rematch-v3", null,
-            ConcurrentWriteRetries, cancellationToken);
+        => await CoalesceRematchAsync(
+            actor,
+            externalSnapshotId,
+            () => RematchSnapshotAsync(
+                actor, externalSnapshotId, correlationId, "manual-rematch-v3", null,
+                ConcurrentWriteRetries, cancellationToken),
+            cancellationToken);
 
     public async Task<TrackRematchCommandResult> RematchSnapshotAsync(
         ProtocolExecutionContext context,
@@ -1351,17 +1359,46 @@ public sealed class TrackMatchCommandService(
         CancellationToken cancellationToken = default)
     {
         var actor = context.RequireActor();
-        return await RematchSnapshotAsync(
-            new TrackMatchActor(
+        var matchActor = new TrackMatchActor(
                 actor.TenantId,
                 actor.EffectiveUserId ?? throw new UnauthorizedAccessException("A user owner is required."),
-                actor.Kind == ProviderActorKind.Administrator),
+                actor.Kind == ProviderActorKind.Administrator);
+        return await CoalesceRematchAsync(
+            matchActor,
             externalSnapshotId,
-            correlationId,
-            policyVersion,
-            context,
-            ConcurrentWriteRetries,
+            () => RematchSnapshotAsync(
+                matchActor,
+                externalSnapshotId,
+                correlationId,
+                policyVersion,
+                context,
+                ConcurrentWriteRetries,
+                cancellationToken),
             cancellationToken);
+    }
+
+    private async Task<TrackRematchCommandResult> CoalesceRematchAsync(
+        TrackMatchActor actor,
+        Guid externalSnapshotId,
+        Func<Task<TrackRematchCommandResult>> rematch,
+        CancellationToken cancellationToken)
+    {
+        var key = (actor.TenantId, actor.UserId, actor.IsAdministrator, externalSnapshotId);
+        var created = new Lazy<Task<TrackRematchCommandResult>>(
+            rematch,
+            LazyThreadSafetyMode.ExecutionAndPublication);
+        var pending = _rematches.GetOrAdd(key, created);
+        try
+        {
+            return await pending.Value.WaitAsync(cancellationToken);
+        }
+        finally
+        {
+            _rematches.TryRemove(
+                new KeyValuePair<
+                    (Guid TenantId, Guid UserId, bool IsAdministrator, Guid SnapshotId),
+                    Lazy<Task<TrackRematchCommandResult>>>(key, pending));
+        }
     }
 
     private async Task<TrackRematchCommandResult> RematchSnapshotAsync(
