@@ -40,6 +40,19 @@ SAMPLES=5 bash tools/tests/live_jellyfin_smoke.sh | tee /tmp/allstarr-jellyfin-l
 unset JELLYFIN_TOKEN
 ```
 
+Pin a configured native playlist alias when qualifying injected playlists.
+This catches clients such as Musiver that open the original Jellyfin playlist
+ID instead of an `allstarr-vpl-*` ID. The kit requires one browse row with the
+expected count, replays the observed playlist-items query shape, validates
+every item ID and playlist context, and runs the existing full native-object
+parity checks against matched entries:
+
+```bash
+INJECTED_PLAYLIST_ID=ddc3db277be524ad6f54e4b276cc619a \
+INJECTED_PLAYLIST_EXPECTED_COUNT=50 \
+SAMPLES=5 bash tools/tests/live_jellyfin_smoke.sh
+```
+
 Do not run the live layer while either endpoint is unhealthy. The default live
 suite does not write playlists, favorites, played state, ratings, display
 preferences, or lyrics. It also avoids provider-backed audio downloads. Every

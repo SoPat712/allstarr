@@ -1574,6 +1574,167 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task JellyfinConfiguredNativePlaylist_UsesCompleteDurableProjection()
+    {
+        const string nativeId = "ddc3db277be524ad6f54e4b276cc619a";
+        const string sourceId = "37i9dQZEVXbLRQDuF5jeBp";
+        const string virtualId = "allstarr-vpl-019fa3ec414873ec9239a8114469c608";
+        var tracks = Enumerable.Range(0, 50)
+            .Select(index => index == 0
+                ? new VirtualPlaylistTrack(
+                    index, "local-song-a", "Babydoll", "Dominic Fike", "Don't Forget About Me, Demos",
+                    "Dominic Fike", 102_000, "cover-a", allstarr.Core.Storage.TrackMatchState.Accepted,
+                    SourceProviderId: "spotify")
+                : new VirtualPlaylistTrack(
+                    index, $"allstarr-unresolved-source-{index}", $"Source Track {index + 1}",
+                    $"Source Artist {index + 1}", $"Source Album {index + 1}", null, 180_000, null,
+                    allstarr.Core.Storage.TrackMatchState.Unresolved,
+                    SourceProviderId: "spotify", RouteKind: TrackRouteKind.Unresolved))
+            .ToArray();
+        var model = new VirtualPlaylistReadModel(
+            virtualId,
+            Guid.Parse("019fa3ec-4148-73ec-9239-a8114469c608"),
+            Guid.CreateVersion7(),
+            "Top 50 - USA",
+            "Spotify chart",
+            "artwork-key",
+            "spotify",
+            sourceId,
+            "revision-24",
+            allstarr.Core.Storage.PlaylistLinkMode.Virtual,
+            tracks);
+        var virtualization = new Mock<IPlaylistVirtualizationService>(MockBehavior.Strict);
+        virtualization.Setup(service => service.ListAsync(
+                It.IsAny<ProtocolExecutionContext>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([model]);
+        virtualization.Setup(service => service.ReadBySourceAsync(
+                It.IsAny<ProtocolExecutionContext>(),
+                "spotify",
+                sourceId,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(model);
+        var observed = new List<string>();
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request =>
+            {
+                observed.Add(request.RequestUri!.PathAndQuery);
+                return request.RequestUri.AbsolutePath switch
+                {
+                    "/Users/Me" => Json(
+                        StatusCodes.Status200OK,
+                        """{"Id":"user-1","Name":"Fixture User"}"""),
+                    "/Users/user-1/Items" => Json(
+                        StatusCodes.Status200OK,
+                        $$"""
+                          {
+                            "Items":[{
+                              "Id":"{{nativeId}}",
+                              "Name":"Top 50 - USA",
+                              "Type":"Playlist",
+                              "MediaType":"Audio",
+                              "ChildCount":5,
+                              "CanDelete":true,
+                              "DateCreated":"2026-07-31T02:11:00Z",
+                              "ImageTags":{"Primary":"native-artwork"},
+                              "ExtraBrowseData":{"Sentinel":"keep-native-fields"}
+                            }],
+                            "TotalRecordCount":1,
+                            "StartIndex":0
+                          }
+                          """),
+                    $"/Items/{nativeId}" => Json(
+                        StatusCodes.Status200OK,
+                        $$"""{"Id":"{{nativeId}}","Name":"Top 50 - USA","Type":"Playlist","ChildCount":5}"""),
+                    "/Items" => Json(
+                        StatusCodes.Status200OK,
+                        """
+                        {
+                          "Items":[{
+                            "Id":"local-song-a",
+                            "Name":"Babydoll",
+                            "ServerId":"server-1",
+                            "Type":"Audio",
+                            "MediaType":"Audio",
+                            "AlbumId":"album-a",
+                            "MediaSources":[{"Id":"source-a","Path":"/music/babydoll.flac"}],
+                            "ExtraNestedData":{"Sentinel":[{"Keep":"every-field"}]}
+                          }],
+                          "TotalRecordCount":1,
+                          "StartIndex":0
+                        }
+                        """),
+                    _ => throw new InvalidOperationException(
+                        $"Unexpected upstream request: {request.RequestUri}")
+                };
+            },
+            services =>
+            {
+                services.RemoveAll<IPlaylistVirtualizationService>();
+                services.AddSingleton(virtualization.Object);
+            },
+            new Dictionary<string, string?>
+            {
+                ["SpotifyImport:Enabled"] = "true",
+                ["SpotifyImport:Playlists:0:Name"] = "Top 50 - USA",
+                ["SpotifyImport:Playlists:0:Id"] = sourceId,
+                ["SpotifyImport:Playlists:0:JellyfinId"] = nativeId,
+                ["SpotifyImport:Playlists:0:UserId"] = "user-1"
+            });
+        using var client = factory.CreateClient();
+
+        using var browseResponse = await client.GetAsync(
+            "/Users/user-1/Items?includeItemTypes=Playlist&recursive=true&startIndex=0&limit=200&api_key=fixture-key");
+        using var browse = JsonDocument.Parse(await browseResponse.Content.ReadAsStringAsync());
+        using var tracksResponse = await client.GetAsync(
+            $"/Playlists/{nativeId}/Items?fields=SortName%2CCanDelete%2CMediaSources%2CDateCreated%2CCanDelete&userId=user-1&startIndex=0&limit=200&api_key=fixture-key");
+        using var playlist = JsonDocument.Parse(await tracksResponse.Content.ReadAsStringAsync());
+        using var parentResponse = await client.GetAsync(
+            $"/Users/user-1/Items?parentId={nativeId}&includeItemTypes=Audio&startIndex=0&limit=200&api_key=fixture-key");
+        using var parentItems = JsonDocument.Parse(await parentResponse.Content.ReadAsStringAsync());
+        using var detailResponse = await client.GetAsync(
+            $"/Items/{nativeId}?userId=user-1&api_key=fixture-key");
+        using var detail = JsonDocument.Parse(await detailResponse.Content.ReadAsStringAsync());
+        using var definitionResponse = await client.GetAsync(
+            $"/Playlists/{nativeId}?userId=user-1&api_key=fixture-key");
+        using var definition = JsonDocument.Parse(await definitionResponse.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, browseResponse.StatusCode);
+        Assert.Equal(1, browse.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        var browseItem = Assert.Single(browse.RootElement.GetProperty("Items").EnumerateArray());
+        Assert.Equal(nativeId, browseItem.GetProperty("Id").GetString());
+        Assert.Equal(50, browseItem.GetProperty("ChildCount").GetInt32());
+        Assert.True(browseItem.GetProperty("CanDelete").GetBoolean());
+        Assert.Equal(
+            "keep-native-fields",
+            browseItem.GetProperty("ExtraBrowseData").GetProperty("Sentinel").GetString());
+        Assert.Equal(HttpStatusCode.OK, tracksResponse.StatusCode);
+        Assert.Equal(50, playlist.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Equal(50, playlist.RootElement.GetProperty("Items").GetArrayLength());
+        Assert.Equal(HttpStatusCode.OK, parentResponse.StatusCode);
+        Assert.Equal(50, parentItems.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Equal(50, parentItems.RootElement.GetProperty("Items").GetArrayLength());
+        Assert.Equal(HttpStatusCode.OK, detailResponse.StatusCode);
+        Assert.Equal(nativeId, detail.RootElement.GetProperty("Id").GetString());
+        Assert.Equal(50, detail.RootElement.GetProperty("ChildCount").GetInt32());
+        Assert.Equal(HttpStatusCode.OK, definitionResponse.StatusCode);
+        Assert.Equal(50, definition.RootElement.GetProperty("ItemIds").GetArrayLength());
+        Assert.All(playlist.RootElement.GetProperty("Items").EnumerateArray(),
+            item => Assert.False(string.IsNullOrWhiteSpace(item.GetProperty("Id").GetString())));
+        var first = playlist.RootElement.GetProperty("Items")[0];
+        Assert.Equal(nativeId, first.GetProperty("ParentId").GetString());
+        Assert.Equal("source-a", first.GetProperty("MediaSources")[0].GetProperty("Id").GetString());
+        Assert.Equal(
+            "every-field",
+            first.GetProperty("ExtraNestedData").GetProperty("Sentinel")[0].GetProperty("Keep").GetString());
+        Assert.DoesNotContain(
+            observed,
+            path => path.StartsWith($"/Playlists/{nativeId}/Items", StringComparison.Ordinal));
+        virtualization.VerifyAll();
+    }
+
+    [Fact]
     public async Task JellyfinWritableHybrid_ReadsInjectedProjectionInsteadOfNativeTarget()
     {
         const string virtualId = "allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0";

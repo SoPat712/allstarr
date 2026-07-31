@@ -10,6 +10,8 @@ TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-20}"
 TEST_EXTERNAL_STREAM="${TEST_EXTERNAL_STREAM:-0}"
 TEST_PLAYLIST_WRITES="${TEST_PLAYLIST_WRITES:-0}"
 PLAYLIST_WRITE_CONFIRM="${PLAYLIST_WRITE_CONFIRM:-}"
+INJECTED_PLAYLIST_ID="${INJECTED_PLAYLIST_ID:-}"
+INJECTED_PLAYLIST_EXPECTED_COUNT="${INJECTED_PLAYLIST_EXPECTED_COUNT:-}"
 
 for command in curl jq awk diff cmp od wc; do
     command -v "$command" >/dev/null || { echo "Missing required command: $command" >&2; exit 1; }
@@ -23,6 +25,12 @@ if [[ "$TEST_PLAYLIST_WRITES" == 1 &&
       "$PLAYLIST_WRITE_CONFIRM" != create-and-delete-throwaway-playlist ]]; then
     echo "TEST_PLAYLIST_WRITES=1 requires PLAYLIST_WRITE_CONFIRM=create-and-delete-throwaway-playlist" >&2
     exit 1
+fi
+if [[ -n "$INJECTED_PLAYLIST_ID" || -n "$INJECTED_PLAYLIST_EXPECTED_COUNT" ]]; then
+    [[ "$INJECTED_PLAYLIST_ID" =~ ^[[:alnum:]_-]{1,128}$ ]] ||
+        { echo "INJECTED_PLAYLIST_ID must be a stable playlist ID" >&2; exit 1; }
+    [[ "$INJECTED_PLAYLIST_EXPECTED_COUNT" =~ ^[1-9][0-9]*$ ]] ||
+        { echo "INJECTED_PLAYLIST_EXPECTED_COUNT must be a positive integer" >&2; exit 1; }
 fi
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -40,6 +48,8 @@ direct_headers_file="$(mktemp)"
 allstarr_headers_file="$(mktemp)"
 virtual_items_file="$(mktemp)"
 direct_virtual_items_file="$(mktemp)"
+direct_playlists_file="$(mktemp)"
+allstarr_playlists_file="$(mktemp)"
 stateful_playlist_id=""
 stateful_playlist_name=""
 playlist_identity_matches() {
@@ -64,7 +74,8 @@ cleanup() {
     rm -f "$users_file" "$items_file" "$response_file" "$timings_file" \
         "$direct_shape_file" "$allstarr_shape_file" "$metrics_file" \
         "$direct_media_file" "$allstarr_media_file" "$direct_headers_file" \
-        "$allstarr_headers_file" "$virtual_items_file" "$direct_virtual_items_file"
+        "$allstarr_headers_file" "$virtual_items_file" "$direct_virtual_items_file" \
+        "$direct_playlists_file" "$allstarr_playlists_file"
 }
 trap cleanup EXIT
 
@@ -758,30 +769,37 @@ playlist_id=""
 virtual_playlist_id=""
 external_playlist_id=""
 if curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
-    "$DIRECT_BASE/Users/$best_user_id/Items?$playlist_query" -o "$response_file"; then
-    direct_playlists="$(jq -r '.TotalRecordCount // (.Items | length) // 0' "$response_file")"
-    playlist_id="$(jq -r '.Items[0].Id // empty' "$response_file")"
+    "$DIRECT_BASE/Users/$best_user_id/Items?$playlist_query" -o "$direct_playlists_file"; then
+    direct_playlists="$(jq -r '.TotalRecordCount // (.Items | length) // 0' "$direct_playlists_file")"
 else
     checks=$((checks + 1))
     failures=$((failures + 1))
     echo "FAIL direct playlist discovery"
 fi
 if curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
-    "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query" -o "$response_file"; then
-    allstarr_playlists="$(jq -r '.TotalRecordCount // (.Items | length) // 0' "$response_file")"
+    "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query" -o "$allstarr_playlists_file"; then
+    allstarr_playlists="$(jq -r '.TotalRecordCount // (.Items | length) // 0' "$allstarr_playlists_file")"
     virtual_playlist_id="$(jq -r '
         (first(.Items[] | select(
             ((.Id // "") | startswith("allstarr-vpl-")) and
             ((.ChildCount // 0) > 0) and .ImageTags.Primary != null)) //
          first(.Items[] | select(
             ((.Id // "") | startswith("allstarr-vpl-")) and
-            ((.ChildCount // 0) > 0)))) | .Id // empty' "$response_file")"
+            ((.ChildCount // 0) > 0)))) | .Id // empty' "$allstarr_playlists_file")"
     external_playlist_id="$(jq -r '
-        first(.Items[] | select((.Id // "") | test("^ext-.+-playlist-"; "i"))) | .Id // empty' "$response_file")"
+        first(.Items[] | select((.Id // "") | test("^ext-.+-playlist-"; "i"))) | .Id // empty' "$allstarr_playlists_file")"
 else
     checks=$((checks + 1))
     failures=$((failures + 1))
     echo "FAIL Allstarr playlist discovery"
+fi
+if [[ -s "$direct_playlists_file" && -s "$allstarr_playlists_file" ]]; then
+    playlist_id="$(jq -r --slurpfile proxy "$allstarr_playlists_file" '
+        first(.Items[] as $direct |
+            select(any($proxy[0].Items[];
+                .Id == $direct.Id and
+                (.ChildCount // 0) == ($direct.ChildCount // 0))) |
+            $direct.Id) // empty' "$direct_playlists_file")"
 fi
 if { [[ -z "$virtual_playlist_id" ]] || [[ -z "$external_playlist_id" ]]; } &&
    (( allstarr_playlists > direct_playlists )) &&
@@ -801,6 +819,30 @@ fi
 echo "playlist-counts direct=$direct_playlists allstarr=$allstarr_playlists"
 check_json "playlist browse shape" "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query" \
     '(.Items | type == "array") and all(.Items[]; .Type == "Playlist")'
+if [[ -n "$INJECTED_PLAYLIST_ID" ]]; then
+    injected_items_url="$ALLSTARR_BASE/Playlists/$INJECTED_PLAYLIST_ID/Items?fields=SortName%2CCanDelete%2CMediaSources%2CDateCreated%2CCanDelete&userId=$best_user_id&startIndex=0&limit=200"
+    direct_injected_count="$(curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
+        "$DIRECT_BASE/Playlists/$INJECTED_PLAYLIST_ID/Items?UserId=$best_user_id&Limit=200" |
+        jq -r '.TotalRecordCount // (.Items | length) // 0' || true)"
+    echo "configured-injected-counts id=$INJECTED_PLAYLIST_ID direct=${direct_injected_count:-unavailable} expected=$INJECTED_PLAYLIST_EXPECTED_COUNT"
+    check_json "configured alias browse count" \
+        "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query" \
+        '([.Items[] | select(.Id == $playlist_id)] | length) == 1 and
+         (first(.Items[] | select(.Id == $playlist_id)).ChildCount == $expected)' \
+        --arg playlist_id "$INJECTED_PLAYLIST_ID" \
+        --argjson expected "$INJECTED_PLAYLIST_EXPECTED_COUNT"
+    check_json "configured alias exact entries" "$injected_items_url" \
+        "$item_contract
+         .TotalRecordCount == \$expected and
+         (.Items | length) == \$expected and
+         all(.Items[];
+             client_item and
+             .ParentId == \$playlist_id and
+             (.PlaylistItemId | nonempty))" \
+        --arg playlist_id "$INJECTED_PLAYLIST_ID" \
+        --argjson expected "$INJECTED_PLAYLIST_EXPECTED_COUNT"
+    [[ -n "$virtual_playlist_id" ]] || virtual_playlist_id="$INJECTED_PLAYLIST_ID"
+fi
 compare_structure "native playlist structure parity" \
     "$DIRECT_BASE/Users/$best_user_id/Items?$playlist_query" \
     "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query" \
@@ -811,11 +853,11 @@ compare_structure "native playlist structure parity" \
 compare_projection "native playlist stable data" \
     "$DIRECT_BASE/Users/$best_user_id/Items?$playlist_query" \
     "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query" \
-    '[.Items[] | {Id,Name,Type,ChildCount,ImageTags,ProviderIds}] | sort_by(.Id)' \
+    '[.Items[] | {Id,Name,Type,ImageTags,ProviderIds}] | sort_by(.Id)' \
     '[.Items[] | select(
         ((((.Id // "") | startswith("allstarr-vpl-")) or
           ((.Id // "") | test("^ext-.+-playlist-"; "i"))) | not)) |
-        {Id,Name,Type,ChildCount,ImageTags,ProviderIds}] | sort_by(.Id)'
+        {Id,Name,Type,ImageTags,ProviderIds}] | sort_by(.Id)'
 if [[ -n "$playlist_id" ]]; then
     check_json "playlist entries music only" "$ALLSTARR_BASE/Playlists/$playlist_id/Items?UserId=$best_user_id&Limit=100" \
         '(.Items | type == "array") and all(.Items[]; .Type == "Audio")'

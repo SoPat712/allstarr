@@ -18,6 +18,19 @@ public partial class JellyfinController
                    ?? NotFound();
         }
 
+        var linkedPlaylist = _spotifySettings.Enabled
+            ? _spotifySettings.GetPlaylistByJellyfinId(playlistId)
+            : null;
+        if (linkedPlaylist != null)
+        {
+            var projection = await _virtualPlaylistProtocolAdapter.ReadDefinitionBySourceAsync(
+                HttpContext.RequireProtocolExecutionContext(),
+                "spotify",
+                linkedPlaylist.Id,
+                HttpContext.RequestAborted);
+            if (projection != null) return projection;
+        }
+
         if (PlaylistIdHelper.IsExternalPlaylist(playlistId))
         {
             var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
@@ -84,6 +97,26 @@ public partial class JellyfinController
                            HttpContext.RequireProtocolExecutionContext(), playlistId,
                            Request.Headers, Request.Query, HttpContext.RequestAborted)
                        ?? _responseBuilder.CreateError(404, "Playlist not found");
+            }
+
+            var linkedPlaylist = _spotifySettings.Enabled
+                ? _spotifySettings.GetPlaylistByJellyfinId(playlistId)
+                : null;
+            if (linkedPlaylist != null)
+            {
+                var projection = await _virtualPlaylistProtocolAdapter.ReadItemsBySourceAsync(
+                    HttpContext.RequireProtocolExecutionContext(),
+                    "spotify",
+                    linkedPlaylist.Id,
+                    playlistId,
+                    Request.Headers,
+                    Request.Query,
+                    HttpContext.RequestAborted);
+                if (projection != null) return projection;
+
+                _logger.LogWarning(
+                    "Configured Spotify playlist {PlaylistId} has no visible durable projection; using Jellyfin",
+                    playlistId);
             }
 
             // Check if this is an external playlist (Deezer/Qobuz) first

@@ -220,6 +220,20 @@ public partial class JellyfinController : ControllerBase
                    ?? _responseBuilder.CreateError(404, "Playlist not found");
         }
 
+        var linkedPlaylist = _spotifySettings.Enabled
+            ? _spotifySettings.GetPlaylistByJellyfinId(itemId)
+            : null;
+        if (linkedPlaylist != null)
+        {
+            var projection = await _virtualPlaylistProtocolAdapter.ReadItemBySourceAsync(
+                HttpContext.RequireProtocolExecutionContext(),
+                "spotify",
+                linkedPlaylist.Id,
+                itemId,
+                HttpContext.RequestAborted);
+            if (projection != null) return projection;
+        }
+
         // Check for external playlist
         if (PlaylistIdHelper.IsExternalPlaylist(itemId))
         {

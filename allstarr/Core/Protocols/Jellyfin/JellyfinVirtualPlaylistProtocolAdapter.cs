@@ -66,7 +66,8 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     IJellyfinPlaylistMutationResolver mutationResolver,
     IOptions<JellyfinSettings>? settings = null,
     JellyfinProxyService? proxyService = null,
-    JellyfinResponseBuilder? responseBuilder = null)
+    JellyfinResponseBuilder? responseBuilder = null,
+    ILogger<JellyfinVirtualPlaylistProtocolAdapter>? logger = null)
 {
     private const string FullItemFields =
         "AirTime,CanDelete,CanDownload,ChannelInfo,Chapters,Trickplay,ChildCount," +
@@ -91,12 +92,17 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         CancellationToken cancellationToken) =>
         mutationResolver.ResolveAsync(context, id, cancellationToken);
 
+    public Task<IReadOnlyList<VirtualPlaylistReadModel>> ListAsync(
+        ProtocolExecutionContext context,
+        CancellationToken cancellationToken) =>
+        playlists.ListAsync(context, cancellationToken);
+
     public async Task<IReadOnlyList<Dictionary<string, object?>>> ListItemsAsync(
         ProtocolExecutionContext context,
         CancellationToken cancellationToken)
     {
-        var visible = await playlists.ListAsync(context, cancellationToken);
-        return visible.Select(ToItem).ToArray();
+        var visible = await ListAsync(context, cancellationToken);
+        return visible.Select(item => ToItem(item)).ToArray();
     }
 
     public async Task<IActionResult?> ReadItemAsync(
@@ -107,10 +113,40 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         return new JsonResult(ToItem(playlist));
     }
 
+    public async Task<IActionResult?> ReadItemBySourceAsync(
+        ProtocolExecutionContext context,
+        string sourceProviderId,
+        string sourcePlaylistId,
+        string responsePlaylistId,
+        CancellationToken cancellationToken)
+    {
+        var playlist = await playlists.ReadBySourceAsync(
+            context, sourceProviderId, sourcePlaylistId, cancellationToken);
+        return playlist == null ? null : new JsonResult(ToItem(playlist, responsePlaylistId));
+    }
+
     public async Task<IActionResult?> ReadDefinitionAsync(
         ProtocolExecutionContext context, string id, CancellationToken cancellationToken)
     {
         var playlist = await playlists.ReadAsync(context, id, cancellationToken);
+        return playlist == null
+            ? null
+            : new JsonResult(new
+            {
+                OpenAccess = false,
+                Shares = Array.Empty<object>(),
+                ItemIds = playlist.Tracks.Select(track => track.BackendItemId).ToArray()
+            });
+    }
+
+    public async Task<IActionResult?> ReadDefinitionBySourceAsync(
+        ProtocolExecutionContext context,
+        string sourceProviderId,
+        string sourcePlaylistId,
+        CancellationToken cancellationToken)
+    {
+        var playlist = await playlists.ReadBySourceAsync(
+            context, sourceProviderId, sourcePlaylistId, cancellationToken);
         return playlist == null
             ? null
             : new JsonResult(new
@@ -138,19 +174,23 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             : PlaylistIdHelper.CreatePlaylistId(source.ProviderId, source.PlaylistId);
     }
 
-    private Dictionary<string, object?> ToItem(VirtualPlaylistReadModel playlist) =>
-        new()
+    internal Dictionary<string, object?> ToItem(
+        VirtualPlaylistReadModel playlist,
+        string? responsePlaylistId = null)
+    {
+        var id = responsePlaylistId ?? playlist.ProtocolId;
+        return new()
         {
             ["Name"] = playlist.Name,
             ["Overview"] = playlist.Description,
             ["ServerId"] = serverId,
-            ["Id"] = playlist.ProtocolId,
+            ["Id"] = id,
             ["IsFolder"] = true,
             ["Type"] = "Playlist",
             ["MediaType"] = "Audio",
             ["ChildCount"] = playlist.Tracks.Count,
             ["RunTimeTicks"] = playlist.Tracks.Sum(track => track.DurationMilliseconds) * TimeSpan.TicksPerMillisecond,
-            ["UserData"] = UserData(playlist.ProtocolId),
+            ["UserData"] = UserData(id),
             ["ImageTags"] = playlist.ArtworkReferenceKey == null
                 ? new Dictionary<string, string>()
                 : new Dictionary<string, string> { ["Primary"] = playlist.ArtworkReferenceKey },
@@ -159,6 +199,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                 [playlist.SourceProviderId] = playlist.SourceRevision
             }
         };
+    }
 
     public Task<IActionResult?> ReadItemsAsync(
         ProtocolExecutionContext context, string id, CancellationToken cancellationToken) =>
@@ -173,7 +214,34 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     {
         var playlist = await playlists.ReadAsync(context, id, cancellationToken);
         if (playlist == null) return null;
+        return await CreateItemsResponseAsync(
+            context, playlist, id, clientHeaders, clientQuery);
+    }
 
+    public async Task<IActionResult?> ReadItemsBySourceAsync(
+        ProtocolExecutionContext context,
+        string sourceProviderId,
+        string sourcePlaylistId,
+        string responsePlaylistId,
+        IHeaderDictionary? clientHeaders,
+        IQueryCollection? clientQuery,
+        CancellationToken cancellationToken)
+    {
+        var playlist = await playlists.ReadBySourceAsync(
+            context, sourceProviderId, sourcePlaylistId, cancellationToken);
+        return playlist == null
+            ? null
+            : await CreateItemsResponseAsync(
+                context, playlist, responsePlaylistId, clientHeaders, clientQuery);
+    }
+
+    private async Task<IActionResult> CreateItemsResponseAsync(
+        ProtocolExecutionContext context,
+        VirtualPlaylistReadModel playlist,
+        string responsePlaylistId,
+        IHeaderDictionary? clientHeaders,
+        IQueryCollection? clientQuery)
+    {
         var startIndex = QueryInt(clientQuery, "StartIndex", 0);
         var limit = QueryInt(clientQuery, "Limit", int.MaxValue);
         var tracks = playlist.Tracks.Skip(startIndex).Take(limit).ToArray();
@@ -225,10 +293,17 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                 }
             }
 
-            item["ParentId"] = playlist.ProtocolId;
-            item["PlaylistItemId"] = $"{playlist.ProtocolId}-{track.SourcePosition}";
+            item["ParentId"] = responsePlaylistId;
+            item["PlaylistItemId"] = $"{responsePlaylistId}-{track.SourcePosition}";
             return item;
         }).ToArray();
+        logger?.LogInformation(
+            "Served injected playlist projection {ResponsePlaylistId} from {ProtocolId}: total={TotalCount}, start={StartIndex}, returned={ReturnedCount}",
+            responsePlaylistId,
+            playlist.ProtocolId,
+            playlist.Tracks.Count,
+            startIndex,
+            items.Length);
         return new JsonResult(new
         {
             Items = items,

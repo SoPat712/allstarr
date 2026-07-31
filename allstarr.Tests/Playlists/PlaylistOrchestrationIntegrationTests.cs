@@ -1162,10 +1162,15 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.Equal("deezer", projection.Entries[1].RouteProviderId);
         Assert.Equal(["deezer", "qobuz"],
             projection.Entries[1].ProviderRoutes.Select(item => item.ProviderId));
-        var virtualPlaylist = await new PlaylistVirtualizationService(
-                _factory, new DurablePlaylistProjectionReader(_factory, gateway.Object))
-            .ReadAsync(Context(), PlaylistVirtualizationService.CreateProtocolId(_link));
+        var virtualization = new PlaylistVirtualizationService(
+            _factory, new DurablePlaylistProjectionReader(_factory, gateway.Object));
+        var virtualPlaylist = await virtualization.ReadAsync(
+            Context(), PlaylistVirtualizationService.CreateProtocolId(_link));
+        var sourceAlias = await virtualization.ReadBySourceAsync(
+            Context(), "fixture", "playlist");
         Assert.Equal(projection.TotalCount, virtualPlaylist!.Tracks.Count);
+        Assert.Equal(virtualPlaylist.ProtocolId, sourceAlias!.ProtocolId);
+        Assert.Equal(virtualPlaylist.Tracks.Count, sourceAlias.Tracks.Count);
         var localTrack = virtualPlaylist.Tracks.Single(item => item.SourcePosition == 0);
         var externalTrack = virtualPlaylist.Tracks.Single(item => item.SourcePosition == 1);
         var unresolvedTrack = virtualPlaylist.Tracks.Single(item => item.SourcePosition == 2);

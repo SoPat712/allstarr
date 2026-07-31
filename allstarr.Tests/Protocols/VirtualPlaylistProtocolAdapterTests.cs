@@ -161,6 +161,13 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             ProtocolExecutionContext context, string protocolId, CancellationToken cancellationToken = default) =>
             Task.FromResult(model);
 
+        public Task<VirtualPlaylistReadModel?> ReadBySourceAsync(
+            ProtocolExecutionContext context,
+            string sourceProviderId,
+            string sourcePlaylistId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(model);
+
         public Task<VirtualPlaylistArtworkSource?> ResolvePublicArtworkSourceAsync(
             string protocolId,
             CancellationToken cancellationToken = default) =>
