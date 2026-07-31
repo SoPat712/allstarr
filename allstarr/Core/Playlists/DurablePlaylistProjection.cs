@@ -415,7 +415,7 @@ public sealed class DurablePlaylistProjectionReader(
             unresolved,
             playable,
             materializedCount,
-            playable,
+            projected.Count,
             added.Order().ToArray(),
             removed.Order().ToArray(),
             moved.Distinct().Order().ToArray(),

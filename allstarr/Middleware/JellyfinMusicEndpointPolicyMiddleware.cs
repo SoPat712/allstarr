@@ -1,4 +1,5 @@
 using System.Text.Json;
+using allstarr.Core.Playlists;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 
@@ -23,12 +24,24 @@ public sealed class JellyfinMusicEndpointPolicyMiddleware(
             return;
         }
 
+        var referencedItemId = JellyfinMusicEndpointPolicy.ReferencedItemId(context.Request.Path.Value);
+        if (PlaylistVirtualizationService.IsUnresolvedItemId(referencedItemId))
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            context.Response.ContentType = "application/json";
+            await JsonSerializer.SerializeAsync(context.Response.Body, new
+            {
+                error = "This playlist item has no playable source."
+            }, cancellationToken: context.RequestAborted);
+            return;
+        }
+
         var decision = JellyfinMusicEndpointPolicy.Evaluate(context.Request);
         context.Items[typeof(JellyfinEndpointDecision)] = decision;
         if (decision.Access is JellyfinEndpointAccess.RequiresMusicItem or
             JellyfinEndpointAccess.RequiresPlaylistItem)
         {
-            var itemId = JellyfinMusicEndpointPolicy.ReferencedItemId(context.Request.Path.Value);
+            var itemId = referencedItemId;
             var allowed = itemId != null && (decision.Access switch
             {
                 JellyfinEndpointAccess.RequiresMusicItem =>

@@ -91,6 +91,13 @@ enabled-state resolution. Pure virtual and provider-only playlists return
 method/body/query preserving passthroughs. Native deletion is relayed only
 after the backend reports `Type: Playlist`.
 
+Injected Jellyfin playlists retain every published source position. Matched
+local rows preserve the complete native Jellyfin item DTO, playable provider
+rows expose synthesized media sources, and unmatched rows remain visible as
+metadata-only `allstarr-unresolved-*` items with `PlayAccess: None`. All routes
+that could play or download an unmatched row return 404 before any Jellyfin or
+provider request.
+
 Synthesized albums, artists, songs, genres, images, and instant-mix routes have
 their own machine-readable supported/denied matrix. Resource types cannot be
 substituted into sibling routes. Primary image paths support bounded resizing

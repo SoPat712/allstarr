@@ -15,7 +15,9 @@ The reusable Jellyfin kit has deterministic and live layers:
   data parity, non-empty virtual playlist projections with client-indexable
   track/artist/album fields, exact full-object parity between every matched
   injected entry and its original Jellyfin item (apart from playlist context
-  and source labels), virtual/external DTOs and artwork, lyrics,
+  and source labels), metadata-only visibility for unmatched source rows,
+  rejection of their file/stream/universal/playback-info routes,
+  virtual/external DTOs and artwork, lyrics,
   playlists, security denials, exact bounded stream bytes (including Finer's
   query-only `Items/{id}/File?ApiKey=...` request), and latency.
 

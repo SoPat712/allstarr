@@ -10,6 +10,7 @@ using allstarr.Models.Subsonic;
 using allstarr.Core.Protocols.Subsonic;
 using allstarr.Core.Protocols;
 using allstarr.Core.Protocols.Jellyfin;
+using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -1632,7 +1633,19 @@ public sealed class ProtocolRouteFixtureTests
                     180_000,
                     "cover-a",
                     allstarr.Core.Storage.TrackMatchState.Accepted,
-                    SourceProviderId: "spotify")
+                    SourceProviderId: "spotify"),
+                new VirtualPlaylistTrack(
+                    1,
+                    "allstarr-unresolved-source-hash",
+                    "Unmatched Track",
+                    "Unmatched Artist",
+                    "Unmatched Album",
+                    null,
+                    200_000,
+                    null,
+                    allstarr.Core.Storage.TrackMatchState.Unresolved,
+                    SourceProviderId: "spotify",
+                    RouteKind: TrackRouteKind.Unresolved)
             ]);
         var virtualization = new Mock<IPlaylistVirtualizationService>(MockBehavior.Strict);
         virtualization.Setup(service => service.ReadAsync(
@@ -1672,6 +1685,14 @@ public sealed class ProtocolRouteFixtureTests
         using var itemResponse = await client.GetAsync($"/Items/{virtualId}?api_key=fixture-key");
         using var definitionResponse = await client.GetAsync($"/Playlists/{virtualId}?api_key=fixture-key");
         using var tracksResponse = await client.GetAsync($"/Playlists/{virtualId}/Items?api_key=fixture-key");
+        using var unresolvedFile = await client.GetAsync(
+            "/Items/allstarr-unresolved-source-hash/File?api_key=fixture-key");
+        using var unresolvedStream = await client.GetAsync(
+            "/Audio/allstarr-unresolved-source-hash/stream?api_key=fixture-key");
+        using var unresolvedUniversal = await client.GetAsync(
+            "/Audio/allstarr-unresolved-source-hash/universal?api_key=fixture-key");
+        using var unresolvedPlayback = await client.GetAsync(
+            "/Items/allstarr-unresolved-source-hash/PlaybackInfo?api_key=fixture-key");
         using var item = JsonDocument.Parse(await itemResponse.Content.ReadAsStringAsync());
         using var definition = JsonDocument.Parse(await definitionResponse.Content.ReadAsStringAsync());
         using var tracks = JsonDocument.Parse(await tracksResponse.Content.ReadAsStringAsync());
@@ -1679,6 +1700,10 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.OK, itemResponse.StatusCode);
         Assert.Equal(HttpStatusCode.OK, definitionResponse.StatusCode);
         Assert.Equal(HttpStatusCode.OK, tracksResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, unresolvedFile.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, unresolvedStream.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, unresolvedUniversal.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, unresolvedPlayback.StatusCode);
         Assert.Equal(virtualId, item.RootElement.GetProperty("Id").GetString());
         Assert.Equal("local-song-a", definition.RootElement.GetProperty("ItemIds")[0].GetString());
         var actual = JsonNode.Parse(
@@ -1702,6 +1727,12 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal("media-original", actual["MediaSources"]![0]!["Id"]!.GetValue<string>());
         Assert.Equal("artist-original", actual["ArtistItems"]![0]!["Id"]!.GetValue<string>());
         Assert.Equal("artist-original", actual["AlbumArtists"]![0]!["Id"]!.GetValue<string>());
+        var unresolved = tracks.RootElement.GetProperty("Items")[1];
+        Assert.Equal("allstarr-unresolved-source-hash",
+            unresolved.GetProperty("Id").GetString());
+        Assert.Equal("None", unresolved.GetProperty("PlayAccess").GetString());
+        Assert.False(unresolved.GetProperty("CanDownload").GetBoolean());
+        Assert.Empty(unresolved.GetProperty("MediaSources").EnumerateArray());
         Assert.Equal(3, observed.Count(path => path == "/Users/Me?api_key=fixture-key"));
         var hydration = Assert.Single(observed, path =>
             path.StartsWith("/Items?", StringComparison.Ordinal));

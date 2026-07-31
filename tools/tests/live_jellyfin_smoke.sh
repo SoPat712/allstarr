@@ -892,7 +892,10 @@ if [[ -n "$virtual_playlist_id" ]]; then
              (.PlaylistItemId | nonempty) and
              (.Album | nonempty) and
              (.Artists | type == \"array\" and length > 0 and all(.[]; nonempty)) and
-             (if (.Id | startswith(\"ext-\"))
+             (if (.Id | startswith(\"allstarr-unresolved-\"))
+              then .PlayAccess == \"None\" and .CanDownload == false and
+                   ((.MediaSources // []) | length == 0)
+              elif (.Id | startswith(\"ext-\"))
               then ((.MediaSources // []) | length > 0)
               else ((.MediaSources // []) | length > 0) and
                    (.ProviderIds.AllstarrSource | nonempty)
@@ -901,8 +904,25 @@ if [[ -n "$virtual_playlist_id" ]]; then
     if curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
            "$virtual_items_url" -o "$virtual_items_file"; then
         matched_ids="$(jq -r '
-            [.Items[] | select(((.Id // "") | startswith("ext-")) | not) | .Id] |
+            [.Items[] |
+             select(((.Id // "") | startswith("ext-")) | not) |
+             select(((.Id // "") | startswith("allstarr-unresolved-")) | not) |
+             .Id] |
             unique | join(",")' "$virtual_items_file")"
+        unresolved_id="$(jq -r '
+            first(.Items[] |
+                select((.Id // "") | startswith("allstarr-unresolved-"))) |
+            .Id // empty' "$virtual_items_file")"
+        if [[ -n "$unresolved_id" ]]; then
+            check_code "unresolved playlist file safety" "404" GET \
+                "$ALLSTARR_BASE/Items/$unresolved_id/File?UserId=$best_user_id"
+            check_code "unresolved playlist stream safety" "404" GET \
+                "$ALLSTARR_BASE/Audio/$unresolved_id/stream?UserId=$best_user_id"
+            check_code "unresolved playlist universal safety" "404" GET \
+                "$ALLSTARR_BASE/Audio/$unresolved_id/universal?UserId=$best_user_id"
+            check_code "unresolved playlist playback safety" "404" GET \
+                "$ALLSTARR_BASE/Items/$unresolved_id/PlaybackInfo?UserId=$best_user_id"
+        fi
         if [[ -n "$matched_ids" ]] &&
            curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" --get \
                --data-urlencode "Ids=$matched_ids" \
@@ -933,7 +953,9 @@ if [[ -n "$virtual_playlist_id" ]]; then
                      else . end);
                 ($source[0].Items |
                     map({key: .Id, value: (. | source_item)}) | from_entries) as $originals |
-                [.Items[] | select(((.Id // "") | startswith("ext-")) | not)] as $injected |
+                [.Items[] |
+                 select(((.Id // "") | startswith("ext-")) | not) |
+                 select(((.Id // "") | startswith("allstarr-unresolved-")) | not)] as $injected |
                 ($injected | length > 0) and
                 all($injected[]; $originals[.Id] != null and
                     ((. | injected_item) == $originals[.Id]))

@@ -349,7 +349,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             reconciliation.Tentative +
             reconciliation.Rejected +
             reconciliation.Unresolved);
-        Assert.Equal(reconciliation.PlayableRoutes, reconciliation.ProtocolVisibleRows);
+        Assert.Equal(reconciliation.PublishedRows, reconciliation.ProtocolVisibleRows);
     }
 
     [Fact]
@@ -1165,14 +1165,20 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         var virtualPlaylist = await new PlaylistVirtualizationService(
                 _factory, new DurablePlaylistProjectionReader(_factory, gateway.Object))
             .ReadAsync(Context(), PlaylistVirtualizationService.CreateProtocolId(_link));
-        Assert.Equal(projection.PlayableCount, virtualPlaylist!.Tracks.Count);
+        Assert.Equal(projection.TotalCount, virtualPlaylist!.Tracks.Count);
         var localTrack = virtualPlaylist.Tracks.Single(item => item.SourcePosition == 0);
         var externalTrack = virtualPlaylist.Tracks.Single(item => item.SourcePosition == 1);
+        var unresolvedTrack = virtualPlaylist.Tracks.Single(item => item.SourcePosition == 2);
+        Assert.Equal(TrackRouteKind.Local, localTrack.RouteKind);
         Assert.Equal("fixture", localTrack.SourceProviderId);
         Assert.Null(localTrack.SourceExternalId);
+        Assert.Equal(TrackRouteKind.External, externalTrack.RouteKind);
         Assert.Equal("ext-deezer-song-deezer-external", externalTrack.BackendItemId);
         Assert.Equal("deezer", externalTrack.SourceProviderId);
         Assert.Equal("deezer-external", externalTrack.SourceExternalId);
+        Assert.Equal(TrackRouteKind.Unresolved, unresolvedTrack.RouteKind);
+        Assert.StartsWith(PlaylistVirtualizationService.UnresolvedItemPrefix,
+            unresolvedTrack.BackendItemId, StringComparison.Ordinal);
     }
 
     [Fact]

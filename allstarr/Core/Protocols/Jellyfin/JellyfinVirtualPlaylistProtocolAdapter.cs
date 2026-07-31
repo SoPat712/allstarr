@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
@@ -182,7 +183,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         var items = tracks.Select(track =>
         {
             JsonObject item;
-            if (track.SourceExternalId == null && originals != null)
+            if (track.RouteKind == TrackRouteKind.Local && originals != null)
             {
                 if (!originals.TryGetValue(track.BackendItemId, out var original))
                     throw new InvalidOperationException(
@@ -190,7 +191,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                 item = (JsonObject)original.DeepClone();
                 AddSourceLabels(item, track.SourceProviderId);
             }
-            else if (track.SourceExternalId != null && responseBuilder != null)
+            else if (track.RouteKind == TrackRouteKind.External && responseBuilder != null)
             {
                 item = JsonSerializer.SerializeToNode(responseBuilder.ConvertSongToJellyfinItem(new Song
                 {
@@ -211,6 +212,17 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             else
             {
                 item = JsonSerializer.SerializeToNode(FallbackItem(track))!.AsObject();
+                AddSourceLabels(item, track.SourceProviderId);
+                if (track.RouteKind == TrackRouteKind.Unresolved)
+                {
+                    item["LocationType"] = "Virtual";
+                    item["PlayAccess"] = "None";
+                    item["CanDownload"] = false;
+                    item["CanDelete"] = false;
+                    item["SupportsSync"] = false;
+                    item["HasLyrics"] = false;
+                    item["MediaSources"] = new JsonArray();
+                }
             }
 
             item["ParentId"] = playlist.ProtocolId;
@@ -232,7 +244,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         IQueryCollection? clientQuery)
     {
         var ids = tracks
-            .Where(track => track.SourceExternalId == null)
+            .Where(track => track.RouteKind == TrackRouteKind.Local)
             .Select(track => track.BackendItemId)
             .Distinct(StringComparer.Ordinal)
             .ToArray();

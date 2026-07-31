@@ -1,4 +1,5 @@
 using System.Xml.Linq;
+using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
 using allstarr.Core.Storage;
 using Microsoft.AspNetCore.Mvc;
@@ -80,6 +81,9 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
     {
         var playlist = await playlists.ReadAsync(context, id, cancellationToken);
         if (playlist == null) return null;
+        var tracks = playlist.Tracks
+            .Where(track => track.RouteKind != TrackRouteKind.Unresolved)
+            .ToArray();
         if (format.Equals("json", StringComparison.OrdinalIgnoreCase))
         {
             return new JsonResult(new Dictionary<string, object?>
@@ -95,12 +99,12 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
                         ["comment"] = playlist.Description,
                         ["owner"] = "allstarr",
                         ["public"] = false,
-                        ["songCount"] = playlist.Tracks.Count,
-                        ["duration"] = playlist.Tracks.All(track => track.DurationMilliseconds.HasValue)
-                            ? playlist.Tracks.Sum(track => track.DurationMilliseconds) / 1000
+                        ["songCount"] = tracks.Length,
+                        ["duration"] = tracks.All(track => track.DurationMilliseconds.HasValue)
+                            ? tracks.Sum(track => track.DurationMilliseconds) / 1000
                             : null,
                         ["coverArt"] = playlist.ArtworkReferenceKey,
-                        ["entry"] = playlist.Tracks.Select(ToJsonEntry).ToList()
+                        ["entry"] = tracks.Select(ToJsonEntry).ToList()
                     }
                 }
             });
@@ -110,12 +114,12 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         var element = new XElement(ns + "playlist",
             new XAttribute("id", playlist.ProtocolId), new XAttribute("name", playlist.Name),
             new XAttribute("owner", "allstarr"), new XAttribute("public", false),
-            new XAttribute("songCount", playlist.Tracks.Count));
-        if (playlist.Tracks.All(track => track.DurationMilliseconds.HasValue))
-            element.Add(new XAttribute("duration", playlist.Tracks.Sum(track => track.DurationMilliseconds)!.Value / 1000));
+            new XAttribute("songCount", tracks.Length));
+        if (tracks.All(track => track.DurationMilliseconds.HasValue))
+            element.Add(new XAttribute("duration", tracks.Sum(track => track.DurationMilliseconds)!.Value / 1000));
         if (playlist.Description != null) element.Add(new XAttribute("comment", playlist.Description));
         if (playlist.ArtworkReferenceKey != null) element.Add(new XAttribute("coverArt", playlist.ArtworkReferenceKey));
-        foreach (var track in playlist.Tracks)
+        foreach (var track in tracks)
             element.Add(new XElement(ns + "entry", ToXmlAttributes(track)));
         var document = new XDocument(new XElement(ns + "subsonic-response",
             new XAttribute("status", "ok"), new XAttribute("version", Version), element));
