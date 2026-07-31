@@ -52,19 +52,25 @@ public sealed class MultiProviderMetadataServiceTests
     [Fact]
     public async Task Provider_deadline_is_linked_to_the_underlying_operation()
     {
-        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellationObserved = false;
 
         await Assert.ThrowsAsync<TimeoutException>(() =>
             MultiProviderMetadataService.RunTimedAsync(
                 async token =>
                 {
-                    using var registration = token.Register(cancelled.SetResult);
-                    await Task.Delay(Timeout.InfiniteTimeSpan, token);
-                    return 1;
+                    try
+                    {
+                        await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                        return 1;
+                    }
+                    finally
+                    {
+                        cancellationObserved = token.IsCancellationRequested;
+                    }
                 },
                 TimeSpan.FromMilliseconds(25),
                 CancellationToken.None));
 
-        await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(cancellationObserved);
     }
 }

@@ -802,7 +802,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 It.IsAny<ProtocolExecutionContext>(), "Concurrent external", 60))
             .Returns(async () =>
             {
-                if (Interlocked.Increment(ref entered) == 8)
+                if (Interlocked.Increment(ref entered) == snapshotIds.Length)
                     release.SetResult();
                 await release.Task;
                 return
