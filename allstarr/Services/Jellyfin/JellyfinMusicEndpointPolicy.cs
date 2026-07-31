@@ -341,6 +341,7 @@ public static class JellyfinMusicEndpointPolicy
              path.Equals("playback/bitratetest", StringComparison.OrdinalIgnoreCase) ||
              path.Equals("library/mediafolders", StringComparison.OrdinalIgnoreCase) ||
              path.Equals("userviews", StringComparison.OrdinalIgnoreCase) ||
+             IsLegacyUserViews(path) ||
              path.Equals("userviews/groupingoptions", StringComparison.OrdinalIgnoreCase) ||
              path.Equals("items/root", StringComparison.OrdinalIgnoreCase) ||
              path.Equals("items/counts", StringComparison.OrdinalIgnoreCase)))
@@ -636,6 +637,14 @@ public static class JellyfinMusicEndpointPolicy
         var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         return segments.Length == 2 &&
                segments[0].Equals("users", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLegacyUserViews(string path)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length == 3 &&
+               segments[0].Equals("users", StringComparison.OrdinalIgnoreCase) &&
+               segments[2].Equals("views", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsSpecificGenre(string path)

@@ -47,7 +47,7 @@ public sealed class JellyfinInteractionProtocolAdapter : IJellyfinInteractionPro
             StatusCodes.Status200OK,
             "application/json",
             JsonSerializer.Serialize(
-                new JellyfinInstantMixResponse(items, items.Count),
+                new JellyfinInstantMixResponse(items, items.Count, 0),
                 SerializerOptions));
     }
 
@@ -55,5 +55,6 @@ public sealed class JellyfinInteractionProtocolAdapter : IJellyfinInteractionPro
 
     private sealed record JellyfinInstantMixResponse(
         IReadOnlyList<Dictionary<string, object?>> Items,
-        int TotalRecordCount);
+        int TotalRecordCount,
+        int StartIndex);
 }

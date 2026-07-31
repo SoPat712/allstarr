@@ -17,7 +17,7 @@ public static class CacheKeyBuilder
         $"negative:playback:metadata:v1:{Normalize(provider)}:{Digest(itemId.Trim())}";
 
     public static string BuildJellyfinItemTypeKey(string itemId) =>
-        $"jellyfin:item-type:v1:{Digest(itemId.Trim())}";
+        $"jellyfin:item-type:v2:{Digest(itemId.Trim())}";
 
     public static string BuildPlaybackSignalDedupeKey(
         string signalType,

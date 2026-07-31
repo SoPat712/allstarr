@@ -20,7 +20,9 @@ public sealed class JellyfinItemLyricsImageProtocolAdapterTests
         Assert.Equal("{\"IsFavorite\":true,\"ItemId\":\"fixture-item\",\"Key\":\"fixture-item\"}", favorite.Body);
         Assert.Equal(StatusCodes.Status204NoContent, adapter.ShapeCapabilitiesStatus(StatusCodes.Status200OK));
         Assert.Equal(StatusCodes.Status401Unauthorized, adapter.ShapeCapabilitiesStatus(StatusCodes.Status401Unauthorized));
-        Assert.Equal("{\"Items\":[{\"Id\":\"mix-1\"}],\"TotalRecordCount\":1}", mix.Body);
+        Assert.Equal(
+            "{\"Items\":[{\"Id\":\"mix-1\"}],\"TotalRecordCount\":1,\"StartIndex\":0}",
+            mix.Body);
         Assert.False(adapter.CanRunOptionalUserWork(null));
     }
 

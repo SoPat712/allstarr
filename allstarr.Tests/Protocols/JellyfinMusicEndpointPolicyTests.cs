@@ -22,6 +22,7 @@ public sealed class JellyfinMusicEndpointPolicyTests
     [InlineData("GET", "/Items/Filters")]
     [InlineData("GET", "/Genres")]
     [InlineData("GET", "/UserViews")]
+    [InlineData("GET", "/Users/user-id/Views")]
     [InlineData("GET", "/UserViews/GroupingOptions")]
     [InlineData("GET", "/Library/MediaFolders")]
     [InlineData("GET", "/Items/Root")]

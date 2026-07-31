@@ -26,6 +26,7 @@ public partial class JellyfinController
 
     [HttpGet("Library/MediaFolders", Order = 1)]
     [HttpGet("UserViews", Order = 1)]
+    [HttpGet("Users/{userId}/Views", Order = 1)]
     public async Task<IActionResult> GetMusicLibraryViews()
     {
         var endpoint = BuildCurrentEndpoint();

@@ -1134,9 +1134,69 @@ public sealed class ProtocolRouteFixtureTests
             "/Songs/ext-deezer-song-42/InstantMix?api_key=fixture-key&userId=spoofed-route-user");
         Assert.Equal(HttpStatusCode.OK, unresolvedResponse.StatusCode);
         Assert.Equal(
-            "{\"Items\":[],\"TotalRecordCount\":0}",
+            "{\"Items\":[],\"TotalRecordCount\":0,\"StartIndex\":0}",
             await unresolvedResponse.Content.ReadAsStringAsync());
         metadata.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task JellyfinExternalSimilar_UsesCompleteQueryResultEnvelope()
+    {
+        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        metadata.Setup(service => service.GetSongAsync(
+                "deezer", "42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Song
+            {
+                Id = "ext-deezer-song-42",
+                ExternalProvider = "deezer",
+                ExternalId = "42",
+                Title = "Seed",
+                Artist = "Fixture Artist"
+            });
+        metadata.Setup(service => service.SearchSongsAsync(
+                "Fixture Artist", 2, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new Song
+                {
+                    Id = "ext-deezer-song-42",
+                    ExternalProvider = "deezer",
+                    ExternalId = "42",
+                    Title = "Seed",
+                    Artist = "Fixture Artist"
+                },
+                new Song
+                {
+                    Id = "ext-deezer-song-43",
+                    ExternalProvider = "deezer",
+                    ExternalId = "43",
+                    Title = "Related",
+                    Artist = "Fixture Artist"
+                }
+            ]);
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request => request.RequestUri!.AbsolutePath == "/Users/Me"
+                ? Json(StatusCodes.Status200OK, """{"Id":"user-1"}""")
+                : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
+            services =>
+            {
+                services.RemoveAll<IMusicMetadataService>();
+                services.AddSingleton(metadata.Object);
+                services.RemoveAll<IProtocolProviderGateway>();
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/Items/ext-deezer-song-42/Similar?Limit=2&api_key=fixture-key");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(0, body.RootElement.GetProperty("StartIndex").GetInt32());
+        Assert.Equal(1, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Equal(
+            "ext-deezer-song-43",
+            body.RootElement.GetProperty("Items")[0].GetProperty("Id").GetString());
+        metadata.VerifyAll();
     }
 
     [Theory]
@@ -1231,6 +1291,7 @@ public sealed class ProtocolRouteFixtureTests
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(0, body.RootElement.GetProperty("StartIndex").GetInt32());
         Assert.Equal(2, body.RootElement.GetProperty("Items").GetArrayLength());
         Assert.Equal(
             ["mix-1", "mix-2"],

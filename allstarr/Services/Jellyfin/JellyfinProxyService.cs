@@ -761,16 +761,20 @@ public class JellyfinProxyService
     /// </summary>
     public async Task<(JsonDocument? Body, int StatusCode)> GetItemAsync(string itemId, IHeaderDictionary? clientHeaders = null)
     {
-        var queryParams = new Dictionary<string, string>();
+        var queryParams = new Dictionary<string, string>
+        {
+            ["ids"] = itemId,
+            ["limit"] = "1"
+        };
         IHeaderDictionary? effectiveHeaders = clientHeaders;
+        var usesInternalCredential = effectiveHeaders == null || effectiveHeaders.Count == 0;
 
-        if (!string.IsNullOrEmpty(_settings.UserId))
+        if (usesInternalCredential && !string.IsNullOrEmpty(_settings.UserId))
         {
             queryParams["userId"] = _settings.UserId;
         }
 
-        if ((effectiveHeaders == null || effectiveHeaders.Count == 0) &&
-            !string.IsNullOrWhiteSpace(_settings.ApiKey))
+        if (usesInternalCredential && !string.IsNullOrWhiteSpace(_settings.ApiKey))
         {
             effectiveHeaders = new HeaderDictionary
             {
@@ -778,7 +782,17 @@ public class JellyfinProxyService
             };
         }
 
-        return await GetJsonAsync($"Items/{itemId}", queryParams, effectiveHeaders);
+        var (body, statusCode) = await GetJsonAsync("Items", queryParams, effectiveHeaders);
+        using (body)
+        {
+            if (statusCode != StatusCodes.Status200OK || body == null ||
+                !body.RootElement.TryGetProperty("Items", out var items) ||
+                items.ValueKind != JsonValueKind.Array ||
+                items.GetArrayLength() == 0)
+                return (null, statusCode);
+
+            return (JsonDocument.Parse(items[0].GetRawText()), statusCode);
+        }
     }
 
     /// <summary>

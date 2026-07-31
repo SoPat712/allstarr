@@ -107,6 +107,10 @@ public class MultiProviderDownloadService : IDownloadService
                     return stream;
                 }
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Streaming failed using provider {Provider}", targetProvider);

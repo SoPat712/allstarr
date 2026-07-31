@@ -1190,7 +1190,8 @@ public partial class JellyfinController : ControllerBase
                 return _responseBuilder.CreateJsonResponse(new
                 {
                     Items = Array.Empty<object>(),
-                    TotalRecordCount = 0
+                    TotalRecordCount = 0,
+                    StartIndex = 0
                 });
             }
 
@@ -1215,7 +1216,8 @@ public partial class JellyfinController : ControllerBase
                     return _responseBuilder.CreateJsonResponse(new
                     {
                         Items = recommendedItems,
-                        TotalRecordCount = recommendedItems.Count
+                        TotalRecordCount = recommendedItems.Count,
+                        StartIndex = 0
                     });
                 }
 
@@ -1225,7 +1227,8 @@ public partial class JellyfinController : ControllerBase
                     return _responseBuilder.CreateJsonResponse(new
                     {
                         Items = Array.Empty<object>(),
-                        TotalRecordCount = 0
+                        TotalRecordCount = 0,
+                        StartIndex = 0
                     });
                 }
 
@@ -1236,7 +1239,8 @@ public partial class JellyfinController : ControllerBase
                     return _responseBuilder.CreateJsonResponse(new
                     {
                         Items = Array.Empty<object>(),
-                        TotalRecordCount = 0
+                        TotalRecordCount = 0,
+                        StartIndex = 0
                     });
                 }
 
@@ -1255,7 +1259,8 @@ public partial class JellyfinController : ControllerBase
                 return _responseBuilder.CreateJsonResponse(new
                 {
                     Items = similarSongs,
-                    TotalRecordCount = similarSongs.Count
+                    TotalRecordCount = similarSongs.Count,
+                    StartIndex = 0
                 });
             }
             catch (Exception ex)
@@ -1264,7 +1269,8 @@ public partial class JellyfinController : ControllerBase
                 return _responseBuilder.CreateJsonResponse(new
                 {
                     Items = Array.Empty<object>(),
-                    TotalRecordCount = 0
+                    TotalRecordCount = 0,
+                    StartIndex = 0
                 });
             }
         }

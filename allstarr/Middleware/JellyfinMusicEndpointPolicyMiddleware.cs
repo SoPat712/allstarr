@@ -97,7 +97,10 @@ public sealed class JellyfinMusicEndpointPolicyMiddleware(
             var result = new ItemTypeCacheEntry(
                 JellyfinMusicEndpointPolicy.IsMusicItemType(itemType),
                 itemType);
-            await cache.SetAsync(cacheKey, result, ItemTypeCacheDuration);
+            if (itemType != null)
+            {
+                await cache.SetAsync(cacheKey, result, ItemTypeCacheDuration);
+            }
             return result;
         }
     }

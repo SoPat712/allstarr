@@ -269,7 +269,7 @@ public class JellyfinProxyServiceTests
     {
         // Arrange
         HttpRequestMessage? captured = null;
-        var itemJson = "{\"Id\":\"abc-123\",\"Name\":\"My Song\",\"Type\":\"Audio\"}";
+        var itemJson = "{\"Items\":[{\"Id\":\"abc-123\",\"Name\":\"My Song\",\"Type\":\"Audio\"}],\"TotalRecordCount\":1}";
         _mockHandler.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
                 ItExpr.IsAny<HttpRequestMessage>(),
@@ -285,11 +285,42 @@ public class JellyfinProxyServiceTests
 
         // Assert
         Assert.NotNull(captured);
-        Assert.Contains("/Items/abc-123", captured!.RequestUri!.ToString());
+        Assert.Contains("/Items?", captured!.RequestUri!.ToString());
+        Assert.Contains("ids=abc-123", captured.RequestUri.ToString());
+        Assert.Contains("limit=1", captured.RequestUri.ToString());
         Assert.Contains("userId=user-guid-here", captured.RequestUri.ToString());
         Assert.Equal("test-api-key-12345", captured.Headers.GetValues("X-Emby-Token").Single());
         Assert.NotNull(body);
+        Assert.Equal("abc-123", body.RootElement.GetProperty("Id").GetString());
         Assert.Equal(200, statusCode);
+    }
+
+    [Fact]
+    public async Task GetItemAsync_WithClientTokenPreservesCallerScope()
+    {
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((request, _) => captured = request)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "{\"Items\":[{\"Id\":\"abc-123\",\"Type\":\"Audio\"}],\"TotalRecordCount\":1}")
+            });
+        var headers = new HeaderDictionary
+        {
+            ["X-Emby-Token"] = "caller-token"
+        };
+
+        var (body, statusCode) = await _service.GetItemAsync("abc-123", headers);
+
+        Assert.Equal(200, statusCode);
+        Assert.NotNull(body);
+        Assert.NotNull(captured);
+        Assert.DoesNotContain("userId=", captured!.RequestUri!.Query);
+        Assert.Equal("caller-token", captured.Headers.GetValues("X-Emby-Token").Single());
     }
 
     [Fact]
