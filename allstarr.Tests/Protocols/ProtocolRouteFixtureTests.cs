@@ -1804,7 +1804,6 @@ public sealed class ProtocolRouteFixtureTests
               "Name": "Original Track",
               "ServerId": "original-server",
               "Id": "local-song-a",
-              "PlaylistItemId": "native-entry",
               "ParentId": "original-parent",
               "AlbumId": "album-original",
               "Album": "Original Album",
@@ -1931,20 +1930,16 @@ public sealed class ProtocolRouteFixtureTests
         var actual = JsonNode.Parse(
             tracks.RootElement.GetProperty("Items")[0].GetRawText())!.AsObject();
         var expected = JsonNode.Parse(originalItem)!.AsObject();
-        expected["Name"] = "Original Track [SP]";
-        expected["Album"] = "Original Album [SP]";
-        expected["AlbumArtist"] = "Original Artist [SP]";
-        expected["Artists"]![0] = "Original Artist [SP]";
-        expected["ArtistItems"]![0]!["Name"] = "Original Artist [SP]";
-        expected["AlbumArtists"]![0]!["Name"] = "Original Artist [SP]";
-        expected["ProviderIds"]!["AllstarrSource"] = "spotify";
-        expected["ParentId"] = virtualId;
-        expected["PlaylistItemId"] = $"{virtualId}-0";
+        expected["PlaylistItemId"] = "local-song-a";
 
         Assert.True(
             JsonNode.DeepEquals(expected, actual),
             $"Expected full source DTO with playlist overlays.\nExpected: {expected}\nActual: {actual}");
+        Assert.Equal("Original Track", actual["Name"]!.GetValue<string>());
+        Assert.Equal("original-parent", actual["ParentId"]!.GetValue<string>());
+        Assert.False(actual["ProviderIds"]!.AsObject().ContainsKey("AllstarrSource"));
         Assert.Equal("local-song-a", actual["Id"]!.GetValue<string>());
+        Assert.Equal("local-song-a", actual["PlaylistItemId"]!.GetValue<string>());
         Assert.Equal("album-original", actual["AlbumId"]!.GetValue<string>());
         Assert.Equal("media-original", actual["MediaSources"]![0]!["Id"]!.GetValue<string>());
         Assert.Equal("artist-original", actual["ArtistItems"]![0]!["Id"]!.GetValue<string>());
