@@ -175,6 +175,10 @@ public class JellyfinResponseBuilderTests
     [InlineData("qobuz", "[Q]")]
     [InlineData("apple-download", "[AM]")]
     [InlineData("applemusic", "[AM]")]
+    [InlineData("apple-music", "[AM]")]
+    [InlineData("apple-musickit", "[AM]")]
+    [InlineData("spotify", "[SP]")]
+    [InlineData("tidal", "[T]")]
     [InlineData("squidwtf", "[S]")]
     public void ConvertSongToJellyfinItem_ExternalSong_UsesProviderSourceLabel(string provider, string label)
     {

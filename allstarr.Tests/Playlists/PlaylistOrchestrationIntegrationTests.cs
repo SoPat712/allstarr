@@ -1166,8 +1166,13 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 _factory, new DurablePlaylistProjectionReader(_factory, gateway.Object))
             .ReadAsync(Context(), PlaylistVirtualizationService.CreateProtocolId(_link));
         Assert.Equal(projection.PlayableCount, virtualPlaylist!.Tracks.Count);
-        Assert.Equal("ext-deezer-song-deezer-external",
-            virtualPlaylist.Tracks.Single(item => item.SourcePosition == 1).BackendItemId);
+        var localTrack = virtualPlaylist.Tracks.Single(item => item.SourcePosition == 0);
+        var externalTrack = virtualPlaylist.Tracks.Single(item => item.SourcePosition == 1);
+        Assert.Equal("fixture", localTrack.SourceProviderId);
+        Assert.Null(localTrack.SourceExternalId);
+        Assert.Equal("ext-deezer-song-deezer-external", externalTrack.BackendItemId);
+        Assert.Equal("deezer", externalTrack.SourceProviderId);
+        Assert.Equal("deezer-external", externalTrack.SourceExternalId);
     }
 
     [Fact]

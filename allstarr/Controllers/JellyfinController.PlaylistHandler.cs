@@ -81,7 +81,8 @@ public partial class JellyfinController
             if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(playlistId))
             {
                 return await _virtualPlaylistProtocolAdapter.ReadItemsAsync(
-                           HttpContext.RequireProtocolExecutionContext(), playlistId, HttpContext.RequestAborted)
+                           HttpContext.RequireProtocolExecutionContext(), playlistId,
+                           Request.Headers, Request.Query, HttpContext.RequestAborted)
                        ?? _responseBuilder.CreateError(404, "Playlist not found");
             }
 

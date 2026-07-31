@@ -573,7 +573,7 @@ public class JellyfinResponseBuilder
                provider.Equals("squidwtf", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string AppendExternalSourceLabel(string value, string? provider)
+    internal static string AppendExternalSourceLabel(string value, string? provider)
     {
         if (string.IsNullOrEmpty(value))
         {
@@ -603,6 +603,9 @@ public class JellyfinResponseBuilder
             "deezer" => "D",
             "qobuz" => "Q",
             "applemusic" or "apple-download" => "AM",
+            "apple-music" or "apple-musickit" => "AM",
+            "spotify" => "SP",
+            "tidal" => "T",
             "squidwtf" => "S",
             _ => "EXT"
         };

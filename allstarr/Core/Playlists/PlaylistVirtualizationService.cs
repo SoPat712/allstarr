@@ -14,7 +14,9 @@ public sealed record VirtualPlaylistTrack(
     string? AlbumArtist,
     long? DurationMilliseconds,
     string? CoverArtReference,
-    TrackMatchState MatchState);
+    TrackMatchState MatchState,
+    string? SourceProviderId = null,
+    string? SourceExternalId = null);
 
 public sealed record VirtualPlaylistReadModel(
     string ProtocolId,
@@ -149,7 +151,7 @@ public sealed class PlaylistVirtualizationService(
                            backendIds.Contains(item.BackendItemId))
             .ToDictionaryAsync(item => item.BackendItemId, StringComparer.Ordinal, cancellationToken);
         var tracks = projection.Entries
-            .Select(item => ToVirtualTrack(item, libraryTracks))
+            .Select(item => ToVirtualTrack(item, libraryTracks, link.SourceProviderId))
             .Where(item => item != null)
             .Select(item => item!)
             .ToList();
@@ -179,19 +181,22 @@ public sealed class PlaylistVirtualizationService(
 
     private static VirtualPlaylistTrack? ToVirtualTrack(
         DurablePlaylistEntryProjection entry,
-        IReadOnlyDictionary<string, LibraryTrackRecord> libraryTracks)
+        IReadOnlyDictionary<string, LibraryTrackRecord> libraryTracks,
+        string sourceProviderId)
     {
         if (entry.BackendItemId != null &&
             libraryTracks.TryGetValue(entry.BackendItemId, out var local))
             return new(entry.Position, local.BackendItemId, local.Title, local.Artist,
                 local.Album, local.AlbumArtist, local.DurationMilliseconds,
-                local.CoverArtReference, entry.MatchState ?? TrackMatchState.Unresolved);
+                local.CoverArtReference, entry.MatchState ?? TrackMatchState.Unresolved,
+                sourceProviderId, null);
         var artist = entry.Artists.FirstOrDefault();
         return entry.RouteKind == "external" && entry.RouteProviderId != null &&
                !string.IsNullOrWhiteSpace(artist)
             ? new(entry.Position, $"ext-{entry.RouteProviderId}-song-{entry.ExternalId}",
                 entry.Title, artist, entry.Album, null, entry.DurationMilliseconds, null,
-                entry.MatchState ?? TrackMatchState.Unresolved)
+                entry.MatchState ?? TrackMatchState.Unresolved,
+                entry.RouteProviderId, entry.ExternalId)
             : null;
     }
 }

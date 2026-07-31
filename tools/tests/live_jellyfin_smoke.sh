@@ -38,6 +38,8 @@ direct_media_file="$(mktemp)"
 allstarr_media_file="$(mktemp)"
 direct_headers_file="$(mktemp)"
 allstarr_headers_file="$(mktemp)"
+virtual_items_file="$(mktemp)"
+direct_virtual_items_file="$(mktemp)"
 stateful_playlist_id=""
 stateful_playlist_name=""
 playlist_identity_matches() {
@@ -62,7 +64,7 @@ cleanup() {
     rm -f "$users_file" "$items_file" "$response_file" "$timings_file" \
         "$direct_shape_file" "$allstarr_shape_file" "$metrics_file" \
         "$direct_media_file" "$allstarr_media_file" "$direct_headers_file" \
-        "$allstarr_headers_file"
+        "$allstarr_headers_file" "$virtual_items_file" "$direct_virtual_items_file"
 }
 trap cleanup EXIT
 
@@ -95,6 +97,7 @@ done < <(jq -r '.[].Id' "$users_file")
 auth=(-H "X-Emby-Authorization: MediaBrowser Client=\"AllstarrLiveSmoke\", Device=\"Qualification\", DeviceId=\"$run_id\", Version=\"1\", UserId=\"$best_user_id\", Token=\"$JELLYFIN_TOKEN\"" \
       -H "User-Agent: AllstarrLiveSmoke/$run_id")
 
+full_item_fields="AirTime,CanDelete,CanDownload,ChannelInfo,Chapters,Trickplay,ChildCount,CumulativeRunTimeTicks,CustomRating,DateCreated,DateLastMediaAdded,DisplayPreferencesId,Etag,ExternalUrls,Genres,ItemCounts,MediaSourceCount,MediaSources,OriginalTitle,Overview,ParentId,Path,People,PlayAccess,ProductionLocations,ProviderIds,PrimaryImageAspectRatio,RecursiveItemCount,Settings,SeriesStudio,SortName,SpecialEpisodeNumbers,Studios,Taglines,Tags,RemoteTrailers,MediaStreams,SeasonUserData,DateLastRefreshed,DateLastSaved,RefreshState,ChannelImage,EnableMediaSourceDisplay,Width,Height,ExtraIds,LocalTrailerCount,IsHD,SpecialFeatureCount"
 items_query="Recursive=true&IncludeItemTypes=Audio&Limit=100&Fields=PrimaryImageAspectRatio%2CProviderIds%2CMediaSources%2CAlbumId%2CArtistItems%2CGenres"
 curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
     "$DIRECT_BASE/Users/$best_user_id/Items?$items_query" -o "$items_file"
@@ -877,8 +880,9 @@ else
     echo "external playlist checks skipped=no provider-backed playlist result"
 fi
 if [[ -n "$virtual_playlist_id" ]]; then
+    virtual_items_url="$ALLSTARR_BASE/Playlists/$virtual_playlist_id/Items?UserId=$best_user_id&StartIndex=0&Limit=100&Fields=$full_item_fields"
     check_json "virtual injected entries/index data" \
-        "$ALLSTARR_BASE/Playlists/$virtual_playlist_id/Items?UserId=$best_user_id&Limit=100" \
+        "$virtual_items_url" \
         "$item_contract
          (.Items | type == \"array\" and length > 0) and
          (.TotalRecordCount >= (.Items | length)) and
@@ -886,10 +890,69 @@ if [[ -n "$virtual_playlist_id" ]]; then
              client_item and
              .ParentId == \$playlist_id and
              (.PlaylistItemId | nonempty) and
-             ((.Id | startswith(\"ext-\")) | not) and
              (.Album | nonempty) and
-             (.Artists | type == \"array\" and length > 0 and all(.[]; nonempty)))" \
+             (.Artists | type == \"array\" and length > 0 and all(.[]; nonempty)) and
+             (if (.Id | startswith(\"ext-\"))
+              then ((.MediaSources // []) | length > 0)
+              else ((.MediaSources // []) | length > 0) and
+                   (.ProviderIds.AllstarrSource | nonempty)
+              end))" \
         --arg playlist_id "$virtual_playlist_id"
+    if curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
+           "$virtual_items_url" -o "$virtual_items_file"; then
+        matched_ids="$(jq -r '
+            [.Items[] | select(((.Id // "") | startswith("ext-")) | not) | .Id] |
+            unique | join(",")' "$virtual_items_file")"
+        if [[ -n "$matched_ids" ]] &&
+           curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" --get \
+               --data-urlencode "Ids=$matched_ids" \
+               --data-urlencode "UserId=$best_user_id" \
+               --data-urlencode "Recursive=true" \
+               --data-urlencode "EnableImages=true" \
+               --data-urlencode "EnableUserData=true" \
+               --data-urlencode "Fields=$full_item_fields" \
+               --data-urlencode "Limit=100" \
+               "$DIRECT_BASE/Items" -o "$direct_virtual_items_file"; then
+            checks=$((checks + 1))
+            if jq -e --slurpfile source "$direct_virtual_items_file" '
+                def unlabel:
+                    if type == "string" then sub(" \\[[A-Z]+\\]$"; "") else . end;
+                def source_item:
+                    del(.ParentId, .PlaylistItemId, .ProviderIds.AllstarrSource);
+                def injected_item:
+                    del(.ParentId, .PlaylistItemId, .ProviderIds.AllstarrSource) |
+                    (if .Name? then .Name |= unlabel else . end) |
+                    (if .Album? then .Album |= unlabel else . end) |
+                    (if .AlbumArtist? then .AlbumArtist |= unlabel else . end) |
+                    (if .Artists? then .Artists |= map(unlabel) else . end) |
+                    (if .ArtistItems? then
+                        .ArtistItems |= map(if .Name? then .Name |= unlabel else . end)
+                     else . end) |
+                    (if .AlbumArtists? then
+                        .AlbumArtists |= map(if .Name? then .Name |= unlabel else . end)
+                     else . end);
+                ($source[0].Items |
+                    map({key: .Id, value: (. | source_item)}) | from_entries) as $originals |
+                [.Items[] | select(((.Id // "") | startswith("ext-")) | not)] as $injected |
+                ($injected | length > 0) and
+                all($injected[]; $originals[.Id] != null and
+                    ((. | injected_item) == $originals[.Id]))
+                ' "$virtual_items_file" >/dev/null; then
+                printf 'PASS %-34s exact full-object parity\n' \
+                    "virtual matched source DTO"
+            else
+                printf 'FAIL %-34s dropped-or-changed-field\n' \
+                    "virtual matched source DTO"
+                failures=$((failures + 1))
+            fi
+        else
+            echo "BLOCKED virtual-matched-full-dto=no matched Jellyfin entries or source fetch"
+        fi
+    else
+        checks=$((checks + 1))
+        failures=$((failures + 1))
+        echo "FAIL virtual matched source DTO fetch"
+    fi
     check_json "virtual playlist definition" \
         "$ALLSTARR_BASE/Playlists/$virtual_playlist_id?UserId=$best_user_id" \
         '(.Shares | type == "array") and (.ItemIds | type == "array") and
@@ -932,6 +995,8 @@ if [[ -n "$virtual_playlist_id" ]]; then
             echo "declared-diff native-vs-virtual-playlist-item unavailable"
         fi
     fi
+else
+    echo "BLOCKED virtual-playlist-live=no user-bound Jellyfin token or visible injected playlist"
 fi
 measure "direct playlist-list" "$DIRECT_BASE/Users/$best_user_id/Items?$playlist_query"
 measure "allstarr playlist-list" "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query"

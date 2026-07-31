@@ -1,7 +1,12 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using allstarr.Core.Playlists;
 using allstarr.Core.Storage;
+using allstarr.Models.Domain;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
+using allstarr.Services.Jellyfin;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -58,8 +63,20 @@ public sealed class JellyfinPlaylistMutationResolver(
 public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     IPlaylistVirtualizationService playlists,
     IJellyfinPlaylistMutationResolver mutationResolver,
-    IOptions<JellyfinSettings>? settings = null)
+    IOptions<JellyfinSettings>? settings = null,
+    JellyfinProxyService? proxyService = null,
+    JellyfinResponseBuilder? responseBuilder = null)
 {
+    private const string FullItemFields =
+        "AirTime,CanDelete,CanDownload,ChannelInfo,Chapters,Trickplay,ChildCount," +
+        "CumulativeRunTimeTicks,CustomRating,DateCreated,DateLastMediaAdded,DisplayPreferencesId," +
+        "Etag,ExternalUrls,Genres,ItemCounts,MediaSourceCount,MediaSources,OriginalTitle,Overview," +
+        "ParentId,Path,People,PlayAccess,ProductionLocations,ProviderIds,PrimaryImageAspectRatio," +
+        "RecursiveItemCount,Settings,SeriesStudio,SortName,SpecialEpisodeNumbers,Studios,Taglines," +
+        "Tags,RemoteTrailers,MediaStreams,SeasonUserData,DateLastRefreshed,DateLastSaved,RefreshState," +
+        "ChannelImage,EnableMediaSourceDisplay,Width,Height,ExtraIds,LocalTrailerCount,IsHD," +
+        "SpecialFeatureCount";
+
     private readonly string serverId = string.IsNullOrWhiteSpace(settings?.Value.DeviceId)
         ? "allstarrrr-proxy"
         : settings.Value.DeviceId;
@@ -142,35 +159,171 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             }
         };
 
+    public Task<IActionResult?> ReadItemsAsync(
+        ProtocolExecutionContext context, string id, CancellationToken cancellationToken) =>
+        ReadItemsAsync(context, id, null, null, cancellationToken);
+
     public async Task<IActionResult?> ReadItemsAsync(
-        ProtocolExecutionContext context, string id, CancellationToken cancellationToken)
+        ProtocolExecutionContext context,
+        string id,
+        IHeaderDictionary? clientHeaders,
+        IQueryCollection? clientQuery,
+        CancellationToken cancellationToken)
     {
         var playlist = await playlists.ReadAsync(context, id, cancellationToken);
         if (playlist == null) return null;
-        var items = playlist.Tracks.Select(track => new Dictionary<string, object?>
+
+        var startIndex = QueryInt(clientQuery, "StartIndex", 0);
+        var limit = QueryInt(clientQuery, "Limit", int.MaxValue);
+        var tracks = playlist.Tracks.Skip(startIndex).Take(limit).ToArray();
+        var originals = proxyService == null
+            ? null
+            : await ReadOriginalItemsAsync(context, tracks, clientHeaders, clientQuery);
+        var items = tracks.Select(track =>
         {
-            ["Name"] = track.Title,
-            ["ServerId"] = serverId,
-            ["Id"] = track.BackendItemId,
-            ["PlaylistItemId"] = $"{playlist.ProtocolId}-{track.SourcePosition}",
-            ["ParentId"] = playlist.ProtocolId,
-            ["AlbumId"] = playlist.ProtocolId,
-            ["Album"] = track.Album,
-            ["AlbumArtist"] = track.AlbumArtist,
-            ["Artists"] = new[] { track.Artist },
-            ["RunTimeTicks"] = track.DurationMilliseconds * TimeSpan.TicksPerMillisecond,
-            ["IndexNumber"] = track.SourcePosition + 1,
-            ["IsFolder"] = false,
-            ["Type"] = "Audio",
-            ["MediaType"] = "Audio",
-            ["LocationType"] = "FileSystem",
-            ["UserData"] = UserData(track.BackendItemId),
-            ["ImageTags"] = track.CoverArtReference == null
-                ? new Dictionary<string, string>()
-                : new Dictionary<string, string> { ["Primary"] = track.CoverArtReference }
-        }).ToList();
-        return new JsonResult(new { Items = items, TotalRecordCount = items.Count, StartIndex = 0 });
+            JsonObject item;
+            if (track.SourceExternalId == null && originals != null)
+            {
+                if (!originals.TryGetValue(track.BackendItemId, out var original))
+                    throw new InvalidOperationException(
+                        $"Jellyfin did not return matched playlist item '{track.BackendItemId}'.");
+                item = (JsonObject)original.DeepClone();
+                AddSourceLabels(item, track.SourceProviderId);
+            }
+            else if (track.SourceExternalId != null && responseBuilder != null)
+            {
+                item = JsonSerializer.SerializeToNode(responseBuilder.ConvertSongToJellyfinItem(new Song
+                {
+                    Id = track.BackendItemId,
+                    Title = track.Title,
+                    Artist = track.Artist,
+                    Artists = [track.Artist],
+                    Album = track.Album ?? string.Empty,
+                    AlbumArtist = track.AlbumArtist,
+                    Duration = track.DurationMilliseconds is { } milliseconds
+                        ? checked((int)(milliseconds / 1000))
+                        : null,
+                    IsLocal = false,
+                    ExternalProvider = track.SourceProviderId,
+                    ExternalId = track.SourceExternalId
+                }))!.AsObject();
+            }
+            else
+            {
+                item = JsonSerializer.SerializeToNode(FallbackItem(track))!.AsObject();
+            }
+
+            item["ParentId"] = playlist.ProtocolId;
+            item["PlaylistItemId"] = $"{playlist.ProtocolId}-{track.SourcePosition}";
+            return item;
+        }).ToArray();
+        return new JsonResult(new
+        {
+            Items = items,
+            TotalRecordCount = playlist.Tracks.Count,
+            StartIndex = startIndex
+        });
     }
+
+    private async Task<IReadOnlyDictionary<string, JsonObject>> ReadOriginalItemsAsync(
+        ProtocolExecutionContext context,
+        IReadOnlyList<VirtualPlaylistTrack> tracks,
+        IHeaderDictionary? clientHeaders,
+        IQueryCollection? clientQuery)
+    {
+        var ids = tracks
+            .Where(track => track.SourceExternalId == null)
+            .Select(track => track.BackendItemId)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (ids.Length == 0) return new Dictionary<string, JsonObject>();
+
+        var batches = await Task.WhenAll(ids.Chunk(100).Select(async batch =>
+        {
+            var query = new Dictionary<string, string>
+            {
+                ["Ids"] = string.Join(',', batch),
+                ["UserId"] = context.VerifiedBackendPrincipalId,
+                ["Recursive"] = "true",
+                ["EnableImages"] = "true",
+                ["EnableUserData"] = "true",
+                ["Fields"] = FullItemFields,
+                ["Limit"] = batch.Length.ToString()
+            };
+            foreach (var name in new[] { "api_key", "access_token", "ApiKey" })
+                if (clientQuery?.TryGetValue(name, out var value) == true && !string.IsNullOrWhiteSpace(value))
+                    query[name] = value.ToString();
+
+            var (body, statusCode) = await proxyService!.GetJsonAsync("Items", query, clientHeaders);
+            using (body)
+            {
+                if (statusCode is < 200 or >= 300 || body == null ||
+                    !body.RootElement.TryGetProperty("Items", out var items))
+                    throw new InvalidOperationException(
+                        $"Jellyfin item hydration failed with status {statusCode}.");
+                return items.EnumerateArray()
+                    .Select(item => JsonNode.Parse(item.GetRawText())!.AsObject())
+                    .ToArray();
+            }
+        }));
+
+        return batches.SelectMany(batch => batch)
+            .Where(item => item["Id"] is JsonValue)
+            .ToDictionary(item => item["Id"]!.GetValue<string>(), StringComparer.Ordinal);
+    }
+
+    private static void AddSourceLabels(JsonObject item, string? provider)
+    {
+        foreach (var name in new[] { "Name", "Album", "AlbumArtist" })
+            Label(item, name, provider);
+        if (item["Artists"] is JsonArray artists)
+            for (var index = 0; index < artists.Count; index++)
+                if (artists[index] is JsonValue value && value.TryGetValue<string>(out var artist))
+                    artists[index] = JellyfinResponseBuilder.AppendExternalSourceLabel(artist, provider);
+        foreach (var collectionName in new[] { "ArtistItems", "AlbumArtists" })
+            if (item[collectionName] is JsonArray values)
+                foreach (var value in values.OfType<JsonObject>())
+                    Label(value, "Name", provider);
+
+        if (!string.IsNullOrWhiteSpace(provider))
+        {
+            var providerIds = item["ProviderIds"] as JsonObject ?? [];
+            item["ProviderIds"] = providerIds;
+            providerIds["AllstarrSource"] = provider;
+        }
+    }
+
+    private static void Label(JsonObject item, string name, string? provider)
+    {
+        if (item[name] is JsonValue value && value.TryGetValue<string>(out var text))
+            item[name] = JellyfinResponseBuilder.AppendExternalSourceLabel(text, provider);
+    }
+
+    private Dictionary<string, object?> FallbackItem(VirtualPlaylistTrack track) => new()
+    {
+        ["Name"] = JellyfinResponseBuilder.AppendExternalSourceLabel(track.Title, track.SourceProviderId),
+        ["ServerId"] = serverId,
+        ["Id"] = track.BackendItemId,
+        ["Album"] = track.Album,
+        ["AlbumArtist"] = track.AlbumArtist,
+        ["Artists"] = new[] { track.Artist },
+        ["RunTimeTicks"] = track.DurationMilliseconds * TimeSpan.TicksPerMillisecond,
+        ["IndexNumber"] = track.SourcePosition + 1,
+        ["IsFolder"] = false,
+        ["Type"] = "Audio",
+        ["MediaType"] = "Audio",
+        ["LocationType"] = "FileSystem",
+        ["UserData"] = UserData(track.BackendItemId),
+        ["ImageTags"] = track.CoverArtReference == null
+            ? new Dictionary<string, string>()
+            : new Dictionary<string, string> { ["Primary"] = track.CoverArtReference }
+    };
+
+    private static int QueryInt(IQueryCollection? query, string name, int fallback) =>
+        query?.TryGetValue(name, out var value) == true &&
+        int.TryParse(value, out var parsed) && parsed >= 0
+            ? parsed
+            : fallback;
 
     private static Dictionary<string, object> UserData(string id) => new()
     {

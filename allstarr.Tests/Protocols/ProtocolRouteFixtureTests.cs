@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using allstarr.Services;
 using allstarr.Services.Common;
 using allstarr.Models.Search;
@@ -1575,6 +1576,40 @@ public sealed class ProtocolRouteFixtureTests
     public async Task JellyfinWritableHybrid_ReadsInjectedProjectionInsteadOfNativeTarget()
     {
         const string virtualId = "allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0";
+        const string originalItem = """
+            {
+              "Name": "Original Track",
+              "ServerId": "original-server",
+              "Id": "local-song-a",
+              "PlaylistItemId": "native-entry",
+              "ParentId": "original-parent",
+              "AlbumId": "album-original",
+              "Album": "Original Album",
+              "AlbumArtist": "Original Artist",
+              "Artists": ["Original Artist"],
+              "ArtistItems": [{"Name": "Original Artist", "Id": "artist-original"}],
+              "AlbumArtists": [{"Name": "Original Artist", "Id": "artist-original"}],
+              "RunTimeTicks": 1800000000,
+              "IndexNumber": 7,
+              "Type": "Audio",
+              "MediaType": "Audio",
+              "CanDelete": true,
+              "CanDownload": true,
+              "MediaSources": [{
+                "Id": "media-original",
+                "Path": "/music/original.flac",
+                "MediaStreams": [{"Index": 0, "Codec": "flac"}]
+              }],
+              "ImageTags": {"Primary": "image-original"},
+              "ProviderIds": {"MusicBrainzTrack": "mb-original"},
+              "UserData": {
+                "ItemId": "local-song-a",
+                "Key": "Audio-local-song-a",
+                "IsFavorite": true
+              },
+              "ExtraNestedData": {"Sentinel": [{"Keep": "every-field"}]}
+            }
+            """;
         var model = new VirtualPlaylistReadModel(
             virtualId,
             Guid.Parse("0198a537-719c-7ea8-9e5a-17e1f2f963f0"),
@@ -1596,7 +1631,8 @@ public sealed class ProtocolRouteFixtureTests
                     "Injected Artist",
                     180_000,
                     "cover-a",
-                    allstarr.Core.Storage.TrackMatchState.Accepted)
+                    allstarr.Core.Storage.TrackMatchState.Accepted,
+                    SourceProviderId: "spotify")
             ]);
         var virtualization = new Mock<IPlaylistVirtualizationService>(MockBehavior.Strict);
         virtualization.Setup(service => service.ReadAsync(
@@ -1610,9 +1646,17 @@ public sealed class ProtocolRouteFixtureTests
             request =>
             {
                 observed.Add(request.RequestUri!.PathAndQuery);
-                return request.RequestUri.AbsolutePath == "/Users/Me"
-                    ? Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}""")
-                    : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}");
+                return request.RequestUri.AbsolutePath switch
+                {
+                    "/Users/Me" => Json(
+                        StatusCodes.Status200OK,
+                        """{"Id":"user-1","Name":"Fixture User"}"""),
+                    "/Items" => Json(
+                        StatusCodes.Status200OK,
+                        $$"""{"Items":[{{originalItem}}],"TotalRecordCount":1,"StartIndex":0}"""),
+                    _ => throw new InvalidOperationException(
+                        $"Unexpected upstream request: {request.RequestUri}")
+                };
             },
             services =>
             {
@@ -1637,9 +1681,34 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.OK, tracksResponse.StatusCode);
         Assert.Equal(virtualId, item.RootElement.GetProperty("Id").GetString());
         Assert.Equal("local-song-a", definition.RootElement.GetProperty("ItemIds")[0].GetString());
-        Assert.Equal("local-song-a", tracks.RootElement.GetProperty("Items")[0].GetProperty("Id").GetString());
-        Assert.Equal(virtualId, tracks.RootElement.GetProperty("Items")[0].GetProperty("ParentId").GetString());
-        Assert.Equal(Enumerable.Repeat("/Users/Me?api_key=fixture-key", 3), observed);
+        var actual = JsonNode.Parse(
+            tracks.RootElement.GetProperty("Items")[0].GetRawText())!.AsObject();
+        var expected = JsonNode.Parse(originalItem)!.AsObject();
+        expected["Name"] = "Original Track [SP]";
+        expected["Album"] = "Original Album [SP]";
+        expected["AlbumArtist"] = "Original Artist [SP]";
+        expected["Artists"]![0] = "Original Artist [SP]";
+        expected["ArtistItems"]![0]!["Name"] = "Original Artist [SP]";
+        expected["AlbumArtists"]![0]!["Name"] = "Original Artist [SP]";
+        expected["ProviderIds"]!["AllstarrSource"] = "spotify";
+        expected["ParentId"] = virtualId;
+        expected["PlaylistItemId"] = $"{virtualId}-0";
+
+        Assert.True(
+            JsonNode.DeepEquals(expected, actual),
+            $"Expected full source DTO with playlist overlays.\nExpected: {expected}\nActual: {actual}");
+        Assert.Equal("local-song-a", actual["Id"]!.GetValue<string>());
+        Assert.Equal("album-original", actual["AlbumId"]!.GetValue<string>());
+        Assert.Equal("media-original", actual["MediaSources"]![0]!["Id"]!.GetValue<string>());
+        Assert.Equal("artist-original", actual["ArtistItems"]![0]!["Id"]!.GetValue<string>());
+        Assert.Equal("artist-original", actual["AlbumArtists"]![0]!["Id"]!.GetValue<string>());
+        Assert.Equal(3, observed.Count(path => path == "/Users/Me?api_key=fixture-key"));
+        var hydration = Assert.Single(observed, path =>
+            path.StartsWith("/Items?", StringComparison.Ordinal));
+        Assert.Contains("Ids=local-song-a", hydration, StringComparison.Ordinal);
+        Assert.Contains("UserId=user-1", hydration, StringComparison.Ordinal);
+        Assert.Contains("api_key=fixture-key", hydration, StringComparison.Ordinal);
+        Assert.Contains("MediaSources", Uri.UnescapeDataString(hydration), StringComparison.Ordinal);
         virtualization.VerifyAll();
     }
 

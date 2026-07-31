@@ -13,7 +13,9 @@ The reusable Jellyfin kit has deterministic and live layers:
 - `live_jellyfin_smoke.sh` compares a real Jellyfin instance directly with
   Allstarr. It covers bootstrap and authentication, native structural/stable
   data parity, non-empty virtual playlist projections with client-indexable
-  track/artist/album fields, virtual/external DTOs and artwork, lyrics,
+  track/artist/album fields, exact full-object parity between every matched
+  injected entry and its original Jellyfin item (apart from playlist context
+  and source labels), virtual/external DTOs and artwork, lyrics,
   playlists, security denials, exact bounded stream bytes (including Finer's
   query-only `Items/{id}/File?ApiKey=...` request), and latency.
 
@@ -71,6 +73,11 @@ each unperformed stateful class.
 prints native-versus-synthesized differences that are expected and reviewed.
 `BLOCKED` lines name qualification that was not performed rather than silently
 counting it as passed.
+
+The injected-playlist live comparison requires a user-bound Jellyfin access
+token. A server API key can qualify native relays but cannot safely establish
+the Allstarr user whose virtual playlists should be exposed, so the kit reports
+that case as blocked.
 
 Every run prints a UTC start time and unique user agent. Use those two values
 to inspect only the matching bounded server-log window; never copy tokens,
