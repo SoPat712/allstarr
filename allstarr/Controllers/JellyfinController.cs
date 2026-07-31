@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using allstarr.Models.Domain;
 using allstarr.Models.Lyrics;
 using allstarr.Models.Scrobbling;
@@ -837,6 +838,8 @@ public partial class JellyfinController : ControllerBase
                         return null;
                     }
 
+                    coverUri = SelectExternalArtworkVariant(
+                        coverUri, provider, width, height);
                     using var response = await _proxyService.HttpClient.GetAsync(coverUri, token);
                     if (response.StatusCode is System.Net.HttpStatusCode.TooManyRequests or
                         System.Net.HttpStatusCode.ServiceUnavailable)
@@ -863,6 +866,36 @@ public partial class JellyfinController : ControllerBase
             },
             MaximumArtworkBytes,
             HttpContext.RequestAborted);
+    }
+
+    internal static Uri SelectExternalArtworkVariant(
+        Uri coverUri,
+        string provider,
+        int? width,
+        int? height)
+    {
+        var size = width > 0 && height > 0
+            ? Math.Min(width.Value, height.Value)
+            : width > 0
+                ? width.Value
+                : height > 0
+                    ? height.Value
+                    : 0;
+        if (size == 0 ||
+            !provider.StartsWith("apple", StringComparison.OrdinalIgnoreCase) ||
+            !coverUri.Host.EndsWith(".mzstatic.com", StringComparison.OrdinalIgnoreCase))
+            return coverUri;
+
+        size = Math.Min(size, 3000);
+        var path = Regex.Replace(
+            coverUri.AbsolutePath,
+            @"/\d+x\d+bb(?=\.[^/]+$)",
+            $"/{size}x{size}bb",
+            RegexOptions.CultureInvariant | RegexOptions.IgnoreCase,
+            TimeSpan.FromMilliseconds(50));
+        return path == coverUri.AbsolutePath
+            ? coverUri
+            : new UriBuilder(coverUri) { Path = path }.Uri;
     }
 
     private IActionResult CreateFormattedImageResponse(

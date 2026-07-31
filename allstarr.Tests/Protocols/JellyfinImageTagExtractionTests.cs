@@ -53,6 +53,23 @@ public class JellyfinImageTagExtractionTests
         Assert.Null(imageTag);
     }
 
+    [Fact]
+    public void AppleArtworkVariant_UsesRequestedCdnSizeOnlyForApple()
+    {
+        var source = new Uri(
+            "https://is1-ssl.mzstatic.com/image/thumb/Music113/cover.jpg/1200x1200bb.jpg");
+
+        Assert.Equal(
+            "https://is1-ssl.mzstatic.com/image/thumb/Music113/cover.jpg/300x300bb.jpg",
+            JellyfinController.SelectExternalArtworkVariant(source, "apple-download", 300, null).ToString());
+        Assert.Same(
+            source,
+            JellyfinController.SelectExternalArtworkVariant(source, "deezer", 300, null));
+        Assert.Same(
+            source,
+            JellyfinController.SelectExternalArtworkVariant(source, "apple-download", null, null));
+    }
+
     private static string? InvokeExtractImageTag(JsonElement item, string imageType)
     {
         var method = typeof(JellyfinController).GetMethod(
