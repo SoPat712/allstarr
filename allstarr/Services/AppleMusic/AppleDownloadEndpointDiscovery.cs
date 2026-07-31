@@ -72,7 +72,8 @@ public sealed class AppleDownloadEndpointDiscovery(
     ];
     private static readonly HashSet<string> ImplementedFeatureIds = new(
     [
-        "metadata-search-song", "metadata-song", "stream-audio-song", "download-audio-song",
+        "metadata-search-song", "metadata-song", "metadata-album", "metadata-artist",
+        "stream-audio-song", "download-audio-song",
         "synced-lyrics-artifact"
     ], StringComparer.OrdinalIgnoreCase);
 

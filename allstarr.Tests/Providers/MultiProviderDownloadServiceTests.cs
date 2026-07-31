@@ -13,6 +13,51 @@ namespace allstarr.Tests;
 public sealed class MultiProviderDownloadServiceTests
 {
     [Fact]
+    public async Task StreamingPrefersMatchingDownloadProviderWithoutTranslation()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["MULTI_PROVIDER_STREAMING_ORDER"] = "apple-download",
+                ["MULTI_PROVIDER_DOWNLOAD_ORDER"] = "deezer"
+            })
+            .Build();
+        var clients = new HttpFactory();
+        var status = new ProviderStatusManager(
+            configuration,
+            clients,
+            NullLogger<ProviderStatusManager>.Instance,
+            Options.Create(new SpotifyApiSettings()),
+            Options.Create(new AppleDownloadSettings { BaseUrl = "http://apple-gateway" }),
+            Options.Create(new DeezerSettings { Arl = "configured-arl" }),
+            Options.Create(new QobuzSettings()),
+            Options.Create(new SquidWTFSettings()),
+            new SquidWtfEndpointCatalog([], []));
+        var deezer = new DeezerRecordingService();
+        var metadata = new Mock<IMusicMetadataService>();
+        var service = new MultiProviderDownloadService(
+            [new AppleMusicCancelingService(), deezer],
+            [],
+            metadata.Object,
+            status,
+            new OdesliService(
+                clients,
+                NullLogger<OdesliService>.Instance,
+                Mock.Of<IApplicationCache>()),
+            NullLogger<MultiProviderDownloadService>.Instance);
+
+        await using var stream = await service.DownloadAndStreamAsync("deezer", "track-1");
+
+        Assert.Equal(("deezer", "track-1"), deezer.Call);
+        metadata.Verify(
+            item => item.GetSongAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task StreamingPropagatesClientCancellation()
     {
         var configuration = new ConfigurationBuilder()
@@ -71,6 +116,43 @@ public sealed class MultiProviderDownloadServiceTests
             StreamQuality? qualityOverride = null,
             CancellationToken cancellationToken = default) =>
             Task.FromCanceled<Stream>(cancellationToken);
+
+        public void DownloadRemainingAlbumTracksInBackground(
+            string externalProvider,
+            string albumExternalId,
+            string excludeTrackExternalId)
+        {
+        }
+
+        public DownloadInfo? GetDownloadStatus(string songId) => null;
+
+        public IReadOnlyList<DownloadInfo> GetActiveDownloads() => [];
+
+        public Task<string?> GetLocalPathIfExistsAsync(string externalProvider, string externalId) =>
+            Task.FromResult<string?>(null);
+
+        public Task<bool> IsAvailableAsync() => Task.FromResult(true);
+    }
+
+    private sealed class DeezerRecordingService : IConcreteDownloadService
+    {
+        public (string Provider, string Id)? Call { get; private set; }
+
+        public Task<string> DownloadSongAsync(
+            string externalProvider,
+            string externalId,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<Stream> DownloadAndStreamAsync(
+            string externalProvider,
+            string externalId,
+            StreamQuality? qualityOverride = null,
+            CancellationToken cancellationToken = default)
+        {
+            Call = (externalProvider, externalId);
+            return Task.FromResult<Stream>(new MemoryStream([1]));
+        }
 
         public void DownloadRemainingAlbumTracksInBackground(
             string externalProvider,

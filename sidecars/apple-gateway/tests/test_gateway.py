@@ -50,6 +50,30 @@ class FakeCatalog:
     async def song(self, song_id: str) -> dict[str, Any] | None:
         return None if song_id == "404" else song(song_id, "Fixture")
 
+    async def album(self, album_id: str) -> dict[str, Any] | None:
+        return None if album_id == "404" else {
+            "id": album_id,
+            "title": "Album",
+            "artist": "Artist",
+            "artist_id": "201",
+            "cover_url": "https://example.test/art.jpg",
+            "release_date": "2026-01-01",
+            "track_count": 1,
+            "genre": "Pop",
+            "tracks": [song("101", "Fixture")],
+        }
+
+    async def artist(self, artist_id: str) -> dict[str, Any] | None:
+        return None if artist_id == "404" else {
+            "id": artist_id,
+            "name": "Artist",
+            "image_url": "https://example.test/art.jpg",
+        }
+
+    async def artist_albums(self, artist_id: str, limit: int) -> list[dict[str, Any]]:
+        album = await self.album("301")
+        return [album][:limit] if album else []
+
     async def song_url(self, song_id: str) -> str | None:
         return None if song_id == "404" else f"https://music.apple.com/us/album/fixture/1?i={song_id}"
 
@@ -85,7 +109,9 @@ def song(song_id: str, title: str) -> dict[str, Any]:
         "id": song_id,
         "title": title,
         "artist": "Artist",
+        "artist_id": "201",
         "album": "Album",
+        "album_id": "301",
         "duration": 123,
         "cover_url": "https://example.test/art.jpg",
         "track_number": 1,
@@ -130,7 +156,14 @@ def test_capabilities_are_versioned_and_truthful(client):
     assert response.status_code == 200
     assert response.json()["sidecarApiVersion"] == API_VERSION
     ids = {item["id"] for item in response.json()["capabilities"]}
-    assert {"metadata-search-song", "metadata-song", "download-audio-song", "synced-lyrics-artifact"} <= ids
+    assert {
+        "metadata-search-song",
+        "metadata-song",
+        "metadata-album",
+        "metadata-artist",
+        "download-audio-song",
+        "synced-lyrics-artifact",
+    } <= ids
 
 
 def test_health_reports_wrapper_and_authentication(client):
@@ -152,8 +185,22 @@ def test_search_song_and_missing_song_contract(client):
     search = client[0].get("/api/search", params={"q": "Needle", "type": "song", "limit": 2})
     assert search.status_code == 200
     assert search.json()[0]["title"] == "Needle"
+    assert search.json()[0]["artist_id"] == "201"
+    assert search.json()[0]["album_id"] == "301"
     assert client[0].get("/api/song/101").json()["id"] == "101"
     assert client[0].get("/api/song/404").status_code == 404
+
+
+def test_artist_discography_and_album_tracks_contract(client):
+    artist = client[0].get("/api/artist/201")
+    assert artist.status_code == 200
+    assert artist.json()["name"] == "Artist"
+    albums = client[0].get("/api/artist/201/albums").json()
+    assert albums[0]["artist_id"] == "201"
+    album = client[0].get("/api/album/301").json()
+    assert album["tracks"][0]["artist_id"] == "201"
+    assert client[0].get("/api/artist/404").status_code == 404
+    assert client[0].get("/api/album/404").status_code == 404
 
 
 def test_song_download_uses_safe_id_quality_mapping_and_flac_contract(client):
@@ -388,7 +435,9 @@ async def test_catalog_mapping_is_deterministic():
             "trackId": 101,
             "trackName": "Fixture",
             "artistName": "Artist",
+            "artistId": 201,
             "collectionName": "Album",
+            "collectionId": 301,
             "trackTimeMillis": 123900,
             "artworkUrl100": "https://img/100x100.jpg",
             "releaseDate": "2026-01-02T00:00:00Z",
@@ -400,5 +449,43 @@ async def test_catalog_mapping_is_deterministic():
     result = await catalog.search_songs("Fixture", 1)
     assert result[0]["duration"] == 123
     assert result[0]["cover_url"] == "https://img/1200x1200.jpg"
+    assert result[0]["artist_id"] == "201"
+    assert result[0]["album_id"] == "301"
     assert await catalog.song_url("101") == "https://music.apple.com/us/album/fixture/1?i=101"
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_catalog_maps_artist_discography_and_album_tracks():
+    artist = {"wrapperType": "artist", "artistId": 201, "artistName": "Artist"}
+    album = {
+        "wrapperType": "collection",
+        "collectionId": 301,
+        "collectionName": "Album",
+        "artistId": 201,
+        "artistName": "Artist",
+        "artworkUrl100": "https://img/100x100.jpg",
+        "releaseDate": "2026-01-02T00:00:00Z",
+        "trackCount": 1,
+        "primaryGenreName": "Pop",
+    }
+    track = {
+        "wrapperType": "track",
+        "trackId": 101,
+        "trackName": "Fixture",
+        "artistId": 201,
+        "artistName": "Artist",
+        "collectionId": 301,
+        "collectionName": "Album",
+    }
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        entity = request.url.params.get("entity")
+        return httpx.Response(200, json={"results": [artist, album] if entity == "album" else [album, track]})
+
+    http_client = httpx.AsyncClient(base_url="https://itunes.apple.com/", transport=httpx.MockTransport(handler))
+    catalog = CatalogClient("us", http_client)
+    assert (await catalog.artist("201"))["image_url"] == "https://img/1200x1200.jpg"
+    assert (await catalog.artist_albums("201", 100))[0]["id"] == "301"
+    assert (await catalog.album("301"))["tracks"][0]["artist_id"] == "201"
     await http_client.aclose()

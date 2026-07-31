@@ -24,6 +24,8 @@ API_VERSION = "1.0.0"
 CAPABILITIES = (
     "metadata-search-song",
     "metadata-song",
+    "metadata-album",
+    "metadata-artist",
     "stream-audio-song",
     "download-audio-song",
     "synced-lyrics-artifact",
@@ -160,6 +162,36 @@ def create_app(
         if result is None:
             raise HTTPException(status_code=404, detail="song_not_found")
         return result
+
+    @application.get("/api/album/{album_id}")
+    async def album(album_id: str) -> dict[str, Any]:
+        try:
+            result = await catalog_client.album(album_id)
+        except (httpx.HTTPError, ValueError):
+            raise HTTPException(status_code=502, detail="catalog_unavailable") from None
+        if result is None:
+            raise HTTPException(status_code=404, detail="album_not_found")
+        return result
+
+    @application.get("/api/artist/{artist_id}")
+    async def artist(artist_id: str) -> dict[str, Any]:
+        try:
+            result = await catalog_client.artist(artist_id)
+        except (httpx.HTTPError, ValueError):
+            raise HTTPException(status_code=502, detail="catalog_unavailable") from None
+        if result is None:
+            raise HTTPException(status_code=404, detail="artist_not_found")
+        return result
+
+    @application.get("/api/artist/{artist_id}/albums")
+    async def artist_albums(
+        artist_id: str,
+        limit: int = Query(default=100, ge=1, le=200),
+    ) -> list[dict[str, Any]]:
+        try:
+            return await catalog_client.artist_albums(artist_id, limit)
+        except (httpx.HTTPError, ValueError):
+            raise HTTPException(status_code=502, detail="catalog_unavailable") from None
 
     async def prepare_song(
         song_id: str,

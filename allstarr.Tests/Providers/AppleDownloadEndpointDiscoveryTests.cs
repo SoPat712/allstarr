@@ -13,6 +13,8 @@ public sealed class AppleDownloadEndpointDiscoveryTests
         {"sidecarApiVersion":"1.0.0","capabilities":[
           {"id":"metadata-search-song","state":"supported"},
           {"id":"metadata-song","state":"supported"},
+          {"id":"metadata-album","state":"supported"},
+          {"id":"metadata-artist","state":"supported"},
           {"id":"stream-audio-song","state":"supported"},
           {"id":"download-audio-song","state":"supported"}
         ]}
@@ -89,6 +91,10 @@ public sealed class AppleDownloadEndpointDiscoveryTests
         Assert.Equal(AppleDownloadCapabilityState.Available,
             snapshot.Capability(ProviderCapabilities.Metadata).State);
         Assert.Equal(AppleDownloadCapabilityState.Unsupported,
+            snapshot.Capability("metadata-album").State);
+        Assert.Equal(AppleDownloadCapabilityState.Unsupported,
+            snapshot.Capability("metadata-artist").State);
+        Assert.Equal(AppleDownloadCapabilityState.Unsupported,
             snapshot.Capability(ProviderCapabilities.Streaming).State);
         Assert.Equal(AppleDownloadCapabilityState.Unsupported,
             snapshot.Capability(ProviderCapabilities.Download).State);
@@ -106,6 +112,10 @@ public sealed class AppleDownloadEndpointDiscoveryTests
         Assert.True(snapshot.Authenticated);
         Assert.Equal(AppleDownloadCapabilityState.Available,
             snapshot.Capability(ProviderCapabilities.Metadata).State);
+        Assert.Equal(AppleDownloadCapabilityState.Available,
+            snapshot.Capability("metadata-album").State);
+        Assert.Equal(AppleDownloadCapabilityState.Available,
+            snapshot.Capability("metadata-artist").State);
         Assert.Equal(AppleDownloadCapabilityState.Available,
             snapshot.Capability(ProviderCapabilities.Streaming).State);
         Assert.Equal(AppleDownloadCapabilityState.Available,

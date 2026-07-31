@@ -661,6 +661,8 @@ item_contract='
         (.Album | provider_labeled) and
         (.AlbumId | nonempty) and
         (.Artists | type == "array" and length > 0 and all(.[]; provider_labeled)) and
+        (.ArtistItems | type == "array" and length > 0) and
+        (.AlbumArtists | type == "array" and length > 0) and
         (.RunTimeTicks | type == "number" and . >= 0) and
         (.ImageTags.Primary | nonempty) and
         (.ProviderIds | type == "object" and length > 0) and
@@ -864,10 +866,30 @@ if [[ -n "$external_song_id" ]]; then
     check_json "external item recursive DTO" "$external_detail_url" \
         "$item_contract external_audio and .Id == \$id" \
         --arg id "$external_song_id"
+    external_artist_id="$(jq -r '.ArtistItems[0].Id // empty' "$response_file")"
+    external_album_id="$(jq -r '.AlbumId // empty' "$response_file")"
     external_search_term="$(jq -r '
         .Name |
         sub(" \\[(AM|D|Q|T|SP|S|EXT)\\]( \\[E\\])?$"; "")' "$response_file" 2>/dev/null || true)"
     external_search_term="${external_search_term:-$search_term}"
+    check_json "external artist detail" \
+        "$ALLSTARR_BASE/Artists/$external_artist_id?UserId=$best_user_id" \
+        '.Id == $id and .Type == "MusicArtist"' \
+        --arg id "$external_artist_id"
+    check_json "external artist discography" \
+        "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_artist_id&IncludeItemTypes=MusicAlbum&Limit=200" \
+        '(.Items | type == "array" and length > 0) and
+         all(.Items[]; .Type == "MusicAlbum" and any(.ArtistItems[]; .Id == $id))' \
+        --arg id "$external_artist_id"
+    check_json "external album detail" \
+        "$ALLSTARR_BASE/Items/$external_album_id?UserId=$best_user_id" \
+        '.Id == $id and .Type == "MusicAlbum"' \
+        --arg id "$external_album_id"
+    check_json "external album tracks" \
+        "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_album_id&IncludeItemTypes=Audio&Limit=200" \
+        '(.Items | type == "array" and length > 0) and
+         all(.Items[]; .Type == "Audio" and .AlbumId == $id and (.ArtistItems | length > 0))' \
+        --arg id "$external_album_id"
     external_search_term_encoded="$(jq -rn --arg value "$external_search_term" '$value | @uri')"
     check_query_json "external detail ApiKey auth" "$external_detail_url" "ApiKey" \
         "$item_contract external_audio and .Id == \$id" \

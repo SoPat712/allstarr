@@ -67,7 +67,7 @@ public class MultiProviderDownloadService : IDownloadService
 
     public async Task<Stream> DownloadAndStreamAsync(string externalProvider, string externalId, Common.StreamQuality? qualityOverride = null, CancellationToken cancellationToken = default)
     {
-        var streamingProviders = GetPrioritizedStreamingProviders();
+        var streamingProviders = GetPrioritizedStreamingProviders(externalProvider);
         if (streamingProviders.Count == 0)
         {
             throw new InvalidOperationException("No streaming providers are currently enabled and healthy.");
@@ -185,9 +185,11 @@ public class MultiProviderDownloadService : IDownloadService
         return _statusManager.GetEnabledDownloadProviders();
     }
 
-    private IReadOnlyList<string> GetPrioritizedStreamingProviders()
+    private IReadOnlyList<string> GetPrioritizedStreamingProviders(string sourceProvider)
     {
-        return _statusManager.GetEnabledStreamingProviders();
+        return _statusManager.GetEnabledPlaybackProviders()
+            .OrderBy(provider => ProviderIdsEquivalent(sourceProvider, provider) ? 0 : 1)
+            .ToList();
     }
 
     private IDownloadService? GetDownloadServiceByName(string name)
