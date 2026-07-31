@@ -43,13 +43,6 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Setup Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: webui/package-lock.json
-
       - name: Install PostgreSQL 18 client
         shell: bash
         run: |
@@ -78,17 +71,88 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore -p:NuGetAudit=true
 
+      - name: Build
+        run: dotnet build --configuration Release --no-restore -p:TreatWarningsAsErrors=true
+
+      - name: Test
+        run: >-
+          dotnet test --configuration Release --no-build
+          --filter "FullyQualifiedName!~allstarr.Tests.DurableStateTransferServiceTests"
+          --verbosity minimal
+
+  state-transfer-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.4-alpine3.23@sha256:996d0920e4ff9df1fc19dacb904492f3c1ec0ec1cc338f0ad7123be7731c5f5e
+        env:
+          POSTGRES_DB: allstarr_test
+          POSTGRES_USER: allstarr
+          POSTGRES_PASSWORD: ci-postgres-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U allstarr -d allstarr_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore -p:NuGetAudit=true
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore -p:TreatWarningsAsErrors=true
+
+      - name: Test state transfer
+        run: >-
+          dotnet test --configuration Release --no-build
+          --filter "FullyQualifiedName~allstarr.Tests.DurableStateTransferServiceTests"
+          --verbosity minimal
+
+  csharp-format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore -p:NuGetAudit=true
+
+      - name: Verify C# formatting and analyzers
+        run: dotnet format allstarr.sln --no-restore --verify-no-changes --verbosity minimal
+
+  webui:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
       - name: Restore Svelte WebUI
         working-directory: webui
         run: |
           npm ci
           npx playwright install --with-deps chromium
-
-      - name: Verify C# formatting and analyzers
-        run: dotnet format allstarr.sln --no-restore --verify-no-changes --verbosity minimal
-
-      - name: Build
-        run: dotnet build --configuration Release --no-restore -p:TreatWarningsAsErrors=true
 
       - name: Verify Svelte WebUI
         working-directory: webui
@@ -99,8 +163,18 @@ jobs:
           npm run check:budgets
           npm run test:e2e
 
-      - name: Test
-        run: dotnet test --configuration Release --no-build --verbosity normal
+  release-manifest:
+    needs:
+      - build-and-test
+      - state-transfer-tests
+      - csharp-format
+      - webui
+      - apple-contracts
+      - compose-contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Create release manifest
         run: bash tools/create-release-manifest.sh > allstarr-release-manifest.json
