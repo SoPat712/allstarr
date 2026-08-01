@@ -16,11 +16,28 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Services.Common;
+using Microsoft.AspNetCore.Mvc.Routing;
 
 namespace allstarr.Tests;
 
 public sealed class HostCompositionTests
 {
+    [Fact]
+    public void ExtensionLifecycleUsesOnlyDurablePackageRoutes()
+    {
+        var routes = typeof(ExtensionController).GetMethods()
+            .SelectMany(method => method.GetCustomAttributes(typeof(HttpMethodAttribute), true)
+                .Cast<HttpMethodAttribute>())
+            .Select(attribute => attribute.Template)
+            .ToArray();
+
+        Assert.Contains("packages/{packageId:guid}/activate", routes);
+        Assert.Contains("packages/{packageId:guid}/disable", routes);
+        Assert.Contains("packages/{packageId:guid}", routes);
+        Assert.DoesNotContain(routes, route => route is "repos" or "installed" or
+            "uninstall/{id}" or "disable/{id}" or "enable/{id}");
+    }
+
     [Theory]
     [InlineData("Jellyfin", typeof(JellyfinController), typeof(SubsonicController))]
     [InlineData("Subsonic", typeof(SubsonicController), typeof(JellyfinController))]
@@ -147,6 +164,7 @@ public sealed class HostCompositionTests
         Assert.NotEmpty(schema.Providers);
         Assert.NotEmpty(schema.ProviderSupportMatrix);
         Assert.NotEmpty(schema.ConfigSections);
+        Assert.Equal("/api/admin/extensions/packages", schema.ExtensionStore.InstalledEndpoint);
     }
 
     [Fact]

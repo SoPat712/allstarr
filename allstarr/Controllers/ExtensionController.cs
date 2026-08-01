@@ -363,38 +363,12 @@ public class ExtensionController : ControllerBase
         catch (Exception exception) { return ControlPlaneError(exception); }
     }
 
-    [HttpGet("repos")]
-    public IActionResult GetRepositories()
-    {
-        if (RequireAdministrator() is { } error) return error;
-        return Ok(Array.Empty<string>());
-    }
-
     [HttpGet("store")]
     public async Task<IActionResult> GetStoreExtensions(CancellationToken cancellationToken)
     {
         if (RequireAdministrator() is { } error) return error;
         var catalog = await _extensionManager.FetchStoreCatalogAsync(cancellationToken);
         return Ok(catalog);
-    }
-
-    [HttpGet("installed")]
-    public IActionResult GetInstalledExtensions()
-    {
-        if (RequireAdministrator() is { } error) return error;
-        var items = _extensionManager.GetInstalledExtensions()
-            .Select(e => new
-            {
-                e.Id,
-                e.Name,
-                e.DisplayName,
-                e.Description,
-                e.Version,
-                e.Types,
-                e.Enabled
-            })
-            .ToList();
-        return Ok(items);
     }
 
     [HttpPost("install")]
@@ -456,47 +430,6 @@ public class ExtensionController : ControllerBase
         {
             return BadRequest(new { success = false, message = exception.Message });
         }
-    }
-
-    [HttpDelete("uninstall/{id}")]
-    public IActionResult UninstallExtension(string id)
-    {
-        if (RequireAdministrator() is { } error) return error;
-        var success = _extensionManager.UninstallExtension(id);
-        if (success)
-        {
-            return Ok(new { success = true, message = "Extension uninstalled successfully." });
-        }
-        else
-        {
-            return NotFound(new { success = false, message = "Extension not found or failed to delete." });
-        }
-    }
-
-    [HttpPost("disable/{id}")]
-    public IActionResult DisableExtension(string id)
-    {
-        if (RequireAdministrator() is { } error) return error;
-        var success = _extensionManager.DisableExtension(id);
-        if (success)
-        {
-            return Ok(new { success = true, message = "Extension disabled successfully." });
-        }
-
-        return NotFound(new { success = false, message = "Extension not found." });
-    }
-
-    [HttpPost("enable/{id}")]
-    public async Task<IActionResult> EnableExtension(string id)
-    {
-        if (RequireAdministrator() is { } error) return error;
-        var success = await _extensionManager.EnableExtensionAsync(id);
-        if (success)
-        {
-            return Ok(new { success = true, message = "Extension enabled successfully." });
-        }
-
-        return NotFound(new { success = false, message = "Extension not found or failed to load." });
     }
 
     private IActionResult? RequireAdministrator() =>

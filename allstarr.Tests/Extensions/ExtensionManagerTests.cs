@@ -5,24 +5,6 @@ namespace allstarr.Tests;
 public class ExtensionManagerTests
 {
     [Fact]
-    public void ParseRepositoryList_DoesNotAddAThirdPartyRegistryByDefault()
-    {
-        Assert.Empty(ExtensionManager.ParseRepositoryList(null));
-        Assert.Empty(ExtensionManager.ParseRepositoryList("  "));
-    }
-
-    [Fact]
-    public void ParseRepositoryList_ReturnsOnlyExplicitlyConfiguredRegistries()
-    {
-        var repositories = ExtensionManager.ParseRepositoryList(
-            "https://one.example/registry.json, https://two.example/registry.json");
-
-        Assert.Equal(
-            ["https://one.example/registry.json", "https://two.example/registry.json"],
-            repositories);
-    }
-
-    [Fact]
     public void ParseStoreRegistry_SupportsExtensionsWrapperAndSnakeCaseFields()
     {
         const string json = """

@@ -311,7 +311,7 @@ public sealed class AdminUiExtensionStore
     public string StoreEndpoint { get; set; } = "/api/admin/extensions/store";
 
     [JsonPropertyName("installedEndpoint")]
-    public string InstalledEndpoint { get; set; } = "/api/admin/extensions/installed";
+    public string InstalledEndpoint { get; set; } = "/api/admin/extensions/packages";
 }
 
 public sealed class AdminUiPluginCapability

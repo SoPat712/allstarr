@@ -111,7 +111,7 @@ public class AdminUiController : ControllerBase
                 Repositories = [],
                 RegistryEnvKey = "",
                 StoreEndpoint = "/api/admin/extensions/store",
-                InstalledEndpoint = "/api/admin/extensions/installed"
+                InstalledEndpoint = "/api/admin/extensions/packages"
             },
             PluginCapabilities =
             [

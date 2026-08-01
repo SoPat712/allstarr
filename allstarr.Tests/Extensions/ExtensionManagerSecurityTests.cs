@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using System.Net;
 using System.Text;
 using allstarr.Core.Extensions;
@@ -95,81 +94,6 @@ public class ExtensionManagerSecurityTests
     }
 
     [Fact]
-    public async Task InstallExtensionAsync_IsDisabledByDefaultWithoutMakingARequest()
-    {
-        var testRoot = CreateTestRoot();
-        try
-        {
-            var httpClientFactory = new Mock<IHttpClientFactory>(MockBehavior.Strict);
-            var manager = CreateManager(testRoot, httpClientFactory.Object);
-
-            var result = await manager.InstallExtensionAsync("https://extensions.example/package.zip");
-
-            Assert.False(result);
-            Assert.False(manager.RemoteInstallEnabled);
-            httpClientFactory.VerifyNoOtherCalls();
-        }
-        finally
-        {
-            DeleteTestRoot(testRoot);
-        }
-    }
-
-    [Fact]
-    public async Task InstallExtensionAsync_RejectsParentDirectoryManifestBeforeDeletingAnything()
-    {
-        var testRoot = CreateTestRoot();
-        try
-        {
-            var sentinelPath = Path.Combine(testRoot, "sentinel.txt");
-            await File.WriteAllTextAsync(sentinelPath, "keep");
-            var package = CreatePackage("..");
-            var manager = CreateManager(
-                testRoot,
-                CreateHttpClientFactory(package),
-                allowRemoteInstall: true);
-
-            var result = await manager.InstallExtensionAsync("https://extensions.example/malicious.zip");
-
-            Assert.False(result);
-            Assert.Equal("keep", await File.ReadAllTextAsync(sentinelPath));
-            Assert.DoesNotContain(
-                Directory.GetDirectories(Path.Combine(testRoot, "extensions")),
-                path => Path.GetFileName(path).StartsWith(".install-", StringComparison.Ordinal));
-        }
-        finally
-        {
-            DeleteTestRoot(testRoot);
-        }
-    }
-
-    [Fact]
-    public async Task InstallExtensionAsync_WithoutChecksumNeverInstallsEvenWithRemoteOptIn()
-    {
-        var testRoot = CreateTestRoot();
-        try
-        {
-            var package = CreatePackage("safe-extension");
-            var logger = new CapturingLogger<ExtensionManager>();
-            var manager = CreateManager(
-                testRoot,
-                CreateHttpClientFactory(package),
-                allowRemoteInstall: true,
-                logger: logger);
-
-            var result = await manager.InstallExtensionAsync("https://extensions.example/safe.zip");
-
-            Assert.False(result);
-            Assert.True(manager.RemoteInstallEnabled);
-            Assert.Null(manager.GetExtension("safe-extension"));
-        }
-        finally
-        {
-            DeleteTestRoot(testRoot);
-        }
-    }
-
-    [Fact]
     public async Task LocalPackageFolders_DoNotBypassDurableSdkReview()
     {
         var testRoot = CreateTestRoot();
@@ -190,7 +114,6 @@ public class ExtensionManagerSecurityTests
 
             Assert.False(manager.RemoteInstallEnabled);
             Assert.Null(manager.GetExtension("safe-local"));
-            Assert.False(await manager.EnableExtensionAsync("safe-local"));
         }
         finally
         {
@@ -220,36 +143,6 @@ public class ExtensionManagerSecurityTests
 
         var item = Assert.Single(items);
         Assert.Equal("safe-extension", item.Id);
-    }
-
-    [Theory]
-    [InlineData(".")]
-    [InlineData("..")]
-    [InlineData("../outside")]
-    [InlineData("/outside")]
-    [InlineData("nested/extension")]
-    [InlineData("nested\\extension")]
-    [InlineData("Upper-Case")]
-    public async Task LifecycleOperations_RejectUnsafeIds(string id)
-    {
-        var testRoot = CreateTestRoot();
-        try
-        {
-            var sentinelPath = Path.Combine(testRoot, "sentinel.txt");
-            await File.WriteAllTextAsync(sentinelPath, "keep");
-            var manager = CreateManager(
-                testRoot,
-                new Mock<IHttpClientFactory>(MockBehavior.Strict).Object);
-
-            Assert.False(manager.DisableExtension(id));
-            Assert.False(await manager.EnableExtensionAsync(id));
-            Assert.False(manager.UninstallExtension(id));
-            Assert.Equal("keep", await File.ReadAllTextAsync(sentinelPath));
-        }
-        finally
-        {
-            DeleteTestRoot(testRoot);
-        }
     }
 
     [Fact]
@@ -292,27 +185,20 @@ public class ExtensionManagerSecurityTests
 
     private static ExtensionManager CreateManager(
         string testRoot,
-        IHttpClientFactory httpClientFactory,
-        bool? allowRemoteInstall = null,
-        ILogger<ExtensionManager>? logger = null)
+        IHttpClientFactory httpClientFactory)
     {
         var extensionsDirectory = Path.Combine(testRoot, "extensions");
         var settings = new Dictionary<string, string?>
         {
             ["Extensions:Directory"] = extensionsDirectory
         };
-        if (allowRemoteInstall.HasValue)
-        {
-            settings["Extensions:AllowRemoteInstall"] = allowRemoteInstall.Value.ToString();
-        }
-
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(settings)
             .Build();
 
         return new ExtensionManager(
             httpClientFactory,
-            logger ?? Mock.Of<ILogger<ExtensionManager>>(),
+            Mock.Of<ILogger<ExtensionManager>>(),
             configuration);
     }
 
@@ -322,31 +208,6 @@ public class ExtensionManagerSecurityTests
         factory.Setup(item => item.CreateClient(It.IsAny<string>()))
             .Returns(() => new HttpClient(new StaticResponseHandler(package)));
         return factory.Object;
-    }
-
-    private static byte[] CreatePackage(string extensionId)
-    {
-        using var stream = new MemoryStream();
-        using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
-        {
-            WriteEntry(
-                archive,
-                "manifest.json",
-                $$"""{ "id": "{{extensionId}}", "displayName": "Test Extension", "version": "1.0.0" }""");
-            WriteEntry(
-                archive,
-                "index.js",
-                "registerExtension({ searchTracks: function() { return []; } });");
-        }
-
-        return stream.ToArray();
-    }
-
-    private static void WriteEntry(ZipArchive archive, string name, string content)
-    {
-        var entry = archive.CreateEntry(name);
-        using var writer = new StreamWriter(entry.Open(), new UTF8Encoding(false));
-        writer.Write(content);
     }
 
     private static string CreateTestRoot()
@@ -389,22 +250,4 @@ public class ExtensionManagerSecurityTests
         }
     }
 
-    private sealed class CapturingLogger<T> : ILogger<T>
-    {
-        public List<string> Messages { get; } = [];
-
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(
-            LogLevel logLevel,
-            EventId eventId,
-            TState state,
-            Exception? exception,
-            Func<TState, Exception?, string> formatter)
-        {
-            Messages.Add($"{logLevel}: {formatter(state, exception)} {exception}");
-        }
-    }
 }

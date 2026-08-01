@@ -123,16 +123,11 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task LegacyAndStagingEndpoints_DoNotBypassAdministratorAuthentication()
+    public async Task StagingEndpoints_DoNotBypassAdministratorAuthentication()
     {
         var controller = Controller();
-        Assert.IsType<UnauthorizedObjectResult>(controller.GetRepositories());
         Assert.IsType<UnauthorizedObjectResult>(await controller.GetStoreExtensions(default));
-        Assert.IsType<UnauthorizedObjectResult>(controller.GetInstalledExtensions());
         Assert.IsType<UnauthorizedObjectResult>(await controller.InstallExtension(new InstallRequest(), default));
-        Assert.IsType<UnauthorizedObjectResult>(controller.UninstallExtension("fixture-extension"));
-        Assert.IsType<UnauthorizedObjectResult>(controller.DisableExtension("fixture-extension"));
-        Assert.IsType<UnauthorizedObjectResult>(await controller.EnableExtension("fixture-extension"));
         Assert.IsType<UnauthorizedObjectResult>(await controller.UninstallPackage(
             Guid.CreateVersion7(), new RevisionRequest(), default));
         Assert.IsType<UnauthorizedObjectResult>(await controller.RevokePermissionGrants(

@@ -83,14 +83,6 @@ public class LocalLibraryService : ILocalLibraryService
         });
     }
 
-    public async Task<string?> GetLocalIdForExternalSongAsync(string externalProvider, string externalId)
-    {
-        // For now, return null as we don't yet have integration
-        // with the Subsonic server to retrieve local ID after scan
-        await Task.CompletedTask;
-        return null;
-    }
-
     public (bool isExternal, string? provider, string? externalId) ParseSongId(string songId)
     {
         var (isExternal, provider, _, externalId) = ParseExternalId(songId);

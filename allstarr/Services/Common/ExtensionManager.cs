@@ -20,7 +20,6 @@ namespace allstarr.Services.Common;
 
 public class ExtensionManager : IDisposable
 {
-    private const string DisabledMarkerFile = ".disabled";
     private const int MaximumExtensionIdLength = 128;
     private const int MaximumRegistryBytes = 4 * 1024 * 1024;
     private static readonly Regex ExtensionIdPattern = new(
@@ -66,46 +65,12 @@ public class ExtensionManager : IDisposable
     public bool RemoteInstallEnabled =>
         _configuration.GetValue("Extensions:AllowRemoteInstall", false);
 
-    public IReadOnlyCollection<InstalledExtensionInfo> GetInstalledExtensions()
-    {
-        if (!Directory.Exists(_extensionsDir))
-        {
-            return [];
-        }
-
-        return Directory.GetDirectories(_extensionsDir)
-            .Select(ReadInstalledExtensionInfo)
-            .Where(item => item != null)
-            .Select(item => item!)
-            .OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
-
     public ExtensionSandbox? GetExtension(string id)
     {
         return TryValidateExtensionId(id, out var validId) &&
                _activeExtensions.TryGetValue(validId, out var sandbox)
             ? sandbox
             : null;
-    }
-
-    public List<string> GetConfiguredRepositories()
-    {
-        return ParseRepositoryList(_configuration["EXTENSION_REPOSITORIES"]);
-    }
-
-    public static List<string> ParseRepositoryList(string? repositories)
-    {
-        return string.IsNullOrWhiteSpace(repositories)
-            ? []
-            : repositories.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToList();
-    }
-
-    public async Task<List<StoreExtensionItem>> FetchStoreExtensionsAsync(CancellationToken cancellationToken = default)
-    {
-        var catalog = await FetchStoreCatalogAsync(cancellationToken);
-        return catalog.Items;
     }
 
     public async Task<ExtensionStoreResponse> FetchStoreCatalogAsync(CancellationToken cancellationToken = default)
@@ -291,13 +256,6 @@ public class ExtensionManager : IDisposable
         return jsonBuilder.ToString();
     }
 
-    public async Task<bool> InstallExtensionAsync(string downloadUrl, CancellationToken cancellationToken = default)
-    {
-        _logger.LogWarning("Blocked extension install without a mandatory registry package checksum");
-        await Task.CompletedTask;
-        return false;
-    }
-
     public async Task<ExtensionPackageRecord> StageExtensionAsync(
         string downloadUrl,
         string expectedSha256,
@@ -366,105 +324,6 @@ public class ExtensionManager : IDisposable
                     _logger.LogWarning(ex, "Failed to clean extension staging directory {Path}", stagingDirectory);
                 }
             }
-        }
-    }
-
-    public bool UninstallExtension(string id)
-    {
-        if (!TryResolveExtensionDirectory(id, out var folder))
-        {
-            return false;
-        }
-
-        _activeExtensions.TryRemove(id, out _);
-        if (Directory.Exists(folder))
-        {
-            try
-            {
-                Directory.Delete(folder, true);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to delete extension directory {Path}", folder);
-            }
-        }
-
-        return false;
-    }
-
-    public bool DisableExtension(string id)
-    {
-        if (!TryResolveExtensionDirectory(id, out var folder) || !Directory.Exists(folder))
-        {
-            return false;
-        }
-
-        _activeExtensions.TryRemove(id, out _);
-        File.WriteAllText(Path.Combine(folder, DisabledMarkerFile), DateTime.UtcNow.ToString("O"));
-        _logger.LogInformation("Disabled extension {ExtensionId}", id);
-        return true;
-    }
-
-    public async Task<bool> EnableExtensionAsync(string id)
-    {
-        _logger.LogWarning("Blocked legacy folder activation for extension {ExtensionId}; stage and review an SDK v1 package instead", id);
-        await Task.CompletedTask;
-        return false;
-    }
-
-    private static bool IsExtensionDisabled(string folderPath)
-    {
-        return File.Exists(Path.Combine(folderPath, DisabledMarkerFile));
-    }
-
-    private InstalledExtensionInfo? ReadInstalledExtensionInfo(string folderPath)
-    {
-        try
-        {
-            if (!TryResolveInstalledExtensionFolder(folderPath, out var folderId, out var safeFolderPath))
-            {
-                return null;
-            }
-
-            var manifestPath = Path.Combine(safeFolderPath, "manifest.json");
-            if (!File.Exists(manifestPath))
-            {
-                return null;
-            }
-
-            var manifestJson = File.ReadAllText(manifestPath);
-            using var doc = JsonDocument.Parse(manifestJson);
-            var root = doc.RootElement;
-            if (!TryValidateExtensionId(ReadString(root, "id", "name"), out var id) ||
-                !id.Equals(folderId, StringComparison.Ordinal))
-            {
-                return null;
-            }
-
-            var active = _activeExtensions.TryGetValue(id, out var sandbox);
-            var displayName = sandbox?.DisplayName ?? ReadString(root, "displayName", "display_name", "title", "name");
-            if (string.IsNullOrWhiteSpace(displayName))
-            {
-                displayName = id;
-            }
-
-            var version = sandbox?.Version ?? ReadString(root, "version");
-            return new InstalledExtensionInfo
-            {
-                Id = id,
-                Name = sandbox?.Name ?? ReadString(root, "name", "id"),
-                DisplayName = displayName,
-                Description = sandbox?.Description ?? ReadString(root, "description", "summary"),
-                Version = string.IsNullOrWhiteSpace(version) ? "1.0.0" : version,
-                Types = sandbox?.Types.ToList() ?? ReadStringList(root, "types", "type", "capabilities", "capability"),
-                Enabled = active && !IsExtensionDisabled(safeFolderPath)
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to read installed extension manifest from {Path}", folderPath);
-            return null;
         }
     }
 
@@ -633,60 +492,6 @@ public class ExtensionManager : IDisposable
                id.IndexOf(Path.AltDirectorySeparatorChar) < 0;
     }
 
-    private bool TryResolveExtensionDirectory(string id, out string folderPath)
-    {
-        folderPath = string.Empty;
-        if (!TryValidateExtensionId(id, out var validId))
-        {
-            return false;
-        }
-
-        folderPath = ResolveExtensionDirectory(validId);
-        return true;
-    }
-
-    private string ResolveExtensionDirectory(string id)
-    {
-        if (!TryValidateExtensionId(id, out var validId))
-        {
-            throw new InvalidDataException("Extension id must be a lowercase kebab-case identifier.");
-        }
-
-        return ResolveContainedPath(validId);
-    }
-
-    private bool TryResolveInstalledExtensionFolder(
-        string folderPath,
-        out string extensionId,
-        out string safeFolderPath)
-    {
-        extensionId = string.Empty;
-        safeFolderPath = string.Empty;
-
-        try
-        {
-            var candidate = EnsureContainedPath(folderPath);
-            var folderName = Path.GetFileName(Path.TrimEndingDirectorySeparator(candidate));
-            if (!TryValidateExtensionId(folderName, out extensionId))
-            {
-                return false;
-            }
-
-            var expected = ResolveExtensionDirectory(extensionId);
-            if (!PathsEqual(candidate, expected))
-            {
-                return false;
-            }
-
-            safeFolderPath = expected;
-            return true;
-        }
-        catch (Exception ex) when (ex is ArgumentException or InvalidDataException or NotSupportedException)
-        {
-            return false;
-        }
-    }
-
     private string ResolveContainedPath(string relativePath)
     {
         if (string.IsNullOrWhiteSpace(relativePath) || Path.IsPathRooted(relativePath))
@@ -711,14 +516,6 @@ public class ExtensionManager : IDisposable
         }
 
         return fullPath;
-    }
-
-    private static bool PathsEqual(string left, string right)
-    {
-        var comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-        return Path.GetFullPath(left).Equals(Path.GetFullPath(right), comparison);
     }
 
 }
@@ -752,17 +549,6 @@ public class StoreExtensionItem
     public string RepoUrl { get; set; } = "";
     public string HomepageUrl { get; set; } = "";
     public string IconUrl { get; set; } = "";
-    public List<string> Types { get; set; } = [];
-}
-
-public class InstalledExtensionInfo
-{
-    public string Id { get; set; } = "";
-    public string Name { get; set; } = "";
-    public string DisplayName { get; set; } = "";
-    public string Description { get; set; } = "";
-    public string Version { get; set; } = "";
-    public bool Enabled { get; set; }
     public List<string> Types { get; set; } = [];
 }
 

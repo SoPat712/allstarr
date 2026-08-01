@@ -22,11 +22,6 @@ public interface ILocalLibraryService
     Task RegisterDownloadedSongAsync(Song song, string localPath);
 
     /// <summary>
-    /// Gets the mapping between external ID and local ID
-    /// </summary>
-    Task<string?> GetLocalIdForExternalSongAsync(string externalProvider, string externalId);
-
-    /// <summary>
     /// Parses a song ID to determine if it is external or local
     /// </summary>
     (bool isExternal, string? provider, string? externalId) ParseSongId(string songId);
