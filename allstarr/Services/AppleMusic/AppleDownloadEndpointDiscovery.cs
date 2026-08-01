@@ -65,14 +65,16 @@ public sealed class AppleDownloadEndpointDiscovery(
         };
     private static readonly string[] GranularFeatureIds =
     [
-        "metadata-search-song", "metadata-song", "metadata-album", "metadata-artist",
+        "metadata-search-song", "metadata-search-album", "metadata-search-artist",
+        "metadata-song", "metadata-album", "metadata-artist",
         "stream-audio-song", "download-audio-song", "download-album", "download-playlist",
         "library-read", "stream-music-video", "synced-lyrics-artifact",
         "tagging-artwork", "codec-alac", "codec-aac"
     ];
     private static readonly HashSet<string> ImplementedFeatureIds = new(
     [
-        "metadata-search-song", "metadata-song", "metadata-album", "metadata-artist",
+        "metadata-search-song", "metadata-search-album", "metadata-search-artist",
+        "metadata-song", "metadata-album", "metadata-artist",
         "stream-audio-song", "download-audio-song",
         "synced-lyrics-artifact"
     ], StringComparer.OrdinalIgnoreCase);

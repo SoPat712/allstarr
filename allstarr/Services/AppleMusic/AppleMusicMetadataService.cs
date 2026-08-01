@@ -26,35 +26,14 @@ public class AppleMusicMetadataService : IConcreteMetadataService
 
     }
 
-    public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
-    {
-        if (!TryEndpoint($"api/search?q={Uri.EscapeDataString(query)}&type=song&limit={Math.Clamp(limit, 1, 100)}", out var url)) return [];
-        try
-        {
-            var results = await _httpClient.GetFromJsonAsync<List<GamdlSong>>(url, cancellationToken);
+    public Task<List<Song>> SearchSongsAsync(string query, int limit = 20, CancellationToken cancellationToken = default) =>
+        SearchAsync<GamdlSong, Song>(query, "song", limit, ToSong, cancellationToken);
 
-            if (results == null) return new List<Song>();
+    public Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20, CancellationToken cancellationToken = default) =>
+        SearchAsync<GamdlAlbum, Album>(query, "album", limit, ToAlbum, cancellationToken);
 
-            return results.Select(ToSong).ToList();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to search Apple Music songs for query: {Query}", query);
-            return new List<Song>();
-        }
-    }
-
-    public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
-    {
-        await Task.CompletedTask;
-        return [];
-    }
-
-    public async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
-    {
-        await Task.CompletedTask;
-        return [];
-    }
+    public Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default) =>
+        SearchAsync<GamdlArtist, Artist>(query, "artist", limit, ToArtist, cancellationToken);
 
     public async Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20, CancellationToken cancellationToken = default)
     {
@@ -124,16 +103,7 @@ public class AppleMusicMetadataService : IConcreteMetadataService
         try
         {
             var artist = await _httpClient.GetFromJsonAsync<GamdlArtist>(url, cancellationToken);
-            return artist == null ? null : new Artist
-            {
-                Id = $"ext-apple-download-artist-{artist.Id}",
-                Name = artist.Name,
-                ImageUrl = artist.ImageUrl,
-                AlbumCount = artist.AlbumCount,
-                ExternalProvider = "apple-download",
-                ExternalId = artist.Id,
-                IsLocal = false
-            };
+            return artist == null ? null : ToArtist(artist);
         }
         catch (Exception ex)
         {
@@ -206,6 +176,26 @@ public class AppleMusicMetadataService : IConcreteMetadataService
 
     private static bool IsSupportedProvider(string provider) => provider is "applemusic" or "apple-download";
 
+    private async Task<List<TResult>> SearchAsync<TSource, TResult>(
+        string query,
+        string type,
+        int limit,
+        Func<TSource, TResult> map,
+        CancellationToken cancellationToken)
+    {
+        if (!TryEndpoint($"api/search?q={Uri.EscapeDataString(query)}&type={type}&limit={Math.Clamp(limit, 1, 100)}", out var url)) return [];
+        try
+        {
+            var results = await _httpClient.GetFromJsonAsync<List<TSource>>(url, cancellationToken);
+            return results?.Select(map).ToList() ?? [];
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to search Apple Music {Type} for query: {Query}", type, query);
+            return [];
+        }
+    }
+
     private static Song ToSong(GamdlSong song)
     {
         var artistId = string.IsNullOrWhiteSpace(song.ArtistId)
@@ -257,6 +247,17 @@ public class AppleMusicMetadataService : IConcreteMetadataService
         ExternalId = album.Id,
         IsLocal = false,
         Songs = album.Tracks.Select(ToSong).ToList()
+    };
+
+    private static Artist ToArtist(GamdlArtist artist) => new()
+    {
+        Id = $"ext-apple-download-artist-{artist.Id}",
+        Name = artist.Name,
+        ImageUrl = artist.ImageUrl,
+        AlbumCount = artist.AlbumCount,
+        ExternalProvider = "apple-download",
+        ExternalId = artist.Id,
+        IsLocal = false
     };
 
     private static int? Year(string? releaseDate) =>

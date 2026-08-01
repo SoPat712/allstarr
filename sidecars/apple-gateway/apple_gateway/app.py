@@ -23,6 +23,8 @@ from .wrapper import WrapperClient, WrapperResponse
 API_VERSION = "1.0.0"
 CAPABILITIES = (
     "metadata-search-song",
+    "metadata-search-album",
+    "metadata-search-artist",
     "metadata-song",
     "metadata-album",
     "metadata-artist",
@@ -144,12 +146,11 @@ def create_app(
     @application.get("/api/search")
     async def search(
         q: str = Query(min_length=1, max_length=500),
-        type: str = Query(default="song", pattern="^song$"),
+        type: str = Query(default="song", pattern="^(song|album|artist)$"),
         limit: int = Query(default=20, ge=1, le=100),
     ) -> list[dict[str, Any]]:
-        del type
         try:
-            return await catalog_client.search_songs(q, limit)
+            return await catalog_client.search(q, type, limit)
         except (httpx.HTTPError, ValueError):
             raise HTTPException(status_code=502, detail="catalog_unavailable") from None
 

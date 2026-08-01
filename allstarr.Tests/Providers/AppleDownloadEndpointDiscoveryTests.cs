@@ -12,6 +12,8 @@ public sealed class AppleDownloadEndpointDiscoveryTests
     private const string FullManifest = """
         {"sidecarApiVersion":"1.0.0","capabilities":[
           {"id":"metadata-search-song","state":"supported"},
+          {"id":"metadata-search-album","state":"supported"},
+          {"id":"metadata-search-artist","state":"supported"},
           {"id":"metadata-song","state":"supported"},
           {"id":"metadata-album","state":"supported"},
           {"id":"metadata-artist","state":"supported"},
@@ -116,6 +118,10 @@ public sealed class AppleDownloadEndpointDiscoveryTests
             snapshot.Capability("metadata-album").State);
         Assert.Equal(AppleDownloadCapabilityState.Available,
             snapshot.Capability("metadata-artist").State);
+        Assert.Equal(AppleDownloadCapabilityState.Available,
+            snapshot.Capability("metadata-search-album").State);
+        Assert.Equal(AppleDownloadCapabilityState.Available,
+            snapshot.Capability("metadata-search-artist").State);
         Assert.Equal(AppleDownloadCapabilityState.Available,
             snapshot.Capability(ProviderCapabilities.Streaming).State);
         Assert.Equal(AppleDownloadCapabilityState.Available,

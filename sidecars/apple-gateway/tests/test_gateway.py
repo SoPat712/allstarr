@@ -44,8 +44,13 @@ class FakeCatalog:
     async def close(self) -> None:
         return None
 
-    async def search_songs(self, query: str, limit: int) -> list[dict[str, Any]]:
-        return [song("101", query)][:limit]
+    async def search(self, query: str, kind: str, limit: int) -> list[dict[str, Any]]:
+        results = {
+            "song": [song("101", query)],
+            "album": [{"id": "301", "title": query, "artist": "Artist", "artist_id": "201"}],
+            "artist": [{"id": "201", "name": query}],
+        }
+        return results[kind][:limit]
 
     async def song(self, song_id: str) -> dict[str, Any] | None:
         return None if song_id == "404" else song(song_id, "Fixture")
@@ -161,6 +166,8 @@ def test_capabilities_are_versioned_and_truthful(client):
     ids = {item["id"] for item in response.json()["capabilities"]}
     assert {
         "metadata-search-song",
+        "metadata-search-album",
+        "metadata-search-artist",
         "metadata-song",
         "metadata-album",
         "metadata-artist",
@@ -184,12 +191,15 @@ def test_login_and_2fa_preserve_pending_status_without_returning_secrets(client)
     assert client[0].post("/api/login/2fa", json={"code": "123456"}).status_code == 200
 
 
-def test_search_song_and_missing_song_contract(client):
-    search = client[0].get("/api/search", params={"q": "Needle", "type": "song", "limit": 2})
-    assert search.status_code == 200
-    assert search.json()[0]["title"] == "Needle"
-    assert search.json()[0]["artist_id"] == "201"
-    assert search.json()[0]["album_id"] == "301"
+def test_search_all_music_entities_and_missing_song_contract(client):
+    song_search = client[0].get("/api/search", params={"q": "Needle", "type": "song", "limit": 2})
+    assert song_search.status_code == 200
+    assert song_search.json()[0]["title"] == "Needle"
+    assert song_search.json()[0]["artist_id"] == "201"
+    assert song_search.json()[0]["album_id"] == "301"
+    assert client[0].get("/api/search", params={"q": "Needle", "type": "album"}).json()[0]["id"] == "301"
+    assert client[0].get("/api/search", params={"q": "Needle", "type": "artist"}).json()[0]["id"] == "201"
+    assert client[0].get("/api/search", params={"q": "Needle", "type": "video"}).status_code == 422
     assert client[0].get("/api/song/101").json()["id"] == "101"
     assert client[0].get("/api/song/404").status_code == 404
 
@@ -451,11 +461,16 @@ async def test_catalog_mapping_is_deterministic():
 
     http_client = httpx.AsyncClient(base_url="https://itunes.apple.com/", transport=httpx.MockTransport(handler))
     catalog = CatalogClient("us", http_client)
-    result = await catalog.search_songs("Fixture", 1)
+    result = await catalog.search("Fixture", "song", 1)
+    album = await catalog.search("Fixture", "album", 1)
+    artist = await catalog.search("Fixture", "artist", 1)
     assert result[0]["duration"] == 123
     assert result[0]["cover_url"] == "https://img/1200x1200.jpg"
     assert result[0]["artist_id"] == "201"
     assert result[0]["album_id"] == "301"
+    assert album[0]["id"] == "301"
+    assert album[0]["artist_id"] == "201"
+    assert artist[0]["id"] == "201"
     assert await catalog.song_url("101") == "https://music.apple.com/us/album/fixture/1?i=101"
     await http_client.aclose()
 

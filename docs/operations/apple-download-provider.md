@@ -77,7 +77,9 @@ The current typed lanes use these routes:
 | Runtime health | `GET /api/health` |
 | Account status | `GET /api/me` |
 | Login and 2FA | `POST /api/login`, `POST /api/login/2fa` |
-| Song search and detail | `GET /api/search`, `GET /api/song/{id}` |
+| Song, album, and artist search | `GET /api/search` |
+| Song, album, and artist detail | `GET /api/song/{id}`, `GET /api/album/{id}`, `GET /api/artist/{id}` |
+| Artist albums and tracks | `GET /api/artist/{id}/albums`, `GET /api/artist/{id}/tracks` |
 | Managed track artifact | `GET /api/download/{id}?quality={quality}` |
 | Progressive playback | `GET /api/stream/{id}?quality={quality}` |
 

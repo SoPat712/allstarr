@@ -51,6 +51,23 @@ public sealed class AppleMusicMetadataServiceTests
         Assert.Equal("ext-apple-download-artist-201", album.Songs[0].ArtistId);
     }
 
+    [Fact]
+    public async Task SearchMapsOpenableAlbumsAndArtists()
+    {
+        var service = new AppleMusicMetadataService(
+            new Factory(new HttpClient(new Handler())),
+            Options.Create(new AppleDownloadSettings { BaseUrl = "http://apple-gateway:8000/" }),
+            NullLogger<AppleMusicMetadataService>.Instance);
+
+        var album = Assert.Single(await service.SearchAlbumsAsync("Dandelion"));
+        var artist = Assert.Single(await service.SearchArtistsAsync("Ella Langley"));
+
+        Assert.Equal("ext-apple-download-album-301", album.Id);
+        Assert.Equal("ext-apple-download-artist-201", album.ArtistId);
+        Assert.Equal("ext-apple-download-artist-201", artist.Id);
+        Assert.Equal("apple-download", artist.ExternalProvider);
+    }
+
     private sealed class Factory(HttpClient client) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => client;
@@ -73,6 +90,10 @@ public sealed class AppleMusicMetadataServiceTests
                     """[{"id":"301","title":"Dandelion","artist":"Ella Langley","artist_id":"201","cover_url":"https://example.test/art.jpg","release_date":"2026-01-01","track_count":1}]""",
                 "/api/album/301" =>
                     """{"id":"301","title":"Dandelion","artist":"Ella Langley","artist_id":"201","cover_url":"https://example.test/art.jpg","release_date":"2026-01-01","track_count":1,"tracks":[{"id":"101","title":"Choosin' Texas","artist":"Ella Langley","artist_id":"201","album":"Dandelion","album_id":"301","duration":231,"cover_url":"https://example.test/art.jpg"}]}""",
+                "/api/search" when request.RequestUri.Query.Contains("type=album", StringComparison.Ordinal) =>
+                    """[{"id":"301","title":"Dandelion","artist":"Ella Langley","artist_id":"201","cover_url":"https://example.test/art.jpg","release_date":"2026-01-01","track_count":1}]""",
+                "/api/search" when request.RequestUri.Query.Contains("type=artist", StringComparison.Ordinal) =>
+                    """[{"id":"201","name":"Ella Langley","image_url":"https://example.test/art.jpg"}]""",
                 _ =>
                     """[{"id":"101","title":"Choosin' Texas","artist":"Ella Langley","artist_id":"201","album":"Dandelion","album_id":"301","duration":231,"cover_url":"https://example.test/art.jpg"}]"""
             };

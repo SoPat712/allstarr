@@ -22,16 +22,21 @@ class CatalogClient:
         if self._owns_client:
             await self._client.aclose()
 
-    async def search_songs(self, query: str, limit: int) -> list[dict[str, Any]]:
+    async def search(self, query: str, kind: str, limit: int) -> list[dict[str, Any]]:
+        entity, id_field, mapper = {
+            "song": ("song", "trackId", self._map),
+            "album": ("album", "collectionId", self._map_album),
+            "artist": ("musicArtist", "artistId", self._map_artist),
+        }[kind]
         response = await self._client.get("search", params={
             "term": query,
             "country": self._storefront,
             "media": "music",
-            "entity": "song",
+            "entity": entity,
             "limit": limit,
         })
         response.raise_for_status()
-        return [self._map(item) for item in response.json().get("results", []) if item.get("trackId")]
+        return [mapper(item) for item in response.json().get("results", []) if item.get(id_field)]
 
     async def song(self, song_id: str) -> dict[str, Any] | None:
         item = await self._song(song_id)

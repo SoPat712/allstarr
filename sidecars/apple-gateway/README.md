@@ -14,7 +14,7 @@ both on Allstarr's private network. Do not expose the gateway or wrapper login e
 - `GET /api/me`
 - `POST /api/login`
 - `POST /api/login/2fa`
-- `GET /api/search?q=...&type=song&limit=...`
+- `GET /api/search?q=...&type=song|album|artist&limit=...`
 - `GET /api/song/{songId}`
 - `GET /api/download/{songId}?quality=...` — complete managed FLAC artifact
 - `GET /api/stream/{songId}?quality=...` — progressive FLAC after Apple fetch/decryption
