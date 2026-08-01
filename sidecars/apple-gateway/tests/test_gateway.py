@@ -74,6 +74,9 @@ class FakeCatalog:
         album = await self.album("301")
         return [album][:limit] if album else []
 
+    async def artist_tracks(self, artist_id: str, limit: int) -> list[dict[str, Any]]:
+        return [song("101", "Fixture")][:limit]
+
     async def song_url(self, song_id: str) -> str | None:
         return None if song_id == "404" else f"https://music.apple.com/us/album/fixture/1?i={song_id}"
 
@@ -197,6 +200,8 @@ def test_artist_discography_and_album_tracks_contract(client):
     assert artist.json()["name"] == "Artist"
     albums = client[0].get("/api/artist/201/albums").json()
     assert albums[0]["artist_id"] == "201"
+    tracks = client[0].get("/api/artist/201/tracks").json()
+    assert tracks[0]["artist_id"] == "201"
     album = client[0].get("/api/album/301").json()
     assert album["tracks"][0]["artist_id"] == "201"
     assert client[0].get("/api/artist/404").status_code == 404
@@ -487,5 +492,6 @@ async def test_catalog_maps_artist_discography_and_album_tracks():
     catalog = CatalogClient("us", http_client)
     assert (await catalog.artist("201"))["image_url"] == "https://img/1200x1200.jpg"
     assert (await catalog.artist_albums("201", 100))[0]["id"] == "301"
+    assert (await catalog.artist_tracks("201", 100))[0]["id"] == "101"
     assert (await catalog.album("301"))["tracks"][0]["artist_id"] == "201"
     await http_client.aclose()

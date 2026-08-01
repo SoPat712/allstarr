@@ -161,7 +161,19 @@ public class AppleMusicMetadataService : IConcreteMetadataService
 
     public async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
-        return new List<Song>();
+        if (!IsSupportedProvider(externalProvider) ||
+            !TryEndpoint($"api/artist/{Uri.EscapeDataString(externalId)}/tracks", out var url)) return [];
+
+        try
+        {
+            var tracks = await _httpClient.GetFromJsonAsync<List<GamdlSong>>(url, cancellationToken);
+            return tracks?.Select(ToSong).ToList() ?? [];
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get Apple Music tracks for artist ID: {ExternalId}", externalId);
+            return [];
+        }
     }
 
     public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)

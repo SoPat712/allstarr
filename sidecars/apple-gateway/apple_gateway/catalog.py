@@ -60,6 +60,10 @@ class CatalogClient:
         results = await self._lookup(artist_id, entity="album", limit=limit)
         return [self._map_album(item) for item in results if item.get("collectionId")]
 
+    async def artist_tracks(self, artist_id: str, limit: int) -> list[dict[str, Any]]:
+        results = await self._lookup(artist_id, entity="song", limit=limit)
+        return [self._map(item) for item in results if item.get("trackId")]
+
     async def song_url(self, song_id: str) -> str | None:
         item = await self._song(song_id)
         return str(item.get("trackViewUrl") or "") or None if item else None

@@ -193,6 +193,16 @@ def create_app(
         except (httpx.HTTPError, ValueError):
             raise HTTPException(status_code=502, detail="catalog_unavailable") from None
 
+    @application.get("/api/artist/{artist_id}/tracks")
+    async def artist_tracks(
+        artist_id: str,
+        limit: int = Query(default=100, ge=1, le=200),
+    ) -> list[dict[str, Any]]:
+        try:
+            return await catalog_client.artist_tracks(artist_id, limit)
+        except (httpx.HTTPError, ValueError):
+            raise HTTPException(status_code=502, detail="catalog_unavailable") from None
+
     async def prepare_song(
         song_id: str,
         quality: str,

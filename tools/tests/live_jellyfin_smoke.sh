@@ -20,8 +20,9 @@ REQUIRE_EXTERNAL="${REQUIRE_EXTERNAL:-0}"
 NATIVE_ROUTE_SAMPLES="${NATIVE_ROUTE_SAMPLES:-10}"
 MAX_EXTERNAL_METADATA_TTFB_MS="${MAX_EXTERNAL_METADATA_TTFB_MS:-2000}"
 MAX_EXTERNAL_ARTWORK_TTFB_MS="${MAX_EXTERNAL_ARTWORK_TTFB_MS:-2000}"
+MAX_EXTERNAL_STREAM_TTFB_MS="${MAX_EXTERNAL_STREAM_TTFB_MS:-8000}"
 
-for command in curl jq awk diff cmp od wc; do
+for command in curl jq awk diff cmp head mkfifo od tr wc; do
     command -v "$command" >/dev/null || { echo "Missing required command: $command" >&2; exit 1; }
 done
 [[ "$SAMPLES" =~ ^[1-9][0-9]*$ ]] || { echo "SAMPLES must be a positive integer" >&2; exit 1; }
@@ -37,6 +38,8 @@ done
     { echo "MAX_EXTERNAL_METADATA_TTFB_MS must be numeric" >&2; exit 1; }
 [[ "$MAX_EXTERNAL_ARTWORK_TTFB_MS" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
     { echo "MAX_EXTERNAL_ARTWORK_TTFB_MS must be numeric" >&2; exit 1; }
+[[ "$MAX_EXTERNAL_STREAM_TTFB_MS" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
+    { echo "MAX_EXTERNAL_STREAM_TTFB_MS must be numeric" >&2; exit 1; }
 if [[ -n "$EXTERNAL_SONG_ID" ]]; then
     [[ "$EXTERNAL_SONG_ID" =~ ^ext-[[:alnum:]_-]+-song-[[:alnum:]_.:-]+$ ]] ||
         { echo "EXTERNAL_SONG_ID must be a typed external song ID" >&2; exit 1; }
@@ -81,6 +84,9 @@ direct_playlists_file="$(mktemp)"
 allstarr_playlists_file="$(mktemp)"
 external_search_file="$(mktemp)"
 provider_cases_file="$(mktemp)"
+stream_pipe="$(mktemp)"
+rm -f "$stream_pipe"
+mkfifo "$stream_pipe"
 stateful_playlist_id=""
 stateful_playlist_name=""
 playlist_identity_matches() {
@@ -107,7 +113,7 @@ cleanup() {
         "$direct_media_file" "$allstarr_media_file" "$direct_headers_file" \
         "$allstarr_headers_file" "$virtual_items_file" "$direct_virtual_items_file" \
         "$direct_playlists_file" "$allstarr_playlists_file" "$external_search_file"
-    rm -f "$provider_cases_file"
+    rm -f "$provider_cases_file" "$stream_pipe"
 }
 trap cleanup EXIT
 
@@ -368,23 +374,32 @@ check_image() {
 }
 
 check_external_stream() {
-    local label="$1" url="$2" result code content_type bytes ttfb total
+    local label="$1" url="$2" result code content_type bytes ttfb total reader_pid
     : >"$response_file"
+    head -c 65536 <"$stream_pipe" >"$response_file" &
+    reader_pid=$!
     result="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" --range 0-65535 \
-        --max-filesize 65536 -o "$response_file" \
+        -o "$stream_pipe" \
         -w '%{http_code}\t%{content_type}\t%{size_download}\t%{time_starttransfer}\t%{time_total}' \
         "$url" || true)"
+    wait "$reader_pid" || true
     IFS=$'\t' read -r code content_type bytes ttfb total <<<"$result"
     code="${code:-000}"
     bytes="${bytes:-0}"
     checks=$((checks + 1))
+    local saved_bytes
+    saved_bytes="$(wc -c <"$response_file" | tr -d ' ')"
     if [[ ",$code," == *,200,* || ",$code," == *,206,* ]] &&
-       (( ${bytes%.*} > 0 && ${bytes%.*} <= 65536 )); then
+       (( saved_bytes > 0 && saved_bytes <= 65536 )) &&
+       awk -v value="${ttfb:-0}" -v max="$MAX_EXTERNAL_STREAM_TTFB_MS" \
+           'BEGIN { exit !((value * 1000) <= max) }'; then
         printf 'PASS %-34s status=%s bytes=%s ttfb_ms=%.1f total_ms=%.1f\n' \
-            "$label" "$code" "$bytes" "$(awk -v value="${ttfb:-0}" 'BEGIN { print value * 1000 }')" \
+            "$label" "$code" "$saved_bytes" "$(awk -v value="${ttfb:-0}" 'BEGIN { print value * 1000 }')" \
             "$(awk -v value="${total:-0}" 'BEGIN { print value * 1000 }')"
     else
-        printf 'FAIL %-34s status=%s type=%s bytes=%s\n' "$label" "$code" "$content_type" "$bytes"
+        printf 'FAIL %-34s status=%s type=%s bytes=%s ttfb_ms=%.1f\n' \
+            "$label" "$code" "$content_type" "$saved_bytes" \
+            "$(awk -v value="${ttfb:-0}" 'BEGIN { print value * 1000 }')"
         failures=$((failures + 1))
     fi
 }
@@ -723,13 +738,14 @@ check_external_provider_case() {
     check_json "$provider artist albums" \
         "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$artist_id&IncludeItemTypes=MusicAlbum&Limit=200" \
         '(.Items | type == "array" and length > 0) and
-         all(.Items[]; .Type == "MusicAlbum" and any(.ArtistItems[]; .Id == $id))' \
+         all(.Items[]; .Type == "MusicAlbum" and (.ArtistItems | length > 0)) and
+         any(.Items[]; any(.ArtistItems[]; .Id == $id))' \
         --arg id "$artist_id"
     check_json "$provider artist tracks" \
         "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$artist_id&IncludeItemTypes=Audio&Limit=200" \
         '(.Items | type == "array" and length > 0) and
-         all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and
-             any(.ArtistItems[]; .Id == $id))' --arg id "$artist_id"
+         all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and (.ArtistItems | length > 0)) and
+         any(.Items[]; any(.ArtistItems[]; .Id == $id))' --arg id "$artist_id"
     check_json "$provider artist combined" \
         "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$artist_id&IncludeItemTypes=MusicAlbum,Audio&Limit=400" \
         'any(.Items[]; .Type == "MusicAlbum") and any(.Items[]; .Type == "Audio")' \
@@ -959,13 +975,14 @@ if [[ -n "$external_song_id" ]]; then
     check_json "external artist discography" \
         "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_artist_id&IncludeItemTypes=MusicAlbum&Limit=200" \
         '(.Items | type == "array" and length > 0) and
-         all(.Items[]; .Type == "MusicAlbum" and any(.ArtistItems[]; .Id == $id))' \
+         all(.Items[]; .Type == "MusicAlbum" and (.ArtistItems | length > 0)) and
+         any(.Items[]; any(.ArtistItems[]; .Id == $id))' \
         --arg id "$external_artist_id"
     check_json "external artist tracks" \
         "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_artist_id&IncludeItemTypes=Audio&Limit=200" \
         '(.Items | type == "array" and length > 0) and
-         all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and
-             any(.ArtistItems[]; .Id == $id))' --arg id "$external_artist_id"
+         all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and (.ArtistItems | length > 0)) and
+         any(.Items[]; any(.ArtistItems[]; .Id == $id))' --arg id "$external_artist_id"
     check_json "external artist combined" \
         "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_artist_id&IncludeItemTypes=MusicAlbum,Audio&Limit=400" \
         'any(.Items[]; .Type == "MusicAlbum") and any(.Items[]; .Type == "Audio")'

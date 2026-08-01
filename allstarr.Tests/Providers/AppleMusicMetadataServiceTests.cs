@@ -40,11 +40,13 @@ public sealed class AppleMusicMetadataServiceTests
 
         var artist = await service.GetArtistAsync("apple-download", "201");
         var albums = await service.GetArtistAlbumsAsync("apple-download", "201");
+        var tracks = await service.GetArtistTracksAsync("apple-download", "201");
         var album = await service.GetAlbumAsync("apple-download", "301");
 
         Assert.Equal("ext-apple-download-artist-201", artist!.Id);
         Assert.Equal("ext-apple-download-album-301", Assert.Single(albums).Id);
         Assert.Equal("ext-apple-download-artist-201", albums[0].ArtistId);
+        Assert.Equal("ext-apple-download-song-101", Assert.Single(tracks).Id);
         Assert.Equal("ext-apple-download-song-101", Assert.Single(album!.Songs).Id);
         Assert.Equal("ext-apple-download-artist-201", album.Songs[0].ArtistId);
     }
