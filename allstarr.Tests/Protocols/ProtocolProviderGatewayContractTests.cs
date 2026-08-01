@@ -14,6 +14,9 @@ public sealed class ProtocolProviderGatewayContractTests
             root, "allstarr", "Controllers", "JellyfinController.Audio.cs"));
 
         Assert.Contains("_providerGateway.GetSongAsync", controller, StringComparison.Ordinal);
+        Assert.Contains("_providerGateway.GetArtistAlbumsAsync", controller, StringComparison.Ordinal);
+        Assert.Contains("_providerGateway.GetArtistTracksAsync", controller, StringComparison.Ordinal);
+        Assert.Contains("_providerGateway.SearchPlayableSongsAsync", controller, StringComparison.Ordinal);
         Assert.Contains("_providerGateway.SearchAsync", search, StringComparison.Ordinal);
         Assert.Contains("_providerGateway.SearchPlaylistsAsync", search, StringComparison.Ordinal);
         Assert.Contains("_providerGateway.GetPlaylistAsync", File.ReadAllText(Path.Combine(

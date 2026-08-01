@@ -167,6 +167,28 @@ public partial class JellyfinController : ControllerBase
         ? _providerGateway.GetArtistAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId)
         : _metadataService.GetArtistAsync(provider, externalId, cancellationToken);
 
+    private Task<List<Album>> GetProviderArtistAlbumsAsync(
+        string provider,
+        string externalId,
+        CancellationToken cancellationToken = default) => _providerGateway != null
+        ? _providerGateway.GetArtistAlbumsAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId)
+        : _metadataService.GetArtistAlbumsAsync(provider, externalId, cancellationToken);
+
+    private Task<List<Song>> GetProviderArtistTracksAsync(
+        string provider,
+        string externalId,
+        CancellationToken cancellationToken = default) => _providerGateway != null
+        ? _providerGateway.GetArtistTracksAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId)
+        : _metadataService.GetArtistTracksAsync(provider, externalId, cancellationToken);
+
+    private async Task<IReadOnlyList<Song>> SearchProviderSongsAsync(
+        string query,
+        int limit,
+        CancellationToken cancellationToken = default) => _providerGateway != null
+        ? await _providerGateway.SearchPlayableSongsAsync(
+            HttpContext.RequireProtocolExecutionContext(), query, limit)
+        : await _metadataService.SearchSongsAsync(query, limit, cancellationToken);
+
     private Task<Song?> GetProviderSongForImageAsync(
         string provider,
         string externalId,
@@ -294,7 +316,7 @@ public partial class JellyfinController : ControllerBase
             case "artist":
                 var artist = await GetProviderArtistAsync(provider, externalId, cancellationToken);
                 if (artist == null) return _itemProtocolAdapter.ShapeNotFound("Artist");
-                var albums = await _metadataService.GetArtistAlbumsAsync(provider, externalId, cancellationToken);
+                var albums = await GetProviderArtistAlbumsAsync(provider, externalId, cancellationToken);
 
                 // Fill in artist info for albums
                 foreach (var a in albums)
@@ -360,48 +382,58 @@ public partial class JellyfinController : ControllerBase
             });
         }
 
-        // Check if asking for audio (artist songs)
-        if (itemTypes?.Contains("Audio", StringComparer.OrdinalIgnoreCase) == true)
+        if (type == "artist")
         {
-            if (type == "artist")
+            var includeTracks = itemTypes?.Contains("Audio", StringComparer.OrdinalIgnoreCase) == true;
+            var includeAlbums = itemTypesUnspecified ||
+                                itemTypes!.Contains("MusicAlbum", StringComparer.OrdinalIgnoreCase);
+            if (includeTracks || includeAlbums)
             {
-                // For artist + Audio, fetch top tracks from the artist endpoint
-                _logger.LogDebug("Fetching artist tracks for {Provider}/{ExternalId}", provider, externalId);
-                var tracks = await _metadataService.GetArtistTracksAsync(provider, externalId, cancellationToken);
+                var tracksTask = includeTracks
+                    ? GetProviderArtistTracksAsync(provider, externalId, cancellationToken)
+                    : Task.FromResult(new List<Song>());
+                var albumsTask = includeAlbums || includeTracks
+                    ? GetProviderArtistAlbumsAsync(provider, externalId, cancellationToken)
+                    : Task.FromResult(new List<Album>());
+                var artistTask = includeAlbums
+                    ? GetProviderArtistAsync(provider, externalId, cancellationToken)
+                    : Task.FromResult<Artist?>(null);
+                await Task.WhenAll(tracksTask, albumsTask, artistTask);
 
-                if (tracks == null)
-                {
-                    _logger.LogWarning("No tracks found for artist {Provider}/{ExternalId}", provider, externalId);
-                    return _responseBuilder.CreateItemsResponse(new List<Song>());
-                }
-
-                _logger.LogDebug("Found {Count} tracks for artist", tracks.Count);
-                return _responseBuilder.CreateItemsResponse(tracks);
-            }
-        }
-
-        // Check if asking for albums (artist albums)
-        if (itemTypes?.Contains("MusicAlbum", StringComparer.OrdinalIgnoreCase) == true || itemTypesUnspecified)
-        {
-            if (type == "artist")
-            {
-                _logger.LogDebug("Fetching artist albums for {Provider}/{ExternalId}", provider, externalId);
-                var albums = await _metadataService.GetArtistAlbumsAsync(provider, externalId, cancellationToken);
-                var artist = await GetProviderArtistAsync(provider, externalId, cancellationToken);
-
-                _logger.LogDebug("Found {Count} albums for artist {ArtistName}", albums.Count, artist?.Name ?? "unknown");
-
-                // Fill artist info
+                var tracks = await tracksTask;
+                var albums = await albumsTask;
+                var artist = await artistTask;
+                if (includeTracks && tracks.Count == 0)
+                    tracks = albums.SelectMany(album => album.Songs)
+                        .DistinctBy(song => song.Id, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
                 if (artist != null)
                 {
-                    foreach (var a in albums)
+                    foreach (var album in albums)
                     {
-                        if (string.IsNullOrEmpty(a.Artist)) a.Artist = artist.Name;
-                        if (string.IsNullOrEmpty(a.ArtistId)) a.ArtistId = artist.Id;
+                        if (string.IsNullOrEmpty(album.Artist)) album.Artist = artist.Name;
+                        if (string.IsNullOrEmpty(album.ArtistId)) album.ArtistId = artist.Id;
                     }
                 }
 
-                return _responseBuilder.CreateAlbumsResponse(albums);
+                var items = (includeAlbums ? albums : []).Select(_responseBuilder.ConvertAlbumToJellyfinItem)
+                    .Concat(tracks.Select(_responseBuilder.ConvertSongToJellyfinItem))
+                    .ToList();
+                var startIndex = GetRequestedStartIndex();
+                var limit = int.TryParse(Request.Query["Limit"], out var parsedLimit) && parsedLimit >= 0
+                    ? parsedLimit
+                    : int.MaxValue;
+                _logger.LogDebug(
+                    "Found {AlbumCount} albums and {TrackCount} tracks for artist {ArtistName}",
+                    albums.Count,
+                    tracks.Count,
+                    artist?.Name ?? "unknown");
+                return _responseBuilder.CreateJsonResponse(new
+                {
+                    Items = items.Skip(startIndex).Take(limit).ToList(),
+                    TotalRecordCount = items.Count,
+                    StartIndex = startIndex
+                });
             }
         }
 
@@ -646,7 +678,7 @@ public partial class JellyfinController : ControllerBase
                 return _responseBuilder.CreateError(404, "Artist not found");
             }
 
-            var albums = await _metadataService.GetArtistAlbumsAsync(provider!, externalId!);
+            var albums = await GetProviderArtistAlbumsAsync(provider!, externalId!);
             foreach (var a in albums)
             {
                 if (string.IsNullOrEmpty(a.Artist)) a.Artist = artist.Name;
@@ -691,7 +723,14 @@ public partial class JellyfinController : ControllerBase
             var extArtist = externalArtists[0];
             if (extArtist.Name.Equals(artistName, StringComparison.OrdinalIgnoreCase))
             {
-                externalAlbums = await _metadataService.GetArtistAlbumsAsync("deezer", extArtist.ExternalId!, HttpContext.RequestAborted);
+                if (!string.IsNullOrWhiteSpace(extArtist.ExternalProvider) &&
+                    !string.IsNullOrWhiteSpace(extArtist.ExternalId))
+                {
+                    externalAlbums = await GetProviderArtistAlbumsAsync(
+                        extArtist.ExternalProvider,
+                        extArtist.ExternalId,
+                        HttpContext.RequestAborted);
+                }
 
                 // Set artist info to local artist so albums link back correctly
                 foreach (var a in externalAlbums)
@@ -1278,7 +1317,8 @@ public partial class JellyfinController : ControllerBase
 
                 // Search for similar songs using artist and genre
                 var searchQuery = $"{song.Artist}";
-                var searchResult = await _metadataService.SearchSongsAsync(searchQuery, limit);
+                var searchResult = await SearchProviderSongsAsync(
+                    searchQuery, limit, HttpContext.RequestAborted);
 
                 // Filter out the original song and convert to Jellyfin format
                 var similarSongs = searchResult
@@ -1381,7 +1421,7 @@ public partial class JellyfinController : ControllerBase
                     if (artist == null) return CreateProtocolResponse(
                         _interactionProtocolAdapter.ShapeInstantMix([]));
                     artistName = artist.Name;
-                    var albums = await _metadataService.GetArtistAlbumsAsync(
+                    var albums = await GetProviderArtistAlbumsAsync(
                         provider!, externalId!, HttpContext.RequestAborted);
                     foreach (var album in albums.Take(3))
                     {
@@ -1404,7 +1444,7 @@ public partial class JellyfinController : ControllerBase
                     {
                         var artistExternalId = song.ArtistId.Replace(
                             $"ext-{song.ExternalProvider}-artist-", "");
-                        var albums = await _metadataService.GetArtistAlbumsAsync(
+                        var albums = await GetProviderArtistAlbumsAsync(
                             song.ExternalProvider,
                             artistExternalId,
                             HttpContext.RequestAborted);
@@ -1423,7 +1463,7 @@ public partial class JellyfinController : ControllerBase
 
                 if (mixSongs.Count < limit && !string.IsNullOrWhiteSpace(artistName))
                 {
-                    var searchResult = await _metadataService.SearchSongsAsync(
+                    var searchResult = await SearchProviderSongsAsync(
                         artistName, limit, HttpContext.RequestAborted);
                     mixSongs.AddRange(searchResult.Where(song =>
                         mixSongs.All(existing => existing.Id != song.Id)));

@@ -33,6 +33,11 @@ SDK v1 recognizes typed metadata, streaming, download, playlist, lyrics, intelli
   text or lyrics, exports playlists, and disconnects a remote service.
 - Health tests one account and capability without changing unrelated state.
 
+Metadata extensions may also expose `getArtistAlbums` and `getArtistTracks`. Both receive the
+provider artist `id`, a `{ limit, cursor }` page, and an optional `expectedSnapshotVersion`, and
+return the same typed page shape as `searchAlbums` or `searchTracks`. This lets Jellyfin clients
+open an extension-backed artist and browse its complete virtual discography.
+
 Allstarr selects the tenant, user, library, provider account, capability, deadline, and policy before invocation. Extension code cannot select a different account or impersonate another user.
 
 ## Accounts and settings

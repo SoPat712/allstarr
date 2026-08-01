@@ -72,8 +72,25 @@ public sealed class ExtensionMetadataCapabilityAdapter : ExtensionCapabilityAdap
         return InvokeAsync(context, "getArtist", new { id = request.Id.Value, request.ExpectedSnapshotVersion }, MapArtist);
     }
 
+    public Task<ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>> GetArtistAlbumsAsync(
+        ProviderExecutionContext context, ProviderArtistItemsRequest request)
+    {
+        context.RequireResourceOwner(request.Id, ProviderResourceKind.Artist);
+        return InvokeAsync(context, "getArtistAlbums", ArtistItemsRequest(request), value => MapPage(value, MapAlbum));
+    }
+
+    public Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>> GetArtistTracksAsync(
+        ProviderExecutionContext context, ProviderArtistItemsRequest request)
+    {
+        context.RequireResourceOwner(request.Id, ProviderResourceKind.Artist);
+        return InvokeAsync(context, "getArtistTracks", ArtistItemsRequest(request), value => MapPage(value, MapTrack));
+    }
+
     private static object SearchRequest(ProviderMetadataSearchRequest request) =>
         new { request.Query, page = new { request.Page.Limit, request.Page.Cursor }, request.Market };
+
+    private static object ArtistItemsRequest(ProviderArtistItemsRequest request) =>
+        new { id = request.Id.Value, page = new { request.Page.Limit, request.Page.Cursor }, request.ExpectedSnapshotVersion };
 
     private ProviderPage<T> MapPage<T>(JsonElement value, Func<JsonElement, T> map) => new(ProviderId,
         value.GetProperty("items").EnumerateArray().Select(map), OptionalText(value, "nextCursor"),

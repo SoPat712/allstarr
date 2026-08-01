@@ -314,7 +314,7 @@ public sealed class ExtensionCapabilityAdapterTests
     [Fact]
     public async Task Metadata_AllDeclaredAlbumAndArtistHooksMapTypedSchemas()
     {
-        string[] hooks = ["searchTracks", "getTrack", "lookupByIsrc", "searchAlbums", "getAlbum", "searchArtists", "getArtist"];
+        string[] hooks = ["searchTracks", "getTrack", "lookupByIsrc", "searchAlbums", "getAlbum", "searchArtists", "getArtist", "getArtistAlbums", "getArtistTracks"];
         var manifest = Manifest(ProviderCapabilityKind.Metadata, hooks);
         var sandbox = Sandbox(manifest, """
             const artist = { id: 'artist-1', name: 'Artist', artworkUrl: 'https://img.example/artist.jpg', snapshotVersion: 'a1' };
@@ -323,7 +323,8 @@ public sealed class ExtensionCapabilityAdapterTests
             registerExtension({
               searchTracks: function() { return { items: [track] }; }, getTrack: function() { return track; }, lookupByIsrc: function() { return track; },
               searchAlbums: function() { return { items: [album], nextCursor: 'next' }; }, getAlbum: function() { return album; },
-              searchArtists: function() { return { items: [artist] }; }, getArtist: function() { return artist; }
+              searchArtists: function() { return { items: [artist] }; }, getArtist: function() { return artist; },
+              getArtistAlbums: function() { return { items: [album] }; }, getArtistTracks: function() { return { items: [track] }; }
             });
             """);
         var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest);
@@ -334,6 +335,9 @@ public sealed class ExtensionCapabilityAdapterTests
         Assert.Equal(8, (await adapter.GetAlbumAsync(Context(), new ProviderAlbumLookupRequest(Id(ProviderResourceKind.Album, "album-1")))).RequireValue().TrackCount);
         Assert.Equal("artist-1", Assert.Single((await adapter.SearchArtistsAsync(Context(), search)).RequireValue().Items).Id.Value);
         Assert.Equal("Artist", (await adapter.GetArtistAsync(Context(), new ProviderArtistLookupRequest(Id(ProviderResourceKind.Artist, "artist-1")))).RequireValue().Name);
+        var artistItems = new ProviderArtistItemsRequest(Id(ProviderResourceKind.Artist, "artist-1"), new ProviderPageRequest(10));
+        Assert.Equal("album-1", Assert.Single((await adapter.GetArtistAlbumsAsync(Context(), artistItems)).RequireValue().Items).Id.Value);
+        Assert.Equal("track-1", Assert.Single((await adapter.GetArtistTracksAsync(Context(), artistItems)).RequireValue().Items).Id.Value);
         Assert.Equal("USABC1234567", (await adapter.LookupByIsrcAsync(Context(), new ProviderIsrcLookupRequest("USABC1234567"))).RequireValue().Isrc);
     }
 

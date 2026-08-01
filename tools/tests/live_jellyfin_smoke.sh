@@ -14,6 +14,8 @@ PLAYLIST_WRITE_CONFIRM="${PLAYLIST_WRITE_CONFIRM:-}"
 INJECTED_PLAYLIST_ID="${INJECTED_PLAYLIST_ID:-}"
 INJECTED_PLAYLIST_EXPECTED_COUNT="${INJECTED_PLAYLIST_EXPECTED_COUNT:-}"
 EXTERNAL_SONG_ID="${EXTERNAL_SONG_ID:-}"
+EXTERNAL_PROVIDER_CASES="${EXTERNAL_PROVIDER_CASES:-[]}" # [{"provider":"extension-id","songId":"ext-extension-id-song-123"}]
+EXPECTED_EXTERNAL_PROVIDERS="${EXPECTED_EXTERNAL_PROVIDERS:-}"
 REQUIRE_EXTERNAL="${REQUIRE_EXTERNAL:-0}"
 NATIVE_ROUTE_SAMPLES="${NATIVE_ROUTE_SAMPLES:-10}"
 MAX_EXTERNAL_METADATA_TTFB_MS="${MAX_EXTERNAL_METADATA_TTFB_MS:-2000}"
@@ -39,6 +41,11 @@ if [[ -n "$EXTERNAL_SONG_ID" ]]; then
     [[ "$EXTERNAL_SONG_ID" =~ ^ext-[[:alnum:]_-]+-song-[[:alnum:]_.:-]+$ ]] ||
         { echo "EXTERNAL_SONG_ID must be a typed external song ID" >&2; exit 1; }
 fi
+jq -e 'type == "array" and all(.[];
+    (.provider | type == "string" and length > 0) and
+    (.songId | type == "string" and test("^ext-.+-song-.+$")))' \
+    <<<"$EXTERNAL_PROVIDER_CASES" >/dev/null ||
+    { echo "EXTERNAL_PROVIDER_CASES must be a JSON array of provider/songId objects" >&2; exit 1; }
 if [[ -n "$JELLYFIN_USER_ID" ]]; then
     [[ "$JELLYFIN_USER_ID" =~ ^[[:alnum:]_-]{1,128}$ ]] ||
         { echo "JELLYFIN_USER_ID must be a stable Jellyfin user ID" >&2; exit 1; }
@@ -73,6 +80,7 @@ direct_virtual_items_file="$(mktemp)"
 direct_playlists_file="$(mktemp)"
 allstarr_playlists_file="$(mktemp)"
 external_search_file="$(mktemp)"
+provider_cases_file="$(mktemp)"
 stateful_playlist_id=""
 stateful_playlist_name=""
 playlist_identity_matches() {
@@ -99,6 +107,7 @@ cleanup() {
         "$direct_media_file" "$allstarr_media_file" "$direct_headers_file" \
         "$allstarr_headers_file" "$virtual_items_file" "$direct_virtual_items_file" \
         "$direct_playlists_file" "$allstarr_playlists_file" "$external_search_file"
+    rm -f "$provider_cases_file"
 }
 trap cleanup EXIT
 
@@ -354,6 +363,28 @@ check_image() {
     else
         printf 'FAIL %-34s status=%s type=%s expected_format=%s bytes=%s\n' \
             "$label" "$code" "$content_type" "${expected_format:-any}" "$bytes"
+        failures=$((failures + 1))
+    fi
+}
+
+check_external_stream() {
+    local label="$1" url="$2" result code content_type bytes ttfb total
+    : >"$response_file"
+    result="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" --range 0-65535 \
+        --max-filesize 65536 -o "$response_file" \
+        -w '%{http_code}\t%{content_type}\t%{size_download}\t%{time_starttransfer}\t%{time_total}' \
+        "$url" || true)"
+    IFS=$'\t' read -r code content_type bytes ttfb total <<<"$result"
+    code="${code:-000}"
+    bytes="${bytes:-0}"
+    checks=$((checks + 1))
+    if [[ ",$code," == *,200,* || ",$code," == *,206,* ]] &&
+       (( ${bytes%.*} > 0 && ${bytes%.*} <= 65536 )); then
+        printf 'PASS %-34s status=%s bytes=%s ttfb_ms=%.1f total_ms=%.1f\n' \
+            "$label" "$code" "$bytes" "$(awk -v value="${ttfb:-0}" 'BEGIN { print value * 1000 }')" \
+            "$(awk -v value="${total:-0}" 'BEGIN { print value * 1000 }')"
+    else
+        printf 'FAIL %-34s status=%s type=%s bytes=%s\n' "$label" "$code" "$content_type" "$bytes"
         failures=$((failures + 1))
     fi
 }
@@ -663,18 +694,64 @@ item_contract='
         (.Artists | type == "array" and length > 0 and all(.[]; provider_labeled)) and
         (.ArtistItems | type == "array" and length > 0) and
         (.AlbumArtists | type == "array" and length > 0) and
-        (.RunTimeTicks | type == "number" and . >= 0) and
+        (.RunTimeTicks | type == "number" and . > 0) and
         (.ImageTags.Primary | nonempty) and
         (.ProviderIds | type == "object" and length > 0) and
         (.CanDownload | type == "boolean") and
-        (.MediaSources | type == "array" and length > 0 and
+        (.RunTimeTicks as $runtime |
+            .MediaSources | type == "array" and length > 0 and
             all(.[];
                 (.Id | nonempty) and
                 (.DirectStreamUrl | nonempty) and
+                (.RunTimeTicks == $runtime) and
                 (.SupportsDirectPlay | type == "boolean") and
                 (.SupportsDirectStream | type == "boolean") and
                 (.MediaStreams | type == "array" and length > 0)));
 '
+
+check_external_provider_case() {
+    local provider="$1" song_id="$2" detail_url artist_id album_id
+    detail_url="$ALLSTARR_BASE/Items/$song_id?UserId=$best_user_id"
+    check_json "$provider external detail" "$detail_url" \
+        "$item_contract external_audio and .Id == \$id" --arg id "$song_id"
+    artist_id="$(jq -r '.ArtistItems[0].Id // empty' "$response_file")"
+    album_id="$(jq -r '.AlbumId // empty' "$response_file")"
+
+    check_json "$provider artist detail" \
+        "$ALLSTARR_BASE/Artists/$artist_id?UserId=$best_user_id" \
+        '.Id == $id and .Type == "MusicArtist"' --arg id "$artist_id"
+    check_json "$provider artist albums" \
+        "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$artist_id&IncludeItemTypes=MusicAlbum&Limit=200" \
+        '(.Items | type == "array" and length > 0) and
+         all(.Items[]; .Type == "MusicAlbum" and any(.ArtistItems[]; .Id == $id))' \
+        --arg id "$artist_id"
+    check_json "$provider artist tracks" \
+        "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$artist_id&IncludeItemTypes=Audio&Limit=200" \
+        '(.Items | type == "array" and length > 0) and
+         all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and
+             any(.ArtistItems[]; .Id == $id))' --arg id "$artist_id"
+    check_json "$provider artist combined" \
+        "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$artist_id&IncludeItemTypes=MusicAlbum,Audio&Limit=400" \
+        'any(.Items[]; .Type == "MusicAlbum") and any(.Items[]; .Type == "Audio")' \
+        --arg id "$artist_id"
+    check_json "$provider album detail" \
+        "$ALLSTARR_BASE/Items/$album_id?UserId=$best_user_id" \
+        '.Id == $id and .Type == "MusicAlbum"' --arg id "$album_id"
+    check_json "$provider album tracks" \
+        "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$album_id&IncludeItemTypes=Audio&Limit=200" \
+        '(.Items | type == "array" and length > 0) and
+         all(.Items[]; .Type == "Audio" and .AlbumId == $id and .RunTimeTicks > 0)' \
+        --arg id "$album_id"
+    check_json "$provider similar songs" \
+        "$ALLSTARR_BASE/Items/$song_id/Similar?UserId=$best_user_id&Limit=10" \
+        '(.Items | type == "array" and length > 0) and
+         all(.Items[]; .Type == "Audio" and .Id != $id and .RunTimeTicks > 0)' \
+        --arg id "$song_id"
+    if [[ "$TEST_EXTERNAL_STREAM" == 1 ]]; then
+        check_external_stream "$provider external stream" \
+            "$ALLSTARR_BASE/Audio/$song_id/stream?static=true&UserId=$best_user_id"
+    fi
+}
 
 echo "functional-and-security-checks"
 check_public_code "public bootstrap" "200" "$ALLSTARR_BASE/System/Info/Public"
@@ -866,6 +943,9 @@ if [[ -n "$external_song_id" ]]; then
     check_json "external item recursive DTO" "$external_detail_url" \
         "$item_contract external_audio and .Id == \$id" \
         --arg id "$external_song_id"
+    external_provider="$(jq -r '
+        first((.ProviderIds // {}) | keys[] |
+            select(. != "ISRC" and . != "AllstarrSource")) // empty' "$response_file")"
     external_artist_id="$(jq -r '.ArtistItems[0].Id // empty' "$response_file")"
     external_album_id="$(jq -r '.AlbumId // empty' "$response_file")"
     external_search_term="$(jq -r '
@@ -881,6 +961,14 @@ if [[ -n "$external_song_id" ]]; then
         '(.Items | type == "array" and length > 0) and
          all(.Items[]; .Type == "MusicAlbum" and any(.ArtistItems[]; .Id == $id))' \
         --arg id "$external_artist_id"
+    check_json "external artist tracks" \
+        "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_artist_id&IncludeItemTypes=Audio&Limit=200" \
+        '(.Items | type == "array" and length > 0) and
+         all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and
+             any(.ArtistItems[]; .Id == $id))' --arg id "$external_artist_id"
+    check_json "external artist combined" \
+        "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_artist_id&IncludeItemTypes=MusicAlbum,Audio&Limit=400" \
+        'any(.Items[]; .Type == "MusicAlbum") and any(.Items[]; .Type == "Audio")'
     check_json "external album detail" \
         "$ALLSTARR_BASE/Items/$external_album_id?UserId=$best_user_id" \
         '.Id == $id and .Type == "MusicAlbum"' \
@@ -914,9 +1002,12 @@ if [[ -n "$external_song_id" ]]; then
     if jq -e '
         [.Items[] |
          select((.Id // "") | test("^ext-.+-song-"; "i")) |
-         (.Id | capture("^ext-(?<provider>.+)-song-").provider)] as $providers |
+         (first((.ProviderIds // {}) | keys[] |
+             select(. != "ISRC" and . != "AllstarrSource")) // "")] as $providers |
+        ($providers | map(select(. != ""))) as $providers |
         ($providers | length) > 0 and
-        (($providers | unique | length) < 2 or $providers[0] != $providers[1])
+        (($providers | unique | length) as $count |
+            $count < 2 or ($providers[0:$count] | unique | length) == $count)
         ' "$external_search_file" >/dev/null; then
         printf 'PASS %-34s provider-order-interleaved\n' "external provider ordering"
     else
@@ -948,9 +1039,10 @@ if [[ -n "$external_song_id" ]]; then
         --arg id "$external_song_id"
     check_json "external similar envelope" \
         "$ALLSTARR_BASE/Items/$external_song_id/Similar?UserId=$best_user_id&Limit=10" \
-        '(.Items | type == "array") and (.TotalRecordCount | type == "number") and
+        '(.Items | type == "array" and length > 0) and (.TotalRecordCount | type == "number") and
          .StartIndex == 0 and
-         all(.Items[]; .Type == "Audio" and (.Id | type == "string" and length > 0))'
+         all(.Items[]; .Type == "Audio" and .Id != $id and .RunTimeTicks > 0)' \
+        --arg id "$external_song_id"
     check_json "external instant mix envelope" \
         "$ALLSTARR_BASE/Songs/$external_song_id/InstantMix?UserId=$best_user_id&Limit=10" \
         '(.Items | type == "array") and (.TotalRecordCount | type == "number") and
@@ -1000,14 +1092,42 @@ if [[ -n "$external_song_id" ]]; then
         echo "declared-diff native-vs-external-audio unavailable"
     fi
     if [[ "$TEST_EXTERNAL_STREAM" == 1 ]]; then
-        check_code "external stream HEAD" "200,206" HEAD \
+        check_external_stream "external stream-64k" \
             "$ALLSTARR_BASE/Audio/$external_song_id/stream?static=true&UserId=$best_user_id"
-        measure "external stream-64k" \
-            "$ALLSTARR_BASE/Audio/$external_song_id/stream?static=true&UserId=$best_user_id" \
-            --range 0-65535 --max-filesize 65536
     else
         echo "external stream skipped=set TEST_EXTERNAL_STREAM=1 for provider/cold-cache media"
     fi
+
+    jq --argjson seeds "$EXTERNAL_PROVIDER_CASES" --arg primary "$external_song_id" \
+        --arg primaryProvider "$external_provider" '
+        $seeds +
+        [{provider: $primaryProvider, songId: $primary}] +
+        [.Items[] |
+         select((.Id // "") | test("^ext-.+-song-.+$")) |
+         {provider: (first((.ProviderIds // {}) | keys[] |
+             select(. != "ISRC" and . != "AllstarrSource")) // ""), songId: .Id}] |
+        map(select(.provider != "")) |
+        unique_by(.provider)
+    ' "$external_search_file" >"$provider_cases_file"
+    echo "external-provider-matrix=$(jq -r '[.[].provider] | join(",")' "$provider_cases_file")"
+    if [[ -n "$EXPECTED_EXTERNAL_PROVIDERS" ]]; then
+        while IFS= read -r expected_provider; do
+            expected_provider="${expected_provider//[[:space:]]/}"
+            [[ -z "$expected_provider" ]] && continue
+            checks=$((checks + 1))
+            if jq -e --arg provider "$expected_provider" \
+                'any(.[]; .provider == $provider)' "$provider_cases_file" >/dev/null; then
+                printf 'PASS %-34s discovered\n' "provider $expected_provider coverage"
+            else
+                printf 'FAIL %-34s not-discovered\n' "provider $expected_provider coverage"
+                failures=$((failures + 1))
+            fi
+        done < <(tr ',' '\n' <<<"$EXPECTED_EXTERNAL_PROVIDERS")
+    fi
+    while IFS=$'\t' read -r provider_case provider_song_id; do
+        [[ "$provider_song_id" == "$external_song_id" ]] && continue
+        check_external_provider_case "$provider_case" "$provider_song_id"
+    done < <(jq -r '.[] | [.provider, .songId] | @tsv' "$provider_cases_file")
 else
     if [[ "$REQUIRE_EXTERNAL" == 1 ]]; then
         checks=$((checks + 1))
@@ -1234,6 +1354,21 @@ if [[ -n "$virtual_playlist_id" ]]; then
             '[.Items[] |
               {Id,PlaylistItemId,ParentId,Name,Album,Artists,AlbumId,RunTimeTicks,
                ProviderIds,ImageTags,MediaSources}]'
+        while IFS=$'\t' read -r injected_provider injected_song_id; do
+            check_json "injected $injected_provider detail" \
+                "$ALLSTARR_BASE/Items/$injected_song_id?UserId=$best_user_id" \
+                "$item_contract external_audio and .Id == \$id" --arg id "$injected_song_id"
+            if [[ "$TEST_EXTERNAL_STREAM" == 1 ]]; then
+                check_external_stream "injected $injected_provider stream" \
+                    "$ALLSTARR_BASE/Audio/$injected_song_id/stream?static=true&UserId=$best_user_id"
+            fi
+        done < <(jq -r '
+            [.Items[] |
+             select((.Id // "") | test("^ext-.+-song-.+$")) |
+             {provider: (first((.ProviderIds // {}) | keys[] |
+                 select(. != "ISRC" and . != "AllstarrSource")) // ""), id: .Id}] |
+            map(select(.provider != "")) | unique_by(.provider)[] |
+            [.provider, .id] | @tsv' "$virtual_items_file")
         sampled_native_index=0
         while IFS= read -r sampled_native_id; do
             sampled_native_index=$((sampled_native_index + 1))

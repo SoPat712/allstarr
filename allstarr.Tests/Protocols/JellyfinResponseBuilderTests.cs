@@ -82,6 +82,26 @@ public class JellyfinResponseBuilderTests
     }
 
     [Fact]
+    public void ConvertSongToJellyfinItem_UnknownDurationDoesNotInventMediaLength()
+    {
+        var result = _builder.ConvertSongToJellyfinItem(new Song
+        {
+            Id = "ext-deezer-song-12345",
+            Title = "External Track",
+            Artist = "External Artist",
+            IsLocal = false,
+            ExternalProvider = "deezer",
+            ExternalId = "12345"
+        });
+
+        var mediaSource = Assert.IsType<Dictionary<string, object?>>(
+            Assert.IsAssignableFrom<object[]>(result["MediaSources"])[0]);
+        Assert.Equal(0L, result["RunTimeTicks"]);
+        Assert.Equal(0L, mediaSource["RunTimeTicks"]);
+        Assert.Null(mediaSource["Size"]);
+    }
+
+    [Fact]
     public void ConvertSongToJellyfinItem_UsesTheAdvertisedProxyServerIdentity()
     {
         var builder = new JellyfinResponseBuilder(Options.Create(new JellyfinSettings

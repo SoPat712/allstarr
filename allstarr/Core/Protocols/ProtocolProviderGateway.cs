@@ -36,6 +36,16 @@ public interface IProtocolProviderGateway
 
     Task<Artist?> GetArtistAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
 
+    Task<List<Album>> GetArtistAlbumsAsync(
+        ProtocolExecutionContext protocol,
+        string providerId,
+        string externalId);
+
+    Task<List<Song>> GetArtistTracksAsync(
+        ProtocolExecutionContext protocol,
+        string providerId,
+        string externalId);
+
     Task<List<ExternalPlaylist>> SearchPlaylistsAsync(
         ProtocolExecutionContext protocol,
         string query,
@@ -374,6 +384,88 @@ public sealed class ProtocolProviderGateway(
         }
         await RequireCompatibilityProviderAsync(protocol, routedProviderId);
         return await legacyMetadata.GetArtistAsync(providerId, externalId, protocol.CancellationToken);
+    }
+
+    public async Task<List<Album>> GetArtistAlbumsAsync(
+        ProtocolExecutionContext protocol,
+        string providerId,
+        string externalId)
+    {
+        ArgumentNullException.ThrowIfNull(protocol);
+        if (protocol.Actor is null && IsPublicMetadataProvider(providerId))
+            return await legacyMetadata.GetArtistAlbumsAsync(providerId, externalId, protocol.CancellationToken);
+        var routedProviderId = NormalizeProvider(providerId);
+        var routed = await PlanExactAsync<IProviderMetadataCapability>(
+            protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-artist-albums");
+        if (routed.Candidate != null)
+        {
+            var id = new ProviderExternalResourceId(routedProviderId, ProviderResourceKind.Artist, externalId);
+            var albums = new List<Album>();
+            var seenCursors = new HashSet<string>(StringComparer.Ordinal);
+            string? cursor = null;
+            do
+            {
+                var outcome = await routed.Candidate.Implementation.GetArtistAlbumsAsync(
+                    routed.Candidate.Context,
+                    new ProviderArtistItemsRequest(id, new ProviderPageRequest(200, cursor)));
+                if (!outcome.IsSuccess)
+                {
+                    if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return [];
+                    if (outcome.Error.Kind is ProviderErrorKind.NotSupported or ProviderErrorKind.CapabilityUnavailable)
+                        return await legacyMetadata.GetArtistAlbumsAsync(providerId, externalId, protocol.CancellationToken);
+                    ThrowRouteFailure(outcome.Error);
+                }
+                var page = outcome.RequireValue();
+                albums.AddRange(page.Items.Select(Map));
+                cursor = page.NextCursor;
+                if (cursor != null && (seenCursors.Count >= 1_000 || !seenCursors.Add(cursor)))
+                    throw new HttpRequestException("The provider repeated an artist-album page cursor.");
+            } while (cursor != null);
+            return albums;
+        }
+        await RequireCompatibilityProviderAsync(protocol, routedProviderId);
+        return await legacyMetadata.GetArtistAlbumsAsync(providerId, externalId, protocol.CancellationToken);
+    }
+
+    public async Task<List<Song>> GetArtistTracksAsync(
+        ProtocolExecutionContext protocol,
+        string providerId,
+        string externalId)
+    {
+        ArgumentNullException.ThrowIfNull(protocol);
+        if (protocol.Actor is null && IsPublicMetadataProvider(providerId))
+            return await legacyMetadata.GetArtistTracksAsync(providerId, externalId, protocol.CancellationToken);
+        var routedProviderId = NormalizeProvider(providerId);
+        var routed = await PlanExactAsync<IProviderMetadataCapability>(
+            protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-artist-tracks");
+        if (routed.Candidate != null)
+        {
+            var id = new ProviderExternalResourceId(routedProviderId, ProviderResourceKind.Artist, externalId);
+            var tracks = new List<Song>();
+            var seenCursors = new HashSet<string>(StringComparer.Ordinal);
+            string? cursor = null;
+            do
+            {
+                var outcome = await routed.Candidate.Implementation.GetArtistTracksAsync(
+                    routed.Candidate.Context,
+                    new ProviderArtistItemsRequest(id, new ProviderPageRequest(200, cursor)));
+                if (!outcome.IsSuccess)
+                {
+                    if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return [];
+                    if (outcome.Error.Kind is ProviderErrorKind.NotSupported or ProviderErrorKind.CapabilityUnavailable)
+                        return await legacyMetadata.GetArtistTracksAsync(providerId, externalId, protocol.CancellationToken);
+                    ThrowRouteFailure(outcome.Error);
+                }
+                var page = outcome.RequireValue();
+                tracks.AddRange(page.Items.Select(Map));
+                cursor = page.NextCursor;
+                if (cursor != null && (seenCursors.Count >= 1_000 || !seenCursors.Add(cursor)))
+                    throw new HttpRequestException("The provider repeated an artist-track page cursor.");
+            } while (cursor != null);
+            return tracks;
+        }
+        await RequireCompatibilityProviderAsync(protocol, routedProviderId);
+        return await legacyMetadata.GetArtistTracksAsync(providerId, externalId, protocol.CancellationToken);
     }
 
     public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(

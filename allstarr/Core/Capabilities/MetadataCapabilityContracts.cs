@@ -254,6 +254,31 @@ public sealed record ProviderArtistLookupRequest
     public string? ExpectedSnapshotVersion { get; }
 }
 
+public sealed record ProviderArtistItemsRequest
+{
+    public ProviderArtistItemsRequest(
+        ProviderExternalResourceId id,
+        ProviderPageRequest page,
+        string? expectedSnapshotVersion = null)
+    {
+        ArgumentNullException.ThrowIfNull(id);
+        ArgumentNullException.ThrowIfNull(page);
+        id.RequireOwner(id.ProviderId, ProviderResourceKind.Artist);
+        Id = id;
+        Page = page;
+        ExpectedSnapshotVersion = ProviderContractValidation.OptionalText(
+            expectedSnapshotVersion,
+            nameof(expectedSnapshotVersion),
+            300);
+    }
+
+    public ProviderExternalResourceId Id { get; }
+
+    public ProviderPageRequest Page { get; }
+
+    public string? ExpectedSnapshotVersion { get; }
+}
+
 public sealed record ProviderIsrcLookupRequest
 {
     public ProviderIsrcLookupRequest(string isrc, string? market = null)
@@ -296,4 +321,16 @@ public interface IProviderMetadataCapability : IProviderCapability
     Task<ProviderOutcome<ProviderArtistMetadata>> GetArtistAsync(
         ProviderExecutionContext context,
         ProviderArtistLookupRequest request);
+
+    Task<ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>> GetArtistAlbumsAsync(
+        ProviderExecutionContext context,
+        ProviderArtistItemsRequest request) => Task.FromResult(
+            ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Failure(
+                new ProviderError(ProviderErrorKind.CapabilityUnavailable)));
+
+    Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>> GetArtistTracksAsync(
+        ProviderExecutionContext context,
+        ProviderArtistItemsRequest request) => Task.FromResult(
+            ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(
+                new ProviderError(ProviderErrorKind.CapabilityUnavailable)));
 }

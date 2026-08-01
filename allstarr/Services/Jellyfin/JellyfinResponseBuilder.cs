@@ -340,6 +340,10 @@ public class JellyfinResponseBuilder
         var artistName = song.Artist;
         var albumName = song.Album;
         var artistNames = song.Artists.ToList();
+        var runTimeTicks = Math.Max(0, song.Duration ?? 0) * TimeSpan.TicksPerSecond;
+        var estimatedSize = song.Duration is > 0
+            ? song.Duration.Value * 1337L * 128L
+            : (long?)null;
 
         if (!song.IsLocal)
         {
@@ -401,7 +405,7 @@ public class JellyfinResponseBuilder
             ["Container"] = "flac",
             ["PremiereDate"] = song.Year.HasValue ? $"{song.Year}-01-01T00:00:00.0000000Z" : null,
             ["DateCreated"] = song.Year.HasValue ? $"{song.Year}-01-01T00:00:00.0000000Z" : DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"),
-            ["RunTimeTicks"] = (song.Duration ?? 0) * TimeSpan.TicksPerSecond,
+            ["RunTimeTicks"] = runTimeTicks,
             ["ProductionYear"] = song.Year,
             ["IndexNumber"] = song.Track,
             ["ParentIndexNumber"] = song.DiscNumber ?? 1,
@@ -490,11 +494,11 @@ public class JellyfinResponseBuilder
                     ["TranscodingUrl"] = $"/Audio/{Uri.EscapeDataString(song.Id)}/universal?container=flac&audioCodec=flac",
                     ["Type"] = "Default",
                     ["Container"] = "flac",
-                    ["Size"] = (song.Duration ?? 180) * 1337 * 128,
+                    ["Size"] = estimatedSize,
                     ["Name"] = song.Title,
                     ["IsRemote"] = false,
                     ["ETag"] = song.Id, // Use song ID as ETag
-                    ["RunTimeTicks"] = (song.Duration ?? 180) * 10000000L,
+                    ["RunTimeTicks"] = runTimeTicks,
                     ["ReadAtNativeFramerate"] = false,
                     ["IgnoreDts"] = false,
                     ["IgnoreIndex"] = false,
