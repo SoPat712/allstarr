@@ -147,9 +147,6 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     }
 });
 
-// Legacy implementation intentionally retired.
-// var encodedUrls = new[] { "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm", ... };
-
 static List<string> ParseCsv(string? raw)
 {
     if (string.IsNullOrWhiteSpace(raw))

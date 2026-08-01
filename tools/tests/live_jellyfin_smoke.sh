@@ -879,7 +879,7 @@ for denied_path in \
     "/System/ActivityLog/Entries" \
     "/Library/VirtualFolders" \
     "/Users/New" \
-    "/api/admin/health" \
+    "/api/admin/providers/status" \
     "/Notifications" \
     "/Branding/Configuration" \
     "/Items/Latest?IncludeItemTypes=Movie,Audio" \

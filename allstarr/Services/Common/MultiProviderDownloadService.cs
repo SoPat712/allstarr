@@ -208,18 +208,6 @@ public class MultiProviderDownloadService : IDownloadService
         );
     }
 
-    private IMusicMetadataService? GetMetadataServiceByName(string name)
-    {
-        // Obtain metadata services from DI indirectly or filter from metadata service if needed,
-        // but since metadataService resolves to MultiProviderMetadataService, we can just inject
-        // IEnumerable<IMusicMetadataService> to find the concrete one!
-        // To be safe and clean, let's resolve this from the MultiProviderMetadataService itself,
-        // or we can pass IEnumerable<IMusicMetadataService> to MultiProviderDownloadService as well!
-        // Let's check: can we inject both? Yes! Let's do that!
-        return null; // Will be mapped dynamically in constructor if we inject IEnumerable<IMusicMetadataService>
-    }
-
-
     public MultiProviderDownloadService(
         IEnumerable<IConcreteDownloadService> services,
         IEnumerable<IConcreteMetadataService> metadataServices,
