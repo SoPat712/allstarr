@@ -44,11 +44,11 @@ public class OdesliService
 
             _logger.LogDebug("🔗 Converting Tidal track {TidalId} to Spotify ID via Odesli", tidalTrackId);
 
-            var odesliResponse = await _httpClient.GetAsync(odesliUrl, cancellationToken);
+            using var odesliResponse = await _httpClient.GetAsync(odesliUrl, cancellationToken);
             if (odesliResponse.IsSuccessStatusCode)
             {
                 var odesliJson = await odesliResponse.Content.ReadAsStringAsync(cancellationToken);
-                var odesliDoc = JsonDocument.Parse(odesliJson);
+                using var odesliDoc = JsonDocument.Parse(odesliJson);
 
                 // Extract Spotify track ID from the Spotify URL
                 if (odesliDoc.RootElement.TryGetProperty("linksByPlatform", out var platforms) &&
@@ -103,11 +103,11 @@ public class OdesliService
 
             _logger.LogDebug("🔗 Converting URL to Spotify ID via Odesli: {Url}", musicUrl);
 
-            var odesliResponse = await _httpClient.GetAsync(odesliUrl, cancellationToken);
+            using var odesliResponse = await _httpClient.GetAsync(odesliUrl, cancellationToken);
             if (odesliResponse.IsSuccessStatusCode)
             {
                 var odesliJson = await odesliResponse.Content.ReadAsStringAsync(cancellationToken);
-                var odesliDoc = JsonDocument.Parse(odesliJson);
+                using var odesliDoc = JsonDocument.Parse(odesliJson);
 
                 // Extract Spotify track ID from the Spotify URL
                 if (odesliDoc.RootElement.TryGetProperty("linksByPlatform", out var platforms) &&
@@ -171,7 +171,7 @@ public class OdesliService
             var odesliUrl = $"https://api.song.link/v1-alpha.1/links?url={Uri.EscapeDataString(sourceUrl)}&userCountry=US";
             _logger.LogDebug("🔗 Odesli: Translating {Url} to platform {Platform}", sourceUrl, targetPlatform);
 
-            var response = await _httpClient.GetAsync(odesliUrl, cancellationToken);
+            using var response = await _httpClient.GetAsync(odesliUrl, cancellationToken);
             if (response.IsSuccessStatusCode)
             {
                 var json = await response.Content.ReadAsStringAsync(cancellationToken);

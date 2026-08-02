@@ -259,7 +259,7 @@ public class ListenBrainzScrobblingService : IScrobblingService
 
             request.Headers.Add("Authorization", $"Token {_settings.UserToken}");
 
-            var response = await _httpClient.SendAsync(request, cancellationToken);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
             _logger.LogTrace("ListenBrainz request: {Endpoint}, Response: {StatusCode}",
@@ -273,7 +273,7 @@ public class ListenBrainzScrobblingService : IScrobblingService
             // Parse error response
             try
             {
-                var errorDoc = JsonDocument.Parse(responseBody);
+                using var errorDoc = JsonDocument.Parse(responseBody);
                 var errorMessage = errorDoc.RootElement.GetProperty("error").GetString() ?? "Unknown error";
                 var errorCode = (int)response.StatusCode;
 

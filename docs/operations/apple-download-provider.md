@@ -37,10 +37,11 @@ The repository gateway is a narrow HTTP adapter around the official upstream pro
 [wrapper-v2](https://github.com/glomatico/wrapper-v2). It exposes catalog song lookup, download-backed streaming,
 managed song downloads, health, login, and 2FA. It runs on the private Compose network and publishes no host port.
 
-The gateway advertises only routes that Allstarr has implemented and tested. GAMDL can do more upstream, but album,
-playlist, artist, library, video, lyrics-artifact, and artwork lanes stay unavailable in Allstarr until their
-managed-artifact contracts exist. That keeps the UI honest and prevents an upstream feature name from becoming a
-false promise.
+The gateway advertises only routes that Allstarr has implemented and tested: song, album, and artist metadata;
+artist discography; track streaming and managed downloads; and synced lyrics artifacts. GAMDL can do more upstream,
+but album downloads, playlist or library mutation, video, and standalone artwork-artifact lanes stay unavailable
+until their managed-artifact contracts exist. That keeps the UI honest and prevents an upstream feature name from
+becoming a false promise.
 
 Before connecting it, confirm that:
 
@@ -59,9 +60,14 @@ Allstarr first requests `GET /api/capabilities`. A compatible version 1 response
   "sidecarApiVersion": "1.0.0",
   "capabilities": [
     { "id": "metadata-search-song", "state": "supported" },
+    { "id": "metadata-search-album", "state": "supported" },
+    { "id": "metadata-search-artist", "state": "supported" },
     { "id": "metadata-song", "state": "supported" },
+    { "id": "metadata-album", "state": "supported" },
+    { "id": "metadata-artist", "state": "supported" },
     { "id": "stream-audio-song", "state": "supported" },
-    { "id": "download-audio-song", "state": "supported" }
+    { "id": "download-audio-song", "state": "supported" },
+    { "id": "synced-lyrics-artifact", "state": "supported" }
   ]
 }
 ```
@@ -82,6 +88,7 @@ The current typed lanes use these routes:
 | Artist albums and tracks | `GET /api/artist/{id}/albums`, `GET /api/artist/{id}/tracks` |
 | Managed track artifact | `GET /api/download/{id}?quality={quality}` |
 | Progressive playback | `GET /api/stream/{id}?quality={quality}` |
+| Synced lyrics artifact | `GET /api/lyrics/{id}` |
 
 Health must report the gateway, GAMDL runtime, and wrapper dependency truthfully. A raw wrapper-v2 `/health`
 response is not enough. Allstarr refuses redirects during discovery and login so credentials cannot be forwarded to

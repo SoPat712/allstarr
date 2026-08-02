@@ -55,11 +55,11 @@ public class QobuzMetadataService : TrackParserBase, IConcreteMetadataService
             var appId = await _bundleService.GetAppIdAsync();
             var url = $"{BaseUrl}track/search?query={Uri.EscapeDataString(query)}&limit={limit}&app_id={appId}";
 
-            var response = await GetWithAuthAsync(url, cancellationToken);
+            using var response = await GetWithAuthAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode) return new List<Song>();
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var result = JsonDocument.Parse(json);
+            using var result = JsonDocument.Parse(json);
 
             var songs = new List<Song>();
             if (result.RootElement.TryGetProperty("tracks", out var tracks) &&
@@ -101,11 +101,11 @@ public class QobuzMetadataService : TrackParserBase, IConcreteMetadataService
             var appId = await _bundleService.GetAppIdAsync();
             var url = $"{BaseUrl}album/search?query={Uri.EscapeDataString(query)}&limit={limit}&app_id={appId}";
 
-            var response = await GetWithAuthAsync(url, cancellationToken);
+            using var response = await GetWithAuthAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode) return new List<Album>();
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var result = JsonDocument.Parse(json);
+            using var result = JsonDocument.Parse(json);
 
             var albums = new List<Album>();
             if (result.RootElement.TryGetProperty("albums", out var albumsData) &&
@@ -133,11 +133,11 @@ public class QobuzMetadataService : TrackParserBase, IConcreteMetadataService
             var appId = await _bundleService.GetAppIdAsync();
             var url = $"{BaseUrl}artist/search?query={Uri.EscapeDataString(query)}&limit={limit}&app_id={appId}";
 
-            var response = await GetWithAuthAsync(url, cancellationToken);
+            using var response = await GetWithAuthAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode) return new List<Artist>();
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var result = JsonDocument.Parse(json);
+            using var result = JsonDocument.Parse(json);
 
             var artists = new List<Artist>();
             if (result.RootElement.TryGetProperty("artists", out var artistsData) &&
@@ -189,11 +189,12 @@ public class QobuzMetadataService : TrackParserBase, IConcreteMetadataService
             var appId = await _bundleService.GetAppIdAsync();
             var url = $"{BaseUrl}track/get?track_id={externalId}&app_id={appId}";
 
-            var response = await GetWithAuthAsync(url, cancellationToken);
+            using var response = await GetWithAuthAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode) return null;
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var track = JsonDocument.Parse(json).RootElement;
+            using var trackDocument = JsonDocument.Parse(json);
+            var track = trackDocument.RootElement;
 
             if (track.TryGetProperty("error", out _)) return null;
 
@@ -234,11 +235,12 @@ public class QobuzMetadataService : TrackParserBase, IConcreteMetadataService
             var appId = await _bundleService.GetAppIdAsync();
             var url = $"{BaseUrl}album/get?album_id={externalId}&app_id={appId}";
 
-            var response = await GetWithAuthAsync(url, cancellationToken);
+            using var response = await GetWithAuthAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode) return null;
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var albumElement = JsonDocument.Parse(json).RootElement;
+            using var albumDocument = JsonDocument.Parse(json);
+            var albumElement = albumDocument.RootElement;
 
             if (albumElement.TryGetProperty("error", out _)) return null;
 
@@ -279,11 +281,12 @@ public class QobuzMetadataService : TrackParserBase, IConcreteMetadataService
             var appId = await _bundleService.GetAppIdAsync();
             var url = $"{BaseUrl}artist/get?artist_id={externalId}&app_id={appId}";
 
-            var response = await GetWithAuthAsync(url, cancellationToken);
+            using var response = await GetWithAuthAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode) return null;
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var artist = JsonDocument.Parse(json).RootElement;
+            using var artistDocument = JsonDocument.Parse(json);
+            var artist = artistDocument.RootElement;
 
             if (artist.TryGetProperty("error", out _)) return null;
 
@@ -312,11 +315,11 @@ public class QobuzMetadataService : TrackParserBase, IConcreteMetadataService
             {
                 var url = $"{BaseUrl}artist/get?artist_id={externalId}&app_id={appId}&limit={limit}&offset={offset}&extra=albums";
 
-                var response = await GetWithAuthAsync(url, cancellationToken);
+                using var response = await GetWithAuthAsync(url, cancellationToken);
                 if (!response.IsSuccessStatusCode) break;
 
                 var json = await response.Content.ReadAsStringAsync(cancellationToken);
-                var result = JsonDocument.Parse(json);
+                using var result = JsonDocument.Parse(json);
 
                 if (!result.RootElement.TryGetProperty("albums", out var albumsData) ||
                     !albumsData.TryGetProperty("items", out var items))
@@ -362,11 +365,11 @@ public class QobuzMetadataService : TrackParserBase, IConcreteMetadataService
             var appId = await _bundleService.GetAppIdAsync();
             var url = $"{BaseUrl}playlist/search?query={Uri.EscapeDataString(query)}&limit={limit}&app_id={appId}";
 
-            var response = await GetWithAuthAsync(url, cancellationToken);
+            using var response = await GetWithAuthAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode) return new List<ExternalPlaylist>();
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var result = JsonDocument.Parse(json);
+            using var result = JsonDocument.Parse(json);
 
             var playlists = new List<ExternalPlaylist>();
             if (result.RootElement.TryGetProperty("playlists", out var playlistsData) &&
@@ -396,11 +399,12 @@ public class QobuzMetadataService : TrackParserBase, IConcreteMetadataService
             var appId = await _bundleService.GetAppIdAsync();
             var url = $"{BaseUrl}playlist/get?playlist_id={externalId}&app_id={appId}";
 
-            var response = await GetWithAuthAsync(url, cancellationToken);
+            using var response = await GetWithAuthAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode) return null;
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var playlistElement = JsonDocument.Parse(json).RootElement;
+            using var playlistDocument = JsonDocument.Parse(json);
+            var playlistElement = playlistDocument.RootElement;
 
             if (playlistElement.TryGetProperty("error", out _)) return null;
 
@@ -422,11 +426,12 @@ public class QobuzMetadataService : TrackParserBase, IConcreteMetadataService
             var appId = await _bundleService.GetAppIdAsync();
             var url = $"{BaseUrl}playlist/get?playlist_id={externalId}&app_id={appId}&extra=tracks";
 
-            var response = await GetWithAuthAsync(url, cancellationToken);
+            using var response = await GetWithAuthAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode) return new List<Song>();
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var playlistElement = JsonDocument.Parse(json).RootElement;
+            using var playlistDocument = JsonDocument.Parse(json);
+            var playlistElement = playlistDocument.RootElement;
 
             if (playlistElement.TryGetProperty("error", out _)) return new List<Song>();
 

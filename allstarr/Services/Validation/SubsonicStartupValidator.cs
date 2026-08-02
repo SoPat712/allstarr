@@ -30,7 +30,7 @@ public class SubsonicStartupValidator : BaseStartupValidator
         try
         {
             var pingUrl = $"{subsonicUrl.TrimEnd('/')}/rest/ping.view?v=1.16.1&c=allstarr&f=json";
-            var response = await _httpClient.GetAsync(pingUrl, cancellationToken);
+            using var response = await _httpClient.GetAsync(pingUrl, cancellationToken);
 
             if (response.IsSuccessStatusCode)
             {

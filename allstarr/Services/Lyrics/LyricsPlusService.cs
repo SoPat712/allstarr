@@ -79,7 +79,7 @@ public class LyricsPlusService
 
             _logger.LogDebug("Fetching lyrics from LyricsPlus: {Url}", url);
 
-            var response = await _httpClient.GetAsync(url);
+            using var response = await _httpClient.GetAsync(url);
 
             if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {

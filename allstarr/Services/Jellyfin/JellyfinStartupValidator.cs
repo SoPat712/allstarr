@@ -33,7 +33,7 @@ public class JellyfinStartupValidator : BaseStartupValidator
         try
         {
             var publicInfoUrl = $"{settings.Url.TrimEnd('/')}/System/Info/Public";
-            var response = await _httpClient.GetAsync(publicInfoUrl, cancellationToken);
+            using var response = await _httpClient.GetAsync(publicInfoUrl, cancellationToken);
 
             if (response.IsSuccessStatusCode)
             {

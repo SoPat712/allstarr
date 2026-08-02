@@ -22,6 +22,7 @@ public class JellyfinSessionManager : IDisposable
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _sessionInitLocks = new();
     private readonly ConcurrentDictionary<string, byte> _proxiedWebSocketConnections = new();
     private readonly Timer _keepAliveTimer;
+    private int _keepAliveRunning;
 
     public JellyfinSessionManager(
         JellyfinProxyService proxyService,
@@ -68,13 +69,18 @@ public class JellyfinSessionManager : IDisposable
                     // Refresh capabilities to keep session alive only for sessions that Allstarr
                     // is synthesizing itself. Native proxied websocket sessions should be left
                     // entirely under Jellyfin's control.
-                    var refreshOk = await PostCapabilitiesAsync(headers);
-                    if (!refreshOk)
+                    var refreshResult = await PostCapabilitiesAsync(headers);
+                    if (refreshResult == CapabilitiesPostResult.Unauthorized)
                     {
                         // Token expired - remove the stale session
                         _logger.LogWarning("Token expired for device {DeviceId} - removing session", deviceId);
                         await RemoveSessionAsync(deviceId);
                         return false;
+                    }
+
+                    if (refreshResult == CapabilitiesPostResult.Failed)
+                    {
+                        _logger.LogWarning("Could not refresh capabilities for device {DeviceId}; preserving the existing session", deviceId);
                     }
                 }
 
@@ -88,11 +94,10 @@ public class JellyfinSessionManager : IDisposable
                 // Post session capabilities to Jellyfin only when Allstarr is creating a
                 // synthetic session. If the real client already has a proxied websocket,
                 // re-posting capabilities can overwrite its remote-control state.
-                var createOk = await PostCapabilitiesAsync(headers);
-                if (!createOk)
+                var createResult = await PostCapabilitiesAsync(headers);
+                if (createResult != CapabilitiesPostResult.Success)
                 {
-                    // Token expired or invalid - client needs to re-authenticate
-                    _logger.LogError("Failed to create session for {DeviceId} - token may be expired", deviceId);
+                    _logger.LogError("Failed to create session for {DeviceId}: {Result}", deviceId, createResult);
                     return false;
                 }
 
@@ -181,9 +186,9 @@ public class JellyfinSessionManager : IDisposable
 
     /// <summary>
     /// Posts session capabilities to Jellyfin.
-    /// Returns true if successful, false if token expired (401).
+    /// Distinguishes an expired token from a transient upstream failure.
     /// </summary>
-    private async Task<bool> PostCapabilitiesAsync(IHeaderDictionary headers)
+    private async Task<CapabilitiesPostResult> PostCapabilitiesAsync(IHeaderDictionary headers)
     {
         var capabilities = new
         {
@@ -205,18 +210,18 @@ public class JellyfinSessionManager : IDisposable
         if (statusCode == 204 || statusCode == 200)
         {
             _logger.LogTrace("Posted capabilities successfully ({StatusCode})", statusCode);
-            return true;
+            return CapabilitiesPostResult.Success;
         }
         else if (statusCode == 401)
         {
             // Token expired - this is expected, client needs to re-authenticate
             _logger.LogWarning("Capabilities returned 401 (token expired) - client should re-authenticate");
-            return false;
+            return CapabilitiesPostResult.Unauthorized;
         }
         else
         {
             _logger.LogDebug("Capabilities post returned {StatusCode}", statusCode);
-            return false;
+            return CapabilitiesPostResult.Failed;
         }
     }
 
@@ -695,61 +700,78 @@ public class JellyfinSessionManager : IDisposable
     /// Note: This is a backup mechanism. The WebSocket connection is the primary keep-alive.
     /// Removes sessions with expired tokens (401 responses).
     /// </summary>
-    private async void KeepSessionsAlive(object? state)
-    {
-        var now = DateTime.UtcNow;
-        var activeSessions = _sessions.Values.Where(s => now - s.LastActivity < TimeSpan.FromMinutes(5)).ToList();
+    private void KeepSessionsAlive(object? state) => _ = RunKeepAlivePassAsync();
 
-        if (activeSessions.Count == 0)
+    internal async Task RunKeepAlivePassAsync()
+    {
+        if (Interlocked.Exchange(ref _keepAliveRunning, 1) != 0)
         {
             return;
         }
 
-        _logger.LogTrace("Keeping {Count} sessions alive", activeSessions.Count);
-
-        var expiredSessions = new List<string>();
-
-        foreach (var session in activeSessions)
+        try
         {
-            try
+            var now = DateTime.UtcNow;
+            var activeSessions = _sessions.Values.Where(s => now - s.LastActivity < TimeSpan.FromMinutes(5)).ToList();
+
+            if (activeSessions.Count == 0)
             {
-                session.HasProxiedWebSocket = HasProxiedWebSocket(session.DeviceId);
-                if (session.HasProxiedWebSocket)
+                return;
+            }
+
+            _logger.LogTrace("Keeping {Count} sessions alive", activeSessions.Count);
+
+            var expiredSessions = new List<string>();
+
+            foreach (var session in activeSessions)
+            {
+                try
                 {
-                    continue;
+                    session.HasProxiedWebSocket = HasProxiedWebSocket(session.DeviceId);
+                    if (session.HasProxiedWebSocket)
+                    {
+                        continue;
+                    }
+
+                    var result = await PostCapabilitiesAsync(session.Headers);
+                    if (result == CapabilitiesPostResult.Unauthorized)
+                    {
+                        _logger.LogWarning("Token expired for device {DeviceId} during keep-alive - marking for removal", session.DeviceId);
+                        expiredSessions.Add(session.DeviceId);
+                    }
+                    else if (result == CapabilitiesPostResult.Failed)
+                    {
+                        _logger.LogWarning("Capability keep-alive failed for device {DeviceId}; preserving the session", session.DeviceId);
+                    }
                 }
-
-                // Post capabilities again to keep session alive
-                // If this returns false (401), the token has expired
-                var success = await PostCapabilitiesAsync(session.Headers);
-
-                if (!success)
+                catch (Exception ex)
                 {
-                    _logger.LogWarning("Token expired for device {DeviceId} during keep-alive - marking for removal", session.DeviceId);
-                    expiredSessions.Add(session.DeviceId);
+                    _logger.LogError(ex, "Error keeping session alive for {DeviceId}", session.DeviceId);
                 }
             }
-            catch (Exception ex)
+
+            foreach (var deviceId in expiredSessions)
             {
-                _logger.LogError(ex, "Error keeping session alive for {DeviceId}", session.DeviceId);
+                _logger.LogWarning("Removing session with expired token: {DeviceId}", deviceId);
+                await RemoveSessionAsync(deviceId);
+            }
+
+            // This balances cleaning up finished sessions with allowing brief pauses/network issues.
+            var staleSessions = _sessions.Where(kvp => now - kvp.Value.LastActivity > TimeSpan.FromMinutes(3)).ToList();
+            foreach (var stale in staleSessions)
+            {
+                _logger.LogDebug("Removing stale session for {DeviceId} (inactive for {Minutes:F1} minutes)",
+                    stale.Key, (now - stale.Value.LastActivity).TotalMinutes);
+                await RemoveSessionAsync(stale.Key);
             }
         }
-
-        // Remove sessions with expired tokens
-        foreach (var deviceId in expiredSessions)
+        catch (Exception ex)
         {
-            _logger.LogWarning("Removing session with expired token: {DeviceId}", deviceId);
-            await RemoveSessionAsync(deviceId);
+            _logger.LogError(ex, "Unexpected error during Jellyfin session keep-alive");
         }
-
-        // Clean up stale sessions after 3 minutes of inactivity
-        // This balances cleaning up finished sessions with allowing brief pauses/network issues
-        var staleSessions = _sessions.Where(kvp => now - kvp.Value.LastActivity > TimeSpan.FromMinutes(3)).ToList();
-        foreach (var stale in staleSessions)
+        finally
         {
-            _logger.LogDebug("Removing stale session for {DeviceId} (inactive for {Minutes:F1} minutes)",
-                stale.Key, (now - stale.Value.LastActivity).TotalMinutes);
-            await RemoveSessionAsync(stale.Key);
+            Volatile.Write(ref _keepAliveRunning, 0);
         }
     }
 
@@ -787,6 +809,13 @@ public class JellyfinSessionManager : IDisposable
         string ItemId,
         long PositionTicks,
         DateTime LastActivity);
+
+    private enum CapabilitiesPostResult
+    {
+        Success,
+        Unauthorized,
+        Failed
+    }
 
     public void Dispose()
     {

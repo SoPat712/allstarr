@@ -161,7 +161,7 @@ public class ScrobblingAdminController : ControllerBase
 
             // Send POST request over HTTPS
             var content = new FormUrlEncodedContent(parameters);
-            var response = await _httpClient.PostAsync("https://ws.audioscrobbler.com/2.0/", content);
+            using var response = await _httpClient.PostAsync("https://ws.audioscrobbler.com/2.0/", content);
             var responseBody = await response.Content.ReadAsStringAsync();
 
             _logger.LogInformation("Last.fm authentication response status: {StatusCode}", response.StatusCode);
@@ -272,7 +272,7 @@ public class ScrobblingAdminController : ControllerBase
             parameters["api_sig"] = signature;
 
             var content = new FormUrlEncodedContent(parameters);
-            var response = await _httpClient.PostAsync("https://ws.audioscrobbler.com/2.0/", content, cancellationToken);
+            using var response = await _httpClient.PostAsync("https://ws.audioscrobbler.com/2.0/", content, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
             if (!response.IsSuccessStatusCode)
@@ -376,10 +376,10 @@ public class ScrobblingAdminController : ControllerBase
 
         try
         {
-            var httpRequest = new HttpRequestMessage(HttpMethod.Get, "https://api.listenbrainz.org/1/validate-token");
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Get, "https://api.listenbrainz.org/1/validate-token");
             httpRequest.Headers.Add("Authorization", $"Token {request.UserToken}");
 
-            var response = await _httpClient.SendAsync(httpRequest);
+            using var response = await _httpClient.SendAsync(httpRequest);
             var responseBody = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)
@@ -390,7 +390,7 @@ public class ScrobblingAdminController : ControllerBase
                     "Check the user token and save a replacement if needed.");
             }
 
-            var jsonDoc = System.Text.Json.JsonDocument.Parse(responseBody);
+            using var jsonDoc = System.Text.Json.JsonDocument.Parse(responseBody);
             var valid = jsonDoc.RootElement.GetProperty("valid").GetBoolean();
 
             if (!valid)
@@ -435,10 +435,10 @@ public class ScrobblingAdminController : ControllerBase
 
         try
         {
-            var httpRequest = new HttpRequestMessage(HttpMethod.Get, "https://api.listenbrainz.org/1/validate-token");
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Get, "https://api.listenbrainz.org/1/validate-token");
             httpRequest.Headers.Add("Authorization", $"Token {token}");
 
-            var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
+            using var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
             if (!response.IsSuccessStatusCode)
@@ -449,7 +449,7 @@ public class ScrobblingAdminController : ControllerBase
                     "Check the user token and save a replacement if needed.");
             }
 
-            var jsonDoc = System.Text.Json.JsonDocument.Parse(responseBody);
+            using var jsonDoc = System.Text.Json.JsonDocument.Parse(responseBody);
             var valid = jsonDoc.RootElement.GetProperty("valid").GetBoolean();
 
             if (!valid)

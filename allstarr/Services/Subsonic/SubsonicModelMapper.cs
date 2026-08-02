@@ -39,7 +39,7 @@ public class SubsonicModelMapper
 
             if (contentType?.Contains("json") == true)
             {
-                var jsonDoc = JsonDocument.Parse(content);
+                using var jsonDoc = JsonDocument.Parse(content);
                 if (jsonDoc.RootElement.TryGetProperty("subsonic-response", out var response) &&
                     response.TryGetProperty("searchResult3", out var searchResult))
                 {

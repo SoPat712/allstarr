@@ -116,7 +116,7 @@ public class QobuzBundleService
     /// </summary>
     private async Task<string> GetBundleUrlAsync()
     {
-        var response = await _httpClient.GetAsync(LoginPageUrl);
+        using var response = await _httpClient.GetAsync(LoginPageUrl);
         response.EnsureSuccessStatusCode();
 
         var html = await response.Content.ReadAsStringAsync();
@@ -135,7 +135,7 @@ public class QobuzBundleService
     /// </summary>
     private async Task<string> DownloadBundleAsync(string bundleUrl)
     {
-        var response = await _httpClient.GetAsync(bundleUrl);
+        using var response = await _httpClient.GetAsync(bundleUrl);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsStringAsync();
     }

@@ -113,12 +113,11 @@ public class QobuzDownloadService : BaseDownloadService
         outputPath = PathHelper.ResolveUniquePath(outputPath);
 
         // Download the file (Qobuz files are NOT encrypted like Deezer)
-        var response = await RetryHelper.RetryWithBackoffAsync(async () =>
+        using var response = await RetryHelper.RetryWithBackoffAsync(async () =>
         {
             var res = await _httpClient.GetAsync(downloadInfo.Url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            res.EnsureSuccessStatusCode();
-            return res;
-        }, Logger);
+            return RetryHelper.EnsureSuccessOrDispose(res);
+        }, Logger, cancellationToken: cancellationToken);
 
         await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
         await using var outputFile = IOFile.Create(outputPath);
@@ -220,12 +219,11 @@ public class QobuzDownloadService : BaseDownloadService
         }
 
         // Download the file (Qobuz files are NOT encrypted like Deezer)
-        var response = await RetryHelper.RetryWithBackoffAsync(async () =>
+        using var response = await RetryHelper.RetryWithBackoffAsync(async () =>
         {
             var res = await _httpClient.GetAsync(downloadInfo.Url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            res.EnsureSuccessStatusCode();
-            return res;
-        }, Logger);
+            return RetryHelper.EnsureSuccessOrDispose(res);
+        }, Logger, cancellationToken: cancellationToken);
 
         await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
         await using var outputFile = IOFile.Create(outputPath);
@@ -345,7 +343,7 @@ public class QobuzDownloadService : BaseDownloadService
             request.Headers.Add("X-User-Auth-Token", _userAuthToken);
         }
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
@@ -355,7 +353,7 @@ public class QobuzDownloadService : BaseDownloadService
             throw new HttpRequestException($"Response status code does not indicate success: {response.StatusCode} ({response.ReasonPhrase})");
         }
 
-        var doc = JsonDocument.Parse(responseBody);
+        using var doc = JsonDocument.Parse(responseBody);
         var root = doc.RootElement;
 
         if (!root.TryGetProperty("url", out var urlElement) || string.IsNullOrEmpty(urlElement.GetString()))

@@ -465,13 +465,16 @@ public class ConfigController : ControllerBase
             };
 
             // Try to restart by container name first, then by ID
-            var response = await dockerClient.PostAsync($"/containers/{containerName}/restart?t=5", null);
+            var restartResponse = await dockerClient.PostAsync($"/containers/{containerName}/restart?t=5", null);
 
-            if (!response.IsSuccessStatusCode)
+            if (!restartResponse.IsSuccessStatusCode)
             {
                 // Try by container ID
-                response = await dockerClient.PostAsync($"/containers/{containerId}/restart?t=5", null);
+                restartResponse.Dispose();
+                restartResponse = await dockerClient.PostAsync($"/containers/{containerId}/restart?t=5", null);
             }
+
+            using var response = restartResponse;
 
             if (response.IsSuccessStatusCode)
             {

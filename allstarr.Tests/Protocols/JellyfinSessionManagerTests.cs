@@ -173,6 +173,82 @@ public class JellyfinSessionManagerTests
         Assert.DoesNotContain("/Sessions/Capabilities/Full", requestedPaths);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.ServiceUnavailable, true, true)]
+    [InlineData(HttpStatusCode.Unauthorized, false, false)]
+    public async Task EnsureSessionAsync_RefreshFailure_PreservesOnlyTransientSession(
+        HttpStatusCode refreshStatus,
+        bool expectedResult,
+        bool expectedSession)
+    {
+        var requests = 0;
+        var handler = new DelegateHttpMessageHandler((_, _) => Task.FromResult(
+            new HttpResponseMessage(Interlocked.Increment(ref requests) == 1
+                ? HttpStatusCode.NoContent
+                : refreshStatus)));
+        var settings = CreateSettings();
+        using var manager = new JellyfinSessionManager(
+            CreateProxyService(handler, settings),
+            Options.Create(settings),
+            NullLogger<JellyfinSessionManager>.Instance);
+        var headers = CreateHeaders();
+
+        Assert.True(await manager.EnsureSessionAsync("dev-123", "Feishin", "Desktop", "1.0", headers));
+        Assert.Equal(expectedResult, await manager.EnsureSessionAsync("dev-123", "Feishin", "Desktop", "1.0", headers));
+        Assert.Equal(expectedSession, manager.HasSession("dev-123"));
+        Assert.Equal(2, requests);
+    }
+
+    [Fact]
+    public async Task RunKeepAlivePassAsync_DoesNotOverlapCapabilityRefreshes()
+    {
+        var requests = 0;
+        var refreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new DelegateHttpMessageHandler(async (_, _) =>
+        {
+            if (Interlocked.Increment(ref requests) == 2)
+            {
+                refreshStarted.SetResult();
+                await releaseRefresh.Task;
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NoContent);
+        });
+        var settings = CreateSettings();
+        using var manager = new JellyfinSessionManager(
+            CreateProxyService(handler, settings),
+            Options.Create(settings),
+            NullLogger<JellyfinSessionManager>.Instance);
+
+        Assert.True(await manager.EnsureSessionAsync("dev-123", "Feishin", "Desktop", "1.0", CreateHeaders()));
+
+        var firstPass = manager.RunKeepAlivePassAsync();
+        await refreshStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await manager.RunKeepAlivePassAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(2, requests);
+
+        releaseRefresh.SetResult();
+        await firstPass;
+        Assert.Equal(2, requests);
+    }
+
+    private static JellyfinSettings CreateSettings() => new()
+    {
+        Url = "http://127.0.0.1:1",
+        ApiKey = "server-api-key",
+        ClientName = "Allstarr",
+        DeviceName = "Allstarr",
+        DeviceId = "allstarr",
+        ClientVersion = "1.0"
+    };
+
+    private static HeaderDictionary CreateHeaders() => new()
+    {
+        ["X-Emby-Authorization"] =
+            "MediaBrowser Client=\"Feishin\", Device=\"Desktop\", DeviceId=\"dev-123\", Version=\"1.0\", Token=\"abc\""
+    };
+
     private static JellyfinProxyService CreateProxyService(HttpMessageHandler handler, JellyfinSettings settings)
     {
         var httpClientFactory = new TestHttpClientFactory(handler);

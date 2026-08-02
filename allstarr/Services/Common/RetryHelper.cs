@@ -8,6 +8,19 @@ namespace allstarr.Services.Common;
 /// </summary>
 public static class RetryHelper
 {
+    internal static HttpResponseMessage EnsureSuccessOrDispose(HttpResponseMessage response)
+    {
+        try
+        {
+            return response.EnsureSuccessStatusCode();
+        }
+        catch
+        {
+            response.Dispose();
+            throw;
+        }
+    }
+
     /// <summary>
     /// Executes an async action with exponential backoff retry logic.
     /// Retries on HTTP 503 (Service Unavailable) and 429 (Too Many Requests).
@@ -22,12 +35,15 @@ public static class RetryHelper
         Func<Task<T>> action,
         ILogger logger,
         int maxRetries = 3,
-        int initialDelayMs = 1000)
+        int initialDelayMs = 1000,
+        CancellationToken cancellationToken = default)
     {
         Exception? lastException = null;
 
         for (int attempt = 0; attempt < maxRetries; attempt++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             try
             {
                 return await action();
@@ -43,7 +59,7 @@ public static class RetryHelper
                     logger.LogWarning(
                         "Retry attempt {Attempt}/{MaxRetries} after {Delay}ms ({Message})",
                         attempt + 1, maxRetries, delay, ex.Message);
-                    await Task.Delay(delay);
+                    await Task.Delay(delay, cancellationToken);
                 }
             }
             catch
@@ -62,12 +78,13 @@ public static class RetryHelper
         Func<Task> action,
         ILogger logger,
         int maxRetries = 3,
-        int initialDelayMs = 1000)
+        int initialDelayMs = 1000,
+        CancellationToken cancellationToken = default)
     {
         await RetryWithBackoffAsync(async () =>
         {
             await action();
             return true;
-        }, logger, maxRetries, initialDelayMs);
+        }, logger, maxRetries, initialDelayMs, cancellationToken);
     }
 }

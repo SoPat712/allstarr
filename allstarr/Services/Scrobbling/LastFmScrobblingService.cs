@@ -292,7 +292,7 @@ public class LastFmScrobblingService : IScrobblingService
         var content = new FormUrlEncodedContent(parameters);
 
         // Send request
-        var response = await _httpClient.PostAsync(ApiRoot, content, cancellationToken);
+        using var response = await _httpClient.PostAsync(ApiRoot, content, cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
         // Log request/response for debugging

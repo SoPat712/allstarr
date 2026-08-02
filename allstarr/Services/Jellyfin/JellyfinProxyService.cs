@@ -230,7 +230,7 @@ public class JellyfinProxyService
 
         LogOutboundRequest(HttpMethod.Get, url);
 
-        var response = await _httpClient.SendAsync(request);
+        using var response = await _httpClient.SendAsync(request);
 
         var statusCode = (int)response.StatusCode;
 
@@ -461,7 +461,7 @@ public class JellyfinProxyService
             _logger.LogTrace("{Method} to Jellyfin: {Url}, body length: {Length} bytes", method, safeUrl, body.Length);
         }
 
-        var response = await _httpClient.SendAsync(request);
+        using var response = await _httpClient.SendAsync(request);
         var statusCode = (int)response.StatusCode;
 
         if (!response.IsSuccessStatusCode)
@@ -506,7 +506,7 @@ public class JellyfinProxyService
 
     /// <summary>
     /// Sends a GET request and returns raw bytes (for images, audio streams).
-    /// WARNING: This loads entire response into memory - use StreamAsync for large files!
+    /// WARNING: This loads the entire response into memory and is intended only for bounded assets.
     /// </summary>
     public async Task<(byte[] Body, string? ContentType)> GetBytesAsync(string endpoint, Dictionary<string, string>? queryParams = null)
     {
@@ -517,41 +517,13 @@ public class JellyfinProxyService
 
         LogOutboundRequest(HttpMethod.Get, url);
 
-        var response = await _httpClient.SendAsync(request);
+        using var response = await _httpClient.SendAsync(request);
         response.EnsureSuccessStatusCode();
 
         var body = await response.Content.ReadAsByteArrayAsync();
         var contentType = response.Content.Headers.ContentType?.ToString();
 
-        // Trigger GC for large files to prevent memory leaks
-        if (body.Length > 1024 * 1024) // 1MB threshold
-        {
-            GC.Collect(2, GCCollectionMode.Optimized, blocking: false);
-        }
-
         return (body, contentType);
-    }
-
-    /// <summary>
-    /// Streams content directly without loading into memory (for large files like audio).
-    /// </summary>
-    public async Task<(Stream Stream, string? ContentType, long? ContentLength)> GetStreamAsync(string endpoint, Dictionary<string, string>? queryParams = null)
-    {
-        var url = BuildUrl(endpoint, queryParams);
-
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Add("Authorization", GetAuthorizationHeader());
-
-        LogOutboundRequest(HttpMethod.Get, url);
-
-        var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-        response.EnsureSuccessStatusCode();
-
-        var stream = await response.Content.ReadAsStreamAsync();
-        var contentType = response.Content.Headers.ContentType?.ToString();
-        var contentLength = response.Content.Headers.ContentLength;
-
-        return (stream, contentType, contentLength);
     }
 
     /// <summary>
@@ -1193,7 +1165,7 @@ public class JellyfinProxyService
 
         LogOutboundRequest(HttpMethod.Get, url);
 
-        var response = await _httpClient.SendAsync(request);
+        using var response = await _httpClient.SendAsync(request);
         var statusCode = (int)response.StatusCode;
         var content = await response.Content.ReadAsStringAsync();
 

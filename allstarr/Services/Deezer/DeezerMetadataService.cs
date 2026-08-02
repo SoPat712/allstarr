@@ -76,12 +76,12 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
         try
         {
             var url = BuildRankedSearchUrl("track", query, limit);
-            var response = await GetAsync(url, cancellationToken);
+            using var response = await GetAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode) return new List<Song>();
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var result = JsonDocument.Parse(json);
+            using var result = JsonDocument.Parse(json);
 
             var songs = new List<Song>();
             if (result.RootElement.TryGetProperty("data", out var data))
@@ -115,7 +115,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
         {
             var normalizedIsrc = isrc.Trim();
             var url = $"{BaseUrl}/track/isrc:{Uri.EscapeDataString(normalizedIsrc)}";
-            var response = await GetAsync(url, cancellationToken);
+            using var response = await GetAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -179,12 +179,12 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
         try
         {
             var url = BuildRankedSearchUrl("album", query, limit);
-            var response = await GetAsync(url, cancellationToken);
+            using var response = await GetAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode) return new List<Album>();
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var result = JsonDocument.Parse(json);
+            using var result = JsonDocument.Parse(json);
 
             var albums = new List<Album>();
             if (result.RootElement.TryGetProperty("data", out var data))
@@ -241,12 +241,12 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
         try
         {
             var url = BuildRankedSearchUrl("artist", query, limit);
-            var response = await GetAsync(url, cancellationToken);
+            using var response = await GetAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode) return new List<Artist>();
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var result = JsonDocument.Parse(json);
+            using var result = JsonDocument.Parse(json);
 
             var artists = new List<Artist>();
             if (result.RootElement.TryGetProperty("data", out var data))
@@ -330,12 +330,13 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
         if (!string.Equals(externalProvider, "deezer", StringComparison.OrdinalIgnoreCase)) return null;
 
         var url = $"{BaseUrl}/track/{externalId}";
-        var response = await GetAsync(url, cancellationToken);
+        using var response = await GetAsync(url, cancellationToken);
 
         if (!response.IsSuccessStatusCode) return null;
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
-        var track = JsonDocument.Parse(json).RootElement;
+        using var trackDocument = JsonDocument.Parse(json);
+        var track = trackDocument.RootElement;
 
         if (track.TryGetProperty("error", out _)) return null;
 
@@ -350,11 +351,12 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
             try
             {
                 var albumUrl = $"{BaseUrl}/album/{albumId}";
-                var albumResponse = await GetAsync(albumUrl, cancellationToken);
+                using var albumResponse = await GetAsync(albumUrl, cancellationToken);
                 if (albumResponse.IsSuccessStatusCode)
                 {
                     var albumJson = await albumResponse.Content.ReadAsStringAsync(cancellationToken);
-                    var albumData = JsonDocument.Parse(albumJson).RootElement;
+                    using var albumDocument = JsonDocument.Parse(albumJson);
+                    var albumData = albumDocument.RootElement;
 
                     // Genre
                     if (albumData.TryGetProperty("genres", out var genres) &&
@@ -422,7 +424,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
         if (!string.Equals(externalProvider, "deezer", StringComparison.OrdinalIgnoreCase)) return null;
 
         var url = $"{BaseUrl}/album/{externalId}";
-        var response = await GetAsync(url, cancellationToken);
+        using var response = await GetAsync(url, cancellationToken);
 
         if (!response.IsSuccessStatusCode) return null;
 
@@ -491,12 +493,13 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
         if (!string.Equals(externalProvider, "deezer", StringComparison.OrdinalIgnoreCase)) return null;
 
         var url = $"{BaseUrl}/artist/{externalId}";
-        var response = await GetAsync(url, cancellationToken);
+        using var response = await GetAsync(url, cancellationToken);
 
         if (!response.IsSuccessStatusCode) return null;
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
-        var artist = JsonDocument.Parse(json).RootElement;
+        using var artistDocument = JsonDocument.Parse(json);
+        var artist = artistDocument.RootElement;
 
         if (artist.TryGetProperty("error", out _)) return null;
 
@@ -521,12 +524,12 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
         if (!string.Equals(externalProvider, "deezer", StringComparison.OrdinalIgnoreCase)) return new List<Song>();
 
         var url = $"{BaseUrl}/artist/{externalId}/top?limit=50";
-        var response = await GetAsync(url, cancellationToken);
+        using var response = await GetAsync(url, cancellationToken);
 
         if (!response.IsSuccessStatusCode) return new List<Song>();
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
-        var result = JsonDocument.Parse(json);
+        using var result = JsonDocument.Parse(json);
 
         var tracks = new List<Song>();
         if (result.RootElement.TryGetProperty("data", out var data))
@@ -809,12 +812,12 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
         try
         {
             var url = BuildRankedSearchUrl("playlist", query, limit);
-            var response = await GetAsync(url, cancellationToken);
+            using var response = await GetAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode) return new List<ExternalPlaylist>();
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var result = JsonDocument.Parse(json);
+            using var result = JsonDocument.Parse(json);
 
             var playlists = new List<ExternalPlaylist>();
             if (result.RootElement.TryGetProperty("data", out var data))
@@ -840,12 +843,13 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
         try
         {
             var url = $"{BaseUrl}/playlist/{externalId}";
-            var response = await GetAsync(url, cancellationToken);
+            using var response = await GetAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode) return null;
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var playlistElement = JsonDocument.Parse(json).RootElement;
+            using var playlistDocument = JsonDocument.Parse(json);
+            var playlistElement = playlistDocument.RootElement;
 
             if (playlistElement.TryGetProperty("error", out _)) return null;
 
@@ -864,12 +868,13 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
         try
         {
             var url = $"{BaseUrl}/playlist/{externalId}";
-            var response = await GetAsync(url, cancellationToken);
+            using var response = await GetAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode) return new List<Song>();
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var playlistElement = JsonDocument.Parse(json).RootElement;
+            using var playlistDocument = JsonDocument.Parse(json);
+            var playlistElement = playlistDocument.RootElement;
 
             if (playlistElement.TryGetProperty("error", out _)) return new List<Song>();
 
@@ -950,7 +955,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
 
         while (IsOfficialDeezerApiUrl(pageUrl) && seenPageUrls.Add(pageUrl!))
         {
-            var response = await GetAsync(pageUrl!, cancellationToken);
+            using var response = await GetAsync(pageUrl!, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 break;

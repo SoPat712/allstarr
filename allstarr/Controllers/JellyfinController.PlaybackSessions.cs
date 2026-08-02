@@ -98,7 +98,7 @@ public partial class JellyfinController
             _logger.LogDebug("📻 Playback START reported");
 
             // Parse the body to check if it's an external track
-            var doc = JsonDocument.Parse(body);
+            using var doc = JsonDocument.Parse(body);
             string? itemId = null;
             string? itemName = null;
             long? positionTicks = null;
@@ -422,7 +422,7 @@ public partial class JellyfinController
             var (deviceId, client, device, version) = ExtractDeviceInfo(Request.Headers);
 
             // Parse the body to check if it's an external track
-            var doc = JsonDocument.Parse(body);
+            using var doc = JsonDocument.Parse(body);
             string? itemId = null;
             long? positionTicks = null;
             string? playSessionId = null;
@@ -1001,7 +1001,7 @@ public partial class JellyfinController
             _logger.LogDebug("📤 Sending playback stop body ({BodyLength} bytes)", body.Length);
 
             // Parse the body to check if it's an external track
-            var doc = JsonDocument.Parse(body);
+            using var doc = JsonDocument.Parse(body);
             string? itemId = null;
             string? itemName = null;
             long? positionTicks = null;
@@ -1190,7 +1190,7 @@ public partial class JellyfinController
             _logger.LogDebug("📤 Original playback stop body length: {BodyLength} bytes", body.Length);
 
             // Parse and fix the body - ensure IsPaused is false for a proper stop
-            var stopDoc = JsonDocument.Parse(body);
+            using var stopDoc = JsonDocument.Parse(body);
             var stopInfo = new Dictionary<string, object?>();
 
             foreach (var prop in stopDoc.RootElement.EnumerateObject())

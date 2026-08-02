@@ -154,7 +154,7 @@ public class LocalLibraryService : ILocalLibraryService
 
             _logger.LogInformation("Triggering Subsonic library scan...");
 
-            var response = await _httpClient.GetAsync(url);
+            using var response = await _httpClient.GetAsync(url);
 
             if (response.IsSuccessStatusCode)
             {
@@ -183,12 +183,12 @@ public class LocalLibraryService : ILocalLibraryService
             // when called from localhost.
             var url = $"{_subsonicSettings.Url}/rest/getScanStatus?f=json";
 
-            var response = await _httpClient.GetAsync(url);
+            using var response = await _httpClient.GetAsync(url);
 
             if (response.IsSuccessStatusCode)
             {
                 var content = await response.Content.ReadAsStringAsync();
-                var doc = JsonDocument.Parse(content);
+                using var doc = JsonDocument.Parse(content);
 
                 if (doc.RootElement.TryGetProperty("subsonic-response", out var subsonicResponse) &&
                     subsonicResponse.TryGetProperty("scanStatus", out var scanStatus))

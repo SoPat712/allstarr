@@ -93,7 +93,7 @@ public class LrclibService
 
             _logger.LogDebug("Searching LRCLIB: {Url} (expecting {ArtistCount} artists)", searchUrl, artistNames.Length);
 
-            var searchResponse = await _httpClient.GetAsync(searchUrl);
+            using var searchResponse = await _httpClient.GetAsync(searchUrl);
 
             if (searchResponse.IsSuccessStatusCode)
             {
@@ -178,7 +178,7 @@ public class LrclibService
 
             _logger.LogDebug("Trying exact match from LRCLIB: {Url}", exactUrl);
 
-            var exactResponse = await _httpClient.GetAsync(exactUrl);
+            using var exactResponse = await _httpClient.GetAsync(exactUrl);
 
             if (exactResponse.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
@@ -321,7 +321,7 @@ public class LrclibService
                      $"album_name={Uri.EscapeDataString(albumName)}&" +
                      $"duration={durationSeconds}";
 
-            var response = await _httpClient.GetAsync(url);
+            using var response = await _httpClient.GetAsync(url);
 
             if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
@@ -377,7 +377,7 @@ public class LrclibService
         try
         {
             var url = $"{BaseUrl}/get/{id}";
-            var response = await _httpClient.GetAsync(url);
+            using var response = await _httpClient.GetAsync(url);
 
             if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {

@@ -47,7 +47,7 @@ public class LyricsStartupValidator : BaseStartupValidator
         {
             var url = $"https://lrclib.net/api/get?artist_name={Uri.EscapeDataString(TestArtist)}&track_name={Uri.EscapeDataString(TestSongTitle)}&album_name={Uri.EscapeDataString(TestAlbum)}&duration={TestDuration}";
 
-            var response = await _httpClient.GetAsync(url, cancellationToken);
+            using var response = await _httpClient.GetAsync(url, cancellationToken);
 
             if (response.IsSuccessStatusCode)
             {
@@ -81,12 +81,12 @@ public class LyricsStartupValidator : BaseStartupValidator
 
             var url = $"{_spotifySettings.LyricsApiUrl}/?trackid={TestSpotifyId}&format=id3";
 
-            var response = await _httpClient.GetAsync(url, cancellationToken);
+            using var response = await _httpClient.GetAsync(url, cancellationToken);
 
             if (response.IsSuccessStatusCode)
             {
                 var json = await response.Content.ReadAsStringAsync(cancellationToken);
-                var doc = JsonDocument.Parse(json);
+                using var doc = JsonDocument.Parse(json);
 
                 var hasError = doc.RootElement.TryGetProperty("error", out var error) && error.GetBoolean();
 

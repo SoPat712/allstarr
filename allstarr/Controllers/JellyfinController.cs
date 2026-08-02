@@ -900,7 +900,11 @@ public partial class JellyfinController : ControllerBase
 
                 return retryTransientFailures
                     ? await RetryHelper.RetryWithBackoffAsync(
-                        Fetch, _logger, maxRetries: 3, initialDelayMs: 500)
+                        Fetch,
+                        _logger,
+                        maxRetries: 3,
+                        initialDelayMs: 500,
+                        cancellationToken: HttpContext.RequestAborted)
                     : await Fetch();
             },
             MaximumArtworkBytes,

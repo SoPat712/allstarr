@@ -553,11 +553,11 @@ public class PlaylistController : ControllerBase
                 url += $"?UserId={userId}";
             }
 
-            var request = _helperService.CreateJellyfinRequest(HttpMethod.Get, url);
+            using var request = _helperService.CreateJellyfinRequest(HttpMethod.Get, url);
 
             _logger.LogDebug("Fetching Jellyfin track {Id} from {Url}", id, url);
 
-            var response = await _jellyfinHttpClient.SendAsync(request);
+            using var response = await _jellyfinHttpClient.SendAsync(request);
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync();

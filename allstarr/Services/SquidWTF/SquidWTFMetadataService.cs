@@ -203,7 +203,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
         {
             // Use 's' parameter for track search as per hifi-api spec
             var url = BuildSearchUrl(baseUrl, "s", query, normalizedLimit);
-            var response = await _httpClient.GetAsync(url, cancellationToken);
+            using var response = await _httpClient.GetAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -213,7 +213,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
 
             // Check for error in response body
-            var result = JsonDocument.Parse(json);
+            using var result = JsonDocument.Parse(json);
             if (result.RootElement.TryGetProperty("detail", out _) ||
                 result.RootElement.TryGetProperty("error", out _))
             {
@@ -255,7 +255,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
             // Use 'al' parameter for album search
             // a= is for artists, al= is for albums, p= is for playlists
             var url = BuildSearchUrl(baseUrl, "al", query, normalizedLimit);
-            var response = await _httpClient.GetAsync(url, cancellationToken);
+            using var response = await _httpClient.GetAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -263,7 +263,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
             }
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var result = JsonDocument.Parse(json);
+            using var result = JsonDocument.Parse(json);
 
             var albums = new List<Album>();
             // Per hifi-api spec: album search returns data.albums.items array
@@ -299,7 +299,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
             var url = BuildSearchUrl(baseUrl, "a", query, normalizedLimit);
             _logger.LogDebug("🔍 SQUIDWTF: Searching artists with URL: {Url}", url);
 
-            var response = await _httpClient.GetAsync(url, cancellationToken);
+            using var response = await _httpClient.GetAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -308,7 +308,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
             }
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var result = JsonDocument.Parse(json);
+            using var result = JsonDocument.Parse(json);
 
             if (result.RootElement.TryGetProperty("detail", out _) ||
                 result.RootElement.TryGetProperty("error", out _))
@@ -450,14 +450,14 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
         {
             // Per hifi-api spec: use 'p' parameter for playlist search
             var url = BuildSearchUrl(baseUrl, "p", query, normalizedLimit);
-            var response = await _httpClient.GetAsync(url, cancellationToken);
+            using var response = await _httpClient.GetAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 throw new HttpRequestException($"HTTP {response.StatusCode}");
             }
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var result = JsonDocument.Parse(json);
+            using var result = JsonDocument.Parse(json);
 
             if (result.RootElement.TryGetProperty("detail", out _) ||
                 result.RootElement.TryGetProperty("error", out _))
@@ -533,7 +533,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
             async (baseUrl) =>
             {
                 var url = BuildSearchUrl(baseUrl, "i", normalizedIsrc, IsrcLookupLimit);
-                var response = await _httpClient.GetAsync(url, cancellationToken);
+                using var response = await _httpClient.GetAsync(url, cancellationToken);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -541,7 +541,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
                 }
 
                 var json = await response.Content.ReadAsStringAsync(cancellationToken);
-                var result = JsonDocument.Parse(json);
+                using var result = JsonDocument.Parse(json);
 
                 if (result.RootElement.TryGetProperty("detail", out _) ||
                     result.RootElement.TryGetProperty("error", out _))
@@ -670,7 +670,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
                     url += $"&limit={limit}";
                 }
 
-                var response = await _httpClient.GetAsync(url, cancellationToken);
+                using var response = await _httpClient.GetAsync(url, cancellationToken);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -679,7 +679,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
                 }
 
                 var json = await response.Content.ReadAsStringAsync(cancellationToken);
-                var result = JsonDocument.Parse(json);
+                using var result = JsonDocument.Parse(json);
 
                 if (!result.RootElement.TryGetProperty("data", out var data) ||
                     !data.TryGetProperty("items", out var items) ||
@@ -771,7 +771,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
             while (true)
             {
                 var url = BuildPagedEndpointUrl(baseUrl, "album", "id", externalId, MetadataPageSize, offset);
-                var response = await _httpClient.GetAsync(url, cancellationToken);
+                using var response = await _httpClient.GetAsync(url, cancellationToken);
                 if (!response.IsSuccessStatusCode)
                 {
                     throw new HttpRequestException($"HTTP {response.StatusCode}");
@@ -851,7 +851,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
             var url = $"{baseUrl}/artist/?id={Uri.EscapeDataString(externalId)}";
             _logger.LogDebug("Fetching artist from {Url}", url);
 
-            var response = await _httpClient.GetAsync(url, cancellationToken);
+            using var response = await _httpClient.GetAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 throw new HttpRequestException($"HTTP {response.StatusCode}");
@@ -908,7 +908,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
             // Per hifi-api README: /artist/?f={artistId} returns aggregated releases and tracks
             var url = $"{baseUrl}/artist/?f={externalId}";
             _logger.LogDebug("Fetching artist albums from URL: {Url}", url);
-            var response = await _httpClient.GetAsync(url, cancellationToken);
+            using var response = await _httpClient.GetAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -917,7 +917,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogDebug("SquidWTF artist albums response for {ExternalId}: {JsonLength} bytes", externalId, json.Length);
-            var result = JsonDocument.Parse(json);
+            using var result = JsonDocument.Parse(json);
 
             var albums = new List<Album>();
 
@@ -955,7 +955,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
             // Per hifi-api README: /artist/?f={artistId} returns both albums and tracks
             var url = $"{baseUrl}/artist/?f={externalId}";
             _logger.LogDebug("Fetching artist tracks from URL: {Url}", url);
-            var response = await _httpClient.GetAsync(url, cancellationToken);
+            using var response = await _httpClient.GetAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -964,7 +964,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogDebug("SquidWTF artist tracks response for {ExternalId}: {JsonLength} bytes", externalId, json.Length);
-            var result = JsonDocument.Parse(json);
+            using var result = JsonDocument.Parse(json);
 
             var tracks = new List<Song>();
 
@@ -995,7 +995,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
         return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {
             var url = BuildPagedEndpointUrl(baseUrl, "playlist", "id", externalId, RemoteSearchMinLimit);
-            var response = await _httpClient.GetAsync(url, cancellationToken);
+            using var response = await _httpClient.GetAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 throw new HttpRequestException($"HTTP {response.StatusCode}");
@@ -1038,7 +1038,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
             while (true)
             {
                 var url = BuildPagedEndpointUrl(baseUrl, "playlist", "id", externalId, MetadataPageSize, offset);
-                var response = await _httpClient.GetAsync(url, cancellationToken);
+                using var response = await _httpClient.GetAsync(url, cancellationToken);
                 if (!response.IsSuccessStatusCode)
                 {
                     throw new HttpRequestException($"HTTP {response.StatusCode}");
@@ -1624,7 +1624,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
                 try
                 {
                     var url = BuildSearchUrl(baseUrl, "s", query, normalizedLimit);
-                    var response = await _httpClient.GetAsync(url, ct);
+                    using var response = await _httpClient.GetAsync(url, ct);
 
                     if (!response.IsSuccessStatusCode)
                     {
@@ -1632,7 +1632,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
                     }
 
                     var json = await response.Content.ReadAsStringAsync(ct);
-                    var result = JsonDocument.Parse(json);
+                    using var result = JsonDocument.Parse(json);
 
                     if (result.RootElement.TryGetProperty("detail", out _) ||
                         result.RootElement.TryGetProperty("error", out _))

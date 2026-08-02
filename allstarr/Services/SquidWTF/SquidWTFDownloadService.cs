@@ -91,7 +91,7 @@ public class SquidWTFDownloadService : BaseDownloadService
     {
         return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {
-            var response = await _httpClient.GetAsync(baseUrl);
+            using var response = await _httpClient.GetAsync(baseUrl);
             return response.IsSuccessStatusCode;
         });
     }
@@ -149,7 +149,7 @@ public class SquidWTFDownloadService : BaseDownloadService
         using var req = new HttpRequestMessage(HttpMethod.Get, downloadInfo.DownloadUrl);
         req.Headers.Add("User-Agent", "Mozilla/5.0");
         req.Headers.Add("Accept", "*/*");
-        var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         res.EnsureSuccessStatusCode();
 
         await using var responseStream = await res.Content.ReadAsStreamAsync(cancellationToken);

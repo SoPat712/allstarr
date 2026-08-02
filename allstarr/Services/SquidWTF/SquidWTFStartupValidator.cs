@@ -47,7 +47,7 @@ public class SquidWTFStartupValidator : BaseStartupValidator
 
         var apiResult = await _apiFallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
             {
-                var response = await _httpClient.GetAsync(baseUrl, cancellationToken);
+                using var response = await _httpClient.GetAsync(baseUrl, cancellationToken);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -68,7 +68,7 @@ public class SquidWTFStartupValidator : BaseStartupValidator
         {
             var streamingResult = await _streamingFallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
             {
-                var response = await _httpClient.GetAsync(baseUrl, cancellationToken);
+                using var response = await _httpClient.GetAsync(baseUrl, cancellationToken);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -108,7 +108,7 @@ public class SquidWTFStartupValidator : BaseStartupValidator
                     using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
 
-                    var response = await _httpClient.GetAsync(endpoint, timeoutCts.Token);
+                    using var response = await _httpClient.GetAsync(endpoint, timeoutCts.Token);
                     return response.IsSuccessStatusCode;
                 }
                 catch

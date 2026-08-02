@@ -61,7 +61,7 @@ public class SpotifyLyricsService
 
             _logger.LogDebug("Fetching lyrics from sidecar API: {Url}", url);
 
-            var response = await _httpClient.GetAsync(url);
+            using var response = await _httpClient.GetAsync(url);
 
             if (!response.IsSuccessStatusCode)
             {

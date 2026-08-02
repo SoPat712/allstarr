@@ -429,7 +429,7 @@ public class SubsonicController : ControllerBase
 
         if (format == "json" || navidromeResult.ContentType?.Contains("json") == true)
         {
-            var jsonDoc = JsonDocument.Parse(navidromeContent);
+            using var jsonDoc = JsonDocument.Parse(navidromeContent);
             if (jsonDoc.RootElement.TryGetProperty("subsonic-response", out var response) &&
                 response.TryGetProperty("artist", out var artistElement))
             {
@@ -593,7 +593,7 @@ public class SubsonicController : ControllerBase
 
         if (format == "json" || navidromeResult.ContentType?.Contains("json") == true)
         {
-            var jsonDoc = JsonDocument.Parse(navidromeContent);
+            using var jsonDoc = JsonDocument.Parse(navidromeContent);
             if (jsonDoc.RootElement.TryGetProperty("subsonic-response", out var response) &&
                 response.TryGetProperty("album", out var albumElement))
             {

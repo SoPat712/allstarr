@@ -374,11 +374,11 @@ check_image() {
 }
 
 check_external_stream() {
-    local label="$1" url="$2" result code content_type bytes ttfb total reader_pid
+    local label="$1" url="$2" range="${3:-0-65535}" result code content_type bytes ttfb total reader_pid
     : >"$response_file"
     head -c 65536 <"$stream_pipe" >"$response_file" &
     reader_pid=$!
-    result="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" --range 0-65535 \
+    result="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" --range "$range" \
         -o "$stream_pipe" \
         -w '%{http_code}\t%{content_type}\t%{size_download}\t%{time_starttransfer}\t%{time_total}' \
         "$url" || true)"
@@ -389,8 +389,8 @@ check_external_stream() {
     checks=$((checks + 1))
     local saved_bytes
     saved_bytes="$(wc -c <"$response_file" | tr -d ' ')"
-    if [[ ",$code," == *,200,* || ",$code," == *,206,* ]] &&
-       (( saved_bytes > 0 && saved_bytes <= 65536 )) &&
+    if [[ "$code" == 206 ]] &&
+       (( saved_bytes > 0 && saved_bytes <= 65536 && bytes == saved_bytes )) &&
        awk -v value="${ttfb:-0}" -v max="$MAX_EXTERNAL_STREAM_TTFB_MS" \
            'BEGIN { exit !((value * 1000) <= max) }'; then
         printf 'PASS %-34s status=%s bytes=%s ttfb_ms=%.1f total_ms=%.1f\n' \
@@ -1111,6 +1111,9 @@ if [[ -n "$external_song_id" ]]; then
     if [[ "$TEST_EXTERNAL_STREAM" == 1 ]]; then
         check_external_stream "external stream-64k" \
             "$ALLSTARR_BASE/Audio/$external_song_id/stream?static=true&UserId=$best_user_id"
+        check_external_stream "external suffix stream-64k" \
+            "$ALLSTARR_BASE/Audio/$external_song_id/stream?static=true&UserId=$best_user_id" \
+            -65536
     else
         echo "external stream skipped=set TEST_EXTERNAL_STREAM=1 for provider/cold-cache media"
     fi

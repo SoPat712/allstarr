@@ -289,7 +289,7 @@ public class AppleMusicDownloadService : BaseDownloadService
         Logger.LogInformation("Downloading Apple Music track {TrackId} at quality {Quality} from sidecar...", trackId, quality);
 
         using var req = new HttpRequestMessage(HttpMethod.Get, streamUrl);
-        var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         res.EnsureSuccessStatusCode();
 
         await using var responseStream = await res.Content.ReadAsStreamAsync(cancellationToken);

@@ -55,12 +55,6 @@ public class SubsonicProxyService
                 response.StatusCode);
         }
 
-        // Trigger GC for large files to prevent memory leaks
-        if (response.Body.Length > 1024 * 1024) // 1MB threshold
-        {
-            GC.Collect(2, GCCollectionMode.Optimized, blocking: false);
-        }
-
         return (response.Body, response.ContentType);
     }
 

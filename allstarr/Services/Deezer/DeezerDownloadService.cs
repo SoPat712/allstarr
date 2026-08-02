@@ -112,16 +112,15 @@ public class DeezerDownloadService : BaseDownloadService
         outputPath = PathHelper.ResolveUniquePath(outputPath);
 
         // Download the encrypted file
-        var response = await RetryHelper.RetryWithBackoffAsync(async () =>
+        using var response = await RetryHelper.RetryWithBackoffAsync(async () =>
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, downloadInfo.DownloadUrl);
             request.Headers.Add("User-Agent", "Mozilla/5.0");
             request.Headers.Add("Accept", "*/*");
 
             var res = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            res.EnsureSuccessStatusCode();
-            return res;
-        }, Logger);
+            return RetryHelper.EnsureSuccessOrDispose(res);
+        }, Logger, cancellationToken: cancellationToken);
 
         // Download and decrypt
         await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -203,16 +202,15 @@ public class DeezerDownloadService : BaseDownloadService
         }
 
         // Download the encrypted file
-        var response = await RetryHelper.RetryWithBackoffAsync(async () =>
+        using var response = await RetryHelper.RetryWithBackoffAsync(async () =>
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, downloadInfo.DownloadUrl);
             request.Headers.Add("User-Agent", "Mozilla/5.0");
             request.Headers.Add("Accept", "*/*");
 
             var res = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            res.EnsureSuccessStatusCode();
-            return res;
-        }, Logger);
+            return RetryHelper.EnsureSuccessOrDispose(res);
+        }, Logger, cancellationToken: cancellationToken);
 
         // Download and decrypt (Deezer uses Blowfish CBC encryption)
         await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -294,11 +292,11 @@ public class DeezerDownloadService : BaseDownloadService
             request.Headers.Add("Cookie", $"arl={arl}");
             request.Content = new StringContent("{}", Encoding.UTF8, "application/json");
 
-            var response = await _httpClient.SendAsync(request);
+            using var response = await _httpClient.SendAsync(request);
             response.EnsureSuccessStatusCode();
 
             var json = await response.Content.ReadAsStringAsync();
-            var doc = JsonDocument.Parse(json);
+            using var doc = JsonDocument.Parse(json);
 
             if (doc.RootElement.TryGetProperty("results", out var results) &&
                 results.TryGetProperty("checkForm", out var checkForm))
@@ -331,11 +329,11 @@ public class DeezerDownloadService : BaseDownloadService
             return await QueueRequestAsync(async () =>
             {
                 // Get track info
-                var trackResponse = await _httpClient.GetAsync($"{DeezerApiBase}/track/{trackId}", cancellationToken);
+                using var trackResponse = await _httpClient.GetAsync($"{DeezerApiBase}/track/{trackId}", cancellationToken);
                 trackResponse.EnsureSuccessStatusCode();
 
                 var trackJson = await trackResponse.Content.ReadAsStringAsync(cancellationToken);
-                var trackDoc = JsonDocument.Parse(trackJson);
+                using var trackDoc = JsonDocument.Parse(trackJson);
 
                 if (!trackDoc.RootElement.TryGetProperty("track_token", out var trackTokenElement))
                 {
@@ -374,11 +372,11 @@ public class DeezerDownloadService : BaseDownloadService
 
                 using (mediaHttpRequest)
                 {
-                    var mediaResponse = await _httpClient.SendAsync(mediaHttpRequest, cancellationToken);
+                    using var mediaResponse = await _httpClient.SendAsync(mediaHttpRequest, cancellationToken);
                     mediaResponse.EnsureSuccessStatusCode();
 
                     var mediaJson = await mediaResponse.Content.ReadAsStringAsync(cancellationToken);
-                    var mediaDoc = JsonDocument.Parse(mediaJson);
+                    using var mediaDoc = JsonDocument.Parse(mediaJson);
 
                     if (!mediaDoc.RootElement.TryGetProperty("data", out var data) ||
                         data.GetArrayLength() == 0)

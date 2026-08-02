@@ -74,7 +74,7 @@ public class MusicBrainzService
             var url = $"{_settings.BaseUrl}/isrc/{isrc}?fmt=json&inc=artists+releases+release-groups+genres+tags";
             _logger.LogDebug("MusicBrainz ISRC lookup: {Url}", url);
 
-            var response = await _httpClient.GetAsync(url);
+            using var response = await _httpClient.GetAsync(url);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -141,7 +141,7 @@ public class MusicBrainzService
 
             _logger.LogDebug("MusicBrainz search: {Url}", url);
 
-            var response = await _httpClient.GetAsync(url);
+            using var response = await _httpClient.GetAsync(url);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -199,7 +199,7 @@ public class MusicBrainzService
             var url = $"{_settings.BaseUrl}/recording/{mbid}?fmt=json&inc=artists+releases+release-groups+genres+tags";
             _logger.LogDebug("MusicBrainz MBID lookup: {Url}", url);
 
-            var response = await _httpClient.GetAsync(url);
+            using var response = await _httpClient.GetAsync(url);
 
             if (!response.IsSuccessStatusCode)
             {

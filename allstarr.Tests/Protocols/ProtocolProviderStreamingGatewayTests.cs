@@ -169,7 +169,7 @@ public sealed class ProtocolProviderStreamingGatewayTests
     }
 
     [Fact]
-    public async Task OpenStream_UsesVerifiedRouterFallback()
+    public async Task OpenStream_UsesVerifiedRouterFallbackAndPreservesSuffixRange()
     {
         var first = Capability("deezer", ProviderOutcome<ProviderStreamLease>.Failure(
             new ProviderError(ProviderErrorKind.TransientFailure)));
@@ -198,18 +198,23 @@ public sealed class ProtocolProviderStreamingGatewayTests
             .Returns((ProviderRoutePlan<IProviderStreamingCapability> plan, int _, ProviderError _) =>
                 new ProviderFallbackDecision<IProviderStreamingCapability>(
                     ProviderFallbackDisposition.Advance, "fallback-transient-failure", plan.Candidates[1]));
+        var http = new HttpClientFactory();
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
             Mock.Of<IProviderRouteAccountResolver>(),
             Mock.Of<IMusicMetadataService>(),
-            new HttpClientFactory());
+            http);
 
         var stream = await gateway.OpenStreamAsync(
-            Context(), "deezer", "source-track", ProviderAudioQuality.Lossless, null);
+            Context(), "deezer", "source-track", ProviderAudioQuality.Lossless, "bytes=-4096");
 
         Assert.NotNull(stream);
         Assert.Equal("qobuz-lease", stream.Lease.LeaseId);
+        Assert.Equal("bytes=-4096", http.Range);
+        second.Verify(item => item.GetStreamLeaseAsync(
+            It.IsAny<ProviderExecutionContext>(),
+            It.Is<ProviderStreamLeaseRequest>(request => request.RangeStart == null)), Times.Once);
         stream.Response.Dispose();
         first.VerifyAll();
         second.VerifyAll();
@@ -390,14 +395,20 @@ public sealed class ProtocolProviderStreamingGatewayTests
 
     private sealed class HttpClientFactory : IHttpClientFactory
     {
-        public HttpClient CreateClient(string name) => new(new Handler());
+        public string? Range { get; private set; }
+
+        public HttpClient CreateClient(string name) => new(new Handler(request =>
+            Range = request.Headers.Range?.ToString()));
     }
 
-    private sealed class Handler : HttpMessageHandler
+    private sealed class Handler(Action<HttpRequestMessage> inspect) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            CancellationToken cancellationToken)
+        {
+            inspect(request);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }
     }
 }

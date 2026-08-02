@@ -629,7 +629,7 @@ public sealed class ProtocolProviderGateway(
             }
 
             var lease = outcome.RequireValue();
-            var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+            using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
             if (rangeHeader != null && lease.SupportsByteRanges)
             {
                 request.Headers.Range = RangeHeaderValue.Parse(rangeHeader);
@@ -638,7 +638,6 @@ public sealed class ProtocolProviderGateway(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
                 protocol.CancellationToken);
-            request.Dispose();
             return new ProtocolProviderStream(response, lease);
         }
         return null;
@@ -860,11 +859,7 @@ public sealed class ProtocolProviderGateway(
             throw new InvalidOperationException("Only one valid byte range may be requested.");
         }
         var range = parsed.Ranges.Single();
-        if (!range.From.HasValue)
-        {
-            throw new InvalidOperationException("Suffix byte ranges are not supported for provider leases.");
-        }
-        return range.From.Value;
+        return range.From;
     }
 
     private static void ThrowRouteFailure(ProviderError error) => throw error.Kind switch

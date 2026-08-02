@@ -149,8 +149,8 @@ public class JellyfinAdminController : ControllerBase
         AdminAuthSession session)
     {
         var playlistUrl = $"{_jellyfinSettings.Url}/Items/{jellyfinPlaylistId}?UserId={Uri.EscapeDataString(userId)}";
-        var playlistRequest = CreateJellyfinRequestForSession(HttpMethod.Get, playlistUrl, session);
-        var playlistResponse = await _jellyfinHttpClient.SendAsync(playlistRequest);
+        using var playlistRequest = CreateJellyfinRequestForSession(HttpMethod.Get, playlistUrl, session);
+        using var playlistResponse = await _jellyfinHttpClient.SendAsync(playlistRequest);
 
         if (playlistResponse.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
@@ -202,9 +202,9 @@ public class JellyfinAdminController : ControllerBase
         {
             var url = $"{_jellyfinSettings.Url}/Users";
 
-            var request = _helperService.CreateJellyfinRequest(HttpMethod.Get, url);
+            using var request = _helperService.CreateJellyfinRequest(HttpMethod.Get, url);
 
-            var response = await _jellyfinHttpClient.SendAsync(request);
+            using var response = await _jellyfinHttpClient.SendAsync(request);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -250,9 +250,9 @@ public class JellyfinAdminController : ControllerBase
         {
             var url = $"{_jellyfinSettings.Url}/Library/VirtualFolders";
 
-            var request = _helperService.CreateJellyfinRequest(HttpMethod.Get, url);
+            using var request = _helperService.CreateJellyfinRequest(HttpMethod.Get, url);
 
-            var response = await _jellyfinHttpClient.SendAsync(request);
+            using var response = await _jellyfinHttpClient.SendAsync(request);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -322,8 +322,8 @@ public class JellyfinAdminController : ControllerBase
                 url += $"&UserId={Uri.EscapeDataString(requestedUserId)}";
             }
 
-            var request = CreateJellyfinRequestForSession(HttpMethod.Get, url, session);
-            var response = await _jellyfinHttpClient.SendAsync(request);
+            using var request = CreateJellyfinRequestForSession(HttpMethod.Get, url, session);
+            using var response = await _jellyfinHttpClient.SendAsync(request);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -430,8 +430,8 @@ public class JellyfinAdminController : ControllerBase
             // Admin fallback: if no configured user, try to get the first Jellyfin user.
             if (session.IsAdministrator && string.IsNullOrEmpty(userId))
             {
-                var usersRequest = CreateJellyfinRequestForSession(HttpMethod.Get, $"{_jellyfinSettings.Url}/Users", session);
-                var usersResponse = await _jellyfinHttpClient.SendAsync(usersRequest);
+                using var usersRequest = CreateJellyfinRequestForSession(HttpMethod.Get, $"{_jellyfinSettings.Url}/Users", session);
+                using var usersResponse = await _jellyfinHttpClient.SendAsync(usersRequest);
 
                 if (usersResponse.IsSuccessStatusCode)
                 {
@@ -451,9 +451,9 @@ public class JellyfinAdminController : ControllerBase
             }
 
             var url = $"{_jellyfinSettings.Url}/Playlists/{playlistId}/Items?UserId={userId}&Fields=Path";
-            var request = CreateJellyfinRequestForSession(HttpMethod.Get, url, session);
+            using var request = CreateJellyfinRequestForSession(HttpMethod.Get, url, session);
 
-            var response = await _jellyfinHttpClient.SendAsync(request);
+            using var response = await _jellyfinHttpClient.SendAsync(request);
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogError("Failed to fetch playlist items for {PlaylistId}: {StatusCode}", playlistId, response.StatusCode);
