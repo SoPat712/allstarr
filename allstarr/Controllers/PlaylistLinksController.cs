@@ -544,7 +544,10 @@ public sealed class PlaylistLinksController(
     {
         return await Execute(async session =>
         {
-            if (!TryEnums(request.Mode, request.MaterializationMode, out var mode, out var materialization, out var error)) return BadRequest(new { error });
+            if (!TryEnums(request.Mode, request.MaterializationMode, out var mode, out var materialization, out var error) ||
+                !TryProjectionMode(request.ProjectionMode, out var projectionMode, out error)) return BadRequest(new { error });
+            if (projectionMode == PlaylistProjectionMode.Target && string.IsNullOrWhiteSpace(request.TargetPlaylistId))
+                return BadRequest(new { error = "ProjectionMode target requires TargetPlaylistId" });
             if (!ValidTargetProtocol(request.TargetProtocol)) return BadRequest(new { error = "TargetProtocol must be jellyfin or subsonic" });
             var context = await CreateExecutionAsync(session, request.LibraryScopeId, cancellationToken);
             if (!await CredentialReferenceAllowed(context, request.TargetCredentialReferenceId, cancellationToken)) return BadRequest(new { error = "TargetCredentialReferenceId is unavailable in this tenant" });
@@ -557,7 +560,7 @@ public sealed class PlaylistLinksController(
                 Required(request.TargetBackendInstanceId, nameof(request.TargetBackendInstanceId)), mode, materialization,
                 "playlist-rules-v1", "playlist-policy-v1", request.ScheduleId, request.TargetPlaylistId,
                 request.TargetCredentialReferenceId, request.MirrorStaleEntries, request.PreserveManualEntries,
-                request.SyncName, request.SyncDescription, request.SyncArtwork), cancellationToken);
+                request.SyncName, request.SyncDescription, request.SyncArtwork, projectionMode), cancellationToken);
             return CreatedAtAction(nameof(List), new { libraryScopeId = record.LibraryScopeId }, ToDto(record));
         });
     }
@@ -569,6 +572,9 @@ public sealed class PlaylistLinksController(
         {
             if (!TryEnums(request.Mode, request.MaterializationMode, out var mode, out var materialization, out var error)) return BadRequest(new { error });
             var existing = await LoadScopedLink(session, id, cancellationToken);
+            if (!TryProjectionMode(request.ProjectionMode ?? existing.ProjectionMode.ToString(), out var projectionMode, out error)) return BadRequest(new { error });
+            if (projectionMode == PlaylistProjectionMode.Target && string.IsNullOrWhiteSpace(request.TargetPlaylistId))
+                return BadRequest(new { error = "ProjectionMode target requires TargetPlaylistId" });
             var context = await CreateExecutionAsync(session, existing.LibraryScopeId, cancellationToken);
             if (!await CredentialReferenceAllowed(context, request.TargetCredentialReferenceId, cancellationToken)) return BadRequest(new { error = "TargetCredentialReferenceId is unavailable in this tenant" });
             if (!await ScheduleAllowed(context, request.ScheduleId, existing.LibraryScopeId, cancellationToken)) return BadRequest(new { error = "ScheduleId is unavailable in this owner and library scope" });
@@ -576,7 +582,7 @@ public sealed class PlaylistLinksController(
                 request.ExpectedRevision, mode, materialization, request.RuleVersion ?? existing.RuleVersion,
                 request.PolicyVersion ?? existing.PolicyVersion, request.ScheduleId, request.TargetPlaylistId,
                 request.MirrorStaleEntries, request.PreserveManualEntries, request.SyncName,
-                request.SyncDescription, request.SyncArtwork, request.TargetCredentialReferenceId), cancellationToken);
+                request.SyncDescription, request.SyncArtwork, request.TargetCredentialReferenceId, projectionMode), cancellationToken);
             return Ok(ToDto(updated));
         });
     }
@@ -929,6 +935,8 @@ public sealed class PlaylistLinksController(
 
     private static bool TryEnums(string modeValue, string materializationValue, out PlaylistLinkMode mode, out PlaylistMaterializationMode materialization, out string? error)
     { error = null; if (!Enum.TryParse(modeValue, true, out mode) || !Enum.IsDefined(mode)) { materialization = default; error = "Mode must be virtual, materialized, or hybrid"; return false; } if (!Enum.TryParse(materializationValue, true, out materialization) || !Enum.IsDefined(materialization)) { error = "MaterializationMode must be reconcile or recreate"; return false; } return true; }
+    private static bool TryProjectionMode(string value, out PlaylistProjectionMode mode, out string? error)
+    { error = null; if (Enum.TryParse(value, true, out mode) && Enum.IsDefined(mode)) return true; error = "ProjectionMode must be resolved, source, or target"; return false; }
     private static bool TryScheduleEnums(ScheduleRequest request, out ScheduleOverlapPolicy overlap, out ScheduleMisfirePolicy misfire, out string? error)
     { error = null; if (!Enum.TryParse(request.OverlapPolicy, true, out overlap) || !Enum.IsDefined(overlap)) { misfire = default; error = "OverlapPolicy must be skip or queue"; return false; } if (!Enum.TryParse(request.MisfirePolicy, true, out misfire) || !Enum.IsDefined(misfire)) { error = "MisfirePolicy must be skip or runOnce"; return false; } return true; }
     private static bool ValidTargetProtocol(string value) => value?.Trim().ToLowerInvariant() is "jellyfin" or "subsonic";
@@ -998,7 +1006,7 @@ public sealed class PlaylistLinksController(
     }
     private static string EncodeOffsetCursor(int offset) =>
         Convert.ToBase64String(Encoding.UTF8.GetBytes(offset.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-    private static object ToDto(PlaylistLinkRecord value) => new { id = value.Id, enabled = value.Enabled, providerAccountId = value.ProviderAccountId, sourceProviderId = value.SourceProviderId, sourcePlaylistId = value.SourcePlaylistId, libraryScopeId = value.LibraryScopeId, targetProtocol = value.TargetProtocol, targetBackendInstanceId = value.TargetBackendInstanceId, mode = value.Mode.ToString().ToLowerInvariant(), materializationMode = value.MaterializationMode.ToString().ToLowerInvariant(), scheduleId = value.ScheduleId, targetPlaylistId = value.TargetPlaylistId, targetCredentialReferenceId = value.TargetCredentialReferenceId, mirrorStaleEntries = value.MirrorStaleEntries, preserveManualEntries = value.PreserveManualEntries, syncName = value.SyncName, syncDescription = value.SyncDescription, syncArtwork = value.SyncArtwork, ruleVersion = value.RuleVersion, policyVersion = value.PolicyVersion, revision = value.Revision, virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id) };
+    private static object ToDto(PlaylistLinkRecord value) => new { id = value.Id, enabled = value.Enabled, providerAccountId = value.ProviderAccountId, sourceProviderId = value.SourceProviderId, sourcePlaylistId = value.SourcePlaylistId, libraryScopeId = value.LibraryScopeId, targetProtocol = value.TargetProtocol, targetBackendInstanceId = value.TargetBackendInstanceId, mode = value.Mode.ToString().ToLowerInvariant(), projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(), materializationMode = value.MaterializationMode.ToString().ToLowerInvariant(), scheduleId = value.ScheduleId, targetPlaylistId = value.TargetPlaylistId, targetCredentialReferenceId = value.TargetCredentialReferenceId, mirrorStaleEntries = value.MirrorStaleEntries, preserveManualEntries = value.PreserveManualEntries, syncName = value.SyncName, syncDescription = value.SyncDescription, syncArtwork = value.SyncArtwork, ruleVersion = value.RuleVersion, policyVersion = value.PolicyVersion, revision = value.Revision, virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id) };
     private static object ToListDto(PlaylistLinkRecord value, DurablePlaylistProjection? projection) => new
     {
         id = value.Id,
@@ -1013,6 +1021,7 @@ public sealed class PlaylistLinksController(
         targetProtocol = value.TargetProtocol,
         targetBackendInstanceId = value.TargetBackendInstanceId,
         mode = value.Mode.ToString().ToLowerInvariant(),
+        projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(),
         materializationMode = value.MaterializationMode.ToString().ToLowerInvariant(),
         scheduleId = value.ScheduleId,
         targetPlaylistId = value.TargetPlaylistId,
@@ -1071,6 +1080,7 @@ public sealed class PlaylistLinksController(
         hasNewerSourceGeneration = value.HasNewerSourceGeneration,
         name = value.Name,
         sourceProviderId = value.SourceProviderId,
+        projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(),
         targetProtocol = value.TargetProtocol,
         targetPlaylistId = value.TargetPlaylistId,
         artworkUrl = value.ArtworkReferenceKey == null ? null :
@@ -1182,11 +1192,11 @@ public sealed record CreatePlaylistLinkRequest(Guid ProviderAccountId, string So
     string LibraryScopeId, string TargetProtocol, string TargetBackendInstanceId, string Mode, string MaterializationMode,
     Guid? ScheduleId = null, string? TargetPlaylistId = null, Guid? TargetCredentialReferenceId = null,
     bool MirrorStaleEntries = false, bool PreserveManualEntries = true, bool SyncName = true,
-    bool SyncDescription = true, bool SyncArtwork = true);
+    bool SyncDescription = true, bool SyncArtwork = true, string ProjectionMode = "resolved");
 public sealed record UpdatePlaylistLinkRequest(long ExpectedRevision, string Mode, string MaterializationMode,
     Guid? ScheduleId, string? TargetPlaylistId, Guid? TargetCredentialReferenceId, bool MirrorStaleEntries,
     bool PreserveManualEntries, bool SyncName, bool SyncDescription, bool SyncArtwork,
-    string? RuleVersion = null, string? PolicyVersion = null);
+    string? RuleVersion = null, string? PolicyVersion = null, string? ProjectionMode = null);
 public sealed record DeletePlaylistLinkRequest(long ExpectedRevision);
 public sealed record SetPlaylistLinkStateRequest(long ExpectedRevision, bool Enabled);
 public sealed record RunPlaylistLinkRequest(long? Generation = null, Guid? SnapshotId = null);

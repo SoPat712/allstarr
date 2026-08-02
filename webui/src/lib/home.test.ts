@@ -36,6 +36,7 @@ describe("summarizeHome", () => {
         name: "Canonical",
         sourceProviderId: "source",
         targetProtocol: "jellyfin",
+        projectionMode: "resolved",
         materializationMode: "reconcile",
         revision: 1,
         trackCount: 8,

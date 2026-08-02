@@ -1,4 +1,5 @@
 using allstarr.Controllers;
+using allstarr.Core.Storage;
 using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -88,6 +89,17 @@ public sealed class PlaylistLinksControllerContractTests
     {
         var create = typeof(CreatePlaylistLinkRequest).GetProperties().Select(item => item.Name).ToArray();
         Assert.Contains("TargetCredentialReferenceId", create);
+        Assert.Contains("ProjectionMode", create);
+        Assert.Equal(
+            "resolved",
+            typeof(CreatePlaylistLinkRequest).GetConstructors().Single().GetParameters()
+                .Single(item => item.Name == "ProjectionMode").DefaultValue);
+        Assert.Equal(
+            new[] { PlaylistProjectionMode.Resolved, PlaylistProjectionMode.Source, PlaylistProjectionMode.Target },
+            Enum.GetValues<PlaylistProjectionMode>());
+        var controllerSource = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Controllers", "PlaylistLinksController.cs"));
+        Assert.Contains("ProjectionMode target requires TargetPlaylistId", controllerSource, StringComparison.Ordinal);
         Assert.DoesNotContain(create, name => name.Contains("Password", StringComparison.OrdinalIgnoreCase) ||
                                                name.Contains("Token", StringComparison.OrdinalIgnoreCase) ||
                                                name.Contains("Cookie", StringComparison.OrdinalIgnoreCase) ||

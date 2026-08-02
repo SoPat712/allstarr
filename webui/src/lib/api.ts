@@ -453,6 +453,7 @@ export type PlaylistLink = {
   artworkUrl?: string | null;
   sourceProviderId: string;
   targetProtocol: string;
+  projectionMode: "resolved" | "source" | "target";
   materializationMode: string;
   revision: number;
   lastRunAt?: string | null;
@@ -1265,7 +1266,8 @@ export const playlistLinks = {
     targetBackendInstanceId: string;
     targetCredentialReferenceId?: string | null;
     targetPlaylistId: string;
-    mode: "materialized" | "hybrid";
+    mode: "virtual" | "materialized" | "hybrid";
+    projectionMode?: "resolved" | "source" | "target";
     materializationMode: "reconcile" | "recreate";
     mirrorStaleEntries: boolean;
     preserveManualEntries: boolean;

@@ -30,7 +30,8 @@ public sealed record VirtualPlaylistReadModel(
     string SourcePlaylistId,
     string SourceRevision,
     PlaylistLinkMode Mode,
-    IReadOnlyList<VirtualPlaylistTrack> Tracks);
+    IReadOnlyList<VirtualPlaylistTrack> Tracks,
+    PlaylistProjectionMode ProjectionMode = PlaylistProjectionMode.Resolved);
 
 public sealed record VirtualPlaylistArtworkSource(string ProviderId, string PlaylistId);
 
@@ -166,7 +167,7 @@ public sealed class PlaylistVirtualizationService(
             .ToList();
         return new VirtualPlaylistReadModel(protocolId, link.Id, projection.SnapshotId, projection.Name,
             projection.Description, projection.ArtworkReferenceKey, link.SourceProviderId,
-            link.SourcePlaylistId, snapshot.ProviderRevision, link.Mode, tracks);
+            link.SourcePlaylistId, snapshot.ProviderRevision, link.Mode, tracks, link.ProjectionMode);
     }
 
     public async Task<VirtualPlaylistReadModel?> ReadBySourceAsync(

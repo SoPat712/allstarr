@@ -173,6 +173,8 @@ public sealed partial class AllstarrDbContext
             Required(entity.Property(item => item.TargetBackendInstanceId), 200);
             entity.Property(item => item.TargetPlaylistId).HasMaxLength(500);
             entity.Property(item => item.Mode).HasConversion<string>().HasMaxLength(32);
+            entity.Property(item => item.ProjectionMode).HasConversion<string>().HasMaxLength(32)
+                .HasDefaultValue(PlaylistProjectionMode.Resolved);
             entity.Property(item => item.MaterializationMode).HasConversion<string>().HasMaxLength(32);
             Required(entity.Property(item => item.RuleVersion), 100);
             Required(entity.Property(item => item.PolicyVersion), 100);

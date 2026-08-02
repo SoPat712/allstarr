@@ -70,6 +70,7 @@ public sealed record DurablePlaylistProjection(
     public Guid? RunId { get; init; }
     public long? Generation { get; init; }
     public int MaterializedCount { get; init; }
+    public PlaylistProjectionMode ProjectionMode { get; init; } = PlaylistProjectionMode.Resolved;
     public int LatestSourceSnapshotVersion { get; init; }
     public bool HasNewerSourceGeneration => LatestSourceSnapshotVersion > SnapshotVersion;
     public DurablePlaylistReconciliation? Reconciliation { get; init; }
@@ -336,6 +337,7 @@ public sealed class DurablePlaylistProjectionReader(
             RunId = run?.Id,
             Generation = run?.Generation,
             MaterializedCount = materializedCount,
+            ProjectionMode = link.ProjectionMode,
             LatestSourceSnapshotVersion = latestSourceSnapshotVersion,
             Reconciliation = BuildReconciliation(
                 entries,

@@ -2952,6 +2952,13 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<bool>("PreserveManualEntries")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("ProjectionMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("Resolved");
+
                     b.Property<Guid>("ProviderAccountId")
                         .HasColumnType("uuid");
 

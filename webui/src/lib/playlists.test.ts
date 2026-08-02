@@ -17,6 +17,7 @@ const playlist = (values: Partial<PlaylistLink>): PlaylistLink => ({
   name: "One",
   sourceProviderId: "source",
   targetProtocol: "target",
+  projectionMode: "resolved",
   materializationMode: "reconcile",
   revision: 1,
   trackCount: 10,

@@ -3,6 +3,7 @@ namespace allstarr.Core.Storage;
 public enum TrackMatchState { Unresolved, Suggested, Accepted, Rejected, Ambiguous, Pinned }
 public enum ManualOverrideDecision { Pin, Reject }
 public enum PlaylistLinkMode { Virtual, Materialized, Hybrid }
+public enum PlaylistProjectionMode { Resolved, Source, Target }
 public enum PlaylistMaterializationMode { Reconcile, Recreate }
 public enum PlaylistSyncState { Pending, Running, Succeeded, PartiallySucceeded, Conflicted, Failed, Cancelled }
 public enum PlaylistEntryOutcome { Matched, Reused, Added, Reordered, Skipped, Rejected, Unsupported, Failed }
@@ -144,6 +145,7 @@ public sealed class PlaylistLinkRecord
     public Guid? TargetCredentialReferenceId { get; set; }
     public string? TargetPlaylistId { get; set; }
     public PlaylistLinkMode Mode { get; set; }
+    public PlaylistProjectionMode ProjectionMode { get; set; } = PlaylistProjectionMode.Resolved;
     public PlaylistMaterializationMode MaterializationMode { get; set; }
     public bool MirrorStaleEntries { get; set; }
     public bool PreserveManualEntries { get; set; } = true;
