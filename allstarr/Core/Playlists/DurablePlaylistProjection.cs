@@ -96,6 +96,29 @@ public sealed record DurablePlaylistProjection(
         : null;
 }
 
+public static class PlaylistProjectionSelector
+{
+    public static IReadOnlyList<T>? Select<T>(
+        PlaylistProjectionMode mode,
+        IReadOnlyList<T> source,
+        IReadOnlyList<T> resolved,
+        IReadOnlyList<T>? target = null)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(resolved);
+        if (!Enum.IsDefined(mode)) throw new ArgumentOutOfRangeException(nameof(mode));
+        if (source.Count != resolved.Count)
+            throw new ArgumentException("Source and resolved projections must contain one row per source entry.");
+        return mode switch
+        {
+            PlaylistProjectionMode.Source => source,
+            PlaylistProjectionMode.Resolved => resolved,
+            PlaylistProjectionMode.Target => target,
+            _ => throw new ArgumentOutOfRangeException(nameof(mode))
+        };
+    }
+}
+
 public sealed class DurablePlaylistProjectionReader(
     IDbContextFactory<AllstarrDbContext> factory,
     IProtocolProviderGateway? providerGateway = null)

@@ -34,6 +34,31 @@ public sealed class DurablePlaylistProjectionTests
         Assert.Equal(1, projection.RouteCounts["unresolved"]);
     }
 
+    [Fact]
+    public void ProjectionSelector_PreservesLogicalRowsAndRequiresAnExactTarget()
+    {
+        var source = new[] { Row("source-a"), Row("source-b"), Row("source-c"), Row("source-d") };
+        var resolved = new[] { Row("local-a"), Row("external-b", "alternate-b"), Row("local-c"), Row("external-d") };
+        var target = new[] { Row("target-a"), Row("target-c") };
+
+        Assert.Same(source, PlaylistProjectionSelector.Select(
+            PlaylistProjectionMode.Source, source, resolved));
+        var selected = PlaylistProjectionSelector.Select(
+            PlaylistProjectionMode.Resolved, source, resolved)!;
+        Assert.Same(resolved, selected);
+        Assert.Equal(4, selected.Count);
+        Assert.Single(selected[1].AlternateRoutes);
+        Assert.Null(PlaylistProjectionSelector.Select(
+            PlaylistProjectionMode.Target, source, resolved));
+        Assert.Same(target, PlaylistProjectionSelector.Select(
+            PlaylistProjectionMode.Target, source, resolved, target));
+        Assert.Throws<ArgumentException>(() => PlaylistProjectionSelector.Select(
+            PlaylistProjectionMode.Resolved, source, resolved[..3]));
+    }
+
+    private static ProjectionRow Row(string id, params string[] alternates) => new(id, alternates);
+    private sealed record ProjectionRow(string Id, IReadOnlyList<string> AlternateRoutes);
+
     private static DurablePlaylistEntryProjection Entry(
         string route,
         TrackMatchState state,
