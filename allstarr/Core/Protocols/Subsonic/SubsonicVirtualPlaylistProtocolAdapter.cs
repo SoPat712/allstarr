@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Xml.Linq;
 using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
@@ -126,6 +127,12 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
 
     private static Dictionary<string, object?> ToJsonEntry(VirtualPlaylistTrack track)
     {
+        if (track.NativeEntryJson != null)
+        {
+            using var document = JsonDocument.Parse(track.NativeEntryJson);
+            return document.RootElement.EnumerateObject()
+                .ToDictionary(item => item.Name, item => (object?)item.Value.Clone(), StringComparer.Ordinal);
+        }
         var result = new Dictionary<string, object?>
         {
             ["id"] = track.BackendItemId,
@@ -145,6 +152,18 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
 
     private static IEnumerable<XAttribute> ToXmlAttributes(VirtualPlaylistTrack track)
     {
+        if (track.NativeEntryJson != null)
+        {
+            using var document = JsonDocument.Parse(track.NativeEntryJson);
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (property.Value.ValueKind == JsonValueKind.Null) continue;
+                yield return new XAttribute(property.Name, property.Value.ValueKind == JsonValueKind.String
+                    ? property.Value.GetString()!
+                    : property.Value.GetRawText());
+            }
+            yield break;
+        }
         yield return new XAttribute("id", track.BackendItemId);
         yield return new XAttribute("title", track.Title);
         yield return new XAttribute("artist", track.Artist);

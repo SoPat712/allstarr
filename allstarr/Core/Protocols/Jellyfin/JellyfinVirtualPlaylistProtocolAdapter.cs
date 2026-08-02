@@ -245,13 +245,13 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         var startIndex = QueryInt(clientQuery, "StartIndex", 0);
         var limit = QueryInt(clientQuery, "Limit", int.MaxValue);
         var tracks = playlist.Tracks.Skip(startIndex).Take(limit).ToArray();
-        var originals = playlist.ProjectionMode != PlaylistProjectionMode.Resolved || proxyService == null
+        var originals = playlist.ProjectionMode is not (PlaylistProjectionMode.Resolved or PlaylistProjectionMode.Target) || proxyService == null
             ? null
             : await ReadOriginalItemsAsync(context, tracks, clientHeaders, clientQuery);
         var items = tracks.Select(track =>
         {
             JsonObject item;
-            if (playlist.ProjectionMode == PlaylistProjectionMode.Resolved &&
+            if (playlist.ProjectionMode is PlaylistProjectionMode.Resolved or PlaylistProjectionMode.Target &&
                 track.RouteKind == TrackRouteKind.Local && originals != null)
             {
                 if (!originals.TryGetValue(track.BackendItemId, out var original))
@@ -307,7 +307,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                 }
             }
 
-            item["PlaylistItemId"] = track.BackendItemId;
+            item["PlaylistItemId"] = track.NativePlaylistEntryId ?? track.BackendItemId;
             return item;
         }).ToArray();
         logger?.LogInformation(

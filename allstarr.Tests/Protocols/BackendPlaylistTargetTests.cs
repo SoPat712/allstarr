@@ -225,6 +225,24 @@ public sealed class BackendPlaylistTargetTests
     }
 
     [Fact]
+    public async Task Subsonic_read_retains_native_entry_json()
+    {
+        var backend = new SubsonicFakeBackend("p1", "Mix", ["a"]);
+        var target = new SubsonicPlaylistTarget(new HttpClient(backend), new Uri("https://subsonic.test/"));
+
+        var result = await target.ReadAsync(Context(), "p1", default);
+
+        var raw = Assert.Single(result.Value!.Members).NativeEntryJson;
+        Assert.NotNull(raw);
+        using var entry = JsonDocument.Parse(raw);
+        Assert.Equal("artist-a", entry.RootElement.GetProperty("artistId").GetString());
+        Assert.Equal("album-a", entry.RootElement.GetProperty("albumId").GetString());
+        Assert.Equal("cover-a", entry.RootElement.GetProperty("coverArt").GetString());
+        Assert.Equal("native", entry.RootElement.GetProperty("provider").GetString());
+        Assert.Equal("unknown-a", entry.RootElement.GetProperty("unknownField").GetString());
+    }
+
+    [Fact]
     public async Task Subsonic_recreate_is_staged_duplicate_safe_and_protocol_failure_is_preserved()
     {
         var backend = new SubsonicFakeBackend("p1", "Mix", ["a"]);
@@ -438,7 +456,16 @@ public sealed class BackendPlaylistTargetTests
                         changed = $"r{state.Revision}",
                         songCount = state.Members.Count,
                         duration = state.Members.Count * 180,
-                        entry = state.Members.Select(item => new { id = item, duration = 180 }).ToArray()
+                        entry = state.Members.Select(item => new
+                        {
+                            id = item,
+                            duration = 180,
+                            artistId = $"artist-{item}",
+                            albumId = $"album-{item}",
+                            coverArt = $"cover-{item}",
+                            provider = "native",
+                            unknownField = $"unknown-{item}"
+                        }).ToArray()
                     }
                 });
             }

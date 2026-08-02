@@ -68,7 +68,8 @@ public sealed record BackendPlaylistMember
     public BackendPlaylistMember(
         string backendItemId,
         string? entryId = null,
-        long? durationMilliseconds = null)
+        long? durationMilliseconds = null,
+        string? nativeEntryJson = null)
     {
         BackendItemId = string.IsNullOrWhiteSpace(backendItemId)
             ? throw new ArgumentException("A backend item ID is required.", nameof(backendItemId))
@@ -77,11 +78,13 @@ public sealed record BackendPlaylistMember
             throw new ArgumentOutOfRangeException(nameof(durationMilliseconds));
         EntryId = entryId;
         DurationMilliseconds = durationMilliseconds;
+        NativeEntryJson = nativeEntryJson;
     }
 
     public string BackendItemId { get; }
     public string? EntryId { get; }
     public long? DurationMilliseconds { get; }
+    public string? NativeEntryJson { get; }
 }
 
 /// <summary>

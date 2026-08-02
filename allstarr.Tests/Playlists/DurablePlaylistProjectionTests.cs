@@ -1,5 +1,6 @@
 using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
+using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Storage;
 
 namespace allstarr.Tests;
@@ -83,6 +84,18 @@ public sealed class DurablePlaylistProjectionTests
         Assert.Equal("ext-spotify-song-source-id", selected[0].CoverArtReference);
         Assert.Null(PlaylistProjectionSelector.Select(
             PlaylistProjectionMode.Target, source, resolved));
+    }
+
+    [Fact]
+    public void TargetProjection_PreservesNativeMembershipOrderAndEntryIds()
+    {
+        var snapshot = new BackendPlaylistSnapshot("playlist", "Target",
+            [new("song-b", "entry-b", 2_000), new("song-a", "entry-a", 1_000)], "fingerprint");
+
+        var tracks = PlaylistVirtualizationService.ToTargetVirtualTracks(snapshot);
+
+        Assert.Equal(["song-b", "song-a"], tracks.Select(item => item.BackendItemId));
+        Assert.Equal(["entry-b", "entry-a"], tracks.Select(item => item.NativePlaylistEntryId));
     }
 
     private static ProjectionRow Row(string id, params string[] alternates) => new(id, alternates);

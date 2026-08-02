@@ -165,6 +165,50 @@ public sealed class VirtualPlaylistProtocolAdapterTests
     }
 
     [Fact]
+    public async Task SubsonicTargetRead_PreservesNativeJsonAndXmlEntries()
+    {
+        var target = Model() with
+        {
+            ProjectionMode = PlaylistProjectionMode.Target,
+            Tracks =
+            [
+                new(0, "native-b", "ignored", "ignored", null, null, 2_000, null,
+                    TrackMatchState.Unresolved, RouteKind: TrackRouteKind.Local,
+                    NativeEntryJson: "{\"id\":\"native-b\",\"title\":\"Native B\",\"artistId\":\"artist-b\",\"albumId\":\"album-b\",\"coverArt\":\"cover-b\",\"provider\":\"navidrome\",\"unknownField\":\"kept-b\"}"),
+                new(1, "native-a", "ignored", "ignored", null, null, 1_000, null,
+                    TrackMatchState.Unresolved, RouteKind: TrackRouteKind.Local,
+                    NativeEntryJson: "{\"id\":\"native-a\",\"title\":\"Native A\",\"artistId\":\"artist-a\",\"albumId\":\"album-a\",\"coverArt\":\"cover-a\",\"provider\":\"navidrome\",\"unknownField\":\"kept-a\"}")
+            ]
+        };
+        var adapter = new SubsonicVirtualPlaylistProtocolAdapter(
+            new StubVirtualizationService(target),
+            new StubMutationResolver(null));
+
+        var jsonResult = Assert.IsType<JsonResult>(await adapter.ReadAsync(
+            Context(ProtocolKind.Subsonic), ProtocolId, "json", CancellationToken.None));
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
+        var entries = json.RootElement.GetProperty("subsonic-response").GetProperty("playlist").GetProperty("entry");
+        Assert.Equal(["native-b", "native-a"], entries.EnumerateArray().Select(item => item.GetProperty("id").GetString()));
+        Assert.Equal("artist-b", entries[0].GetProperty("artistId").GetString());
+        Assert.Equal("album-b", entries[0].GetProperty("albumId").GetString());
+        Assert.Equal("cover-b", entries[0].GetProperty("coverArt").GetString());
+        Assert.Equal("navidrome", entries[0].GetProperty("provider").GetString());
+        Assert.Equal("kept-b", entries[0].GetProperty("unknownField").GetString());
+
+        var xmlResult = Assert.IsType<ContentResult>(await adapter.ReadAsync(
+            Context(ProtocolKind.Subsonic), ProtocolId, "xml", CancellationToken.None));
+        var document = XDocument.Parse(xmlResult.Content!);
+        var ns = document.Root!.Name.Namespace;
+        var xmlEntries = document.Descendants(ns + "entry").ToArray();
+        Assert.Equal(["native-b", "native-a"], xmlEntries.Select(item => item.Attribute("id")!.Value));
+        Assert.Equal("artist-b", xmlEntries[0].Attribute("artistId")!.Value);
+        Assert.Equal("album-b", xmlEntries[0].Attribute("albumId")!.Value);
+        Assert.Equal("cover-b", xmlEntries[0].Attribute("coverArt")!.Value);
+        Assert.Equal("navidrome", xmlEntries[0].Attribute("provider")!.Value);
+        Assert.Equal("kept-b", xmlEntries[0].Attribute("unknownField")!.Value);
+    }
+
+    [Fact]
     public async Task Adapters_ReturnNullForUnlinkedOrUnknownVirtualPlaylist()
     {
         var service = new StubVirtualizationService(null);

@@ -149,7 +149,8 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
         var members = playlist.GetPropertyOrDefault("entry").EnumerateArrayOrEmpty()
             .Select(entry => new BackendPlaylistMember(
                 entry.StringOrNull("id") ?? throw new JsonException("Subsonic playlist entry has no id."),
-                durationMilliseconds: MillisecondsFromSeconds(entry.Int64OrNull("duration"))))
+                durationMilliseconds: MillisecondsFromSeconds(entry.Int64OrNull("duration")),
+                nativeEntryJson: entry.GetRawText()))
             .ToArray();
         var reportedCount = playlist.Int64OrNull("songCount") is { } count &&
                             count is >= 0 and <= int.MaxValue

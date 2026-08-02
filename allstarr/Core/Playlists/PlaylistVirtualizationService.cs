@@ -1,6 +1,7 @@
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Core.Playlists.Targets;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Playlists;
@@ -21,7 +22,9 @@ public sealed record VirtualPlaylistTrack(
     string? RouteProviderId = null,
     string? RouteExternalId = null,
     PlaylistSourceIdentity? SourceIdentity = null,
-    PlaylistSourceMetadata? SourceMetadata = null);
+    PlaylistSourceMetadata? SourceMetadata = null,
+    string? NativePlaylistEntryId = null,
+    string? NativeEntryJson = null);
 
 public sealed record VirtualPlaylistReadModel(
     string ProtocolId,
@@ -67,7 +70,8 @@ public interface IPlaylistVirtualizationService
 /// </summary>
 public sealed class PlaylistVirtualizationService(
     IDbContextFactory<AllstarrDbContext> contextFactory,
-    DurablePlaylistProjectionReader projections) : IPlaylistVirtualizationService
+    DurablePlaylistProjectionReader projections,
+    IBackendPlaylistTargetResolver? targets = null) : IPlaylistVirtualizationService
 {
     public const string IdPrefix = "allstarr-vpl-";
     public const string UnresolvedItemPrefix = "allstarr-unresolved-";
@@ -154,6 +158,21 @@ public sealed class PlaylistVirtualizationService(
         if (projection == null) return null;
         var snapshot = await db.PlaylistSourceSnapshots.AsNoTracking()
             .SingleAsync(item => item.Id == projection.SnapshotId, cancellationToken);
+        BackendPlaylistSnapshot? targetSnapshot = null;
+        if (link.ProjectionMode == PlaylistProjectionMode.Target)
+        {
+            if (targets == null || string.IsNullOrWhiteSpace(link.TargetPlaylistId)) return null;
+            var targetResult = await targets.Resolve(link.TargetProtocol).ReadAsync(
+                new BackendPlaylistTargetContext(
+                    link.TargetBackendInstanceId,
+                    context.VerifiedBackendPrincipalId,
+                    link.TargetCredentialReferenceId?.ToString(),
+                    link.TenantId),
+                link.TargetPlaylistId,
+                cancellationToken);
+            if (!targetResult.IsSuccess || targetResult.Value == null) return null;
+            targetSnapshot = targetResult.Value;
+        }
         var backendIds = projection.Entries
             .Where(item => item.RouteKind == "local" && item.BackendItemId != null)
             .Select(item => item.BackendItemId!)
@@ -175,13 +194,22 @@ public sealed class PlaylistVirtualizationService(
                 item,
                 resolvedByPosition.GetValueOrDefault(item.Position)))
             .ToArray();
+        var targetTracks = targetSnapshot == null
+            ? null
+            : ToTargetVirtualTracks(targetSnapshot);
         var tracks = PlaylistProjectionSelector.Select(
             link.ProjectionMode,
             sourceTracks,
-            resolvedTracks);
+            resolvedTracks,
+            targetTracks);
         if (tracks == null) return null;
-        return new VirtualPlaylistReadModel(protocolId, link.Id, projection.SnapshotId, projection.Name,
-            projection.Description, projection.ArtworkReferenceKey, link.SourceProviderId,
+        var name = targetSnapshot == null ? projection.Name : targetSnapshot.Name;
+        var description = targetSnapshot == null ? projection.Description : targetSnapshot.Description;
+        var artwork = targetSnapshot == null
+            ? projection.ArtworkReferenceKey
+            : targetSnapshot.ArtworkReference;
+        return new VirtualPlaylistReadModel(protocolId, link.Id, projection.SnapshotId,
+            name, description, artwork, link.SourceProviderId,
             link.SourcePlaylistId, snapshot.ProviderRevision, link.Mode, tracks, link.ProjectionMode);
     }
 
@@ -273,6 +301,23 @@ public sealed class PlaylistVirtualizationService(
             entry.DurationMilliseconds, null, entry.MatchState ?? TrackMatchState.Unresolved,
             sourceProviderId, null, TrackRouteKind.Unresolved);
     }
+
+    internal static IReadOnlyList<VirtualPlaylistTrack> ToTargetVirtualTracks(
+        BackendPlaylistSnapshot snapshot) => snapshot.Members
+        .Select((member, position) => new VirtualPlaylistTrack(
+            position,
+            member.BackendItemId,
+            member.BackendItemId,
+            "Unknown Artist",
+            null,
+            null,
+            member.DurationMilliseconds,
+            null,
+            TrackMatchState.Unresolved,
+            RouteKind: TrackRouteKind.Local,
+            NativePlaylistEntryId: member.EntryId,
+            NativeEntryJson: member.NativeEntryJson))
+        .ToArray();
 
     internal static VirtualPlaylistTrack ToSourceVirtualTrack(
         DurablePlaylistSourceEntryProjection source,
