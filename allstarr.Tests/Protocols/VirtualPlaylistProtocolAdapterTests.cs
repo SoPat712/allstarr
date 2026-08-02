@@ -170,6 +170,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         var target = Model() with
         {
             ProjectionMode = PlaylistProjectionMode.Target,
+            TargetPlaylistId = "backend-target",
             Tracks =
             [
                 new(0, "native-b", "ignored", "ignored", null, null, 2_000, null,
@@ -183,6 +184,14 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         var adapter = new SubsonicVirtualPlaylistProtocolAdapter(
             new StubVirtualizationService(target),
             new StubMutationResolver(null));
+
+        var jellyfin = new JellyfinVirtualPlaylistProtocolAdapter(
+            new StubVirtualizationService(target),
+            new StubJellyfinMutationResolver(null));
+        Assert.Equal("backend-target", await jellyfin.GetImageSourceIdAsync(
+            Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
+        Assert.Equal("backend-target", await jellyfin.GetImageSourceIdAsync(
+            null, ProtocolId, CancellationToken.None));
 
         var jsonResult = Assert.IsType<JsonResult>(await adapter.ReadAsync(
             Context(ProtocolKind.Subsonic), ProtocolId, "json", CancellationToken.None));
@@ -259,7 +268,8 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             CancellationToken cancellationToken = default) =>
             Task.FromResult(model == null
                 ? null
-                : new VirtualPlaylistArtworkSource(model.SourceProviderId, model.SourcePlaylistId));
+                : new VirtualPlaylistArtworkSource(
+                    model.SourceProviderId, model.SourcePlaylistId, model.TargetPlaylistId));
     }
 
     private sealed class StubMutationResolver(SubsonicPlaylistMutationRoute? route)

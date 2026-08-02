@@ -38,9 +38,13 @@ public sealed record VirtualPlaylistReadModel(
     string SourceRevision,
     PlaylistLinkMode Mode,
     IReadOnlyList<VirtualPlaylistTrack> Tracks,
-    PlaylistProjectionMode ProjectionMode = PlaylistProjectionMode.Resolved);
+    PlaylistProjectionMode ProjectionMode = PlaylistProjectionMode.Resolved,
+    string? TargetPlaylistId = null);
 
-public sealed record VirtualPlaylistArtworkSource(string ProviderId, string PlaylistId);
+public sealed record VirtualPlaylistArtworkSource(
+    string ProviderId,
+    string PlaylistId,
+    string? TargetPlaylistId = null);
 
 public interface IPlaylistVirtualizationService
 {
@@ -210,7 +214,8 @@ public sealed class PlaylistVirtualizationService(
             : targetSnapshot.ArtworkReference;
         return new VirtualPlaylistReadModel(protocolId, link.Id, projection.SnapshotId,
             name, description, artwork, link.SourceProviderId,
-            link.SourcePlaylistId, snapshot.ProviderRevision, link.Mode, tracks, link.ProjectionMode);
+            link.SourcePlaylistId, snapshot.ProviderRevision, link.Mode, tracks, link.ProjectionMode,
+            targetSnapshot?.BackendPlaylistId);
     }
 
     public async Task<VirtualPlaylistReadModel?> ReadBySourceAsync(
@@ -268,7 +273,10 @@ public sealed class PlaylistVirtualizationService(
                 (item.Mode == PlaylistLinkMode.Virtual || item.Mode == PlaylistLinkMode.Hybrid))
             .Select(item => new VirtualPlaylistArtworkSource(
                 item.SourceProviderId,
-                item.SourcePlaylistId))
+                item.SourcePlaylistId,
+                item.ProjectionMode == PlaylistProjectionMode.Target
+                    ? item.TargetPlaylistId
+                    : null))
             .SingleOrDefaultAsync(cancellationToken);
     }
 

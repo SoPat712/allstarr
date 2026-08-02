@@ -754,6 +754,43 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task JellyfinTargetPlaylistImage_RelaysNativeTargetWithoutPlayerToken()
+    {
+        const string virtualId = "allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0";
+        var artworkBytes = new byte[] { 0xFF, 0xD8, 0x03, 0x04, 0xFF, 0xD9 };
+        var virtualization = new Mock<IPlaylistVirtualizationService>(MockBehavior.Strict);
+        virtualization.Setup(service => service.ResolvePublicArtworkSourceAsync(
+                virtualId,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VirtualPlaylistArtworkSource(
+                "spotify", "source-list", "native-target"));
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request => request.RequestUri!.AbsolutePath == "/Items/native-target/Images/Primary"
+                ? new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(artworkBytes)
+                    {
+                        Headers = { ContentType = new("image/jpeg") }
+                    }
+                }
+                : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
+            services =>
+            {
+                services.RemoveAll<IPlaylistVirtualizationService>();
+                services.AddSingleton(virtualization.Object);
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync($"/Items/{virtualId}/Images/Primary");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("image/jpeg", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(artworkBytes, await response.Content.ReadAsByteArrayAsync());
+        virtualization.VerifyAll();
+    }
+
+    [Fact]
     public async Task JellyfinApplePlaybackInfo_AdvertisesImmediateFlacStream()
     {
         var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);

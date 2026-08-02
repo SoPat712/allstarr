@@ -165,13 +165,15 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             var playlist = await playlists.ReadAsync(context, id, cancellationToken);
             return playlist?.ArtworkReferenceKey == null
                 ? null
-                : PlaylistIdHelper.CreatePlaylistId(playlist.SourceProviderId, playlist.SourcePlaylistId);
+                : playlist.TargetPlaylistId ??
+                  PlaylistIdHelper.CreatePlaylistId(playlist.SourceProviderId, playlist.SourcePlaylistId);
         }
 
         var source = await playlists.ResolvePublicArtworkSourceAsync(id, cancellationToken);
         return source == null
             ? null
-            : PlaylistIdHelper.CreatePlaylistId(source.ProviderId, source.PlaylistId);
+            : source.TargetPlaylistId ??
+              PlaylistIdHelper.CreatePlaylistId(source.ProviderId, source.PlaylistId);
     }
 
     internal Dictionary<string, object?> ToItem(

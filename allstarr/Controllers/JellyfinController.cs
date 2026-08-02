@@ -780,9 +780,11 @@ public partial class JellyfinController : ControllerBase
         {
             var sourceId = await _virtualPlaylistProtocolAdapter.GetImageSourceIdAsync(
                 HttpContext.GetProtocolExecutionContext(), itemId, HttpContext.RequestAborted);
-            return sourceId == null
-                ? NotFound()
-                : await GetPlaylistImage(sourceId, maxWidth, maxHeight, requestedFormat);
+            if (sourceId == null) return NotFound();
+            return PlaylistIdHelper.IsExternalPlaylist(sourceId)
+                ? await GetPlaylistImage(sourceId, maxWidth, maxHeight, requestedFormat)
+                : await RelayCurrentRequestToPlaylistTargetAsync(
+                    Request.Path.Value!, itemId, sourceId);
         }
 
         // Check for external playlist
