@@ -69,16 +69,29 @@ jobs:
           pg_restore --version
 
       - name: Restore dependencies
-        run: dotnet restore -p:NuGetAudit=true
+        run: python3 tools/tests/timing_report.py --name dotnet-restore -- dotnet restore -p:NuGetAudit=true
 
       - name: Build
-        run: dotnet build --configuration Release --no-restore -p:TreatWarningsAsErrors=true
+        run: python3 tools/tests/timing_report.py --name dotnet-build -- dotnet build --configuration Release --no-restore -p:TreatWarningsAsErrors=true
 
       - name: Test
         run: >-
+          python3 tools/tests/timing_report.py
+          --name dotnet-test
+          --trx "${{ runner.temp }}/build-and-test.trx"
+          --
           dotnet test --configuration Release --no-build
           --filter "FullyQualifiedName!~allstarr.Tests.DurableStateTransferServiceTests"
           --verbosity minimal
+          --logger "trx;LogFileName=${{ runner.temp }}/build-and-test.trx"
+
+      - name: Upload .NET test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dotnet-test-results-build-and-test
+          path: ${{ runner.temp }}/build-and-test.trx
+          if-no-files-found: warn
 
   state-transfer-tests:
     runs-on: ubuntu-latest
@@ -107,16 +120,29 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Restore dependencies
-        run: dotnet restore -p:NuGetAudit=true
+        run: python3 tools/tests/timing_report.py --name state-transfer-restore -- dotnet restore -p:NuGetAudit=true
 
       - name: Build
-        run: dotnet build --configuration Release --no-restore -p:TreatWarningsAsErrors=true
+        run: python3 tools/tests/timing_report.py --name state-transfer-build -- dotnet build --configuration Release --no-restore -p:TreatWarningsAsErrors=true
 
       - name: Test state transfer
         run: >-
+          python3 tools/tests/timing_report.py
+          --name state-transfer-test
+          --trx "${{ runner.temp }}/state-transfer-tests.trx"
+          --
           dotnet test --configuration Release --no-build
           --filter "FullyQualifiedName~allstarr.Tests.DurableStateTransferServiceTests"
           --verbosity minimal
+          --logger "trx;LogFileName=${{ runner.temp }}/state-transfer-tests.trx"
+
+      - name: Upload state-transfer test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dotnet-test-results-state-transfer
+          path: ${{ runner.temp }}/state-transfer-tests.trx
+          if-no-files-found: warn
 
   csharp-format:
     runs-on: ubuntu-latest
@@ -130,10 +156,10 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Restore dependencies
-        run: dotnet restore -p:NuGetAudit=true
+        run: python3 tools/tests/timing_report.py --name csharp-restore -- dotnet restore -p:NuGetAudit=true
 
       - name: Verify C# formatting and analyzers
-        run: dotnet format allstarr.sln --no-restore --verify-no-changes --verbosity minimal
+        run: python3 tools/tests/timing_report.py --name csharp-format -- dotnet format allstarr.sln --no-restore --verify-no-changes --verbosity minimal
 
   webui:
     runs-on: ubuntu-latest

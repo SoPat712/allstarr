@@ -162,6 +162,11 @@ def _duration(value: str) -> float | None:
         if seconds:
             hours, minutes, seconds_value = (float(item or 0) for item in seconds.groups())
             return (hours * 3600 + minutes * 60 + seconds_value) * 1000
+    timespan = re.fullmatch(r"(?:(\d+)\.)?(\d+):(\d{2}):(\d{2})(?:\.(\d+))?", value)
+    if timespan:
+        days, hours, minutes, seconds, fraction = timespan.groups()
+        whole_ms = ((int(days or 0) * 24 + int(hours)) * 60 + int(minutes)) * 60 + int(seconds)
+        return whole_ms * 1000 + (float(f"0.{fraction}") * 1000 if fraction else 0)
     return None
 
 
@@ -291,6 +296,8 @@ def _self_test() -> None:
     assert _parse_retries("Retries: 2") == 2
     assert _duration("PT1.25S") == 1250
     assert _duration("12ms") == 12
+    assert _duration("00:00:01.2500000") == 1250
+    assert _duration("1.02:03:04.5") == 93784500
 
 
 def main(argv: list[str] | None = None) -> int:
