@@ -39,6 +39,8 @@ namespace allstarr.Controllers;
 public partial class JellyfinController : ControllerBase
 {
     private const int MaximumArtworkBytes = 10 * 1024 * 1024;
+    private static readonly byte[] PlaceholderImageBytes = Convert.FromBase64String(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==");
 
     private readonly JellyfinSettings _settings;
     private readonly SpotifyImportSettings _spotifySettings;
@@ -803,15 +805,14 @@ public partial class JellyfinController : ControllerBase
                 maxWidth, maxHeight);
             if (asset == null)
             {
-                return await GetPlaceholderImageAsync();
+                return GetPlaceholderImage();
             }
             return CreateFormattedImageResponse(asset, requestedFormat);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to fetch cover art for {Provider}/{ExternalId}", provider, externalId);
-            // Return placeholder on exception
-            return await GetPlaceholderImageAsync();
+            return GetPlaceholderImage();
         }
     }
 
@@ -1017,28 +1018,8 @@ public partial class JellyfinController : ControllerBase
         return "image/jpeg";
     }
 
-    /// <summary>
-    /// Returns a placeholder "no image available" image.
-    /// Generates a simple 1x1 transparent PNG as a minimal placeholder.
-    /// TODO: Replace with actual "no image available" graphic from wwwroot/placeholder.png
-    /// </summary>
-    private async Task<IActionResult> GetPlaceholderImageAsync()
-    {
-        // Check if custom placeholder exists in wwwroot
-        var placeholderPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "placeholder.png");
-        if (System.IO.File.Exists(placeholderPath))
-        {
-            var imageBytes = await System.IO.File.ReadAllBytesAsync(placeholderPath);
-            return CreateConditionalImageResponse(imageBytes, "image/png");
-        }
-
-        // Fallback: Return a 1x1 transparent PNG as minimal placeholder
-        var transparentPng = Convert.FromBase64String(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-        );
-
-        return CreateConditionalImageResponse(transparentPng, "image/png");
-    }
+    private IActionResult GetPlaceholderImage() =>
+        CreateConditionalImageResponse(PlaceholderImageBytes, "image/png");
 
     private IActionResult CreateConditionalImageResponse(byte[] imageBytes, string contentType)
     {

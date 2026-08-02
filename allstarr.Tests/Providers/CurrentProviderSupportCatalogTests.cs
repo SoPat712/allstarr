@@ -28,6 +28,7 @@ public sealed class CurrentProviderSupportCatalogTests
     [Fact]
     public void Matrix_AdvertisesTypedPlaylistSourcesAndKeepsMissingLanesUnavailable()
     {
+        AssertState("apple-download", "lyrics", CurrentProviderSupportCatalog.Supported);
         AssertState("apple-musickit", "playlist", CurrentProviderSupportCatalog.Supported);
         AssertState("apple-musickit", "metadata", CurrentProviderSupportCatalog.Supported);
         AssertState("spotify", "playlist", CurrentProviderSupportCatalog.Supported);

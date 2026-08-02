@@ -32,7 +32,8 @@ public static class CurrentProviderSupportCatalog
             "URL of an optional, operator-managed GAMDL-compatible service.",
             Capability("metadata", Partial, "The bundled gateway supports catalog song, album, and artist search and detail. Playlist and personal-library features remain separate capabilities.", "AppleMusicMetadataServiceTests; AppleDownloadEndpointDiscoveryTests; apple-gateway tests"),
             Capability("streaming", Partial, "The compatible external manifest must advertise single-track audio streaming; no provider range lease or video lane is implemented.", "AppleDownloadEndpointDiscoveryTests; provider contract gap"),
-            Capability("download", Partial, "The compatible external manifest must advertise the distinct managed track-artifact route. Album, playlist, library, rich-artifact, lyrics, and video jobs remain unsupported.", "AppleDownloadEndpointDiscoveryTests; provider contract gap"),
+            Capability("download", Partial, "The compatible external manifest must advertise the distinct managed track-artifact route. Album, playlist, library, standalone artwork, and video jobs remain unsupported.", "AppleDownloadCapabilityAdapterTests; AppleDownloadEndpointDiscoveryTests"),
+            Capability("lyrics", Supported, "The compatible external manifest must advertise synced lyrics artifacts for single tracks.", "AppleDownloadCapabilityAdapterTests; AppleDownloadEndpointDiscoveryTests"),
             Capability("health", Partial, "Runtime discovery verifies the gateway API version, authentication, health, and each advertised feature without treating a raw wrapper as a gateway.", "AppleDownloadEndpointDiscoveryTests; AppleMusicControllerTests")),
         Provider(
             "apple-musickit",
