@@ -7,32 +7,41 @@ public sealed class MultiProviderMetadataServiceTests
     [Fact]
     public async Task Timed_out_work_drains_before_the_concurrency_slot_is_reused()
     {
+        var synchronizationTimeout = TimeSpan.FromSeconds(2);
         using var gate = new SemaphoreSlim(1, 1);
         var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstCancellationObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        var first = RunAsync(async _ =>
+        var first = RunAsync(async token =>
         {
             firstStarted.SetResult();
+            using var registration = token.Register(firstCancellationObserved.SetResult);
             await releaseFirst.Task;
             return 1;
         });
-        await firstStarted.Task;
-        await Task.Delay(100);
-        var second = RunAsync(_ =>
+        try
         {
-            secondStarted.SetResult();
-            return Task.FromResult(2);
-        });
-        await Task.Delay(50);
+            await firstStarted.Task.WaitAsync(synchronizationTimeout);
+            await firstCancellationObserved.Task.WaitAsync(synchronizationTimeout);
+            var second = RunAsync(_ =>
+            {
+                secondStarted.SetResult();
+                return Task.FromResult(2);
+            });
 
-        Assert.False(first.IsCompleted);
-        Assert.False(secondStarted.Task.IsCompleted);
+            Assert.False(first.IsCompleted);
+            Assert.False(secondStarted.Task.IsCompleted);
 
-        releaseFirst.SetResult();
-        await Assert.ThrowsAsync<TimeoutException>(() => first);
-        Assert.Equal(2, await second);
+            releaseFirst.TrySetResult();
+            await Assert.ThrowsAsync<TimeoutException>(() => first);
+            Assert.Equal(2, await second);
+        }
+        finally
+        {
+            releaseFirst.TrySetResult();
+        }
 
         async Task<int> RunAsync(Func<CancellationToken, Task<int>> operation)
         {

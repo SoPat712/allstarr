@@ -44,7 +44,6 @@ public class JellyfinSessionManagerTests
         Assert.True(ensured);
 
         manager.MarkSessionPotentiallyEnded("dev-123", TimeSpan.FromMilliseconds(25));
-        await Task.Delay(100);
 
         Assert.True(manager.HasSession("dev-123"));
     }
