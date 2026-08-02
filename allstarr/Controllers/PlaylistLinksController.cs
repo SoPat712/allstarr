@@ -38,6 +38,7 @@ public sealed class PlaylistLinksController(
     IPlatformClock clock,
     ProviderPolicyOptions providerPolicy,
     AdminProtocolExecutionContextFactory protocolContexts,
+    IPlaylistVirtualizationService virtualization,
     IConfiguration configuration,
     ApplicationCacheRequestCoalescer requestCoalescer) : ControllerBase
 {
@@ -535,7 +536,12 @@ public sealed class PlaylistLinksController(
                     item => item.Id == scheduleId && item.TenantId == link.TenantId,
                     cancellationToken)
                 : null;
-            return Ok(ToProjectionDto(projection, schedule));
+            var execution = await CreateExecutionAsync(session, link.LibraryScopeId, cancellationToken);
+            var clientProjection = await virtualization.ReadAsync(
+                execution,
+                PlaylistVirtualizationService.CreateProtocolId(link.Id),
+                cancellationToken);
+            return Ok(ToProjectionDto(projection, schedule, clientProjection));
         });
     }
 
@@ -1071,7 +1077,7 @@ public sealed class PlaylistLinksController(
         },
         virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id)
     };
-    private static object ToProjectionDto(DurablePlaylistProjection value, JobScheduleRecord? schedule = null) => new
+    private static object ToProjectionDto(DurablePlaylistProjection value, JobScheduleRecord? schedule = null, VirtualPlaylistReadModel? clientProjection = null) => new
     {
         id = value.LinkId,
         snapshotId = value.SnapshotId,
@@ -1134,6 +1140,7 @@ public sealed class PlaylistLinksController(
             reportedDurationMs = value.VerifiedTargetDurationMilliseconds,
             verifiedAt = value.VerifiedAt
         },
+        clientProjection = ToClientProjectionDto(clientProjection),
         tracks = value.Entries.Select(item => new
         {
             sourcePosition = item.Position,
@@ -1161,6 +1168,19 @@ public sealed class PlaylistLinksController(
                 externalId = route.ExternalId,
                 pinned = route.IsManual
             })
+        })
+    };
+    internal static object? ToClientProjectionDto(VirtualPlaylistReadModel? value) => value == null ? null : new
+    {
+        protocolId = value.ProtocolId,
+        projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(),
+        trackCount = value.Tracks.Count,
+        tracks = value.Tracks.Select((track, index) => new
+        {
+            position = index + 1,
+            sourcePosition = track.SourcePosition,
+            itemId = track.BackendItemId,
+            playlistEntryId = track.NativePlaylistEntryId
         })
     };
     private sealed record PlaylistDiscoveryPageCacheEntry(

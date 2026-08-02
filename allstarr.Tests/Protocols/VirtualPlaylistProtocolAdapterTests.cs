@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
+using allstarr.Controllers;
 using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
 using allstarr.Core.Protocols;
@@ -287,6 +288,39 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         var resolvedNs = resolvedDocument.Root!.Name.Namespace;
         Assert.Equal("kept-b", resolvedDocument.Descendants(resolvedNs + "entry")
             .First().Attribute("unknownField")!.Value);
+    }
+
+    [Theory]
+    [InlineData(PlaylistProjectionMode.Source)]
+    [InlineData(PlaylistProjectionMode.Target)]
+    public async Task AdminAndProtocols_PreserveProjectionCountAndOrder(PlaylistProjectionMode mode)
+    {
+        var model = Model() with { ProjectionMode = mode };
+        using var admin = JsonDocument.Parse(JsonSerializer.Serialize(
+            PlaylistLinksController.ToClientProjectionDto(model)));
+        var adminIds = admin.RootElement.GetProperty("tracks").EnumerateArray()
+            .Select(item => item.GetProperty("itemId").GetString()).ToArray();
+
+        var service = new StubVirtualizationService(model);
+        var subsonicResult = Assert.IsType<JsonResult>(await new SubsonicVirtualPlaylistProtocolAdapter(
+            service, new StubMutationResolver(null)).ReadAsync(
+                Context(ProtocolKind.Subsonic), ProtocolId, "json", CancellationToken.None));
+        using var subsonic = JsonDocument.Parse(JsonSerializer.Serialize(subsonicResult.Value));
+        var subsonicIds = subsonic.RootElement.GetProperty("subsonic-response")
+            .GetProperty("playlist").GetProperty("entry").EnumerateArray()
+            .Select(item => item.GetProperty("id").GetString()).ToArray();
+        var jellyfinResult = Assert.IsType<JsonResult>(await new JellyfinVirtualPlaylistProtocolAdapter(
+            service, new StubJellyfinMutationResolver(null)).ReadItemsAsync(
+                Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
+        using var jellyfin = JsonDocument.Parse(JsonSerializer.Serialize(jellyfinResult.Value));
+        var jellyfinIds = jellyfin.RootElement.GetProperty("Items").EnumerateArray()
+            .Select(item => item.GetProperty("Id").GetString()).ToArray();
+
+        Assert.Equal(mode.ToString().ToLowerInvariant(),
+            admin.RootElement.GetProperty("projectionMode").GetString());
+        Assert.Equal(adminIds.Length, admin.RootElement.GetProperty("trackCount").GetInt32());
+        Assert.Equal(adminIds, subsonicIds);
+        Assert.Equal(adminIds, jellyfinIds);
     }
 
     [Fact]
