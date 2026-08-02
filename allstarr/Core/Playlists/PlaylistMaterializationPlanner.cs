@@ -26,11 +26,54 @@ public enum PlaylistPreviewEntryStatus
     StaleDecision
 }
 
+public static class PlaylistMaterializationOutcomeCodes
+{
+    public const string IncludedNativeBackendItem = "included_native_backend_item";
+    public const string SkippedExternalOnlyForBackend = "skipped_external_only_for_backend";
+    public const string SkippedUnresolved = "skipped_unresolved";
+    public const string SkippedRejected = "skipped_rejected";
+    public const string SkippedDuplicate = "skipped_duplicate";
+    public const string SkippedWrongBackendOrLibrary = "skipped_wrong_backend_or_library";
+    public const string SkippedStaleRevision = "skipped_stale_revision";
+}
+
+public sealed record PlaylistSourceIdentity(
+    string ProviderId,
+    Guid ProviderAccountId,
+    string ExternalIdHash,
+    string SourceRevision,
+    int SnapshotVersion,
+    string? ExternalId = null);
+
+public sealed record PlaylistSourceMetadata(
+    string? Title = null,
+    IReadOnlyList<string>? Artists = null,
+    string? Album = null,
+    long? DurationMilliseconds = null,
+    string? DurationProvenance = null,
+    string? Isrc = null,
+    bool? IsExplicit = null,
+    string? ArtworkUrl = null,
+    Guid? CanonicalRecordingId = null);
+
+public sealed record PlaylistResolvedRoute(
+    TrackRouteKind Kind,
+    Guid? LibraryTrackId = null,
+    string? BackendItemId = null,
+    string? BackendInstanceId = null,
+    string? Protocol = null,
+    string? LibraryScopeId = null,
+    string? ProviderId = null,
+    string? ExternalId = null,
+    Guid? CanonicalRecordingId = null);
+
 public sealed record ImmutablePlaylistSourceEntry(
     Guid SourceEntryId,
     int SourcePosition,
     Guid ExternalSnapshotId,
-    string SourceTrackReference);
+    string SourceTrackReference,
+    PlaylistSourceIdentity? SourceIdentity = null,
+    PlaylistSourceMetadata? Metadata = null);
 
 public sealed record ImmutablePlaylistSourceSnapshot
 {
@@ -100,7 +143,8 @@ public sealed record PersistedPlaylistMatchDecision(
     double AcceptanceThreshold,
     int DecisionVersion,
     IReadOnlyList<string> Reasons,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    PlaylistResolvedRoute? Route = null);
 
 public sealed record PlaylistPlanningTarget(
     string Protocol,
@@ -153,7 +197,14 @@ public sealed record PlaylistPreviewEntry(
     int? TargetPosition,
     IReadOnlyList<string> Reasons,
     IReadOnlyList<string> Warnings,
-    Guid? DuplicateOfSourceEntryId = null);
+    Guid? DuplicateOfSourceEntryId = null,
+    PlaylistResolvedRoute? ResolvedRoute = null,
+    bool TargetEligible = false,
+    string OutcomeCode = PlaylistMaterializationOutcomeCodes.SkippedUnresolved)
+{
+    public PlaylistSourceIdentity? SourceIdentity { get; init; }
+    public PlaylistSourceMetadata? SourceMetadata { get; init; }
+}
 
 public sealed record PlannedPlaylistMetadata(
     string? Name,
@@ -214,7 +265,9 @@ public sealed class PlaylistMaterializationPlanner
                         Status = PlaylistPreviewEntryStatus.Duplicate,
                         TargetPosition = original.TargetPosition,
                         Reasons = assessed.Reasons.Concat(["duplicate_local_backend_item_first_source_entry_kept"]).ToArray(),
-                        DuplicateOfSourceEntryId = original.SourceEntryId
+                        DuplicateOfSourceEntryId = original.SourceEntryId,
+                        TargetEligible = false,
+                        OutcomeCode = PlaylistMaterializationOutcomeCodes.SkippedDuplicate
                     };
                 }
                 else
@@ -278,40 +331,103 @@ public sealed class PlaylistMaterializationPlanner
             return Skip(entry, PlaylistPreviewEntryStatus.StaleDecision, "match_decision_external_snapshot_mismatch", decision);
         if (decision.State == TrackMatchReviewState.Accepted && decision.Confidence < decision.AcceptanceThreshold)
             return Skip(entry, PlaylistPreviewEntryStatus.BelowAcceptanceThreshold, "accepted_match_below_persisted_threshold", decision);
+        if (decision.State == TrackMatchReviewState.Rejected)
+            return Skip(entry, PlaylistPreviewEntryStatus.Rejected, "match_state_rejected", decision);
         if (decision.State is not (TrackMatchReviewState.Accepted or TrackMatchReviewState.Pinned))
             return Skip(entry, Map(decision.State), $"match_state_{decision.State.ToString().ToLowerInvariant()}", decision);
-        if (decision.LibraryTrackId == null || string.IsNullOrWhiteSpace(decision.BackendItemId))
-            return Skip(entry, PlaylistPreviewEntryStatus.MissingLocalItem, "accepted_match_has_no_local_backend_item", decision);
-        if (!target.BackendInstanceId.Equals(decision.BackendInstanceId, StringComparison.Ordinal))
-            return Skip(entry, PlaylistPreviewEntryStatus.WrongBackend, "local_item_belongs_to_different_backend_instance", decision);
 
-        return new(
+        var route = decision.Route ?? InferRoute(decision);
+        if (route.Kind == TrackRouteKind.External)
+            return Skip(entry, PlaylistPreviewEntryStatus.MissingLocalItem,
+                "accepted_match_has_external_only_route_for_backend", decision, route,
+                PlaylistMaterializationOutcomeCodes.SkippedExternalOnlyForBackend);
+        if (route.Kind != TrackRouteKind.Local)
+        {
+            var status = route.LibraryTrackId.HasValue || decision.LibraryTrackId.HasValue
+                ? PlaylistPreviewEntryStatus.WrongBackend
+                : PlaylistPreviewEntryStatus.Unresolved;
+            return Skip(entry, status,
+                status == PlaylistPreviewEntryStatus.WrongBackend
+                    ? "local_item_is_not_in_selected_backend_library"
+                    : "accepted_match_has_no_resolved_route",
+                decision, route,
+                status == PlaylistPreviewEntryStatus.WrongBackend
+                    ? PlaylistMaterializationOutcomeCodes.SkippedWrongBackendOrLibrary
+                    : PlaylistMaterializationOutcomeCodes.SkippedUnresolved);
+        }
+        if (route.LibraryTrackId == null || string.IsNullOrWhiteSpace(route.BackendItemId))
+            return Skip(entry, PlaylistPreviewEntryStatus.WrongBackend, "accepted_match_has_no_local_backend_item", decision, route,
+                PlaylistMaterializationOutcomeCodes.SkippedWrongBackendOrLibrary);
+        if (!target.BackendInstanceId.Equals(route.BackendInstanceId, StringComparison.Ordinal))
+            return Skip(entry, PlaylistPreviewEntryStatus.WrongBackend, "local_item_belongs_to_different_backend_instance_or_library", decision, route,
+                PlaylistMaterializationOutcomeCodes.SkippedWrongBackendOrLibrary);
+
+        return new PlaylistPreviewEntry(
             entry.SourceEntryId,
             entry.SourcePosition,
             entry.SourceTrackReference,
             PlaylistPreviewEntryStatus.Included,
-            decision.LibraryTrackId,
-            decision.BackendItemId,
+            route.LibraryTrackId,
+            route.BackendItemId,
             targetPosition,
             decision.Reasons,
-            decision.Warnings);
+            decision.Warnings,
+            ResolvedRoute: route,
+            TargetEligible: true,
+            OutcomeCode: PlaylistMaterializationOutcomeCodes.IncludedNativeBackendItem)
+        {
+            SourceIdentity = entry.SourceIdentity,
+            SourceMetadata = entry.Metadata
+        };
     }
 
     private static PlaylistPreviewEntry Skip(
         ImmutablePlaylistSourceEntry entry,
         PlaylistPreviewEntryStatus status,
         string reason,
-        PersistedPlaylistMatchDecision? decision = null) =>
-        new(
+        PersistedPlaylistMatchDecision? decision = null,
+        PlaylistResolvedRoute? route = null,
+        string? outcomeCode = null)
+    {
+        route ??= decision?.Route;
+        var code = outcomeCode ?? OutcomeCodeFor(status);
+        return new PlaylistPreviewEntry(
             entry.SourceEntryId,
             entry.SourcePosition,
             entry.SourceTrackReference,
             status,
-            decision?.LibraryTrackId,
-            decision?.BackendItemId,
+            route?.LibraryTrackId ?? decision?.LibraryTrackId,
+            route?.BackendItemId ?? decision?.BackendItemId,
             null,
             (decision?.Reasons ?? []).Concat([reason]).Distinct(StringComparer.Ordinal).ToArray(),
-            decision?.Warnings ?? []);
+            decision?.Warnings ?? [],
+            ResolvedRoute: route,
+            TargetEligible: false,
+            OutcomeCode: code)
+        {
+            SourceIdentity = entry.SourceIdentity,
+            SourceMetadata = entry.Metadata
+        };
+    }
+
+    private static PlaylistResolvedRoute InferRoute(PersistedPlaylistMatchDecision decision)
+    {
+        if (!string.IsNullOrWhiteSpace(decision.BackendItemId) || decision.LibraryTrackId.HasValue)
+            return new(TrackRouteKind.Local, decision.LibraryTrackId, decision.BackendItemId,
+                decision.BackendInstanceId);
+        return decision.Route ?? new(TrackRouteKind.Unresolved);
+    }
+
+    private static string OutcomeCodeFor(PlaylistPreviewEntryStatus status) => status switch
+    {
+        PlaylistPreviewEntryStatus.Included => PlaylistMaterializationOutcomeCodes.IncludedNativeBackendItem,
+        PlaylistPreviewEntryStatus.Duplicate => PlaylistMaterializationOutcomeCodes.SkippedDuplicate,
+        PlaylistPreviewEntryStatus.Rejected => PlaylistMaterializationOutcomeCodes.SkippedRejected,
+        PlaylistPreviewEntryStatus.WrongBackend => PlaylistMaterializationOutcomeCodes.SkippedWrongBackendOrLibrary,
+        PlaylistPreviewEntryStatus.MissingLocalItem => PlaylistMaterializationOutcomeCodes.SkippedWrongBackendOrLibrary,
+        PlaylistPreviewEntryStatus.StaleDecision => PlaylistMaterializationOutcomeCodes.SkippedStaleRevision,
+        _ => PlaylistMaterializationOutcomeCodes.SkippedUnresolved
+    };
 
     private static PlaylistPreviewEntryStatus Map(TrackMatchReviewState state) => state switch
     {

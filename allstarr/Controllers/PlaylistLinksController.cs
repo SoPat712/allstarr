@@ -1183,7 +1183,70 @@ public sealed class PlaylistLinksController(
         string? ArtworkResourceId,
         string? ArtworkRevision);
     private static object ToScheduleDto(JobScheduleRecord value) => new { id = value.Id, cronExpression = value.CronExpression, timeZoneId = value.TimeZoneId, overlapPolicy = value.OverlapPolicy.ToString().ToLowerInvariant(), misfirePolicy = LowerCamel(value.MisfirePolicy.ToString()), enabled = value.Enabled, nextRunAt = value.NextRunAt, revision = value.Revision };
-    private static object ToPreviewDto(PlaylistPreview value) => new { linkId = value.LinkId, snapshotId = value.SnapshotId, name = value.Name, description = value.Description, artworkReferenceKey = value.ArtworkReferenceKey, entries = value.Entries.Select(item => new { sourcePosition = item.Position, position = item.Position + 1, externalSnapshotId = item.ExternalSnapshotId, state = item.State.ToString().ToLowerInvariant(), libraryTrackId = item.LibraryTrackId, @override = item.Override?.ToString().ToLowerInvariant() }) };
+    private static object ToPreviewDto(PlaylistPreview value) => new
+    {
+        linkId = value.LinkId,
+        snapshotId = value.SnapshotId,
+        sourceRevision = value.SourceRevision,
+        name = value.Name,
+        description = value.Description,
+        artworkReferenceKey = value.ArtworkReferenceKey,
+        libraryScopeId = value.LibraryScopeId,
+        target = new
+        {
+            protocol = value.TargetProtocol,
+            backendInstanceId = value.TargetBackendInstanceId
+        },
+        entries = value.Entries.Select(item => new
+        {
+            sourceEntryId = item.SourceEntryId,
+            sourceTrackReference = item.SourceTrackReference,
+            sourcePosition = item.Position,
+            position = item.Position + 1,
+            externalSnapshotId = item.ExternalSnapshotId,
+            state = item.State.ToString().ToLowerInvariant(),
+            libraryTrackId = item.LibraryTrackId,
+            @override = item.Override?.ToString().ToLowerInvariant(),
+            sourceIdentity = item.SourceIdentity == null ? null : new
+            {
+                providerId = item.SourceIdentity.ProviderId,
+                providerAccountId = item.SourceIdentity.ProviderAccountId,
+                externalIdHash = item.SourceIdentity.ExternalIdHash,
+                externalId = item.SourceIdentity.ExternalId,
+                sourceRevision = item.SourceIdentity.SourceRevision,
+                snapshotVersion = item.SourceIdentity.SnapshotVersion
+            },
+            sourceMetadata = item.SourceMetadata == null ? null : new
+            {
+                title = item.SourceMetadata.Title,
+                artists = item.SourceMetadata.Artists ?? [],
+                album = item.SourceMetadata.Album,
+                durationMilliseconds = item.SourceMetadata.DurationMilliseconds,
+                durationProvenance = item.SourceMetadata.DurationProvenance,
+                isrc = item.SourceMetadata.Isrc,
+                isExplicit = item.SourceMetadata.IsExplicit,
+                artworkUrl = item.SourceMetadata.ArtworkUrl,
+                canonicalRecordingId = item.SourceMetadata.CanonicalRecordingId
+            },
+            resolvedRoute = item.ResolvedRoute == null ? null : new
+            {
+                kind = item.ResolvedRoute.Kind.ToString().ToLowerInvariant(),
+                providerId = item.ResolvedRoute.ProviderId,
+                externalId = item.ResolvedRoute.ExternalId,
+                libraryTrackId = item.ResolvedRoute.LibraryTrackId,
+                backendItemId = item.ResolvedRoute.BackendItemId,
+                backendInstanceId = item.ResolvedRoute.BackendInstanceId,
+                protocol = item.ResolvedRoute.Protocol,
+                libraryScopeId = item.ResolvedRoute.LibraryScopeId,
+                canonicalRecordingId = item.ResolvedRoute.CanonicalRecordingId
+            },
+            targetEligible = item.TargetEligible,
+            outcomeCode = item.OutcomeCode,
+            status = item.Status.ToString().ToLowerInvariant(),
+            targetPosition = item.TargetPosition,
+            duplicateOfSourceEntryId = item.DuplicateOfSourceEntryId
+        })
+    };
     private static object ToCredentialDto(SecretReferenceInfo value) => new { referenceId = value.Id, targetProtocol = "subsonic", purpose = value.Purpose, activeVersion = value.ActiveVersion, updatedAt = value.UpdatedAt };
     private static string LowerCamel(string value) => char.ToLowerInvariant(value[0]) + value[1..];
 }

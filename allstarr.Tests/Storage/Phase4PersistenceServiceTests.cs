@@ -77,10 +77,17 @@ public sealed class Phase4PersistenceServiceTests : IAsyncLifetime
         var preview = await _playlists.ReadPreviewAsync(context, link.Id, source.Id);
         Assert.Equal([0, 1], preview.Entries.Select(item => item.Position));
         Assert.Equal(TrackMatchState.Rejected, preview.Entries[0].State);
+        Assert.Equal("fixture", preview.Entries[0].SourceIdentity!.ProviderId);
+        Assert.Equal("track-1", preview.Entries[0].SourceMetadata!.Title);
+        Assert.Equal(PlaylistMaterializationOutcomeCodes.SkippedRejected, preview.Entries[0].OutcomeCode);
+        Assert.False(preview.Entries[0].TargetEligible);
 
         await _matches.RevokeOverrideAsync(context, rejected.Id, rejected.Revision);
         preview = await _playlists.ReadPreviewAsync(context, link.Id, source.Id);
         Assert.Equal(TrackMatchState.Accepted, preview.Entries[0].State);
+        Assert.True(preview.Entries[0].TargetEligible);
+        Assert.Equal(PlaylistMaterializationOutcomeCodes.IncludedNativeBackendItem, preview.Entries[0].OutcomeCode);
+        Assert.Equal(TrackRouteKind.Local, preview.Entries[0].ResolvedRoute!.Kind);
         var pinned = await _matches.SetOverrideAsync(context, new ManualOverrideInput(first.Id, "music", ManualOverrideDecision.Pin, _localTrack, "confirmed"));
         Assert.Equal(2, pinned.DecisionVersion);
         preview = await _playlists.ReadPreviewAsync(context, link.Id, source.Id);

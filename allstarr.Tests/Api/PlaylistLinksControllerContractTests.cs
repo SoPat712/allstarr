@@ -1,4 +1,7 @@
+using System.Text.Json;
 using allstarr.Controllers;
+using allstarr.Core.Matching;
+using allstarr.Core.Playlists;
 using allstarr.Core.Storage;
 using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Http;
@@ -106,6 +109,46 @@ public sealed class PlaylistLinksControllerContractTests
                                                name.Contains("Secret", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(new[] { "Decision", "LibraryTrackId", "Reason" },
             typeof(SetMatchOverrideRequest).GetProperties().Select(item => item.Name));
+    }
+
+    [Fact]
+    public void PreviewContract_ExposesSourceMetadataRouteEligibilityAndOneOutcomeCode()
+    {
+        var row = new PersistedPlaylistPreviewEntry(
+            0,
+            Guid.NewGuid(),
+            TrackMatchState.Accepted,
+            Guid.NewGuid(),
+            null,
+            Guid.NewGuid(),
+            "source-entry",
+            new PlaylistSourceIdentity("spotify", Guid.NewGuid(), "source-hash", "source-revision", 1, "provider-track"),
+            new PlaylistSourceMetadata("Title", ["Artist"], "Album", 1234, "spotify", "isrc", false, "artwork-key"),
+            new PlaylistResolvedRoute(TrackRouteKind.Local, Guid.NewGuid(), "backend-item", "backend", "jellyfin", "music"),
+            true,
+            PlaylistMaterializationOutcomeCodes.IncludedNativeBackendItem,
+            0,
+            PlaylistPreviewEntryStatus.Included);
+        var preview = new PlaylistPreview(Guid.NewGuid(), Guid.NewGuid(), "List", null, null, [row])
+        {
+            SourceRevision = "source-revision",
+            LibraryScopeId = "music",
+            TargetProtocol = "jellyfin",
+            TargetBackendInstanceId = "backend"
+        };
+        var method = typeof(PlaylistLinksController).GetMethod(
+            "ToPreviewDto", BindingFlags.NonPublic | BindingFlags.Static)!;
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(method.Invoke(null, [preview])));
+        var value = json.RootElement;
+        var entry = Assert.Single(value.GetProperty("entries").EnumerateArray());
+        Assert.Equal("source-revision", value.GetProperty("sourceRevision").GetString());
+        Assert.Equal("spotify", entry.GetProperty("sourceIdentity").GetProperty("providerId").GetString());
+        Assert.Equal("provider-track", entry.GetProperty("sourceIdentity").GetProperty("externalId").GetString());
+        Assert.Equal("Title", entry.GetProperty("sourceMetadata").GetProperty("title").GetString());
+        Assert.Equal("local", entry.GetProperty("resolvedRoute").GetProperty("kind").GetString());
+        Assert.True(entry.GetProperty("targetEligible").GetBoolean());
+        Assert.Equal("included_native_backend_item", entry.GetProperty("outcomeCode").GetString());
+        Assert.False(entry.TryGetProperty("inclusionReason", out _));
     }
 
     [Fact]

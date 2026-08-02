@@ -70,6 +70,40 @@ public sealed class PlaylistMaterializationPlannerTests(ITestOutputHelper output
     }
 
     [Fact]
+    public void Backend_preview_keeps_source_rows_and_writes_only_native_a_and_c()
+    {
+        var source = Source(
+            RichEntry(0, "a", "spotify-a", "Song A"),
+            RichEntry(1, "b", "apple-b", "Song B"),
+            RichEntry(2, "c", "spotify-c", "Song C"),
+            RichEntry(3, "d", "deezer-d", "Song D"));
+        var decisions = new[]
+        {
+            Accepted(source.Entries[0], "backend-a"),
+            Decision(source.Entries[1], TrackMatchReviewState.Accepted, confidence: .95, route: new(
+                TrackRouteKind.External, ProviderId: "apple", ExternalId: "apple-track-b")),
+            Accepted(source.Entries[2], "backend-c"),
+            Decision(source.Entries[3], TrackMatchReviewState.Unresolved)
+        };
+
+        var plan = Planner().Plan(PlaylistPlanMode.Virtual, source, decisions, Target(), Rules());
+
+        Assert.Equal(["backend-a", "backend-c"], plan.OrderedBackendItemIds);
+        Assert.Equal([true, false, true, false], plan.Entries.Select(item => item.TargetEligible));
+        Assert.Equal(
+            [PlaylistMaterializationOutcomeCodes.IncludedNativeBackendItem,
+                PlaylistMaterializationOutcomeCodes.SkippedExternalOnlyForBackend,
+                PlaylistMaterializationOutcomeCodes.IncludedNativeBackendItem,
+                PlaylistMaterializationOutcomeCodes.SkippedUnresolved],
+            plan.Entries.Select(item => item.OutcomeCode));
+        Assert.Equal("spotify", plan.Entries[0].SourceIdentity!.ProviderId);
+        Assert.Equal("Song A", plan.Entries[0].SourceMetadata!.Title);
+        Assert.Equal(TrackRouteKind.External, plan.Entries[1].ResolvedRoute!.Kind);
+        Assert.Equal("apple-track-b", plan.Entries[1].ResolvedRoute!.ExternalId);
+        Assert.Equal([0, 1], plan.Entries.Where(item => item.TargetEligible).Select(item => item.TargetPosition));
+    }
+
+    [Fact]
     public void Low_confidence_accept_is_skipped_but_manual_pin_is_included()
     {
         var source = Source(Entry(0, "weak"), Entry(1, "pinned"));
@@ -244,6 +278,11 @@ public sealed class PlaylistMaterializationPlannerTests(ITestOutputHelper output
     private static ImmutablePlaylistSourceEntry Entry(int position, string reference) =>
         new(Guid.CreateVersion7(), position, Guid.CreateVersion7(), reference);
 
+    private static ImmutablePlaylistSourceEntry RichEntry(int position, string reference, string externalHash, string title) =>
+        new(Guid.CreateVersion7(), position, Guid.CreateVersion7(), reference,
+            new("spotify", Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"), externalHash, "source-revision-1", 1),
+            new(title, ["Artist"], "Album", 123_000, "spotify", "USRC1", false, "https://art.test/a.jpg"));
+
     private static PersistedPlaylistMatchDecision Accepted(
         ImmutablePlaylistSourceEntry entry,
         string backendItemId,
@@ -259,9 +298,10 @@ public sealed class PlaylistMaterializationPlannerTests(ITestOutputHelper output
         double confidence = 0.5,
         double threshold = 0.88,
         string backendInstanceId = "backend-1",
-        IReadOnlyList<string>? reasons = null) =>
+        IReadOnlyList<string>? reasons = null,
+        PlaylistResolvedRoute? route = null) =>
         new(entry.SourceEntryId, entry.ExternalSnapshotId, state,
             backendItemId == null ? null : Guid.CreateVersion7(), backendItemId,
             backendItemId == null ? null : backendInstanceId,
-            confidence, threshold, 1, reasons ?? [], []);
+            confidence, threshold, 1, reasons ?? [], [], Route: route);
 }

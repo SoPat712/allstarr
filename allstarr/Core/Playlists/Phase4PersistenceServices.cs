@@ -73,8 +73,35 @@ public sealed record PlaylistLinkInput(Guid ProviderAccountId, string SourceProv
 public sealed record PlaylistLinkUpdate(long ExpectedRevision, PlaylistLinkMode Mode, PlaylistMaterializationMode MaterializationMode, string RuleVersion, string PolicyVersion, Guid? ScheduleId, string? TargetPlaylistId, bool MirrorStaleEntries, bool PreserveManualEntries, bool SyncName, bool SyncDescription, bool SyncArtwork, Guid? TargetCredentialReferenceId = null, PlaylistProjectionMode ProjectionMode = PlaylistProjectionMode.Resolved);
 public sealed record PlaylistSourceEntryInput(int Position, Guid ExternalMetadataSnapshotId, string SourceEntryIdHash);
 public sealed record PlaylistSourceSnapshotInput(int SnapshotVersion, string ProviderRevision, string? ETag, string Name, string? Description, string? ArtworkReferenceKey, string PayloadSha256, IReadOnlyList<PlaylistSourceEntryInput> Entries, Guid? SourceJobId = null);
-public sealed record PersistedPlaylistPreviewEntry(int Position, Guid ExternalSnapshotId, TrackMatchState State, Guid? LibraryTrackId, ManualOverrideDecision? Override);
-public sealed record PlaylistPreview(Guid LinkId, Guid SnapshotId, string Name, string? Description, string? ArtworkReferenceKey, IReadOnlyList<PersistedPlaylistPreviewEntry> Entries);
+public sealed record PersistedPlaylistPreviewEntry(
+    int Position,
+    Guid ExternalSnapshotId,
+    TrackMatchState State,
+    Guid? LibraryTrackId,
+    ManualOverrideDecision? Override,
+    Guid SourceEntryId = default,
+    string SourceTrackReference = "",
+    PlaylistSourceIdentity? SourceIdentity = null,
+    PlaylistSourceMetadata? SourceMetadata = null,
+    PlaylistResolvedRoute? ResolvedRoute = null,
+    bool TargetEligible = false,
+    string OutcomeCode = PlaylistMaterializationOutcomeCodes.SkippedUnresolved,
+    int? TargetPosition = null,
+    PlaylistPreviewEntryStatus Status = PlaylistPreviewEntryStatus.Unresolved,
+    Guid? DuplicateOfSourceEntryId = null);
+public sealed record PlaylistPreview(
+    Guid LinkId,
+    Guid SnapshotId,
+    string Name,
+    string? Description,
+    string? ArtworkReferenceKey,
+    IReadOnlyList<PersistedPlaylistPreviewEntry> Entries)
+{
+    public string SourceRevision { get; init; } = string.Empty;
+    public string LibraryScopeId { get; init; } = string.Empty;
+    public string TargetProtocol { get; init; } = string.Empty;
+    public string TargetBackendInstanceId { get; init; } = string.Empty;
+}
 public sealed record PlaylistRunInput(Guid SnapshotId, long Generation, string IdempotencyKey, string RuleVersion, PlaylistMaterializationMode MaterializationMode, PlaylistSyncState State, string? TargetRevisionBefore, Guid? ScheduleId = null, Guid? JobId = null);
 public sealed record PlaylistRunEntryInput(Guid SourceEntryId, Guid? TrackMatchId, Guid? LibraryTrackId, int SourcePosition, int? TargetPosition, PlaylistEntryOutcome Outcome, string? OutcomeCode, string DetailsJson);
 
@@ -92,17 +119,20 @@ public interface IPlaylistPersistenceService
 
 public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
 {
+    private static readonly JsonSerializerOptions PreviewJson = new() { PropertyNameCaseInsensitive = true };
     private readonly IDbContextFactory<AllstarrDbContext> _factory;
     private readonly ProviderAccountResolver _accounts;
     private readonly IPlatformClock _clock;
     private readonly ITrackMatchRepository _trackMatches;
+    private readonly PlaylistMaterializationPlanner _planner;
     public PlaylistPersistenceService(
         IDbContextFactory<AllstarrDbContext> factory,
         ProviderAccountResolver accounts,
         IPlatformClock clock,
-        ITrackMatchRepository trackMatches) =>
-        (_factory, _accounts, _clock, _trackMatches) =
-        (factory, accounts, clock, trackMatches);
+        ITrackMatchRepository trackMatches,
+        PlaylistMaterializationPlanner? planner = null) =>
+        (_factory, _accounts, _clock, _trackMatches, _planner) =
+        (factory, accounts, clock, trackMatches, planner ?? new PlaylistMaterializationPlanner());
 
     public async Task<PlaylistLinkRecord> CreateLinkAsync(ProtocolExecutionContext context, PlaylistLinkInput input, CancellationToken cancellationToken = default)
     {
@@ -242,8 +272,32 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         PersistenceGuard.Required(input.ProviderRevision, nameof(input.ProviderRevision)); PersistenceGuard.Required(input.Name, nameof(input.Name)); PersistenceGuard.ValidateStableReference(input.ArtworkReferenceKey, nameof(input.ArtworkReferenceKey));
         if (input.PayloadSha256.Length != 64) throw new ArgumentException("A payload hash is required.", nameof(input));
         await using var db = await _factory.CreateDbContextAsync(cancellationToken); var link = await db.PlaylistLinks.SingleOrDefaultAsync(item => item.Id == linkId && item.TenantId == actor.TenantId, cancellationToken) ?? throw new KeyNotFoundException("Playlist link not found."); PersistenceGuard.RequireOwner(actor, link.OwnerUserId); PersistenceGuard.RequireLibrary(context, link.LibraryScopeId);
-        var existing = await db.PlaylistSourceSnapshots.AsNoTracking().SingleOrDefaultAsync(item => item.TenantId == actor.TenantId && item.PlaylistLinkId == link.Id && item.SnapshotVersion == input.SnapshotVersion, cancellationToken); if (existing != null) { if (existing.PayloadSha256 != input.PayloadSha256) throw new InvalidOperationException("The immutable playlist snapshot version already has different content."); return existing; }
-        var ids = input.Entries.Select(item => item.ExternalMetadataSnapshotId).Distinct().ToArray(); var owned = await db.ExternalMetadataSnapshots.CountAsync(item => ids.Contains(item.Id) && item.TenantId == actor.TenantId && item.OwnerUserId == link.OwnerUserId && item.LibraryScopeId == link.LibraryScopeId && item.ProviderAccountId == link.ProviderAccountId, cancellationToken); if (owned != ids.Length) throw new UnauthorizedAccessException("A source entry snapshot is outside the playlist scope or account.");
+        var existing = await db.PlaylistSourceSnapshots.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.TenantId == actor.TenantId &&
+            item.OwnerUserId == link.OwnerUserId &&
+            item.ProviderAccountId == link.ProviderAccountId &&
+            item.PlaylistLinkId == link.Id &&
+            item.SnapshotVersion == input.SnapshotVersion, cancellationToken);
+        if (existing != null)
+        {
+            if (existing.PayloadSha256 != input.PayloadSha256)
+                throw new InvalidOperationException("The immutable playlist snapshot version already has different content.");
+            return existing;
+        }
+        var ids = input.Entries.Select(item => item.ExternalMetadataSnapshotId).Distinct().ToArray();
+        var targetProtocols = TargetProtocols(link.TargetProtocol);
+        var owned = await db.ExternalMetadataSnapshots.CountAsync(item =>
+            ids.Contains(item.Id) &&
+            item.TenantId == actor.TenantId &&
+            item.OwnerUserId == link.OwnerUserId &&
+            item.LibraryScopeId == link.LibraryScopeId &&
+            item.ProviderAccountId == link.ProviderAccountId &&
+            item.ProviderId == link.SourceProviderId &&
+            item.ResourceKind == "track" &&
+            item.BackendInstanceId == link.TargetBackendInstanceId &&
+            targetProtocols.Contains(item.Protocol), cancellationToken);
+        if (owned != ids.Length)
+            throw new UnauthorizedAccessException("A source entry snapshot is outside the playlist scope or account.");
         var snapshot = new PlaylistSourceSnapshotRecord { Id = Guid.CreateVersion7(), TenantId = actor.TenantId, OwnerUserId = link.OwnerUserId, PlaylistLinkId = link.Id, ProviderAccountId = link.ProviderAccountId, SourceJobId = input.SourceJobId, SnapshotVersion = input.SnapshotVersion, ProviderRevision = input.ProviderRevision.Trim(), ETag = input.ETag, Name = input.Name.Trim(), Description = input.Description?.Trim(), ArtworkReferenceKey = input.ArtworkReferenceKey, PayloadSha256 = input.PayloadSha256, CorrelationId = context.CorrelationId, RetrievedAt = _clock.UtcNow };
         db.PlaylistSourceSnapshots.Add(snapshot); await db.SaveChangesAsync(cancellationToken);
         db.PlaylistSourceEntries.AddRange(input.Entries.Select(entry => new PlaylistSourceEntryRecord { Id = Guid.CreateVersion7(), TenantId = actor.TenantId, PlaylistSourceSnapshotId = snapshot.Id, ExternalMetadataSnapshotId = entry.ExternalMetadataSnapshotId, SourcePosition = entry.Position, SourceEntryIdHash = entry.SourceEntryIdHash })); await db.SaveChangesAsync(cancellationToken); return snapshot;
@@ -251,7 +305,20 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
 
     public async Task<PlaylistPreview> ReadPreviewAsync(ProtocolExecutionContext context, Guid linkId, Guid snapshotId, CancellationToken cancellationToken = default)
     {
-        var actor = context.RequireActor(); await using var db = await _factory.CreateDbContextAsync(cancellationToken); var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item => item.Id == linkId && item.TenantId == actor.TenantId, cancellationToken) ?? throw new KeyNotFoundException("Playlist link not found."); PersistenceGuard.RequireOwner(actor, link.OwnerUserId); PersistenceGuard.RequireLibrary(context, link.LibraryScopeId); var snapshot = await db.PlaylistSourceSnapshots.AsNoTracking().SingleOrDefaultAsync(item => item.Id == snapshotId && item.TenantId == actor.TenantId && item.PlaylistLinkId == link.Id, cancellationToken) ?? throw new KeyNotFoundException("Playlist snapshot not found.");
+        var actor = context.RequireActor();
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(
+            item => item.Id == linkId && item.TenantId == actor.TenantId,
+            cancellationToken) ?? throw new KeyNotFoundException("Playlist link not found.");
+        PersistenceGuard.RequireOwner(actor, link.OwnerUserId);
+        PersistenceGuard.RequireLibrary(context, link.LibraryScopeId);
+        var snapshot = await db.PlaylistSourceSnapshots.AsNoTracking().SingleOrDefaultAsync(
+            item => item.Id == snapshotId &&
+                    item.TenantId == actor.TenantId &&
+                    item.OwnerUserId == link.OwnerUserId &&
+                    item.ProviderAccountId == link.ProviderAccountId &&
+                    item.PlaylistLinkId == link.Id,
+            cancellationToken) ?? throw new KeyNotFoundException("Playlist snapshot not found.");
         var entries = await db.PlaylistSourceEntries.AsNoTracking()
             .Where(item => item.TenantId == actor.TenantId && item.PlaylistSourceSnapshotId == snapshot.Id)
             .OrderBy(item => item.SourcePosition)
@@ -266,24 +333,241 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
             link.LibraryScopeId,
             externalSnapshotIds,
             cancellationToken);
-        var manualOverrides = resolution.ActiveOverrides
-            .ToDictionary(item => item.ExternalSnapshotId);
-        var latestMatches = resolution.LatestDecisions
-            .ToDictionary(item => item.ExternalSnapshotId);
-        var result = new List<PersistedPlaylistPreviewEntry>(entries.Count);
+
+        var targetProtocols = TargetProtocols(link.TargetProtocol);
+        var snapshots = resolution.Snapshots
+            .Where(item => item.OwnerUserId == link.OwnerUserId &&
+                           item.LibraryScopeId == link.LibraryScopeId &&
+                           item.ProviderAccountId == link.ProviderAccountId &&
+                           item.ProviderId == link.SourceProviderId &&
+                           item.ResourceKind == "track" &&
+                           item.BackendInstanceId == link.TargetBackendInstanceId &&
+                           targetProtocols.Contains(item.Protocol))
+            .ToDictionary(item => item.Id);
+        var sourceIdentities = resolution.ProviderIdentities.ToDictionary(item => item.Id);
+        var sourceIdentityLookup = resolution.ProviderIdentities
+            .Where(item => item.ResourceKind == ProviderResourceKind.Track)
+            .ToLookup(item => (item.ProviderId.ToLowerInvariant(), item.ExternalIdHash));
+        var linkedSourceIdentityByExternalId = snapshots.Values.ToDictionary(
+            external => external.Id,
+            external =>
+                external.ProviderTrackIdentityId is { } identityId &&
+                sourceIdentities.TryGetValue(identityId, out var identity) &&
+                MatchesSourceIdentity(external, identity)
+                    ? identity
+                    : null);
+        var sourceIdentityByExternalId = snapshots.Values.ToDictionary(
+            external => external.Id,
+            external => linkedSourceIdentityByExternalId[external.Id] ??
+                sourceIdentityLookup[(external.ProviderId.ToLowerInvariant(), external.ExternalIdHash)]
+                    .FirstOrDefault(identity => MatchesSourceIdentity(external, identity)));
+        var identitiesByCanonical = resolution.ProviderIdentities
+            .Where(item => item.ResourceKind == ProviderResourceKind.Track)
+            .GroupBy(item => item.CanonicalRecordingId)
+            .ToDictionary(group => group.Key, group => group.ToArray());
+        var manualOverrides = resolution.ActiveOverrides.ToDictionary(item => item.ExternalSnapshotId);
+        var latestMatches = resolution.LatestDecisions.ToDictionary(item => item.ExternalSnapshotId);
+        var libraryTracks = await db.LibraryTracks.AsNoTracking()
+            .Where(item => item.TenantId == actor.TenantId &&
+                           item.OwnerUserId == link.OwnerUserId &&
+                           item.LibraryScopeId == link.LibraryScopeId &&
+                           item.BackendInstanceId == link.TargetBackendInstanceId &&
+                           targetProtocols.Contains(item.Protocol))
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var playableIds = libraryTracks.Keys.ToHashSet();
+        var providerPriority = new[] { link.SourceProviderId }
+            .Concat(resolution.ProviderIdentities.Select(item => item.ProviderId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var source = new ImmutablePlaylistSourceSnapshot(
+            snapshot.Id,
+            link.Id,
+            snapshot.ProviderRevision,
+            snapshot.Name,
+            entries.Select(entry =>
+            {
+                var external = snapshots.GetValueOrDefault(entry.ExternalMetadataSnapshotId);
+                var identity = external == null
+                    ? null
+                    : linkedSourceIdentityByExternalId.GetValueOrDefault(external.Id);
+                return new ImmutablePlaylistSourceEntry(
+                    entry.Id,
+                    entry.SourcePosition,
+                    entry.ExternalMetadataSnapshotId,
+                    external?.ExternalIdHash ?? entry.SourceEntryIdHash,
+                    external == null ? null : new PlaylistSourceIdentity(
+                        external.ProviderId,
+                        external.ProviderAccountId,
+                        external.ExternalIdHash,
+                        external.ProviderRevision,
+                        external.SnapshotVersion,
+                        identity?.ExternalId),
+                    external == null ? null : ReadSourceMetadata(external.PayloadJson));
+            }),
+            snapshot.Description,
+            snapshot.ArtworkReferenceKey);
+        var sourceEntriesById = source.Entries.ToDictionary(item => item.SourceEntryId);
+        var decisions = new List<PersistedPlaylistMatchDecision>(entries.Count);
         foreach (var entry in entries)
         {
+            snapshots.TryGetValue(entry.ExternalMetadataSnapshotId, out var external);
             manualOverrides.TryGetValue(entry.ExternalMetadataSnapshotId, out var manual);
             latestMatches.TryGetValue(entry.ExternalMetadataSnapshotId, out var match);
-            var classification = TrackClassifier.Classify(manual, match);
-            result.Add(new PersistedPlaylistPreviewEntry(
-                entry.SourcePosition,
-                entry.ExternalMetadataSnapshotId,
-                classification.State,
+            if (external == null)
+            {
+                decisions.Add(new(entry.Id, entry.ExternalMetadataSnapshotId,
+                    TrackMatchReviewState.Unresolved, null, null, null, 0, 1, 0, [], []));
+                continue;
+            }
+
+            var sourceIdentity = sourceIdentityByExternalId.GetValueOrDefault(external.Id);
+            var canonicalId = match?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId;
+            var routeIdentities = canonicalId.HasValue &&
+                                  identitiesByCanonical.TryGetValue(canonicalId.Value, out var canonicalIdentities)
+                ? canonicalIdentities
+                : [];
+            var classification = TrackClassifier.Classify(
+                manual,
+                match,
+                sourceIdentity,
+                routeIdentities,
+                providerPriority,
+                playableIds);
+            libraryTracks.TryGetValue(classification.LibraryTrackId ?? Guid.Empty, out var library);
+            var route = classification.RouteKind switch
+            {
+                TrackRouteKind.Local => new PlaylistResolvedRoute(
+                    TrackRouteKind.Local,
+                    classification.LibraryTrackId ?? match?.LibraryTrackId,
+                    library?.BackendItemId,
+                    library?.BackendInstanceId,
+                    library?.Protocol,
+                    library?.LibraryScopeId,
+                    CanonicalRecordingId: canonicalId),
+                TrackRouteKind.External when classification.PrimaryProviderRoute is { } selected => new PlaylistResolvedRoute(
+                    TrackRouteKind.External,
+                    ProviderId: selected.ProviderId,
+                    ExternalId: selected.ExternalId,
+                    CanonicalRecordingId: canonicalId),
+                _ when match?.LibraryTrackId is { } matchedId => new PlaylistResolvedRoute(
+                    TrackRouteKind.Local,
+                    LibraryTrackId: matchedId,
+                    CanonicalRecordingId: canonicalId),
+                _ => new PlaylistResolvedRoute(TrackRouteKind.Unresolved, CanonicalRecordingId: canonicalId)
+            };
+            decisions.Add(new(
+                entry.Id,
+                external.Id,
+                ToPlannerState(classification.ReviewState),
                 classification.LibraryTrackId,
-                manual?.Decision));
+                library?.BackendItemId,
+                library?.BackendInstanceId,
+                match?.Confidence ?? 0,
+                match?.Threshold ?? 1,
+                match?.DecisionVersion ?? 0,
+                ReadStringArray(match?.ReasonsJson),
+                ReadStringArray(match?.WarningsJson),
+                Route: route));
         }
-        return new PlaylistPreview(link.Id, snapshot.Id, snapshot.Name, snapshot.Description, snapshot.ArtworkReferenceKey, result);
+
+        var plan = _planner.Plan(
+            PlaylistPlanMode.Virtual,
+            source,
+            decisions,
+            new PlaylistPlanningTarget(link.TargetProtocol, link.TargetBackendInstanceId, link.TargetPlaylistId),
+            new PlaylistPlanningRules(link.RuleVersion, 1, link.PreserveManualEntries, link.MirrorStaleEntries,
+                syncName: link.SyncName, syncDescription: link.SyncDescription, syncArtwork: link.SyncArtwork));
+        var decisionsByEntry = decisions.ToDictionary(item => item.SourceEntryId);
+        var result = plan.Entries.Select(item =>
+        {
+            decisionsByEntry.TryGetValue(item.SourceEntryId, out var decision);
+            var sourceEntry = sourceEntriesById[item.SourceEntryId];
+            manualOverrides.TryGetValue(sourceEntry.ExternalSnapshotId, out var manual);
+            return new PersistedPlaylistPreviewEntry(
+                item.SourcePosition,
+                sourceEntry.ExternalSnapshotId,
+                ToTrackMatchState(decision?.State ?? TrackMatchReviewState.Unresolved),
+                item.LibraryTrackId,
+                manual?.Decision,
+                item.SourceEntryId,
+                item.SourceTrackReference,
+                item.SourceIdentity,
+                item.SourceMetadata,
+                item.ResolvedRoute,
+                item.TargetEligible,
+                item.OutcomeCode,
+                item.TargetPosition,
+                item.Status,
+                item.DuplicateOfSourceEntryId);
+        }).ToArray();
+        return new PlaylistPreview(link.Id, snapshot.Id, snapshot.Name, snapshot.Description, snapshot.ArtworkReferenceKey, result)
+        {
+            SourceRevision = snapshot.ProviderRevision,
+            LibraryScopeId = link.LibraryScopeId,
+            TargetProtocol = link.TargetProtocol,
+            TargetBackendInstanceId = link.TargetBackendInstanceId
+        };
+    }
+
+    private static string[] TargetProtocols(string protocol) => protocol.Trim().ToLowerInvariant() switch
+    {
+        "jellyfin" => ["jellyfin"],
+        "subsonic" or "opensubsonic" or "navidrome" => ["subsonic", "opensubsonic", "navidrome"],
+        _ => [protocol.Trim().ToLowerInvariant()]
+    };
+
+    private static bool MatchesSourceIdentity(
+        ExternalMetadataSnapshotRecord external,
+        ProviderTrackIdentityRecord identity) =>
+        identity.TenantId == external.TenantId &&
+        identity.ResourceKind == ProviderResourceKind.Track &&
+        identity.ProviderId.Equals(external.ProviderId, StringComparison.OrdinalIgnoreCase) &&
+        identity.ExternalIdHash.Equals(external.ExternalIdHash, StringComparison.Ordinal) &&
+        (identity.ProviderAccountId == null || identity.ProviderAccountId == external.ProviderAccountId);
+
+    private static TrackMatchReviewState ToPlannerState(TrackMatchState state) => state switch
+    {
+        TrackMatchState.Suggested => TrackMatchReviewState.Suggested,
+        TrackMatchState.Accepted => TrackMatchReviewState.Accepted,
+        TrackMatchState.Rejected => TrackMatchReviewState.Rejected,
+        TrackMatchState.Pinned => TrackMatchReviewState.Pinned,
+        TrackMatchState.Ambiguous => TrackMatchReviewState.Ambiguous,
+        _ => TrackMatchReviewState.Unresolved
+    };
+
+    private static TrackMatchState ToTrackMatchState(TrackMatchReviewState state) => state switch
+    {
+        TrackMatchReviewState.Suggested => TrackMatchState.Suggested,
+        TrackMatchReviewState.Accepted => TrackMatchState.Accepted,
+        TrackMatchReviewState.Rejected => TrackMatchState.Rejected,
+        TrackMatchReviewState.Pinned => TrackMatchState.Pinned,
+        TrackMatchReviewState.Ambiguous => TrackMatchState.Ambiguous,
+        _ => TrackMatchState.Unresolved
+    };
+
+    private static string[] ReadStringArray(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            return JsonSerializer.Deserialize<string[]>(json) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private static PlaylistSourceMetadata ReadSourceMetadata(string payload)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<PlaylistSourceMetadata>(payload, PreviewJson) ?? new();
+        }
+        catch (JsonException)
+        {
+            return new();
+        }
     }
 
     public async Task<PlaylistSyncRunRecord> RecordRunAsync(ProtocolExecutionContext context, Guid linkId, PlaylistRunInput input, IReadOnlyList<PlaylistRunEntryInput> results, CancellationToken cancellationToken = default)
