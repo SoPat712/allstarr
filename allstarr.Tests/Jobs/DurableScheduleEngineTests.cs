@@ -26,7 +26,6 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
         _database = await PostgresTestDatabase.CreateAsync();
         _factory = new TestFactory(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
-        await db.Database.MigrateAsync();
         var now = new DateTimeOffset(2026, 7, 10, 12, 0, 0, TimeSpan.Zero);
         db.Tenants.Add(new TenantRecord { Id = _tenant, Slug = "scheduler", Name = "Scheduler", CreatedAt = now });
         db.Users.Add(new PlatformUserRecord { Id = _user, TenantId = _tenant, DisplayName = "Owner", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now });

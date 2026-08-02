@@ -42,7 +42,6 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         };
         _sourceFactory = new TestDbContextFactory(sourceDatabase.Options);
         await using var context = await _sourceFactory.CreateDbContextAsync();
-        await context.Database.MigrateAsync();
         _currentSchema = context.Database.GetMigrations().Last();
         var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();

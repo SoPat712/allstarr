@@ -25,7 +25,6 @@ public sealed class DurableProviderHealthStoreTests : IAsyncLifetime
         };
         _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
-        await context.Database.MigrateAsync();
         _state = new DurableStorageState(storage);
         _state.Set(DurableStorageReadiness.Ready, "fixture");
         _clock = new FakeClock(new DateTimeOffset(2026, 7, 10, 12, 0, 0, TimeSpan.Zero));

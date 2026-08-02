@@ -20,8 +20,6 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
             options.UseNpgsql(database.ConnectionString));
         provider = services.BuildServiceProvider();
 
-        await using var scope = provider.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AllstarrDbContext>().Database.MigrateAsync();
     }
 
     public async Task DisposeAsync()

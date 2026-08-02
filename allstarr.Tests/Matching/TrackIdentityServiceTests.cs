@@ -32,7 +32,6 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
         _factory = new TestDbContextFactory(_database.Options);
         await using (var context = await _factory.CreateDbContextAsync())
         {
-            await context.Database.MigrateAsync();
             _tenantA = Guid.CreateVersion7();
             _tenantB = Guid.CreateVersion7();
             _userA = Guid.CreateVersion7();

@@ -22,7 +22,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         database = await PostgresTestDatabase.CreateAsync();
-        factory = new(database.Options); await using var db = await factory.CreateDbContextAsync(); await db.Database.MigrateAsync();
+        factory = new(database.Options); await using var db = await factory.CreateDbContextAsync();
         var now = DateTimeOffset.UtcNow; db.Tenants.Add(new() { Id = tenant, Slug = "playback", Name = "Playback", CreatedAt = now });
         db.Users.Add(new() { Id = user, TenantId = tenant, DisplayName = "User", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now }); await db.SaveChangesAsync();
         var identity = Guid.CreateVersion7(); db.BackendIdentities.Add(new() { Id = identity, TenantId = tenant, UserId = user, BackendType = "jellyfin", BackendInstanceId = "backend", PrincipalId = "principal", CreatedAt = now, LastSeenAt = now });

@@ -63,7 +63,6 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             new TrackMatchDecisionEngine(), _trackMatches, clock,
             new CollectingLogger<PlaylistOrchestrationService>(_logs));
         await using var db = await _factory.CreateDbContextAsync();
-        await db.Database.MigrateAsync();
         _identity = Guid.CreateVersion7(); _canonical = Guid.CreateVersion7();
         _trackOne = Guid.CreateVersion7(); _trackTwo = Guid.CreateVersion7();
         db.Tenants.Add(new TenantRecord { Id = _tenant, Slug = "orchestration", Name = "Orchestration", CreatedAt = _now });

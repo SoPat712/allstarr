@@ -28,7 +28,6 @@ public sealed class OperationalObservabilityTests : IAsyncLifetime
         };
         _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
-        await context.Database.MigrateAsync();
         context.Jobs.Add(new DurableJobRecord
         {
             Id = Guid.CreateVersion7(),

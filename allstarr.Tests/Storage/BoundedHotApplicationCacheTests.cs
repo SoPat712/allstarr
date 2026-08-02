@@ -26,8 +26,6 @@ public sealed class BoundedHotApplicationCacheTests : IAsyncLifetime
             NullLogger<DatabaseApplicationCache>.Instance);
         _cache = new BoundedHotApplicationCache(_database);
 
-        await using var context = await _factory.CreateDbContextAsync();
-        await context.Database.MigrateAsync();
     }
 
     [Fact]

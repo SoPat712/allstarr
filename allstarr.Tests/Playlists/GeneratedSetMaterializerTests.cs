@@ -20,7 +20,7 @@ public sealed class GeneratedSetMaterializerTests : IAsyncLifetime
     {
         _database = await PostgresTestDatabase.CreateAsync();
         _factory = new(_database.Options);
-        await using var db = await _factory.CreateDbContextAsync(); await db.Database.MigrateAsync();
+        await using var db = await _factory.CreateDbContextAsync();
         var now = DateTimeOffset.UtcNow; var job = Guid.CreateVersion7(); var run = Guid.CreateVersion7();
         db.Tenants.Add(new() { Id = _tenant, Slug = "generated", Name = "Generated", CreatedAt = now });
         db.Users.Add(new() { Id = _user, TenantId = _tenant, DisplayName = "Owner", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now });

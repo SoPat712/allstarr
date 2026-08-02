@@ -241,7 +241,6 @@ public sealed class MetadataEnrichmentTests
             var now = DateTimeOffset.UtcNow;
             await using (var db = await factory.CreateDbContextAsync())
             {
-                await db.Database.MigrateAsync();
                 db.Tenants.Add(new TenantRecord { Id = tenantId, Slug = "enrichment-apps", Name = "Enrichment apps", CreatedAt = now });
                 db.Users.Add(new PlatformUserRecord
                 {
@@ -395,7 +394,6 @@ public sealed class MetadataEnrichmentTests
             var tenant = Guid.CreateVersion7(); var foreignTenant = Guid.CreateVersion7(); var user = Guid.CreateVersion7();
             await using (var db = await factory.CreateDbContextAsync())
             {
-                await db.Database.MigrateAsync();
                 db.Tenants.AddRange(
                     new TenantRecord { Id = tenant, Slug = "owner", Name = "Owner", CreatedAt = DateTimeOffset.UtcNow },
                     new TenantRecord { Id = foreignTenant, Slug = "foreign", Name = "Foreign", CreatedAt = DateTimeOffset.UtcNow });

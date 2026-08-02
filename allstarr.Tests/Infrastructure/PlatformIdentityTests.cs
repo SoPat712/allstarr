@@ -20,8 +20,6 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
             ConnectionString = _database.ConnectionString
         };
         _factory = new TestDbContextFactory(_database.Options);
-        await using var context = await _factory.CreateDbContextAsync();
-        await context.Database.MigrateAsync();
         _state = new DurableStorageState(storage);
         _state.Set(DurableStorageReadiness.Ready, "fixture");
     }

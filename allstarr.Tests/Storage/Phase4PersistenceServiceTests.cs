@@ -28,7 +28,7 @@ public sealed class Phase4PersistenceServiceTests : IAsyncLifetime
         _database = await PostgresTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
         _tenant = Guid.CreateVersion7(); _userA = Guid.CreateVersion7(); _userB = Guid.CreateVersion7(); _accountA = Guid.CreateVersion7(); _localTrack = Guid.CreateVersion7();
-        await using var db = await _factory.CreateDbContextAsync(); await db.Database.MigrateAsync();
+        await using var db = await _factory.CreateDbContextAsync();
         db.Tenants.Add(new TenantRecord { Id = _tenant, Slug = "phase4", Name = "Phase 4", CreatedAt = _now });
         db.Users.AddRange(User(_userA, "A"), User(_userB, "B"));
         var identityA = Identity(_userA, "principal-a"); db.BackendIdentities.AddRange(identityA, Identity(_userB, "principal-b"));

@@ -60,7 +60,6 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         });
         _storageState.Set(DurableStorageReadiness.Ready, "fixture");
         await using var context = await _factory.CreateDbContextAsync();
-        await context.Database.MigrateAsync();
         context.Tenants.Add(new TenantRecord
         {
             Id = _tenantId,

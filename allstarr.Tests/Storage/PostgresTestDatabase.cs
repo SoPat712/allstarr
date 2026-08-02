@@ -7,6 +7,7 @@ namespace allstarr.Tests;
 
 internal sealed class PostgresTestDatabase : IAsyncDisposable
 {
+    private const int CloneMaxPoolSize = 4;
     private static readonly SemaphoreSlim TemplateGate = new(1, 1);
     private static string? _templateName;
     private readonly string _adminConnectionString;
@@ -14,11 +15,13 @@ internal sealed class PostgresTestDatabase : IAsyncDisposable
     private PostgresTestDatabase(
         string databaseName,
         string connectionString,
-        string adminConnectionString)
+        string adminConnectionString,
+        bool isTemplateBacked)
     {
         DatabaseName = databaseName;
         ConnectionString = connectionString;
         _adminConnectionString = adminConnectionString;
+        IsTemplateBacked = isTemplateBacked;
         Options = new DbContextOptionsBuilder<AllstarrDbContext>()
             .UseNpgsql(connectionString)
             .Options;
@@ -27,6 +30,8 @@ internal sealed class PostgresTestDatabase : IAsyncDisposable
     public string DatabaseName { get; }
 
     public string ConnectionString { get; }
+
+    public bool IsTemplateBacked { get; }
 
     public DbContextOptions<AllstarrDbContext> Options { get; }
 
@@ -39,7 +44,6 @@ internal sealed class PostgresTestDatabase : IAsyncDisposable
                 "PostgreSQL integration tests require ALLSTARR_TEST_POSTGRES.");
         }
 
-        var source = new NpgsqlConnectionStringBuilder(configured);
         var databaseName = $"allstarr_test_{Guid.NewGuid():N}";
         var admin = new NpgsqlConnectionStringBuilder(configured)
         {
@@ -49,7 +53,9 @@ internal sealed class PostgresTestDatabase : IAsyncDisposable
         var isolated = new NpgsqlConnectionStringBuilder(configured)
         {
             Database = databaseName,
-            Pooling = false
+            Pooling = true,
+            MinPoolSize = 0,
+            MaxPoolSize = CloneMaxPoolSize
         };
         var templateName = useTemplate
             ? await EnsureTemplateAsync(configured, admin.ConnectionString)
@@ -68,11 +74,16 @@ internal sealed class PostgresTestDatabase : IAsyncDisposable
         return new PostgresTestDatabase(
             databaseName,
             isolated.ConnectionString,
-            admin.ConnectionString);
+            admin.ConnectionString,
+            templateName != null);
     }
 
     public async ValueTask DisposeAsync()
     {
+        using (var pooledConnection = new NpgsqlConnection(ConnectionString))
+        {
+            NpgsqlConnection.ClearPool(pooledConnection);
+        }
         await using var connection = new NpgsqlConnection(_adminConnectionString);
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
@@ -91,8 +102,12 @@ internal sealed class PostgresTestDatabase : IAsyncDisposable
         {
             if (_templateName != null) return _templateName;
 
+            var management = new NpgsqlConnectionStringBuilder(configured)
+            {
+                Pooling = false
+            };
             var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-                .UseNpgsql(configured)
+                .UseNpgsql(management.ConnectionString)
                 .Options;
             await using var model = new AllstarrDbContext(options);
             var latestMigration = model.Database.GetMigrations().Last();

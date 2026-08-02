@@ -574,7 +574,6 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
         };
         var factory = new TestDbContextFactory(database.Options);
         await using var context = await factory.CreateDbContextAsync();
-        await context.Database.MigrateAsync();
 
         var tenantId = Guid.NewGuid();
         var userId = Guid.NewGuid();
@@ -643,7 +642,6 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
         };
         var factory = new TestDbContextFactory(database.Options);
         await using var context = await factory.CreateDbContextAsync();
-        await context.Database.MigrateAsync();
 
         var state = new DurableStorageState(options);
         state.Set(DurableStorageReadiness.Ready, "test");

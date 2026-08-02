@@ -25,7 +25,6 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         _database = await PostgresTestDatabase.CreateAsync();
         _factory = new(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
-        await db.Database.MigrateAsync();
         _tenantId = Guid.CreateVersion7(); _userId = Guid.CreateVersion7();
         var now = DateTimeOffset.Parse("2026-07-13T12:00:00Z"); _clock = new(now);
         db.Tenants.Add(new() { Id = _tenantId, Slug = "settings", Name = "Settings", CreatedAt = now });

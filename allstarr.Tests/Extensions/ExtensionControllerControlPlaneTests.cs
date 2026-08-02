@@ -32,7 +32,6 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
         _database = await PostgresTestDatabase.CreateAsync();
         var factory = new DbFactory(_database.Options);
         await using var db = await factory.CreateDbContextAsync();
-        await db.Database.MigrateAsync();
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["Extensions:Directory"] = Path.Combine(_root, "extensions")

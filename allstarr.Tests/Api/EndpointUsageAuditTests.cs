@@ -12,7 +12,6 @@ public sealed class EndpointUsageAuditTests
         await using var database = await PostgresTestDatabase.CreateAsync();
         await using (var context = new AllstarrDbContext(database.Options))
         {
-            await context.Database.MigrateAsync();
             context.AuditEvents.Add(new AuditEventRecord
             {
                 Id = Guid.CreateVersion7(),

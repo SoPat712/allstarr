@@ -26,7 +26,6 @@ public sealed class JobsControllerTests : IAsyncLifetime
         _database = await PostgresTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
-        await context.Database.MigrateAsync();
         context.Tenants.Add(new TenantRecord
         {
             Id = _tenantId,

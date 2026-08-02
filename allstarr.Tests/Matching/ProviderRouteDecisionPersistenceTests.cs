@@ -25,7 +25,6 @@ public sealed class ProviderRouteDecisionPersistenceTests : IAsyncLifetime
         _factory = new TestFactory(_database.Options);
         _clock = new FakeClock(new DateTimeOffset(2026, 7, 14, 20, 0, 0, TimeSpan.Zero));
         await using var db = await _factory.CreateDbContextAsync();
-        await db.Database.MigrateAsync();
         db.Tenants.Add(new TenantRecord
         {
             Id = _tenantId,

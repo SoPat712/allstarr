@@ -30,7 +30,6 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         _database = await PostgresTestDatabase.CreateAsync();
         _factory = new TestFactory(_database.Options);
         await using var database = await _factory.CreateDbContextAsync();
-        await database.Database.MigrateAsync();
         var now = new DateTimeOffset(2026, 7, 12, 12, 0, 0, TimeSpan.Zero);
         database.Tenants.Add(new TenantRecord { Id = _tenantId, Slug = "favorite-tests", Name = "Favorite tests", CreatedAt = now });
         database.Users.AddRange(

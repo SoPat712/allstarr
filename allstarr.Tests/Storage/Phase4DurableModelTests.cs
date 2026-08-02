@@ -11,7 +11,6 @@ public sealed class Phase4DurableModelTests
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
         await using var context = new AllstarrDbContext(database.Options);
-        await context.Database.MigrateAsync();
 
         var now = DateTimeOffset.UtcNow;
         var tenantId = Guid.NewGuid();
@@ -272,7 +271,6 @@ public sealed class Phase4DurableModelTests
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
         await using var context = new AllstarrDbContext(database.Options);
-        await context.Database.MigrateAsync();
 
         var tenant = Guid.NewGuid();
         var user = Guid.NewGuid();

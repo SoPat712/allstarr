@@ -18,7 +18,6 @@ public sealed class ManagedFileReferenceStoreTests : IAsyncLifetime
         database = await PostgresTestDatabase.CreateAsync();
         options = database.Options;
         await using var db = new AllstarrDbContext(options);
-        await db.Database.MigrateAsync();
         tenantId = Guid.CreateVersion7();
         userId = Guid.CreateVersion7();
         db.Tenants.Add(new TenantRecord

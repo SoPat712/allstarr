@@ -31,7 +31,6 @@ public sealed class PostgresStorageIntegrationTests
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
         await using var db = new AllstarrDbContext(database.Options);
-        await db.Database.MigrateAsync();
 
         var now = DateTimeOffset.UtcNow;
         var tenantA = Guid.CreateVersion7();
@@ -247,7 +246,6 @@ public sealed class PostgresStorageIntegrationTests
             string schema;
             await using (var source = await sourceFactory.CreateDbContextAsync())
             {
-                await source.Database.MigrateAsync();
                 schema = source.Database.GetMigrations().Last();
                 source.Tenants.Add(new TenantRecord
                 {
@@ -295,7 +293,6 @@ public sealed class PostgresStorageIntegrationTests
             var userId = Guid.CreateVersion7();
             await using (var db = await factory.CreateDbContextAsync())
             {
-                await db.Database.MigrateAsync();
                 db.Tenants.Add(new TenantRecord
                 {
                     Id = tenantId,
@@ -829,7 +826,6 @@ public sealed class PostgresStorageIntegrationTests
             var factory = new TestDbContextFactory(sourceDatabase.Options);
             await using (var reset = await factory.CreateDbContextAsync())
             {
-                await reset.Database.MigrateAsync();
                 reset.Jobs.Add(new DurableJobRecord
                 {
                     Id = Guid.CreateVersion7(),

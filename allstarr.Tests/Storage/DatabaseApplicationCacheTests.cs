@@ -27,8 +27,6 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
             _clock,
             new WarningLogger(_warnings));
 
-        await using var database = await _factory.CreateDbContextAsync();
-        await database.Database.MigrateAsync();
     }
 
     [Fact]

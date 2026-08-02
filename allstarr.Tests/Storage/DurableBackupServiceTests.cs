@@ -20,7 +20,6 @@ public sealed class DurableBackupServiceTests : IAsyncLifetime
         _database = await PostgresTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
-        await context.Database.MigrateAsync();
         context.Jobs.Add(Job("backup-fixture"));
         await context.SaveChangesAsync();
         _options = new DurableStorageOptions

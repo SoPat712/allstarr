@@ -35,7 +35,6 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
         };
         _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
-        await context.Database.MigrateAsync();
         context.ProviderAccounts.Add(new ProviderAccountRecord
         {
             Id = AccountId("applemusic", "legacy-global"),

@@ -18,7 +18,7 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         _database = await PostgresTestDatabase.CreateAsync();
         _factory = new(_database.Options);
         _clock = new(new(2026, 7, 13, 0, 0, 0, TimeSpan.Zero)); _scope = new(_tenant, _user, "jellyfin", "main", "music");
-        await using var db = await _factory.CreateDbContextAsync(); await db.Database.MigrateAsync();
+        await using var db = await _factory.CreateDbContextAsync();
         db.Tenants.Add(new() { Id = _tenant, Slug = "intel", Name = "Intelligence", CreatedAt = _clock.UtcNow });
         db.Users.Add(new() { Id = _user, TenantId = _tenant, DisplayName = "Listener", Status = PlatformUserStatus.Active, CreatedAt = _clock.UtcNow, UpdatedAt = _clock.UtcNow });
         var identityId = Guid.CreateVersion7();

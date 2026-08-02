@@ -29,7 +29,6 @@ public sealed class ManagedFilesControllerTests : IAsyncLifetime
         database = await PostgresTestDatabase.CreateAsync();
         factory = new(database.Options);
         await using var db = await factory.CreateDbContextAsync();
-        await db.Database.MigrateAsync();
         db.Tenants.Add(new TenantRecord { Id = tenant, Slug = "managed", Name = "Managed", CreatedAt = DateTimeOffset.UtcNow });
         db.Users.AddRange(User(owner), User(otherUser));
         owned = File(owner, "owned.flac", 'a');

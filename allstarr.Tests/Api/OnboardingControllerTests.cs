@@ -36,7 +36,6 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
         _database = await PostgresTestDatabase.CreateAsync();
         _factory = new TestFactory(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
-        await db.Database.MigrateAsync();
         var now = DateTimeOffset.Parse("2026-07-14T12:00:00Z");
         db.Tenants.AddRange(
             new TenantRecord { Id = _firstTenantId, Slug = "first", Name = "First", CreatedAt = now },

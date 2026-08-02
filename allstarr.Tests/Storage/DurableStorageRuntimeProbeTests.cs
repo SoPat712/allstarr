@@ -13,8 +13,6 @@ public sealed class DurableStorageRuntimeProbeTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         _database = await PostgresTestDatabase.CreateAsync();
-        await using var context = new AllstarrDbContext(_database.Options);
-        await context.Database.MigrateAsync();
     }
 
     [Fact]

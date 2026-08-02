@@ -31,7 +31,6 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         var now = new DateTimeOffset(2026, 7, 12, 2, 0, 0, TimeSpan.Zero);
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            await db.Database.MigrateAsync();
             _tenantId = Guid.CreateVersion7();
             _userA = Guid.CreateVersion7();
             _userB = Guid.CreateVersion7();

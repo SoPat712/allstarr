@@ -28,7 +28,6 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         _database = await PostgresTestDatabase.CreateAsync();
         _factory = new(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
-        await db.Database.MigrateAsync();
         var tenant = Guid.CreateVersion7();
         db.Tenants.Add(new TenantRecord { Id = tenant, Slug = "extensions", Name = "Extensions", CreatedAt = DateTimeOffset.UtcNow });
         db.Users.Add(new PlatformUserRecord { Id = _reviewer, TenantId = tenant, DisplayName = "Reviewer", Status = PlatformUserStatus.Active, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow });

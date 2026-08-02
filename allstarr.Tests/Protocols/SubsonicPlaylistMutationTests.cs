@@ -31,7 +31,6 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
         var now = DateTimeOffset.UtcNow;
 
         await using var db = await _factory.CreateDbContextAsync();
-        await db.Database.MigrateAsync();
         db.Tenants.Add(new TenantRecord
         {
             Id = _tenantId,

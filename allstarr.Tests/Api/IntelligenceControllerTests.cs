@@ -24,7 +24,7 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
         _database = await PostgresTestDatabase.CreateAsync();
         _factory = new(new DbContextOptionsBuilder<AllstarrDbContext>(_database.Options)
             .AddInterceptors(_commands).Options);
-        await using var db = await _factory.CreateDbContextAsync(); await db.Database.MigrateAsync();
+        await using var db = await _factory.CreateDbContextAsync();
         db.Tenants.Add(new() { Id = _tenant, Slug = "intelligence", Name = "Intelligence", CreatedAt = DateTimeOffset.UtcNow });
         db.Users.Add(new()
         {

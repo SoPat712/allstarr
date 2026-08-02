@@ -34,7 +34,6 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         _database = await PostgresTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
-        await db.Database.MigrateAsync();
         db.Tenants.Add(new TenantRecord
         {
             Id = _tenantId,

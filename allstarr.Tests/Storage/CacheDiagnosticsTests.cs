@@ -43,8 +43,6 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
             _media,
             activityMetrics: _activity);
 
-        await using var context = await factory.CreateDbContextAsync();
-        await context.Database.MigrateAsync();
     }
 
     [Fact]

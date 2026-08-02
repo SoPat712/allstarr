@@ -14,11 +14,6 @@ public sealed class ConcurrentRematchDecisionTests
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
         var factory = new DbFactory(database.Options);
-        await using (var migrated = await factory.CreateDbContextAsync())
-        {
-            await migrated.Database.MigrateAsync();
-        }
-
         var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
         var backendIdentityId = Guid.CreateVersion7();

@@ -24,7 +24,7 @@ public sealed class FavoriteActionPolicyTests : IAsyncLifetime
     {
         _database = await PostgresTestDatabase.CreateAsync();
         _factory = new(_database.Options);
-        await using var db = await _factory.CreateDbContextAsync(); await db.Database.MigrateAsync();
+        await using var db = await _factory.CreateDbContextAsync();
         db.Tenants.Add(new() { Id = _tenant, Slug = "policy", Name = "Policy", CreatedAt = Clock.Now });
         db.Users.AddRange(User(_user, "Owner"), User(_other, "Other"));
         db.BackendIdentities.AddRange(Identity(_user, "principal"), Identity(_other, "other-principal"));

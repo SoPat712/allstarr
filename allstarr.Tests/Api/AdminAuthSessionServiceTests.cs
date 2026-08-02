@@ -77,10 +77,6 @@ public sealed class AdminAuthSessionServiceTests
     public async Task PostgreSqlSession_SurvivesServiceRestart()
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
-        await using (var context = new AllstarrDbContext(database.Options))
-        {
-            await context.Database.MigrateAsync();
-        }
 
         var factory = new Factory(database.Options);
         var dataProtection = new EphemeralDataProtectionProvider();
