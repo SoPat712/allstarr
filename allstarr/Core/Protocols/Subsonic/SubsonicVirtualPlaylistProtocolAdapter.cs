@@ -1,8 +1,12 @@
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Xml;
 using System.Xml.Linq;
 using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
 using allstarr.Core.Storage;
+using allstarr.Services.Subsonic;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -76,6 +80,26 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         string id,
         CancellationToken cancellationToken) =>
         mutationResolver.ResolveAsync(context, id, cancellationToken);
+
+    public async Task<SubsonicProxyResponse> ListAsync(
+        ProtocolExecutionContext context,
+        string format,
+        SubsonicProxyResponse nativeResponse,
+        CancellationToken cancellationToken)
+    {
+        if (!nativeResponse.IsSuccessStatusCode || !TryGetFormat(nativeResponse, format, out var nativeFormat))
+            return nativeResponse;
+        if (!IsSuccessfulNativeResponse(nativeResponse.Body, nativeFormat))
+            return nativeResponse;
+
+        var visible = await playlists.ListAsync(context, cancellationToken);
+        if (visible.Count == 0) return nativeResponse;
+
+        var merged = nativeFormat == NativeFormat.Json
+            ? MergeJson(nativeResponse.Body, visible)
+            : MergeXml(nativeResponse.Body, visible);
+        return merged == null ? nativeResponse : nativeResponse with { Body = merged };
+    }
 
     public async Task<IActionResult?> ReadAsync(
         ProtocolExecutionContext context, string id, string format, CancellationToken cancellationToken)
@@ -197,5 +221,202 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         result["allstarrSourceRevision"] = identity.SourceRevision;
         if (identity.ExternalId != null) result["allstarrSourceId"] = identity.ExternalId;
         if (track.SourceMetadata?.Isrc != null) result["isrc"] = track.SourceMetadata.Isrc;
+    }
+
+    private static bool TryGetFormat(
+        SubsonicProxyResponse response,
+        string format,
+        out NativeFormat nativeFormat)
+    {
+        nativeFormat = default;
+        if (format.Equals("json", StringComparison.OrdinalIgnoreCase) ||
+            response.ContentType?.Contains("json", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            nativeFormat = NativeFormat.Json;
+            return true;
+        }
+
+        if (format.Equals("xml", StringComparison.OrdinalIgnoreCase) ||
+            response.ContentType?.Contains("xml", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            nativeFormat = NativeFormat.Xml;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static byte[]? MergeJson(
+        byte[] body,
+        IReadOnlyList<VirtualPlaylistReadModel> visible)
+    {
+        try
+        {
+            var document = JsonNode.Parse(Encoding.UTF8.GetString(body))?.AsObject();
+            var response = document?["subsonic-response"]?.AsObject();
+            if (response?["status"]?.GetValue<string>() != "ok") return null;
+            var playlists = response["playlists"] as JsonObject;
+            if (playlists == null)
+            {
+                playlists = new JsonObject();
+                response["playlists"] = playlists;
+            }
+            var native = playlists["playlist"] switch
+            {
+                JsonArray array => array,
+                JsonObject single => new JsonArray(single.DeepClone()),
+                null => [],
+                _ => null
+            };
+            if (native == null) return null;
+            playlists["playlist"] = native;
+
+            var nativeIds = native
+                .OfType<JsonObject>()
+                .Select(item => item["id"]?.GetValue<string>())
+                .Where(id => id != null)
+                .ToHashSet(StringComparer.Ordinal);
+            var added = 0;
+            foreach (var playlist in visible)
+            {
+                if (!nativeIds.Add(playlist.ProtocolId)) continue;
+                native.Add(ToJsonPlaylist(playlist));
+                added++;
+            }
+
+            return added == 0 ? null : Encoding.UTF8.GetBytes(document!.ToJsonString());
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private static bool IsSuccessfulNativeResponse(byte[] body, NativeFormat format)
+    {
+        try
+        {
+            return format == NativeFormat.Json
+                ? JsonNode.Parse(Encoding.UTF8.GetString(body))?["subsonic-response"]?["status"]?.GetValue<string>() == "ok"
+                : XDocument.Parse(Encoding.UTF8.GetString(body)).Root?.Attribute("status")?.Value == "ok";
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+        catch (XmlException)
+        {
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private static byte[]? MergeXml(
+        byte[] body,
+        IReadOnlyList<VirtualPlaylistReadModel> visible)
+    {
+        try
+        {
+            var document = XDocument.Parse(Encoding.UTF8.GetString(body), LoadOptions.PreserveWhitespace);
+            var root = document.Root;
+            if (root?.Attribute("status")?.Value != "ok") return null;
+            var ns = root.Name.Namespace;
+            var playlists = root.Element(ns + "playlists");
+            if (playlists == null)
+            {
+                playlists = new XElement(ns + "playlists");
+                root.Add(playlists);
+            }
+
+            var nativeIds = playlists.Elements(ns + "playlist")
+                .Select(item => item.Attribute("id")?.Value)
+                .Where(id => id != null)
+                .ToHashSet(StringComparer.Ordinal);
+            var added = 0;
+            foreach (var playlist in visible)
+            {
+                if (!nativeIds.Add(playlist.ProtocolId)) continue;
+                playlists.Add(ToXmlPlaylist(playlist, ns));
+                added++;
+            }
+
+            return added == 0
+                ? null
+                : Encoding.UTF8.GetBytes(document.ToString(SaveOptions.DisableFormatting));
+        }
+        catch (XmlException)
+        {
+            return null;
+        }
+    }
+
+    private static JsonObject ToJsonPlaylist(VirtualPlaylistReadModel playlist)
+    {
+        var result = new JsonObject
+        {
+            ["id"] = playlist.ProtocolId,
+            ["name"] = playlist.Name,
+            ["owner"] = "allstarr",
+            ["public"] = false,
+            ["songCount"] = playlist.Tracks.Count
+        };
+        AddOptionalPlaylistFields(result, playlist);
+        return result;
+    }
+
+    private static XElement ToXmlPlaylist(VirtualPlaylistReadModel playlist, XNamespace ns)
+    {
+        var result = new XElement(ns + "playlist",
+            new XAttribute("id", playlist.ProtocolId),
+            new XAttribute("name", playlist.Name),
+            new XAttribute("owner", "allstarr"),
+            new XAttribute("public", "false"),
+            new XAttribute("songCount", playlist.Tracks.Count));
+        if (playlist.Description != null)
+            result.Add(new XAttribute("comment", playlist.Description));
+        if (TryGetDurationSeconds(playlist, out var duration))
+            result.Add(new XAttribute("duration", duration));
+        if (playlist.ArtworkReferenceKey != null)
+            result.Add(new XAttribute("coverArt", playlist.ArtworkReferenceKey));
+        return result;
+    }
+
+    private static void AddOptionalPlaylistFields(
+        JsonObject result,
+        VirtualPlaylistReadModel playlist)
+    {
+        if (playlist.Description != null) result["comment"] = playlist.Description;
+        if (TryGetDurationSeconds(playlist, out var duration)) result["duration"] = duration;
+        if (playlist.ArtworkReferenceKey != null) result["coverArt"] = playlist.ArtworkReferenceKey;
+    }
+
+    private static bool TryGetDurationSeconds(
+        VirtualPlaylistReadModel playlist,
+        out long duration)
+    {
+        duration = 0;
+        if (playlist.Tracks.Any(track => !track.DurationMilliseconds.HasValue)) return false;
+        try
+        {
+            duration = checked(playlist.Tracks.Sum(track => track.DurationMilliseconds!.Value) / 1000);
+            return true;
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+    }
+
+    private enum NativeFormat
+    {
+        Json,
+        Xml
     }
 }

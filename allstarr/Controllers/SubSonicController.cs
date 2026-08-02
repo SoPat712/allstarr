@@ -724,6 +724,24 @@ public class SubsonicController : ControllerBase
         return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
     }
 
+    [HttpGet, HttpPost]
+    [Route("rest/getPlaylists")]
+    [Route("rest/getPlaylists.view")]
+    public async Task<IActionResult> GetPlaylists()
+    {
+        var parameters = await ExtractAllParameters();
+        var format = parameters.GetValueOrDefault("f", "xml");
+        var endpoint = Request.Path.Value?.TrimStart('/') ?? "rest/getPlaylists";
+        var result = await _proxyService.RelayRawAsync(
+            endpoint, parameters, HttpContext.RequestAborted, Request.Headers);
+        var merged = await _virtualPlaylistProtocolAdapter.ListAsync(
+            CurrentProtocolContext,
+            format,
+            result,
+            HttpContext.RequestAborted);
+        return _relayProtocolAdapter.CreateResult(merged, $"application/{format}");
+    }
+
     /// <summary>
     /// Proxies external covers. Uses type from ID to determine which API to call.
     /// Format: ext-{provider}-{type}-{id} (e.g., ext-deezer-artist-259, ext-deezer-album-96126)

@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
 using allstarr.Core.Matching;
@@ -6,6 +7,7 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Protocols.Jellyfin;
 using allstarr.Core.Protocols.Subsonic;
 using allstarr.Core.Storage;
+using allstarr.Services.Subsonic;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Tests;
@@ -162,6 +164,57 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         var ns = document.Root!.Name.Namespace;
         Assert.Equal(new[] { "jellyfin-local-b", "jellyfin-local-a", "allstarr-unresolved-source-hash" },
             document.Descendants(ns + "entry").Select(item => item.Attribute("id")!.Value));
+    }
+
+    [Fact]
+    public async Task SubsonicList_AppendsVirtualSummariesAfterNativePlaylists()
+    {
+        var model = Model() with
+        {
+            Name = "Virtual Mix",
+            Description = "Virtual comment",
+            ArtworkReferenceKey = "virtual-cover"
+        };
+        var adapter = new SubsonicVirtualPlaylistProtocolAdapter(
+            new StubVirtualizationService(model),
+            new StubMutationResolver(null));
+        var native = new SubsonicProxyResponse(
+            Encoding.UTF8.GetBytes("""{"subsonic-response":{"status":"ok","version":"1.16.1","playlists":{"playlist":{"id":"native-playlist","name":"Native","owner":"backend","public":true,"songCount":1,"unknownField":"preserved"}}}}"""),
+            "application/json; charset=utf-8",
+            System.Net.HttpStatusCode.OK,
+            new Dictionary<string, string[]> { ["X-Native"] = ["kept"] });
+
+        var merged = await adapter.ListAsync(
+            Context(ProtocolKind.Subsonic), "json", native, CancellationToken.None);
+
+        Assert.Equal(native.StatusCode, merged.StatusCode);
+        Assert.Equal(native.Headers, merged.Headers);
+        using var json = JsonDocument.Parse(merged.Body);
+        var response = json.RootElement.GetProperty("subsonic-response");
+        var playlists = response.GetProperty("playlists").GetProperty("playlist");
+        Assert.Equal(["native-playlist", ProtocolId],
+            playlists.EnumerateArray().Select(item => item.GetProperty("id").GetString()));
+        Assert.Equal("preserved", playlists[0].GetProperty("unknownField").GetString());
+        Assert.Equal("Virtual Mix", playlists[1].GetProperty("name").GetString());
+        Assert.Equal("Virtual comment", playlists[1].GetProperty("comment").GetString());
+        Assert.Equal("allstarr", playlists[1].GetProperty("owner").GetString());
+        Assert.False(playlists[1].GetProperty("public").GetBoolean());
+        Assert.Equal(3, playlists[1].GetProperty("songCount").GetInt32());
+        Assert.Equal(9, playlists[1].GetProperty("duration").GetInt64());
+        Assert.Equal("virtual-cover", playlists[1].GetProperty("coverArt").GetString());
+
+        var passthrough = await new SubsonicVirtualPlaylistProtocolAdapter(
+            new StubVirtualizationService(null), new StubMutationResolver(null)).ListAsync(
+                Context(ProtocolKind.Subsonic), "json", native, CancellationToken.None);
+        Assert.Same(native, passthrough);
+
+        var malformed = native with
+        {
+            Body = Encoding.UTF8.GetBytes(
+                """{"subsonic-response":{"status":"ok","playlists":{"playlist":42}}}""")
+        };
+        Assert.Same(malformed, await adapter.ListAsync(
+            Context(ProtocolKind.Subsonic), "json", malformed, CancellationToken.None));
     }
 
     [Fact]

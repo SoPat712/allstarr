@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Xml.Linq;
 using allstarr.Services;
 using allstarr.Services.Common;
 using allstarr.Models.Search;
@@ -12,6 +13,7 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Protocols.Jellyfin;
 using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
+using allstarr.Core.Storage;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.WebUtilities;
@@ -2384,6 +2386,119 @@ public sealed class ProtocolRouteFixtureTests
             Assert.Equal("album-b", entries[0].Attribute("albumId")!.Value);
             Assert.Equal("cover-b", entries[0].Attribute("coverArt")!.Value);
             Assert.Equal("navidrome", entries[0].Attribute("provider")!.Value);
+        }
+        virtualization.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData(
+        "GET",
+        "/rest/getPlaylists?u=password-user&p=secret-pass&v=1.16.1&c=fixture&f=json",
+        null,
+        "json",
+        "/rest/getPlaylists")]
+    [InlineData(
+        "POST",
+        "/rest/getPlaylists.view?v=1.16.1&c=fixture",
+        "u=token-user&t=token-hash&s=token-salt&v=1.16.1&c=fixture&f=xml",
+        "xml",
+        "/rest/getPlaylists.view")]
+    public async Task SubsonicGetPlaylists_MergesNativeAndVirtualSummariesWithoutCredentialEcho(
+        string method,
+        string path,
+        string? formBody,
+        string format,
+        string expectedRelayPath)
+    {
+        const string virtualId = "allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0";
+        var model = new VirtualPlaylistReadModel(
+            virtualId,
+            Guid.Parse("0198a537-719c-7ea8-9e5a-17e1f2f963f0"),
+            Guid.CreateVersion7(),
+            "Virtual Mix",
+            "Virtual comment",
+            "virtual-cover",
+            "spotify",
+            "source-list",
+            "revision-1",
+            PlaylistLinkMode.Virtual,
+            [new(0, "song-1", "Song", "Artist", "Album", null, 4_000, null, TrackMatchState.Accepted)]);
+        var virtualization = new Mock<IPlaylistVirtualizationService>(MockBehavior.Strict);
+        virtualization.Setup(service => service.ListAsync(
+                It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([model]);
+        var observedRequests = new List<ObservedRequest>();
+        using var factory = new ProtocolFactory(
+            "Subsonic",
+            request =>
+            {
+                var observed = Observe(request);
+                observedRequests.Add(observed);
+                if (request.RequestUri!.AbsolutePath == "/rest/ping.view")
+                    return Json(StatusCodes.Status200OK,
+                        """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""");
+                if (request.RequestUri.AbsolutePath != expectedRelayPath)
+                    throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}");
+                return format == "json"
+                    ? Json(StatusCodes.Status200OK,
+                        """{"subsonic-response":{"status":"ok","version":"1.16.1","playlists":{"playlist":[{"id":"native-id","name":"Native","owner":"backend","public":true,"songCount":1,"duration":2,"coverArt":"native-cover","unknownField":"preserved"}]}}}""")
+                    : new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(
+                            """<subsonic-response status="ok" version="1.16.1"><playlists><playlist id="native-id" name="Native" owner="backend" public="true" songCount="1" duration="2" coverArt="native-cover" unknownField="preserved" /></playlists></subsonic-response>""",
+                            Encoding.UTF8,
+                            "application/xml")
+                    };
+            },
+            services =>
+            {
+                services.RemoveAll<IPlaylistVirtualizationService>();
+                services.AddSingleton(virtualization.Object);
+            });
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(new HttpMethod(method), path)
+        {
+            Content = formBody == null
+                ? null
+                : new StringContent(formBody, Encoding.UTF8, "application/x-www-form-urlencoded")
+        };
+
+        using var response = await client.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, observedRequests.Count);
+        Assert.Equal(expectedRelayPath, observedRequests[1].PathAndQuery.Split('?')[0]);
+        Assert.DoesNotContain("secret-pass", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("token-hash", body, StringComparison.Ordinal);
+        if (format == "json")
+        {
+            using var document = JsonDocument.Parse(body);
+            var playlists = document.RootElement.GetProperty("subsonic-response")
+                .GetProperty("playlists").GetProperty("playlist");
+            Assert.Equal(["native-id", virtualId],
+                playlists.EnumerateArray().Select(item => item.GetProperty("id").GetString()));
+            Assert.Equal("preserved", playlists[0].GetProperty("unknownField").GetString());
+            Assert.Equal(1, playlists[1].GetProperty("songCount").GetInt32());
+            Assert.Equal(4, playlists[1].GetProperty("duration").GetInt64());
+            Assert.Equal("Virtual comment", playlists[1].GetProperty("comment").GetString());
+            Assert.Equal("allstarr", playlists[1].GetProperty("owner").GetString());
+            Assert.False(playlists[1].GetProperty("public").GetBoolean());
+            Assert.Equal("virtual-cover", playlists[1].GetProperty("coverArt").GetString());
+        }
+        else
+        {
+            var document = XDocument.Parse(body);
+            var ns = document.Root!.Name.Namespace;
+            var playlists = document.Descendants(ns + "playlist").ToArray();
+            Assert.Equal(["native-id", virtualId], playlists.Select(item => item.Attribute("id")!.Value));
+            Assert.Equal("preserved", playlists[0].Attribute("unknownField")!.Value);
+            Assert.Equal("1", playlists[1].Attribute("songCount")!.Value);
+            Assert.Equal("4", playlists[1].Attribute("duration")!.Value);
+            Assert.Equal("Virtual comment", playlists[1].Attribute("comment")!.Value);
+            Assert.Equal("allstarr", playlists[1].Attribute("owner")!.Value);
+            Assert.Equal("false", playlists[1].Attribute("public")!.Value);
+            Assert.Equal("virtual-cover", playlists[1].Attribute("coverArt")!.Value);
         }
         virtualization.VerifyAll();
     }
