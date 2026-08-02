@@ -259,7 +259,13 @@ const responses: Record<string, unknown> = {
   },
 };
 
-async function mockApi(page: Page, options: { delay?: string; fail?: string[] } = {}) {
+function routeRelease() {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => { release = resolve; });
+  return { promise, release };
+}
+
+async function mockApi(page: Page, options: { releasePath?: string; release?: Promise<void>; fail?: string[] } = {}) {
   await page.route("**/fonts/**", (route) => route.fulfill({ status: 204 }));
   await page.route("**/images/providers/**", (route) => route.fulfill({
     status: 200,
@@ -268,7 +274,7 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
   }));
   await page.route("**/api/admin/**", async (route) => {
     const url = new URL(route.request().url());
-    if (url.pathname === options.delay) await new Promise((resolve) => setTimeout(resolve, 500));
+    if (url.pathname === options.releasePath) await options.release;
     if (options.fail?.includes(url.pathname)) {
       await route.fulfill({
         status: 503,
@@ -475,11 +481,13 @@ for (const viewport of viewports) {
       });
     }
 
-    for (const [route, heading, loadingLabel, delay, failures] of stateRoutes) {
+    for (const [route, heading, loadingLabel, releasePath, failures] of stateRoutes) {
       test(`${route} exposes loading and error recovery`, async ({ page, context }) => {
-        await mockApi(page, { delay });
+        const delayed = routeRelease();
+        await mockApi(page, { releasePath, release: delayed.promise });
         await page.goto(route);
         await expect(page.getByLabel(loadingLabel)).toBeVisible();
+        delayed.release();
         await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
 
         const errorPage = await context.newPage();
@@ -536,12 +544,14 @@ for (const viewport of viewports) {
     });
 
     test("Intelligence results remain usable", async ({ page, context }) => {
-      await mockApi(page, { delay: "/api/admin/intelligence" });
+      const delayed = routeRelease();
+      await mockApi(page, { releasePath: "/api/admin/intelligence", release: delayed.promise });
       await page.goto("#/intelligence");
       await page.getByLabel("Backend instance").fill("main");
       await page.getByLabel("Library scope").fill("music");
       await page.getByRole("button", { name: "Open library" }).click();
       await expect(page.getByLabel("Loading Intelligence")).toBeVisible();
+      delayed.release();
       await expect(page.getByText("Future Song", { exact: true })).toBeVisible();
       await expect(page.getByText("Morning discovery")).toBeVisible();
       await expect(page.getByText("Private similarity source. · ready")).toBeVisible();
@@ -992,6 +1002,7 @@ test("Add playlist links a Jellyfin playlist before its Source on mobile", async
 
 test("Tentative mappings sort by confidence and deep links open review", async ({ page }) => {
   await mockApi(page);
+  const delayedProvider = routeRelease();
   let localSearches = 0;
   await page.route("**/api/admin/track-matches/targets/local?*", (route) => {
     localSearches += 1;
@@ -1010,7 +1021,7 @@ test("Tentative mappings sort by confidence and deep links open review", async (
     });
   });
   await page.route("**/api/admin/track-matches/targets/provider?*", async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await delayedProvider.promise;
     return route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -1044,6 +1055,7 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await dialog.getByRole("button", { name: "Search", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "Searching…" })).toBeVisible();
   await expect(dialog.locator(".provider-result-summary")).toHaveCount(0);
+  delayedProvider.release();
   await expect.poll(() => localSearches).toBe(1);
   await expect(dialog.getByRole("button", { name: /Jellyfin 1/ })).toBeVisible();
   await expect(dialog.getByRole("button", { name: /Lumen Audio 1/ })).toBeVisible();
@@ -1408,7 +1420,8 @@ test("Maintenance previews, retries, and applies a legacy import on mobile", asy
 
 test("Maintenance validates before selective import and reports applied rows", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await mockApi(page, { delay: "/api/admin/preview-selective-state" });
+  const delayed = routeRelease();
+  await mockApi(page, { releasePath: "/api/admin/preview-selective-state", release: delayed.promise });
   await page.goto("#/settings/maintenance");
   const card = page.locator(".transfer-card");
   const archive = {
@@ -1422,7 +1435,9 @@ test("Maintenance validates before selective import and reports applied rows", a
   await card.getByRole("button", { name: "Import behavior" }).click();
   await page.getByRole("option", { name: "Merge compatible rows" }).click();
   await card.getByRole("button", { name: "Validate archive" }).click();
+  await expect(card.getByLabel("preview in progress")).toBeVisible();
   await card.getByRole("button", { name: "Cancel" }).click();
+  delayed.release();
   await expect(card.getByText("State transfer cancelled.")).toBeVisible();
   await card.getByRole("button", { name: "Validate archive" }).click();
   await expect(card.getByRole("region", { name: "Selective transfer preview" })).toContainText("3 rows");

@@ -11,6 +11,7 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:existing-build": "PLAYWRIGHT_SKIP_BUILD=1 playwright test",
     "build": "vite build",
     "check:budgets": "node scripts/check-budgets.mjs"
   },

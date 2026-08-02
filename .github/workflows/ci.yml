@@ -154,14 +154,25 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
 
-      - name: Verify Svelte WebUI
+      - name: WebUI check
         working-directory: webui
-        run: |
-          npm run check
-          npm test
-          npm run build
-          npm run check:budgets
-          npm run test:e2e
+        run: python3 ../tools/tests/timing_report.py --name webui-check -- npm run check
+
+      - name: WebUI unit tests
+        working-directory: webui
+        run: python3 ../tools/tests/timing_report.py --name webui-unit -- npm test
+
+      - name: WebUI build
+        working-directory: webui
+        run: python3 ../tools/tests/timing_report.py --name webui-build -- npm run build
+
+      - name: WebUI budgets
+        working-directory: webui
+        run: python3 ../tools/tests/timing_report.py --name webui-budgets -- npm run check:budgets
+
+      - name: WebUI E2E
+        working-directory: webui
+        run: python3 ../tools/tests/timing_report.py --name webui-e2e -- npm run test:e2e:existing-build
 
   release-manifest:
     needs:
