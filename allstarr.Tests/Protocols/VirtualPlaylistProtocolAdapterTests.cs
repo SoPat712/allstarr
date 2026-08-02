@@ -101,7 +101,44 @@ public sealed class VirtualPlaylistProtocolAdapterTests
     }
 
     [Fact]
-    public async Task SubsonicRead_ShapesJsonAndXmlWithoutExternalStreamIds()
+    public async Task JellyfinSourceRead_KeepsSourceMetadataWithoutNativeMediaFacts()
+    {
+        var source = Model() with
+        {
+            ProjectionMode = PlaylistProjectionMode.Source,
+            Tracks =
+            [
+                new(0, "jellyfin-local-a", "Source title", "Source artist", "Source album",
+                    null, 1_000, "ext-spotify-song-source-a", TrackMatchState.Accepted,
+                    "spotify", "source-a", TrackRouteKind.Local,
+                    SourceIdentity: new("spotify", Guid.NewGuid(), "source-hash", "revision-7", 7, "source-a"),
+                    SourceMetadata: new("Source title", ["Source artist", "Second artist"],
+                        "Source album", 1_000, "spotify", "USRC17607839"))
+            ]
+        };
+        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(
+            new StubVirtualizationService(source),
+            new StubJellyfinMutationResolver(null));
+
+        var result = Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(
+            Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+        var item = json.RootElement.GetProperty("Items")[0];
+
+        Assert.Contains("Source title", item.GetProperty("Name").GetString(), StringComparison.Ordinal);
+        Assert.Contains("Source artist", item.GetProperty("Artists")[0].GetString(), StringComparison.Ordinal);
+        Assert.Contains("Second artist", item.GetProperty("Artists")[1].GetString(), StringComparison.Ordinal);
+        Assert.Equal("Virtual", item.GetProperty("LocationType").GetString());
+        Assert.Empty(item.GetProperty("MediaSources").EnumerateArray());
+        Assert.Equal("spotify", item.GetProperty("ProviderIds").GetProperty("AllstarrSource").GetString());
+        Assert.Equal("source-a", item.GetProperty("ProviderIds").GetProperty("spotify").GetString());
+        Assert.Equal("source-hash", item.GetProperty("ProviderIds").GetProperty("AllstarrSourceHash").GetString());
+        Assert.Equal("revision-7", item.GetProperty("ProviderIds").GetProperty("AllstarrSourceRevision").GetString());
+        Assert.Equal("USRC17607839", item.GetProperty("ProviderIds").GetProperty("ISRC").GetString());
+    }
+
+    [Fact]
+    public async Task SubsonicRead_PreservesJsonAndXmlOrderIncludingUnresolvedRows()
     {
         var adapter = new SubsonicVirtualPlaylistProtocolAdapter(
             new StubVirtualizationService(Model()),
@@ -111,16 +148,19 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
         var subsonicPlaylist = json.RootElement.GetProperty("subsonic-response").GetProperty("playlist");
         var entries = subsonicPlaylist.GetProperty("entry");
-        Assert.Equal(2, subsonicPlaylist.GetProperty("songCount").GetInt32());
-        Assert.Equal(2, entries.GetArrayLength());
+        Assert.Equal(3, subsonicPlaylist.GetProperty("songCount").GetInt32());
+        Assert.Equal(3, entries.GetArrayLength());
         Assert.Equal("jellyfin-local-b", entries[0].GetProperty("id").GetString());
+        Assert.Equal("allstarr-unresolved-source-hash", entries[2].GetProperty("id").GetString());
+        Assert.Equal("apple-music", entries[2].GetProperty("allstarrSource").GetString());
+        Assert.Equal("source-hash", entries[2].GetProperty("allstarrSourceHash").GetString());
         Assert.DoesNotContain("ext-", JsonSerializer.Serialize(jsonResult.Value), StringComparison.Ordinal);
 
         var xmlResult = Assert.IsType<ContentResult>(await adapter.ReadAsync(
             Context(ProtocolKind.Subsonic), ProtocolId, "xml", CancellationToken.None));
         var document = XDocument.Parse(xmlResult.Content!);
         var ns = document.Root!.Name.Namespace;
-        Assert.Equal(new[] { "jellyfin-local-b", "jellyfin-local-a" },
+        Assert.Equal(new[] { "jellyfin-local-b", "jellyfin-local-a", "allstarr-unresolved-source-hash" },
             document.Descendants(ns + "entry").Select(item => item.Attribute("id")!.Value));
     }
 
@@ -144,7 +184,9 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             new(2, "jellyfin-local-b", "Second", "Artist B", "Album B", null, 2000, "cover-b", TrackMatchState.Accepted),
             new(8, "jellyfin-local-a", "Ninth", "Artist A", "Album A", "Artist A", 3000, null, TrackMatchState.Pinned),
             new(12, "allstarr-unresolved-source-hash", "Missing", "Artist C", "Album C", null,
-                4000, null, TrackMatchState.Unresolved, "apple-music", null, TrackRouteKind.Unresolved)
+                4000, null, TrackMatchState.Unresolved, "apple-music", null, TrackRouteKind.Unresolved,
+                SourceIdentity: new("apple-music", Guid.NewGuid(), "source-hash", "revision-7", 7),
+                SourceMetadata: new("Missing", ["Artist C"], "Album C", 4_000))
         ]);
 
     private static ProtocolExecutionContext Context(ProtocolKind protocol) => new(

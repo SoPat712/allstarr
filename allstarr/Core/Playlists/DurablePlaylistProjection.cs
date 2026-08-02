@@ -24,6 +24,12 @@ public sealed record DurablePlaylistEntryProjection(
     string? RouteProviderId,
     IReadOnlyList<DurableProviderRoute> ProviderRoutes);
 
+public sealed record DurablePlaylistSourceEntryProjection(
+    int Position,
+    Guid ExternalSnapshotId,
+    PlaylistSourceIdentity Identity,
+    PlaylistSourceMetadata Metadata);
+
 public sealed record DurablePlaylistReconciliation(
     int ProviderAdvertisedRows,
     int RawRows,
@@ -72,6 +78,7 @@ public sealed record DurablePlaylistProjection(
     public int MaterializedCount { get; init; }
     public PlaylistProjectionMode ProjectionMode { get; init; } = PlaylistProjectionMode.Resolved;
     public int LatestSourceSnapshotVersion { get; init; }
+    public IReadOnlyList<DurablePlaylistSourceEntryProjection> SourceEntries { get; init; } = [];
     public bool HasNewerSourceGeneration => LatestSourceSnapshotVersion > SnapshotVersion;
     public DurablePlaylistReconciliation? Reconciliation { get; init; }
     public int TotalCount => Entries.Count;
@@ -212,10 +219,63 @@ public sealed class DurablePlaylistProjectionReader(
             .ToArray();
         var sourceIdentities = await database.ProviderTrackIdentities.AsNoTracking()
             .Where(item => item.TenantId == tenantId &&
+                           item.ResourceKind == ProviderResourceKind.Track &&
                            (identityIds.Contains(item.Id) ||
                             externalHashes.Contains(item.ExternalIdHash)))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var canonicalIds = sourceIdentities.Values
+        var linkedSourceIdentities = external.Values
+            .Select(item =>
+            {
+                if (item.ProviderTrackIdentityId is not { } identityId ||
+                    !sourceIdentities.TryGetValue(identityId, out var identity) ||
+                    !MatchesSourceIdentity(item, identity))
+                    return (item.Id, Identity: (ProviderTrackIdentityRecord?)null);
+                return (item.Id, Identity: identity);
+            })
+            .Where(item => item.Identity != null)
+            .ToDictionary(item => item.Id, item => item.Identity!);
+        var eligibleSourceIdentities = sourceIdentities.Values
+            .Where(identity =>
+                identity.Scope is ProviderIdentityScope.Catalog or ProviderIdentityScope.Account &&
+                identity.Verification is ProviderIdentityVerification.Verified or ProviderIdentityVerification.Pinned)
+            .ToArray();
+        var accountSourceIdentities = eligibleSourceIdentities
+            .Where(identity => identity.Scope == ProviderIdentityScope.Account &&
+                               identity.ProviderAccountId.HasValue)
+            .GroupBy(identity => (
+                ProviderId: identity.ProviderId.ToLowerInvariant(),
+                ProviderAccountId: identity.ProviderAccountId!.Value,
+                identity.ExternalIdHash))
+            .ToDictionary(group => group.Key, group => group
+                .OrderByDescending(identity => identity.Verification == ProviderIdentityVerification.Pinned)
+                .ThenByDescending(identity => identity.VerifiedAt)
+                .First());
+        var catalogSourceIdentities = eligibleSourceIdentities
+            .Where(identity => identity.Scope == ProviderIdentityScope.Catalog &&
+                               !identity.ProviderAccountId.HasValue)
+            .GroupBy(identity => (
+                ProviderId: identity.ProviderId.ToLowerInvariant(),
+                identity.ExternalIdHash))
+            .ToDictionary(group => group.Key, group => group
+                .OrderByDescending(identity => identity.Verification == ProviderIdentityVerification.Pinned)
+                .ThenByDescending(identity => identity.VerifiedAt)
+                .First());
+        var scopedSourceIdentities = external.Values
+            .Select(item =>
+            {
+                if (linkedSourceIdentities.TryGetValue(item.Id, out var linked))
+                    return (item.Id, Identity: linked);
+                var fallback = accountSourceIdentities.GetValueOrDefault((
+                    item.ProviderId.ToLowerInvariant(), item.ProviderAccountId, item.ExternalIdHash));
+                fallback ??= catalogSourceIdentities.GetValueOrDefault((
+                    item.ProviderId.ToLowerInvariant(), item.ExternalIdHash));
+                if (fallback != null && !MatchesSourceIdentity(item, fallback))
+                    fallback = null;
+                return (item.Id, Identity: fallback);
+            })
+            .Where(item => item.Identity != null)
+            .ToDictionary(item => item.Id, item => item.Identity!);
+        var canonicalIds = scopedSourceIdentities.Values
             .Select(item => item.CanonicalRecordingId)
             .Distinct()
             .ToArray();
@@ -317,10 +377,16 @@ public sealed class DurablePlaylistProjectionReader(
             : await database.ExternalMetadataSnapshots.AsNoTracking()
                 .Where(item => previousExternalIds.Contains(item.Id))
                 .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var sourceEntries = entries.Select(entry =>
+            ProjectSourceEntry(
+                entry,
+                external[entry.ExternalMetadataSnapshotId],
+                linkedSourceIdentities))
+            .ToArray();
         var projectedEntries = entries.Select(entry => ProjectEntry(
                 entry,
                 external[entry.ExternalMetadataSnapshotId],
-                sourceIdentities,
+                scopedSourceIdentities,
                 identities,
                 providerOrder,
                 entry.PublishedTrackMatchId is { } matchId
@@ -362,6 +428,7 @@ public sealed class DurablePlaylistProjectionReader(
             MaterializedCount = materializedCount,
             ProjectionMode = link.ProjectionMode,
             LatestSourceSnapshotVersion = latestSourceSnapshotVersion,
+            SourceEntries = sourceEntries,
             Reconciliation = BuildReconciliation(
                 entries,
                 external,
@@ -455,6 +522,40 @@ public sealed class DurablePlaylistProjectionReader(
         current.Isrc == prior.Isrc &&
         current.DurationMilliseconds == prior.DurationMilliseconds;
 
+    private static bool MatchesSourceIdentity(
+        ExternalMetadataSnapshotRecord external,
+        ProviderTrackIdentityRecord identity) =>
+        identity.TenantId == external.TenantId &&
+        identity.ProviderId.Equals(external.ProviderId, StringComparison.OrdinalIgnoreCase) &&
+        (identity.ProviderAccountId == external.ProviderAccountId ||
+         identity.Scope == ProviderIdentityScope.Catalog && !identity.ProviderAccountId.HasValue) &&
+        identity.ResourceKind == ProviderResourceKind.Track &&
+        identity.Scope is ProviderIdentityScope.Catalog or ProviderIdentityScope.Account &&
+        identity.Verification is ProviderIdentityVerification.Verified or ProviderIdentityVerification.Pinned &&
+        identity.ExternalIdHash == external.ExternalIdHash;
+
+    private static DurablePlaylistSourceEntryProjection ProjectSourceEntry(
+        PlaylistSourceEntryRecord entry,
+        ExternalMetadataSnapshotRecord external,
+        IReadOnlyDictionary<Guid, ProviderTrackIdentityRecord> linkedSourceIdentities)
+    {
+        var sourceExternalId = linkedSourceIdentities.GetValueOrDefault(external.Id)?.ExternalId;
+        if (string.IsNullOrWhiteSpace(sourceExternalId) ||
+            sourceExternalId.Equals(external.ExternalIdHash, StringComparison.Ordinal))
+            sourceExternalId = null;
+        return new(
+            entry.SourcePosition,
+            external.Id,
+            new PlaylistSourceIdentity(
+                external.ProviderId,
+                external.ProviderAccountId,
+                external.ExternalIdHash,
+                external.ProviderRevision,
+                external.SnapshotVersion,
+                sourceExternalId),
+            ReadSourceMetadata(external.PayloadJson));
+    }
+
     private static DurablePlaylistEntryProjection ProjectEntry(
         PlaylistSourceEntryRecord entry,
         ExternalMetadataSnapshotRecord external,
@@ -467,12 +568,7 @@ public sealed class DurablePlaylistProjectionReader(
         IReadOnlySet<Guid> playableLibraryTrackIds)
     {
         overrides.TryGetValue(external.Id, out var manual);
-        ProviderTrackIdentityRecord? identity = null;
-        if (external.ProviderTrackIdentityId is { } identityId)
-            sourceIdentities.TryGetValue(identityId, out identity);
-        identity ??= sourceIdentities.Values.FirstOrDefault(item =>
-            item.ProviderId.Equals(external.ProviderId, StringComparison.OrdinalIgnoreCase) &&
-            item.ExternalIdHash == external.ExternalIdHash);
+        var identity = sourceIdentities.GetValueOrDefault(external.Id);
         var classification = TrackClassifier.Classify(
             manual,
             match,
@@ -549,6 +645,23 @@ public sealed class DurablePlaylistProjectionReader(
             root.TryGetProperty("Album", out var album) ? album.GetString() : null,
             root.TryGetProperty("Isrc", out var isrc) ? isrc.GetString() : null,
             duration);
+    }
+
+    private static readonly JsonSerializerOptions SourceMetadataJson = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    private static PlaylistSourceMetadata ReadSourceMetadata(string payload)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<PlaylistSourceMetadata>(payload, SourceMetadataJson) ?? new();
+        }
+        catch (JsonException)
+        {
+            return new();
+        }
     }
 
     private sealed record EntryMetadata(

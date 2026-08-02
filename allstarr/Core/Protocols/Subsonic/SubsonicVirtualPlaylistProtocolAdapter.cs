@@ -81,9 +81,7 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
     {
         var playlist = await playlists.ReadAsync(context, id, cancellationToken);
         if (playlist == null) return null;
-        var tracks = playlist.Tracks
-            .Where(track => track.RouteKind != TrackRouteKind.Unresolved)
-            .ToArray();
+        var tracks = playlist.Tracks.ToArray();
         if (format.Equals("json", StringComparison.OrdinalIgnoreCase))
         {
             return new JsonResult(new Dictionary<string, object?>
@@ -126,19 +124,24 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         return new ContentResult { Content = document.ToString(), ContentType = "application/xml" };
     }
 
-    private static Dictionary<string, object?> ToJsonEntry(VirtualPlaylistTrack track) => new()
+    private static Dictionary<string, object?> ToJsonEntry(VirtualPlaylistTrack track)
     {
-        ["id"] = track.BackendItemId,
-        ["title"] = track.Title,
-        ["artist"] = track.Artist,
-        ["album"] = track.Album,
-        ["albumArtist"] = track.AlbumArtist,
-        ["duration"] = track.DurationMilliseconds / 1000,
-        ["track"] = track.SourcePosition + 1,
-        ["isDir"] = false,
-        ["type"] = "music",
-        ["coverArt"] = track.CoverArtReference
-    };
+        var result = new Dictionary<string, object?>
+        {
+            ["id"] = track.BackendItemId,
+            ["title"] = track.Title,
+            ["artist"] = track.Artist,
+            ["album"] = track.Album,
+            ["albumArtist"] = track.AlbumArtist,
+            ["duration"] = track.DurationMilliseconds / 1000,
+            ["track"] = track.SourcePosition + 1,
+            ["isDir"] = false,
+            ["type"] = "music",
+            ["coverArt"] = track.CoverArtReference
+        };
+        AddSourceIdentity(result, track);
+        return result;
+    }
 
     private static IEnumerable<XAttribute> ToXmlAttributes(VirtualPlaylistTrack track)
     {
@@ -153,5 +156,27 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         yield return new XAttribute("isDir", false);
         yield return new XAttribute("type", "music");
         if (track.CoverArtReference != null) yield return new XAttribute("coverArt", track.CoverArtReference);
+        if (track.SourceIdentity is { } identity)
+        {
+            yield return new XAttribute("allstarrSource", identity.ProviderId);
+            yield return new XAttribute("allstarrSourceHash", identity.ExternalIdHash);
+            yield return new XAttribute("allstarrSourceRevision", identity.SourceRevision);
+            if (identity.ExternalId != null)
+                yield return new XAttribute("allstarrSourceId", identity.ExternalId);
+        }
+        if (track.SourceMetadata?.Isrc != null)
+            yield return new XAttribute("isrc", track.SourceMetadata.Isrc);
+    }
+
+    private static void AddSourceIdentity(
+        IDictionary<string, object?> result,
+        VirtualPlaylistTrack track)
+    {
+        if (track.SourceIdentity is not { } identity) return;
+        result["allstarrSource"] = identity.ProviderId;
+        result["allstarrSourceHash"] = identity.ExternalIdHash;
+        result["allstarrSourceRevision"] = identity.SourceRevision;
+        if (identity.ExternalId != null) result["allstarrSourceId"] = identity.ExternalId;
+        if (track.SourceMetadata?.Isrc != null) result["isrc"] = track.SourceMetadata.Isrc;
     }
 }

@@ -56,6 +56,35 @@ public sealed class DurablePlaylistProjectionTests
             PlaylistProjectionMode.Resolved, source, resolved[..3]));
     }
 
+    [Fact]
+    public void VirtualizationSelector_UsesSourceMetadataAndNeverFallsBackToResolvedTarget()
+    {
+        var resolved = new[]
+        {
+            new VirtualPlaylistTrack(0, "local-id", "Library title", "Library artist", "Library album",
+                "Library artist", 2_000, "library-artwork", TrackMatchState.Accepted,
+                "spotify", null, TrackRouteKind.Local)
+        };
+        var source = new[]
+        {
+            PlaylistVirtualizationService.ToSourceVirtualTrack(
+                new DurablePlaylistSourceEntryProjection(0, Guid.NewGuid(),
+                    new("spotify", Guid.NewGuid(), "source-hash", "revision-1", 1, "source-id"),
+                    new("Source title", ["Source artist"], "Source album", 1_000)),
+                resolved[0])
+        };
+
+        var selected = PlaylistProjectionSelector.Select(
+            PlaylistProjectionMode.Source, source, resolved);
+        Assert.Same(source, selected);
+        Assert.Equal("Source title", selected![0].Title);
+        Assert.Equal("Source artist", selected[0].Artist);
+        Assert.Equal("local-id", selected[0].BackendItemId);
+        Assert.Equal("ext-spotify-song-source-id", selected[0].CoverArtReference);
+        Assert.Null(PlaylistProjectionSelector.Select(
+            PlaylistProjectionMode.Target, source, resolved));
+    }
+
     private static ProjectionRow Row(string id, params string[] alternates) => new(id, alternates);
     private sealed record ProjectionRow(string Id, IReadOnlyList<string> AlternateRoutes);
 

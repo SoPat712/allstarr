@@ -17,7 +17,11 @@ public sealed record VirtualPlaylistTrack(
     TrackMatchState MatchState,
     string? SourceProviderId = null,
     string? SourceExternalId = null,
-    TrackRouteKind RouteKind = TrackRouteKind.Local);
+    TrackRouteKind RouteKind = TrackRouteKind.Local,
+    string? RouteProviderId = null,
+    string? RouteExternalId = null,
+    PlaylistSourceIdentity? SourceIdentity = null,
+    PlaylistSourceMetadata? SourceMetadata = null);
 
 public sealed record VirtualPlaylistReadModel(
     string ProtocolId,
@@ -162,9 +166,20 @@ public sealed class PlaylistVirtualizationService(
                            item.BackendInstanceId == link.TargetBackendInstanceId &&
                            backendIds.Contains(item.BackendItemId))
             .ToDictionaryAsync(item => item.BackendItemId, StringComparer.Ordinal, cancellationToken);
-        var tracks = projection.Entries
-            .Select(item => ToVirtualTrack(item, libraryTracks, link.SourceProviderId))
-            .ToList();
+        var resolvedTracks = projection.Entries
+            .Select(item => ToResolvedVirtualTrack(item, libraryTracks, link.SourceProviderId))
+            .ToArray();
+        var resolvedByPosition = resolvedTracks.ToDictionary(item => item.SourcePosition);
+        var sourceTracks = projection.SourceEntries
+            .Select(item => ToSourceVirtualTrack(
+                item,
+                resolvedByPosition.GetValueOrDefault(item.Position)))
+            .ToArray();
+        var tracks = PlaylistProjectionSelector.Select(
+            link.ProjectionMode,
+            sourceTracks,
+            resolvedTracks);
+        if (tracks == null) return null;
         return new VirtualPlaylistReadModel(protocolId, link.Id, projection.SnapshotId, projection.Name,
             projection.Description, projection.ArtworkReferenceKey, link.SourceProviderId,
             link.SourcePlaylistId, snapshot.ProviderRevision, link.Mode, tracks, link.ProjectionMode);
@@ -229,7 +244,7 @@ public sealed class PlaylistVirtualizationService(
             .SingleOrDefaultAsync(cancellationToken);
     }
 
-    private static VirtualPlaylistTrack ToVirtualTrack(
+    private static VirtualPlaylistTrack ToResolvedVirtualTrack(
         DurablePlaylistEntryProjection entry,
         IReadOnlyDictionary<string, LibraryTrackRecord> libraryTracks,
         string sourceProviderId)
@@ -248,7 +263,8 @@ public sealed class PlaylistVirtualizationService(
                 entry.Album, null,
                 entry.DurationMilliseconds, null,
                 entry.MatchState ?? TrackMatchState.Unresolved,
-                entry.RouteProviderId, entry.ExternalId, TrackRouteKind.External);
+                entry.RouteProviderId, entry.ExternalId, TrackRouteKind.External,
+                entry.RouteProviderId, entry.ExternalId);
         }
 
         return new(entry.Position, $"{UnresolvedItemPrefix}{entry.ExternalId}",
@@ -256,5 +272,42 @@ public sealed class PlaylistVirtualizationService(
             entry.Album, null,
             entry.DurationMilliseconds, null, entry.MatchState ?? TrackMatchState.Unresolved,
             sourceProviderId, null, TrackRouteKind.Unresolved);
+    }
+
+    internal static VirtualPlaylistTrack ToSourceVirtualTrack(
+        DurablePlaylistSourceEntryProjection source,
+        VirtualPlaylistTrack? resolved)
+    {
+        var identity = source.Identity;
+        var metadata = source.Metadata;
+        var artist = metadata.Artists?.FirstOrDefault();
+        var sourceArtist = string.IsNullOrWhiteSpace(artist) ? "Unknown Artist" : artist;
+        var routeKind = resolved?.RouteKind == TrackRouteKind.Local ||
+                        resolved?.RouteKind == TrackRouteKind.External &&
+                        !string.IsNullOrWhiteSpace(resolved.RouteProviderId) &&
+                        !string.IsNullOrWhiteSpace(resolved.RouteExternalId)
+            ? resolved.RouteKind
+            : TrackRouteKind.Unresolved;
+        return new(
+            source.Position,
+            routeKind == TrackRouteKind.Unresolved
+                ? $"{UnresolvedItemPrefix}{identity.ExternalIdHash}"
+                : resolved!.BackendItemId,
+            metadata.Title ?? "Unknown",
+            sourceArtist,
+            metadata.Album,
+            null,
+            metadata.DurationMilliseconds,
+            identity.ExternalId == null
+                ? null
+                : $"ext-{identity.ProviderId}-song-{identity.ExternalId}",
+            resolved?.MatchState ?? TrackMatchState.Unresolved,
+            identity.ProviderId,
+            identity.ExternalId,
+            routeKind,
+            routeKind == TrackRouteKind.External ? resolved!.RouteProviderId : null,
+            routeKind == TrackRouteKind.External ? resolved!.RouteExternalId : null,
+            identity,
+            metadata);
     }
 }

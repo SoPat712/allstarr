@@ -245,20 +245,22 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         var startIndex = QueryInt(clientQuery, "StartIndex", 0);
         var limit = QueryInt(clientQuery, "Limit", int.MaxValue);
         var tracks = playlist.Tracks.Skip(startIndex).Take(limit).ToArray();
-        var originals = proxyService == null
+        var originals = playlist.ProjectionMode != PlaylistProjectionMode.Resolved || proxyService == null
             ? null
             : await ReadOriginalItemsAsync(context, tracks, clientHeaders, clientQuery);
         var items = tracks.Select(track =>
         {
             JsonObject item;
-            if (track.RouteKind == TrackRouteKind.Local && originals != null)
+            if (playlist.ProjectionMode == PlaylistProjectionMode.Resolved &&
+                track.RouteKind == TrackRouteKind.Local && originals != null)
             {
                 if (!originals.TryGetValue(track.BackendItemId, out var original))
                     throw new InvalidOperationException(
                         $"Jellyfin did not return matched playlist item '{track.BackendItemId}'.");
                 item = (JsonObject)original.DeepClone();
             }
-            else if (track.RouteKind == TrackRouteKind.External && responseBuilder != null)
+            else if (playlist.ProjectionMode == PlaylistProjectionMode.Resolved &&
+                     track.RouteKind == TrackRouteKind.External && responseBuilder != null)
             {
                 item = JsonSerializer.SerializeToNode(responseBuilder.ConvertSongToJellyfinItem(new Song
                 {
@@ -272,15 +274,27 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                         ? checked((int)(milliseconds / 1000))
                         : null,
                     IsLocal = false,
-                    ExternalProvider = track.SourceProviderId,
-                    ExternalId = track.SourceExternalId
+                    ExternalProvider = track.RouteProviderId ?? track.SourceProviderId,
+                    ExternalId = track.RouteExternalId ?? track.SourceExternalId
                 }))!.AsObject();
             }
             else
             {
                 item = JsonSerializer.SerializeToNode(FallbackItem(track))!.AsObject();
-                if (track.RouteKind != TrackRouteKind.Local)
-                    AddSourceLabels(item, track.SourceProviderId);
+                if (playlist.ProjectionMode == PlaylistProjectionMode.Source ||
+                    track.RouteKind != TrackRouteKind.Local)
+                {
+                    var labelProvider = playlist.ProjectionMode == PlaylistProjectionMode.Source
+                        ? track.SourceProviderId
+                        : track.RouteProviderId ?? track.SourceProviderId;
+                    AddSourceLabels(item, labelProvider);
+                }
+                if (playlist.ProjectionMode == PlaylistProjectionMode.Source)
+                {
+                    AddSourceIdentity(item, track);
+                    item["LocationType"] = "Virtual";
+                    item["MediaSources"] = new JsonArray();
+                }
                 if (track.RouteKind == TrackRouteKind.Unresolved)
                 {
                     item["LocationType"] = "Virtual";
@@ -379,6 +393,17 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         }
     }
 
+    private static void AddSourceIdentity(JsonObject item, VirtualPlaylistTrack track)
+    {
+        if (track.SourceIdentity is not { } identity) return;
+        var providerIds = item["ProviderIds"] as JsonObject ?? [];
+        item["ProviderIds"] = providerIds;
+        providerIds["AllstarrSourceHash"] = identity.ExternalIdHash;
+        providerIds["AllstarrSourceRevision"] = identity.SourceRevision;
+        if (identity.ExternalId != null) providerIds[identity.ProviderId] = identity.ExternalId;
+        if (track.SourceMetadata?.Isrc != null) providerIds["ISRC"] = track.SourceMetadata.Isrc;
+    }
+
     private static void Label(JsonObject item, string name, string? provider)
     {
         if (item[name] is JsonValue value && value.TryGetValue<string>(out var text))
@@ -387,14 +412,14 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
 
     private Dictionary<string, object?> FallbackItem(VirtualPlaylistTrack track) => new()
     {
-        ["Name"] = track.RouteKind == TrackRouteKind.Local
-            ? track.Title
-            : JellyfinResponseBuilder.AppendExternalSourceLabel(track.Title, track.SourceProviderId),
+        ["Name"] = track.Title,
         ["ServerId"] = serverId,
         ["Id"] = track.BackendItemId,
         ["Album"] = track.Album,
         ["AlbumArtist"] = track.AlbumArtist,
-        ["Artists"] = new[] { track.Artist },
+        ["Artists"] = track.SourceMetadata?.Artists is { Count: > 0 } artists
+            ? artists
+            : [track.Artist],
         ["RunTimeTicks"] = track.DurationMilliseconds * TimeSpan.TicksPerMillisecond,
         ["IndexNumber"] = track.SourcePosition + 1,
         ["IsFolder"] = false,
