@@ -98,6 +98,34 @@ public sealed class DurablePlaylistProjectionTests
         Assert.Equal(["entry-b", "entry-a"], tracks.Select(item => item.NativePlaylistEntryId));
     }
 
+    [Fact]
+    public void ResolvedProjection_AttachesNativeEntryWithoutReplacingLibraryIdentity()
+    {
+        const string backendItemId = "native-id";
+        const string nativeJson = "{\"id\":\"native-id\",\"unknownField\":\"kept\"}";
+        var local = new LibraryTrackRecord
+        {
+            BackendItemId = backendItemId,
+            Title = "Library title",
+            Artist = "Library artist",
+            Album = "Library album",
+            DurationMilliseconds = 2_000
+        };
+        var track = PlaylistVirtualizationService.ToResolvedVirtualTrack(
+            Entry("local", TrackMatchState.Accepted, backendItemId),
+            new Dictionary<string, LibraryTrackRecord> { [backendItemId] = local },
+            "subsonic",
+            new Dictionary<string, BackendPlaylistMember>
+            {
+                [backendItemId] = new(backendItemId, durationMilliseconds: 3_000, nativeEntryJson: nativeJson)
+            });
+
+        Assert.Equal(backendItemId, track.BackendItemId);
+        Assert.Equal("Library title", track.Title);
+        Assert.Equal(TrackRouteKind.Local, track.RouteKind);
+        Assert.Equal(nativeJson, track.NativeEntryJson);
+    }
+
     private static ProjectionRow Row(string id, params string[] alternates) => new(id, alternates);
     private sealed record ProjectionRow(string Id, IReadOnlyList<string> AlternateRoutes);
 

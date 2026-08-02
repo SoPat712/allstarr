@@ -169,6 +169,41 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
             response.Status);
     }
 
+    public async Task<BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistMember>>> ReadItemsAsync(
+        BackendPlaylistTargetContext context,
+        IReadOnlyList<string> backendItemIds,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(backendItemIds);
+        var requested = backendItemIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (requested.Length == 0)
+            return new(BackendPlaylistTargetStatus.Success, [], HttpStatusCode.OK);
+
+        try
+        {
+            BackendPlaylistTargetResult<BackendPlaylistMember>?[] results = new BackendPlaylistTargetResult<BackendPlaylistMember>?[requested.Length];
+            await Parallel.ForEachAsync(
+                Enumerable.Range(0, requested.Length),
+                new ParallelOptions { CancellationToken = cancellationToken, MaxDegreeOfParallelism = 4 },
+                async (index, token) => results[index] = await ReadItemAsync(context, requested[index], token));
+
+            var failure = results.FirstOrDefault(result => result is not { IsSuccess: true, Value: not null });
+            if (failure != null)
+                return ConvertFailure<IReadOnlyList<BackendPlaylistMember>, BackendPlaylistMember>(failure);
+
+            var members = results.Select(result => result!.Value!).ToArray();
+            return new(BackendPlaylistTargetStatus.Success, members,
+                results.Select(result => result!.UpstreamStatus).FirstOrDefault(status => status != null));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return new(BackendPlaylistTargetStatus.Cancelled, ErrorCode: "cancelled");
+        }
+    }
+
     public async Task<BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>> WriteAsync(
         BackendPlaylistTargetContext context,
         BackendPlaylistWriteRequest request,
@@ -242,6 +277,30 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
         {
             return new(BackendPlaylistTargetStatus.Cancelled, ErrorCode: "cancelled", RecoveryPlaylistId: request.BackendPlaylistId);
         }
+    }
+
+    private async Task<BackendPlaylistTargetResult<BackendPlaylistMember>> ReadItemAsync(
+        BackendPlaylistTargetContext context,
+        string backendItemId,
+        CancellationToken cancellationToken)
+    {
+        var response = await CallAsync(context, "getSong", [Pair("id", backendItemId)], cancellationToken);
+        if (!response.IsSuccess) return ConvertFailure<BackendPlaylistMember>(response);
+        using var document = JsonDocument.Parse(response.Body!);
+        if (!TryResponseRoot(document.RootElement, out var root, out var protocolFailure))
+            return ConvertFailure<BackendPlaylistMember>(protocolFailure!);
+        var song = root.GetPropertyOrDefault("song");
+        if (song.ValueKind != JsonValueKind.Object)
+            return new(BackendPlaylistTargetStatus.NotFound, UpstreamStatus: response.Status, ErrorCode: "song-not-found");
+        var returnedId = song.StringOrNull("id");
+        if (string.IsNullOrWhiteSpace(returnedId))
+            return new(BackendPlaylistTargetStatus.BackendFailure, UpstreamStatus: response.Status, ErrorCode: "song-id-missing");
+        return new(BackendPlaylistTargetStatus.Success,
+            new BackendPlaylistMember(
+                returnedId,
+                durationMilliseconds: MillisecondsFromSeconds(song.Int64OrNull("duration")),
+                nativeEntryJson: song.GetRawText()),
+            response.Status);
     }
 
     private async Task<HttpResult> CallAsync(

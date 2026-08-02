@@ -243,6 +243,55 @@ public sealed class BackendPlaylistTargetTests
     }
 
     [Fact]
+    public async Task Subsonic_read_items_preserves_requested_order_native_fields_auth_and_failures()
+    {
+        var backend = new SubsonicFakeBackend("p1", "Mix", ["a", "b"]);
+        var target = new SubsonicPlaylistTarget(
+            new HttpClient(backend),
+            new Uri("https://subsonic.test/"),
+            new FakeAuthenticationResolver(form:
+            [
+                Pair("u", "alice"), Pair("t", "hash"), Pair("s", "salt"),
+                Pair("v", "1.16.1"), Pair("c", "allstarr")
+            ]));
+
+        var result = await target.ReadItemsAsync(Context(), ["b", "a", "b"], default);
+
+        Assert.True(result.IsSuccess);
+        var members = result.Value!;
+        Assert.Equal(["b", "a"], members.Select(item => item.BackendItemId));
+        Assert.Equal([180_000L, 180_000L], members.Select(item => item.DurationMilliseconds));
+        using var raw = JsonDocument.Parse(members[0].NativeEntryJson!);
+        Assert.Equal("artist-b", raw.RootElement.GetProperty("artistId").GetString());
+        Assert.Equal("album-b", raw.RootElement.GetProperty("albumId").GetString());
+        Assert.Equal("cover-b", raw.RootElement.GetProperty("coverArt").GetString());
+        Assert.Equal("native", raw.RootElement.GetProperty("provider").GetString());
+        Assert.Equal("unknown-b", raw.RootElement.GetProperty("unknownField").GetString());
+        Assert.All(backend.Requests.Where(item => item.Path == "getSong"), request =>
+        {
+            Assert.Equal("alice", request.Parameters["u"].Single());
+            Assert.Equal("hash", request.Parameters["t"].Single());
+            Assert.Equal("salt", request.Parameters["s"].Single());
+            Assert.Equal("json", request.Parameters["f"].Single());
+        });
+
+        backend.ForcedStatus = HttpStatusCode.Forbidden;
+        var unauthorized = await target.ReadItemsAsync(Context(), ["a"], default);
+        Assert.Equal(BackendPlaylistTargetStatus.Unauthorized, unauthorized.Status);
+
+        backend.ForcedStatus = null;
+        backend.ProtocolFailureCode = 40;
+        var failed = await target.ReadItemsAsync(Context(), ["a"], default);
+        Assert.Equal(BackendPlaylistTargetStatus.BackendFailure, failed.Status);
+        Assert.Equal("subsonic-40", failed.ErrorCode);
+
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var cancelled = await target.ReadItemsAsync(Context(), ["a"], cancellation.Token);
+        Assert.Equal(BackendPlaylistTargetStatus.Cancelled, cancelled.Status);
+    }
+
+    [Fact]
     public async Task Subsonic_recreate_is_staged_duplicate_safe_and_protocol_failure_is_preserved()
     {
         var backend = new SubsonicFakeBackend("p1", "Mix", ["a"]);
@@ -466,6 +515,25 @@ public sealed class BackendPlaylistTargetTests
                             provider = "native",
                             unknownField = $"unknown-{item}"
                         }).ToArray()
+                    }
+                });
+            }
+            if (endpoint == "getSong")
+            {
+                var id = parameters["id"].Single();
+                return Json(new
+                {
+                    status = "ok",
+                    song = new
+                    {
+                        id,
+                        title = $"Song {id}",
+                        duration = 180,
+                        artistId = $"artist-{id}",
+                        albumId = $"album-{id}",
+                        coverArt = $"cover-{id}",
+                        provider = "native",
+                        unknownField = $"unknown-{id}"
                     }
                 });
             }

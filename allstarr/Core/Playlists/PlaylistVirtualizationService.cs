@@ -142,7 +142,6 @@ public sealed class PlaylistVirtualizationService(
             return null;
 
         var actor = context.Actor;
-        var protocol = context.Protocol == ProtocolKind.Jellyfin ? "jellyfin" : "subsonic";
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
             item.Id == linkId && item.TenantId == actor.TenantId &&
@@ -189,8 +188,33 @@ public sealed class PlaylistVirtualizationService(
                            item.BackendInstanceId == link.TargetBackendInstanceId &&
                            backendIds.Contains(item.BackendItemId))
             .ToDictionaryAsync(item => item.BackendItemId, StringComparer.Ordinal, cancellationToken);
+        IReadOnlyDictionary<string, BackendPlaylistMember>? nativeItems = null;
+        if (link.ProjectionMode == PlaylistProjectionMode.Resolved &&
+            context.Protocol == ProtocolKind.Subsonic &&
+            link.TargetProtocol is "subsonic" or "opensubsonic" or "navidrome" &&
+            backendIds.Length > 0)
+        {
+            if (backendIds.Any(id => !libraryTracks.ContainsKey(id))) return null;
+            if (targets == null) return null;
+            var nativeResult = await targets.Resolve(link.TargetProtocol).ReadItemsAsync(
+                new BackendPlaylistTargetContext(
+                    link.TargetBackendInstanceId,
+                    context.VerifiedBackendPrincipalId,
+                    link.TargetCredentialReferenceId?.ToString(),
+                    link.TenantId),
+                backendIds,
+                cancellationToken);
+            if (!nativeResult.IsSuccess || nativeResult.Value == null) return null;
+            var hydrated = new Dictionary<string, BackendPlaylistMember>(StringComparer.Ordinal);
+            foreach (var member in nativeResult.Value)
+            {
+                if (!hydrated.TryAdd(member.BackendItemId, member)) return null;
+            }
+            if (backendIds.Any(id => !hydrated.ContainsKey(id))) return null;
+            nativeItems = hydrated;
+        }
         var resolvedTracks = projection.Entries
-            .Select(item => ToResolvedVirtualTrack(item, libraryTracks, link.SourceProviderId))
+            .Select(item => ToResolvedVirtualTrack(item, libraryTracks, link.SourceProviderId, nativeItems))
             .ToArray();
         var resolvedByPosition = resolvedTracks.ToDictionary(item => item.SourcePosition);
         var sourceTracks = projection.SourceEntries
@@ -280,17 +304,19 @@ public sealed class PlaylistVirtualizationService(
             .SingleOrDefaultAsync(cancellationToken);
     }
 
-    private static VirtualPlaylistTrack ToResolvedVirtualTrack(
+    internal static VirtualPlaylistTrack ToResolvedVirtualTrack(
         DurablePlaylistEntryProjection entry,
         IReadOnlyDictionary<string, LibraryTrackRecord> libraryTracks,
-        string sourceProviderId)
+        string sourceProviderId,
+        IReadOnlyDictionary<string, BackendPlaylistMember>? nativeItems = null)
     {
         if (entry.BackendItemId != null &&
             libraryTracks.TryGetValue(entry.BackendItemId, out var local))
             return new(entry.Position, local.BackendItemId, local.Title, local.Artist,
                 local.Album, local.AlbumArtist, local.DurationMilliseconds,
                 local.CoverArtReference, entry.MatchState ?? TrackMatchState.Unresolved,
-                sourceProviderId, null, TrackRouteKind.Local);
+                sourceProviderId, null, TrackRouteKind.Local,
+                NativeEntryJson: nativeItems?.GetValueOrDefault(local.BackendItemId)?.NativeEntryJson);
         var artist = entry.Artists.FirstOrDefault();
         if (entry.RouteKind == "external" && entry.RouteProviderId != null)
         {

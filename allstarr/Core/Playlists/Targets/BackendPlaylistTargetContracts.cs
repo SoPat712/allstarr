@@ -254,6 +254,14 @@ public interface IBackendPlaylistTarget
         string backendPlaylistId,
         CancellationToken cancellationToken);
 
+    Task<BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistMember>>> ReadItemsAsync(
+        BackendPlaylistTargetContext context,
+        IReadOnlyList<string> backendItemIds,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(new BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistMember>>(
+            BackendPlaylistTargetStatus.Unsupported,
+            ErrorCode: "native-item-read-unsupported"));
+
     Task<BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>> WriteAsync(
         BackendPlaylistTargetContext context,
         BackendPlaylistWriteRequest request,

@@ -215,6 +215,25 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         Assert.Equal("cover-b", xmlEntries[0].Attribute("coverArt")!.Value);
         Assert.Equal("navidrome", xmlEntries[0].Attribute("provider")!.Value);
         Assert.Equal("kept-b", xmlEntries[0].Attribute("unknownField")!.Value);
+
+        var resolvedAdapter = new SubsonicVirtualPlaylistProtocolAdapter(
+            new StubVirtualizationService(target with { ProjectionMode = PlaylistProjectionMode.Resolved }),
+            new StubMutationResolver(null));
+        var resolvedJsonResult = Assert.IsType<JsonResult>(await resolvedAdapter.ReadAsync(
+            Context(ProtocolKind.Subsonic), ProtocolId, "json", CancellationToken.None));
+        using var resolvedJson = JsonDocument.Parse(JsonSerializer.Serialize(resolvedJsonResult.Value));
+        var resolvedEntries = resolvedJson.RootElement.GetProperty("subsonic-response")
+            .GetProperty("playlist").GetProperty("entry");
+        Assert.Equal(["native-b", "native-a"],
+            resolvedEntries.EnumerateArray().Select(item => item.GetProperty("id").GetString()));
+        Assert.Equal("kept-b", resolvedEntries[0].GetProperty("unknownField").GetString());
+
+        var resolvedXmlResult = Assert.IsType<ContentResult>(await resolvedAdapter.ReadAsync(
+            Context(ProtocolKind.Subsonic), ProtocolId, "xml", CancellationToken.None));
+        var resolvedDocument = XDocument.Parse(resolvedXmlResult.Content!);
+        var resolvedNs = resolvedDocument.Root!.Name.Namespace;
+        Assert.Equal("kept-b", resolvedDocument.Descendants(resolvedNs + "entry")
+            .First().Attribute("unknownField")!.Value);
     }
 
     [Fact]
