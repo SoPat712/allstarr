@@ -378,7 +378,7 @@ check_external_stream() {
     : >"$response_file"
     head -c 65536 <"$stream_pipe" >"$response_file" &
     reader_pid=$!
-    result="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" --range "$range" \
+    result="$(curl -s --max-time "$TIMEOUT_SECONDS" "${auth[@]}" --range "$range" \
         -o "$stream_pipe" \
         -w '%{http_code}\t%{content_type}\t%{size_download}\t%{time_starttransfer}\t%{time_total}' \
         "$url" || true)"
@@ -1215,16 +1215,21 @@ fi
 echo "playlist-counts direct=$direct_playlists allstarr=$allstarr_playlists"
 check_json "playlist browse shape" "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query" \
     '(.Items | type == "array") and all(.Items[]; .Type == "Playlist")'
+if [[ -n "$INJECTED_PLAYLIST_ID" ]]; then
+    direct_injected_count="$(curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
+        "$DIRECT_BASE/Playlists/$INJECTED_PLAYLIST_ID/Items?UserId=$best_user_id&Limit=200" |
+        jq -r '.TotalRecordCount // (.Items | length) // 0' || true)"
+    allstarr_visible_count="$(curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
+        "$ALLSTARR_BASE/Playlists/$INJECTED_PLAYLIST_ID/Items?UserId=$best_user_id&Limit=200" |
+        jq -r '.TotalRecordCount // (.Items | length) // 0' || true)"
+    echo "configured-injected-counts id=$INJECTED_PLAYLIST_ID direct=${direct_injected_count:-unavailable} allstarr=${allstarr_visible_count:-unavailable} expected=$INJECTED_PLAYLIST_EXPECTED_COUNT actor_bound=$actor_bound"
+fi
 if [[ -n "$INJECTED_PLAYLIST_ID" && "$actor_bound" != 1 ]]; then
     checks=$((checks + 1))
     failures=$((failures + 1))
     echo "FAIL configured alias precondition      requires a user-bound Jellyfin access token; server API keys cannot authorize provider-owned projections"
 elif [[ -n "$INJECTED_PLAYLIST_ID" ]]; then
     injected_items_url="$ALLSTARR_BASE/Playlists/$INJECTED_PLAYLIST_ID/Items?fields=SortName%2CCanDelete%2CMediaSources%2CDateCreated%2CCanDelete&userId=$best_user_id&startIndex=0&limit=200"
-    direct_injected_count="$(curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
-        "$DIRECT_BASE/Playlists/$INJECTED_PLAYLIST_ID/Items?UserId=$best_user_id&Limit=200" |
-        jq -r '.TotalRecordCount // (.Items | length) // 0' || true)"
-    echo "configured-injected-counts id=$INJECTED_PLAYLIST_ID direct=${direct_injected_count:-unavailable} expected=$INJECTED_PLAYLIST_EXPECTED_COUNT"
     check_json "configured alias browse count" \
         "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query" \
         '([.Items[] | select(.Id == $playlist_id)] | length) == 1 and

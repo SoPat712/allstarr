@@ -94,8 +94,10 @@ counting it as passed.
 The injected-playlist live comparison requires a user-bound Jellyfin access
 token. A server API key can qualify native relays but cannot safely establish
 the Allstarr user whose virtual playlists should be exposed, so the kit reports
-that case as a failed precondition instead of silently testing Jellyfin's
-native fallback.
+that case as a failed precondition instead of silently passing Jellyfin's
+native fallback. It still records direct Jellyfin and actor-visible Allstarr
+counts; for example, a five-track native source beneath a 50-track injected
+projection is reported as `direct=5 allstarr=5 expected=50 actor_bound=0`.
 
 Every run prints a UTC start time and unique user agent. Use those two values
 to inspect only the matching bounded server-log window; never copy tokens,
