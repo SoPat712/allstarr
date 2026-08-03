@@ -288,18 +288,25 @@ public sealed class ProviderStatusManagerTests
     [Fact]
     public async Task ManagedListenBrainzAccount_ValidatesItsOwnToken()
     {
+        var handler = new QueuedResponseHandler(
+            Json(HttpStatusCode.OK, "{\"valid\":true,\"user_name\":\"listener\"}"));
         var manager = CreateManager(
             new Dictionary<string, string?>(),
-            httpClientFactory: new HandlerHttpClientFactory(
-                new QueuedResponseHandler(Json(HttpStatusCode.OK, "{\"valid\":true,\"user_name\":\"listener\"}"))));
+            httpClientFactory: new HandlerHttpClientFactory(handler));
         var accountId = Guid.CreateVersion7();
-        var secrets = new Dictionary<string, string> { ["token"] = "user-token" };
+        var secrets = new Dictionary<string, string>
+        {
+            ["token"] = "user-token",
+            ["baseUrl"] = "https://koito.example/apis/listenbrainz/1"
+        };
 
         var tested = await manager.TestManagedProviderCapabilityAsync(
             "listenbrainz", ProviderCapabilities.Scrobbling, accountId, secrets);
 
         Assert.Equal(ProviderHealthState.Healthy, tested.Health);
         Assert.True(tested.IsReady);
+        Assert.Equal("https://koito.example/apis/listenbrainz/1/validate-token",
+            Assert.Single(handler.Requests).AbsoluteUri);
     }
 
     [Fact]
@@ -476,11 +483,13 @@ public sealed class ProviderStatusManagerTests
     private sealed class QueuedResponseHandler(params HttpResponseMessage[] responses) : HttpMessageHandler
     {
         private readonly ConcurrentQueue<HttpResponseMessage> _responses = new(responses);
+        public List<Uri> Requests { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
+            Requests.Add(request.RequestUri!);
             if (!_responses.TryDequeue(out var response))
             {
                 throw new InvalidOperationException("No fake provider response remains.");

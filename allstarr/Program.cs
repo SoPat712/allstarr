@@ -632,7 +632,7 @@ builder.Services.AddHttpClient("LastFm", client =>
 {
     client.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0 (https://github.com/sopat712/allstarr)");
     client.Timeout = TimeSpan.FromSeconds(30);
-});
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 
 builder.Services.AddSingleton<ScrobblingHelper>();
 

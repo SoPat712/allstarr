@@ -83,16 +83,47 @@ public sealed class ScopedListenBrainzTargetTests
         Assert.False(additional.TryGetProperty("tracknumber", out _));
     }
 
+    [Fact]
+    public async Task ConfiguredHttpsServiceReceivesTheTokenAndListen()
+    {
+        var handler = new CaptureHandler();
+        var target = new ListenBrainzScopedPlaybackScrobbleTarget(new HttpClient(handler),
+            new AccountAccessor("""{"token":"koito-token","baseUrl":"https://koito.example/apis/listenbrainz/1"}"""));
+
+        await target.DeliverAsync(Scope(), PlaybackTransition.Stop,
+            new ScopedPlaybackTrack("Track", "Artist", null, 180_000), null,
+            DateTimeOffset.FromUnixTimeSeconds(123456), "signal", CancellationToken.None);
+
+        Assert.Equal("https://koito.example/apis/listenbrainz/1/submit-listens", handler.RequestUri);
+        Assert.Equal("Token", handler.AuthorizationScheme);
+        Assert.Equal("koito-token", handler.AuthorizationParameter);
+    }
+
+    [Fact]
+    public async Task NonHttpsServiceIsRejectedBeforeTheTokenCanBeSent()
+    {
+        var handler = new CaptureHandler();
+        var target = new ListenBrainzScopedPlaybackScrobbleTarget(new HttpClient(handler),
+            new AccountAccessor("""{"token":"koito-token","baseUrl":"http://koito.example/apis/listenbrainz/1"}"""));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => target.DeliverAsync(
+            Scope(), PlaybackTransition.Stop, new ScopedPlaybackTrack("Track", "Artist", null, 180_000),
+            null, DateTimeOffset.UtcNow, "signal", CancellationToken.None));
+
+        Assert.Equal(0, handler.Calls);
+    }
+
     private static IntelligenceScope Scope() => new(Guid.NewGuid(), Guid.NewGuid(), "jellyfin", "backend", "library");
 
-    private sealed class AccountAccessor : IScopedRecommendationAccountAccessor
+    private sealed class AccountAccessor(string json = "{\"token\":\"test-token\"}")
+        : IScopedRecommendationAccountAccessor
     {
         public Task<bool> HasAccountAsync(IntelligenceScope scope, string providerId, CancellationToken cancellationToken) => Task.FromResult(true);
 
         public async Task<T> UseAsync<T>(IntelligenceScope scope, string providerId,
             Func<JsonElement, CancellationToken, Task<T>> operation, CancellationToken cancellationToken)
         {
-            using var document = JsonDocument.Parse("{\"token\":\"test-token\"}");
+            using var document = JsonDocument.Parse(json);
             return await operation(document.RootElement, cancellationToken);
         }
     }
@@ -100,10 +131,18 @@ public sealed class ScopedListenBrainzTargetTests
     private sealed class CaptureHandler : HttpMessageHandler
     {
         public string? Body { get; private set; }
+        public string? RequestUri { get; private set; }
+        public string? AuthorizationScheme { get; private set; }
+        public string? AuthorizationParameter { get; private set; }
+        public int Calls { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            Calls++;
             Body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            RequestUri = request.RequestUri?.AbsoluteUri;
+            AuthorizationScheme = request.Headers.Authorization?.Scheme;
+            AuthorizationParameter = request.Headers.Authorization?.Parameter;
             return new HttpResponseMessage(HttpStatusCode.OK);
         }
     }

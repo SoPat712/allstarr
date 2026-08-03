@@ -6,6 +6,7 @@ using System.Text;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Storage;
+using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Services.Recommendations;
@@ -286,24 +287,26 @@ public sealed class ListenBrainzRecommendationClient(HttpClient http, IScopedRec
         accounts.UseAsync(query.Scope, "listenbrainz", async (secret, ct) =>
         {
             var username = Required(secret, "username"); var userToken = Required(secret, "token");
+            var baseUri = ListenBrainzServiceEndpoint.FromSecret(secret);
             return kind switch
             {
-                ListenBrainzDiscoveryKind.CollaborativeFiltering => await CollaborativeAsync(query, username, userToken, ct),
-                ListenBrainzDiscoveryKind.WeeklyExploration => await PlaylistAsync(query, username, userToken,
+                ListenBrainzDiscoveryKind.CollaborativeFiltering => await CollaborativeAsync(query, baseUri, username, userToken, ct),
+                ListenBrainzDiscoveryKind.WeeklyExploration => await PlaylistAsync(query, baseUri, username, userToken,
                     "weekly-exploration", "listenbrainz-weekly-exploration",
                     "ListenBrainz included this track in your latest Weekly Exploration playlist.", ct),
-                ListenBrainzDiscoveryKind.WeeklyJams => await PlaylistAsync(query, username, userToken,
+                ListenBrainzDiscoveryKind.WeeklyJams => await PlaylistAsync(query, baseUri, username, userToken,
                     "weekly-jams", "listenbrainz-weekly-jams",
                     "ListenBrainz included this track in your latest Weekly Jams playlist.", ct),
-                ListenBrainzDiscoveryKind.TopRecordings => await TopRecordingsAsync(query, username, userToken, ct),
+                ListenBrainzDiscoveryKind.TopRecordings => await TopRecordingsAsync(query, baseUri, username, userToken, ct),
                 _ => throw new ArgumentOutOfRangeException(nameof(kind))
             };
         }, token);
 
     private async Task<IReadOnlyList<RecommendationSourceItem>> CollaborativeAsync(
-        ScopedRecommendationQuery query, string username, string token, CancellationToken cancellationToken)
+        ScopedRecommendationQuery query, Uri baseUri, string username, string token,
+        CancellationToken cancellationToken)
     {
-        using var document = await GetAsync(
+        using var document = await GetAsync(baseUri,
             $"cf/recommendation/user/{Uri.EscapeDataString(username)}/recording?count={query.Limit}", token,
             cancellationToken);
         if (!document.RootElement.TryGetProperty("payload", out var payload) ||
@@ -322,9 +325,10 @@ public sealed class ListenBrainzRecommendationClient(HttpClient http, IScopedRec
     }
 
     private async Task<IReadOnlyList<RecommendationSourceItem>> TopRecordingsAsync(
-        ScopedRecommendationQuery query, string username, string token, CancellationToken cancellationToken)
+        ScopedRecommendationQuery query, Uri baseUri, string username, string token,
+        CancellationToken cancellationToken)
     {
-        using var document = await GetAsync(
+        using var document = await GetAsync(baseUri,
             $"stats/user/{Uri.EscapeDataString(username)}/recordings?count={query.Limit}&range=month", token,
             cancellationToken);
         if (!document.RootElement.TryGetProperty("payload", out var payload) ||
@@ -345,11 +349,11 @@ public sealed class ListenBrainzRecommendationClient(HttpClient http, IScopedRec
     }
 
     private async Task<IReadOnlyList<RecommendationSourceItem>> PlaylistAsync(
-        ScopedRecommendationQuery query, string username, string token, string playlistType,
+        ScopedRecommendationQuery query, Uri baseUri, string username, string token, string playlistType,
         string signalCode, string explanation, CancellationToken cancellationToken)
     {
-        var playlistId = await LatestPlaylistAsync(username, token, playlistType, cancellationToken);
-        using var document = await GetAsync($"playlist/{playlistId}", token, cancellationToken);
+        var playlistId = await LatestPlaylistAsync(baseUri, username, token, playlistType, cancellationToken);
+        using var document = await GetAsync(baseUri, $"playlist/{playlistId}", token, cancellationToken);
         if (!document.RootElement.TryGetProperty("playlist", out var playlist) ||
             !playlist.TryGetProperty("track", out var tracks) || tracks.ValueKind != JsonValueKind.Array) return [];
         return tracks.EnumerateArray().Take(query.Limit).Select((item, index) =>
@@ -366,7 +370,8 @@ public sealed class ListenBrainzRecommendationClient(HttpClient http, IScopedRec
     }
 
     private async Task<string> LatestPlaylistAsync(
-        string username, string token, string playlistType, CancellationToken cancellationToken)
+        Uri baseUri, string username, string token, string playlistType,
+        CancellationToken cancellationToken)
     {
         var offset = 0;
         DateTimeOffset? newest = null;
@@ -374,7 +379,7 @@ public sealed class ListenBrainzRecommendationClient(HttpClient http, IScopedRec
         var complete = false;
         for (var page = 0; page < MaximumPlaylistPages; page++)
         {
-            using var document = await GetAsync(
+            using var document = await GetAsync(baseUri,
                 $"user/{Uri.EscapeDataString(username)}/playlists/createdfor?offset={offset}", token,
                 cancellationToken);
             var root = document.RootElement;
@@ -415,9 +420,11 @@ public sealed class ListenBrainzRecommendationClient(HttpClient http, IScopedRec
         return true;
     }
 
-    private async Task<JsonDocument> GetAsync(string path, string token, CancellationToken cancellationToken)
+    private async Task<JsonDocument> GetAsync(Uri baseUri, string path, string token,
+        CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.listenbrainz.org/1/{path}");
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            ListenBrainzServiceEndpoint.Route(baseUri, path));
         request.Headers.Authorization = new AuthenticationHeaderValue("Token", token);
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)

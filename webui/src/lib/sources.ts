@@ -92,13 +92,21 @@ const builtInSettings: Record<string, ProviderSetting[]> = {
     { key: "password", label: "Last.fm password", type: "password", sensitive: true, required: true,
       helpText: "Used once to request a session and never stored." },
   ],
-  listenbrainz: [{
-    key: "token",
-    label: "ListenBrainz user token",
-    type: "password",
-    sensitive: true,
-    required: true,
-  }],
+  listenbrainz: [
+    {
+      key: "token",
+      label: "ListenBrainz or Koito token",
+      type: "password",
+      sensitive: true,
+      required: true,
+    },
+    {
+      key: "baseUrl",
+      label: "Where to send listens (optional)",
+      type: "url",
+      helpText: "Leave blank to send listens to ListenBrainz. To use Koito, paste its HTTPS listening address.",
+    },
+  ],
 };
 
 export function accountSettings(provider: ProviderDefinition) {

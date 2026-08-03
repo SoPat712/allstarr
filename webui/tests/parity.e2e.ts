@@ -22,6 +22,7 @@ const schema = {
       id: "lumen-audio", name: "Lumen Audio", categories: ["metadata", "streaming"],
       accountSettings: [{ key: "token", label: "Access token", type: "password", sensitive: true, required: true }],
     },
+    { id: "listenbrainz", name: "ListenBrainz", categories: ["scrobbling"] },
     {
       id: "apple-download", name: "Apple Music - Gamdl", categories: ["metadata", "download"],
       connectionKind: "operator_managed",
@@ -856,8 +857,14 @@ for (const viewport of viewports) {
       await mockApi(page);
       await page.goto("#/sources");
       await page.getByRole("button", { name: "Connect Source" }).click();
-      await expect(page.getByRole("dialog", { name: "Connect a Source" })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Save and test" })).toBeInViewport();
+      const connect = page.getByRole("dialog", { name: "Connect a Source" });
+      await expect(connect).toBeVisible();
+      await connect.getByRole("button", { name: "Source", exact: true }).click();
+      await page.getByRole("option", { name: "ListenBrainz" }).click();
+      await expect(connect.getByLabel("ListenBrainz or Koito token")).toBeVisible();
+      await expect(connect.getByLabel("Where to send listens (optional)")).toBeVisible();
+      await expect(connect.getByText("Leave blank to send listens to ListenBrainz. To use Koito, paste its HTTPS listening address.")).toBeVisible();
+      await expect(connect.getByRole("button", { name: "Save and test" })).toBeInViewport();
       await page.getByRole("button", { name: "Close source connection dialog" }).click();
       await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();
       await page.getByRole("tab", { name: "Access" }).click();

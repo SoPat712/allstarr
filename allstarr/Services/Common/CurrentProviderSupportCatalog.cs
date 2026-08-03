@@ -109,7 +109,7 @@ public static class CurrentProviderSupportCatalog
             "listenbrainz",
             "ListenBrainz",
             "user",
-            "Exact user-scoped encrypted token reference.",
+            "Exact user-scoped encrypted token with an optional HTTPS Koito listening address.",
             Capability("scrobbling", Supported, "Durable Jellyfin and Subsonic playback delivery with idempotent checkpoints and exact user/account scope.", "PlaybackSignalPipelineTests; ScrobblingAdminControllerTests"),
             Capability("recommendation", Supported, "Collaborative-filtering recording recommendations join the same explained, scoped candidate pipeline.", "RecommendationSourceAdapterTests; IntelligenceCoreTests"),
             Capability("health", Partial, "Token validation and source readiness are exposed; provider failure remains isolated.", "ScrobblingAdminControllerTests; RecommendationSourceAdapterTests")),

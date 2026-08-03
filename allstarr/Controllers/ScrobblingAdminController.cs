@@ -12,6 +12,7 @@ using allstarr.Core.Secrets;
 using allstarr.Core.Settings;
 using allstarr.Filters;
 using allstarr.Services.Admin;
+using allstarr.Services.Common;
 using allstarr.Models.Settings;
 using Microsoft.EntityFrameworkCore;
 
@@ -363,7 +364,8 @@ public class ScrobblingAdminController : ControllerBase
 
         try
         {
-            using var httpRequest = new HttpRequestMessage(HttpMethod.Get, "https://api.listenbrainz.org/1/validate-token");
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Get,
+                "https://api.listenbrainz.org/1/validate-token");
             httpRequest.Headers.Add("Authorization", $"Token {request.UserToken}");
 
             using var response = await _httpClient.SendAsync(httpRequest);
@@ -422,7 +424,9 @@ public class ScrobblingAdminController : ControllerBase
 
         try
         {
-            using var httpRequest = new HttpRequestMessage(HttpMethod.Get, "https://api.listenbrainz.org/1/validate-token");
+            var baseUri = ListenBrainzServiceEndpoint.FromSecret(account);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Get,
+                ListenBrainzServiceEndpoint.Route(baseUri, "validate-token"));
             httpRequest.Headers.Add("Authorization", $"Token {token}");
 
             using var response = await _httpClient.SendAsync(httpRequest, cancellationToken);

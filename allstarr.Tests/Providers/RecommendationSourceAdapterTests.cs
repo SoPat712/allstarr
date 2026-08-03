@@ -144,12 +144,13 @@ public sealed class RecommendationSourceAdapterTests
     {
         var handler = new QueueHandler("""{"payload":{"mbids":["22222222-2222-2222-2222-222222222222"]}}""");
         var client = new ListenBrainzRecommendationClient(new HttpClient(handler),
-            new SecretAccessor("""{"token":"protected","username":"listener"}"""));
+            new SecretAccessor("""{"token":"protected","username":"listener","baseUrl":"https://koito.example/apis/listenbrainz/1"}"""));
 
         var item = Assert.Single(await client.GetRecommendationsAsync(
             Query(), ListenBrainzDiscoveryKind.CollaborativeFiltering, default));
 
         Assert.Equal("22222222-2222-2222-2222-222222222222", item.Identity!.MusicBrainzRecordingId);
+        Assert.Equal("koito.example", handler.Requests.Single().Host);
         Assert.Contains("/cf/recommendation/user/", handler.Requests.Single().AbsolutePath, StringComparison.Ordinal);
     }
 

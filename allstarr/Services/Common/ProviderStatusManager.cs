@@ -760,8 +760,10 @@ public class ProviderStatusManager
             return false;
         }
 
-        using var client = _httpClientFactory.CreateClient();
-        using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.listenbrainz.org/1/validate-token");
+        var baseUri = ListenBrainzServiceEndpoint.FromSecret(secrets);
+        using var client = _httpClientFactory.CreateClient("LastFm");
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            ListenBrainzServiceEndpoint.Route(baseUri, "validate-token"));
         request.Headers.Authorization = new("Token", token);
         using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
         if (!response.IsSuccessStatusCode)

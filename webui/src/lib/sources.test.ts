@@ -70,6 +70,16 @@ describe("source presentation", () => {
       .toBe("available");
   });
 
+  it("offers an optional Koito address without replacing the encrypted token", () => {
+    const settings = accountSettings({ id: "listenbrainz", name: "ListenBrainz" });
+
+    expect(settings).toMatchObject([
+      { key: "token", type: "password", required: true },
+      { key: "baseUrl", type: "url" },
+    ]);
+    expect(settings[1].required).not.toBe(true);
+  });
+
   it("uses runtime readiness for operator-managed Sources", () => {
     const managed = {
       id: "apple-download",

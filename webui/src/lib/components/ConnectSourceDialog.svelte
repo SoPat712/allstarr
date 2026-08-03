@@ -125,7 +125,7 @@
                 {:else}
                   <input
                     name={field.key}
-                    type={field.sensitive ? "password" : field.type === "number" ? "number" : "text"}
+                    type={field.sensitive ? "password" : field.type === "number" ? "number" : field.type === "url" ? "url" : "text"}
                     required={field.required}
                     autocomplete={field.key === "username" ? "username" : field.key === "password" ? "current-password" : "off"}
                   />

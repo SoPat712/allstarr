@@ -9,6 +9,7 @@ using System.Xml.Linq;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Operations;
 using allstarr.Core.Playback;
+using allstarr.Services.Common;
 
 namespace allstarr.Services.Scrobbling;
 
@@ -236,7 +237,9 @@ public sealed class ListenBrainzScopedPlaybackScrobbleTarget(HttpClient http, IS
         accounts.UseAsync(scope, ProviderId, async (secret, ct) =>
         {
             var playing = transition is PlaybackTransition.Start or PlaybackTransition.InferredStart;
-            using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.listenbrainz.org/1/submit-listens");
+            var baseUri = ListenBrainzServiceEndpoint.FromSecret(secret);
+            using var request = new HttpRequestMessage(HttpMethod.Post,
+                ListenBrainzServiceEndpoint.Route(baseUri, "submit-listens"));
             request.Headers.Authorization = new("Token", Required(secret, "token"));
             var additionalInfo = new Dictionary<string, object>
             {
