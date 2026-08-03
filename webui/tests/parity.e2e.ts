@@ -784,15 +784,16 @@ for (const viewport of viewports) {
       await page.emulateMedia({ reducedMotion: "reduce" });
       await mockApi(page, { releasePath: "/api/admin/intelligence", release: delayed.promise });
       await page.goto("#/intelligence");
-      await page.getByLabel("Server connection").fill("main");
-      await page.getByLabel("Music library").fill("music");
-      await page.getByRole("button", { name: "Open library" }).click();
       const loadingStatus = page.getByRole("status", { name: "Loading Intelligence" });
       await expect(loadingStatus).toBeVisible();
       expect(await loadingStatus.locator(".skeleton-panel").first().evaluate((element) =>
         getComputedStyle(element, "::after").animationName)).toBe("none");
       delayed.release();
       await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+      await expect(page.locator(".library-choice")).toContainText("Music");
+      await expect(page.locator(".library-choice")).toContainText("Jellyfin · Jellyfin Music");
+      await expect(page.getByLabel("Server connection")).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Open library" })).toHaveCount(0);
       if (viewport.width <= 650) {
         const sectionTabs = page.getByRole("navigation", { name: "Intelligence sections" }).locator(".segmented-tabs");
         await expect(sectionTabs).toHaveCSS("overflow-x", "auto");
@@ -959,11 +960,8 @@ for (const viewport of viewports) {
       const errorPage = await context.newPage();
       await mockApi(errorPage, { fail: ["/api/admin/intelligence"] });
       await errorPage.goto("#/intelligence");
-      await errorPage.getByLabel("Server connection").fill("main");
-      await errorPage.getByLabel("Music library").fill("music");
-      await errorPage.getByRole("button", { name: "Open library" }).click();
       await expect(errorPage.getByRole("alert")).toContainText("Fixture unavailable");
-      await expect(errorPage.getByRole("button", { name: "Open library" })).toBeInViewport();
+      await expect(errorPage.getByRole("button", { name: "Try again" })).toBeInViewport();
     });
 
     test("Source dialogs remain usable", async ({ page }) => {
@@ -1042,15 +1040,11 @@ for (const viewport of viewports) {
 test("Intelligence history imports, corrections, and schedules use the selected scope", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
-  await page.goto("#/intelligence?section=history");
-  await page.getByLabel("Server connection").fill("main");
-  await page.getByLabel("Music library").fill("music");
   const overviewRequest = page.waitForRequest((request) => request.url().includes("/api/admin/intelligence/history/overview"));
-  await page.getByRole("button", { name: "Open library" }).click();
+  await page.goto("#/intelligence?section=history");
   await expect(page.getByRole("tab", { name: "History" })).toHaveAttribute("aria-selected", "true");
   expect(new URL((await overviewRequest).url()).searchParams.get("backendInstanceId")).toBe("main");
 
-  await page.getByLabel("Server connection").fill("typed-but-not-opened");
   await page.locator(".history-list").getByRole("button").click();
   const detail = page.getByRole("dialog", { name: "Edit listen" });
   await expect(detail).toBeVisible();
@@ -1130,9 +1124,6 @@ test("Intelligence empty states explain how to get results", async ({ page }) =>
   });
 
   await page.goto("#/intelligence?section=unknown");
-  await page.getByLabel("Server connection").fill("main");
-  await page.getByLabel("Music library").fill("music");
-  await page.getByRole("button", { name: "Open library" }).click();
   await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("heading", { name: "Listening overview" })).toBeVisible();
   await page.getByRole("tab", { name: "Recommendations" }).click();

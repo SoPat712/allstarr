@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { X } from "lucide-svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import AudioMuseDiscovery from "$lib/components/AudioMuseDiscovery.svelte";
@@ -28,6 +29,8 @@
   let selectedProviders = $state<string[]>([]);
   let targetCredentialReferenceId = $state("");
   let mediaTargets = $state<MediaTarget[]>([]);
+  let selectedTargetId = $state("");
+  let targetsLoading = $state(true);
   let loadedScope = $state<IntelligenceScope | null>(null);
 
   const activeSection = $derived<IntelligenceSection>(
@@ -41,6 +44,9 @@
   const audioMuseReady = $derived(data?.providers.some((item) => item.id === "audiomuse-ai" && item.enabled && item.available && item.state === "ready") ?? false);
   const runState = $derived(data?.actions.latestRunState?.replace("retryscheduled", "retry scheduled"));
   const runStatus = $derived(runState === "succeeded" ? "Ready" : ["pending", "running", "retry scheduled"].includes(runState ?? "") ? "Refreshing" : runState);
+  const scopedTargets = $derived(mediaTargets.filter((item) => Boolean(item.libraryScopeId)));
+  const selectedTarget = $derived(scopedTargets.find((item) => item.id === selectedTargetId) ?? scopedTargets[0]);
+  const targetOptions = $derived(scopedTargets.map((item) => ({ value: item.id, label: targetLabel(item) })));
   const credentialOptions = $derived(mediaTargets
     .filter((item) => item.protocol === activeScope.protocol && item.backendInstanceId === activeScope.backendInstanceId &&
       (!item.libraryScopeId || item.libraryScopeId === activeScope.libraryScopeId) && item.credentialReferenceId)
@@ -52,6 +58,8 @@
     return () => clearTimeout(timer);
   });
 
+  onMount(() => { void discoverTargets(); });
+
   function adopt(next: IntelligenceState) {
     data = next;
     enabled = Boolean(next.policy?.enabled);
@@ -61,17 +69,52 @@
     targetCredentialReferenceId = next.policy?.targetCredentialReferenceId ?? "";
   }
 
-  async function load() {
-    if (!backendInstanceId.trim() || !libraryScopeId.trim()) return;
-    const requestedScope = { ...scope };
+  function serverLabel(value: string) {
+    return value === "jellyfin" ? "Jellyfin" : value === "subsonic" ? "Subsonic" : "Media server";
+  }
+
+  function libraryLabel(value: string) {
+    return value.replaceAll("-", " ").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+  }
+
+  function targetLabel(target: MediaTarget) {
+    return `${libraryLabel(target.libraryScopeId ?? "Music")} · ${serverLabel(target.protocol)}`;
+  }
+
+  async function discoverTargets() {
+    targetsLoading = true;
+    error = "";
+    try {
+      const response = await playlistLinks.targets();
+      mediaTargets = response.targets;
+      const target = response.targets.find((item) => Boolean(item.libraryScopeId));
+      if (target) {
+        targetsLoading = false;
+        await openTarget(target.id);
+      }
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : "Your music libraries could not be found.";
+    } finally {
+      targetsLoading = false;
+    }
+  }
+
+  async function openTarget(targetId: string) {
+    const target = mediaTargets.find((item) => item.id === targetId && item.libraryScopeId);
+    if (!target?.libraryScopeId) return;
+    selectedTargetId = target.id;
+    protocol = target.protocol;
+    backendInstanceId = target.backendInstanceId;
+    libraryScopeId = target.libraryScopeId;
+    await load({ protocol: target.protocol, backendInstanceId: target.backendInstanceId, libraryScopeId: target.libraryScopeId });
+  }
+
+  async function load(requestedScope: IntelligenceScope = { ...scope }) {
+    if (!requestedScope.backendInstanceId.trim() || !requestedScope.libraryScopeId.trim()) return;
     loading = true;
     error = "";
     try {
-      const [next, targets] = await Promise.all([
-        intelligence.get(requestedScope),
-        playlistLinks.targets().catch(() => ({ targets: [] })),
-      ]);
-      mediaTargets = targets.targets;
+      const next = await intelligence.get(requestedScope);
       loadedScope = requestedScope;
       adopt(next);
     } catch (cause) {
@@ -170,12 +213,31 @@
     {/if}
   </header>
 
-  <form class="panel scope-card" onsubmit={(event) => { event.preventDefault(); void load(); }}>
-    <label class="field"><span>Media server</span><SelectField bind:value={protocol} label="Media server" options={[{ value: "jellyfin", label: "Jellyfin" }, { value: "subsonic", label: "Subsonic" }]} /></label>
-    <label class="field"><span>Server connection</span><input bind:value={backendInstanceId} maxlength="200" placeholder="main" required /></label>
-    <label class="field"><span>Music library</span><input bind:value={libraryScopeId} maxlength="300" placeholder="music" required /></label>
-    <button class="button-secondary" type="submit" disabled={loading}>{loading ? "Loading…" : "Open library"}</button>
-  </form>
+  <section class="panel scope-card" aria-busy={targetsLoading || loading}>
+    <div class="scope-intro">
+      <p class="eyebrow">Music library</p>
+      <p>History, recommendations, and generated playlists stay scoped to one connected library.</p>
+    </div>
+    {#if targetsLoading}
+      <span class="scope-card-status" role="status">Finding your library…</span>
+    {:else if selectedTarget && scopedTargets.length === 1}
+      <div class="library-choice">
+        <strong>{libraryLabel(selectedTarget.libraryScopeId ?? "Music")}</strong>
+        <span>{serverLabel(selectedTarget.protocol)} · {selectedTarget.displayName}</span>
+      </div>
+    {:else if scopedTargets.length > 1}
+      <label class="field library-picker"><span>Use this library</span><SelectField value={selectedTargetId} label="Music library" options={targetOptions} onchange={(value) => void openTarget(value)} /></label>
+    {:else}
+      <div class="scope-card-status">
+        <strong>{mediaTargets.length ? "Finish indexing your music library" : "Connect a music server"}</strong>
+        <span>{mediaTargets.length ? "Allstarr found your server, but it has not indexed a music library yet." : "Connect Jellyfin or Subsonic before opening Intelligence."}</span>
+        <a class="button-secondary" href="#/sources">Open Sources</a>
+      </div>
+    {/if}
+    {#if !targetsLoading && selectedTarget && error}
+      <button class="button-secondary" type="button" disabled={loading} onclick={() => void load()}>{loading ? "Trying again…" : "Try again"}</button>
+    {/if}
+  </section>
 
   {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
 
@@ -183,21 +245,14 @@
     <div class="intelligence-grid" role="status" aria-busy="true" aria-label="Loading Intelligence">
       {#each Array(3) as _}<div class="panel skeleton-panel"></div>{/each}
     </div>
-  {:else if !data}
-    <section class="panel empty-state">
-      <span class="empty-orbit" aria-hidden="true">✦</span>
-      <p class="eyebrow">Choose a library</p>
-      <h2>Choose a music library.</h2>
-      <p>Enter the connection and library names configured for your media server. If you have not connected a music source yet, <a class="touch-link" href="#/sources">open Sources</a>.</p>
-    </section>
-  {:else if data.state === "unauthorized" || data.state === "error"}
+  {:else if data?.state === "unauthorized" || data?.state === "error"}
     <RouteError
       eyebrow={data.state}
       title="This library is unavailable."
       message={data.message ?? "The library could not be loaded."}
       onRetry={load}
     />
-  {:else}
+  {:else if data}
     {#if data.state === "degraded"}
       <div class="degraded-banner" role="status"><span aria-hidden="true">!</span><p><strong>Some discovery sources need attention.</strong> Existing results remain available.</p></div>
     {/if}
@@ -301,7 +356,7 @@
 
 <style>
   .intelligence-view{min-width:0}
-  .intelligence-view{display:grid;gap:1.25rem}.route-heading{display:flex;align-items:end;justify-content:space-between;gap:1rem}.route-heading h2{margin:.25rem 0;font-family:var(--font-display);font-size:clamp(1.5rem,3vw,2.2rem)}.route-heading p:last-child{color:var(--color-ink-muted)}.heading-actions{display:flex;align-items:center;gap:.75rem}.scope-card{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;align-items:end;gap:1rem;padding:1rem}.run-progress{display:grid;grid-template-columns:minmax(0,1fr) minmax(10rem,.5fr) auto;align-items:center;gap:1rem;padding:1rem}.run-progress p{margin:0}.run-progress small{display:block;color:var(--color-ink-muted)}.run-progress progress{width:100%;accent-color:var(--color-signal)}.settings-stack{display:grid;gap:1rem}.settings-status-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.status-card{padding:1.15rem}.status-card h3,.status-card p{margin:.2rem 0}.status-list,.profile-list,.generated-list{margin:0;padding:0;list-style:none}.status-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.75rem 0}.status-row strong,.status-row small{display:block}.status-row small{color:var(--color-ink-muted)}.intelligence-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(18rem,.8fr);gap:1rem}.recommendations,.profile-card,.generated-card,.privacy-card{padding:1.15rem}.recommendations>header,.privacy-card>header{display:flex;align-items:center;justify-content:space-between}.recommendations h3,.profile-card h3,.generated-card h3,.privacy-card h3{margin:.2rem 0 1rem}.recommendation-list{display:grid;margin:0;padding:0;list-style:none}.recommendation-list>li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.85rem;align-items:center;border-top:1px solid var(--color-edge);padding:.9rem 0}.track-copy small,summary{color:var(--color-ink-muted);font-size:.75rem}.track-copy details{margin-top:.35rem}.track-copy ul{margin:.4rem 0 0;padding-left:1.1rem;color:var(--color-ink-muted);font-size:.78rem}.side-stack{display:grid;align-content:start;gap:1rem}.profile-list li,.generated-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.7rem 0}.profile-card meter{width:55%;accent-color:var(--color-signal)}.generated-row span:first-child strong,.generated-row span:first-child small{display:block}.generated-row small{color:var(--color-ink-muted)}.generate-form{display:grid;gap:.75rem;margin-top:1rem}.privacy-card form{display:grid;grid-template-columns:minmax(14rem,.6fr) 1fr 1fr;gap:1rem}.toggle-line{display:flex;gap:.75rem}.toggle-line span>*,fieldset label span>*{display:block}.toggle-line small,fieldset small{color:var(--color-ink-muted)}fieldset{display:grid;align-content:start;gap:.55rem;border:0;margin:0;padding:0}fieldset legend{margin-bottom:.55rem;font-weight:750}fieldset label{display:flex;gap:.5rem}.privacy-card footer{grid-column:1/-1;display:flex;justify-content:space-between;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}
-  @media(max-width:900px){.scope-card{grid-template-columns:1fr 1fr}.run-progress{grid-template-columns:1fr}.settings-status-grid,.intelligence-grid{grid-template-columns:1fr}.privacy-card form{grid-template-columns:1fr 1fr}}
-  @media(max-width:620px){.route-heading{align-items:stretch;flex-direction:column}.scope-card,.privacy-card form,.run-progress{grid-template-columns:1fr}.recommendation-list>li{grid-template-columns:auto minmax(0,1fr)}.track-actions{grid-column:2;flex-wrap:wrap}.privacy-card footer{grid-column:auto;flex-direction:column-reverse}.privacy-card footer>*{width:100%}.touch-link{display:inline-flex;min-height:var(--control-md);align-items:center}}
+  .intelligence-view{display:grid;gap:1.25rem}.route-heading{display:flex;align-items:end;justify-content:space-between;gap:1rem}.route-heading h2{margin:.25rem 0;font-family:var(--font-display);font-size:clamp(1.5rem,3vw,2.2rem)}.route-heading p:last-child{color:var(--color-ink-muted)}.heading-actions{display:flex;align-items:center;gap:.75rem}.scope-card{display:flex;align-items:center;justify-content:space-between;gap:1.25rem;padding:1rem}.scope-intro{min-width:0}.scope-intro p{margin:0}.scope-intro p:last-child{margin-top:.2rem;color:var(--color-ink-muted)}.library-choice{display:grid;min-width:min(22rem,45%);border-left:1px solid var(--color-edge);padding-left:1rem}.library-choice span,.scope-card-status span{color:var(--color-ink-muted);font-size:.8rem}.library-picker{width:min(24rem,45%)}.scope-card-status{display:flex;align-items:center;gap:.75rem}.scope-card-status strong,.scope-card-status span{display:block}.run-progress{display:grid;grid-template-columns:minmax(0,1fr) minmax(10rem,.5fr) auto;align-items:center;gap:1rem;padding:1rem}.run-progress p{margin:0}.run-progress small{display:block;color:var(--color-ink-muted)}.run-progress progress{width:100%;accent-color:var(--color-signal)}.settings-stack{display:grid;gap:1rem}.settings-status-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.status-card{padding:1.15rem}.status-card h3,.status-card p{margin:.2rem 0}.status-list,.profile-list,.generated-list{margin:0;padding:0;list-style:none}.status-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.75rem 0}.status-row strong,.status-row small{display:block}.status-row small{color:var(--color-ink-muted)}.intelligence-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(18rem,.8fr);gap:1rem}.recommendations,.profile-card,.generated-card,.privacy-card{padding:1.15rem}.recommendations>header,.privacy-card>header{display:flex;align-items:center;justify-content:space-between}.recommendations h3,.profile-card h3,.generated-card h3,.privacy-card h3{margin:.2rem 0 1rem}.recommendation-list{display:grid;margin:0;padding:0;list-style:none}.recommendation-list>li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.85rem;align-items:center;border-top:1px solid var(--color-edge);padding:.9rem 0}.track-copy small,summary{color:var(--color-ink-muted);font-size:.75rem}.track-copy details{margin-top:.35rem}.track-copy ul{margin:.4rem 0 0;padding-left:1.1rem;color:var(--color-ink-muted);font-size:.78rem}.side-stack{display:grid;align-content:start;gap:1rem}.profile-list li,.generated-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.7rem 0}.profile-card meter{width:55%;accent-color:var(--color-signal)}.generated-row span:first-child strong,.generated-row span:first-child small{display:block}.generated-row small{color:var(--color-ink-muted)}.generate-form{display:grid;gap:.75rem;margin-top:1rem}.privacy-card form{display:grid;grid-template-columns:minmax(14rem,.6fr) 1fr 1fr;gap:1rem}.toggle-line{display:flex;gap:.75rem}.toggle-line span>*,fieldset label span>*{display:block}.toggle-line small,fieldset small{color:var(--color-ink-muted)}fieldset{display:grid;align-content:start;gap:.55rem;border:0;margin:0;padding:0}fieldset legend{margin-bottom:.55rem;font-weight:750}fieldset label{display:flex;gap:.5rem}.privacy-card footer{grid-column:1/-1;display:flex;justify-content:space-between;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}
+  @media(max-width:900px){.scope-card{align-items:stretch;flex-direction:column}.library-choice,.library-picker{width:100%;min-width:0;border-left:0;border-top:1px solid var(--color-edge);padding-top:1rem;padding-left:0}.run-progress{grid-template-columns:1fr}.settings-status-grid,.intelligence-grid{grid-template-columns:1fr}.privacy-card form{grid-template-columns:1fr 1fr}}
+  @media(max-width:620px){.route-heading{align-items:stretch;flex-direction:column}.scope-card-status{align-items:stretch;flex-direction:column}.privacy-card form,.run-progress{grid-template-columns:1fr}.recommendation-list>li{grid-template-columns:auto minmax(0,1fr)}.track-actions{grid-column:2;flex-wrap:wrap}.privacy-card footer{grid-column:auto;flex-direction:column-reverse}.privacy-card footer>*{width:100%}.touch-link{display:inline-flex;min-height:var(--control-md);align-items:center}}
 </style>
