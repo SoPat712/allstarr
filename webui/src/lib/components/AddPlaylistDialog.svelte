@@ -13,7 +13,14 @@
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
-  import { orderPlaylistSources } from "$lib/playlists";
+  import {
+    orderPlaylistSources,
+    playlistDestinationOptions,
+    playlistProjectionOptions,
+  } from "$lib/playlists";
+
+  type DestinationMode = "virtual" | "materialized" | "hybrid";
+  type ProjectionMode = "resolved" | "source" | "target";
 
   let {
     open = $bindable(false),
@@ -42,6 +49,9 @@
   let sourcePlaylists = $state<PlaylistDiscoveryItem[]>([]);
   let sourceCursor = $state("");
   let schedule = $state("manual");
+  let mode = $state<DestinationMode>("materialized");
+  let projectionMode = $state<ProjectionMode>("resolved");
+  let materializationMode = $state<"reconcile" | "recreate">("reconcile");
   let syncBehavior = $state("preserve");
   let syncName = $state(true);
   let syncDescription = $state(true);
@@ -50,13 +60,42 @@
   let saving = $state(false);
   let error = $state("");
   let browseRequest = 0;
+  let addBody = $state<HTMLElement>();
 
   const orderedAccounts = $derived(orderPlaylistSources(accounts, providerOrder));
   const providerIds = $derived([...new Set(orderedAccounts.map((item) => item.providerId))]);
   const selectedAccount = $derived(accounts.find((item) => item.id === accountId));
+  const compatibleTargets = $derived(targets.filter((item) =>
+    !selectedAccount?.libraryScopeId || !item.libraryScopeId ||
+    item.libraryScopeId === selectedAccount.libraryScopeId));
   const selectedTarget = $derived(targets.find((item) => item.id === targetId));
   const selectedLibraryScope = $derived(selectedAccount?.libraryScopeId || selectedTarget?.libraryScopeId);
-  const stepReady = $derived(step === 1 ? Boolean(targetPlaylistId) : step === 2 ? Boolean(sourcePlaylistId) : true);
+  const sourceName = $derived(selectedAccount?.displayName ?? "the source service");
+  const targetName = $derived(
+    selectedTarget?.protocol === "jellyfin"
+      ? "Jellyfin"
+      : selectedTarget?.protocol === "subsonic"
+        ? "Subsonic"
+        : selectedTarget?.displayName ?? "your media server",
+  );
+  const targetPlaylistName = $derived(
+    targetPlaylists.find((item) => item.id === targetPlaylistId)?.name ?? `the selected ${targetName} playlist`,
+  );
+  const destinationOptions = $derived(playlistDestinationOptions(targetName, targetPlaylistName));
+  const projectionOptions = $derived(playlistProjectionOptions(sourceName, targetName, targetPlaylistName));
+  const needsTargetPlaylist = $derived(mode !== "virtual" || projectionMode === "target");
+  const stepReady = $derived(
+    step === 1
+      ? Boolean(sourcePlaylistId)
+      : step === 3
+        ? Boolean(targetId) && (!needsTargetPlaylist || Boolean(targetPlaylistId))
+        : true,
+  );
+
+  $effect(() => {
+    step;
+    queueMicrotask(() => addBody?.scrollTo({ top: 0 }));
+  });
 
   function definition(id: string) {
     return providers.find((item) => item.id.toLowerCase() === id.toLowerCase());
@@ -73,18 +112,32 @@
   });
 
   async function load() {
+    browseRequest++;
     loading = true;
     error = "";
     step = 1;
+    accounts = [];
+    providerOrder = [];
+    providerNames = {};
+    blocked = 0;
+    targets = [];
+    targetId = "";
     targetPlaylistId = "";
     targetQuery = "";
+    targetPlaylists = [];
     accountId = "";
     sourcePlaylistId = "";
     sourceQuery = "";
     sourcePlaylists = [];
     sourceCursor = "";
     schedule = "manual";
+    mode = "materialized";
+    projectionMode = "resolved";
+    materializationMode = "reconcile";
     syncBehavior = "preserve";
+    syncName = true;
+    syncDescription = true;
+    syncArtwork = true;
     try {
       const [sourceResponse, targetResponse] = await Promise.all([
         playlistLinks.sources(), playlistLinks.targets(),
@@ -95,7 +148,6 @@
       blocked = sourceResponse.blockedAccounts.length;
       targets = targetResponse.targets;
       targetId = targets[0]?.id ?? "";
-      if (targetId) await browseTargets();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Playlist setup is unavailable.";
     } finally {
@@ -108,13 +160,20 @@
     targetPlaylistId = "";
     targetQuery = "";
     targetPlaylists = [];
-    await browseTargets();
+    if (needsTargetPlaylist) await browseTargets();
+  }
+
+  async function chooseDestination(value: DestinationMode) {
+    mode = value;
+    if (needsTargetPlaylist && targetId && !targetPlaylists.length) await browseTargets();
   }
 
   async function browseTargets() {
     if (!targetId) return;
     const requestedTarget = targetId;
     const request = ++browseRequest;
+    targetPlaylistId = "";
+    targetPlaylists = [];
     loading = true;
     error = "";
     try {
@@ -135,6 +194,14 @@
     sourceQuery = "";
     sourcePlaylists = [];
     sourceCursor = "";
+    const libraryScopeId = accounts.find((item) => item.id === id)?.libraryScopeId;
+    const compatible = targets.filter((item) =>
+      !libraryScopeId || !item.libraryScopeId || item.libraryScopeId === libraryScopeId);
+    if (!compatible.some((item) => item.id === targetId)) {
+      targetId = compatible[0]?.id ?? "";
+      targetPlaylistId = "";
+      targetPlaylists = [];
+    }
     await browseSources();
   }
 
@@ -142,6 +209,10 @@
     if (!accountId) return;
     const requestedAccount = accountId;
     const request = ++browseRequest;
+    if (!cursor) {
+      sourcePlaylistId = "";
+      sourcePlaylists = [];
+    }
     loading = true;
     error = "";
     try {
@@ -157,13 +228,16 @@
     }
   }
 
-  function next() {
+  async function next() {
     if (!stepReady) return;
-    step = Math.min(3, step + 1);
+    step = Math.min(4, step + 1);
+    if (step === 3 && needsTargetPlaylist && targetId && !targetPlaylists.length)
+      await browseTargets();
   }
 
   async function save() {
-    if (!selectedAccount || !selectedTarget || !selectedLibraryScope || !sourcePlaylistId || !targetPlaylistId || saving) return;
+    if (!selectedAccount || !selectedTarget || !selectedLibraryScope || !sourcePlaylistId ||
+        (needsTargetPlaylist && !targetPlaylistId) || saving) return;
     saving = true;
     error = "";
     try {
@@ -175,9 +249,10 @@
         targetProtocol: selectedTarget.protocol,
         targetBackendInstanceId: selectedTarget.backendInstanceId,
         targetCredentialReferenceId: selectedTarget.credentialReferenceId,
-        targetPlaylistId,
-        mode: "materialized",
-        materializationMode: "reconcile",
+        targetPlaylistId: needsTargetPlaylist ? targetPlaylistId : null,
+        mode,
+        projectionMode,
+        materializationMode,
         mirrorStaleEntries: syncBehavior === "mirror",
         preserveManualEntries: syncBehavior === "preserve",
         syncName,
@@ -204,7 +279,11 @@
         }
       }
       open = false;
-      await onSaved("Playlist linked. Allstarr will match local tracks first and use configured fallback Sources.");
+      await onSaved(mode === "virtual"
+        ? `Playlist linked. Listeners will see it through Allstarr; ${targetName} will not create or update a playlist.`
+        : mode === "hybrid"
+          ? `Playlist linked. Listeners will see it through Allstarr, and ${targetPlaylistName} will stay updated in ${targetName}.`
+          : `Playlist linked. ${targetPlaylistName} will stay updated in ${targetName}; no separate Allstarr playlist will be shown.`);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Playlist could not be linked.";
     } finally {
@@ -221,55 +300,75 @@
         <div>
           <p class="eyebrow">Library intake</p>
           <Dialog.Title>Link a playlist</Dialog.Title>
-          <Dialog.Description>Choose the Jellyfin playlist first, then connect its source and sync rules.</Dialog.Description>
+          <Dialog.Description>Choose the original playlist, what listeners see, and whether Allstarr updates a playlist in your media server.</Dialog.Description>
         </div>
         <Dialog.Close class="icon-button" aria-label="Close playlist setup"><X size={18} aria-hidden="true" /></Dialog.Close>
       </header>
 
       <nav class="playlist-add-steps" aria-label="Playlist setup progress">
-        {#each ["Jellyfin playlist", "Source playlist", "Sync settings"] as label, index}
+        {#each ["Source", "What listeners see", "Where it appears", "Updates"] as label, index}
           <button class:active={step === index + 1} class:complete={step > index + 1} type="button" onclick={() => { if (index + 1 < step) step = index + 1; }}>
             <span>{index + 1}</span>{label}
           </button>
         {/each}
       </nav>
 
-      <div class="playlist-add-body" aria-busy={loading}>
+      <div class="playlist-add-body" bind:this={addBody} aria-busy={loading}>
         {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
 
-        {#if step === 1}
+        {#if loading && step === 1 && !accounts.length}
+          <div class="detail-loading" aria-busy="true">Loading playlist sources…</div>
+        {:else if error && step === 1 && !accounts.length}
+          <div class="compact-empty">
+            <strong>Playlist setup is unavailable</strong>
+            <button class="button-secondary" type="button" onclick={() => void load()}>Try again</button>
+          </div>
+        {:else if step === 3}
           <section class="playlist-add-step">
             <div class="dialog-section-heading">
-              <div><strong>Choose the playlist in your media library</strong><small>This is the playlist Allstarr will keep synchronized.</small></div>
+              <div><strong>Choose where listeners find this playlist</strong><small>You can show it through Allstarr, keep a playlist updated in {targetName}, or do both.</small></div>
             </div>
+            <fieldset class="audience-options playlist-mode-options">
+              <legend>Where it appears</legend>
+              {#each destinationOptions as option}
+                <label class:active={mode === option.id}>
+                  <input type="radio" name="playlist-destination" value={option.id} checked={mode === option.id} onchange={() => void chooseDestination(option.id)} />
+                  <span><strong>{option.label}</strong><small>{option.description}</small></span>
+                </label>
+              {/each}
+            </fieldset>
             <fieldset class="audience-options playlist-targets">
               <legend>Media server</legend>
-              {#each targets as target}
+              {#each compatibleTargets as target}
                 <label class:active={targetId === target.id}>
                   <input type="radio" name="playlist-target" value={target.id} checked={targetId === target.id} onchange={() => void chooseTarget(target.id)} />
                   <ProviderMark id={target.protocol} definition={definition(target.protocol)} />
                   <span><strong>{target.displayName}</strong><small>{target.protocol} · {target.libraryScopeId || "music library"}</small></span>
                 </label>
-              {:else}<p class="notice-error">No linked Jellyfin or Subsonic target is available.</p>{/each}
+              {:else}<p class="notice-error">No media server is connected to this music library.</p>{/each}
             </fieldset>
             {#if targetId}
-              <form class="playlist-add-search" onsubmit={(event) => { event.preventDefault(); void browseTargets(); }}>
-                <SearchField class="field" bind:value={targetQuery} label="Find a Jellyfin playlist" placeholder="Playlist name" />
-                <button class="button-secondary" type="submit" disabled={loading}>Search</button>
-              </form>
-              <fieldset class="audience-options playlist-add-list">
-                <legend>Jellyfin playlists</legend>
-                {#each targetPlaylists as playlist}
-                  <label class:active={targetPlaylistId === playlist.id}>
-                    <input bind:group={targetPlaylistId} type="radio" value={playlist.id} />
-                    <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
-                    <span><strong>{playlist.name}</strong><small>{playlist.trackCount ?? "?"} tracks{playlist.description ? ` · ${playlist.description}` : ""}</small></span>
-                  </label>
-                {:else}{#if !loading}<p class="credential-safety">No writable playlists found.</p>{/if}{/each}
-              </fieldset>
+              {#if needsTargetPlaylist}
+                <form class="playlist-add-search" onsubmit={(event) => { event.preventDefault(); void browseTargets(); }}>
+                  <SearchField class="field" bind:value={targetQuery} label={`Find a playlist in ${targetName}`} placeholder="Playlist name" />
+                  <button class="button-secondary" type="submit" disabled={loading}>Search</button>
+                </form>
+                <fieldset class="audience-options playlist-add-list">
+                  <legend>Playlists in {targetName}</legend>
+                  {#each targetPlaylists as playlist}
+                    <label class:active={targetPlaylistId === playlist.id}>
+                      <input bind:group={targetPlaylistId} type="radio" value={playlist.id} />
+                      <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
+                      <span><strong>{playlist.name}</strong><small>{playlist.trackCount ?? "?"} tracks{playlist.description ? ` · ${playlist.description}` : ""}</small></span>
+                    </label>
+                  {:else}{#if !loading}<p class="credential-safety">No writable playlists found.</p>{/if}{/each}
+                </fieldset>
+              {:else}
+                <p class="credential-safety">Listeners will see this playlist through Allstarr. {targetName} will not create or update a playlist.</p>
+              {/if}
             {/if}
           </section>
-        {:else if step === 2}
+        {:else if step === 1}
           <section class="playlist-add-step">
             {#if !accounts.length && !loading}
               <div class="compact-empty"><strong>No Playlist Sources are available</strong><p>Connect a Playlist-capable account under Sources first.</p><a class="button-primary" href="#/sources">Open Sources</a></div>
@@ -308,8 +407,32 @@
               {/if}
             {/if}
           </section>
+        {:else if step === 2}
+          <section class="playlist-add-step playlist-sync-settings">
+            <div class="dialog-section-heading">
+              <div><strong>Choose what listeners see</strong><small>This does not change the original playlist in {sourceName}.</small></div>
+            </div>
+            <fieldset class="audience-options playlist-mode-options">
+              <legend>What listeners see</legend>
+              {#each projectionOptions as option}
+                <label class:active={projectionMode === option.id}>
+                  <input bind:group={projectionMode} type="radio" value={option.id} />
+                  <span><strong>{option.label}</strong><small>{option.description}</small></span>
+                </label>
+              {/each}
+            </fieldset>
+          </section>
         {:else}
           <section class="playlist-add-step playlist-sync-settings">
+            {#if mode !== "virtual"}
+              <div class="setting-field">
+                <span><strong>How {targetName} is updated</strong><small>Keep the same playlist, or replace the songs Allstarr manages.</small></span>
+                <SelectField bind:value={materializationMode} label={`How ${targetName} is updated`} options={[
+                  { value: "reconcile", label: "Update the existing playlist" },
+                  { value: "recreate", label: "Replace its managed songs" },
+                ]} />
+              </div>
+            {/if}
             <div class="setting-field">
               <span><strong>Automatic sync</strong><small>Times use {Intl.DateTimeFormat().resolvedOptions().timeZone}.</small></span>
               <SelectField bind:value={schedule} label="Automatic sync" options={[
@@ -327,7 +450,7 @@
               ]} />
             </div>
             <fieldset class="playlist-sync-fields">
-              <legend>Metadata to synchronize</legend>
+              <legend>Keep these details updated</legend>
               <label><input bind:checked={syncName} type="checkbox" /> Playlist name</label>
               <label><input bind:checked={syncDescription} type="checkbox" /> Description</label>
               <label><input bind:checked={syncArtwork} type="checkbox" /> Artwork</label>
@@ -338,10 +461,10 @@
 
       <footer class="playlist-add-footer">
         {#if step === 1}<Dialog.Close class="button-secondary">Cancel</Dialog.Close>{:else}<button class="button-secondary" type="button" onclick={() => step--}>Back</button>{/if}
-        {#if step < 3}
-          <button class="button-primary" type="button" disabled={!stepReady || loading} onclick={next}>Continue</button>
+        {#if step < 4}
+          <button class="button-primary" type="button" disabled={!stepReady || loading} onclick={() => void next()}>Continue</button>
         {:else}
-          <button class="button-primary" type="button" disabled={!sourcePlaylistId || !targetPlaylistId || !selectedLibraryScope || saving} onclick={() => void save()}>{saving ? "Linking…" : "Link playlist"}</button>
+          <button class="button-primary" type="button" disabled={!sourcePlaylistId || !targetId || (needsTargetPlaylist && !targetPlaylistId) || !selectedLibraryScope || saving} onclick={() => void save()}>{saving ? "Linking…" : "Link playlist"}</button>
         {/if}
       </footer>
     </Dialog.Content>

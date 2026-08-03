@@ -82,6 +82,8 @@ public sealed class PlaylistLinksControllerContractTests
 
         Assert.Contains("projections.ReadByLinkIdsAsync", source, StringComparison.Ordinal);
         Assert.Contains("projections.ReadByLinkIdAsync", source, StringComparison.Ordinal);
+        Assert.Contains("playlists.ReadPreviewAsync", source, StringComparison.Ordinal);
+        Assert.Contains("virtualization.ReadAsync", source, StringComparison.Ordinal);
         Assert.Contains("projections.ReadByLinkIdAsync", playback, StringComparison.Ordinal);
         Assert.DoesNotContain("TrackClassifier.Classify", playback, StringComparison.Ordinal);
         Assert.DoesNotContain("BuildMetrics(", source, StringComparison.Ordinal);
@@ -149,6 +151,49 @@ public sealed class PlaylistLinksControllerContractTests
         Assert.True(entry.GetProperty("targetEligible").GetBoolean());
         Assert.Equal("included_native_backend_item", entry.GetProperty("outcomeCode").GetString());
         Assert.False(entry.TryGetProperty("inclusionReason", out _));
+    }
+
+    [Fact]
+    public void DetailsContract_SeparatesClientOrderFromSourceMetricsAndShowsEligibility()
+    {
+        var linkId = Guid.NewGuid();
+        var snapshotId = Guid.NewGuid();
+        var externalSnapshotId = Guid.NewGuid();
+        var projection = new DurablePlaylistProjection(
+            linkId, snapshotId, 1, "Source name", "spotify", "source-list",
+            Guid.NewGuid(), "jellyfin", "target-list", null, DateTimeOffset.UtcNow,
+            null, null,
+            [new(0, externalSnapshotId, "source-track", "Source title", ["Artist"], null,
+                null, 1_000, null, null, TrackMatchState.Accepted, "native-a", "local", null, [])]);
+        var client = new VirtualPlaylistReadModel(
+            PlaylistVirtualizationService.CreateProtocolId(linkId), linkId, snapshotId,
+            "Client name", null, null, "spotify", "source-list", "revision-1",
+            PlaylistLinkMode.Hybrid,
+            [new(0, "native-a", "Native title", "Artist", null, null, 1_000, null,
+                TrackMatchState.Accepted)],
+            PlaylistProjectionMode.Target,
+            "target-list");
+        IReadOnlyDictionary<int, PersistedPlaylistPreviewEntry> preview =
+            new Dictionary<int, PersistedPlaylistPreviewEntry>
+            {
+                [0] = new(0, externalSnapshotId, TrackMatchState.Accepted, Guid.NewGuid(), null,
+                    TargetEligible: false,
+                    OutcomeCode: PlaylistMaterializationOutcomeCodes.SkippedWrongBackendOrLibrary,
+                    Status: PlaylistPreviewEntryStatus.WrongBackend)
+            };
+        var method = typeof(PlaylistLinksController).GetMethod(
+            "ToProjectionDto", BindingFlags.NonPublic | BindingFlags.Static)!;
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(
+            method.Invoke(null, new object?[] { projection, null, client, preview })));
+
+        Assert.Equal(1, json.RootElement.GetProperty("trackCount").GetInt32());
+        var clientProjection = json.RootElement.GetProperty("clientProjection");
+        Assert.Equal("target", clientProjection.GetProperty("projectionMode").GetString());
+        Assert.Equal("native-a", clientProjection.GetProperty("tracks")[0].GetProperty("itemId").GetString());
+        var track = json.RootElement.GetProperty("tracks")[0];
+        Assert.False(track.GetProperty("targetEligible").GetBoolean());
+        Assert.Equal(PlaylistMaterializationOutcomeCodes.SkippedWrongBackendOrLibrary,
+            track.GetProperty("outcomeCode").GetString());
     }
 
     [Fact]

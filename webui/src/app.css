@@ -1276,7 +1276,6 @@
     left: 50%;
     display: flex;
     width: min(calc(100% - 2rem), 72rem);
-    height: min(92dvh, 58rem);
     max-height: min(92vh, 58rem);
     flex-direction: column;
     overflow: hidden;
@@ -1674,6 +1673,33 @@
     padding: 0;
   }
 
+  .playlist-view-switcher {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    border-bottom: 1px solid var(--color-edge);
+    padding: 0.7rem 1rem;
+  }
+
+  .playlist-view-switcher > span {
+    display: grid;
+    gap: 0.15rem;
+  }
+
+  .playlist-view-switcher > span strong {
+    font-size: var(--text-xs);
+  }
+
+  .playlist-view-switcher > span small {
+    color: var(--color-ink-muted);
+    font-size: var(--text-xs);
+  }
+
+  .playlist-view-switcher nav {
+    width: min(100%, 24rem);
+  }
+
   .playlist-detail-coverage .coverage-bar {
     width: 100%;
     height: 0.5rem;
@@ -1893,7 +1919,7 @@
   .track-table {
     display: flex;
     min-width: 0;
-    min-height: 10rem;
+    min-height: 6rem;
     flex: 1;
     flex-direction: column;
   }
@@ -2027,6 +2053,15 @@
     opacity: var(--disabled-opacity);
   }
 
+  .track-title-static {
+    overflow: hidden;
+    min-width: 0;
+    color: var(--color-ink);
+    font-size: 0.86rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .track-review-badge {
     flex: none;
     border: 1px solid color-mix(in srgb, var(--color-warning) 45%, transparent);
@@ -2035,6 +2070,30 @@
     padding: 0.15rem 0.4rem;
     font-size: 0.65rem;
     font-weight: 750;
+  }
+
+  .track-eligibility {
+    overflow: hidden;
+    flex: none;
+    max-width: 12rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+    color: var(--color-warning);
+    padding: 0.15rem 0.4rem;
+    font-size: 0.65rem;
+    font-weight: 750;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .track-eligibility.included {
+    background: color-mix(in srgb, var(--color-success) 12%, transparent);
+    color: var(--color-success);
+  }
+
+  .playlist-projection-empty {
+    min-height: 12rem;
+    margin: 1rem;
   }
 
   .track-text-cell {
@@ -2280,6 +2339,15 @@
   .playlist-add-list,
   .playlist-sync-settings .setting-field {
     grid-template-columns: 1fr;
+  }
+
+  .playlist-view-switcher {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .playlist-view-switcher nav {
+    width: 100%;
   }
 
   .playlist-add-steps {
@@ -3054,7 +3122,7 @@
 
   .playlist-add-steps {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     border-bottom: 1px solid var(--color-edge);
     padding: 0.65rem 1rem;
   }
@@ -3113,6 +3181,70 @@
     display: grid;
     grid-template-columns: auto 2.5rem minmax(0, 1fr);
     column-gap: 0.65rem;
+  }
+
+  .playlist-mode-options {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .playlist-mode-options legend {
+    grid-column: 1 / -1;
+  }
+
+  .playlist-add-dialog .playlist-mode-options label {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .playlist-settings-dialog {
+    display: flex;
+    width: min(calc(100% - 2rem), 60rem);
+    max-height: min(92dvh, 54rem);
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .playlist-settings-form {
+    display: grid;
+    min-height: 0;
+    gap: 1rem;
+    overflow: auto;
+    padding: 1rem;
+  }
+
+  .playlist-settings-form .playlist-mode-options label {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 0.65rem;
+  }
+
+  .playlist-settings-form .setting-field {
+    grid-template-columns: minmax(0, 1fr) minmax(14rem, 0.7fr);
+    align-items: center;
+    border: 1px solid var(--color-edge);
+    border-radius: 0.8rem;
+    padding: 1rem;
+  }
+
+  .playlist-settings-form .setting-field > span {
+    display: grid;
+    justify-content: start;
+  }
+
+  .playlist-settings-form .setting-field > span small {
+    background: transparent;
+    padding: 0;
+  }
+
+  .playlist-settings-form > footer {
+    position: sticky;
+    bottom: -1rem;
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.55rem;
+    margin: 0 -1rem -1rem;
+    border-top: 1px solid var(--color-edge);
+    background: var(--color-panel);
+    padding: 0.75rem 1rem;
   }
 
   .playlist-targets {
@@ -6214,6 +6346,11 @@
 }
 
 @media (max-width: 650px) {
+  .playlist-mode-options,
+  .playlist-settings-form .setting-field {
+    grid-template-columns: 1fr;
+  }
+
   .match-dialog,
   .source-dialog,
   .confirm-dialog,

@@ -362,6 +362,13 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             ProtocolExecutionContext context, string protocolId, CancellationToken cancellationToken = default) =>
             Task.FromResult(model);
 
+        public Task<VirtualPlaylistReadModel?> ReadAsync(
+            ProtocolExecutionContext context,
+            string protocolId,
+            PlaylistProjectionMode projectionMode,
+            CancellationToken cancellationToken = default) => Task.FromResult(
+                model == null ? null : model with { ProjectionMode = projectionMode });
+
         public Task<VirtualPlaylistReadModel?> ReadBySourceAsync(
             ProtocolExecutionContext context,
             string sourceProviderId,

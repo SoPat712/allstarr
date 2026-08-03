@@ -117,8 +117,14 @@ const responses: Record<string, unknown> = {
   "/api/admin/playlist-links": {
     playlistLinks: [{
       id: "playlist-link", enabled: true, name: "Test playlist",
-      sourceProviderId: "lumen-audio", targetProtocol: "jellyfin",
-      materializationMode: "reconcile", revision: 1, artworkUrl: "/missing-playlist-art",
+      sourceProviderId: "lumen-audio", sourcePlaylistId: "source-list",
+      providerAccountId: "lumen", libraryScopeId: "music",
+      targetProtocol: "jellyfin", targetBackendInstanceId: "main",
+      targetPlaylistId: "jellyfin-playlist", mode: "hybrid", projectionMode: "resolved",
+      materializationMode: "reconcile", mirrorStaleEntries: false,
+      preserveManualEntries: true, syncName: true, syncDescription: true, syncArtwork: true,
+      ruleVersion: "playlist-rules-v1", policyVersion: "playlist-policy-v1",
+      revision: 1, artworkUrl: "/missing-playlist-art",
       trackCount: 2,
       matchedCount: 0, unmatchedCount: 1, playableCount: 1, materializedCount: 0,
       routeCoverage: [{ providerId: "lumen-audio", count: 1 }],
@@ -344,24 +350,39 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
         }],
         providers: ["lumen-audio", "qobuz"],
       };
-    if (url.pathname === "/api/admin/playlist-links/playlist-link")
+    if (url.pathname === "/api/admin/playlist-links/playlist-link" && route.request().method() === "GET") {
+      const projectionMode = url.searchParams.get("projectionMode") ?? "resolved";
       body = {
         id: "playlist-link", snapshotId: "playlist-snapshot", snapshotVersion: 1,
         latestSourceSnapshotVersion: 1, hasNewerSourceGeneration: false,
-        name: "Test playlist", sourceProviderId: "lumen-audio", targetProtocol: "jellyfin",
+        name: "Test playlist", sourceProviderId: "lumen-audio", projectionMode,
+        targetProtocol: "jellyfin", targetPlaylistId: "jellyfin-playlist",
         artworkUrl: "/missing-playlist-art",
         retrievedAt: "2026-01-01", completedAt: "2026-01-01", trackCount: 2,
         localCount: 0, externalCount: 1, unresolvedCount: 1, durationMs: 180_000,
         matchedCount: 0, reviewCount: 1, rejectedCount: 0, playableCount: 1,
         routeCoverage: [{ providerId: "lumen-audio", count: 1 }],
-        unknownDurationCount: 0, tracks: [{
+        unknownDurationCount: 0,
+        clientProjection: {
+          protocolId: "allstarr-vpl-playlist-link", projectionMode, trackCount: 1,
+          tracks: [{
+            position: 1, sourcePosition: 0,
+            itemId: projectionMode === "target" ? "target-track" : "client-track",
+            title: projectionMode === "resolved" ? "Test song" : `${projectionMode} track`, artists: ["Artist"], album: "Album",
+            durationMs: 180_000, routeKind: "local",
+          }],
+        },
+        tracks: [{
           sourcePosition: 0, position: 1, externalSnapshotId: "snapshot", title: "Test song",
           artists: ["Artist"], album: "Album", isrc: "US-AAA-26-00001",
           artworkUrl: "/missing-track-art",
           durationMs: 180_000, routeKind: "external", routeProviderId: "lumen-audio",
-          matchState: "suggested", providerRoutes: [{ providerId: "lumen-audio", externalId: "provider-track", pinned: false }],
+          matchState: "suggested", targetEligible: false,
+          outcomeCode: "skipped_external_only_for_backend", targetStatus: "wrongbackend",
+          providerRoutes: [{ providerId: "lumen-audio", externalId: "provider-track", pinned: false }],
         }],
       };
+    }
     if (url.pathname.includes("/api/admin/playlist-sources/") && url.pathname.endsWith("/playlists"))
       body = {
         items: [{
@@ -382,6 +403,12 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
       };
     if (url.pathname === "/api/admin/playlist-links" && route.request().method() === "POST")
       body = { id: "new-playlist" };
+    if (url.pathname === "/api/admin/playlist-links/playlist-link" && route.request().method() === "PUT")
+      body = {
+        ...(responses["/api/admin/playlist-links"] as { playlistLinks: Record<string, unknown>[] }).playlistLinks[0],
+        ...route.request().postDataJSON(),
+        revision: 2,
+      };
     if (url.pathname.endsWith("/schedules") && route.request().method() === "POST")
       body = {
         id: "schedule", cronExpression: "0 3 * * *", timeZoneId: "America/New_York",
@@ -480,6 +507,40 @@ for (const viewport of viewports) {
         expect(errors).toEqual([]);
       });
     }
+
+    test("Playlist projection dialogs remain usable", async ({ page }, testInfo) => {
+      await mockApi(page);
+      await page.goto("#/library/playlists");
+      await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
+      const details = page.getByRole("dialog", { name: "Test playlist" });
+      await details.getByRole("tab", { name: "Jellyfin" }).click();
+      await expect(details.getByText("target track", { exact: true })).toBeVisible();
+      await expect(details).toHaveCSS("overflow", "hidden");
+      await expect(details.locator(".track-scroll")).toHaveCSS("overflow", "auto");
+      await expect.poll(() => details.locator(".track-scroll").evaluate((scroll) =>
+        scroll.clientHeight - scroll.querySelector("table")!.scrollHeight)).toBeLessThan(48);
+      const screenshotDirectory = process.env.ALLSTARR_SCREENSHOT_DIR;
+      const detailScreenshot = await page.screenshot({
+        path: screenshotDirectory ? `${screenshotDirectory}/playlist-${viewport.width}-details.png` : undefined,
+      });
+      await testInfo.attach("playlist-details", {
+        body: detailScreenshot,
+        contentType: "image/png",
+      });
+
+      await details.getByRole("button", { name: "Actions" }).click();
+      await page.getByRole("menuitem", { name: "Edit settings" }).click();
+      const settings = page.getByRole("dialog", { name: "Edit playlist settings" });
+      await expect(settings.locator(".playlist-settings-form")).toHaveCSS("overflow-y", "auto");
+      await expect(settings.getByRole("button", { name: "Save settings" })).toBeInViewport();
+      const settingsScreenshot = await page.screenshot({
+        path: screenshotDirectory ? `${screenshotDirectory}/playlist-${viewport.width}-settings.png` : undefined,
+      });
+      await testInfo.attach("playlist-settings", {
+        body: settingsScreenshot,
+        contentType: "image/png",
+      });
+    });
 
     for (const [route, heading, loadingLabel, releasePath, failures] of stateRoutes) {
       test(`${route} exposes loading and error recovery`, async ({ page, context }) => {
@@ -957,19 +1018,25 @@ test("extension updates stay beside the shared management menu", async ({ page }
   await expect(page.getByRole("button", { name: "Remove" })).toBeDisabled();
 });
 
-test("Add playlist links a Jellyfin playlist before its Source on mobile", async ({ page }) => {
+test("Add playlist separates source, client view, destination, and sync on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await mockApi(page);
+  const sources = routeRelease();
+  await mockApi(page, { releasePath: "/api/admin/playlist-sources", release: sources.promise });
   await page.goto("#/library/playlists");
-  await page.getByRole("button", { name: "Add playlist" }).click();
+  const add = page.getByRole("button", { name: "Add playlist" });
+  await add.click();
   const dialog = page.getByRole("dialog", { name: "Link a playlist" });
   await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("Loading playlist sources…")).toBeVisible();
+  sources.release();
+  await expect(dialog.locator(".playlist-source-groups legend")).toHaveCount(5);
+  const stepTops = await dialog.locator(".playlist-add-steps button").evaluateAll((buttons) =>
+    buttons.map((button) => Math.round(button.getBoundingClientRect().top)));
+  expect(new Set(stepTops).size).toBe(1);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
-  await page.getByRole("button", { name: "Add playlist" }).click();
-  await expect(dialog.getByRole("radio", { name: /Road trip/ })).toBeVisible();
-  await dialog.getByRole("radio", { name: /Road trip/ }).check();
-  await dialog.getByRole("button", { name: "Continue" }).click();
+  await expect(add).toBeFocused();
+  await add.click();
   const sourceGroups = dialog.locator(".playlist-source-groups legend");
   await expect(sourceGroups).toHaveCount(5);
   expect(await sourceGroups.allTextContents()).toEqual([
@@ -981,9 +1048,23 @@ test("Add playlist links a Jellyfin playlist before its Source on mobile", async
   await expect(dialog.getByRole("radio", { name: /Second Mix/ })).toBeVisible();
   await dialog.getByRole("radio", { name: /Source Mix/ }).check();
   await dialog.getByRole("button", { name: "Continue" }).click();
+  if (process.env.ALLSTARR_SCREENSHOT_DIR)
+    await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/playlist-390-listener-choice.png` });
+  await dialog.getByRole("radio", { name: /Spotify Keep every song/ }).check();
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await expect.poll(() => dialog.locator(".playlist-add-body").evaluate((body) => body.scrollTop)).toBe(0);
+  await dialog.getByRole("radio", { name: /Allstarr \+ Jellyfin Listeners see/ }).check();
+  await expect(dialog.getByRole("radio", { name: /Road trip/ })).toBeVisible();
+  await dialog.getByRole("radio", { name: /Road trip/ }).check();
+  if (process.env.ALLSTARR_SCREENSHOT_DIR) {
+    await dialog.locator(".playlist-add-body").evaluate((body) => body.scrollTo({ top: 0 }));
+    await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/playlist-390-appearance-choice.png` });
+  }
+  await dialog.getByRole("button", { name: "Continue" }).click();
   await dialog.getByRole("button", { name: "Automatic sync" }).click();
   await page.getByRole("option", { name: "Daily at 3:00 AM" }).click();
   await expect(dialog.getByRole("button", { name: "Link playlist" })).toBeInViewport();
+  await expect(dialog.locator(".playlist-add-body")).toHaveCSS("overflow-y", "auto");
   const create = page.waitForRequest((request) =>
     request.method() === "POST" && request.url().endsWith("/api/admin/playlist-links"));
   const scheduled = page.waitForRequest((request) =>
@@ -994,10 +1075,104 @@ test("Add playlist links a Jellyfin playlist before its Source on mobile", async
     libraryScopeId: "music",
     targetPlaylistId: "jellyfin-playlist",
     sourcePlaylistId: "playlist",
-    mode: "materialized",
+    mode: "hybrid",
+    projectionMode: "source",
   });
   expect((await scheduled).postDataJSON().cronExpression).toBe("0 3 * * *");
   await expect(dialog).toBeHidden();
+});
+
+test("Playlist views and revisioned settings stay keyboard-safe", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await mockApi(page);
+  let listRevision = 1;
+  await page.route("**/api/admin/playlist-links", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = responses["/api/admin/playlist-links"] as { playlistLinks: Record<string, unknown>[] };
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ playlistLinks: response.playlistLinks.map((item) => ({ ...item, revision: listRevision })) }),
+    });
+  });
+  await page.route("**/api/admin/media-targets", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({ targets: [
+      {
+        id: "wrong-credential", protocol: "jellyfin", backendInstanceId: "main",
+        libraryScopeId: "music", credentialReferenceId: "wrong", displayName: "Wrong credential",
+      },
+      ...(responses["/api/admin/media-targets"] as { targets: Record<string, unknown>[] }).targets,
+    ] }),
+  }));
+  await page.goto("#/library/playlists");
+  await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
+  const details = page.getByRole("dialog", { name: "Test playlist" });
+  await expect(details).toBeVisible();
+  const resolved = details.getByRole("tab", { name: "Best available" });
+  await resolved.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(details.getByRole("tab", { name: "Lumen Audio" })).toHaveAttribute("aria-selected", "true");
+  await expect(details.getByText("source track", { exact: true })).toBeVisible();
+  await page.keyboard.press("ArrowRight");
+  await expect(details.getByRole("tab", { name: "Jellyfin" })).toHaveAttribute("aria-selected", "true");
+  await expect(details.getByText("target track", { exact: true })).toBeVisible();
+  await expect(details).toHaveCSS("overflow", "hidden");
+  await expect(details.locator(".track-scroll")).toHaveCSS("overflow", "auto");
+
+  const exactTarget = page.waitForRequest((request) =>
+    request.url().includes("/api/admin/media-targets/22222222-2222-2222-2222-222222222222/playlists"));
+  await details.getByRole("button", { name: "Actions" }).click();
+  await page.getByRole("menuitem", { name: "Edit settings" }).click();
+  let settings = page.getByRole("dialog", { name: "Edit playlist settings" });
+  await exactTarget;
+  await settings.getByRole("radio", { name: /Lumen Audio Keep every song/ }).check();
+  await settings.getByRole("radio", { name: /Allstarr only Listeners see/ }).check();
+  const update = page.waitForRequest((request) =>
+    request.method() === "PUT" && request.url().endsWith("/api/admin/playlist-links/playlist-link"));
+  await settings.getByRole("button", { name: "Save settings" }).click();
+  expect((await update).postDataJSON()).toMatchObject({
+    expectedRevision: 1,
+    mode: "virtual",
+    projectionMode: "source",
+    targetPlaylistId: null,
+  });
+  await expect(settings).toBeHidden();
+
+  await page.route("**/api/admin/playlist-links/playlist-link", async (route) => {
+    if (route.request().method() === "PUT") {
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "The resource changed before this update" }),
+      });
+      return;
+    }
+    await route.fallback();
+  });
+  await details.getByRole("button", { name: "Actions" }).click();
+  await page.getByRole("menuitem", { name: "Edit settings" }).click();
+  settings = page.getByRole("dialog", { name: "Edit playlist settings" });
+  await settings.getByRole("button", { name: "Save settings" }).click();
+  await expect(settings.getByRole("alert")).toContainText("resource changed");
+  listRevision = 2;
+  await page.locator(".playlist-toolbar-actions").getByRole("button", { name: "Refresh playlists" })
+    .evaluate((button) => (button as HTMLButtonElement).click());
+  await expect(settings.getByRole("alert")).toContainText("changed while you were editing");
+  await expect(settings.getByRole("button", { name: "Save settings" })).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(settings).toBeHidden();
+  await expect(details).toBeVisible();
+
+  await page.route("**/api/admin/playlist-links/playlist-link?projectionMode=source", (route) => route.fulfill({
+    status: 503,
+    contentType: "application/json",
+    body: JSON.stringify({ error: "Projection fixture unavailable" }),
+  }), { times: 1 });
+  await details.getByRole("tab", { name: "Lumen Audio" }).click();
+  const projectionError = details.getByRole("alert");
+  await expect(projectionError).toContainText("Projection fixture unavailable");
+  await projectionError.getByRole("button", { name: "Try again" }).click();
+  await expect(details.getByText("source track", { exact: true })).toBeVisible();
 });
 
 test("Tentative mappings sort by confidence and deep links open review", async ({ page }) => {
@@ -1123,8 +1298,6 @@ test("Shared search fields reserve icon space", async ({ page }) => {
   await page.goto("#/library/playlists");
   await page.getByRole("button", { name: "Add playlist" }).click();
   const dialog = page.getByRole("dialog", { name: "Link a playlist" });
-  await dialog.getByRole("radio", { name: /Road trip/ }).check();
-  await dialog.getByRole("button", { name: "Continue" }).click();
   await dialog.getByRole("radio", { name: /Spotify/ }).check();
   await expect(dialog.getByRole("searchbox", { name: "Find a source playlist" })).toBeVisible();
 });
@@ -1642,16 +1815,19 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
     const bounds = element.getBoundingClientRect();
     const strip = element.querySelector(".playlist-meta-strip")!;
     const trackScroll = element.querySelector(".track-scroll")!.getBoundingClientRect();
+    const table = element.querySelector(".track-data-table")!.getBoundingClientRect();
     const centers = [...strip.children].map((child) => {
       const childBounds = child.getBoundingClientRect();
       return childBounds.top + childBounds.height / 2;
     });
     return {
-      trackRatio: trackScroll.height / bounds.height,
+      dialogHeight: bounds.height,
+      blankTrackTail: trackScroll.height - table.height,
       metadataCenterSpread: Math.max(...centers) - Math.min(...centers),
     };
   });
-  expect(density.trackRatio).toBeGreaterThan(0.45);
+  expect(density.dialogHeight).toBeLessThan(700);
+  expect(density.blankTrackTail).toBeLessThan(48);
   expect(density.metadataCenterSpread).toBeLessThanOrEqual(1);
   await dialog.getByRole("button", { name: "Technical details for Test song" }).click();
   await expect(page).toHaveURL(/#\/library\/playlists$/);
@@ -1688,7 +1864,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
       });
     });
 
-    const detail = (id: string, name: string) => ({
+    const detail = (id: string, name: string, projectionMode: "resolved" | "source" | "target") => ({
       id,
       snapshotId: `${id}-snapshot`,
       snapshotVersion: 1,
@@ -1696,6 +1872,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
       hasNewerSourceGeneration: false,
       name,
       sourceProviderId: "lumen-audio",
+      projectionMode,
       targetProtocol: "jellyfin",
       retrievedAt: "2026-01-01",
       completedAt: "2026-01-01",
@@ -1710,6 +1887,21 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
       playableCount: 60,
       routeCoverage: [{ providerId: "jellyfin", count: 60 }],
       unknownDurationCount: 0,
+      clientProjection: {
+        protocolId: `allstarr-vpl-${id}`,
+        projectionMode,
+        trackCount: 60,
+        tracks: Array.from({ length: 60 }, (_, index) => ({
+          position: index + 1,
+          sourcePosition: index,
+          itemId: `${id}-${projectionMode}-${index}`,
+          title: `Track ${index + 1}`,
+          artists: ["Artist"],
+          album: "Album",
+          durationMs: 180_000,
+          routeKind: "local",
+        })),
+      },
       tracks: Array.from({ length: 60 }, (_, index) => ({
         sourcePosition: index,
         position: index + 1,
@@ -1727,15 +1919,19 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     let detailRequests = 0;
     let releaseRefresh!: () => void;
     const refreshHeld = new Promise<void>((resolve) => { releaseRefresh = resolve; });
-    await page.route("**/api/admin/playlist-links/playlist-link", async (route) => {
+    await page.route("**/api/admin/playlist-links/playlist-link?*", async (route) => {
       detailRequests++;
       if (detailRequests === 2) await refreshHeld;
-      return route.fulfill({ contentType: "application/json", body: JSON.stringify(detail("playlist-link", "Test playlist")) });
+      const mode = new URL(route.request().url()).searchParams.get("projectionMode") as "resolved" | "source" | "target";
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify(detail("playlist-link", "Test playlist", mode)) });
     });
-    await page.route("**/api/admin/playlist-links/playlist-link-two", (route) => route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify(detail("playlist-link-two", "Second playlist")),
-    }));
+    await page.route("**/api/admin/playlist-links/playlist-link-two?*", (route) => {
+      const mode = new URL(route.request().url()).searchParams.get("projectionMode") as "resolved" | "source" | "target";
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(detail("playlist-link-two", "Second playlist", mode)),
+      });
+    });
 
     await page.goto("#/library/playlists");
     await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();

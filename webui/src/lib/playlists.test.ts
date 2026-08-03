@@ -6,6 +6,9 @@ import {
   formatDuration,
   isReviewTrack,
   orderPlaylistSources,
+  playlistDestinationOptions,
+  playlistOutcomeLabel,
+  playlistProjectionOptions,
   providerColor,
   runBounded,
   scheduleCadence,
@@ -16,9 +19,22 @@ const playlist = (values: Partial<PlaylistLink>): PlaylistLink => ({
   enabled: true,
   name: "One",
   sourceProviderId: "source",
+  sourcePlaylistId: "source-playlist",
+  providerAccountId: "account",
+  libraryScopeId: "music",
   targetProtocol: "target",
+  targetBackendInstanceId: "backend",
+  targetPlaylistId: "target-playlist",
+  mode: "hybrid",
   projectionMode: "resolved",
   materializationMode: "reconcile",
+  mirrorStaleEntries: false,
+  preserveManualEntries: true,
+  syncName: true,
+  syncDescription: true,
+  syncArtwork: true,
+  ruleVersion: "rules-v1",
+  policyVersion: "policy-v1",
   revision: 1,
   trackCount: 10,
   matchedCount: 9,
@@ -87,6 +103,25 @@ describe("playlist presentation", () => {
     expect(scheduleCadence("0 * * * *")).toBe("Every hour");
     expect(scheduleCadence("0 3 * * *")).toBe("Every day at 03:00");
     expect(scheduleCadence("15 4 * * 2")).toBe("Cron 15 4 * * 2");
+  });
+
+  it("keeps consequence copy and eligibility reasons explicit", () => {
+    const destinations = playlistDestinationOptions("Jellyfin", "Road trip");
+    const views = playlistProjectionOptions("Spotify", "Jellyfin", "Road trip");
+    expect(destinations.map((item) => item.id)).toEqual([
+      "virtual", "materialized", "hybrid",
+    ]);
+    expect(views.map((item) => item.id)).toEqual([
+      "resolved", "source", "target",
+    ]);
+    expect(destinations.map((item) => item.label)).toEqual([
+      "Allstarr only", "Update Jellyfin", "Allstarr + Jellyfin",
+    ]);
+    expect(destinations[0].description).toContain("will not create or update");
+    expect(views.map((item) => item.label)).toEqual(["Best available", "Spotify", "Jellyfin"]);
+    expect(playlistOutcomeLabel("skipped_wrong_backend_or_library", "Jellyfin playlist")).toBe(
+      "Not added to Jellyfin playlist: belongs to a different library",
+    );
   });
 
   it("orders local targets, Spotify, then configured playlist Sources", () => {

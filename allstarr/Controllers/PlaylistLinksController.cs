@@ -519,7 +519,10 @@ public sealed class PlaylistLinksController(
     }
 
     [HttpGet("{id:guid}")]
-    public async Task<IActionResult> Details(Guid id, CancellationToken cancellationToken)
+    public async Task<IActionResult> Details(
+        Guid id,
+        [FromQuery] string? projectionMode,
+        CancellationToken cancellationToken)
     {
         return await Execute(async session =>
         {
@@ -530,6 +533,10 @@ public sealed class PlaylistLinksController(
                 id,
                 cancellationToken);
             if (projection == null) return NotFound();
+            var selectedMode = link.ProjectionMode;
+            if (!string.IsNullOrWhiteSpace(projectionMode) &&
+                !TryProjectionMode(projectionMode, out selectedMode, out var error))
+                return BadRequest(new { error });
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
             var schedule = link.ScheduleId is { } scheduleId
                 ? await db.JobSchedules.AsNoTracking().SingleOrDefaultAsync(
@@ -540,8 +547,17 @@ public sealed class PlaylistLinksController(
             var clientProjection = await virtualization.ReadAsync(
                 execution,
                 PlaylistVirtualizationService.CreateProtocolId(link.Id),
+                selectedMode,
                 cancellationToken);
-            return Ok(ToProjectionDto(projection, schedule, clientProjection));
+            var preview = link.OwnerUserId == session.AllstarrUserId
+                ? await playlists.ReadPreviewAsync(
+                    execution, link.Id, projection.SnapshotId, cancellationToken)
+                : null;
+            return Ok(ToProjectionDto(
+                projection,
+                schedule,
+                clientProjection,
+                preview?.Entries.ToDictionary(item => item.Position)));
         });
     }
 
@@ -1077,7 +1093,7 @@ public sealed class PlaylistLinksController(
         },
         virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id)
     };
-    private static object ToProjectionDto(DurablePlaylistProjection value, JobScheduleRecord? schedule = null, VirtualPlaylistReadModel? clientProjection = null) => new
+    private static object ToProjectionDto(DurablePlaylistProjection value, JobScheduleRecord? schedule = null, VirtualPlaylistReadModel? clientProjection = null, IReadOnlyDictionary<int, PersistedPlaylistPreviewEntry>? previewByPosition = null) => new
     {
         id = value.LinkId,
         snapshotId = value.SnapshotId,
@@ -1162,6 +1178,9 @@ public sealed class PlaylistLinksController(
             routeKind = item.RouteKind,
             routeProviderId = item.RouteProviderId,
             matchState = item.MatchState?.ToString().ToLowerInvariant(),
+            targetEligible = previewByPosition?.GetValueOrDefault(item.Position)?.TargetEligible ?? false,
+            outcomeCode = previewByPosition?.GetValueOrDefault(item.Position)?.OutcomeCode,
+            targetStatus = previewByPosition?.GetValueOrDefault(item.Position)?.Status.ToString().ToLowerInvariant(),
             providerRoutes = item.ProviderRoutes.Select(route => new
             {
                 providerId = route.ProviderId,
@@ -1180,7 +1199,13 @@ public sealed class PlaylistLinksController(
             position = index + 1,
             sourcePosition = track.SourcePosition,
             itemId = track.BackendItemId,
-            playlistEntryId = track.NativePlaylistEntryId
+            playlistEntryId = track.NativePlaylistEntryId,
+            title = track.SourceMetadata?.Title ?? track.Title,
+            artists = track.SourceMetadata?.Artists ?? [track.Artist],
+            album = track.SourceMetadata?.Album ?? track.Album,
+            durationMs = track.SourceMetadata?.DurationMilliseconds ?? track.DurationMilliseconds,
+            routeKind = track.RouteKind.ToString().ToLowerInvariant(),
+            routeProviderId = track.RouteProviderId
         })
     };
     private sealed record PlaylistDiscoveryPageCacheEntry(

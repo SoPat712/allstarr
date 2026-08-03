@@ -452,9 +452,24 @@ export type PlaylistLink = {
   description?: string | null;
   artworkUrl?: string | null;
   sourceProviderId: string;
+  sourcePlaylistId: string;
+  providerAccountId: string;
+  libraryScopeId: string;
   targetProtocol: string;
+  targetBackendInstanceId: string;
+  targetPlaylistId?: string | null;
+  targetCredentialReferenceId?: string | null;
+  mode: "virtual" | "materialized" | "hybrid";
   projectionMode: "resolved" | "source" | "target";
-  materializationMode: string;
+  materializationMode: "reconcile" | "recreate";
+  scheduleId?: string | null;
+  mirrorStaleEntries: boolean;
+  preserveManualEntries: boolean;
+  syncName: boolean;
+  syncDescription: boolean;
+  syncArtwork: boolean;
+  ruleVersion: string;
+  policyVersion: string;
   revision: number;
   lastRunAt?: string | null;
   lastRunState?: string | null;
@@ -479,10 +494,33 @@ export type PlaylistTrack = {
   durationProvenance?: string | null;
   artworkUrl?: string | null;
   backendItemId?: string | null;
-  routeKind: "local" | "external" | "unmatched";
+  routeKind: "local" | "external" | "unmatched" | "unresolved";
   routeProviderId?: string | null;
   matchState?: string | null;
+  targetEligible?: boolean;
+  outcomeCode?: string | null;
+  targetStatus?: string | null;
   providerRoutes: Array<{ providerId: string; externalId: string; pinned: boolean }>;
+};
+
+export type PlaylistClientTrack = {
+  position: number;
+  sourcePosition: number;
+  itemId: string;
+  playlistEntryId?: string | null;
+  title: string;
+  artists: string[];
+  album?: string | null;
+  durationMs?: number | null;
+  routeKind: "local" | "external" | "unresolved";
+  routeProviderId?: string | null;
+};
+
+export type PlaylistClientProjection = {
+  protocolId: string;
+  projectionMode: "resolved" | "source" | "target";
+  trackCount: number;
+  tracks: PlaylistClientTrack[];
 };
 
 export type PlaylistSchedule = {
@@ -504,6 +542,7 @@ export type PlaylistDetails = {
   hasNewerSourceGeneration: boolean;
   name: string;
   sourceProviderId: string;
+  projectionMode: "resolved" | "source" | "target";
   targetProtocol: string;
   targetPlaylistId?: string | null;
   artworkUrl?: string | null;
@@ -542,6 +581,7 @@ export type PlaylistDetails = {
     changedPositions: number[];
   } | null;
   schedule?: PlaylistSchedule | null;
+  clientProjection?: PlaylistClientProjection | null;
   tracks: PlaylistTrack[];
 };
 
@@ -1217,7 +1257,8 @@ export const downloads = {
 
 export const playlistLinks = {
   list: () => json<{ playlistLinks: PlaylistLink[] }>("/api/admin/playlist-links"),
-  details: (id: string) => json<PlaylistDetails>(`/api/admin/playlist-links/${encodeURIComponent(id)}`),
+  details: (id: string, projectionMode?: "resolved" | "source" | "target") =>
+    json<PlaylistDetails>(`/api/admin/playlist-links/${encodeURIComponent(id)}${projectionMode ? `?projectionMode=${projectionMode}` : ""}`),
   refresh: (id: string) =>
     json(`/api/admin/playlist-links/${encodeURIComponent(id)}/refresh`, { method: "POST" }),
   run: (id: string, snapshotId?: string) =>
@@ -1265,7 +1306,7 @@ export const playlistLinks = {
     targetProtocol: string;
     targetBackendInstanceId: string;
     targetCredentialReferenceId?: string | null;
-    targetPlaylistId: string;
+    targetPlaylistId?: string | null;
     mode: "virtual" | "materialized" | "hybrid";
     projectionMode?: "resolved" | "source" | "target";
     materializationMode: "reconcile" | "recreate";
@@ -1276,6 +1317,26 @@ export const playlistLinks = {
     syncArtwork: boolean;
   }) => json<{ id: string }>("/api/admin/playlist-links", {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  }),
+  update: (id: string, input: {
+    expectedRevision: number;
+    mode: "virtual" | "materialized" | "hybrid";
+    projectionMode: "resolved" | "source" | "target";
+    materializationMode: "reconcile" | "recreate";
+    scheduleId?: string | null;
+    targetPlaylistId?: string | null;
+    targetCredentialReferenceId?: string | null;
+    mirrorStaleEntries: boolean;
+    preserveManualEntries: boolean;
+    syncName: boolean;
+    syncDescription: boolean;
+    syncArtwork: boolean;
+    ruleVersion?: string;
+    policyVersion?: string;
+  }) => json<PlaylistLink>(`/api/admin/playlist-links/${encodeURIComponent(id)}`, {
+    method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   }),

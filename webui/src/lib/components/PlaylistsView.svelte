@@ -9,9 +9,11 @@
   import MatchDialog from "$lib/components/MatchDialog.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import OperationConsole from "$lib/components/OperationConsole.svelte";
+  import PlaylistSettingsDialog from "$lib/components/PlaylistSettingsDialog.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
+  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import {
     home,
@@ -20,6 +22,7 @@
     type MatchReviewItem,
     type PlaylistDetails,
     type PlaylistLink,
+    type PlaylistTrack,
     type ProviderDefinition,
   } from "$lib/api";
   import { humanize } from "$lib/activity";
@@ -29,6 +32,8 @@
     filterTracks,
     formatDuration,
     isReviewTrack,
+    playlistOutcomeLabel,
+    playlistProjectionOptions,
     providerColor,
     runBounded,
     scheduleCadence,
@@ -53,6 +58,7 @@
   let trackSort = $state<TrackSort>("position");
   let loading = $state(true);
   let detailLoading = $state(false);
+  let detailError = $state("");
   let refreshing = $state(false);
   let error = $state("");
   let degraded = $state("");
@@ -94,6 +100,8 @@
   let scheduleEnabled = $state(true);
   let scheduleSaving = $state(false);
   let scheduleError = $state("");
+  let viewMode = $state<"resolved" | "source" | "target">("resolved");
+  let settingsOpen = $state(false);
 
   const visiblePlaylists = $derived(filterPlaylists(playlists, query, stateFilter, sort));
   const pageCount = $derived(Math.max(1, Math.ceil(visiblePlaylists.length / 20)));
@@ -101,10 +109,48 @@
   const pagePlaylists = $derived(
     visiblePlaylists.slice((currentPage - 1) * 20, currentPage * 20),
   );
+  const projectedTracks = $derived.by((): PlaylistTrack[] => {
+    if (!details?.clientProjection) return [];
+    return details.clientProjection.tracks.map((track) => {
+      const source = viewMode === "target"
+        ? undefined
+        : details?.tracks.find((item) => item.sourcePosition === track.sourcePosition);
+      return {
+        sourcePosition: track.sourcePosition,
+        position: track.position,
+        externalSnapshotId: source?.externalSnapshotId ?? "",
+        title: track.title,
+        artists: track.artists,
+        album: track.album,
+        isrc: source?.isrc,
+        durationMs: track.durationMs,
+        artworkUrl: source?.artworkUrl,
+        backendItemId: track.itemId,
+        routeKind: track.routeKind === "unresolved" ? "unmatched" : track.routeKind,
+        routeProviderId: track.routeProviderId,
+        matchState: source?.matchState,
+        targetEligible: source?.targetEligible,
+        outcomeCode: source?.outcomeCode,
+        targetStatus: source?.targetStatus,
+        providerRoutes: source?.providerRoutes ?? [],
+      };
+    });
+  });
   const visibleTracks = $derived(
-    details ? filterTracks(details.tracks, trackQuery, routeFilter, trackSort) : [],
+    filterTracks(projectedTracks, trackQuery, routeFilter, trackSort),
   );
   const selected = $derived(playlists.find((playlist) => playlist.id === selectedId));
+  const detailProjectionOptions = $derived(playlistProjectionOptions(
+    details ? providerName(details.sourceProviderId) : "Source",
+    details ? providerName(details.targetProtocol) : "Media server",
+    details ? `the selected ${providerName(details.targetProtocol)} playlist` : "the selected media-server playlist",
+  ));
+  const selectedProjectionLabel = $derived(
+    detailProjectionOptions.find((option) => option.id === viewMode)?.label ?? "Selected songs",
+  );
+  const savedProjectionLabel = $derived(
+    detailProjectionOptions.find((option) => option.id === selected?.projectionMode)?.label ?? "Best available",
+  );
   const visibleTrackColumnCount = $derived(
     trackColumnOptions.filter((column) => trackColumns[column.id]).length,
   );
@@ -127,6 +173,7 @@
     selectedId = "";
     details = null;
     detailLoading = false;
+    detailError = "";
     detailRequest++;
     const returnFocus = detailReturnFocus;
     detailReturnFocus = null;
@@ -208,27 +255,44 @@
     }
   }
 
-  async function loadDetails(id: string, returnFocus?: HTMLElement) {
+  async function loadDetails(
+    id: string,
+    returnFocus?: HTMLElement,
+    projectionMode?: "resolved" | "source" | "target",
+  ) {
     const changingPlaylist = id !== selectedId;
+    const playlist = playlists.find((item) => item.id === id);
+    const requestedMode = projectionMode ?? (changingPlaylist
+      ? playlist?.projectionMode ?? "resolved"
+      : viewMode);
     if (returnFocus) detailReturnFocus = returnFocus;
     selectedId = id;
+    viewMode = requestedMode;
     if (changingPlaylist) {
       details = null;
       trackQuery = "";
       routeFilter = "all";
+    } else if (details && details.clientProjection?.projectionMode !== requestedMode) {
+      details = { ...details, clientProjection: null };
     }
     detailOpen = true;
     detailLoading = true;
+    detailError = "";
     const request = ++detailRequest;
     try {
-      const next = await playlistLinks.details(id);
+      const next = await playlistLinks.details(id, requestedMode);
       if (request === detailRequest && selectedId === id) details = next;
     } catch (cause) {
       if (request === detailRequest)
-        degraded = cause instanceof Error ? cause.message : "Playlist details are unavailable.";
+        detailError = cause instanceof Error ? cause.message : "Playlist details are unavailable.";
     } finally {
       if (request === detailRequest) detailLoading = false;
     }
+  }
+
+  async function changeView(mode: string) {
+    if (!selectedId || detailLoading || !["resolved", "source", "target"].includes(mode)) return;
+    await loadDetails(selectedId, undefined, mode as typeof viewMode);
   }
 
   async function refresh() {
@@ -544,6 +608,12 @@
         <Dialog.Content class="panel playlist-detail playlist-detail-dialog">
       {#if detailLoading && !details}
         <div class="detail-loading" aria-busy="true">Loading playlist tracks…</div>
+      {:else if detailError && !details}
+        <div class="compact-empty playlist-projection-empty" role="alert">
+          <strong>Playlist details are unavailable</strong>
+          <p>{detailError}</p>
+          <button class="button-secondary" type="button" onclick={() => void loadDetails(selectedId, undefined, viewMode)}>Try again</button>
+        </div>
       {:else if details && selected}
         <header class="playlist-hero">
           <MediaArtwork class="hero-art" url={details.artworkUrl} fallback="♫" loading="eager" />
@@ -551,7 +621,8 @@
             <p class="eyebrow">{providerName(details.sourceProviderId)} playlist</p>
             <Dialog.Title>{details.name}</Dialog.Title>
             <p>
-              {details.trackCount} tracks · {formatDuration(details.durationMs)}
+              {details.clientProjection?.trackCount ?? 0} {(details.clientProjection?.trackCount ?? 0) === 1 ? "song" : "songs"} shown · {details.trackCount} {details.trackCount === 1 ? "song" : "songs"} in the source
+              · {formatDuration(details.durationMs)}
               {#if details.unknownDurationCount} · {details.unknownDurationCount} unknown duration{/if}
               {#if details.hasNewerSourceGeneration}
                 · New source refresh waiting
@@ -576,11 +647,22 @@
                 <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("rematch")}>Rematch</DropdownMenu.Item>
                 <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void refreshSources([selected.id])}>Refresh source</DropdownMenu.Item>
                 <DropdownMenu.Separator />
+                <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => settingsOpen = true}>Edit settings</DropdownMenu.Item>
                 <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run("toggle")}>{selected.enabled ? "Pause" : "Resume"}</DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
         </header>
+
+        <div class="playlist-view-switcher">
+          <span><strong>What listeners see</strong><small>Preview only. Saved choice: {savedProjectionLabel}.</small></span>
+          <SegmentedNav
+            items={detailProjectionOptions}
+            active={viewMode}
+            label="What listeners see"
+            onchange={(mode) => void changeView(mode)}
+          />
+        </div>
 
         <div class="playlist-detail-coverage">
           <CoverageBar
@@ -673,6 +755,13 @@
 
         {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
 
+        {#if detailError}
+          <div class="compact-empty playlist-projection-empty" role="alert">
+            <strong>{selectedProjectionLabel} could not be loaded</strong>
+            <p>{detailError}</p>
+            <button class="button-secondary" type="button" onclick={() => void loadDetails(selectedId, undefined, viewMode)}>Try again</button>
+          </div>
+        {:else if details.clientProjection}
         <div class="track-toolbar">
           <SearchField bind:value={trackQuery} label="Filter tracks" placeholder="Filter tracks" hiddenLabel />
           <SelectField bind:value={routeFilter} label="Track route" options={[
@@ -745,17 +834,28 @@
                     <th scope="row" class="track-identity-cell">
                       <span class="track-identity">
                         <MediaArtwork class="track-art" url={track.artworkUrl} />
-                        <button
-                          type="button"
-                          class="track-title-button"
-                          aria-label={`Open mapping details for ${track.title}`}
-                          disabled={matchLoading === track.externalSnapshotId}
-                          onclick={(event) => void openTrackMatch(track.externalSnapshotId, event.currentTarget)}
-                        >
-                          {track.title}
-                        </button>
+                        {#if track.externalSnapshotId}
+                          <button
+                            type="button"
+                            class="track-title-button"
+                            aria-label={`Open mapping details for ${track.title}`}
+                            disabled={matchLoading === track.externalSnapshotId}
+                            onclick={(event) => void openTrackMatch(track.externalSnapshotId, event.currentTarget)}
+                          >
+                            {track.title}
+                          </button>
+                        {:else}
+                          <strong class="track-title-static">{track.title}</strong>
+                        {/if}
                         {#if isReviewTrack(track)}
                           <small class="track-review-badge">Needs review</small>
+                        {/if}
+                        {#if viewMode !== "target" && track.outcomeCode}
+                          <small
+                            class="track-eligibility"
+                            class:included={track.targetEligible}
+                            title={playlistOutcomeLabel(track.outcomeCode, `${providerName(details.targetProtocol)} playlist`)}
+                          >{playlistOutcomeLabel(track.outcomeCode, `${providerName(details.targetProtocol)} playlist`)}</small>
                         {/if}
                       </span>
                     </th>
@@ -787,15 +887,18 @@
                             <div class="track-technical">
                               <strong>{track.matchState ?? "unmatched"}</strong>
                               {#if track.isrc}<small>ISRC {track.isrc}</small>{/if}
-                              {#if track.backendItemId}<small>Backend {track.backendItemId}</small>{/if}
+                              {#if track.backendItemId}<small>Media server ID {track.backendItemId}</small>{/if}
                               {#each track.providerRoutes as route}
                                 <small>{providerName(route.providerId)} · {route.externalId}{route.pinned ? " · pinned" : ""}</small>
                               {/each}
-                              <button
-                                type="button"
-                                class="button-secondary"
-                                onclick={(event) => void openTrackMatch(track.externalSnapshotId, event.currentTarget)}
-                              >Review match</button>
+                              {#if track.outcomeCode}<small>{playlistOutcomeLabel(track.outcomeCode, `${providerName(details.targetProtocol)} playlist`)}</small>{/if}
+                              {#if track.externalSnapshotId}
+                                <button
+                                  type="button"
+                                  class="button-secondary"
+                                  onclick={(event) => void openTrackMatch(track.externalSnapshotId, event.currentTarget)}
+                                >Review match</button>
+                              {/if}
                             </div>
                           </Popover.Content>
                         </Popover.Portal>
@@ -813,6 +916,12 @@
             </table>
           </div>
         </div>
+        {:else}
+          <div class="compact-empty playlist-projection-empty">
+            <strong>{detailLoading ? `Loading ${selectedProjectionLabel}…` : viewMode === "target" ? `No ${providerName(details.targetProtocol)} playlist is selected` : `${selectedProjectionLabel} is unavailable`}</strong>
+            {#if !detailLoading}<p>{viewMode === "target" ? `Choose the playlist Allstarr should use in ${providerName(details.targetProtocol)}, then try again.` : "Refresh the original playlist or check that this media server is still connected."}</p>{/if}
+          </div>
+        {/if}
       {:else}
         <div class="compact-empty"><strong>Select a playlist to inspect its tracks</strong></div>
       {/if}
@@ -821,6 +930,19 @@
     </Dialog.Root>
   </section>
 {/if}
+
+<PlaylistSettingsDialog
+  bind:open={settingsOpen}
+  playlist={selected ?? null}
+  {details}
+  sourceName={providerName(selected?.sourceProviderId)}
+  targetName={providerName(selected?.targetProtocol)}
+  onSaved={playlistAdded}
+  onEditSchedule={() => {
+    editSchedule();
+    scheduleEditorOpen = true;
+  }}
+/>
 
 <AddPlaylistDialog bind:open={addOpen} {providers} onSaved={playlistAdded} />
 <MatchDialog

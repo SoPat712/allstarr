@@ -4,6 +4,44 @@ export type PlaylistSort = "name" | "tracks" | "coverage" | "updated";
 export type TrackSort = "position" | "title" | "duration" | "route";
 export type TrackRouteFilter = "all" | PlaylistTrack["routeKind"] | "review";
 
+export function playlistDestinationOptions(
+  targetName = "your media server",
+  playlistName = `the selected ${targetName} playlist`,
+) {
+  return [
+    { id: "virtual", label: "Allstarr only", description: `Listeners see the playlist through Allstarr. ${targetName} will not create or update a playlist.` },
+    { id: "materialized", label: `Update ${targetName}`, description: `Keep ${playlistName} updated with the songs ${targetName} can play. No separate Allstarr playlist is shown.` },
+    { id: "hybrid", label: `Allstarr + ${targetName}`, description: `Listeners see the full playlist through Allstarr, and ${playlistName} is updated with the songs ${targetName} can play.` },
+  ] as const;
+}
+
+export function playlistProjectionOptions(
+  sourceName = "the source service",
+  targetName = "your media server",
+  playlistName = `the selected ${targetName} playlist`,
+) {
+  return [
+    { id: "resolved", label: "Best available", description: `Use songs already in ${targetName} when possible, then play the rest from their original service.` },
+    { id: "source", label: sourceName, description: `Keep every song from ${sourceName} in its original order.` },
+    { id: "target", label: targetName, description: `Show exactly what is currently in ${playlistName}.` },
+  ] as const;
+}
+
+export function playlistOutcomeLabel(code?: string | null, targetName = "the media server playlist") {
+  const labels: Record<string, string> = {
+    included_native_backend_item: `Will be included in ${targetName}`,
+    included_same_provider_identity: `Will be included in ${targetName}`,
+    skipped_external_only_for_backend: `Not added to ${targetName}: only available from its original service`,
+    skipped_cross_provider_identity: `Not added to ${targetName}: matched to a different service`,
+    skipped_unresolved: `Not added to ${targetName}: no playable match yet`,
+    skipped_rejected: `Not added to ${targetName}: match was rejected`,
+    skipped_duplicate: `Not added twice to ${targetName}`,
+    skipped_wrong_backend_or_library: `Not added to ${targetName}: belongs to a different library`,
+    skipped_stale_revision: `Not added to ${targetName}: the source changed`,
+  };
+  return code ? labels[code] ?? code.replaceAll("_", " ") : "Eligibility unavailable";
+}
+
 export function isReviewTrack(track: Pick<PlaylistTrack, "matchState">) {
   return track.matchState === "suggested" || track.matchState === "ambiguous";
 }

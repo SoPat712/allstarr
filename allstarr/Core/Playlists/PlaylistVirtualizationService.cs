@@ -57,6 +57,12 @@ public interface IPlaylistVirtualizationService
         string protocolId,
         CancellationToken cancellationToken = default);
 
+    Task<VirtualPlaylistReadModel?> ReadAsync(
+        ProtocolExecutionContext context,
+        string protocolId,
+        PlaylistProjectionMode projectionMode,
+        CancellationToken cancellationToken = default);
+
     Task<VirtualPlaylistReadModel?> ReadBySourceAsync(
         ProtocolExecutionContext context,
         string sourceProviderId,
@@ -132,10 +138,24 @@ public sealed class PlaylistVirtualizationService(
         return result;
     }
 
-    public async Task<VirtualPlaylistReadModel?> ReadAsync(
+    public Task<VirtualPlaylistReadModel?> ReadAsync(
         ProtocolExecutionContext context,
         string protocolId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        ReadCoreAsync(context, protocolId, null, cancellationToken);
+
+    public Task<VirtualPlaylistReadModel?> ReadAsync(
+        ProtocolExecutionContext context,
+        string protocolId,
+        PlaylistProjectionMode projectionMode,
+        CancellationToken cancellationToken = default) =>
+        ReadCoreAsync(context, protocolId, projectionMode, cancellationToken);
+
+    private async Task<VirtualPlaylistReadModel?> ReadCoreAsync(
+        ProtocolExecutionContext context,
+        string protocolId,
+        PlaylistProjectionMode? projectionMode,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
         if (!TryParseProtocolId(protocolId, out var linkId) || context.Actor == null)
@@ -159,10 +179,11 @@ public sealed class PlaylistVirtualizationService(
         var projection = await projections.ReadByLinkIdAsync(
             actor.TenantId, link.OwnerUserId, link.Id, cancellationToken);
         if (projection == null) return null;
+        var selectedMode = projectionMode ?? link.ProjectionMode;
         var snapshot = await db.PlaylistSourceSnapshots.AsNoTracking()
             .SingleAsync(item => item.Id == projection.SnapshotId, cancellationToken);
         BackendPlaylistSnapshot? targetSnapshot = null;
-        if (link.ProjectionMode == PlaylistProjectionMode.Target)
+        if (selectedMode == PlaylistProjectionMode.Target)
         {
             if (targets == null || string.IsNullOrWhiteSpace(link.TargetPlaylistId)) return null;
             var targetResult = await targets.Resolve(link.TargetProtocol).ReadAsync(
@@ -189,7 +210,7 @@ public sealed class PlaylistVirtualizationService(
                            backendIds.Contains(item.BackendItemId))
             .ToDictionaryAsync(item => item.BackendItemId, StringComparer.Ordinal, cancellationToken);
         IReadOnlyDictionary<string, BackendPlaylistMember>? nativeItems = null;
-        if (link.ProjectionMode == PlaylistProjectionMode.Resolved &&
+        if (selectedMode == PlaylistProjectionMode.Resolved &&
             context.Protocol == ProtocolKind.Subsonic &&
             link.TargetProtocol is "subsonic" or "opensubsonic" or "navidrome" &&
             backendIds.Length > 0)
@@ -226,7 +247,7 @@ public sealed class PlaylistVirtualizationService(
             ? null
             : ToTargetVirtualTracks(targetSnapshot);
         var tracks = PlaylistProjectionSelector.Select(
-            link.ProjectionMode,
+            selectedMode,
             sourceTracks,
             resolvedTracks,
             targetTracks);
@@ -238,7 +259,7 @@ public sealed class PlaylistVirtualizationService(
             : targetSnapshot.ArtworkReference;
         return new VirtualPlaylistReadModel(protocolId, link.Id, projection.SnapshotId,
             name, description, artwork, link.SourceProviderId,
-            link.SourcePlaylistId, snapshot.ProviderRevision, link.Mode, tracks, link.ProjectionMode,
+            link.SourcePlaylistId, snapshot.ProviderRevision, link.Mode, tracks, selectedMode,
             targetSnapshot?.BackendPlaylistId);
     }
 
