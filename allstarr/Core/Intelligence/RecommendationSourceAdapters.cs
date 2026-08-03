@@ -7,6 +7,14 @@ public sealed record RecommendationSourceItem(string TrackKey, double Score,
 public sealed record ScopedRecommendationQuery(IntelligenceScope Scope, ListeningProfile Profile,
     IReadOnlyList<string> SeedTrackKeys, int Limit);
 
+public enum ListenBrainzDiscoveryKind
+{
+    CollaborativeFiltering,
+    WeeklyExploration,
+    WeeklyJams,
+    TopRecordings
+}
+
 public interface IJellyfinInstantMixClient
 {
     Task<IReadOnlyList<RecommendationSourceItem>> GetInstantMixAsync(ScopedRecommendationQuery query, CancellationToken cancellationToken);
@@ -21,7 +29,8 @@ public interface IListenBrainzRecommendationClient
 {
     bool IsConfigured { get; }
     Task<RecommendationProviderReadiness> GetReadinessAsync(IntelligenceScope scope, CancellationToken cancellationToken);
-    Task<IReadOnlyList<RecommendationSourceItem>> GetRecommendationsAsync(ScopedRecommendationQuery query, CancellationToken cancellationToken);
+    Task<IReadOnlyList<RecommendationSourceItem>> GetRecommendationsAsync(ScopedRecommendationQuery query,
+        ListenBrainzDiscoveryKind kind, CancellationToken cancellationToken);
 }
 public interface IAudioMuseRecommendationClient
 {
@@ -120,13 +129,16 @@ public sealed class LastFmRecommendationProvider(ILastFmRecommendationClient cli
     public override async Task<RecommendationProviderReadiness> GetReadinessAsync(IntelligenceScope scope, CancellationToken token = default) => (await client.GetReadinessAsync(scope, token)) with { ProviderId = Id };
     protected override Task<IReadOnlyList<RecommendationSourceItem>> FetchAsync(ScopedRecommendationQuery query, CancellationToken token) => client.GetSimilarTracksAsync(query, token);
 }
-public sealed class ListenBrainzRecommendationProvider(IListenBrainzRecommendationClient client)
-    : BoundedRecommendationProvider("listenbrainz")
+public sealed class ListenBrainzRecommendationProvider(
+    IListenBrainzRecommendationClient client,
+    ListenBrainzDiscoveryKind kind = ListenBrainzDiscoveryKind.CollaborativeFiltering,
+    string id = "listenbrainz") : BoundedRecommendationProvider(id)
 {
     protected override bool Available => client.IsConfigured;
     protected override string UnavailableCode => "listenbrainz_recommendations_not_configured";
     public override async Task<RecommendationProviderReadiness> GetReadinessAsync(IntelligenceScope scope, CancellationToken token = default) => (await client.GetReadinessAsync(scope, token)) with { ProviderId = Id };
-    protected override Task<IReadOnlyList<RecommendationSourceItem>> FetchAsync(ScopedRecommendationQuery query, CancellationToken token) => client.GetRecommendationsAsync(query, token);
+    protected override Task<IReadOnlyList<RecommendationSourceItem>> FetchAsync(ScopedRecommendationQuery query, CancellationToken token) =>
+        client.GetRecommendationsAsync(query, kind, token);
 }
 public sealed class AudioMuseRecommendationProvider(IAudioMuseRecommendationClient client)
     : BoundedRecommendationProvider("audiomuse-ai")

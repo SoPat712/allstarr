@@ -146,10 +146,53 @@ public sealed class RecommendationSourceAdapterTests
         var client = new ListenBrainzRecommendationClient(new HttpClient(handler),
             new SecretAccessor("""{"token":"protected","username":"listener"}"""));
 
-        var item = Assert.Single(await client.GetRecommendationsAsync(Query(), default));
+        var item = Assert.Single(await client.GetRecommendationsAsync(
+            Query(), ListenBrainzDiscoveryKind.CollaborativeFiltering, default));
 
         Assert.Equal("22222222-2222-2222-2222-222222222222", item.Identity!.MusicBrainzRecordingId);
         Assert.Contains("/cf/recommendation/user/", handler.Requests.Single().AbsolutePath, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ListenBrainzConcreteClientReturnsLatestWeeklyPlaylistAndMonthlyTopTracks()
+    {
+        var handler = new QueueHandler(
+            """{"count":1,"offset":0,"playlist_count":1,"playlists":[{"playlist":{"date":"2026-07-20T00:00:00Z","identifier":"https://listenbrainz.org/playlist/33333333-3333-3333-3333-333333333333","extension":{"https://musicbrainz.org/doc/jspf#playlist":{"additional_metadata":{"algorithm_metadata":{"source_patch":"weekly-exploration"}}}}}}]}""",
+            """{"playlist":{"track":[{"title":"New Song","creator":"New Artist","album":"New Album","identifier":["https://musicbrainz.org/recording/44444444-4444-4444-4444-444444444444"]}]}}""",
+            """{"payload":{"recordings":[{"track_name":"Favorite Song","artist_name":"Favorite Artist","release_name":"Favorite Album","recording_mbid":"55555555-5555-5555-5555-555555555555"}]}}""");
+        var client = new ListenBrainzRecommendationClient(new HttpClient(handler),
+            new SecretAccessor("""{"token":"protected","username":"listener"}"""));
+
+        var weekly = Assert.Single(await client.GetRecommendationsAsync(
+            Query(), ListenBrainzDiscoveryKind.WeeklyExploration, default));
+        var top = Assert.Single(await client.GetRecommendationsAsync(
+            Query(), ListenBrainzDiscoveryKind.TopRecordings, default));
+
+        Assert.Equal("New Song", weekly.Identity!.Title);
+        Assert.Equal("44444444-4444-4444-4444-444444444444", weekly.Identity.MusicBrainzRecordingId);
+        Assert.Contains(weekly.Signals, signal => signal.Code == "listenbrainz-weekly-exploration");
+        Assert.Equal("Favorite Song", top.Identity!.Title);
+        Assert.Contains(top.Signals, signal => signal.Code == "listenbrainz-top-recordings");
+        Assert.Equal(3, handler.Calls);
+        Assert.Contains(handler.Requests, request => request.AbsolutePath.Contains("/playlists/createdfor", StringComparison.Ordinal));
+        Assert.Contains(handler.Requests, request => request.AbsolutePath.Contains("/stats/user/", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(ListenBrainzDiscoveryKind.WeeklyExploration, "listenbrainz-weekly-exploration")]
+    [InlineData(ListenBrainzDiscoveryKind.WeeklyJams, "listenbrainz-weekly-jams")]
+    [InlineData(ListenBrainzDiscoveryKind.TopRecordings, "listenbrainz-top-recordings")]
+    public async Task ListenBrainzVariantsStayInsideTheCurrentRecommendationProvider(
+        ListenBrainzDiscoveryKind kind, string providerId)
+    {
+        var client = new FakeClient { IsConfigured = true, Items = [Item("musicbrainz:track", .8, providerId)] };
+
+        var result = await new ListenBrainzRecommendationProvider(client, kind, providerId)
+            .RecommendAsync(Request(true));
+
+        Assert.Equal(RecommendationProviderState.Succeeded, result.State);
+        Assert.Equal(providerId, Assert.Single(result.Candidates).Source);
+        Assert.Equal(kind, client.LastListenBrainzKind);
     }
 
     [Fact]
@@ -210,6 +253,7 @@ public sealed class RecommendationSourceAdapterTests
         public bool IsAvailable { get; set; }
         public int Calls { get; private set; }
         public ScopedRecommendationQuery? LastQuery { get; private set; }
+        public ListenBrainzDiscoveryKind? LastListenBrainzKind { get; private set; }
         public IReadOnlyList<RecommendationSourceItem> Items { get; set; } = [];
         public Exception? Failure { get; set; }
         private Task<IReadOnlyList<RecommendationSourceItem>> Call(ScopedRecommendationQuery query)
@@ -217,7 +261,9 @@ public sealed class RecommendationSourceAdapterTests
         public Task<IReadOnlyList<RecommendationSourceItem>> GetInstantMixAsync(ScopedRecommendationQuery query, CancellationToken token) => Call(query);
         public Task<IReadOnlyList<RecommendationSourceItem>> GetSimilarTracksAsync(ScopedRecommendationQuery query, CancellationToken token) => Call(query);
         public Task<RecommendationProviderReadiness> GetReadinessAsync(IntelligenceScope scope, CancellationToken token) => Task.FromResult(new RecommendationProviderReadiness("fake", IsConfigured ? RecommendationProviderReadinessState.Ready : RecommendationProviderReadinessState.Unconfigured));
-        public Task<IReadOnlyList<RecommendationSourceItem>> GetRecommendationsAsync(ScopedRecommendationQuery query, CancellationToken token) => Call(query);
+        public Task<IReadOnlyList<RecommendationSourceItem>> GetRecommendationsAsync(ScopedRecommendationQuery query,
+            ListenBrainzDiscoveryKind kind, CancellationToken token)
+        { LastListenBrainzKind = kind; return Call(query); }
         public Task<IReadOnlyList<RecommendationSourceItem>> RecommendAsync(ScopedRecommendationQuery query, CancellationToken token) => Call(query);
         public Task<bool> CheckHealthAsync(IntelligenceScope scope, CancellationToken token) => Task.FromResult(IsAvailable);
         public Task<IReadOnlyList<RecommendationSourceItem>> FindRelatedAsync(ScopedRecommendationQuery query, CancellationToken token) => Call(query);

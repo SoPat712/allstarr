@@ -18,7 +18,17 @@ public static class RecommendationSourceRegistration
         services.AddSingleton<IRecommendationProvider, LocalRuleRecommendationProvider>();
         services.AddSingleton<IRecommendationProvider, MusicBrainzLocalRecommendationProvider>();
         services.AddSingleton<IRecommendationProvider, LastFmRecommendationProvider>();
-        services.AddSingleton<IRecommendationProvider, ListenBrainzRecommendationProvider>();
+        services.AddSingleton<IRecommendationProvider>(provider => new ListenBrainzRecommendationProvider(
+            provider.GetRequiredService<IListenBrainzRecommendationClient>()));
+        services.AddSingleton<IRecommendationProvider>(provider => new ListenBrainzRecommendationProvider(
+            provider.GetRequiredService<IListenBrainzRecommendationClient>(),
+            ListenBrainzDiscoveryKind.WeeklyExploration, "listenbrainz-weekly-exploration"));
+        services.AddSingleton<IRecommendationProvider>(provider => new ListenBrainzRecommendationProvider(
+            provider.GetRequiredService<IListenBrainzRecommendationClient>(),
+            ListenBrainzDiscoveryKind.WeeklyJams, "listenbrainz-weekly-jams"));
+        services.AddSingleton<IRecommendationProvider>(provider => new ListenBrainzRecommendationProvider(
+            provider.GetRequiredService<IListenBrainzRecommendationClient>(),
+            ListenBrainzDiscoveryKind.TopRecordings, "listenbrainz-top-recordings"));
         services.AddSingleton<IRecommendationProvider, AudioMuseRecommendationProvider>();
         return services;
     }

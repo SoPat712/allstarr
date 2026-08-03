@@ -517,8 +517,15 @@ public sealed partial class IntelligenceController(
         actions = new { canRun = false, canGenerate = false }
     };
     private static object PublicScope(IntelligenceScope scope) => new { scope.Protocol, scope.BackendInstanceId, scope.LibraryScopeId };
-    private static string Label(string value) => string.Join(' ', value.Split(['-', '_'], StringSplitOptions.RemoveEmptyEntries)
-        .Select(item => char.ToUpperInvariant(item[0]) + item[1..]));
+    private static string Label(string value) => value switch
+    {
+        "listenbrainz" => "ListenBrainz recommendations",
+        "listenbrainz-weekly-exploration" => "ListenBrainz Weekly Exploration",
+        "listenbrainz-weekly-jams" => "ListenBrainz Weekly Jams",
+        "listenbrainz-top-recordings" => "Your ListenBrainz top tracks",
+        _ => string.Join(' ', value.Split(['-', '_'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(item => char.ToUpperInvariant(item[0]) + item[1..]))
+    };
     private static string SourceDescription(string id) => id switch
     {
         "lastfm" => "Personalized from your opted-in Last.fm listening context.",
@@ -526,6 +533,9 @@ public sealed partial class IntelligenceController(
         "musicbrainz-local" => "Local similarity using MusicBrainz-enriched genres, credits, and relationships. MusicBrainz is metadata, not a personalized recommendation account.",
         "jellyfin-instant-mix" => "Your linked Jellyfin library's Instant Mix results.",
         "listenbrainz" => "Personalized from your opted-in ListenBrainz listening context.",
+        "listenbrainz-weekly-exploration" => "Tracks from the latest Weekly Exploration playlist ListenBrainz made for you.",
+        "listenbrainz-weekly-jams" => "Tracks from the latest Weekly Jams playlist ListenBrainz made for you.",
+        "listenbrainz-top-recordings" => "Tracks you played most on ListenBrainz this month.",
         "local-rules" => "Private rules over retained local listening and library signals.",
         _ => "Registered recommendation source."
     };
