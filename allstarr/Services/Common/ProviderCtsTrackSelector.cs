@@ -1,4 +1,3 @@
-using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -6,7 +5,7 @@ using Microsoft.Extensions.Caching.Memory;
 
 namespace allstarr.Services.Common;
 
-public sealed record ProviderCtsTrackSelection(string TrackId, string Label, int CorpusSize);
+public sealed record ProviderCtsTrackSelection(string TrackId, int CorpusSize);
 
 public sealed class ProviderCtsTrackSelector(
     IDbContextFactory<AllstarrDbContext> contextFactory) : IDisposable
@@ -35,7 +34,7 @@ public sealed class ProviderCtsTrackSelector(
                   identity.ProviderId == providerId &&
                   identity.ResourceKind == ProviderResourceKind.Track
             orderby snapshot.RetrievedAt descending, identity.Id
-            select new { identity.Id, identity.ExternalId, snapshot.PayloadJson, snapshot.RetrievedAt })
+            select new { identity.Id, identity.ExternalId })
             .Take(CorpusLimit * 4)
             .ToArrayAsync(cancellationToken);
         var corpus = recentSnapshots
@@ -62,36 +61,8 @@ public sealed class ProviderCtsTrackSelector(
                 });
         }
         var selected = corpus[index % corpus.Length];
-        return new ProviderCtsTrackSelection(selected.ExternalId, TrackLabel(selected.PayloadJson) ?? "Known provider track", corpus.Length);
+        return new ProviderCtsTrackSelection(selected.ExternalId, corpus.Length);
     }
 
     public void Dispose() => _nextIndexes.Dispose();
-
-    private static string? TrackLabel(string? payload)
-    {
-        if (string.IsNullOrWhiteSpace(payload)) return null;
-        try
-        {
-            using var document = JsonDocument.Parse(payload);
-            var title = Property(document.RootElement, "title");
-            var artist = Property(document.RootElement, "artist");
-            if (string.IsNullOrWhiteSpace(title)) return null;
-            return string.IsNullOrWhiteSpace(artist) ? title : $"{artist} - {title}";
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    private static string? Property(JsonElement element, string name)
-    {
-        if (element.ValueKind != JsonValueKind.Object) return null;
-        foreach (var property in element.EnumerateObject())
-        {
-            if (property.Name.Equals(name, StringComparison.OrdinalIgnoreCase) && property.Value.ValueKind == JsonValueKind.String)
-                return property.Value.GetString();
-        }
-        return null;
-    }
 }

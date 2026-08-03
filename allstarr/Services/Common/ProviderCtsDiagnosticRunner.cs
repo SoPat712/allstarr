@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text.Json.Serialization;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Health;
@@ -15,7 +16,7 @@ public sealed class ProviderCtsDiagnosticRunner(
     ProviderCtsTrackSelector trackSelector,
     IDurableProviderHealthObservationStore healthStore)
 {
-    private const int SampleLimitBytes = 256 * 1024;
+    private const int SampleLimitBytes = 64 * 1024;
     private static readonly BoundedOperationGate Concurrency = new(2);
 
     public async Task<ProviderCtsDiagnosticResult> MeasureAsync(
@@ -25,7 +26,6 @@ public sealed class ProviderCtsDiagnosticRunner(
         ProviderAudioQuality quality,
         string correlationId,
         string? trackId = null,
-        string? trackLabel = null,
         CancellationToken cancellationToken = default)
     {
         providerId = ProviderContractValidation.ProviderId(providerId, nameof(providerId));
@@ -66,10 +66,8 @@ public sealed class ProviderCtsDiagnosticRunner(
         }
 
         trackId = string.IsNullOrWhiteSpace(trackId) ? automaticTrack!.TrackId : trackId.Trim();
-        trackLabel = string.IsNullOrWhiteSpace(trackLabel)
-            ? automaticTrack?.Label ?? "Selected diagnostic track"
-            : trackLabel.Trim();
 
+        var total = Stopwatch.StartNew();
         ProviderRouteAccountResolution? resolved;
         try
         {
@@ -99,6 +97,7 @@ public sealed class ProviderCtsDiagnosticRunner(
                 "account-resolution",
                 "The selected provider account is unavailable.");
         }
+        var routeMilliseconds = total.Elapsed.TotalMilliseconds;
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
@@ -120,14 +119,15 @@ public sealed class ProviderCtsDiagnosticRunner(
             DateTimeOffset.UtcNow.AddSeconds(30),
             deadline.Token);
         var track = new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, trackId);
-        var total = Stopwatch.StartNew();
 
         try
         {
+            var preparationStartedAt = total.Elapsed;
             var leaseOutcome = await streaming.GetStreamLeaseAsync(
                 execution,
                 new ProviderStreamLeaseRequest(track, quality, 0));
-            var resolveMilliseconds = total.Elapsed.TotalMilliseconds;
+            var preparationMilliseconds = (total.Elapsed - preparationStartedAt).TotalMilliseconds;
+            var resolveMilliseconds = preparationMilliseconds;
             if (!leaseOutcome.IsSuccess)
             {
                 var error = leaseOutcome.Error!.Kind.ToString();
@@ -178,11 +178,13 @@ public sealed class ProviderCtsDiagnosticRunner(
                 MaxAge = TimeSpan.Zero
             };
             sampleRequest.Headers.Pragma.ParseAdd("no-cache");
+            var upstreamHeadersStartedAt = total.Elapsed;
             using var response = lease.ProtectedResponseFactory != null
                 ? await lease.ProtectedResponseFactory(sampleRequest, deadline.Token)
                 : await sampleClient.SendAsync(
                     sampleRequest, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
             var headersMilliseconds = total.Elapsed.TotalMilliseconds;
+            var upstreamHeadersMilliseconds = (total.Elapsed - upstreamHeadersStartedAt).TotalMilliseconds;
             if (IsRedirect(response.StatusCode) || !response.IsSuccessStatusCode)
             {
                 var error = IsRedirect(response.StatusCode)
@@ -204,12 +206,14 @@ public sealed class ProviderCtsDiagnosticRunner(
             var bytesRead = 0;
             double? firstByteMilliseconds = null;
             var transferStart = total.Elapsed;
+            using var sampleHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             while (bytesRead < SampleLimitBytes)
             {
                 var count = await stream.ReadAsync(
                     buffer.AsMemory(0, Math.Min(buffer.Length, SampleLimitBytes - bytesRead)), deadline.Token);
                 if (count == 0) break;
                 bytesRead += count;
+                sampleHash.AppendData(buffer, 0, count);
                 firstByteMilliseconds ??= total.Elapsed.TotalMilliseconds;
             }
 
@@ -228,6 +232,7 @@ public sealed class ProviderCtsDiagnosticRunner(
 
             var transferSeconds = Math.Max((total.Elapsed - transferStart).TotalSeconds, 0.001);
             var throughputKbps = bytesRead * 8d / 1000d / transferSeconds;
+            var totalMilliseconds = total.Elapsed.TotalMilliseconds;
             await healthStore.RecordAsync(
                 providerId,
                 providerAccountId.ToString("N"),
@@ -238,17 +243,28 @@ public sealed class ProviderCtsDiagnosticRunner(
             return ProviderCtsDiagnosticResult.Success(
                 providerId,
                 providerAccountId,
-                trackLabel,
                 automaticTrack == null ? "manual" : "rotating-corpus",
                 automaticTrack?.CorpusSize,
                 quality,
+                routeMilliseconds,
+                preparationMilliseconds,
                 resolveMilliseconds,
                 headersMilliseconds,
+                upstreamHeadersMilliseconds,
                 firstByteMilliseconds.Value,
+                totalMilliseconds,
                 bytesRead,
                 throughputKbps,
+                (int)response.StatusCode,
                 response.Content.Headers.ContentType?.MediaType,
+                response.Content.Headers.ContentLength,
+                response.Content.Headers.ContentRange?.ToString(),
+                response.Headers.AcceptRanges.Any(value => value.Equals("bytes", StringComparison.OrdinalIgnoreCase)),
                 CacheState(response),
+                Convert.ToHexString(sampleHash.GetHashAndReset()).ToLowerInvariant(),
+                lease.SupportsByteRanges,
+                lease.SupportsSeeking,
+                lease.Media,
                 DateTimeOffset.UtcNow);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -320,7 +336,10 @@ public sealed class ProviderCtsDiagnosticRunner(
     {
         if (!response.Headers.TryGetValues("X-Cache", out var values)) return "unknown";
         var value = string.Join(", ", values);
-        return value.Length <= 100 ? value : "reported";
+        if (value.Contains("hit", StringComparison.OrdinalIgnoreCase)) return "hit";
+        if (value.Contains("miss", StringComparison.OrdinalIgnoreCase)) return "miss";
+        if (value.Contains("bypass", StringComparison.OrdinalIgnoreCase)) return "bypass";
+        return "reported";
     }
 }
 
@@ -334,18 +353,29 @@ public sealed class ProviderCtsDiagnosticResult
     public Guid ProviderAccountId { get; init; }
     public string? Stage { get; init; }
     public string? Error { get; init; }
-    public string? TrackLabel { get; init; }
     public string? SelectionMode { get; init; }
     public int? CorpusSize { get; init; }
     public string? RequestedQuality { get; init; }
+    public double? RouteMilliseconds { get; init; }
+    public double? PreparationMilliseconds { get; init; }
     public double? ResolveMilliseconds { get; init; }
     public double? HeadersMilliseconds { get; init; }
+    public double? UpstreamHeadersMilliseconds { get; init; }
     public double? FirstByteMilliseconds { get; init; }
     public double? ClickToStreamMilliseconds { get; init; }
+    public double? TotalMilliseconds { get; init; }
     public int SampleBytes { get; init; }
     public double? ThroughputKbps { get; init; }
+    public int? UpstreamStatusCode { get; init; }
     public string? ContentType { get; init; }
+    public long? ContentLength { get; init; }
+    public string? ContentRange { get; init; }
+    public bool AcceptsByteRanges { get; init; }
     public string? CacheState { get; init; }
+    public string? SampleSha256 { get; init; }
+    public bool LeaseSupportsByteRanges { get; init; }
+    public bool LeaseSupportsSeeking { get; init; }
+    public ProviderMediaFormat? Media { get; init; }
     public string ProbeMode { get; init; } = "cold-connect";
     public int Bars { get; init; }
     public string? Quality { get; init; }
@@ -377,17 +407,28 @@ public sealed class ProviderCtsDiagnosticResult
     public static ProviderCtsDiagnosticResult Success(
         string providerId,
         Guid providerAccountId,
-        string trackLabel,
         string selectionMode,
         int? corpusSize,
         ProviderAudioQuality quality,
+        double routeMilliseconds,
+        double preparationMilliseconds,
         double resolveMilliseconds,
         double headersMilliseconds,
+        double upstreamHeadersMilliseconds,
         double firstByteMilliseconds,
+        double totalMilliseconds,
         int sampleBytes,
         double throughputKbps,
+        int upstreamStatusCode,
         string? contentType,
+        long? contentLength,
+        string? contentRange,
+        bool acceptsByteRanges,
         string cacheState,
+        string sampleSha256,
+        bool leaseSupportsByteRanges,
+        bool leaseSupportsSeeking,
+        ProviderMediaFormat media,
         DateTimeOffset measuredAt)
     {
         var bars = ConnectivityQuality.Bars(firstByteMilliseconds, true, ConnectivityMetric.ClickToStream);
@@ -397,18 +438,29 @@ public sealed class ProviderCtsDiagnosticResult
             Succeeded = true,
             ProviderId = providerId,
             ProviderAccountId = providerAccountId,
-            TrackLabel = trackLabel,
             SelectionMode = selectionMode,
             CorpusSize = corpusSize,
             RequestedQuality = quality.ToString().ToLowerInvariant(),
+            RouteMilliseconds = Round(routeMilliseconds),
+            PreparationMilliseconds = Round(preparationMilliseconds),
             ResolveMilliseconds = Round(resolveMilliseconds),
             HeadersMilliseconds = Round(headersMilliseconds),
+            UpstreamHeadersMilliseconds = Round(upstreamHeadersMilliseconds),
             FirstByteMilliseconds = Round(firstByteMilliseconds),
             ClickToStreamMilliseconds = Round(firstByteMilliseconds),
+            TotalMilliseconds = Round(totalMilliseconds),
             SampleBytes = sampleBytes,
             ThroughputKbps = Round(throughputKbps),
+            UpstreamStatusCode = upstreamStatusCode,
             ContentType = contentType,
+            ContentLength = contentLength,
+            ContentRange = contentRange,
+            AcceptsByteRanges = acceptsByteRanges,
             CacheState = cacheState,
+            SampleSha256 = sampleSha256,
+            LeaseSupportsByteRanges = leaseSupportsByteRanges,
+            LeaseSupportsSeeking = leaseSupportsSeeking,
+            Media = media,
             ProbeMode = "cold-connect",
             Bars = bars,
             Quality = ConnectivityQuality.Label(bars),
@@ -422,5 +474,5 @@ public sealed class ProviderCtsDiagnosticResult
 public sealed class ProviderCtsDiagnosticLimit
 {
     public int TimeoutSeconds { get; init; } = 30;
-    public int SampleBytes { get; init; } = 256 * 1024;
+    public int SampleBytes { get; init; } = 64 * 1024;
 }

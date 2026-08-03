@@ -116,7 +116,6 @@ public sealed class ProviderDiagnosticsController(
                 request.Quality,
                 correlationId,
                 request.TrackId,
-                request.TrackLabel,
                 cancellationToken);
             db.AuditEvents.Add(new AuditEventRecord
             {
@@ -127,28 +126,7 @@ public sealed class ProviderDiagnosticsController(
                 Action = "cold-connect.measure",
                 Outcome = result.Succeeded ? "succeeded" : "failed",
                 CorrelationId = correlationId,
-                DetailsJson = JsonSerializer.Serialize(new
-                {
-                    result.ProviderId,
-                    result.ProviderAccountId,
-                    result.ProbeMode,
-                    result.TrackLabel,
-                    result.SelectionMode,
-                    result.CorpusSize,
-                    result.RequestedQuality,
-                    result.ResolveMilliseconds,
-                    result.HeadersMilliseconds,
-                    result.FirstByteMilliseconds,
-                    result.ClickToStreamMilliseconds,
-                    result.SampleBytes,
-                    result.ThroughputKbps,
-                    result.ContentType,
-                    result.CacheState,
-                    result.Bars,
-                    result.Quality,
-                    result.Stage,
-                    result.Error
-                }),
+                DetailsJson = JsonSerializer.Serialize(result),
                 CreatedAt = result.MeasuredAt
             });
             await db.SaveChangesAsync(cancellationToken);
@@ -182,7 +160,6 @@ public sealed class ProviderDiagnosticsController(
                     measuredAt,
                     value.Error,
                     value.ProbeMode,
-                    value.TrackLabel,
                     value.SelectionMode,
                     value.CorpusSize,
                     value.RequestedQuality,
@@ -211,7 +188,6 @@ public sealed class ProviderDiagnosticsController(
         DateTimeOffset TestedAt,
         string? FailureCode,
         string? ProbeMode,
-        string? TrackLabel,
         string? SelectionMode,
         int? CorpusSize,
         string? RequestedQuality,
@@ -229,7 +205,6 @@ public sealed class ProviderDiagnosticsController(
         public string? ProviderId { get; set; }
         public Guid ProviderAccountId { get; set; }
         public string? ProbeMode { get; set; }
-        public string? TrackLabel { get; set; }
         public string? SelectionMode { get; set; }
         public int? CorpusSize { get; set; }
         public string? RequestedQuality { get; set; }
