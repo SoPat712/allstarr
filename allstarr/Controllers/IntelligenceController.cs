@@ -263,9 +263,14 @@ public sealed partial class IntelligenceController(
     }
 
     [HttpDelete("data")]
-    public async Task<IActionResult> DisableAndPurge([FromBody] IntelligenceScopeRequest request, CancellationToken cancellationToken)
+    public async Task<IActionResult> DisableAndPurge(
+        [FromBody] IntelligenceScopeRequest request,
+        [FromServices] ListeningIntakeTokenService tokens,
+        CancellationToken cancellationToken)
     {
         if (!TrySessionScope(request, out var scope, out var error)) return error!;
+        foreach (var token in await tokens.ListAsync(scope, cancellationToken))
+            await tokens.RevokeAsync(scope, token.Id, cancellationToken);
         await policies.DisableAndPurgeAsync(scope, cancellationToken); return NoContent();
     }
 

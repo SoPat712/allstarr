@@ -503,6 +503,33 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SubmittedListenKeepsProvidedMetadataWithoutRelaying()
+    {
+        var request = Signal(PlaybackTransition.Submission, "listenbrainz:track", 0) with
+        {
+            SubmittedTrack = new(null, null, "listenbrainz:track", "Submitted title", "Submitted artist",
+                "Submitted album", 181_000, RecordingMusicBrainzId: "12345678-1234-1234-1234-123456789abc"),
+            RelayExternally = false,
+            SourceKind = "listenbrainz-api"
+        };
+        Assert.True(await new PlaybackSignalPipeline(jobs).RecordAsync(request));
+        var claim = await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]);
+        var scrobbles = new Scrobbles();
+        var handler = new PlaybackSignalJobHandler(
+            new RecommendationSignalWriter(factory, clock), scrobbles, new Lyrics(), factory, new RejectResolver());
+
+        Assert.Equal(DurableJobCompletionKind.Succeeded,
+            (await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default)).Kind);
+
+        await using var db = await factory.CreateDbContextAsync();
+        var occurrence = Assert.Single(await db.ListeningEvents.AsNoTracking().ToListAsync());
+        Assert.Equal("Submitted title", occurrence.Title);
+        Assert.Equal("Submitted artist", occurrence.Artist);
+        Assert.Equal("listenbrainz-api", occurrence.SourceKind);
+        Assert.Equal(0, scrobbles.Calls);
+    }
+
+    [Fact]
     public async Task ScopedDelivery_UsesDurableOccurrenceMetadataAndOriginalListenTime()
     {
         var startedAt = clock.UtcNow.AddMinutes(-4);
@@ -595,6 +622,11 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     private sealed class Writer : IIdempotentRecommendationSignalWriter { private readonly HashSet<string> keys = []; public int Calls; public string? LastType; public Task<bool> WriteAsync(IntelligenceScope s, string t, string k, double v, DateTimeOffset o, CancellationToken c = default) { Calls++; LastType = t; return Task.FromResult(true); } public Task<bool> WriteIdempotentAsync(IntelligenceScope s, string t, string k, double v, DateTimeOffset o, string key, Guid job, CancellationToken c = default) { if (keys.Add(key)) { Calls++; LastType = t; } return Task.FromResult(true); } }
     private sealed class Scrobbles : IScopedPlaybackScrobbleDelivery { public int Calls; public int Successes; public bool FailFirst; public Task DeliverAsync(PlaybackSignalPayload p, CancellationToken c) { Calls++; if (FailFirst) { FailFirst = false; throw new IOException(); } Successes++; return Task.CompletedTask; } }
     private sealed class Lyrics : IPlaybackLyricsPrefetch { public int Calls; public Task PrefetchAsync(PlaybackSignalPayload p, CancellationToken c) { Calls++; return Task.CompletedTask; } }
+    private sealed class RejectResolver : IPlaybackTrackResolver
+    {
+        public Task<PlaybackTrackSnapshot?> ResolveAsync(PlaybackSignalPayload payload, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("Submitted metadata should bypass lookup.");
+    }
     private sealed class Target(string id, bool configured) : IExactScopePlaybackScrobbleTarget
     {
         public string ProviderId => id;

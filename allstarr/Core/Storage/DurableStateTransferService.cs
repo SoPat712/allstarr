@@ -26,7 +26,7 @@ public sealed record DurableStateTransferArtifact(
 
 public sealed class DurableStateTransferService
 {
-    private const int CurrentFormatVersion = 6;
+    private const int CurrentFormatVersion = 7;
     private const long MaximumManifestBytes = 64 * 1024;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -65,6 +65,7 @@ public sealed class DurableStateTransferService
         "metadata-enrichment-plans.json",
         "metadata-enrichment-applications.json",
         "intelligence-policies.json",
+        "listening-intake-tokens.json",
         "listening-events.json",
         "listening-history-imports.json",
         "listening-signals.json",
@@ -189,6 +190,7 @@ public sealed class DurableStateTransferService
             await WriteEntryAsync(archive, "metadata-enrichment-plans.json", await context.MetadataEnrichmentPlans.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "metadata-enrichment-applications.json", await context.MetadataEnrichmentApplications.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "intelligence-policies.json", await context.IntelligencePolicies.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
+            await WriteEntryAsync(archive, "listening-intake-tokens.json", await context.ListeningIntakeTokens.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "listening-events.json", await context.ListeningEvents.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "listening-history-imports.json", await context.ListeningHistoryImports.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "listening-signals.json", await context.ListeningSignals.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
@@ -330,6 +332,7 @@ public sealed class DurableStateTransferService
             await context.MetadataEnrichmentPlans.AnyAsync(cancellationToken) ||
             await context.MetadataEnrichmentApplications.AnyAsync(cancellationToken) ||
             await context.IntelligencePolicies.AnyAsync(cancellationToken) ||
+            await context.ListeningIntakeTokens.AnyAsync(cancellationToken) ||
             await context.ListeningEvents.AnyAsync(cancellationToken) ||
             await context.ListeningHistoryImports.AnyAsync(cancellationToken) ||
             await context.ListeningSignals.AnyAsync(cancellationToken) ||
@@ -391,6 +394,7 @@ public sealed class DurableStateTransferService
         var enrichmentPlans = await ReadEntryAsync<MetadataEnrichmentPlanRecord>(archive, "metadata-enrichment-plans.json", cancellationToken);
         var enrichmentApplications = await ReadEntryAsync<MetadataEnrichmentApplicationRecord>(archive, "metadata-enrichment-applications.json", cancellationToken);
         var intelligencePolicies = await ReadEntryAsync<IntelligencePolicyRecord>(archive, "intelligence-policies.json", cancellationToken);
+        var listeningIntakeTokens = await ReadEntryAsync<ListeningIntakeTokenRecord>(archive, "listening-intake-tokens.json", cancellationToken);
         var listeningEvents = await ReadEntryAsync<ListeningEventRecord>(archive, "listening-events.json", cancellationToken);
         var listeningHistoryImports = await ReadEntryAsync<ListeningHistoryImportRecord>(archive, "listening-history-imports.json", cancellationToken);
         var listeningSignals = await ReadEntryAsync<ListeningSignalRecord>(archive, "listening-signals.json", cancellationToken);
@@ -425,7 +429,7 @@ public sealed class DurableStateTransferService
         ValidateDownloadArtifactArchive(tenants, users, jobs, providerAccounts, managedFiles, downloadWorkspaces, downloadArtifacts);
         ValidateIntelligenceArchive(tenants, users, backendIdentities, jobs, jobSchedules, secretReferences,
             providerAccounts, providerTrackIdentities, canonicalRecordings, libraryTracks, intelligencePolicies,
-            listeningEvents, listeningHistoryImports, listeningSignals,
+            listeningIntakeTokens, listeningEvents, listeningHistoryImports, listeningSignals,
             playbackDeliveryCheckpoints,
             listeningProfiles, recommendationRuns, recommendationCandidates, recommendationFeedback,
             generatedSets, generatedSetEntries);
@@ -461,6 +465,7 @@ public sealed class DurableStateTransferService
         context.MetadataEnrichmentPlans.AddRange(enrichmentPlans);
         context.MetadataEnrichmentApplications.AddRange(enrichmentApplications);
         context.IntelligencePolicies.AddRange(intelligencePolicies);
+        context.ListeningIntakeTokens.AddRange(listeningIntakeTokens);
         context.ListeningEvents.AddRange(listeningEvents);
         context.ListeningHistoryImports.AddRange(listeningHistoryImports);
         context.ListeningSignals.AddRange(listeningSignals);
@@ -1108,6 +1113,7 @@ public sealed class DurableStateTransferService
         IReadOnlyCollection<ProviderTrackIdentityRecord> providerTrackIdentities,
         IReadOnlyCollection<CanonicalRecordingRecord> canonicalRecordings,
         IReadOnlyCollection<LibraryTrackRecord> libraryTracks, IReadOnlyCollection<IntelligencePolicyRecord> policies,
+        IReadOnlyCollection<ListeningIntakeTokenRecord> intakeTokens,
         IReadOnlyCollection<ListeningEventRecord> events, IReadOnlyCollection<ListeningHistoryImportRecord> imports,
         IReadOnlyCollection<ListeningSignalRecord> signals,
         IReadOnlyCollection<PlaybackDeliveryCheckpointEntity> playbackCheckpoints,
@@ -1122,6 +1128,7 @@ public sealed class DurableStateTransferService
         var setById = IndexUnique(sets, x => x.Id, "generated set");
         var policyById = IndexUnique(policies, x => x.Id, "intelligence policy");
         var scheduleById = IndexUnique(schedules, x => x.Id, "job schedule");
+        IndexUnique(intakeTokens, x => x.Id, "listening intake token");
         IndexUnique(events, x => x.Id, "listening event"); IndexUnique(signals, x => x.Id, "listening signal");
         IndexUnique(imports, x => x.Id, "listening history import");
         IndexUnique(profiles, x => x.Id, "listening profile");
@@ -1150,6 +1157,21 @@ public sealed class DurableStateTransferService
                 policy.TargetCredentialReferenceId.HasValue && !Credential(policy.TenantId, policy.TargetCredentialReferenceId) ||
                 !policyByScope.TryAdd(Scope(policy.TenantId, policy.OwnerUserId, policy.Protocol, policy.BackendInstanceId, policy.LibraryScopeId), policy))
                 RejectIntelligenceArchive("an intelligence policy is malformed, duplicated, or crosses its exact scope");
+        }
+        var intakeSecretIds = new HashSet<Guid>();
+        foreach (var token in intakeTokens)
+        {
+            var key = Scope(token.TenantId, token.OwnerUserId, token.Protocol, token.BackendInstanceId, token.LibraryScopeId);
+            if (!policyByScope.ContainsKey(key) || !Owner(token.TenantId, token.OwnerUserId) ||
+                token.Protocol is not ("jellyfin" or "subsonic") ||
+                !Backend(token.TenantId, token.OwnerUserId, token.Protocol, token.BackendInstanceId) ||
+                !IsRequiredText(token.BackendInstanceId, 200) || !IsRequiredText(token.LibraryScopeId, 300) ||
+                token.CreatedAt == default || token.RevokedAt < token.CreatedAt ||
+                !intakeSecretIds.Add(token.SecretReferenceId) ||
+                !secretById.TryGetValue(token.SecretReferenceId, out var secret) ||
+                secret.TenantId != token.TenantId || secret.Purpose != "listening-intake-token" ||
+                token.RevokedAt.HasValue != secret.RevokedAt.HasValue)
+                RejectIntelligenceArchive("a listening-app token is malformed or crosses its exact scope");
         }
         foreach (var import in imports)
         {
@@ -1232,8 +1254,8 @@ public sealed class DurableStateTransferService
                 occurrence.State != ListeningEventState.Completed && occurrence.ListenedAt != null ||
                 occurrence.PositionTicks is < 0 || occurrence.DurationMilliseconds is <= 0 ||
                 !IsOptionalText(occurrence.ClientClass, 200) || !IsOptionalText(occurrence.DeviceClass, 200) ||
-                occurrence.SourceKind is not ("protocol" or "import") ||
-                occurrence.SourceKind == "protocol" && occurrence.ImportProvenance != null ||
+                occurrence.SourceKind is not ("protocol" or "import" or "listenbrainz-api") ||
+                occurrence.SourceKind != "import" && occurrence.ImportProvenance != null ||
                 occurrence.SourceKind == "import" && !IsRequiredText(occurrence.ImportProvenance, 500) ||
                 !IsRequiredText(occurrence.TrackReference, 500) || occurrence.TrackReference.Contains("://", StringComparison.Ordinal) ||
                 !IsOptionalText(occurrence.Title, 500) || !IsOptionalText(occurrence.Artist, 500) ||

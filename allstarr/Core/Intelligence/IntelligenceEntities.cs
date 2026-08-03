@@ -31,6 +31,19 @@ public sealed class ListeningSignalRecord
     public DateTimeOffset ObservedAt { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
 }
+public sealed class ListeningIntakeTokenRecord
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid OwnerUserId { get; set; }
+    public string Protocol { get; set; } = "";
+    public string BackendInstanceId { get; set; } = "";
+    public string LibraryScopeId { get; set; } = "";
+    public Guid SecretReferenceId { get; set; }
+    public bool RelayExternally { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? RevokedAt { get; set; }
+}
 public sealed class ListeningEventRecord
 {
     public Guid Id { get; set; }

@@ -7,6 +7,7 @@ public sealed partial class AllstarrDbContext
 {
     public DbSet<IntelligencePolicyRecord> IntelligencePolicies => Set<IntelligencePolicyRecord>();
     public DbSet<ListeningEventRecord> ListeningEvents => Set<ListeningEventRecord>();
+    public DbSet<ListeningIntakeTokenRecord> ListeningIntakeTokens => Set<ListeningIntakeTokenRecord>();
     public DbSet<ListeningHistoryImportRecord> ListeningHistoryImports => Set<ListeningHistoryImportRecord>();
     public DbSet<ListeningSignalRecord> ListeningSignals => Set<ListeningSignalRecord>();
     public DbSet<ListeningProfileRecord> ListeningProfiles => Set<ListeningProfileRecord>();

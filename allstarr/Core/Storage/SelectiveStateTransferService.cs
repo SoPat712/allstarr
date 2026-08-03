@@ -84,7 +84,7 @@ public sealed class SelectiveTransferSchemaMismatchException : Exception
 /// </summary>
 public sealed class SelectiveStateTransferService
 {
-    public const int CurrentFormatVersion = 7;
+    public const int CurrentFormatVersion = 8;
     public const long MaximumArchiveBytes = 128L * 1024 * 1024;
     public const long MaximumRequestBytes = MaximumArchiveBytes + (1024 * 1024);
     public const long MaximumExpandedBytes = 512L * 1024 * 1024;
@@ -137,6 +137,7 @@ public sealed class SelectiveStateTransferService
             [TransferCategory.Intelligence] = new[]
             {
                 "intelligence-policies",
+                "listening-intake-tokens",
                 "listening-events",
                 "listening-history-imports",
                 "listening-signals",
@@ -884,6 +885,12 @@ public sealed class SelectiveStateTransferService
                     await WriteJsonAsync(archive, entry, rows, cancellationToken);
                     return rows.Count;
                 }
+            case "listening-intake-tokens":
+                {
+                    var rows = await context.ListeningIntakeTokens.AsNoTracking().ToListAsync(cancellationToken);
+                    await WriteJsonAsync(archive, entry, rows, cancellationToken);
+                    return rows.Count;
+                }
             case "listening-events":
                 {
                     var rows = await context.ListeningEvents.AsNoTracking().ToListAsync(cancellationToken);
@@ -1233,6 +1240,12 @@ public sealed class SelectiveStateTransferService
                 {
                     var rows = await ReadJsonAsync<IntelligencePolicyRecord>(archiveEntry, cancellationToken);
                     context.IntelligencePolicies.AddRange(rows);
+                    return rows.Count;
+                }
+            case "listening-intake-tokens":
+                {
+                    var rows = await ReadJsonAsync<ListeningIntakeTokenRecord>(archiveEntry, cancellationToken);
+                    context.ListeningIntakeTokens.AddRange(rows);
                     return rows.Count;
                 }
             case "listening-events":

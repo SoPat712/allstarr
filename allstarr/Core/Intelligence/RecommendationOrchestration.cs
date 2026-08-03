@@ -460,6 +460,7 @@ public static class IntelligenceRegistration
         services.AddSingleton<IListeningProfileService, ListeningProfileService>(); services.AddSingleton<ISmartPlaylistService, SmartPlaylistService>();
         services.AddSingleton<IRecommendationRunService, RecommendationRunService>(); services.AddSingleton<IDurableJobHandler, RecommendationRunJobHandler>();
         services.AddSingleton<IRecommendationProviderStatusService, RecommendationProviderStatusService>();
+        services.AddSingleton<ListeningIntakeTokenService>();
         services.AddSingleton<IDurableJobHandler, GeneratedSetMaterializationJobHandler>(); return services;
     }
 }

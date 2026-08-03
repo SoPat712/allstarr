@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, normalizeResponse, sources } from "./api";
+import { ApiError, intelligence, normalizeResponse, sources } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -42,5 +42,25 @@ describe("API response normalization", () => {
         validationDetails: { providerId: "deezer" },
       },
     });
+  });
+
+  it("creates a listening-app key for the exact selected library", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      Id: "token-id", Token: "private-key", RelayExternally: false, CreatedAt: "2026-01-01T00:00:00Z",
+    }), { status: 201 }));
+    vi.stubGlobal("fetch", fetch);
+
+    const created = await intelligence.createListeningApp({
+      protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music",
+    }, false);
+
+    expect(created).toMatchObject({ id: "token-id", token: "private-key", relayExternally: false });
+    expect(fetch).toHaveBeenCalledWith("/api/admin/intelligence/listening-apps", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music",
+        sendToConnectedServices: false,
+      }),
+    }));
   });
 });

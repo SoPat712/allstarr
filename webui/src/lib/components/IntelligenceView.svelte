@@ -3,6 +3,7 @@
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import AudioMuseDiscovery from "$lib/components/AudioMuseDiscovery.svelte";
   import IntelligenceHistory from "$lib/components/IntelligenceHistory.svelte";
+  import ListeningAppsCard from "$lib/components/ListeningAppsCard.svelte";
   import IntelligenceSchedules from "$lib/components/IntelligenceSchedules.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -250,6 +251,7 @@
             <p>{songDetailsMessage(data.songDetails ?? { pending: 0, resolved: 0, unresolved: 0, failed: 0 })}</p>
           </section>
         </div>
+        <ListeningAppsCard scope={activeScope} policyEnabled={enabled} />
         <IntelligenceSchedules scope={activeScope} schedules={data.schedules ?? []} policyEnabled={enabled} onChanged={refresh} />
       </div>
     {:else}

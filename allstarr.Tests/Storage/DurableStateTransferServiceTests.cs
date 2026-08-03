@@ -46,6 +46,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
         var secretId = Guid.CreateVersion7();
+        var intakeSecretId = Guid.CreateVersion7();
         var accountId = Guid.CreateVersion7();
         var canonicalRecordingId = Guid.CreateVersion7();
         var providerIdentityId = Guid.CreateVersion7();
@@ -107,6 +108,26 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             Ciphertext = [9, 8, 7, 6],
             AuthenticationTag = [4, 5, 6],
             CreatedAt = DateTimeOffset.UtcNow
+        });
+        context.SecretReferences.Add(new SecretReferenceRecord
+        {
+            Id = intakeSecretId,
+            TenantId = tenantId,
+            Purpose = "listening-intake-token",
+            ActiveVersion = 1,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        context.SecretVersions.Add(new SecretVersionRecord
+        {
+            Id = Guid.CreateVersion7(),
+            SecretReferenceId = intakeSecretId,
+            Version = 1,
+            KeyId = "external-key-1",
+            Nonce = [7, 8, 9],
+            Ciphertext = [1, 3, 5, 7],
+            AuthenticationTag = [2, 4, 6],
+            CreatedAt = now
         });
         context.ProviderAccounts.Add(new ProviderAccountRecord
         {
@@ -481,6 +502,18 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             CreatedAt = now,
             UpdatedAt = now,
             Revision = 1
+        });
+        context.ListeningIntakeTokens.Add(new ListeningIntakeTokenRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            Protocol = "jellyfin",
+            BackendInstanceId = "transfer-backend",
+            LibraryScopeId = "music",
+            SecretReferenceId = intakeSecretId,
+            RelayExternally = false,
+            CreatedAt = now
         });
         context.ListeningEvents.Add(new ListeningEventRecord
         {
@@ -984,6 +1017,10 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         Assert.Equal(MetadataEnrichmentApplicationState.Applied,
             (await target.MetadataEnrichmentApplications.SingleAsync()).State);
         Assert.True((await target.IntelligencePolicies.SingleAsync()).Enabled);
+        var listeningIntake = await target.ListeningIntakeTokens.SingleAsync();
+        Assert.False(listeningIntake.RelayExternally);
+        Assert.Equal("listening-intake-token", (await target.SecretReferences.SingleAsync(item =>
+            item.Id == listeningIntake.SecretReferenceId)).Purpose);
         var listeningEvent = await target.ListeningEvents.SingleAsync();
         Assert.Equal(ListeningEventState.Completed, listeningEvent.State);
         Assert.Equal("local-42", listeningEvent.TrackReference);
@@ -1006,7 +1043,8 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             .OrderBy(item => item.Name).Select(item => item.Name).ToArrayAsync());
         Assert.Equal(["audiomuse-ai", "local-rules"], await target.GeneratedSetEntries
             .OrderBy(item => item.Source).Select(item => item.Source).ToArrayAsync());
-        var secret = await target.SecretVersions.SingleAsync();
+        var fixtureSecret = await target.SecretReferences.SingleAsync(item => item.Purpose == "fixture.encrypted");
+        var secret = await target.SecretVersions.SingleAsync(item => item.SecretReferenceId == fixtureSecret.Id);
         Assert.Equal("external-key-1", secret.KeyId);
         Assert.Equal([9, 8, 7, 6], secret.Ciphertext);
         Assert.False(File.ReadAllText(artifact.Path).Contains("plaintext-secret", StringComparison.Ordinal));

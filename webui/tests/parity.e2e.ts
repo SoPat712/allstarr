@@ -287,6 +287,9 @@ const responses: Record<string, unknown> = {
     }],
     visualization: [{ key: "plays", label: "Plays", value: .7 }],
   },
+  "/api/admin/intelligence/listening-apps": {
+    items: [{ id: "66666666-6666-6666-6666-666666666666", relayExternally: false, createdAt: "2026-01-01T00:00:00Z" }],
+  },
   "/api/admin/intelligence/history/overview": {
     period: { from: "2025-12-01T00:00:00Z", to: "2026-01-01T00:00:00Z", timeZoneId: "UTC" },
     allTime: { completedListens: 42, distinctTracks: 20, distinctArtists: 8, listeningTimeMilliseconds: 7_200_000, firstListen: "2025-01-01T00:00:00Z" },
@@ -550,6 +553,10 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
     if (url.pathname === "/api/admin/intelligence/policy")
       body = { revision: 2 };
     if (url.pathname === "/api/admin/intelligence/data")
+      body = {};
+    if (url.pathname === "/api/admin/intelligence/listening-apps" && route.request().method() === "POST")
+      body = { id: "77777777-7777-7777-7777-777777777777", token: `als_${"7".repeat(32)}_${"8".repeat(64)}`, relayExternally: false, createdAt: "2026-01-02T00:00:00Z" };
+    if (url.pathname.startsWith("/api/admin/intelligence/listening-apps/") && route.request().method() === "DELETE")
       body = {};
     if (url.pathname === "/api/admin/intelligence/audiomuse/analysis")
       body = { jobId: "sound-scan-1", state: "completed", completed: 200, total: 200 };
@@ -836,6 +843,16 @@ for (const viewport of viewports) {
       await expect(page.getByText("Allstarr is checking 2 saved listens for more song details.", { exact: true })).toBeVisible();
       await expect(page.getByText("Private similarity source. · Ready")).toBeVisible();
       await expect(page.getByText("Where generated playlists are created", { exact: true })).toBeVisible();
+      const listeningApps = page.locator(".listening-apps-card");
+      await expect(listeningApps).toContainText("Allstarr will save listens from this key to music on Jellyfin.");
+      await expect(listeningApps).toContainText("Allstarr will not send these listens to another service.");
+      await expect(listeningApps).not.toContainText(/native playlist|hybrid|materialized|write-back|projection|backend/i);
+      const keyRequest = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/listening-apps") && request.method() === "POST");
+      await listeningApps.getByRole("button", { name: "Create private key" }).click();
+      expect((await keyRequest).postDataJSON()).toMatchObject({
+        protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music", sendToConnectedServices: false,
+      });
+      await expect(listeningApps.getByLabel("New listening app private key")).toHaveValue(/^als_/);
       await page.getByRole("button", { name: "Turn off and clear" }).click();
       const clearDialog = page.getByRole("alertdialog", { name: "Clear private listening data for this library?" });
       await expect(clearDialog).toContainText("it will not change Jellyfin playlists or connected Last.fm or ListenBrainz accounts.");

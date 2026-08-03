@@ -12,10 +12,12 @@ namespace allstarr.Core.Playback;
 
 public enum PlaybackTransition { Start, Progress, Stop, InferredStart, InferredStop, Submission }
 public sealed record PlaybackSignalRequest(ProtocolExecutionContext ExecutionContext, PlaybackTransition Transition,
-    string ItemId, string? DeviceId, string? PlaySessionId, long? PositionTicks, DateTimeOffset ObservedAt);
+    string ItemId, string? DeviceId, string? PlaySessionId, long? PositionTicks, DateTimeOffset ObservedAt,
+    PlaybackTrackSnapshot? SubmittedTrack = null, bool RelayExternally = true, string SourceKind = "protocol");
 public sealed record PlaybackSignalPayload(IntelligenceScope Scope, PlaybackTransition Transition, string ItemId,
     string? DeviceId, string? PlaySessionId, long? PositionTicks, DateTimeOffset ObservedAt, string SignalKey,
-    string? OccurrenceKey = null, string? ClientClass = null, string? DeviceClass = null);
+    string? OccurrenceKey = null, string? ClientClass = null, string? DeviceClass = null,
+    PlaybackTrackSnapshot? SubmittedTrack = null, bool RelayExternally = true, string SourceKind = "protocol");
 public interface IPlaybackSignalPipeline { Task<bool> RecordAsync(PlaybackSignalRequest request, CancellationToken cancellationToken = default); }
 public interface IScopedPlaybackScrobbleDelivery
 {
@@ -42,6 +44,8 @@ public sealed class PlaybackSignalPipeline(
         if (string.IsNullOrWhiteSpace(request.ItemId) || request.ItemId.Length > 500 || request.ObservedAt == default ||
             request.DeviceId?.Length > 200 || request.PlaySessionId?.Length > 500 || request.PositionTicks is < 0)
             throw new ArgumentException("Playback signal is invalid.");
+        if (request.SourceKind is not ("protocol" or "listenbrainz-api"))
+            throw new ArgumentException("Playback signal source is invalid.");
         var scope = new IntelligenceScope(actor.TenantId, owner, execution.Protocol.ToString().ToLowerInvariant(),
             execution.BackendInstanceId, execution.LibraryScopeId);
         var bucket = request.Transition == PlaybackTransition.Progress ? (request.PositionTicks ?? 0) / TimeSpan.TicksPerSecond / 10 : 0;
@@ -52,7 +56,8 @@ public sealed class PlaybackSignalPipeline(
         var normalizedTicks = request.Transition == PlaybackTransition.Progress ? TimeSpan.FromSeconds(bucket * 10).Ticks : request.PositionTicks;
         var result = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaybackSignalPayload>(JobType, key,
             new(scope, request.Transition, request.ItemId, deviceId, request.PlaySessionId, normalizedTicks,
-                request.ObservedAt, key, occurrenceKey, execution.Client.ClientId, execution.Client.DeviceName),
+                request.ObservedAt, key, occurrenceKey, execution.Client.ClientId, execution.Client.DeviceName,
+                request.SubmittedTrack, request.RelayExternally, request.SourceKind),
             scope.TenantId, scope.OwnerUserId, LibraryScopeId: scope.LibraryScopeId,
             CorrelationId: execution.CorrelationId), cancellationToken);
         return result.Created;
@@ -94,7 +99,8 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
             var retainHistory = await RetainsHistoryAsync(payload.Scope, cancellationToken);
             if (retainHistory)
             {
-                var track = tracks == null ? null : await tracks.ResolveAsync(payload, cancellationToken);
+                var track = payload.SubmittedTrack ??
+                    (tracks == null ? null : await tracks.ResolveAsync(payload, cancellationToken));
                 var state = await RecordOccurrenceAsync(
                     payload, track, musicBrainz?.Enabled == true, cancellationToken);
                 var signalType = SignalType(payload.Transition, state);
@@ -108,7 +114,8 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
                         cancellationToken);
             }
             if (payload.Transition is PlaybackTransition.Start or PlaybackTransition.InferredStart) await lyrics.PrefetchAsync(payload, cancellationToken);
-            await scrobbles.DeliverAsync(payload, cancellationToken);
+            if (payload.RelayExternally)
+                await scrobbles.DeliverAsync(payload, cancellationToken);
             return DurableJobCompletion.Success();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return DurableJobCompletion.Cancelled(); }
@@ -164,7 +171,7 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
                 BackendInstanceId = payload.Scope.BackendInstanceId,
                 LibraryScopeId = payload.Scope.LibraryScopeId,
                 OccurrenceKey = occurrenceKey,
-                SourceKind = "protocol",
+                SourceKind = payload.SourceKind,
                 TrackReference = payload.ItemId
             };
             Apply(record, payload, track, added, enrichWithMusicBrainz);

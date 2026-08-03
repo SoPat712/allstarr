@@ -795,6 +795,14 @@ export type IntelligenceScope = {
   libraryScopeId: string;
 };
 
+export type ListeningApp = {
+  id: string;
+  relayExternally: boolean;
+  createdAt: string;
+};
+
+export type ListeningAppCreated = ListeningApp & { token: string };
+
 export type AudioMuseTrack = {
   trackId: string;
   title?: string | null;
@@ -1151,6 +1159,14 @@ export const intelligence = {
       intelligenceBody({ ...scope, kind, expectedRevision }, "PUT")),
   purge: (scope: IntelligenceScope) =>
     json<void>("/api/admin/intelligence/data", intelligenceBody(scope, "DELETE")),
+  listeningApps: (scope: IntelligenceScope) =>
+    json<{ items: ListeningApp[] }>(`/api/admin/intelligence/listening-apps?${intelligenceQuery(scope)}`),
+  createListeningApp: (scope: IntelligenceScope, sendToConnectedServices: boolean) =>
+    json<ListeningAppCreated>("/api/admin/intelligence/listening-apps",
+      intelligenceBody({ ...scope, sendToConnectedServices })),
+  revokeListeningApp: (scope: IntelligenceScope, id: string) =>
+    json<void>(`/api/admin/intelligence/listening-apps/${encodeURIComponent(id)}`,
+      intelligenceBody(scope, "DELETE")),
   startAudioMuseAnalysis: (scope: IntelligenceScope, rebuild = false) =>
     json<AudioMuseAnalysis>("/api/admin/intelligence/audiomuse/analysis",
       intelligenceBody({ ...scope, rebuild, idempotencyKey: crypto.randomUUID() })),

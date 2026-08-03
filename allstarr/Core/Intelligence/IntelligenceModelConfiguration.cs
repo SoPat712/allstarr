@@ -16,6 +16,15 @@ public static class IntelligenceModelConfiguration
             });
         ConfigureOwned<ListeningSignalRecord>(modelBuilder, "listening_signals", e => e.Id,
             entity => { entity.Property(x => x.SignalType).HasMaxLength(32).IsRequired(); entity.Property(x => x.TrackKeyHash).HasMaxLength(64).IsRequired(); entity.Property(x => x.TrackReference).HasMaxLength(100).IsRequired(); entity.Property(x => x.SignalKey).HasMaxLength(64); entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.ExpiresAt }); entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.SignalKey }).IsUnique().HasFilter("\"SignalKey\" IS NOT NULL").HasDatabaseName("IX_listening_signal_idempotency"); entity.HasOne<DurableJobRecord>().WithMany().HasForeignKey(x => x.SourceJobId).HasConstraintName("FK_listening_signal_job").OnDelete(DeleteBehavior.Restrict); });
+        ConfigureOwned<ListeningIntakeTokenRecord>(modelBuilder, "listening_intake_tokens", e => e.Id,
+            entity =>
+            {
+                entity.HasIndex(x => x.SecretReferenceId).IsUnique().HasDatabaseName("IX_listening_intake_token_secret");
+                entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.Protocol, x.BackendInstanceId, x.LibraryScopeId, x.CreatedAt })
+                    .HasDatabaseName("IX_listening_intake_token_scope");
+                entity.HasOne<SecretReferenceRecord>().WithMany().HasForeignKey(x => x.SecretReferenceId)
+                    .HasConstraintName("FK_listening_intake_token_secret").OnDelete(DeleteBehavior.Restrict);
+            });
         ConfigureOwned<ListeningEventRecord>(modelBuilder, "listening_events", e => e.Id,
             entity =>
             {

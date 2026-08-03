@@ -14,6 +14,6 @@ public sealed class MigrationModelSnapshotTests
         using var context = new AllstarrDbContext(options);
 
         Assert.False(context.Database.HasPendingModelChanges());
-        Assert.Equal("20260803030000_AllowDirectGeneratedSets", context.Database.GetMigrations().Last());
+        Assert.Equal("20260803040000_AddListeningIntakeTokens", context.Database.GetMigrations().Last());
     }
 }

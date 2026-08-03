@@ -935,6 +935,56 @@ namespace allstarr.Core.Storage.Migrations
                         });
                 });
 
+            modelBuilder.Entity("allstarr.Core.Intelligence.ListeningIntakeTokenRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BackendInstanceId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("LibraryScopeId")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Protocol")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<bool>("RelayExternally")
+                        .HasColumnType("boolean");
+
+                    b.Property<long?>("RevokedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("SecretReferenceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SecretReferenceId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_listening_intake_token_secret");
+
+                    b.HasIndex("TenantId", "OwnerUserId", "Protocol", "BackendInstanceId", "LibraryScopeId", "CreatedAt")
+                        .HasDatabaseName("IX_listening_intake_token_scope");
+
+                    b.ToTable("listening_intake_tokens", (string)null);
+                });
+
             modelBuilder.Entity("allstarr.Core.Intelligence.ListeningHistoryImportRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4444,6 +4494,29 @@ namespace allstarr.Core.Storage.Migrations
                         .HasForeignKey("ProviderTrackIdentityId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_listening_event_provider_identity");
+
+                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "OwnerUserId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("allstarr.Core.Intelligence.ListeningIntakeTokenRecord", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.SecretReferenceRecord", null)
+                        .WithMany()
+                        .HasForeignKey("SecretReferenceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_listening_intake_token_secret");
 
                     b.HasOne("allstarr.Core.Storage.TenantRecord", null)
                         .WithMany()
