@@ -113,6 +113,7 @@ public static class ListeningHistoryImportRegistration
         services.AddSingleton<IListeningHistoryImporter, LastFmListeningHistoryImporter>();
         services.AddSingleton<IListeningHistoryImporter, ListenBrainzListeningHistoryImporter>();
         services.AddSingleton<IListeningHistoryImporter, KoitoListeningHistoryImporter>();
+        services.AddSingleton<IListeningHistoryImporter, MalojaListeningHistoryImporter>();
         services.AddSingleton<ListeningHistoryImporterRegistry>();
         services.AddSingleton<ListeningHistoryImportArtifactStore>();
         services.AddSingleton<ListeningHistoryImportService>();
