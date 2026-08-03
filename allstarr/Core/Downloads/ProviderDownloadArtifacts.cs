@@ -71,6 +71,18 @@ public sealed record ProviderDownloadArtifactWriteRequest(
     public Action<long, long?>? Progress { get; init; }
 }
 
+public sealed record ProviderDownloadArtifactProduceRequest(
+    ProviderManagedWorkspaceReference Workspace,
+    Guid DurableJobId,
+    string ProviderId,
+    string ArtifactId,
+    long MaximumBytes,
+    Func<Stream, CancellationToken, Task> Produce)
+{
+    public long? ExpectedBytes { get; init; }
+    public Action<long, long?>? Progress { get; init; }
+}
+
 public sealed record ProviderDownloadArtifactWriteResult(
     string ArtifactId,
     string Sha256,

@@ -19,15 +19,6 @@ public static class BuiltInProviderDescriptorCatalog
     public static IReadOnlyList<ProviderRegistration> LegacyRegistrations { get; } =
     [
         Registration(
-            "qobuz",
-            "Qobuz",
-            "The existing Qobuz catalog, playlist-read, stream, and managed download lanes.",
-            Optional(ProviderCapabilityKind.Metadata),
-            Required(ProviderCapabilityKind.Streaming),
-            Required(ProviderCapabilityKind.Download),
-            Required(ProviderCapabilityKind.Playlist),
-            Required(ProviderCapabilityKind.Health)),
-        Registration(
             "squidwtf",
             "SquidWTF",
             "The discovered public metadata lane; stream and download remain policy-blocked.",

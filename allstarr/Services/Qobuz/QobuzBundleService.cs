@@ -40,18 +40,22 @@ public class QobuzBundleService
     /// <summary>
     /// Gets the Qobuz App ID, extracting it from the bundle if not cached
     /// </summary>
-    public virtual async Task<string> GetAppIdAsync()
+    public virtual Task<string> GetAppIdAsync() => GetAppIdAsync(CancellationToken.None);
+
+    public virtual async Task<string> GetAppIdAsync(CancellationToken cancellationToken)
     {
-        await EnsureInitializedAsync();
+        await EnsureInitializedAsync(cancellationToken);
         return _cachedAppId!;
     }
 
     /// <summary>
     /// Gets the Qobuz secrets list, extracting them from the bundle if not cached
     /// </summary>
-    public virtual async Task<List<string>> GetSecretsAsync()
+    public virtual Task<List<string>> GetSecretsAsync() => GetSecretsAsync(CancellationToken.None);
+
+    public virtual async Task<List<string>> GetSecretsAsync(CancellationToken cancellationToken)
     {
-        await EnsureInitializedAsync();
+        await EnsureInitializedAsync(cancellationToken);
         return _cachedSecrets!;
     }
 
@@ -72,14 +76,14 @@ public class QobuzBundleService
     /// <summary>
     /// Ensures App ID and secrets are extracted and cached
     /// </summary>
-    private async Task EnsureInitializedAsync()
+    private async Task EnsureInitializedAsync(CancellationToken cancellationToken)
     {
         if (_cachedAppId != null && _cachedSecrets != null)
         {
             return;
         }
 
-        await _initLock.WaitAsync();
+        await _initLock.WaitAsync(cancellationToken);
         try
         {
             // Double-check after acquiring lock
@@ -91,11 +95,11 @@ public class QobuzBundleService
             _logger.LogInformation("Extracting Qobuz App ID and secrets from web bundle...");
 
             // Step 1: Get the bundle URL from login page
-            var bundleUrl = await GetBundleUrlAsync();
+            var bundleUrl = await GetBundleUrlAsync(cancellationToken);
             _logger.LogDebug("Found bundle URL: {BundleUrl}", bundleUrl);
 
             // Step 2: Download the bundle JavaScript
-            var bundleJs = await DownloadBundleAsync(bundleUrl);
+            var bundleJs = await DownloadBundleAsync(bundleUrl, cancellationToken);
 
             // Step 3: Extract App ID
             _cachedAppId = ExtractAppId(bundleJs);
@@ -114,12 +118,12 @@ public class QobuzBundleService
     /// <summary>
     /// Gets the bundle JavaScript URL from the login page
     /// </summary>
-    private async Task<string> GetBundleUrlAsync()
+    private async Task<string> GetBundleUrlAsync(CancellationToken cancellationToken)
     {
-        using var response = await _httpClient.GetAsync(LoginPageUrl);
+        using var response = await _httpClient.GetAsync(LoginPageUrl, cancellationToken);
         response.EnsureSuccessStatusCode();
 
-        var html = await response.Content.ReadAsStringAsync();
+        var html = await response.Content.ReadAsStringAsync(cancellationToken);
         var match = BundleUrlRegex.Match(html);
 
         if (!match.Success)
@@ -133,11 +137,11 @@ public class QobuzBundleService
     /// <summary>
     /// Downloads the bundle JavaScript file
     /// </summary>
-    private async Task<string> DownloadBundleAsync(string bundleUrl)
+    private async Task<string> DownloadBundleAsync(string bundleUrl, CancellationToken cancellationToken)
     {
-        using var response = await _httpClient.GetAsync(bundleUrl);
+        using var response = await _httpClient.GetAsync(bundleUrl, cancellationToken);
         response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsStringAsync();
+        return await response.Content.ReadAsStringAsync(cancellationToken);
     }
 
     /// <summary>

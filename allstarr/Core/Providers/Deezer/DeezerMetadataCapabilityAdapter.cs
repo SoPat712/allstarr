@@ -81,7 +81,8 @@ public sealed class DeezerMetadataCapabilityAdapter : IProviderMetadataCapabilit
         MapArtist);
 
     public static ProviderRegistration CreateRegistration(
-        DeezerMetadataCapabilityAdapter adapter) => new(
+        DeezerMetadataCapabilityAdapter adapter,
+        IProviderDownloadCapability? download = null) => new(
         new ProviderDescriptor(
             StableProviderId,
             "Deezer",
@@ -107,14 +108,32 @@ public sealed class DeezerMetadataCapabilityAdapter : IProviderMetadataCapabilit
                         "getArtist"
                     ]),
                 LegacyLane(ProviderCapabilityKind.Streaming),
-                LegacyLane(ProviderCapabilityKind.Download),
+                download == null
+                    ? LegacyLane(ProviderCapabilityKind.Download)
+                    : new ProviderCapabilityDescriptor(
+                        ProviderCapabilityKind.Download,
+                        ProviderCapabilitySupportState.Supported,
+                        ProviderAccountRequirement.Required,
+                        compatibilityVersion: "1",
+                        hooks: ["checkAvailability", "download"],
+                        allowedAccountScopes:
+                        [
+                            ProviderAccountScope.Global,
+                            ProviderAccountScope.User,
+                            ProviderAccountScope.Library
+                        ]),
                 LegacyLane(ProviderCapabilityKind.Playlist),
                 LegacyLane(ProviderCapabilityKind.Health)
             ],
             permissions: new ProviderPermissionDescriptor(
-                networkOrigins: [new Uri("https://api.deezer.com/")],
+                networkOrigins:
+                [
+                    new Uri("https://api.deezer.com/"),
+                    new Uri("https://media.deezer.com/"),
+                    new Uri("https://www.deezer.com/")
+                ],
                 cache: true)),
-        [adapter]);
+        download == null ? [adapter] : [adapter, download]);
 
     private static ProviderCapabilityDescriptor LegacyLane(
         ProviderCapabilityKind capability) => new(

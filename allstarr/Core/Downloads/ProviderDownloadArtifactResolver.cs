@@ -38,9 +38,25 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
     /// </summary>
     public async Task<ProviderDownloadArtifactWriteResult> WriteAsync(
         ProviderDownloadArtifactWriteRequest request,
+        CancellationToken cancellationToken = default) =>
+        await WriteProducedAsync(new(
+            request.Workspace,
+            request.DurableJobId,
+            request.ProviderId,
+            request.ArtifactId,
+            request.MaximumBytes,
+            (output, token) => request.Content.CopyToAsync(output, token))
+        {
+            ExpectedBytes = request.ExpectedBytes,
+            Progress = request.Progress
+        }, cancellationToken);
+
+    public async Task<ProviderDownloadArtifactWriteResult> WriteProducedAsync(
+        ProviderDownloadArtifactProduceRequest request,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Produce);
         if (request.DurableJobId == Guid.Empty || string.IsNullOrWhiteSpace(request.ProviderId) ||
             request.MaximumBytes < 1 || request.ExpectedBytes is < 0)
             throw new ArgumentException("Download artifact write constraints are invalid.", nameof(request));
@@ -68,32 +84,25 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
         var partial = destination + ".partial-" + Guid.NewGuid().ToString("N");
         try
         {
+            long written;
+            string hash;
             await using (var output = new FileStream(partial, FileMode.CreateNew, FileAccess.Write, FileShare.None,
                              128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
             using (var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
             {
-                var buffer = new byte[128 * 1024];
-                long written = 0;
-                while (true)
-                {
-                    var read = await request.Content.ReadAsync(buffer, cancellationToken);
-                    if (read == 0) break;
-                    written = checked(written + read);
-                    if (written > request.MaximumBytes)
-                        throw new InvalidDataException("The provider download exceeds the managed artifact size limit.");
-                    await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
-                    hasher.AppendData(buffer, 0, read);
-                    request.Progress?.Invoke(written, request.ExpectedBytes);
-                }
+                await using var bounded = new BoundedHashingWriteStream(
+                    output, hasher, request.MaximumBytes, request.ExpectedBytes, request.Progress);
+                await request.Produce(bounded, cancellationToken);
+                written = bounded.BytesWritten;
                 if (written < 1)
                     throw new InvalidDataException("The provider returned an empty download artifact.");
                 if (request.ExpectedBytes.HasValue && written != request.ExpectedBytes.Value)
                     throw new InvalidDataException("The provider download length does not match its response contract.");
-                await output.FlushAsync(cancellationToken);
-                output.Close();
-                File.Move(partial, destination, overwrite: false);
-                return new(relative, Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant(), written);
+                await bounded.FlushAsync(cancellationToken);
+                hash = Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
             }
+            File.Move(partial, destination, overwrite: false);
+            return new(relative, hash, written);
         }
         catch
         {
@@ -260,4 +269,59 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
         BitDepth = item.BitDepth,
         Channels = item.Channels
     };
+
+    private sealed class BoundedHashingWriteStream(
+        Stream output,
+        IncrementalHash hasher,
+        long maximumBytes,
+        long? expectedBytes,
+        Action<long, long?>? progress) : Stream
+    {
+        public long BytesWritten { get; private set; }
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => BytesWritten;
+        public override long Position { get => BytesWritten; set => throw new NotSupportedException(); }
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            Write(buffer.AsSpan(offset, count));
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            Validate(buffer.Length);
+            output.Write(buffer);
+            hasher.AppendData(buffer);
+            Complete(buffer.Length);
+        }
+
+        public override async ValueTask WriteAsync(
+            ReadOnlyMemory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            Validate(buffer.Length);
+            await output.WriteAsync(buffer, cancellationToken);
+            hasher.AppendData(buffer.Span);
+            Complete(buffer.Length);
+        }
+
+        public override Task FlushAsync(CancellationToken cancellationToken) =>
+            output.FlushAsync(cancellationToken);
+        public override void Flush() => output.Flush();
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        private void Validate(int count)
+        {
+            if (count < 0 || BytesWritten > maximumBytes - count)
+                throw new InvalidDataException("The provider download exceeds the managed artifact size limit.");
+        }
+
+        private void Complete(int count)
+        {
+            BytesWritten += count;
+            progress?.Invoke(BytesWritten, expectedBytes);
+        }
+    }
 }

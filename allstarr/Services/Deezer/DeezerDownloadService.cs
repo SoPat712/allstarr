@@ -29,9 +29,6 @@ public class DeezerDownloadService : BaseDownloadService
     private readonly string? _arlFallback;
     private readonly string? _preferredQuality;
 
-    private string? _apiToken;
-    private string? _licenseToken;
-
     private const string DeezerApiBase = "https://api.deezer.com";
 
     // Deezer's standard Blowfish CBC encryption key for track decryption
@@ -72,7 +69,7 @@ public class DeezerDownloadService : BaseDownloadService
 
         try
         {
-            await InitializeAsync();
+            await InitializeAsync(_arl, CancellationToken.None);
             return true;
         }
         catch (Exception ex)
@@ -126,7 +123,7 @@ public class DeezerDownloadService : BaseDownloadService
         await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
         await using var outputFile = IOFile.Create(outputPath);
 
-        await DecryptAndWriteStreamAsync(responseStream, outputFile, trackId, cancellationToken);
+        await DecryptDownloadAsync(responseStream, outputFile, trackId, cancellationToken);
 
         // Close file before writing metadata
         await outputFile.DisposeAsync();
@@ -215,7 +212,7 @@ public class DeezerDownloadService : BaseDownloadService
         // Download and decrypt (Deezer uses Blowfish CBC encryption)
         await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
         await using var outputFile = IOFile.Create(outputPath);
-        await DecryptAndWriteStreamAsync(responseStream, outputFile, trackId, cancellationToken);
+        await DecryptDownloadAsync(responseStream, outputFile, trackId, cancellationToken);
 
         // Close file before writing metadata
         await outputFile.DisposeAsync();
@@ -276,15 +273,14 @@ public class DeezerDownloadService : BaseDownloadService
 
     #region Deezer API Methods
 
-    private async Task InitializeAsync(string? arlOverride = null)
+    private async Task<string> InitializeAsync(string? arl, CancellationToken cancellationToken)
     {
-        var arl = arlOverride ?? _arl;
         if (string.IsNullOrEmpty(arl))
         {
             throw new Exception("ARL token required for Deezer downloads");
         }
 
-        await RetryHelper.RetryWithBackoffAsync(async () =>
+        return await RetryHelper.RetryWithBackoffAsync(async () =>
         {
             using var request = new HttpRequestMessage(HttpMethod.Post,
                 "https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&input=3&api_version=1.0&api_token=null");
@@ -292,39 +288,42 @@ public class DeezerDownloadService : BaseDownloadService
             request.Headers.Add("Cookie", $"arl={arl}");
             request.Content = new StringContent("{}", Encoding.UTF8, "application/json");
 
-            using var response = await _httpClient.SendAsync(request);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var json = await response.Content.ReadAsStringAsync();
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             using var doc = JsonDocument.Parse(json);
 
             if (doc.RootElement.TryGetProperty("results", out var results) &&
-                results.TryGetProperty("checkForm", out var checkForm))
+                results.TryGetProperty("checkForm", out _) &&
+                results.TryGetProperty("USER", out var user) &&
+                user.TryGetProperty("OPTIONS", out var options) &&
+                options.TryGetProperty("license_token", out var licenseToken) &&
+                !string.IsNullOrWhiteSpace(licenseToken.GetString()))
             {
-                _apiToken = checkForm.GetString();
-
-                if (results.TryGetProperty("USER", out var user) &&
-                    user.TryGetProperty("OPTIONS", out var options) &&
-                    options.TryGetProperty("license_token", out var licenseToken))
-                {
-                    _licenseToken = licenseToken.GetString();
-                }
-
                 Logger.LogInformation("Deezer token refreshed successfully");
+                return licenseToken.GetString()!;
             }
-            else
-            {
-                throw new Exception("Invalid ARL token");
-            }
-        }, Logger);
+            throw new Exception("Invalid ARL token");
+        }, Logger, cancellationToken: cancellationToken);
     }
 
-    private async Task<DownloadResult> GetTrackDownloadInfoAsync(string trackId, CancellationToken cancellationToken, string? qualityOverride = null)
+    private Task<DeezerDownloadResult> GetTrackDownloadInfoAsync(
+        string trackId,
+        CancellationToken cancellationToken,
+        string? qualityOverride = null) =>
+        ResolveDownloadAsync(trackId, _arl, _arlFallback, qualityOverride, cancellationToken);
+
+    internal async Task<DeezerDownloadResult> ResolveDownloadAsync(
+        string trackId,
+        string? arl,
+        string? arlFallback,
+        string? quality,
+        CancellationToken cancellationToken)
     {
         var tryDownload = async (string arl) =>
         {
-            // Refresh token with specific ARL
-            await InitializeAsync(arl);
+            var licenseToken = await InitializeAsync(arl, cancellationToken);
 
             return await QueueRequestAsync(async () =>
             {
@@ -348,11 +347,11 @@ public class DeezerDownloadService : BaseDownloadService
 
                 // Get download URL via media API
                 // Build format list based on preferred quality (or overridden quality for transcoding)
-                var formatsList = BuildFormatsList(qualityOverride ?? _preferredQuality);
+                var formatsList = BuildFormatsList(quality ?? _preferredQuality);
 
                 var mediaRequest = new
                 {
-                    license_token = _licenseToken,
+                    license_token = licenseToken,
                     media = new[]
                     {
                         new
@@ -440,7 +439,7 @@ public class DeezerDownloadService : BaseDownloadService
 
                     Logger.LogInformation("Selected quality: {Format}", selectedFormat);
 
-                    return new DownloadResult
+                    return new DeezerDownloadResult
                     {
                         DownloadUrl = downloadUrl,
                         Format = selectedFormat ?? "MP3_128",
@@ -448,19 +447,25 @@ public class DeezerDownloadService : BaseDownloadService
                         Artist = artist
                     };
                 }
-            });
+            }, cancellationToken);
         };
 
+        if (string.IsNullOrWhiteSpace(arl))
+            throw new InvalidOperationException("ARL token required for Deezer downloads");
         try
         {
-            return await tryDownload(_arl!);
+            return await tryDownload(arl);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            if (!string.IsNullOrEmpty(_arlFallback))
+            if (!string.IsNullOrEmpty(arlFallback))
             {
                 Logger.LogWarning(ex, "Primary ARL failed, trying fallback ARL...");
-                return await tryDownload(_arlFallback);
+                return await tryDownload(arlFallback);
             }
             throw;
         }
@@ -484,7 +489,7 @@ public class DeezerDownloadService : BaseDownloadService
         return bfKey;
     }
 
-    private async Task DecryptAndWriteStreamAsync(
+    internal async Task DecryptDownloadAsync(
         Stream input,
         Stream output,
         string trackId,
@@ -585,7 +590,7 @@ public class DeezerDownloadService : BaseDownloadService
 
     #endregion
 
-    private class DownloadResult
+    internal sealed class DeezerDownloadResult
     {
         public string DownloadUrl { get; set; } = string.Empty;
         public string Format { get; set; } = string.Empty;

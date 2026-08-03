@@ -132,6 +132,50 @@ public sealed class ProviderDownloadArtifactResolverTests : IDisposable
         Assert.Contains("content changed", exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task WriteProduced_EnforcesTheLimitAndCleansPartialOutput()
+    {
+        var store = new MemoryStore();
+        var resolver = Resolver(store);
+        var request = Request();
+        var workspace = await resolver.CreateWorkspaceAsync(request);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => resolver.WriteProducedAsync(new(
+            workspace.Reference,
+            request.DurableJobId,
+            request.ProviderId,
+            "oversized.flac",
+            4,
+            async (output, token) => await output.WriteAsync(new byte[5], token))));
+
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(root, workspace.Reference.WorkspaceId)));
+    }
+
+    [Fact]
+    public async Task WriteProduced_CancellationCleansPartialOutput()
+    {
+        var store = new MemoryStore();
+        var resolver = Resolver(store);
+        var request = Request();
+        var workspace = await resolver.CreateWorkspaceAsync(request);
+        using var cancellation = new CancellationTokenSource();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => resolver.WriteProducedAsync(new(
+            workspace.Reference,
+            request.DurableJobId,
+            request.ProviderId,
+            "cancelled.flac",
+            1024,
+            async (output, token) =>
+            {
+                await output.WriteAsync(new byte[4], token);
+                cancellation.Cancel();
+                token.ThrowIfCancellationRequested();
+            }), cancellation.Token));
+
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(root, workspace.Reference.WorkspaceId)));
+    }
+
     private ProviderDownloadArtifactResolver Resolver(MemoryStore store) => new(store, new() { RootPath = root });
     private ProviderDownloadWorkspaceRequest Request() => new(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "qobuz", Guid.CreateVersion7(), "favorite:event:download");
     private string Write(ProviderManagedWorkspaceReference workspace, string relative, byte[] content)

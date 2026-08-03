@@ -2,6 +2,7 @@ using allstarr.Models.Settings;
 using allstarr.Services;
 using allstarr.Services.Deezer;
 using allstarr.Services.Qobuz;
+using allstarr.Core.Providers.Qobuz;
 using allstarr.Services.SquidWTF;
 using allstarr.Services.AppleMusic;
 using allstarr.Services.Local;
@@ -447,14 +448,17 @@ builder.Services.AddSingleton<IConcreteMetadataService>(sp =>
         squidWtfApiUrls,
         sp.GetService<GenreEnrichmentService>()));
 builder.Services.AddDeezerMetadataCapability();
+builder.Services.AddQobuzDownloadCapability();
 builder.Services.AddSpotifyPlaylistCapability();
 builder.Services.AddAppleMusicKitPlaylistCapability();
 builder.Services.AddAppleDownloadCapability();
 builder.Services.AddLegacyBuiltInProviderDescriptors();
 
 // 2. Concrete Download Services
-builder.Services.AddSingleton<IConcreteDownloadService, DeezerDownloadService>();
-builder.Services.AddSingleton<IConcreteDownloadService, QobuzDownloadService>();
+builder.Services.AddSingleton<IConcreteDownloadService>(provider =>
+    provider.GetRequiredService<DeezerDownloadService>());
+builder.Services.AddSingleton<IConcreteDownloadService>(provider =>
+    provider.GetRequiredService<QobuzDownloadService>());
 builder.Services.AddSingleton<IConcreteDownloadService, AppleMusicDownloadService>();
 builder.Services.AddSingleton<IConcreteDownloadService>(sp =>
     new SquidWTFDownloadService(

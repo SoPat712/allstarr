@@ -902,9 +902,11 @@ public abstract class BaseDownloadService : IConcreteDownloadService
     /// Queues a request with rate limiting to prevent overwhelming the API.
     /// Ensures minimum interval between requests.
     /// </summary>
-    protected async Task<T> QueueRequestAsync<T>(Func<Task<T>> action)
+    protected async Task<T> QueueRequestAsync<T>(
+        Func<Task<T>> action,
+        CancellationToken cancellationToken = default)
     {
-        await _requestLock.WaitAsync();
+        await _requestLock.WaitAsync(cancellationToken);
         try
         {
             var now = DateTime.UtcNow;
@@ -912,7 +914,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
 
             if (timeSinceLastRequest < _minRequestIntervalMs)
             {
-                await Task.Delay((int)(_minRequestIntervalMs - timeSinceLastRequest));
+                await Task.Delay((int)(_minRequestIntervalMs - timeSinceLastRequest), cancellationToken);
             }
 
             _lastRequestTime = DateTime.UtcNow;

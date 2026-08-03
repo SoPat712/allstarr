@@ -51,7 +51,7 @@ public static class CurrentProviderSupportCatalog
             "Public metadata; an ARL is required on each managed account used for download or stream work.",
             Capability("metadata", Supported, "Catalog song, album, artist, playlist, and ISRC operations.", "DeezerMetadataServiceTests"),
             Capability("streaming", Partial, "Download-backed playback; no typed range lease.", "DeezerDownloadServiceTests"),
-            Capability("download", Partial, "Track transfer/decrypt/tag path exists; progress, cancellation, and artifact contracts are incomplete.", "DeezerDownloadServiceTests"),
+            Capability("download", Supported, "Account-bound encrypted transfer and decryption use a typed host-owned workspace with size, checksum, progress, cancellation, cleanup, and retry contracts.", "DirectProviderDownloadCapabilityAdapterTests; ProviderDownloadArtifactResolverTests"),
             Capability("playlist", Supported, "Read/discovery only; no provider-neutral write contract.", "DeezerMetadataServiceTests"),
             Capability("health", Partial, "Account-scoped metadata, playlist, stream, and download probes with durable capability samples.", "ProviderStatusManagerTests; ConfigControllerAuthorizationTests")),
         Provider(
@@ -62,7 +62,7 @@ public static class CurrentProviderSupportCatalog
             "A user token and user ID belong to each managed account used for download work.",
             Capability("metadata", Supported, "Catalog song, album, artist, playlist, and paged artist-track reads.", "QobuzMetadataServiceTests"),
             Capability("streaming", Partial, "Download-backed playback; no typed range lease.", "QobuzDownloadServiceTests"),
-            Capability("download", Partial, "Track download exists; progress, cancellation, and signed-URL failure contracts are incomplete.", "QobuzDownloadServiceTests"),
+            Capability("download", Supported, "Account-bound signed downloads use a typed host-owned workspace with media facts, size, checksum, progress, cancellation, cleanup, and retry contracts.", "DirectProviderDownloadCapabilityAdapterTests; ProviderDownloadArtifactResolverTests"),
             Capability("playlist", Partial, "Read/discovery only.", "QobuzMetadataServiceTests"),
             Capability("health", Partial, "Account-scoped metadata, playlist, stream, and download probes with durable capability samples.", "ProviderStatusManagerTests; ConfigControllerAuthorizationTests")),
         Provider(

@@ -159,7 +159,7 @@ public class QobuzDownloadService : BaseDownloadService
             quality, formatId, envFormatId, trackId);
 
         // Get download URL at the overridden quality — try all secrets
-        var secrets = await _bundleService.GetSecretsAsync();
+        var secrets = await _bundleService.GetSecretsAsync(cancellationToken);
 
         if (secrets.Count == 0)
         {
@@ -173,8 +173,13 @@ public class QobuzDownloadService : BaseDownloadService
         {
             try
             {
-                downloadInfo = await TryGetTrackDownloadUrlAsync(trackId, formatId, secret, cancellationToken);
+                downloadInfo = await TryGetTrackDownloadUrlAsync(
+                    trackId, formatId, secret, _userAuthToken, cancellationToken);
                 break;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -276,10 +281,20 @@ public class QobuzDownloadService : BaseDownloadService
     /// <summary>
     /// Gets the download URL for a track with proper MD5 signature
     /// </summary>
-    private async Task<QobuzDownloadResult> GetTrackDownloadUrlAsync(string trackId, CancellationToken cancellationToken)
+    private Task<QobuzDownloadResult> GetTrackDownloadUrlAsync(
+        string trackId,
+        CancellationToken cancellationToken) =>
+        ResolveDownloadAsync(trackId, _userAuthToken, _preferredQuality, cancellationToken);
+
+    internal async Task<QobuzDownloadResult> ResolveDownloadAsync(
+        string trackId,
+        string? userAuthToken,
+        string? quality,
+        CancellationToken cancellationToken)
     {
-        var appId = await _bundleService.GetAppIdAsync();
-        var secrets = await _bundleService.GetSecretsAsync();
+        if (string.IsNullOrWhiteSpace(userAuthToken))
+            throw new InvalidOperationException("Qobuz user auth token is required.");
+        var secrets = await _bundleService.GetSecretsAsync(cancellationToken);
 
         if (secrets.Count == 0)
         {
@@ -287,7 +302,7 @@ public class QobuzDownloadService : BaseDownloadService
         }
 
         // Determine format ID based on preferred quality
-        var formatId = GetFormatId(_preferredQuality);
+        var formatId = GetFormatId(quality);
 
         // Try the preferred quality first, then fallback to lower qualities
         var formatPriority = GetFormatPriority(formatId);
@@ -302,7 +317,8 @@ public class QobuzDownloadService : BaseDownloadService
             {
                 try
                 {
-                    var result = await TryGetTrackDownloadUrlAsync(trackId, format, secret, cancellationToken);
+                    var result = await TryGetTrackDownloadUrlAsync(
+                        trackId, format, secret, userAuthToken, cancellationToken);
 
                     // Check if quality was downgraded
                     if (result.WasQualityDowngraded)
@@ -312,6 +328,10 @@ public class QobuzDownloadService : BaseDownloadService
                     }
 
                     return result;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -325,10 +345,15 @@ public class QobuzDownloadService : BaseDownloadService
         throw new Exception($"Failed to get download URL for all secrets and quality formats", lastException);
     }
 
-    private async Task<QobuzDownloadResult> TryGetTrackDownloadUrlAsync(string trackId, int formatId, string secret, CancellationToken cancellationToken)
+    private async Task<QobuzDownloadResult> TryGetTrackDownloadUrlAsync(
+        string trackId,
+        int formatId,
+        string secret,
+        string? userAuthToken,
+        CancellationToken cancellationToken)
     {
         var unix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var appId = await _bundleService.GetAppIdAsync();
+        var appId = await _bundleService.GetAppIdAsync(cancellationToken);
         var signature = ComputeMD5Signature(trackId, formatId, unix, secret);
 
         var url = $"{BaseUrl}track/getFileUrl?format_id={formatId}&intent=stream&request_ts={unix}&track_id={trackId}&request_sig={signature}";
@@ -338,9 +363,9 @@ public class QobuzDownloadService : BaseDownloadService
         request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0");
         request.Headers.Add("X-App-Id", appId);
 
-        if (!string.IsNullOrEmpty(_userAuthToken))
+        if (!string.IsNullOrEmpty(userAuthToken))
         {
-            request.Headers.Add("X-User-Auth-Token", _userAuthToken);
+            request.Headers.Add("X-User-Auth-Token", userAuthToken);
         }
 
         using var response = await _httpClient.SendAsync(request, cancellationToken);
@@ -417,7 +442,7 @@ public class QobuzDownloadService : BaseDownloadService
     /// <summary>
     /// Gets the format ID based on quality preference
     /// </summary>
-    private int GetFormatId(string? quality)
+    private static int GetFormatId(string? quality)
     {
         if (string.IsNullOrEmpty(quality))
         {
@@ -438,7 +463,7 @@ public class QobuzDownloadService : BaseDownloadService
     /// <summary>
     /// Gets the list of format IDs to try in priority order
     /// </summary>
-    private List<int> GetFormatPriority(int preferredFormat)
+    private static List<int> GetFormatPriority(int preferredFormat)
     {
         var allFormats = new List<int> { FormatFlac24High, FormatFlac24Low, FormatFlac16, FormatMp3320 };
 
@@ -450,7 +475,7 @@ public class QobuzDownloadService : BaseDownloadService
 
     #endregion
 
-    private class QobuzDownloadResult
+    internal sealed class QobuzDownloadResult
     {
         public string Url { get; set; } = string.Empty;
         public int FormatId { get; set; }
