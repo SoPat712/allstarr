@@ -53,6 +53,46 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ListeningHistoryRetentionKeepsScopesExactAndAbandonsStalePlayback()
+    {
+        var otherScope = _scope with { LibraryScopeId = "other" };
+        await _policies.SetAsync(_scope, new(true, 2, ["play"], ["local"]));
+        await _policies.SetAsync(otherScope, new(true, 30, ["play"], ["local"]));
+        var expiredKey = new string('a', 64);
+        var recentKey = new string('b', 64);
+        var staleKey = new string('c', 64);
+        var activeKey = new string('d', 64);
+        var otherKey = new string('e', 64);
+        await using (var setup = await _factory.CreateDbContextAsync())
+        {
+            setup.ListeningEvents.AddRange(
+                HistoryEvent(_scope, expiredKey, _clock.UtcNow.AddDays(-3)),
+                HistoryEvent(_scope, recentKey, _clock.UtcNow.AddDays(-1)),
+                HistoryEvent(_scope, staleKey, _clock.UtcNow.AddHours(-9), ListeningEventState.Playing),
+                HistoryEvent(_scope, activeKey, _clock.UtcNow.AddHours(-1), ListeningEventState.Playing),
+                HistoryEvent(otherScope, otherKey, _clock.UtcNow.AddDays(-3)));
+            setup.PlaybackDeliveryCheckpoints.AddRange(
+                HistoryCheckpoint(expiredKey, new string('f', 64)),
+                HistoryCheckpoint(recentKey, new string('1', 64)),
+                HistoryCheckpoint(otherKey, new string('2', 64)));
+            await setup.SaveChangesAsync();
+        }
+
+        await new ListeningHistoryRetentionSweeper(_factory, _clock).SweepAsync();
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var events = await db.ListeningEvents.AsNoTracking().ToDictionaryAsync(item => item.OccurrenceKey);
+        Assert.DoesNotContain(expiredKey, events.Keys);
+        Assert.Equal(ListeningEventState.Completed, events[recentKey].State);
+        Assert.Equal(ListeningEventState.Abandoned, events[staleKey].State);
+        Assert.Equal(1, events[staleKey].Revision);
+        Assert.Equal(ListeningEventState.Playing, events[activeKey].State);
+        Assert.Equal("other", events[otherKey].LibraryScopeId);
+        Assert.Equal([recentKey, otherKey], await db.PlaybackDeliveryCheckpoints.AsNoTracking()
+            .OrderBy(item => item.OccurrenceKey).Select(item => item.OccurrenceKey!).ToArrayAsync());
+    }
+
+    [Fact]
     public async Task DurableRunIsIdempotentRestartSafeAndPersistsExplanations()
     {
         await _policies.SetAsync(_scope, new(true, 30, ["play"], ["fixture"]));
@@ -319,21 +359,23 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         UpdatedAt = _clock.UtcNow
     };
 
-    private ListeningEventRecord HistoryEvent(IntelligenceScope scope, string occurrenceKey) => new()
-    {
-        Id = Guid.CreateVersion7(),
-        TenantId = scope.TenantId,
-        OwnerUserId = scope.OwnerUserId,
-        Protocol = scope.Protocol,
-        BackendInstanceId = scope.BackendInstanceId,
-        LibraryScopeId = scope.LibraryScopeId,
-        OccurrenceKey = occurrenceKey,
-        State = ListeningEventState.Completed,
-        ListenedAt = _clock.UtcNow,
-        UpdatedAt = _clock.UtcNow,
-        SourceKind = "protocol",
-        TrackReference = "track"
-    };
+    private ListeningEventRecord HistoryEvent(IntelligenceScope scope, string occurrenceKey,
+        DateTimeOffset? observedAt = null, ListeningEventState state = ListeningEventState.Completed) => new()
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = scope.TenantId,
+            OwnerUserId = scope.OwnerUserId,
+            Protocol = scope.Protocol,
+            BackendInstanceId = scope.BackendInstanceId,
+            LibraryScopeId = scope.LibraryScopeId,
+            OccurrenceKey = occurrenceKey,
+            State = state,
+            StartedAt = observedAt ?? _clock.UtcNow,
+            ListenedAt = state == ListeningEventState.Playing ? null : observedAt ?? _clock.UtcNow,
+            UpdatedAt = observedAt ?? _clock.UtcNow,
+            SourceKind = "protocol",
+            TrackReference = "track"
+        };
 
     private ListeningHistoryImportRecord HistoryImport(IntelligenceScope scope, string hash) => new()
     {

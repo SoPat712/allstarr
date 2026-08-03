@@ -9,6 +9,7 @@ public sealed class ListeningHistoryImportCleanupService(
     IDbContextFactory<AllstarrDbContext> factory,
     ListeningHistoryImportArtifactStore artifacts,
     DurableJobQueue jobs,
+    ListeningHistoryRetentionSweeper historyRetention,
     DurableStorageState storageState,
     IPlatformClock clock,
     ILogger<ListeningHistoryImportCleanupService> logger) : BackgroundService
@@ -30,7 +31,7 @@ public sealed class ListeningHistoryImportCleanupService(
             catch (Exception exception)
             {
                 logger.LogWarning(
-                    "Listening-history import cleanup failed ({ExceptionType})",
+                    "Listening-history cleanup failed ({ExceptionType})",
                     exception.GetType().Name);
             }
             if (!await timer.WaitForNextTickAsync(stoppingToken)) return;
@@ -39,6 +40,7 @@ public sealed class ListeningHistoryImportCleanupService(
 
     internal async Task SweepAsync(CancellationToken cancellationToken)
     {
+        await historyRetention.SweepAsync(cancellationToken);
         var now = clock.UtcNow;
         await using var readDb = await factory.CreateDbContextAsync(cancellationToken);
         var expired = await readDb.ListeningHistoryImports.AsNoTracking().Where(item =>
