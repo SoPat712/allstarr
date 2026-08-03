@@ -41,12 +41,7 @@ public sealed class SquidWTFMetadataCapabilityAdapter(IConcreteMetadataService l
                         ProviderAccountScope.Global,
                         ProviderAccountScope.User,
                         ProviderAccountScope.Library
-                    ]),
-                new(
-                    ProviderCapabilityKind.Health,
-                    ProviderCapabilitySupportState.ConfiguredOnly,
-                    ProviderAccountRequirement.None,
-                    compatibilityVersion: "discovery-health-v1")
+                    ])
             ],
             new ProviderPermissionDescriptor()),
         [adapter]);

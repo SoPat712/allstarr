@@ -148,8 +148,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
                         ProviderCapabilitySupportState.Supported,
                         ProviderAccountRequirement.None,
                         "1",
-                        ["fetchLyrics"]),
-                ConfiguredLane(ProviderCapabilityKind.Health)
+                        ["fetchLyrics"])
             ],
             new ProviderPermissionDescriptor(
                 [new Uri("https://open.spotify.com/"), new Uri("https://api.spotify.com/")],

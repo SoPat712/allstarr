@@ -236,8 +236,7 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
                         ProviderAccountScope.User,
                         ProviderAccountScope.Library
                     ]),
-                ConfiguredLane(ProviderCapabilityKind.Playlist),
-                ConfiguredLane(ProviderCapabilityKind.Health)
+                ConfiguredLane(ProviderCapabilityKind.Playlist)
             ],
             permissions: new ProviderPermissionDescriptor(
                 networkOrigins:

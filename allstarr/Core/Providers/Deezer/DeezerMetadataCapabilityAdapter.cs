@@ -70,8 +70,7 @@ public sealed class DeezerMetadataCapabilityAdapter(IConcreteMetadataService leg
                             ProviderAccountScope.User,
                             ProviderAccountScope.Library
                         ]),
-                LegacyLane(ProviderCapabilityKind.Playlist),
-                LegacyLane(ProviderCapabilityKind.Health)
+                LegacyLane(ProviderCapabilityKind.Playlist)
             ],
             permissions: new ProviderPermissionDescriptor(
                 networkOrigins:

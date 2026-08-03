@@ -145,12 +145,7 @@ public static class BuiltInLyricsCapabilityRegistration
                     ProviderCapabilitySupportState.Supported,
                     ProviderAccountRequirement.None,
                     "1",
-                    ["fetchLyrics"]),
-                new ProviderCapabilityDescriptor(
-                    ProviderCapabilityKind.Health,
-                    ProviderCapabilitySupportState.ConfiguredOnly,
-                    ProviderAccountRequirement.None,
-                    "legacy-health-v1")
+                    ["fetchLyrics"])
             ],
             new ProviderPermissionDescriptor()),
         [adapter]);

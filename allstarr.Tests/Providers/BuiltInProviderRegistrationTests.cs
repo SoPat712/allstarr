@@ -16,7 +16,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class BuiltInProviderDescriptorCatalogTests
+public sealed class BuiltInProviderRegistrationTests
 {
     [Fact]
     public void Catalog_SeparatesAppleMusicKitAndNeverRoutesLegacyOnlyLanes()
@@ -93,8 +93,7 @@ public sealed class BuiltInProviderDescriptorCatalogTests
                 ProviderCapabilityKind.Metadata,
                 ProviderCapabilityKind.Streaming,
                 ProviderCapabilityKind.Download,
-                ProviderCapabilityKind.Playlist,
-                ProviderCapabilityKind.Health
+                ProviderCapabilityKind.Playlist
             ],
             deezerDescriptor.Capabilities.Select(item => item.Capability));
         Assert.True(deezerDescriptor.Capabilities.Single(item =>
@@ -105,12 +104,10 @@ public sealed class BuiltInProviderDescriptorCatalogTests
                 ProviderCapabilityKind.Streaming or
                 ProviderCapabilityKind.Download),
             capability => Assert.True(capability.HasUsableImplementation));
-        Assert.All(
-            deezerDescriptor.Capabilities.Where(item =>
-                item.Capability is ProviderCapabilityKind.Playlist or ProviderCapabilityKind.Health),
-            capability => Assert.Equal(
-                ProviderCapabilitySupportState.ConfiguredOnly,
-                capability.SupportState));
+        Assert.Equal(
+            ProviderCapabilitySupportState.ConfiguredOnly,
+            deezerDescriptor.Capabilities.Single(item =>
+                item.Capability == ProviderCapabilityKind.Playlist).SupportState);
         Assert.Contains(
             registry.FindByCapability(ProviderCapabilityKind.Playlist),
             item => item.Id == "apple-musickit");

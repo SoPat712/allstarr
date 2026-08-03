@@ -209,8 +209,7 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
                         ProviderCapabilitySupportState.Supported,
                         ProviderAccountRequirement.None,
                         compatibilityVersion: "1",
-                        hooks: ["fetchLyrics"]),
-                ConfiguredLane(ProviderCapabilityKind.Health)
+                        hooks: ["fetchLyrics"])
             ],
             permissions: new ProviderPermissionDescriptor()),
         Implementations(adapter, lyrics, streaming, metadata));
