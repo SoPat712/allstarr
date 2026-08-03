@@ -109,26 +109,25 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         var tracks = playlist.Tracks.ToArray();
         if (format.Equals("json", StringComparison.OrdinalIgnoreCase))
         {
+            var result = new Dictionary<string, object?>
+            {
+                ["id"] = playlist.ProtocolId,
+                ["name"] = playlist.Name,
+                ["owner"] = "allstarr",
+                ["public"] = false,
+                ["songCount"] = tracks.Length,
+                ["entry"] = tracks.Select(ToJsonEntry).ToList()
+            };
+            if (TryGetDurationSeconds(playlist, out var duration)) result["duration"] = duration;
+            if (playlist.Description != null) result["comment"] = playlist.Description;
+            if (playlist.ArtworkReferenceKey != null) result["coverArt"] = playlist.ArtworkReferenceKey;
             return new JsonResult(new Dictionary<string, object?>
             {
                 ["subsonic-response"] = new Dictionary<string, object?>
                 {
                     ["status"] = "ok",
                     ["version"] = Version,
-                    ["playlist"] = new Dictionary<string, object?>
-                    {
-                        ["id"] = playlist.ProtocolId,
-                        ["name"] = playlist.Name,
-                        ["comment"] = playlist.Description,
-                        ["owner"] = "allstarr",
-                        ["public"] = false,
-                        ["songCount"] = tracks.Length,
-                        ["duration"] = tracks.All(track => track.DurationMilliseconds.HasValue)
-                            ? tracks.Sum(track => track.DurationMilliseconds) / 1000
-                            : null,
-                        ["coverArt"] = playlist.ArtworkReferenceKey,
-                        ["entry"] = tracks.Select(ToJsonEntry).ToList()
-                    }
+                    ["playlist"] = result
                 }
             });
         }
@@ -162,14 +161,15 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
             ["id"] = track.BackendItemId,
             ["title"] = track.Title,
             ["artist"] = track.Artist,
-            ["album"] = track.Album,
-            ["albumArtist"] = track.AlbumArtist,
-            ["duration"] = track.DurationMilliseconds / 1000,
             ["track"] = track.SourcePosition + 1,
             ["isDir"] = false,
-            ["type"] = "music",
-            ["coverArt"] = track.CoverArtReference
+            ["type"] = "music"
         };
+        if (track.Album != null) result["album"] = track.Album;
+        if (track.AlbumArtist != null) result["albumArtist"] = track.AlbumArtist;
+        if (track.DurationMilliseconds.HasValue)
+            result["duration"] = track.DurationMilliseconds.Value / 1000;
+        if (track.CoverArtReference != null) result["coverArt"] = track.CoverArtReference;
         AddSourceIdentity(result, track);
         return result;
     }

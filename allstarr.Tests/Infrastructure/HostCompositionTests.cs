@@ -106,6 +106,16 @@ public sealed class HostCompositionTests
     }
 
     [Fact]
+    public void SubsonicController_UsesSafeExceptionFilter()
+    {
+        var filters = typeof(SubsonicController)
+            .GetCustomAttributes(typeof(ServiceFilterAttribute), inherit: true)
+            .Cast<ServiceFilterAttribute>();
+
+        Assert.Single(filters, filter => filter.ServiceType == typeof(SubsonicExceptionFilter));
+    }
+
+    [Fact]
     public async Task HealthEndpoints_SeparateProcessLivenessFromDurableReadiness()
     {
         using var factory = new AllstarrFactory("Jellyfin");

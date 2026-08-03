@@ -25,6 +25,7 @@ namespace allstarr.Controllers;
 [Route("")]
 [ServiceFilter(typeof(SubsonicAuthFilter), Order = int.MinValue)]
 [ServiceFilter(typeof(ProtocolExecutionContextFilter), Order = int.MinValue + 1)]
+[ServiceFilter(typeof(SubsonicExceptionFilter))]
 public class SubsonicController : ControllerBase
 {
     private const int MaximumArtworkBytes = 10 * 1024 * 1024;
@@ -156,21 +157,11 @@ public class SubsonicController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(cleanQuery))
         {
-            try
-            {
-                var result = await _proxyService.RelayRawAsync(
-                    "rest/search3",
-                    parameters,
-                    HttpContext.RequestAborted);
-                return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(
-                    "Subsonic empty-search relay failed ({ExceptionType})",
-                    ex.GetType().Name);
-                return StatusCode(StatusCodes.Status502BadGateway);
-            }
+            var result = await _proxyService.RelayRawAsync(
+                "rest/search3",
+                parameters,
+                HttpContext.RequestAborted);
+            return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
         }
 
         var subsonicTask = _proxyService.RelaySafeAsync("rest/search3", parameters);
@@ -220,10 +211,14 @@ public class SubsonicController : ControllerBase
     {
         var parameters = await ExtractAllParameters();
         var id = parameters.GetValueOrDefault("id", "");
+        var format = parameters.GetValueOrDefault("f", "xml");
 
         if (string.IsNullOrWhiteSpace(id))
         {
-            return BadRequest(new { error = "Missing id parameter" });
+            var result = _responseBuilder.CreateError(format, 10, "Missing id parameter");
+            if (result is JsonResult json) json.StatusCode = StatusCodes.Status400BadRequest;
+            if (result is ContentResult content) content.StatusCode = StatusCodes.Status400BadRequest;
+            return result;
         }
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(id);
@@ -244,7 +239,9 @@ public class SubsonicController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to update last write time for {Path}", localPath);
+                _logger.LogWarning(
+                    "Failed to refresh cached Subsonic stream age ({ExceptionType})",
+                    ex.GetType().Name);
             }
 
             var stream = System.IO.File.OpenRead(localPath);
@@ -278,8 +275,14 @@ public class SubsonicController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Typed provider stream route failed for {Provider}", provider);
-                return StatusCode(StatusCodes.Status502BadGateway, new { error = "External stream failed" });
+                var error = SubsonicExceptionFilter.Map(
+                    ex,
+                    HttpContext.RequestAborted.IsCancellationRequested);
+                _logger.LogWarning(
+                    "Typed provider stream route failed safely for {Provider} ({ExceptionType})",
+                    provider,
+                    ex.GetType().Name);
+                return StatusCode(error.StatusCode, new { error = error.Message });
             }
         }
 
@@ -297,35 +300,14 @@ public class SubsonicController : ControllerBase
         }
         catch (Exception ex)
         {
-            if (HttpContext.RequestAborted.IsCancellationRequested && ex is OperationCanceledException)
-            {
-                _logger.LogInformation("Client aborted external Subsonic stream request for {Id}", id);
-                return StatusCode(499);
-            }
-
-            if (ex is HttpRequestException httpRequestException && httpRequestException.StatusCode.HasValue)
-            {
-                var statusCode = httpRequestException.StatusCode == System.Net.HttpStatusCode.NotFound ? 404 : 503;
-                _logger.LogError(ex, "Failed to stream external Subsonic item {Id}: responding {StatusCode}; upstream returned {UpstreamStatus}",
-                    id, statusCode, (int)httpRequestException.StatusCode.Value);
-                return StatusCode(statusCode, new { error = statusCode == 404 ? "External track not found" : "External provider unavailable" });
-            }
-
-            if (ex is TimeoutException || ex is TaskCanceledException)
-            {
-                _logger.LogError(ex, "Timed out streaming external Subsonic item {Id}", id);
-                return StatusCode(504, new { error = "External provider timed out" });
-            }
-
-            if (ex is InvalidOperationException invalidOperationException &&
-                invalidOperationException.Message.Contains("endpoints", StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogError(ex, "No healthy endpoints available for external Subsonic item {Id}", id);
-                return StatusCode(503, new { error = "External provider has no healthy endpoints" });
-            }
-
-            _logger.LogError(ex, "Failed to stream external Subsonic item {Id}", id);
-            return StatusCode(502, new { error = "External stream failed" });
+            var error = SubsonicExceptionFilter.Map(
+                ex,
+                HttpContext.RequestAborted.IsCancellationRequested);
+            _logger.LogError(
+                "Failed to stream external Subsonic item {Id} safely ({ExceptionType})",
+                id,
+                ex.GetType().Name);
+            return StatusCode(error.StatusCode, new { error = error.Message });
         }
     }
 
@@ -414,11 +396,14 @@ public class SubsonicController : ControllerBase
             return _responseBuilder.CreateArtistResponse(format, artist, albums);
         }
 
-        var navidromeResult = await _proxyService.RelaySafeAsync("rest/getArtist", parameters);
+        var navidromeResult = await _proxyService.RelayRawAsync(
+            "rest/getArtist",
+            parameters,
+            HttpContext.RequestAborted);
 
-        if (!navidromeResult.Success || navidromeResult.Body == null)
+        if (!navidromeResult.IsSuccessStatusCode)
         {
-            return _responseBuilder.CreateError(format, 70, "Artist not found");
+            return _relayProtocolAdapter.CreateResult(navidromeResult, $"application/{format}");
         }
 
         var navidromeContent = Encoding.UTF8.GetString(navidromeResult.Body);
@@ -536,32 +521,24 @@ public class SubsonicController : ControllerBase
         // Check if this is an external playlist
         if (PlaylistIdHelper.IsExternalPlaylist(id))
         {
-            try
+            var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(id);
+
+            // Get playlist metadata
+            var playlist = _providerGateway != null
+                ? await _providerGateway.GetPlaylistAsync(CurrentProtocolContext, provider, externalId)
+                : await _metadataService.GetPlaylistAsync(provider, externalId);
+            if (playlist == null)
             {
-                var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(id);
-
-                // Get playlist metadata
-                var playlist = _providerGateway != null
-                    ? await _providerGateway.GetPlaylistAsync(CurrentProtocolContext, provider, externalId)
-                    : await _metadataService.GetPlaylistAsync(provider, externalId);
-                if (playlist == null)
-                {
-                    return _responseBuilder.CreateError(format, 70, "Playlist not found");
-                }
-
-                // Get playlist tracks
-                var tracks = _providerGateway != null
-                    ? await _providerGateway.GetPlaylistTracksAsync(CurrentProtocolContext, provider, externalId)
-                    : await _metadataService.GetPlaylistTracksAsync(provider, externalId);
-
-                // Convert to album response (playlist as album)
-                return _responseBuilder.CreatePlaylistAsAlbumResponse(format, playlist, tracks);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting playlist {Id}", id);
                 return _responseBuilder.CreateError(format, 70, "Playlist not found");
             }
+
+            // Get playlist tracks
+            var tracks = _providerGateway != null
+                ? await _providerGateway.GetPlaylistTracksAsync(CurrentProtocolContext, provider, externalId)
+                : await _metadataService.GetPlaylistTracksAsync(provider, externalId);
+
+            // Convert to album response (playlist as album)
+            return _responseBuilder.CreatePlaylistAsAlbumResponse(format, playlist, tracks);
         }
 
         var (isExternal, albumProvider, albumExternalId) = _localLibraryService.ParseSongId(id);
@@ -578,11 +555,14 @@ public class SubsonicController : ControllerBase
             return _responseBuilder.CreateAlbumResponse(format, album);
         }
 
-        var navidromeResult = await _proxyService.RelaySafeAsync("rest/getAlbum", parameters);
+        var navidromeResult = await _proxyService.RelayRawAsync(
+            "rest/getAlbum",
+            parameters,
+            HttpContext.RequestAborted);
 
-        if (!navidromeResult.Success || navidromeResult.Body == null)
+        if (!navidromeResult.IsSuccessStatusCode)
         {
-            return _responseBuilder.CreateError(format, 70, "Album not found");
+            return _relayProtocolAdapter.CreateResult(navidromeResult, $"application/{format}");
         }
 
         var navidromeContent = Encoding.UTF8.GetString(navidromeResult.Body);
@@ -679,15 +659,18 @@ public class SubsonicController : ControllerBase
                 albumDict["song"] = mergedSongs;
                 albumDict["songCount"] = mergedSongs.Count;
 
-                var totalDuration = 0;
-                foreach (var song in mergedSongs)
-                {
-                    if (song is Dictionary<string, object> dict && dict.TryGetValue("duration", out var dur))
-                    {
-                        totalDuration += Convert.ToInt32(dur);
-                    }
-                }
-                albumDict["duration"] = totalDuration;
+                var durations = mergedSongs.Select(song =>
+                    song is Dictionary<string, object> dict &&
+                    dict.TryGetValue("duration", out var value) &&
+                    int.TryParse(value?.ToString(), out var duration) &&
+                    duration > 0
+                        ? (int?)duration
+                        : null).ToArray();
+                var totalDuration = durations.Sum(duration => (long?)duration ?? 0);
+                if (durations.All(duration => duration.HasValue) && totalDuration <= int.MaxValue)
+                    albumDict["duration"] = (int)totalDuration;
+                else
+                    albumDict.Remove("duration");
             }
         }
 
@@ -753,10 +736,14 @@ public class SubsonicController : ControllerBase
     {
         var parameters = await ExtractAllParameters();
         var id = parameters.GetValueOrDefault("id", "");
+        var format = parameters.GetValueOrDefault("f", "xml");
 
         if (string.IsNullOrWhiteSpace(id))
         {
-            return NotFound();
+            var result = _responseBuilder.CreateError(format, 10, "Missing id parameter");
+            if (result is JsonResult json) json.StatusCode = StatusCodes.Status400BadRequest;
+            if (result is ContentResult content) content.StatusCode = StatusCodes.Status400BadRequest;
+            return result;
         }
 
         // Check if this is a playlist cover art request
@@ -780,8 +767,13 @@ public class SubsonicController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error getting playlist cover art for {Id}", id);
-                return NotFound();
+                var error = SubsonicExceptionFilter.Map(
+                    ex,
+                    HttpContext.RequestAborted.IsCancellationRequested);
+                _logger.LogWarning(
+                    "Playlist cover art failed safely ({ExceptionType})",
+                    ex.GetType().Name);
+                return StatusCode(error.StatusCode);
             }
         }
 
@@ -799,9 +791,15 @@ public class SubsonicController : ControllerBase
                     Request.Headers);
                 return _relayProtocolAdapter.CreateResult(result, "image/jpeg");
             }
-            catch
+            catch (Exception ex)
             {
-                return NotFound();
+                var error = SubsonicExceptionFilter.Map(
+                    ex,
+                    HttpContext.RequestAborted.IsCancellationRequested);
+                _logger.LogWarning(
+                    "Native Subsonic cover art relay failed safely ({ExceptionType})",
+                    ex.GetType().Name);
+                return StatusCode(error.StatusCode);
             }
         }
 
@@ -1003,7 +1001,7 @@ public class SubsonicController : ControllerBase
             {
                 return _responseBuilder.CreateError(
                     format,
-                    40,
+                    50,
                     "A linked Allstarr user is required for external favorite actions");
             }
 

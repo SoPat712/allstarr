@@ -422,6 +422,7 @@ else if (backendType == BackendType.Subsonic)
     builder.Services.AddSingleton<SubsonicSearchProtocolAdapter>();
     builder.Services.AddSingleton<SubsonicScrobbleProtocolAdapter>();
     builder.Services.AddScoped<SubsonicAuthFilter>();
+    builder.Services.AddScoped<SubsonicExceptionFilter>();
 }
 else
 {

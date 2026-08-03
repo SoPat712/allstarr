@@ -168,6 +168,35 @@ public sealed class VirtualPlaylistProtocolAdapterTests
     }
 
     [Fact]
+    public async Task SubsonicRead_OmitsUnknownDurationAndArtworkFacts()
+    {
+        var model = Model() with
+        {
+            ArtworkReferenceKey = null,
+            Tracks =
+            [
+                new(0, "unresolved", "Unknown", "Artist", null, null, null, null,
+                    TrackMatchState.Unresolved, RouteKind: TrackRouteKind.Unresolved)
+            ]
+        };
+        var adapter = new SubsonicVirtualPlaylistProtocolAdapter(
+            new StubVirtualizationService(model),
+            new StubMutationResolver(null));
+
+        var result = Assert.IsType<JsonResult>(await adapter.ReadAsync(
+            Context(ProtocolKind.Subsonic), ProtocolId, "json", CancellationToken.None));
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+        var playlist = json.RootElement.GetProperty("subsonic-response").GetProperty("playlist");
+        var entry = playlist.GetProperty("entry")[0];
+
+        Assert.False(playlist.TryGetProperty("duration", out _));
+        Assert.False(playlist.TryGetProperty("coverArt", out _));
+        Assert.False(entry.TryGetProperty("duration", out _));
+        Assert.False(entry.TryGetProperty("album", out _));
+        Assert.False(entry.TryGetProperty("coverArt", out _));
+    }
+
+    [Fact]
     public async Task SubsonicList_AppendsVirtualSummariesAfterNativePlaylists()
     {
         var model = Model() with

@@ -318,4 +318,27 @@ public class SubsonicModelMapperTests
         Assert.Single(mergedAlbums);
         Assert.Single(mergedArtists);
     }
+
+    [Fact]
+    public void MergeSearchResults_PlaylistOmitsUnknownDurationInBothFormats()
+    {
+        var playlist = new ExternalPlaylist
+        {
+            Id = "ext-deezer-playlist-1",
+            Name = "Fixture",
+            Provider = "deezer",
+            ExternalId = "1",
+            TrackCount = 3
+        };
+        var empty = new SearchResult();
+
+        var (_, jsonAlbums, _) = _mapper.MergeSearchResults(
+            [], [], [], empty, [playlist], true);
+        Assert.False(Assert.IsType<Dictionary<string, object>>(Assert.Single(jsonAlbums))
+            .ContainsKey("duration"));
+
+        var (_, xmlAlbums, _) = _mapper.MergeSearchResults(
+            [], [], [], empty, [playlist], false);
+        Assert.Null(Assert.IsType<XElement>(Assert.Single(xmlAlbums)).Attribute("duration"));
+    }
 }

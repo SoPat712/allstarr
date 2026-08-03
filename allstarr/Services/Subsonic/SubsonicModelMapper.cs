@@ -244,9 +244,13 @@ public class SubsonicModelMapper
             ["artist"] = artistName,
             ["artistId"] = artistId,
             ["genre"] = "Playlist",  // Note: This is metadata-only, actual tracks will have their own genres
-            ["songCount"] = playlist.TrackCount,
-            ["duration"] = playlist.Duration
+            ["songCount"] = playlist.TrackCount
         };
+
+        if (playlist.Duration > 0)
+        {
+            album["duration"] = playlist.Duration;
+        }
 
         if (playlist.CreatedDate.HasValue)
         {
@@ -282,9 +286,13 @@ public class SubsonicModelMapper
             new XAttribute("artist", artistName),
             new XAttribute("artistId", artistId),
             new XAttribute("genre", "Playlist"),  // Note: This is metadata-only, actual tracks will have their own genres
-            new XAttribute("songCount", playlist.TrackCount),
-            new XAttribute("duration", playlist.Duration)
+            new XAttribute("songCount", playlist.TrackCount)
         );
+
+        if (playlist.Duration > 0)
+        {
+            album.Add(new XAttribute("duration", playlist.Duration));
+        }
 
         if (playlist.CreatedDate.HasValue)
         {

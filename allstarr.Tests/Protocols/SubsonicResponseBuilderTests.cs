@@ -181,6 +181,11 @@ public class SubsonicResponseBuilderTests
         Assert.Equal("Test Song", songData.GetProperty("title").GetString());
         Assert.Equal("Test Artist", songData.GetProperty("artist").GetString());
         Assert.Equal("Test Album", songData.GetProperty("album").GetString());
+        Assert.Equal(180, songData.GetProperty("duration").GetInt32());
+        Assert.Equal(5, songData.GetProperty("track").GetInt32());
+        Assert.Equal(2023, songData.GetProperty("year").GetInt32());
+        Assert.Equal("mp3", songData.GetProperty("suffix").GetString());
+        Assert.Equal("audio/mpeg", songData.GetProperty("contentType").GetString());
     }
 
     [Fact]
@@ -215,6 +220,9 @@ public class SubsonicResponseBuilderTests
         Assert.Null(songElement.Attribute("suffix"));
         Assert.Null(songElement.Attribute("contentType"));
         Assert.Null(songElement.Attribute("coverArt"));
+        Assert.Null(songElement.Attribute("track"));
+        Assert.Null(songElement.Attribute("discNumber"));
+        Assert.Null(songElement.Attribute("year"));
     }
 
     [Fact]
@@ -240,6 +248,9 @@ public class SubsonicResponseBuilderTests
         Assert.Equal("flac", element.Attribute("suffix")?.Value);
         Assert.Equal("audio/flac", element.Attribute("contentType")?.Value);
         Assert.Equal("song-1", element.Attribute("coverArt")?.Value);
+        Assert.Null(element.Attribute("duration"));
+        Assert.Null(element.Attribute("track"));
+        Assert.Null(element.Attribute("year"));
     }
 
     [Fact]
@@ -388,10 +399,18 @@ public class SubsonicResponseBuilderTests
 
         Assert.Equal("song123", songData.GetProperty("id").GetString());
         Assert.Equal("Test Song", songData.GetProperty("title").GetString());
+        foreach (var field in new[]
+                 {
+                     "parent", "album", "artist", "albumId", "artistId", "duration",
+                     "track", "discNumber", "year", "suffix", "contentType"
+                 })
+        {
+            Assert.False(songData.TryGetProperty(field, out _), field);
+        }
     }
 
     [Fact]
-    public void CreateAlbumResponse_EmptySongList_ReturnsZeroCounts()
+    public void CreateAlbumResponse_UnknownSongFacts_OmitsCountsAndDuration()
     {
         // Arrange
         var album = new Album
@@ -411,7 +430,31 @@ public class SubsonicResponseBuilderTests
         var doc = JsonDocument.Parse(json);
         var albumData = doc.RootElement.GetProperty("subsonic-response").GetProperty("album");
 
-        Assert.Equal(0, albumData.GetProperty("songCount").GetInt32());
-        Assert.Equal(0, albumData.GetProperty("duration").GetInt32());
+        Assert.False(albumData.TryGetProperty("songCount", out _));
+        Assert.False(albumData.TryGetProperty("duration", out _));
+    }
+
+    [Fact]
+    public void CreateAlbumResponse_IncompleteDurations_OmitsAggregateInBothFormats()
+    {
+        var album = new Album
+        {
+            Id = "album123",
+            Title = "Partial Album",
+            Songs =
+            [
+                new Song { Id = "song1", Title = "Known", Duration = 180 },
+                new Song { Id = "song2", Title = "Unknown" }
+            ]
+        };
+
+        var jsonResult = Assert.IsType<JsonResult>(_builder.CreateAlbumResponse("json", album));
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
+        Assert.False(json.RootElement.GetProperty("subsonic-response").GetProperty("album")
+            .TryGetProperty("duration", out _));
+
+        var xmlResult = Assert.IsType<ContentResult>(_builder.CreateAlbumResponse("xml", album));
+        var document = XDocument.Parse(xmlResult.Content!);
+        Assert.Null(document.Root!.Elements().Single().Attribute("duration"));
     }
 }

@@ -165,45 +165,30 @@ public class SubsonicResponseBuilder
     /// </summary>
     public IActionResult CreateAlbumResponse(string format, Album album)
     {
-        var totalDuration = album.Songs.Sum(s => s.Duration ?? 0);
-
         if (format == "json")
         {
-            return CreateJsonResponse(new
+            var result = ConvertAlbumToJson(album);
+            result["isCompilation"] = false;
+            result["song"] = album.Songs.Select(ConvertSongToJson).ToList();
+            return CreateJsonResponse(new Dictionary<string, object?>
             {
-                status = "ok",
-                version = SubsonicVersion,
-                album = new
-                {
-                    id = album.Id,
-                    name = album.Title,
-                    artist = album.Artist,
-                    artistId = album.ArtistId,
-                    coverArt = album.Id,
-                    songCount = album.Songs.Count > 0 ? album.Songs.Count : (album.SongCount ?? 0),
-                    duration = totalDuration,
-                    year = album.Year ?? 0,
-                    genre = album.Genre ?? "",
-                    isCompilation = false,
-                    song = album.Songs.Select(s => ConvertSongToJson(s)).ToList()
-                }
+                ["status"] = "ok",
+                ["version"] = SubsonicVersion,
+                ["album"] = result
             });
         }
 
         var ns = XNamespace.Get(SubsonicNamespace);
+        var albumElement = ConvertAlbumToXml(album, ns);
+        foreach (var song in album.Songs)
+        {
+            albumElement.Add(ConvertSongToXml(song, ns));
+        }
         var doc = new XDocument(
             new XElement(ns + "subsonic-response",
                 new XAttribute("status", "ok"),
                 new XAttribute("version", SubsonicVersion),
-                new XElement(ns + "album",
-                    new XAttribute("id", album.Id),
-                    new XAttribute("name", album.Title),
-                    new XAttribute("artist", album.Artist ?? ""),
-                    new XAttribute("songCount", album.SongCount ?? 0),
-                    new XAttribute("year", album.Year ?? 0),
-                    new XAttribute("coverArt", album.Id),
-                    album.Songs.Select(s => ConvertSongToXml(s, ns))
-                )
+                albumElement
             )
         );
         return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
@@ -215,8 +200,6 @@ public class SubsonicResponseBuilder
     /// </summary>
     public IActionResult CreatePlaylistAsAlbumResponse(string format, ExternalPlaylist playlist, List<Song> tracks)
     {
-        var totalDuration = tracks.Sum(s => s.Duration ?? 0);
-
         // Build artist name with emoji and curator
         var artistName = $"🎵 {char.ToUpper(playlist.Provider[0])}{playlist.Provider.Substring(1)}";
         if (!string.IsNullOrEmpty(playlist.CuratorName))
@@ -236,25 +219,30 @@ public class SubsonicResponseBuilder
 
         if (format == "json")
         {
-            return CreateJsonResponse(new
+            var album = new Dictionary<string, object?>
             {
-                status = "ok",
-                version = SubsonicVersion,
-                album = new
-                {
-                    id = playlist.Id,
-                    name = playlist.Name,
-                    artist = artistName,
-                    artistId = artistId,
-                    coverArt = playlist.Id,
-                    songCount = tracks.Count,
-                    duration = totalDuration,
-                    year = playlist.CreatedDate?.Year ?? 0,
-                    genre = genreString,
-                    isCompilation = false,
-                    created = playlist.CreatedDate?.ToString("yyyy-MM-ddTHH:mm:ss"),
-                    song = tracks.Select(s => ConvertSongToJson(s)).ToList()
-                }
+                ["id"] = playlist.Id,
+                ["name"] = playlist.Name,
+                ["artist"] = artistName,
+                ["artistId"] = artistId,
+                ["songCount"] = tracks.Count,
+                ["genre"] = genreString,
+                ["isCompilation"] = false,
+                ["song"] = tracks.Select(ConvertSongToJson).ToList()
+            };
+            if (TryGetTotalDuration(tracks, out var totalDuration)) album["duration"] = totalDuration;
+            if (playlist.CreatedDate.HasValue)
+            {
+                album["year"] = playlist.CreatedDate.Value.Year;
+                album["created"] = playlist.CreatedDate.Value.ToString("yyyy-MM-ddTHH:mm:ss");
+            }
+            if (!string.IsNullOrWhiteSpace(playlist.CoverUrl)) album["coverArt"] = playlist.Id;
+
+            return CreateJsonResponse(new Dictionary<string, object?>
+            {
+                ["status"] = "ok",
+                ["version"] = SubsonicVersion,
+                ["album"] = album
             });
         }
 
@@ -265,10 +253,13 @@ public class SubsonicResponseBuilder
             new XAttribute("artist", artistName),
             new XAttribute("artistId", artistId),
             new XAttribute("songCount", tracks.Count),
-            new XAttribute("duration", totalDuration),
-            new XAttribute("genre", genreString),
-            new XAttribute("coverArt", playlist.Id)
+            new XAttribute("genre", genreString)
         );
+
+        if (TryGetTotalDuration(tracks, out var xmlDuration))
+            albumElement.Add(new XAttribute("duration", xmlDuration));
+        if (!string.IsNullOrWhiteSpace(playlist.CoverUrl))
+            albumElement.Add(new XAttribute("coverArt", playlist.Id));
 
         if (playlist.CreatedDate.HasValue)
         {
@@ -352,24 +343,34 @@ public class SubsonicResponseBuilder
         var result = new Dictionary<string, object>
         {
             ["id"] = song.Id,
-            ["parent"] = song.AlbumId ?? "",
             ["isDir"] = false,
             ["title"] = song.Title,
-            ["album"] = song.Album ?? "",
-            ["artist"] = song.Artist ?? "",
-            ["albumId"] = song.AlbumId ?? "",
-            ["artistId"] = song.ArtistId ?? "",
-            ["duration"] = song.Duration ?? 0,
-            ["track"] = song.Track ?? 0,
-            ["discNumber"] = song.DiscNumber ?? 0,
-            ["year"] = song.Year ?? 0,
             ["type"] = "music",
             ["isVideo"] = false,
-            ["isExternal"] = !song.IsLocal,
-            ["displayArtist"] = song.Artist ?? "",
-            ["displayAlbumArtist"] = song.AlbumArtist ?? song.Artist ?? "",
-            ["displayComposer"] = song.Composer ?? ""
+            ["isExternal"] = !song.IsLocal
         };
+
+        if (!string.IsNullOrWhiteSpace(song.AlbumId))
+        {
+            result["parent"] = song.AlbumId;
+            result["albumId"] = song.AlbumId;
+        }
+        if (!string.IsNullOrWhiteSpace(song.Album)) result["album"] = song.Album;
+        if (!string.IsNullOrWhiteSpace(song.Artist))
+        {
+            result["artist"] = song.Artist;
+            result["displayArtist"] = song.Artist;
+        }
+        if (!string.IsNullOrWhiteSpace(song.ArtistId)) result["artistId"] = song.ArtistId;
+        if (song.Duration is > 0) result["duration"] = song.Duration.Value;
+        if (song.Track is > 0) result["track"] = song.Track.Value;
+        if (song.DiscNumber is > 0) result["discNumber"] = song.DiscNumber.Value;
+        if (song.Year is > 0) result["year"] = song.Year.Value;
+        if (song.Bpm is > 0) result["bpm"] = song.Bpm.Value;
+        if (!string.IsNullOrWhiteSpace(song.Genre)) result["genre"] = song.Genre;
+        var albumArtist = !string.IsNullOrWhiteSpace(song.AlbumArtist) ? song.AlbumArtist : song.Artist;
+        if (!string.IsNullOrWhiteSpace(albumArtist)) result["displayAlbumArtist"] = albumArtist;
+        if (!string.IsNullOrWhiteSpace(song.Composer)) result["displayComposer"] = song.Composer;
 
         if (song.IsLocal || !string.IsNullOrWhiteSpace(song.CoverArtUrl))
         {
@@ -388,20 +389,24 @@ public class SubsonicResponseBuilder
     /// <summary>
     /// Converts an Album domain model to Subsonic JSON format.
     /// </summary>
-    public object ConvertAlbumToJson(Album album)
+    public Dictionary<string, object?> ConvertAlbumToJson(Album album)
     {
         var result = new Dictionary<string, object?>
         {
             ["id"] = album.Id,
             ["name"] = album.Title,
-            ["artist"] = album.Artist,
-            ["artistId"] = album.ArtistId ?? "",
-            ["songCount"] = album.Songs.Count > 0 ? album.Songs.Count : album.SongCount ?? 0,
-            ["duration"] = album.Songs.Sum(song => song.Duration ?? 0),
-            ["year"] = album.Year ?? 0,
-            ["isExternal"] = !album.IsLocal,
-            ["displayArtist"] = album.Artist
+            ["isExternal"] = !album.IsLocal
         };
+        if (!string.IsNullOrWhiteSpace(album.Artist))
+        {
+            result["artist"] = album.Artist;
+            result["displayArtist"] = album.Artist;
+        }
+        if (!string.IsNullOrWhiteSpace(album.ArtistId)) result["artistId"] = album.ArtistId;
+        if (album.Songs.Count > 0) result["songCount"] = album.Songs.Count;
+        else if (album.SongCount.HasValue) result["songCount"] = album.SongCount.Value;
+        if (TryGetTotalDuration(album.Songs, out var duration)) result["duration"] = duration;
+        if (album.Year is > 0) result["year"] = album.Year.Value;
         if (album.IsLocal || !string.IsNullOrWhiteSpace(album.CoverArtUrl))
         {
             result["coverArt"] = album.Id;
@@ -442,28 +447,38 @@ public class SubsonicResponseBuilder
     {
         var element = new XElement(ns + "song",
             new XAttribute("id", song.Id),
-            new XAttribute("parent", song.AlbumId ?? ""),
             new XAttribute("isDir", "false"),
             new XAttribute("title", song.Title),
-            new XAttribute("album", song.Album ?? ""),
-            new XAttribute("albumId", song.AlbumId ?? ""),
-            new XAttribute("artist", song.Artist ?? ""),
-            new XAttribute("duration", song.Duration ?? 0),
-            new XAttribute("track", song.Track ?? 0),
-            new XAttribute("discNumber", song.DiscNumber ?? 0),
-            new XAttribute("year", song.Year ?? 0),
             new XAttribute("type", "music"),
             new XAttribute("isVideo", "false"),
-            new XAttribute("displayArtist", song.Artist ?? ""),
-            new XAttribute("displayAlbumArtist", song.AlbumArtist ?? song.Artist ?? ""),
-            new XAttribute("displayComposer", song.Composer ?? ""),
             new XAttribute("isExternal", (!song.IsLocal).ToString().ToLower())
         );
 
+        if (!string.IsNullOrWhiteSpace(song.AlbumId))
+        {
+            element.Add(new XAttribute("parent", song.AlbumId));
+            element.Add(new XAttribute("albumId", song.AlbumId));
+        }
+        if (!string.IsNullOrWhiteSpace(song.Album)) element.Add(new XAttribute("album", song.Album));
+        if (!string.IsNullOrWhiteSpace(song.Artist))
+        {
+            element.Add(new XAttribute("artist", song.Artist));
+            element.Add(new XAttribute("displayArtist", song.Artist));
+        }
         if (!string.IsNullOrWhiteSpace(song.ArtistId))
         {
             element.Add(new XAttribute("artistId", song.ArtistId));
         }
+        if (song.Duration is > 0) element.Add(new XAttribute("duration", song.Duration.Value));
+        if (song.Track is > 0) element.Add(new XAttribute("track", song.Track.Value));
+        if (song.DiscNumber is > 0) element.Add(new XAttribute("discNumber", song.DiscNumber.Value));
+        if (song.Year is > 0) element.Add(new XAttribute("year", song.Year.Value));
+        if (song.Bpm is > 0) element.Add(new XAttribute("bpm", song.Bpm.Value));
+        var albumArtist = !string.IsNullOrWhiteSpace(song.AlbumArtist) ? song.AlbumArtist : song.Artist;
+        if (!string.IsNullOrWhiteSpace(albumArtist))
+            element.Add(new XAttribute("displayAlbumArtist", albumArtist));
+        if (!string.IsNullOrWhiteSpace(song.Composer))
+            element.Add(new XAttribute("displayComposer", song.Composer));
 
         if (song.IsLocal || !string.IsNullOrWhiteSpace(song.CoverArtUrl))
         {
@@ -492,15 +507,21 @@ public class SubsonicResponseBuilder
         var element = new XElement(ns + "album",
             new XAttribute("id", album.Id),
             new XAttribute("name", album.Title),
-            new XAttribute("artist", album.Artist ?? ""),
-            new XAttribute("artistId", album.ArtistId ?? ""),
-            new XAttribute("songCount", album.Songs.Count > 0 ? album.Songs.Count : album.SongCount ?? 0),
-            new XAttribute("duration", album.Songs.Sum(song => song.Duration ?? 0)),
-            new XAttribute("year", album.Year ?? 0),
-            new XAttribute("displayArtist", album.Artist ?? ""),
             new XAttribute("isExternal", (!album.IsLocal).ToString().ToLower())
         );
 
+        if (!string.IsNullOrWhiteSpace(album.Artist))
+        {
+            element.Add(new XAttribute("artist", album.Artist));
+            element.Add(new XAttribute("displayArtist", album.Artist));
+        }
+        if (!string.IsNullOrWhiteSpace(album.ArtistId))
+            element.Add(new XAttribute("artistId", album.ArtistId));
+        if (album.Songs.Count > 0) element.Add(new XAttribute("songCount", album.Songs.Count));
+        else if (album.SongCount.HasValue) element.Add(new XAttribute("songCount", album.SongCount.Value));
+        if (TryGetTotalDuration(album.Songs, out var duration))
+            element.Add(new XAttribute("duration", duration));
+        if (album.Year is > 0) element.Add(new XAttribute("year", album.Year.Value));
         if (album.IsLocal || !string.IsNullOrWhiteSpace(album.CoverArtUrl))
         {
             element.Add(new XAttribute("coverArt", album.Id));
@@ -589,5 +610,22 @@ public class SubsonicResponseBuilder
             _ => string.Empty
         };
         return contentType.Length > 0;
+    }
+
+    private static bool TryGetTotalDuration(
+        IReadOnlyCollection<Song> songs,
+        out int duration)
+    {
+        duration = 0;
+        if (songs.Count == 0 || songs.Any(song => song.Duration is not > 0)) return false;
+        try
+        {
+            duration = checked(songs.Sum(song => song.Duration!.Value));
+            return true;
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
     }
 }
