@@ -1,3 +1,4 @@
+using System.Globalization;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
@@ -80,6 +81,22 @@ public sealed class DeezerMetadataCapabilityAdapter : IProviderMetadataCapabilit
         token => _legacy.GetArtistAsync(StableProviderId, request.Id.Value, token),
         MapArtist);
 
+    public Task<ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>> GetArtistAlbumsAsync(
+        ProviderExecutionContext context,
+        ProviderArtistItemsRequest request) => ExecuteCollectionPageAsync(
+        context,
+        request,
+        token => _legacy.GetArtistAlbumsAsync(StableProviderId, request.Id.Value, token),
+        MapAlbum);
+
+    public Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>> GetArtistTracksAsync(
+        ProviderExecutionContext context,
+        ProviderArtistItemsRequest request) => ExecuteCollectionPageAsync(
+        context,
+        request,
+        token => _legacy.GetArtistTracksAsync(StableProviderId, request.Id.Value, token),
+        MapTrack);
+
     public static ProviderRegistration CreateRegistration(
         DeezerMetadataCapabilityAdapter adapter,
         IProviderDownloadCapability? download = null,
@@ -106,7 +123,9 @@ public sealed class DeezerMetadataCapabilityAdapter : IProviderMetadataCapabilit
                         "searchAlbums",
                         "getAlbum",
                         "searchArtists",
-                        "getArtist"
+                        "getArtist",
+                        "getArtistAlbums",
+                        "getArtistTracks"
                     ]),
                 streaming == null
                     ? LegacyLane(ProviderCapabilityKind.Streaming)
@@ -248,6 +267,45 @@ public sealed class DeezerMetadataCapabilityAdapter : IProviderMetadataCapabilit
         {
             return ProviderOutcome<TTarget>.Failure(
                 new ProviderError(ProviderErrorKind.TransientFailure));
+        }
+    }
+
+    private async Task<ProviderOutcome<ProviderPage<TTarget>>> ExecuteCollectionPageAsync<TLegacy, TTarget>(
+        ProviderExecutionContext context,
+        ProviderArtistItemsRequest request,
+        Func<CancellationToken, Task<List<TLegacy>>> fetch,
+        Func<TLegacy, TTarget> map)
+        where TTarget : class
+    {
+        var contextFailure = ValidateContext(context);
+        if (contextFailure != null)
+            return ProviderOutcome<ProviderPage<TTarget>>.Failure(contextFailure);
+        if (!request.Id.ProviderId.Equals(StableProviderId, StringComparison.Ordinal))
+            return ProviderOutcome<ProviderPage<TTarget>>.Failure(new(ProviderErrorKind.Forbidden));
+        if (request.ExpectedSnapshotVersion != null)
+            return ProviderOutcome<ProviderPage<TTarget>>.Failure(new(ProviderErrorKind.NotSupported));
+        if (!int.TryParse(request.Page.Cursor ?? "0", NumberStyles.None, CultureInfo.InvariantCulture,
+                out var offset))
+            return ProviderOutcome<ProviderPage<TTarget>>.Failure(new(ProviderErrorKind.NotSupported));
+
+        try
+        {
+            var values = await fetch(context.CancellationToken);
+            var items = values.Skip(offset).Take(request.Page.Limit).Select(map).ToArray();
+            var nextOffset = offset + items.Length;
+            var nextCursor = nextOffset < values.Count
+                ? nextOffset.ToString(CultureInfo.InvariantCulture)
+                : null;
+            return ProviderOutcome<ProviderPage<TTarget>>.Success(new(
+                StableProviderId, items, nextCursor, nextCursor != null));
+        }
+        catch (OperationCanceledException)
+        {
+            return ProviderOutcome<ProviderPage<TTarget>>.Failure(new(ProviderErrorKind.Canceled));
+        }
+        catch
+        {
+            return ProviderOutcome<ProviderPage<TTarget>>.Failure(new(ProviderErrorKind.TransientFailure));
         }
     }
 

@@ -219,6 +219,40 @@ public sealed class DeezerMetadataCapabilityAdapterTests
         Assert.Equal("route-result", Assert.Single(outcome.RequireValue().Items).Id.Value);
     }
 
+    [Fact]
+    public async Task ArtistAlbumsAndTracksUseTypedPagedResults()
+    {
+        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        legacy.Setup(item => item.GetArtistAlbumsAsync("deezer", "artist-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new Album { ExternalId = "album-1", Title = "First", Artist = "Artist" },
+                new Album { ExternalId = "album-2", Title = "Second", Artist = "Artist" },
+                new Album { ExternalId = "album-3", Title = "Third", Artist = "Artist" }
+            ]);
+        legacy.Setup(item => item.GetArtistTracksAsync("deezer", "artist-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new Song { ExternalId = "track-1", Title = "First", Artist = "Artist", Artists = ["Artist"] },
+                new Song { ExternalId = "track-2", Title = "Second", Artist = "Artist", Artists = ["Artist"] }
+            ]);
+        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+        var artist = new ProviderExternalResourceId("deezer", ProviderResourceKind.Artist, "artist-1");
+
+        var albums = (await adapter.GetArtistAlbumsAsync(
+            Context(), new(artist, new(limit: 2)))).RequireValue();
+        var remaining = (await adapter.GetArtistAlbumsAsync(
+            Context(), new(artist, new(limit: 2, cursor: albums.NextCursor)))).RequireValue();
+        var tracks = (await adapter.GetArtistTracksAsync(
+            Context(), new(artist, new(limit: 2)))).RequireValue();
+
+        Assert.Equal(["album-1", "album-2"], albums.Items.Select(item => item.Id.Value));
+        Assert.Equal("2", albums.NextCursor);
+        Assert.True(albums.IsPartial);
+        Assert.Equal("album-3", Assert.Single(remaining.Items).Id.Value);
+        Assert.Null(remaining.NextCursor);
+        Assert.Equal(["track-1", "track-2"], tracks.Items.Select(item => item.Id.Value));
+        legacy.VerifyAll();
+    }
+
     private static ProviderExecutionContext Context()
     {
         var actor = new ProviderActorContext(

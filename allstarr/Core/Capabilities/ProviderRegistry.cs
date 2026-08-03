@@ -265,7 +265,7 @@ public static class ProviderManifestValidator
             [ProviderCapabilityKind.Metadata] = new HashSet<string>(StringComparer.Ordinal)
             {
                 "searchTracks", "getTrack", "lookupByIsrc", "searchAlbums", "getAlbum",
-                "searchArtists", "getArtist"
+                "searchArtists", "getArtist", "getArtistAlbums", "getArtistTracks"
             },
             [ProviderCapabilityKind.Streaming] = new HashSet<string>(StringComparer.Ordinal)
             {
