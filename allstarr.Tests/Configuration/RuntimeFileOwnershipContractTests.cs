@@ -21,6 +21,7 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Core/Enrichment/TagLibManagedMetadataWriter.cs"] = "managed audio and artwork",
             ["Core/Extensions/ExtensionSdkV1.cs"] = "extension packages",
             ["Core/Extensions/ExtensionSignedSessionClient.cs"] = "protected extension session",
+            ["Core/Intelligence/ListeningHistoryImportPersistence.cs"] = "bounded listening-history upload",
             ["Core/ManagedFiles/FilePlacementService.cs"] = "managed audio and artwork",
             ["Core/ManagedFiles/PhysicalManagedFileOperations.cs"] = "managed audio and artwork",
             ["Core/Operations/PlatformReadinessService.cs"] = "temporary readiness probe",

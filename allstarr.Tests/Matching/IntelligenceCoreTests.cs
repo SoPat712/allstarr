@@ -1,4 +1,5 @@
 using System.Text.Json;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
@@ -71,7 +72,28 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         var writer = new RecommendationSignalWriter(_factory, _clock);
         Assert.False(await writer.WriteAsync(_scope, "play", "track-secret", 1, _clock.UtcNow));
         await _policies.SetAsync(_scope, new(true, 2, ["play", "skip"], ["local"]));
+        await using (var setup = await _factory.CreateDbContextAsync())
+        {
+            var identityId = Guid.CreateVersion7();
+            setup.BackendIdentities.Add(new()
+            {
+                Id = identityId,
+                TenantId = _tenant,
+                UserId = _user,
+                BackendType = "subsonic",
+                BackendInstanceId = "main",
+                PrincipalId = "listener",
+                CreatedAt = _clock.UtcNow,
+                LastSeenAt = _clock.UtcNow
+            });
+            var crossProtocol = Track(Guid.CreateVersion7(), identityId, "subsonic-only");
+            crossProtocol.CanonicalRecordingId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+            crossProtocol.Protocol = "subsonic";
+            setup.LibraryTracks.Add(crossProtocol);
+            await setup.SaveChangesAsync();
+        }
         Assert.True(await writer.WriteAsync(_scope, "play", "track-secret", 1, _clock.UtcNow));
+        Assert.False(await writer.WriteAsync(_scope, "play", "subsonic-only", 1, _clock.UtcNow));
         Assert.False(await writer.WriteAsync(_scope with { LibraryScopeId = "other" }, "play", "track-secret", 1, _clock.UtcNow));
         await using (var db = await _factory.CreateDbContextAsync())
         {
@@ -82,6 +104,38 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         var profile = await new ListeningProfileService(_factory, _clock).BuildAsync(_scope);
         Assert.Equal(0, profile.PlayCount);
         await using var verified = await _factory.CreateDbContextAsync(); Assert.Empty(await verified.ListeningSignals.ToListAsync());
+    }
+
+    [Fact]
+    public async Task RecommendationWorkStopsWhenBackendIsNoLongerLinked()
+    {
+        await _policies.SetAsync(_scope, new(true, 30, ["play"], ["fixture"]));
+        var runs = new RecommendationRunService(_factory, _jobs, _clock);
+        await runs.EnqueueAsync(_scope, [], 10, "queued-before-unlink");
+        var claim = await _jobs.ClaimNextAsync("intelligence-unlinked", ["recommendation.generate"]);
+        Assert.NotNull(claim);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.BackendIdentities.SingleAsync(item => item.BackendType == "jellyfin"))
+                .BackendInstanceId = "removed";
+            await db.SaveChangesAsync();
+        }
+
+        var completion = await new RecommendationRunJobHandler(_factory, [new FixtureProvider()],
+            new ListeningProfileService(_factory, _clock), _clock)
+            .ExecuteAsync(new(claim!, EmptyServices.Instance), default);
+
+        Assert.Equal(DurableJobCompletionKind.Cancelled, completion.Kind);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            runs.EnqueueAsync(_scope, [], 10, "after-unlink"));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            new SmartPlaylistService(_factory, _clock, _jobs).CreateGeneratedSetAsync(_scope,
+                "After unlink", [new("track-secret", 1, "fixture", [new("fixture", 1, "Fixture")])],
+                "after-unlink"));
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(RecommendationRunState.Cancelled, (await verify.RecommendationRuns.SingleAsync()).State);
+        Assert.Empty(await verify.RecommendationCandidates.ToListAsync());
+        Assert.Empty(await verify.GeneratedSets.ToListAsync());
     }
 
     [Fact]
@@ -211,6 +265,64 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         Assert.Equal(GeneratedSetMaterializationState.Succeeded, savedSet.MaterializationState);
         Assert.Equal("backend-playlist-1", savedSet.BackendPlaylistId);
         Assert.Equal("revision-1", savedSet.TargetRevision);
+    }
+
+    [Fact]
+    public async Task RecommendationProvenanceNeverUsesAnotherOwnersProviderAccount()
+    {
+        var otherUser = Guid.CreateVersion7();
+        var otherAccount = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.Users.Add(new()
+            {
+                Id = otherUser,
+                TenantId = _tenant,
+                DisplayName = "Other",
+                Status = PlatformUserStatus.Active,
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            });
+            db.ProviderAccounts.Add(Account(otherAccount, ProviderAccountScope.User, otherUser));
+            db.ProviderTrackIdentities.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = _tenant,
+                CanonicalRecordingId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+                ProviderAccountId = otherAccount,
+                ProviderId = "fixture",
+                ResourceKind = ProviderResourceKind.Track,
+                CatalogNamespace = "default",
+                Scope = ProviderIdentityScope.Account,
+                ExternalId = "outside-track",
+                ExternalIdHash = new string('a', 64),
+                Verification = ProviderIdentityVerification.Verified,
+                VerificationMethod = "fixture",
+                DecisionVersion = 1,
+                VerifiedAt = _clock.UtcNow,
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow,
+                Revision = 1
+            });
+            await db.SaveChangesAsync();
+        }
+        await _policies.SetAsync(_scope, new(true, 30, ["play"], ["fixture"]));
+        await new RecommendationRunService(_factory, _jobs, _clock)
+            .EnqueueAsync(_scope, [], 10, "foreign-provenance");
+        var claim = await _jobs.ClaimNextAsync("foreign-provenance", ["recommendation.generate"]);
+        var candidate = new RecommendationCandidate("outside-track", .9, "fixture",
+            [new("fixture", .9, "Fixture")], new(ProviderId: "fixture", ProviderTrackId: "outside-track"))
+        { SourceRevision = "fixture:outside" };
+
+        var completion = await new RecommendationRunJobHandler(_factory, [new FixtureProvider(candidate)],
+            new ListeningProfileService(_factory, _clock), _clock)
+            .ExecuteAsync(new(claim!, EmptyServices.Instance), default);
+
+        Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
+        await using var verify = await _factory.CreateDbContextAsync();
+        var saved = await verify.RecommendationCandidates.SingleAsync();
+        Assert.Null(saved.ProviderAccountId);
+        Assert.Null(saved.CanonicalRecordingId);
     }
 
     [Fact]
@@ -625,14 +737,14 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     }
 
     public async Task DisposeAsync() => await _database.DisposeAsync();
-    private sealed class FixtureProvider : IRecommendationProvider
+    private sealed class FixtureProvider(RecommendationCandidate? candidate = null) : IRecommendationProvider
     {
         public string Id => "fixture";
         public Task<RecommendationProviderResult> RecommendAsync(RecommendationRequest request)
         {
             Assert.True(request.ExplicitlyOptedIn);
             return Task.FromResult(new RecommendationProviderResult(RecommendationProviderState.Succeeded,
-                [new RecommendationCandidate("track-1", .9, Id, [new("genre", .8, "shared-genre")],
+                [candidate ?? new RecommendationCandidate("track-1", .9, Id, [new("genre", .8, "shared-genre")],
                     new(LibraryTrackId: Guid.Parse("11111111-1111-1111-1111-111111111111")))
                     { SourceRevision = "fixture:1" }]));
         }

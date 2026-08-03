@@ -176,6 +176,10 @@ public sealed partial class IntelligenceController
         {
             return Conflict(new { error = "intelligence_not_ready" });
         }
+        catch (UnauthorizedAccessException)
+        {
+            return NotFound();
+        }
     }
 
     [HttpPost("audiomuse/search")]

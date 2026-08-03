@@ -66,6 +66,8 @@ public sealed class SmartPlaylistService(IDbContextFactory<AllstarrDbContext> fa
         IntelligencePolicyService.ValidateScope(scope); name = ValidName(name);
         candidates = candidates.Where(item => item.Exclusions.Count == 0).ToArray();
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        if (!await IntelligencePolicyService.OwnsBackendAsync(db, scope, cancellationToken))
+            throw new UnauthorizedAccessException("The generated playlist backend identity is outside this scope.");
         var existing = await db.GeneratedSets.AsNoTracking().SingleOrDefaultAsync(x => x.RunId == runId && x.TenantId == scope.TenantId && x.OwnerUserId == scope.OwnerUserId, cancellationToken);
         if (existing != null) { await EnqueueMaterialization(existing, cancellationToken); return existing.Id; }
         if (!await IntelligencePolicyService.ScopedRuns(db, scope).AnyAsync(x => x.Id == runId && x.State == RecommendationRunState.Succeeded, cancellationToken)) throw new UnauthorizedAccessException("The recommendation run is outside this scope or incomplete.");
@@ -102,6 +104,8 @@ public sealed class SmartPlaylistService(IDbContextFactory<AllstarrDbContext> fa
             throw new ArgumentException("Generated playlist request key is invalid.");
         var setId = StableSetId(scope, idempotencyKey);
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        if (!await IntelligencePolicyService.OwnsBackendAsync(db, scope, cancellationToken))
+            throw new UnauthorizedAccessException("The generated playlist backend identity is outside this scope.");
         var existing = await db.GeneratedSets.AsNoTracking().SingleOrDefaultAsync(item => item.Id == setId,
             cancellationToken);
         if (existing != null)
@@ -180,7 +184,10 @@ public sealed class RecommendationRunService(IDbContextFactory<AllstarrDbContext
         int limit, string idempotencyKey, CancellationToken cancellationToken = default)
     {
         IntelligencePolicyService.ValidateScope(scope); if (limit is < 1 or > 500 || string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 300 || seeds.Count > 100) throw new ArgumentException("The recommendation run request is invalid.");
-        await using var db = await factory.CreateDbContextAsync(cancellationToken); var policy = await IntelligencePolicyService.Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken);
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        if (!await IntelligencePolicyService.OwnsBackendAsync(db, scope, cancellationToken))
+            throw new UnauthorizedAccessException("The recommendation backend identity is outside this scope.");
+        var policy = await IntelligencePolicyService.Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken);
         if (policy?.Enabled != true) throw new InvalidOperationException("Intelligence is not enabled for this exact scope.");
         var enabledProviders = JsonSerializer.Deserialize<string[]>(policy.EnabledProvidersJson) ?? [];
         if (enabledProviders.Length == 0) throw new InvalidOperationException("No recommendation provider is enabled for this scope.");
@@ -234,7 +241,9 @@ public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbCont
         RecommendationPolicySnapshot snapshot; try { snapshot = JsonSerializer.Deserialize<RecommendationPolicySnapshot>(run.PolicySnapshotJson) ?? throw new JsonException(); } catch (JsonException) { return DurableJobCompletion.Failure("recommendation_policy_snapshot_invalid", "The recommendation policy snapshot is invalid."); }
         if (run.State == RecommendationRunState.Succeeded) return await EnsureScheduledSetAsync(db, run, snapshot.Automation, cancellationToken);
         var scope = new IntelligenceScope(run.TenantId, run.OwnerUserId, run.Protocol, run.BackendInstanceId, run.LibraryScopeId);
-        var policy = await IntelligencePolicyService.Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken); if (policy?.Enabled != true) { run.State = RecommendationRunState.Cancelled; run.CompletedAt = clock.UtcNow; await db.SaveChangesAsync(cancellationToken); return DurableJobCompletion.Cancelled(); }
+        var policy = await IntelligencePolicyService.Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken);
+        if (policy?.Enabled != true || !await IntelligencePolicyService.OwnsBackendAsync(db, scope, cancellationToken))
+        { run.State = RecommendationRunState.Cancelled; run.CompletedAt = clock.UtcNow; await db.SaveChangesAsync(cancellationToken); return DurableJobCompletion.Cancelled(); }
         var enabled = snapshot.EnabledProviders.ToHashSet(StringComparer.Ordinal);
         var selectedProviders = providers.Where(item => enabled.Contains(item.Id))
             .OrderBy(item => item.Id, StringComparer.Ordinal).ToArray();
@@ -387,7 +396,9 @@ public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbCont
         {
             var providerId = candidate.Identity?.ProviderId;
             var externalId = candidate.Identity?.ProviderTrackId ?? candidate.Identity?.BackendItemId;
-            var providerMatches = identities.Where(item => item.ProviderId == providerId && item.ExternalId == externalId)
+            var providerMatches = identities.Where(item => item.ProviderId == providerId && item.ExternalId == externalId &&
+                    (item.ProviderAccountId == null || validAccounts.Any(account =>
+                        account.Id == item.ProviderAccountId && account.ProviderId == providerId)))
                 .ToArray();
             var providerCanonical = providerMatches.Select(item => item.CanonicalRecordingId).Distinct().ToArray();
             var providerAccounts = providerMatches.Select(item => item.ProviderAccountId).OfType<Guid>().Distinct().ToArray();

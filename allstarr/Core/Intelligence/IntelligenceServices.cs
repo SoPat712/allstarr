@@ -41,9 +41,7 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
         if (signals.Any(value => !Signals.Contains(value))) throw new ArgumentException("The intelligence signal type is unsupported.", nameof(input));
         var providers = input.EnabledProviders.Select(Normalize).Distinct().Order().ToArray();
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        if (!await db.BackendIdentities.AsNoTracking().AnyAsync(item => item.TenantId == scope.TenantId &&
-            item.UserId == scope.OwnerUserId && item.BackendType == scope.Protocol &&
-            item.BackendInstanceId == scope.BackendInstanceId, cancellationToken))
+        if (!await OwnsBackendAsync(db, scope, cancellationToken))
             throw new UnauthorizedAccessException("The intelligence policy backend identity is outside this scope.");
         if (scope.Protocol == "jellyfin" && input.TargetCredentialReferenceId.HasValue ||
             scope.Protocol == "subsonic" && input.Enabled && !input.TargetCredentialReferenceId.HasValue)
@@ -202,6 +200,11 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
     internal static IQueryable<ListeningSignalRecord> ScopedSignals(AllstarrDbContext db, IntelligenceScope s) => db.ListeningSignals.Where(x => x.TenantId == s.TenantId && x.OwnerUserId == s.OwnerUserId && x.Protocol == s.Protocol && x.BackendInstanceId == s.BackendInstanceId && x.LibraryScopeId == s.LibraryScopeId);
     internal static IQueryable<ListeningProfileRecord> ScopedProfiles(AllstarrDbContext db, IntelligenceScope s) => db.ListeningProfiles.Where(x => x.TenantId == s.TenantId && x.OwnerUserId == s.OwnerUserId && x.Protocol == s.Protocol && x.BackendInstanceId == s.BackendInstanceId && x.LibraryScopeId == s.LibraryScopeId);
     internal static IQueryable<RecommendationRunRecord> ScopedRuns(AllstarrDbContext db, IntelligenceScope s) => db.RecommendationRuns.Where(x => x.TenantId == s.TenantId && x.OwnerUserId == s.OwnerUserId && x.Protocol == s.Protocol && x.BackendInstanceId == s.BackendInstanceId && x.LibraryScopeId == s.LibraryScopeId);
+    internal static Task<bool> OwnsBackendAsync(AllstarrDbContext db, IntelligenceScope scope,
+        CancellationToken cancellationToken) => db.BackendIdentities.AsNoTracking().AnyAsync(item =>
+            item.TenantId == scope.TenantId && item.UserId == scope.OwnerUserId &&
+            item.BackendType == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId,
+            cancellationToken);
     private static bool JobMatchesScope(string payloadJson, IntelligenceScope scope)
     {
         try { return JsonSerializer.Deserialize<MusicBrainzListeningEnrichmentPayload>(payloadJson)?.Scope == scope; }
@@ -231,9 +234,8 @@ public sealed class RecommendationSignalWriter(IDbContextFactory<AllstarrDbConte
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var policy = await IntelligencePolicyService.Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken);
         if (policy == null || !policy.Enabled || !JsonSerializer.Deserialize<string[]>(policy.AllowedSignalTypesJson)!.Contains(signalType)) return false;
-        var tracks = await db.LibraryTracks.AsNoTracking().Where(x => x.TenantId == scope.TenantId &&
-            x.OwnerUserId == scope.OwnerUserId && x.BackendInstanceId == scope.BackendInstanceId &&
-            x.LibraryScopeId == scope.LibraryScopeId).ToListAsync(cancellationToken);
+        var tracks = await LocalRecommendationCatalog.Scoped(db, scope).AsNoTracking()
+            .ToListAsync(cancellationToken);
         var track = tracks.SingleOrDefault(x => x.BackendItemId == trackKey || x.Id.ToString("D") == trackKey) ??
             tracks.FirstOrDefault(x => ProviderValueMatches(x.ProviderIdsJson, trackKey));
         if (track == null) return false;

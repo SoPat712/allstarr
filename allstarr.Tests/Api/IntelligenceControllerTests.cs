@@ -588,6 +588,20 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
         var generatedCandidate = Assert.Single(_smart.Candidates!);
         Assert.Equal(Guid.Parse("22222222-2222-2222-2222-222222222222"), generatedCandidate.Identity!.LibraryTrackId);
         Assert.Equal("backend-track-42", generatedCandidate.Identity.BackendItemId);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.BackendIdentities.SingleAsync()).BackendInstanceId = "removed";
+            await db.SaveChangesAsync();
+        }
+        Assert.IsType<NotFoundResult>(await Controller().SetFeedback(
+            Guid.Parse("33333333-3333-3333-3333-333333333333"), new()
+            {
+                Protocol = "jellyfin",
+                BackendInstanceId = "main",
+                LibraryScopeId = "music",
+                Kind = "dismiss",
+                ExpectedRevision = 1
+            }, default));
     }
 
     [Fact]

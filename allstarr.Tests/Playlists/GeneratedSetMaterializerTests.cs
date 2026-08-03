@@ -234,6 +234,21 @@ public sealed class GeneratedSetMaterializerTests : IAsyncLifetime
     public async Task Subsonic_RequiresExactScopedEncryptedCredentialBeforeTargetCall()
     {
         await ChangeProtocol("subsonic"); var track = await AddTrack("song-1", null, "subsonic"); await AddEntries("one");
+        var unrelated = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.SecretReferences.Add(new()
+            {
+                Id = unrelated,
+                TenantId = _tenant,
+                Purpose = "unrelated",
+                ActiveVersion = 1,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+            (await db.GeneratedSets.SingleAsync()).TargetCredentialReferenceId = unrelated;
+            await db.SaveChangesAsync();
+        }
         var target = new FakeTarget(BackendPlaylistFamily.Subsonic);
         var materializer = new SubsonicGeneratedSetMaterializer(_factory, new Resolver(target));
 
@@ -253,7 +268,7 @@ public sealed class GeneratedSetMaterializerTests : IAsyncLifetime
             {
                 Id = credential,
                 TenantId = _tenant,
-                Purpose = "subsonic.generated-playlists",
+                Purpose = IntelligencePolicyService.SubsonicCredentialPurpose,
                 ActiveVersion = 1,
                 CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = DateTimeOffset.UtcNow

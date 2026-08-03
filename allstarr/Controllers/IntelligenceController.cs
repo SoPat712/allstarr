@@ -286,6 +286,7 @@ public sealed partial class IntelligenceController(
         }
         catch (ArgumentException exception) { return BadRequest(new { error = "recommendation_request_invalid", message = exception.Message }); }
         catch (InvalidOperationException) { return Conflict(new { error = "intelligence_not_ready" }); }
+        catch (UnauthorizedAccessException) { return NotFound(); }
     }
 
     [HttpPost("generated-sets")]
@@ -336,6 +337,7 @@ public sealed partial class IntelligenceController(
             reason?.Any(character => char.IsControl(character) || !(char.IsLetterOrDigit(character) || character is '-' or '_')) == true)
             return BadRequest(new { error = "recommendation_feedback_invalid" });
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        if (!await OwnsBackend(db, scope, cancellationToken)) return NotFound();
         var candidate = await db.RecommendationCandidates.AsNoTracking()
             .Join(db.RecommendationRuns.AsNoTracking(), item => item.RunId, run => run.Id, (item, run) => new { item, run })
             .SingleOrDefaultAsync(value => value.item.Id == candidateId &&
@@ -498,8 +500,7 @@ public sealed partial class IntelligenceController(
         catch (ArgumentException) { error = BadRequest(new { error = "intelligence_scope_invalid" }); return false; }
     }
     private static Task<bool> OwnsBackend(AllstarrDbContext db, IntelligenceScope scope, CancellationToken token) =>
-        db.BackendIdentities.AsNoTracking().AnyAsync(item => item.TenantId == scope.TenantId && item.UserId == scope.OwnerUserId &&
-            item.BackendType == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId, token);
+        IntelligencePolicyService.OwnsBackendAsync(db, scope, token);
     private static HashSet<string> ParseArray(string? json) => (JsonSerializer.Deserialize<string[]>(json ?? "[]") ?? []).ToHashSet(StringComparer.Ordinal);
     private static IReadOnlyList<RecommendationSignal> ParseSignals(string json) => JsonSerializer.Deserialize<RecommendationSignal[]>(json) ?? [];
     private static RecommendationTrackIdentity? ParseIdentity(string json) =>
