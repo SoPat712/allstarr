@@ -2,6 +2,7 @@ using System.Text.Json;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
+using allstarr.Core.Playback;
 using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Services.Admin;
@@ -21,13 +22,17 @@ public sealed partial class IntelligenceController(
     IRecommendationProviderStatusService readiness,
     IEnumerable<IRecommendationProvider> providers,
     IAudioMuseRecommendationClient audioMuse,
-    IPlatformClock? clock = null) : ControllerBase
+    IPlatformClock? clock = null,
+    IEnumerable<IExactScopePlaybackScrobbleTarget>? scrobbleTargets = null) : ControllerBase
 {
     private static readonly string[] SignalCatalog = ["play", "skip", "complete", "favorite", "playlist"];
     private readonly IDbContextFactory<AllstarrDbContext> _factory = factory;
     private readonly IPlatformClock? _clock = clock;
     private readonly IAudioMuseRecommendationClient _audioMuse = audioMuse;
     private readonly IReadOnlyDictionary<string, IRecommendationProvider> _providers = providers.ToDictionary(item => item.Id, StringComparer.Ordinal);
+    private readonly IExactScopePlaybackScrobbleTarget[] _scrobbleTargets =
+        scrobbleTargets?.GroupBy(item => item.ProviderId, StringComparer.Ordinal)
+            .Select(group => group.First()).OrderBy(item => item.ProviderId, StringComparer.Ordinal).ToArray() ?? [];
 
     [HttpGet]
     public async Task<IActionResult> Get([FromQuery] IntelligenceScopeRequest request, CancellationToken cancellationToken)
@@ -94,6 +99,35 @@ public sealed partial class IntelligenceController(
             var providerReadiness = await readiness.ListAsync(scope, cancellationToken);
             var readinessById = providerReadiness.ToDictionary(item => item.ProviderId, StringComparer.Ordinal);
             var missingProvider = enabledProviders.Any(id => !readinessById.TryGetValue(id, out var item) || item.State != RecommendationProviderReadinessState.Ready);
+            var scopedOccurrences = db.ListeningEvents.Where(item =>
+                item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+                item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
+                item.LibraryScopeId == scope.LibraryScopeId);
+            var enrichmentCounts = await scopedOccurrences.AsNoTracking()
+                .GroupBy(item => item.MusicBrainzEnrichmentState)
+                .Select(group => new { State = group.Key, Count = group.Count() })
+                .ToDictionaryAsync(item => item.State, item => item.Count, cancellationToken);
+            var occurrenceKeys = scopedOccurrences.Select(item => item.OccurrenceKey);
+            var listeningServices = new List<object>(_scrobbleTargets.Length);
+            foreach (var target in _scrobbleTargets)
+            {
+                var configured = await target.IsConfiguredAsync(scope, cancellationToken);
+                var latest = await db.PlaybackDeliveryCheckpoints.AsNoTracking().Where(item =>
+                        item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+                        item.Kind == PlaybackScrobbleDeliveryKind.Completed && item.OccurrenceKey != null &&
+                        occurrenceKeys.Contains(item.OccurrenceKey) && item.TargetId == target.ProviderId)
+                    .OrderByDescending(item => item.UpdatedAt).ThenByDescending(item => item.Id)
+                    .FirstOrDefaultAsync(cancellationToken);
+                listeningServices.Add(new
+                {
+                    id = target.ProviderId,
+                    label = PlaybackTargetLabel(target.ProviderId),
+                    configured,
+                    latestState = latest?.State.ToString().ToLowerInvariant(),
+                    latest?.RequiresReauthentication,
+                    latest?.UpdatedAt
+                });
+            }
             var state = policy == null ? "empty" : !policy.Enabled ? "disabled" :
                 latestRun?.State == RecommendationRunState.Failed || missingProvider ? "degraded" : "configured";
             return Ok(new
@@ -124,6 +158,14 @@ public sealed partial class IntelligenceController(
                         reasonCode = status.SafeReasonCode
                     };
                 }),
+                listeningServices,
+                songDetails = new
+                {
+                    pending = enrichmentCounts.GetValueOrDefault(MusicBrainzEnrichmentState.Pending),
+                    resolved = enrichmentCounts.GetValueOrDefault(MusicBrainzEnrichmentState.Resolved),
+                    unresolved = enrichmentCounts.GetValueOrDefault(MusicBrainzEnrichmentState.Unresolved),
+                    failed = enrichmentCounts.GetValueOrDefault(MusicBrainzEnrichmentState.Failed)
+                },
                 actions = new
                 {
                     canRun = policy?.Enabled == true && enabledProviders.Any(id => readinessById.TryGetValue(id, out var item) && item.State == RecommendationProviderReadinessState.Ready),
@@ -512,6 +554,8 @@ public sealed partial class IntelligenceController(
         message,
         availableSignalTypes = Array.Empty<object>(),
         providers = Array.Empty<object>(),
+        listeningServices = Array.Empty<object>(),
+        songDetails = new { pending = 0, resolved = 0, unresolved = 0, failed = 0 },
         candidates = Array.Empty<object>(),
         generatedSets = Array.Empty<object>(),
         schedules = Array.Empty<object>(),
@@ -527,6 +571,12 @@ public sealed partial class IntelligenceController(
         "listenbrainz-top-recordings" => "Your ListenBrainz top tracks",
         _ => string.Join(' ', value.Split(['-', '_'], StringSplitOptions.RemoveEmptyEntries)
             .Select(item => char.ToUpperInvariant(item[0]) + item[1..]))
+    };
+    private static string PlaybackTargetLabel(string value) => value switch
+    {
+        "lastfm" => "Last.fm",
+        "listenbrainz" => "ListenBrainz",
+        _ => Label(value)
     };
     private static string SourceDescription(string id) => id switch
     {

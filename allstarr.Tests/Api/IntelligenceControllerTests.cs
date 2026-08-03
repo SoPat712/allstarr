@@ -5,6 +5,7 @@ using allstarr.Controllers;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
+using allstarr.Core.Playback;
 using allstarr.Core.Storage;
 using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Http;
@@ -98,6 +99,39 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
 
         Assert.Contains("configured", json, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("\"schedules\":[]", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetReportsExactListeningServiceAndSongDetailStatus()
+    {
+        _policy.Record = Policy();
+        var delivered = HistoryEvent("Delivered", DateTimeOffset.UtcNow.AddMinutes(-2));
+        delivered.MusicBrainzEnrichmentState = MusicBrainzEnrichmentState.Resolved;
+        var pending = HistoryEvent("Pending", DateTimeOffset.UtcNow.AddMinutes(-1));
+        pending.MusicBrainzEnrichmentState = MusicBrainzEnrichmentState.Pending;
+        var other = HistoryEvent("Other", DateTimeOffset.UtcNow, "other");
+        other.MusicBrainzEnrichmentState = MusicBrainzEnrichmentState.Failed;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.ListeningEvents.AddRange(delivered, pending, other);
+            db.PlaybackDeliveryCheckpoints.AddRange(
+                DeliveryCheckpoint(delivered.OccurrenceKey, "lastfm", ScopedPlaybackScrobbleOutcome.Delivered),
+                DeliveryCheckpoint(other.OccurrenceKey, "listenbrainz", ScopedPlaybackScrobbleOutcome.PermanentFailure));
+            await db.SaveChangesAsync();
+        }
+
+        var result = Assert.IsType<OkObjectResult>(await Controller(scrobbleTargets:
+            [new FakeScrobbleTarget("lastfm", true), new FakeScrobbleTarget("listenbrainz", false)])
+            .Get(Scope(), default));
+        var json = JsonSerializer.Serialize(result.Value);
+
+        Assert.Contains("Last.fm", json, StringComparison.Ordinal);
+        Assert.Contains("\"latestState\":\"delivered\"", json, StringComparison.Ordinal);
+        Assert.Contains("ListenBrainz", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("permanentfailure", json, StringComparison.Ordinal);
+        Assert.Contains("\"pending\":1", json, StringComparison.Ordinal);
+        Assert.Contains("\"resolved\":1", json, StringComparison.Ordinal);
+        Assert.Contains("\"failed\":0", json, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -731,11 +765,12 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
             StringComparison.Ordinal);
     }
 
-    private IntelligenceController Controller(FakeAudioMuse? audioMuse = null)
+    private IntelligenceController Controller(FakeAudioMuse? audioMuse = null,
+        IReadOnlyList<IExactScopePlaybackScrobbleTarget>? scrobbleTargets = null)
     {
         var value = new IntelligenceController(_factory, _policy, _runs, _smart, _readiness,
             [new FakeProvider("lastfm"), new FakeProvider("musicbrainz-local"), new FakeProvider("audiomuse-ai")],
-            audioMuse ?? new FakeAudioMuse());
+            audioMuse ?? new FakeAudioMuse(), scrobbleTargets: scrobbleTargets);
         value.ControllerContext = new() { HttpContext = new DefaultHttpContext() };
         value.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
         {
@@ -784,6 +819,20 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
         Artist = "Artist",
         Revision = 1
     };
+    private PlaybackDeliveryCheckpointEntity DeliveryCheckpoint(string occurrenceKey, string target,
+        ScopedPlaybackScrobbleOutcome state) => new()
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = _tenant,
+            OwnerUserId = _user,
+            OccurrenceKey = occurrenceKey,
+            SignalKey = Convert.ToHexStringLower(
+            System.Security.Cryptography.SHA256.HashData(Guid.NewGuid().ToByteArray())),
+            TargetId = target,
+            Kind = PlaybackScrobbleDeliveryKind.Completed,
+            State = state,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
     private LibraryTrackRecord LocalTrack(Guid backendIdentityId, string id, string title,
         string library = "music") => new()
         {
@@ -850,6 +899,16 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
         }
     }
     private sealed class FakeProvider(string id) : IRecommendationProvider { public string Id => id; public Task<RecommendationProviderResult> RecommendAsync(RecommendationRequest request) => Task.FromResult(new RecommendationProviderResult(RecommendationProviderState.Succeeded, [])); }
+    private sealed class FakeScrobbleTarget(string id, bool configured) : IExactScopePlaybackScrobbleTarget
+    {
+        public string ProviderId => id;
+        public Task<bool> IsConfiguredAsync(IntelligenceScope scope, CancellationToken cancellationToken) =>
+            Task.FromResult(configured);
+        public Task<ScopedPlaybackScrobbleResult> DeliverAsync(IntelligenceScope scope,
+            PlaybackTransition transition, ScopedPlaybackTrack track, long? positionTicks,
+            DateTimeOffset observedAt, string signalKey, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
     private sealed class FakeAudioMuse : IAudioMuseRecommendationClient
     {
         public bool IsAvailable => true;

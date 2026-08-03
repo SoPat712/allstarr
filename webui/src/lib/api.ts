@@ -848,6 +848,20 @@ export type IntelligenceState = {
     state: string;
     reasonCode?: string | null;
   }>;
+  listeningServices?: Array<{
+    id: string;
+    label: string;
+    configured: boolean;
+    latestState?: string | null;
+    requiresReauthentication?: boolean | null;
+    updatedAt?: string | null;
+  }>;
+  songDetails?: {
+    pending: number;
+    resolved: number;
+    unresolved: number;
+    failed: number;
+  };
   actions: {
     canRun: boolean;
     canGenerate: boolean;

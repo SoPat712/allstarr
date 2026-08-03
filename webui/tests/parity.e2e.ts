@@ -250,6 +250,11 @@ const responses: Record<string, unknown> = {
       id: "audiomuse-ai", label: "AudioMuse", description: "Explore this library by sound.",
       enabled: true, available: true, state: "ready",
     }],
+    listeningServices: [
+      { id: "lastfm", label: "Last.fm", configured: true, latestState: "delivered", requiresReauthentication: false },
+      { id: "listenbrainz", label: "ListenBrainz", configured: false, latestState: null, requiresReauthentication: false },
+    ],
+    songDetails: { pending: 2, resolved: 8, unresolved: 0, failed: 0 },
     actions: {
       canRun: true, canGenerate: true, latestRunId: "run-1", latestRunState: "running",
       latestJobId: "job-1", attemptCount: 1, failureCount: 0, maxAttempts: 5,
@@ -825,6 +830,9 @@ for (const viewport of viewports) {
       await expect(page.getByText("Keep listening history for", { exact: true })).toBeVisible();
       await expect(page.getByText("Use these actions for recommendations", { exact: true })).toBeVisible();
       await expect(page.locator(".settings-stack")).not.toContainText(/\bsignals?\b/i);
+      await expect(page.getByText("Allstarr sent the latest completed listen to Last.fm.", { exact: true })).toBeVisible();
+      await expect(page.getByText("Allstarr will not send listens to ListenBrainz.", { exact: true })).toBeVisible();
+      await expect(page.getByText("Allstarr is checking 2 saved listens for more song details.", { exact: true })).toBeVisible();
       await expect(page.getByText("Private similarity source. · Ready")).toBeVisible();
       await expect(page.getByText("Where generated playlists are created", { exact: true })).toBeVisible();
       await page.getByRole("button", { name: "Turn off and clear" }).click();

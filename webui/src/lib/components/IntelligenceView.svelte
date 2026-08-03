@@ -116,6 +116,32 @@
     if (["unauthorized", "degraded", "failed"].includes(state)) return "Needs attention";
     return state.replaceAll("_", " ");
   }
+
+  function listeningServiceMessage(service: NonNullable<IntelligenceState["listeningServices"]>[number]) {
+    if (!service.configured) return `Allstarr will not send listens to ${service.label}.`;
+    if (service.requiresReauthentication) return `Reconnect ${service.label} before Allstarr can send more listens.`;
+    if (service.latestState === "delivered") return `Allstarr sent the latest completed listen to ${service.label}.`;
+    if (service.latestState === "ignored") return `${service.label} did not need the latest completed listen.`;
+    if (service.latestState === "retrying") return `Allstarr will retry sending the latest completed listen to ${service.label}.`;
+    if (service.latestState === "permanentfailure") return `${service.label} rejected the latest completed listen.`;
+    return `Allstarr will send completed listens to ${service.label}.`;
+  }
+
+  function listeningServiceStatus(service: NonNullable<IntelligenceState["listeningServices"]>[number]) {
+    if (!service.configured) return { label: "Off", class: "suggested" };
+    if (service.requiresReauthentication || service.latestState === "permanentfailure")
+      return { label: "Needs attention", class: "suggested" };
+    if (service.latestState === "retrying") return { label: "Retrying", class: "suggested" };
+    return { label: "Connected", class: "healthy" };
+  }
+
+  function songDetailsMessage(status: NonNullable<IntelligenceState["songDetails"]>) {
+    if (status.pending) return `Allstarr is checking ${status.pending} saved ${status.pending === 1 ? "listen" : "listens"} for more song details.`;
+    const unmatched = status.unresolved + status.failed;
+    if (unmatched) return `Allstarr could not add more song details to ${unmatched} saved ${unmatched === 1 ? "listen" : "listens"}. Your history is still saved.`;
+    if (status.resolved) return `Allstarr added more song details to ${status.resolved} saved ${status.resolved === 1 ? "listen" : "listens"}.`;
+    return "No saved listens are waiting for more song details.";
+  }
 </script>
 
 <section class="intelligence-view">
@@ -211,6 +237,19 @@
             <footer><button class="button-danger" type="button" onclick={() => purgeOpen = true}>Turn off and clear</button><button class="button-primary" type="submit" disabled={Boolean(action)}>{action === "policy" ? "Saving…" : "Save settings"}</button></footer>
           </form>
         </section>
+        <div class="settings-status-grid">
+          <section class="panel status-card">
+            <header><div><p class="eyebrow">Completed listens</p><h3>Listening services</h3></div></header>
+            {#each data.listeningServices ?? [] as service}
+              {@const status = listeningServiceStatus(service)}
+              <div class="status-row"><span><strong>{service.label}</strong><small>{listeningServiceMessage(service)}</small></span><span class={`status-pill ${status.class}`}>{status.label}</span></div>
+            {:else}<p class="muted">Allstarr will not send completed listens to another service.</p>{/each}
+          </section>
+          <section class="panel status-card">
+            <header><div><p class="eyebrow">MusicBrainz</p><h3>Extra song details</h3></div></header>
+            <p>{songDetailsMessage(data.songDetails ?? { pending: 0, resolved: 0, unresolved: 0, failed: 0 })}</p>
+          </section>
+        </div>
         <IntelligenceSchedules scope={activeScope} schedules={data.schedules ?? []} policyEnabled={enabled} onChanged={refresh} />
       </div>
     {:else}
@@ -251,7 +290,7 @@
 
 <style>
   .intelligence-view{min-width:0}
-  .intelligence-view{display:grid;gap:1.25rem}.route-heading{display:flex;align-items:end;justify-content:space-between;gap:1rem}.route-heading h2{margin:.25rem 0;font-family:var(--font-display);font-size:clamp(1.5rem,3vw,2.2rem)}.route-heading p:last-child{color:var(--color-ink-muted)}.heading-actions{display:flex;align-items:center;gap:.75rem}.scope-card{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;align-items:end;gap:1rem;padding:1rem}.run-progress{display:grid;grid-template-columns:minmax(0,1fr) minmax(10rem,.5fr) auto;align-items:center;gap:1rem;padding:1rem}.run-progress p{margin:0}.run-progress small{display:block;color:var(--color-ink-muted)}.run-progress progress{width:100%;accent-color:var(--color-signal)}.settings-stack{display:grid;gap:1rem}.intelligence-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(18rem,.8fr);gap:1rem}.recommendations,.profile-card,.generated-card,.privacy-card{padding:1.15rem}.recommendations>header,.privacy-card>header{display:flex;align-items:center;justify-content:space-between}.recommendations h3,.profile-card h3,.generated-card h3,.privacy-card h3{margin:.2rem 0 1rem}.recommendation-list{display:grid;margin:0;padding:0;list-style:none}.recommendation-list>li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.85rem;align-items:center;border-top:1px solid var(--color-edge);padding:.9rem 0}.track-copy small,summary{color:var(--color-ink-muted);font-size:.75rem}.track-copy details{margin-top:.35rem}.track-copy ul{margin:.4rem 0 0;padding-left:1.1rem;color:var(--color-ink-muted);font-size:.78rem}.side-stack{display:grid;align-content:start;gap:1rem}.profile-card label,.generated-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.7rem 0}.profile-card meter{width:55%;accent-color:var(--color-signal)}.generated-row span:first-child strong,.generated-row span:first-child small{display:block}.generated-row small{color:var(--color-ink-muted)}.generate-form{display:grid;gap:.75rem;margin-top:1rem}.privacy-card form{display:grid;grid-template-columns:minmax(14rem,.6fr) 1fr 1fr;gap:1rem}.toggle-line{display:flex;gap:.75rem}.toggle-line span>*,fieldset label span>*{display:block}.toggle-line small,fieldset small{color:var(--color-ink-muted)}fieldset{display:grid;align-content:start;gap:.55rem;border:0;margin:0;padding:0}fieldset legend{margin-bottom:.55rem;font-weight:750}fieldset label{display:flex;gap:.5rem}.privacy-card footer{grid-column:1/-1;display:flex;justify-content:space-between;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}
-  @media(max-width:900px){.scope-card{grid-template-columns:1fr 1fr}.run-progress{grid-template-columns:1fr}.intelligence-grid{grid-template-columns:1fr}.privacy-card form{grid-template-columns:1fr 1fr}}
+  .intelligence-view{display:grid;gap:1.25rem}.route-heading{display:flex;align-items:end;justify-content:space-between;gap:1rem}.route-heading h2{margin:.25rem 0;font-family:var(--font-display);font-size:clamp(1.5rem,3vw,2.2rem)}.route-heading p:last-child{color:var(--color-ink-muted)}.heading-actions{display:flex;align-items:center;gap:.75rem}.scope-card{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;align-items:end;gap:1rem;padding:1rem}.run-progress{display:grid;grid-template-columns:minmax(0,1fr) minmax(10rem,.5fr) auto;align-items:center;gap:1rem;padding:1rem}.run-progress p{margin:0}.run-progress small{display:block;color:var(--color-ink-muted)}.run-progress progress{width:100%;accent-color:var(--color-signal)}.settings-stack{display:grid;gap:1rem}.settings-status-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.status-card{padding:1.15rem}.status-card h3,.status-card p{margin:.2rem 0}.status-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.75rem 0}.status-row strong,.status-row small{display:block}.status-row small{color:var(--color-ink-muted)}.intelligence-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(18rem,.8fr);gap:1rem}.recommendations,.profile-card,.generated-card,.privacy-card{padding:1.15rem}.recommendations>header,.privacy-card>header{display:flex;align-items:center;justify-content:space-between}.recommendations h3,.profile-card h3,.generated-card h3,.privacy-card h3{margin:.2rem 0 1rem}.recommendation-list{display:grid;margin:0;padding:0;list-style:none}.recommendation-list>li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.85rem;align-items:center;border-top:1px solid var(--color-edge);padding:.9rem 0}.track-copy small,summary{color:var(--color-ink-muted);font-size:.75rem}.track-copy details{margin-top:.35rem}.track-copy ul{margin:.4rem 0 0;padding-left:1.1rem;color:var(--color-ink-muted);font-size:.78rem}.side-stack{display:grid;align-content:start;gap:1rem}.profile-card label,.generated-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.7rem 0}.profile-card meter{width:55%;accent-color:var(--color-signal)}.generated-row span:first-child strong,.generated-row span:first-child small{display:block}.generated-row small{color:var(--color-ink-muted)}.generate-form{display:grid;gap:.75rem;margin-top:1rem}.privacy-card form{display:grid;grid-template-columns:minmax(14rem,.6fr) 1fr 1fr;gap:1rem}.toggle-line{display:flex;gap:.75rem}.toggle-line span>*,fieldset label span>*{display:block}.toggle-line small,fieldset small{color:var(--color-ink-muted)}fieldset{display:grid;align-content:start;gap:.55rem;border:0;margin:0;padding:0}fieldset legend{margin-bottom:.55rem;font-weight:750}fieldset label{display:flex;gap:.5rem}.privacy-card footer{grid-column:1/-1;display:flex;justify-content:space-between;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}
+  @media(max-width:900px){.scope-card{grid-template-columns:1fr 1fr}.run-progress{grid-template-columns:1fr}.settings-status-grid,.intelligence-grid{grid-template-columns:1fr}.privacy-card form{grid-template-columns:1fr 1fr}}
   @media(max-width:620px){.route-heading{align-items:stretch;flex-direction:column}.scope-card,.privacy-card form,.run-progress{grid-template-columns:1fr}.recommendation-list>li{grid-template-columns:auto minmax(0,1fr)}.track-actions{grid-column:2;flex-wrap:wrap}.privacy-card footer{grid-column:auto;flex-direction:column-reverse}.privacy-card footer>*{width:100%}}
 </style>
