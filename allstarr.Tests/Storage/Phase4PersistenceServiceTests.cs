@@ -152,6 +152,49 @@ public sealed class Phase4PersistenceServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Concurrent_same_revision_link_updates_allow_one_winner()
+    {
+        var context = Context(_userA, "principal-a");
+        var link = await _playlists.CreateLinkAsync(context, Link());
+        var firstUpdate = new PlaylistLinkUpdate(
+            link.Revision, PlaylistLinkMode.Virtual, link.MaterializationMode,
+            "rules-first", "policy-first", null, null, false, true, true, true, true);
+        var secondUpdate = firstUpdate with
+        {
+            RuleVersion = "rules-second",
+            PolicyVersion = "policy-second"
+        };
+
+        async Task<(PlaylistLinkRecord? Value, Exception? Error)> ObserveAsync(
+            Task<PlaylistLinkRecord> pending)
+        {
+            try
+            {
+                return (await pending, null);
+            }
+            catch (Exception exception)
+            {
+                return (null, exception);
+            }
+        }
+
+        var outcomes = await Task.WhenAll(
+            ObserveAsync(_playlists.UpdateLinkAsync(context, link.Id, firstUpdate)),
+            ObserveAsync(_playlists.UpdateLinkAsync(context, link.Id, secondUpdate)));
+
+        var winner = Assert.Single(outcomes, item => item.Value != null).Value!;
+        var loser = Assert.Single(outcomes, item => item.Error != null).Error!;
+        Assert.IsType<DbUpdateConcurrencyException>(loser);
+        Assert.Equal(link.Revision + 1, winner.Revision);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var persisted = await db.PlaylistLinks.AsNoTracking().SingleAsync(item => item.Id == link.Id);
+        Assert.Equal(winner.Revision, persisted.Revision);
+        Assert.Equal(winner.RuleVersion, persisted.RuleVersion);
+        Assert.Equal(winner.PolicyVersion, persisted.PolicyVersion);
+    }
+
+    [Fact]
     public async Task ListLinks_WithoutLibraryFilter_RemainsTenantAndOwnerScoped()
     {
         var owned = await _playlists.CreateLinkAsync(Context(_userA, "principal-a"), Link());

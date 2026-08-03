@@ -279,7 +279,7 @@ public sealed class PlaylistVirtualizationService(
         var providerId = sourceProviderId.Trim().ToLowerInvariant();
         var playlistId = sourcePlaylistId.Trim();
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var linkId = await db.PlaylistLinks.AsNoTracking()
+        var linkIds = await db.PlaylistLinks.AsNoTracking()
             .Where(item =>
                 item.TenantId == actor.TenantId &&
                 item.OwnerUserId == actor.EffectiveUserId &&
@@ -296,11 +296,12 @@ public sealed class PlaylistVirtualizationService(
                 (string.IsNullOrEmpty(context.LibraryScopeId) ||
                  item.LibraryScopeId == context.LibraryScopeId))
             .OrderBy(item => item.CreatedAt)
-            .Select(item => (Guid?)item.Id)
-            .FirstOrDefaultAsync(cancellationToken);
-        return linkId == null
+            .Take(2)
+            .Select(item => item.Id)
+            .ToArrayAsync(cancellationToken);
+        return linkIds.Length != 1
             ? null
-            : await ReadAsync(context, CreateProtocolId(linkId.Value), cancellationToken);
+            : await ReadAsync(context, CreateProtocolId(linkIds[0]), cancellationToken);
     }
 
     public async Task<VirtualPlaylistArtworkSource?> ResolvePublicArtworkSourceAsync(

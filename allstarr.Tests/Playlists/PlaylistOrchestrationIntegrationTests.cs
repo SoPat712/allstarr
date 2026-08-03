@@ -1190,6 +1190,83 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     }
 
     [Fact]
+    public async Task Virtualization_reads_are_scoped_and_source_alias_requires_unambiguous_account()
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot(
+            "revision-virtualization-scope",
+            Entry(0, "entry-virtualization-scope", "source-1", "One"));
+        await _service.RefreshAsync(Context(), _link);
+
+        var virtualization = new PlaylistVirtualizationService(
+            _factory, new DurablePlaylistProjectionReader(_factory));
+        var protocolId = PlaylistVirtualizationService.CreateProtocolId(_link);
+        var visible = await virtualization.ReadAsync(Context(), protocolId);
+        Assert.NotNull(visible);
+        Assert.Single(await virtualization.ListAsync(Context()));
+        Assert.Equal(protocolId,
+            (await virtualization.ReadBySourceAsync(Context(), "fixture", "playlist"))!.ProtocolId);
+
+        foreach (var inaccessible in new[]
+        {
+            Context("other-library"),
+            ScopedContext(_tenant, Guid.CreateVersion7(), "backend"),
+            ScopedContext(_tenant, _user, "other-backend"),
+            ScopedContext(Guid.CreateVersion7(), Guid.CreateVersion7(), "backend")
+        })
+        {
+            Assert.Empty(await virtualization.ListAsync(inaccessible));
+            Assert.Null(await virtualization.ReadAsync(inaccessible, protocolId));
+            Assert.Null(await virtualization.ReadBySourceAsync(inaccessible, "fixture", "playlist"));
+        }
+
+        var ambiguousAccount = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.ProviderAccounts.Add(new ProviderAccountRecord
+            {
+                Id = ambiguousAccount,
+                TenantId = _tenant,
+                OwnerUserId = _user,
+                ProviderId = "fixture",
+                DisplayName = "Fixture duplicate",
+                Scope = ProviderAccountScope.User,
+                Enabled = true,
+                CreatedAt = _now,
+                UpdatedAt = _now
+            });
+            db.PlaylistLinks.Add(new PlaylistLinkRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = _tenant,
+                OwnerUserId = _user,
+                ProviderAccountId = ambiguousAccount,
+                LibraryScopeId = "music",
+                SourceProviderId = "fixture",
+                SourcePlaylistId = "playlist",
+                SourcePlaylistIdHash = Hash("playlist"),
+                TargetProtocol = "jellyfin",
+                TargetBackendInstanceId = "backend",
+                Mode = PlaylistLinkMode.Virtual,
+                MaterializationMode = PlaylistMaterializationMode.Reconcile,
+                PreserveManualEntries = true,
+                SyncName = true,
+                SyncDescription = true,
+                SyncArtwork = true,
+                RuleVersion = "rules-v1",
+                PolicyVersion = "policy-v1",
+                CreatedAt = _now.AddMinutes(1),
+                UpdatedAt = _now.AddMinutes(1)
+            });
+            await db.SaveChangesAsync();
+        }
+
+        Assert.Null(await virtualization.ReadBySourceAsync(Context(), "fixture", "playlist"));
+        Assert.Equal(visible!.LinkId,
+            (await virtualization.ReadAsync(Context(), protocolId))!.LinkId);
+    }
+
+    [Fact]
     public async Task Durable_projection_keeps_the_published_generation_until_the_next_publish()
     {
         _source.Snapshot = Snapshot(
@@ -1517,6 +1594,9 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
 
     private ProtocolExecutionContext Context(string libraryScopeId = "music") => new(ProtocolKind.Jellyfin, "backend", "principal",
         new AllstarrPrincipal(_tenant, _user, "jellyfin", "backend", "principal", "Owner", false),
+        "correlation", _now.AddMinutes(5), default, libraryScopeId: libraryScopeId);
+    private ProtocolExecutionContext ScopedContext(Guid tenant, Guid user, string backend, string libraryScopeId = "music") => new(ProtocolKind.Jellyfin, backend, "principal",
+        new AllstarrPrincipal(tenant, user, "jellyfin", backend, "principal", "Owner", false),
         "correlation", _now.AddMinutes(5), default, libraryScopeId: libraryScopeId);
     private CollectedPlaylistSourceSnapshot Snapshot(string revision, params CollectedPlaylistSourceEntry[] entries) =>
         new("fixture", _account, Hash("playlist"), revision, $"etag-{revision}", "Provider Mix", "Description",
