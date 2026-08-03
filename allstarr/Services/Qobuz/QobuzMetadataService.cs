@@ -306,6 +306,7 @@ public class QobuzMetadataService : TrackParserBase, IConcreteMetadataService
         try
         {
             var albums = new List<Album>();
+            var seenAlbumIds = new HashSet<string>(StringComparer.Ordinal);
             var appId = await _bundleService.GetAppIdAsync();
             int offset = 0;
             const int limit = 500;
@@ -332,16 +333,22 @@ public class QobuzMetadataService : TrackParserBase, IConcreteMetadataService
 
                 foreach (var album in itemsArray)
                 {
-                    albums.Add(ParseQobuzAlbum(album));
+                    var parsed = ParseQobuzAlbum(album);
+                    if (seenAlbumIds.Add(parsed.ExternalId ?? parsed.Id)) albums.Add(parsed);
                 }
 
-                // If we got less than the limit, we've reached the end
-                if (itemsArray.Count < limit) break;
-
-                offset += limit;
+                offset += itemsArray.Count;
+                var total = albumsData.TryGetProperty("total", out var totalElement) && totalElement.TryGetInt32(out var value)
+                    ? value
+                    : (int?)null;
+                if (total.HasValue ? offset >= total : itemsArray.Count < limit) break;
             }
 
             return albums;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -352,10 +359,81 @@ public class QobuzMetadataService : TrackParserBase, IConcreteMetadataService
 
     public async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
-        // Qobuz doesn't have a dedicated "artist top tracks" endpoint
-        // Return empty list - clients will need to browse albums instead
         if (externalProvider != "qobuz") return new List<Song>();
-        return new List<Song>();
+
+        try
+        {
+            var albums = await GetArtistAlbumsAsync(externalProvider, externalId, cancellationToken);
+            var appId = await _bundleService.GetAppIdAsync();
+            var songs = new List<Song>();
+            var seenTrackIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var album in albums)
+            {
+                if (string.IsNullOrWhiteSpace(album.ExternalId)) continue;
+                foreach (var song in await GetAlbumTracksAsync(album, appId, cancellationToken))
+                    if (seenTrackIds.Add(song.ExternalId ?? song.Id)) songs.Add(song);
+            }
+            return songs;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get artist tracks for {ExternalId}", externalId);
+            return new List<Song>();
+        }
+    }
+
+    private async Task<List<Song>> GetAlbumTracksAsync(
+        Album listedAlbum,
+        string appId,
+        CancellationToken cancellationToken)
+    {
+        var songs = new List<Song>();
+        var offset = 0;
+        const int limit = 500;
+        while (true)
+        {
+            var url = $"{BaseUrl}album/get?album_id={Uri.EscapeDataString(listedAlbum.ExternalId!)}&app_id={appId}&limit={limit}&offset={offset}&extra=tracks";
+            using var response = await GetWithAuthAsync(url, cancellationToken);
+            if (!response.IsSuccessStatusCode) break;
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            using var result = JsonDocument.Parse(json);
+            var root = result.RootElement;
+            if (root.TryGetProperty("error", out _) ||
+                !root.TryGetProperty("tracks", out var tracks) ||
+                !tracks.TryGetProperty("items", out var items)) break;
+
+            var album = ParseQobuzAlbum(root);
+            var largeArtwork = GetLargeCoverArtUrl(root);
+            var itemsArray = items.EnumerateArray().ToList();
+            if (itemsArray.Count == 0) break;
+            foreach (var track in itemsArray)
+            {
+                var song = ParseQobuzTrack(track);
+                song.Album = album.Title;
+                song.AlbumId = album.Id;
+                song.AlbumArtist = album.Artist;
+                song.CoverArtUrl ??= album.CoverArtUrl;
+                song.CoverArtUrlLarge ??= largeArtwork;
+                if (string.IsNullOrWhiteSpace(song.Artist)) song.Artist = album.Artist;
+                song.ArtistId ??= album.ArtistId;
+                songs.Add(song);
+            }
+
+            offset += itemsArray.Count;
+            var total = tracks.TryGetProperty("total", out var totalElement) && totalElement.TryGetInt32(out var value)
+                ? value
+                : album.SongCount;
+            if (total.HasValue ? offset >= total : itemsArray.Count < limit) break;
+        }
+        return songs
+            .OrderBy(song => song.DiscNumber ?? 1)
+            .ThenBy(song => song.Track ?? int.MaxValue)
+            .ToList();
     }
 
     public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)

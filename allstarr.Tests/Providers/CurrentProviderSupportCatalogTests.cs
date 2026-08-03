@@ -33,6 +33,7 @@ public sealed class CurrentProviderSupportCatalogTests
         AssertState("apple-musickit", "metadata", CurrentProviderSupportCatalog.Supported);
         AssertState("spotify", "playlist", CurrentProviderSupportCatalog.Supported);
         AssertState("spotify", "metadata", CurrentProviderSupportCatalog.Unavailable);
+        AssertState("qobuz", "metadata", CurrentProviderSupportCatalog.Supported);
         AssertState("musicbrainz", "metadata", CurrentProviderSupportCatalog.Unavailable);
         AssertState("musicbrainz", "recommendation", CurrentProviderSupportCatalog.Supported);
         AssertState("lastfm", "scrobbling", CurrentProviderSupportCatalog.Supported);

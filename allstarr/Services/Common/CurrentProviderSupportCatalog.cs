@@ -60,7 +60,7 @@ public static class CurrentProviderSupportCatalog
             "Qobuz",
             "mixed",
             "A user token and user ID belong to each managed account used for download work.",
-            Capability("metadata", Partial, "Catalog and playlist reads exist; artist-track coverage is incomplete.", "QobuzMetadataServiceTests"),
+            Capability("metadata", Supported, "Catalog song, album, artist, playlist, and paged artist-track reads.", "QobuzMetadataServiceTests"),
             Capability("streaming", Partial, "Download-backed playback; no typed range lease.", "QobuzDownloadServiceTests"),
             Capability("download", Partial, "Track download exists; progress, cancellation, and signed-URL failure contracts are incomplete.", "QobuzDownloadServiceTests"),
             Capability("playlist", Partial, "Read/discovery only.", "QobuzMetadataServiceTests"),

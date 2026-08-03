@@ -659,4 +659,86 @@ public class QobuzMetadataServiceTests
     }
 
     #endregion
+
+    #region GetArtistTracksAsync Tests
+
+    [Fact]
+    public async Task GetArtistTracksAsync_PagesAlbumsAndTracksWithoutDuplicates()
+    {
+        var requests = new List<string>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            var path = request.RequestUri!.PathAndQuery;
+            requests.Add(path);
+            var json = path switch
+            {
+                _ when path.Contains("artist/get", StringComparison.Ordinal) && path.Contains("offset=0", StringComparison.Ordinal) => """
+                    {"albums":{"total":3,"items":[
+                      {"id":"alpha","title":"First Album","tracks_count":4,"artist":{"id":101,"name":"The Artist"},"image":{"thumbnail":"https://img/alpha-small.jpg","large":"https://img/alpha_600.jpg"}},
+                      {"id":"alpha","title":"First Album","tracks_count":4,"artist":{"id":101,"name":"The Artist"}}
+                    ]}}
+                    """,
+                _ when path.Contains("artist/get", StringComparison.Ordinal) => """
+                    {"albums":{"total":3,"items":[
+                      {"id":"beta","title":"Second Album","tracks_count":1,"artist":{"id":101,"name":"The Artist"},"image":{"thumbnail":"https://img/beta-small.jpg","large":"https://img/beta_600.jpg"}}
+                    ]}}
+                    """,
+                _ when path.Contains("album_id=alpha", StringComparison.Ordinal) && path.Contains("offset=0", StringComparison.Ordinal) => """
+                    {"id":"alpha","title":"First Album","tracks_count":4,"artist":{"id":101,"name":"The Artist"},"image":{"thumbnail":"https://img/alpha-small.jpg","large":"https://img/alpha_600.jpg"},"tracks":{"total":4,"items":[
+                      {"id":2,"title":"Second","duration":202,"track_number":2,"media_number":1},
+                      {"id":1,"title":"First","duration":201,"track_number":1,"media_number":1,"performer":{"id":101,"name":"The Artist"}}
+                    ]}}
+                    """,
+                _ when path.Contains("album_id=alpha", StringComparison.Ordinal) => """
+                    {"id":"alpha","title":"First Album","tracks_count":4,"artist":{"id":101,"name":"The Artist"},"image":{"thumbnail":"https://img/alpha-small.jpg","large":"https://img/alpha_600.jpg"},"tracks":{"total":4,"items":[
+                      {"id":3,"title":"Third","duration":203,"track_number":1,"media_number":2,"performer":{"id":101,"name":"The Artist"}},
+                      {"id":1,"title":"First duplicate","duration":201,"track_number":1,"media_number":1,"performer":{"id":101,"name":"The Artist"}}
+                    ]}}
+                    """,
+                _ when path.Contains("album_id=beta", StringComparison.Ordinal) => """
+                    {"id":"beta","title":"Second Album","tracks_count":1,"artist":{"id":101,"name":"The Artist"},"image":{"thumbnail":"https://img/beta-small.jpg","large":"https://img/beta_600.jpg"},"tracks":{"total":1,"items":[
+                      {"id":4,"title":"Fourth","duration":204,"track_number":1,"media_number":1,"performer":{"id":101,"name":"The Artist"}}
+                    ]}}
+                    """,
+                _ => throw new InvalidOperationException($"Unexpected Qobuz request: {path}")
+            };
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) };
+        });
+        var clientFactory = new Mock<IHttpClientFactory>();
+        clientFactory.Setup(factory => factory.CreateClient(It.IsAny<string>()))
+            .Returns(new HttpClient(handler));
+        var service = new QobuzMetadataService(
+            clientFactory.Object,
+            Options.Create(new SubsonicSettings()),
+            Options.Create(new QobuzSettings()),
+            _bundleServiceMock.Object,
+            _loggerMock.Object);
+
+        var result = await service.GetArtistTracksAsync("qobuz", "101");
+
+        Assert.Equal(["First", "Second", "Third", "Fourth"], result.Select(song => song.Title));
+        Assert.Equal([201, 202, 203, 204], result.Select(song => song.Duration));
+        Assert.Equal(["First Album", "First Album", "First Album", "Second Album"], result.Select(song => song.Album));
+        Assert.Equal([1, 1, 2, 1], result.Select(song => song.DiscNumber));
+        Assert.All(result, song =>
+        {
+            Assert.Equal("The Artist", song.Artist);
+            Assert.Equal("The Artist", song.AlbumArtist);
+            Assert.Equal("ext-qobuz-artist-101", song.ArtistId);
+            Assert.Equal("qobuz", song.ExternalProvider);
+            Assert.StartsWith("https://img/", song.CoverArtUrl);
+            Assert.EndsWith("_org.jpg", song.CoverArtUrlLarge);
+        });
+        Assert.Contains(requests, path => path.Contains("artist/get", StringComparison.Ordinal) && path.Contains("offset=2", StringComparison.Ordinal));
+        Assert.Contains(requests, path => path.Contains("album_id=alpha", StringComparison.Ordinal) && path.Contains("offset=2", StringComparison.Ordinal));
+        Assert.Equal(2, requests.Count(path => path.Contains("album_id=alpha", StringComparison.Ordinal)));
+    }
+
+    private sealed class StubHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(handler(request));
+    }
+
+    #endregion
 }
