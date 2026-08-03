@@ -169,21 +169,11 @@ public sealed class ProtocolProviderGateway(
             }
         }
 
-        // ConfiguredOnly built-ins remain compatibility adapters until their durable-account
-        // implementations expose the typed contract. Merge them without allowing them to
-        // overwrite a routed result for the same provider-native identity.
-        var legacy = await legacyMetadata.SearchAllAsync(
-            query,
-            songLimit,
-            albumLimit,
-            artistLimit,
-            protocol.CancellationToken);
-        var allowedCompatibilityProviders = await ResolveAllowedCompatibilityProvidersAsync(protocol, actor);
         return new SearchResult
         {
-            Songs = Merge(routed.Songs, legacy.Songs.Where(item => Allowed(item.ExternalProvider, allowedCompatibilityProviders)), songLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider),
-            Albums = Merge(routed.Albums, legacy.Albums.Where(item => Allowed(item.ExternalProvider, allowedCompatibilityProviders)), albumLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider),
-            Artists = Merge(routed.Artists, legacy.Artists.Where(item => Allowed(item.ExternalProvider, allowedCompatibilityProviders)), artistLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider)
+            Songs = Merge(routed.Songs, [], songLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider),
+            Albums = Merge(routed.Albums, [], albumLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider),
+            Artists = Merge(routed.Artists, [], artistLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider)
         };
     }
 
@@ -253,16 +243,9 @@ public sealed class ProtocolProviderGateway(
             .Select(Map)
             .Where(item => providerOrder.Contains(
                 NormalizeProvider(item.ExternalProvider), StringComparer.Ordinal));
-        var legacy = await legacyMetadata.SearchPlayableSongsAsync(
-            query, limit, protocol.CancellationToken);
-        var allowedCompatibilityProviders = await ResolveAllowedCompatibilityProvidersAsync(
-            protocol, actor);
         return Merge(
             routed,
-            legacy.Where(item =>
-                Allowed(item.ExternalProvider, allowedCompatibilityProviders) &&
-                providerOrder.Contains(
-                    NormalizeProvider(item.ExternalProvider), StringComparer.Ordinal)),
+            [],
             limit,
             item => Key(item.ExternalProvider, item.ExternalId, item.Id),
             item => item.ExternalProvider,

@@ -66,14 +66,14 @@ public sealed class ProtocolProviderGatewayContractTests
     }
 
     [Fact]
-    public void CompatibilityMetadataIsFilteredByExactAccountResolution()
+    public void PlaylistCompatibilityIsFilteredByExactAccountResolution()
     {
         var source = File.ReadAllText(Path.Combine(
             RepositoryRoot(), "allstarr", "Core", "Protocols", "ProtocolProviderGateway.cs"));
 
         Assert.Contains("ResolveAllowedCompatibilityProvidersAsync", source, StringComparison.Ordinal);
         Assert.Contains("accounts.ResolveAsync", source, StringComparison.Ordinal);
-        Assert.Contains("legacy.Songs.Where(item => Allowed", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("legacy.Songs.Where(item => Allowed", source, StringComparison.Ordinal);
         Assert.Contains("var routedProviderId = NormalizeProvider(providerId)", source, StringComparison.Ordinal);
         Assert.Contains("RequireCompatibilityProviderAsync(protocol, routedProviderId)", source, StringComparison.Ordinal);
         Assert.Contains("NormalizeProvider(item).Equals(normalized", source, StringComparison.Ordinal);
