@@ -204,6 +204,7 @@ public sealed class RecommendationSourceAdapterTests
             BackendIdentities = new Dictionary<string, RecommendationTrackIdentity>(StringComparer.Ordinal)
             {
                 ["audio-333"] = new("audiomuse-ai", Title: "Future Song", Artist: "Future Artist", BackendItemId: "audio-333"),
+                ["seed"] = new("audiomuse-ai", Title: "Seed", Artist: "Artist", BackendItemId: "seed"),
                 ["audio-start"] = new("audiomuse-ai", Title: "Start", Artist: "Artist", BackendItemId: "audio-start"),
                 ["audio-bridge"] = new("audiomuse-ai", Title: "Bridge", Artist: "Artist", BackendItemId: "audio-bridge"),
                 ["audio-end"] = new("audiomuse-ai", Title: "End", Artist: "Artist", BackendItemId: "audio-end")
@@ -224,7 +225,7 @@ public sealed class RecommendationSourceAdapterTests
         Assert.Equal("audio-333", item.Identity!.BackendItemId);
         Assert.NotNull(item.ProviderAccountId);
         Assert.Equal("account:1", item.SourceRevision);
-        Assert.Equal(["backend:seed"], capability.Seeds);
+        Assert.Equal(["seed"], capability.Seeds);
         Assert.Equal(["audio-start", "audio-bridge", "audio-end"],
             (await configured.FindPathAsync(Query().Scope, "audio-start", "audio-end", 10, default))
             .Tracks.Select(value => value.TrackKey));
@@ -235,6 +236,10 @@ public sealed class RecommendationSourceAdapterTests
         Assert.Equal("audio-333", Assert.Single(map.Items).Identity.BackendItemId);
         Assert.Equal("next", map.NextCursor);
         Assert.Equal(Query().Scope, catalog.LastResolvedScope);
+        var callsBeforeRejectedSeed = capability.CallCount;
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => configured.BlendAsync(
+            Query().Scope, ["other-user-track"], [], 10, default));
+        Assert.Equal(callsBeforeRejectedSeed, capability.CallCount);
     }
 
     [Fact]
@@ -294,6 +299,14 @@ public sealed class RecommendationSourceAdapterTests
         public Task<AudioMuseMapPage> GetMapAsync(IntelligenceScope scope, ProviderPageRequest page, CancellationToken token) => throw new NotSupportedException();
         public Task<IReadOnlyList<RecommendationSourceItem>> FindRelatedAsync(ScopedRecommendationQuery query, CancellationToken token) => Call(query);
         public Task<bool> HasCoverageAsync(IntelligenceScope scope, bool requireMusicBrainz, CancellationToken token) => Task.FromResult(true);
+        public Task<IReadOnlyList<string>> ResolveTrackKeysAsync(
+            IntelligenceScope scope, IReadOnlyList<string> trackKeys, CancellationToken token)
+        {
+            LastResolvedScope = scope;
+            return Task.FromResult<IReadOnlyList<string>>(trackKeys.Select(item =>
+                    item.StartsWith("backend:", StringComparison.Ordinal) ? item[8..] : item)
+                .Where(BackendIdentities.ContainsKey).Distinct(StringComparer.Ordinal).ToArray());
+        }
         public Task<IReadOnlyDictionary<string, RecommendationTrackIdentity>> ResolveBackendItemsAsync(
             IntelligenceScope scope, IReadOnlyList<string> backendItemIds, CancellationToken token)
         {
@@ -319,9 +332,11 @@ public sealed class RecommendationSourceAdapterTests
         public string ProviderId => "audiomuse-ai";
         public ProviderCapabilityKind Capability => ProviderCapabilityKind.Intelligence;
         public IReadOnlyList<string> Seeds { get; private set; } = [];
+        public int CallCount { get; private set; }
         public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> RecommendAsync(
             ProviderExecutionContext context, IReadOnlyList<string> seedTrackIds, int limit)
         {
+            CallCount++;
             Seeds = seedTrackIds;
             return Task.FromResult(ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>.Success(
                 [new("audio-333", "Future Song", "Future Artist", .8, "Future Album"),
@@ -332,18 +347,27 @@ public sealed class RecommendationSourceAdapterTests
         public Task<ProviderOutcome<ProviderAnalysisProgress>> GetAnalysisProgressAsync(ProviderExecutionContext context, string jobId) => throw new NotSupportedException();
         public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceCluster>>> GetClustersAsync(ProviderExecutionContext context, int limit = 50) => throw new NotSupportedException();
         public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> SearchAsync(ProviderExecutionContext context, string query, bool includeLyrics, int limit) => throw new NotSupportedException();
-        public Task<ProviderOutcome<ProviderIntelligencePath>> FindPathAsync(ProviderExecutionContext context, string startTrackId, string endTrackId, int limit) =>
-            Task.FromResult(ProviderOutcome<ProviderIntelligencePath>.Success(new(
+        public Task<ProviderOutcome<ProviderIntelligencePath>> FindPathAsync(ProviderExecutionContext context, string startTrackId, string endTrackId, int limit)
+        {
+            CallCount++;
+            return Task.FromResult(ProviderOutcome<ProviderIntelligencePath>.Success(new(
                 [new(startTrackId, "Start", "Artist", 1), new("audio-bridge", "Bridge", "Artist", .8),
                  new(endTrackId, "End", "Artist", 1)], .4)));
-        public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> BlendAsync(ProviderExecutionContext context, IReadOnlyList<string> positiveSeedTrackIds, IReadOnlyList<string> negativeSeedTrackIds, int limit) =>
-            Task.FromResult(ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>.Success(
+        }
+        public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> BlendAsync(ProviderExecutionContext context, IReadOnlyList<string> positiveSeedTrackIds, IReadOnlyList<string> negativeSeedTrackIds, int limit)
+        {
+            CallCount++;
+            return Task.FromResult(ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>.Success(
                 [new(positiveSeedTrackIds[0], "Seed", "Artist", 1),
                  new("audio-333", "Future Song", "Future Artist", .8)]));
-        public Task<ProviderOutcome<ProviderIntelligenceMapPage>> GetMapAsync(ProviderExecutionContext context, ProviderPageRequest page) =>
-            Task.FromResult(ProviderOutcome<ProviderIntelligenceMapPage>.Success(new(
+        }
+        public Task<ProviderOutcome<ProviderIntelligenceMapPage>> GetMapAsync(ProviderExecutionContext context, ProviderPageRequest page)
+        {
+            CallCount++;
+            return Task.FromResult(ProviderOutcome<ProviderIntelligenceMapPage>.Success(new(
                 [new("audio-333", "Future Song", "Future Artist", .2, -.3),
                  new("other-user-track", "Private Song", "Private Artist", .4, .5)], "umap", "next")));
+        }
         public Task<ProviderOutcome<bool>> DisconnectAsync(ProviderExecutionContext context) => throw new NotSupportedException();
     }
 

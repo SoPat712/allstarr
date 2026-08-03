@@ -32,10 +32,12 @@ public sealed class AudioMuseRecommendationClient(
     public async Task<IReadOnlyList<RecommendationSourceItem>> RecommendAsync(ScopedRecommendationQuery query, CancellationToken cancellationToken)
     {
         var limit = Math.Min(query.Limit, 200);
+        var seeds = await catalog.ResolveTrackKeysAsync(query.Scope,
+            query.SeedTrackKeys.Take(100).ToArray(), cancellationToken);
+        if (seeds.Count == 0) return [];
         var (capability, context) = await CapabilityAsync(query.Scope, "intelligence-recommend", cancellationToken);
-        var outcome = await capability.RecommendAsync(context, query.SeedTrackKeys, limit);
-        var excluded = query.SeedTrackKeys.Select(LocalRecommendationCatalog.NormalizeTrackKey)
-            .ToHashSet(StringComparer.Ordinal);
+        var outcome = await capability.RecommendAsync(context, seeds, limit);
+        var excluded = seeds.ToHashSet(StringComparer.Ordinal);
         return await MapTracksAsync(query.Scope, context, Require(outcome, cancellationToken), excluded,
             limit, "audiomuse-intelligence",
             "AudioMuse-AI found this song from your selected listening profile.", cancellationToken);
@@ -46,6 +48,9 @@ public sealed class AudioMuseRecommendationClient(
     {
         var start = LocalRecommendationCatalog.NormalizeTrackKey(startTrackId);
         var end = LocalRecommendationCatalog.NormalizeTrackKey(endTrackId);
+        var endpoints = await catalog.ResolveTrackKeysAsync(scope, [start, end], cancellationToken);
+        if (endpoints.Count != 2 || endpoints[0] != start || endpoints[1] != end)
+            throw new UnauthorizedAccessException("A path endpoint is outside the selected library.");
         var (capability, context) = await CapabilityAsync(scope, "intelligence-path", cancellationToken);
         var result = Require(await capability.FindPathAsync(context, start, end, limit), cancellationToken);
         var tracks = await MapTracksAsync(scope, context, result.Tracks,
@@ -64,6 +69,9 @@ public sealed class AudioMuseRecommendationClient(
     {
         var positive = positiveSeedTrackIds.Select(LocalRecommendationCatalog.NormalizeTrackKey).ToArray();
         var negative = negativeSeedTrackIds.Select(LocalRecommendationCatalog.NormalizeTrackKey).ToArray();
+        var accessible = await catalog.ResolveTrackKeysAsync(scope, positive.Concat(negative).ToArray(), cancellationToken);
+        if (accessible.Count != positive.Concat(negative).Distinct(StringComparer.Ordinal).Count())
+            throw new UnauthorizedAccessException("A blend seed is outside the selected library.");
         var (capability, context) = await CapabilityAsync(scope, "intelligence-blend", cancellationToken);
         var result = Require(await capability.BlendAsync(context, positive, negative, limit), cancellationToken);
         var excluded = positive.Concat(negative).ToHashSet(StringComparer.Ordinal);

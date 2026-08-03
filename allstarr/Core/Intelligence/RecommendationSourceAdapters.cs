@@ -68,6 +68,8 @@ public interface ILocalRecommendationCatalog
 {
     Task<bool> HasCoverageAsync(IntelligenceScope scope, bool requireMusicBrainz, CancellationToken cancellationToken);
     Task<IReadOnlyList<RecommendationSourceItem>> FindRelatedAsync(ScopedRecommendationQuery query, CancellationToken cancellationToken);
+    Task<IReadOnlyList<string>> ResolveTrackKeysAsync(IntelligenceScope scope,
+        IReadOnlyList<string> trackKeys, CancellationToken cancellationToken);
     Task<IReadOnlyDictionary<string, RecommendationTrackIdentity>> ResolveBackendItemsAsync(
         IntelligenceScope scope, IReadOnlyList<string> backendItemIds, CancellationToken cancellationToken);
 }

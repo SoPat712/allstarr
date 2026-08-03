@@ -41,6 +41,49 @@ public sealed class LocalRecommendationCatalog(IDbContextFactory<AllstarrDbConte
                 item.Album, item.Id, item.BackendItemId), StringComparer.Ordinal, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<string>> ResolveTrackKeysAsync(IntelligenceScope scope,
+        IReadOnlyList<string> trackKeys, CancellationToken cancellationToken)
+    {
+        IntelligencePolicyService.ValidateScope(scope);
+        ArgumentNullException.ThrowIfNull(trackKeys);
+        if (trackKeys.Count > 100) throw new ArgumentOutOfRangeException(nameof(trackKeys));
+        var keys = trackKeys.Select(item => item?.Trim() ?? "").ToArray();
+        if (keys.Any(item => item.Length is < 1 or > 500 || item.Any(char.IsControl)))
+            throw new ArgumentException("A track key is invalid.", nameof(trackKeys));
+        var libraryIds = keys.Where(item => item.StartsWith("library:", StringComparison.Ordinal))
+            .Select(item => Guid.TryParse(item[8..], out var id) ? id : Guid.Empty).ToArray();
+        if (libraryIds.Contains(Guid.Empty)) throw new ArgumentException("A library track key is invalid.", nameof(trackKeys));
+        var backendIds = keys.Where(item => !item.StartsWith("library:", StringComparison.Ordinal))
+            .Select(NormalizeTrackKey).ToArray();
+        var canonicalIds = backendIds.Select(item => Guid.TryParse(item, out var id) ? id : Guid.Empty)
+            .Where(item => item != Guid.Empty).ToArray();
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        var tracks = await Scoped(db, scope).AsNoTracking().Where(item =>
+                backendIds.Contains(item.BackendItemId) || libraryIds.Contains(item.Id) ||
+                item.CanonicalRecordingId.HasValue && canonicalIds.Contains(item.CanonicalRecordingId.Value))
+            .ToListAsync(cancellationToken);
+        var resolved = new List<string>(keys.Length);
+        foreach (var key in keys)
+        {
+            LibraryTrackRecord? track;
+            if (key.StartsWith("library:", StringComparison.Ordinal))
+                track = tracks.SingleOrDefault(item => item.Id == Guid.Parse(key[8..]));
+            else
+            {
+                var normalized = NormalizeTrackKey(key);
+                track = tracks.SingleOrDefault(item => item.BackendItemId == normalized);
+                if (track == null && Guid.TryParse(normalized, out var canonical))
+                {
+                    var matches = tracks.Where(item => item.CanonicalRecordingId == canonical).Take(2).ToArray();
+                    track = matches.Length == 1 ? matches[0] : null;
+                }
+            }
+            if (track != null && !resolved.Contains(track.BackendItemId, StringComparer.Ordinal))
+                resolved.Add(track.BackendItemId);
+        }
+        return resolved;
+    }
+
     internal static IQueryable<LibraryTrackRecord> Scoped(AllstarrDbContext db, IntelligenceScope scope) => db.LibraryTracks.Where(track =>
         track.TenantId == scope.TenantId && track.OwnerUserId == scope.OwnerUserId && track.Protocol == scope.Protocol &&
         track.BackendInstanceId == scope.BackendInstanceId && track.LibraryScopeId == scope.LibraryScopeId);
