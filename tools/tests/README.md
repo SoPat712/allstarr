@@ -103,3 +103,41 @@ Every run prints a UTC start time and unique user agent. Use those two values
 to inspect only the matching bounded server-log window; never copy tokens,
 authorization headers, signed media URLs, or raw private payloads into a
 saved report. Unset and revoke temporary credentials after the run.
+
+## OpenSubsonic/Navidrome qualification
+
+`live_subsonic_smoke.py` is read-only by default. It checks password and
+token+salt authentication, JSON/XML and GET/form POST variants, inventory,
+independent `search3` windows, dynamically selected artist/album/song details,
+cover art, lyrics, similar/top songs, and a 65,536-byte stream range. It never
+prints or stores credentials or selected media IDs; its JSON report contains
+only redacted status, shape, size, and timing facts.
+
+Run its offline safety checks first:
+
+```bash
+python3 tools/tests/test_live_subsonic_smoke.py
+```
+
+Then supply the endpoint and credentials through inherited secret input. If
+`SUBSONIC_PASSWORD` is absent, the script prompts without echoing it.
+
+```bash
+export SUBSONIC_BASE_URL=http://127.0.0.1:4533
+export SUBSONIC_USERNAME=qualification-user
+read -rs SUBSONIC_PASSWORD
+export SUBSONIC_PASSWORD
+python3 tools/tests/live_subsonic_smoke.py
+unset SUBSONIC_PASSWORD
+```
+
+Set `ALLSTARR_SUBSONIC_BASE_URL` only for a dedicated Allstarr-backed instance;
+the script then compares required response shapes without recording values.
+Playlist writes require both an explicit option and confirmation. The script
+creates one unique playlist, verifies its exact returned ID and name before
+every cleanup attempt, and never deletes by name or search result.
+
+```bash
+SUBSONIC_STATEFUL_CONFIRM=create-and-delete-throwaway-playlist \
+python3 tools/tests/live_subsonic_smoke.py --stateful
+```
