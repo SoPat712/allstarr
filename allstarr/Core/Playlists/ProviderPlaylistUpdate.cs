@@ -238,10 +238,13 @@ public sealed class ProviderPlaylistUpdateService(
                     "Choose a Jellyfin or Subsonic playlist before updating the source playlist.");
 
             account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item =>
-                item.Id == link.ProviderAccountId &&
-                item.ProviderId == link.SourceProviderId &&
-                item.Enabled,
+                item.Id == link.ProviderAccountId,
                 cancellationToken) ?? throw new ProviderPlaylistUpdateException(
+                    "provider-account-unavailable",
+                    "The selected source account is unavailable.",
+                    forbidden: true);
+            if (!MatchesSavedAccount(link, account))
+                throw new ProviderPlaylistUpdateException(
                     "provider-account-unavailable",
                     "The selected source account is unavailable.",
                     forbidden: true);
@@ -411,14 +414,65 @@ public sealed class ProviderPlaylistUpdateService(
                 expectedAccountRevision: account.Revision)],
             new ProviderLibraryContext(link.TenantId, link.LibraryScopeId),
             cancellationToken: cancellationToken));
-        return plan.Candidates.FirstOrDefault() ?? throw new ProviderPlaylistUpdateException(
-            "provider-route-unavailable",
-            "The selected source account cannot update this playlist right now.",
-            retryable: true,
-            forbidden: plan.Decision.Candidates.Any(item =>
-                item.ProviderId == link.SourceProviderId &&
-                item.ReasonCode.Contains("authorized", StringComparison.Ordinal)));
+        var candidate = plan.Candidates.FirstOrDefault();
+        if (candidate == null ||
+            candidate.Provider.Id != link.SourceProviderId ||
+            candidate.Provider.Id != account.ProviderId ||
+            candidate.Descriptor.Capability != ProviderCapabilityKind.Playlist ||
+            candidate.Implementation.Capability != ProviderCapabilityKind.Playlist ||
+            candidate.Implementation.ProviderId != link.SourceProviderId ||
+            candidate.Implementation.ProviderId != account.ProviderId ||
+            candidate.Context.ProviderId != link.SourceProviderId ||
+            candidate.Context.ProviderId != account.ProviderId ||
+            !MatchesRoutedAccount(account, candidate.Context.Account) ||
+            candidate.Context.Library is not { } routedLibrary ||
+            routedLibrary.TenantId != link.TenantId ||
+            routedLibrary.ScopeId != link.LibraryScopeId ||
+            candidate.Context.Actor.TenantId != actor.TenantId ||
+            candidate.Context.Actor.EffectiveUserId != actor.EffectiveUserId)
+            throw new ProviderPlaylistUpdateException(
+                "provider-route-unavailable",
+                "The selected source account cannot update this playlist right now.",
+                retryable: true,
+                forbidden: plan.Decision.Candidates.Any(item =>
+                    item.ProviderId == link.SourceProviderId &&
+                    item.ReasonCode.Contains("authorized", StringComparison.Ordinal)));
+        return candidate;
     }
+
+    private static bool MatchesSavedAccount(
+        PlaylistLinkRecord link,
+        ProviderAccountRecord account) =>
+        account.Enabled && account.ProviderId == link.SourceProviderId &&
+        account.Scope switch
+        {
+            ProviderAccountScope.User =>
+                account.TenantId == link.TenantId &&
+                account.OwnerUserId == link.OwnerUserId &&
+                account.LibraryScopeId == null,
+            ProviderAccountScope.Library =>
+                account.TenantId == link.TenantId &&
+                account.OwnerUserId == null &&
+                account.LibraryScopeId == link.LibraryScopeId,
+            ProviderAccountScope.Global =>
+                account.TenantId == null &&
+                account.OwnerUserId == null &&
+                account.LibraryScopeId == null,
+            _ => false
+        };
+
+    private static bool MatchesRoutedAccount(
+        ProviderAccountRecord account,
+        ProviderAccountContext? routed) =>
+        routed is { Enabled: true } &&
+        routed.AccountId == account.Id &&
+        routed.ProviderId == account.ProviderId &&
+        routed.Scope == account.Scope &&
+        routed.Revision == account.Revision &&
+        routed.TenantId == account.TenantId &&
+        routed.OwnerUserId == account.OwnerUserId &&
+        routed.LibraryScopeId == account.LibraryScopeId &&
+        routed.SecretReferenceId == account.SecretReferenceId;
 
     private async Task<ProviderPlaylistSourceState> ReadSourceAsync(
         ProviderRouteCandidate<IProviderPlaylistCapability> candidate,
