@@ -149,7 +149,7 @@ public sealed class ListeningHistoryImportJobHandler(
     {
         if (!musicBrainz.Enabled) return;
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        var provenance = $"spotify:{payload.ImportId:N}:";
+        var provenance = $"history-import:{payload.ImportId:N}:";
         var candidates = await db.ListeningEvents.AsNoTracking().Where(item =>
                 item.TenantId == payload.Scope.TenantId && item.OwnerUserId == payload.Scope.OwnerUserId &&
                 item.Protocol == payload.Scope.Protocol && item.BackendInstanceId == payload.Scope.BackendInstanceId &&
@@ -268,19 +268,19 @@ public sealed class ListeningHistoryImportJobHandler(
             DurationMilliseconds = libraryTrack?.DurationMilliseconds,
             ClientClass = row.Client,
             SourceKind = "import",
-            ImportProvenance = $"spotify:{payload.ImportId:N}:{row.Sequence}:{row.ReasonCode}:{(row.Offline ? "offline" : "online")}:{(row.PrivateSession ? "private" : "standard")}",
-            TrackReference = libraryTrack == null ? $"spotify:{row.SourceItemKey}" : $"library:{libraryTrack.Id:N}",
+            ImportProvenance = $"history-import:{payload.ImportId:N}:{row.SourceService}:{row.Sequence}:{row.ReasonCode}:{(row.Offline ? "offline" : "online")}:{(row.PrivateSession ? "private" : "standard")}",
+            TrackReference = libraryTrack == null ? $"{row.SourceService}:{row.SourceItemKey}" : $"library:{libraryTrack.Id:N}",
             Title = row.Title,
             Artist = row.Artist,
             Album = row.Album,
-            RecordingMusicBrainzId = libraryTrack?.MusicBrainzRecordingId ?? canonical?.MusicBrainzRecordingId,
+            RecordingMusicBrainzId = libraryTrack?.MusicBrainzRecordingId ?? canonical?.MusicBrainzRecordingId ?? row.RecordingMusicBrainzId,
             Isrc = libraryTrack?.Isrc ?? canonical?.Isrc,
-            MusicBrainzEnrichmentState = enrichWithMusicBrainz && completed && identity == null
+            MusicBrainzEnrichmentState = enrichWithMusicBrainz && completed && canonical == null
                 ? MusicBrainzEnrichmentState.Pending
                 : MusicBrainzEnrichmentState.NotRequested,
-            CanonicalRecordingId = identity?.CanonicalRecordingId,
+            CanonicalRecordingId = canonical?.Id,
             LibraryTrackId = libraryTrack?.Id,
-            ProviderId = "spotify",
+            ProviderId = row.SourceService,
             ProviderAccountId = identity?.ProviderAccountId,
             ProviderTrackIdentityId = identity?.Id,
             ProviderTrackReference = row.ProviderTrackReference,
@@ -351,9 +351,8 @@ public sealed class ListeningHistoryImportJobHandler(
                     item.TenantId == payload.Scope.TenantId && item.OwnerUserId == payload.Scope.OwnerUserId &&
                     occurrenceKeys.Contains(item.OccurrenceKey))
                 .Select(item => item.OccurrenceKey).ToHashSetAsync(cancellationToken);
-            var externalHashes = _rows.Where(row => row.ProviderTrackReference != null)
-                .Select(row => ListeningHistoryImportService.Hash(row.ProviderTrackReference!["spotify:track:".Length..]))
-                .Distinct().ToArray();
+            var externalHashes = _rows.Select(ListeningHistoryImportService.ProviderIdentityHash)
+                .OfType<string>().Distinct().ToArray();
             var identities = externalHashes.Length == 0
                 ? []
                 : await db.ProviderTrackIdentities.AsNoTracking().Where(item =>
@@ -365,18 +364,26 @@ public sealed class ListeningHistoryImportJobHandler(
             var identityByHash = identities.GroupBy(item => item.ExternalIdHash)
                 .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
             var canonicalIds = identities.Select(item => item.CanonicalRecordingId).Distinct().ToArray();
-            var canonicalById = canonicalIds.Length == 0
+            var recordingMbids = _rows.Select(item => item.RecordingMusicBrainzId).OfType<string>().Distinct().ToArray();
+            var canonicals = canonicalIds.Length == 0 && recordingMbids.Length == 0
                 ? []
                 : await db.CanonicalRecordings.AsNoTracking().Where(item =>
-                        item.TenantId == payload.Scope.TenantId && canonicalIds.Contains(item.Id))
-                    .ToDictionaryAsync(item => item.Id, cancellationToken);
-            var libraryTracks = canonicalIds.Length == 0
+                        item.TenantId == payload.Scope.TenantId &&
+                        (canonicalIds.Contains(item.Id) ||
+                         item.MusicBrainzRecordingId != null && recordingMbids.Contains(item.MusicBrainzRecordingId)))
+                    .ToListAsync(cancellationToken);
+            var canonicalById = canonicals.ToDictionary(item => item.Id);
+            var canonicalByMbid = canonicals.Where(item => item.MusicBrainzRecordingId != null)
+                .GroupBy(item => item.MusicBrainzRecordingId!)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+            var resolvedCanonicalIds = canonicals.Select(item => item.Id).ToArray();
+            var libraryTracks = resolvedCanonicalIds.Length == 0
                 ? []
                 : await db.LibraryTracks.AsNoTracking().Where(item =>
                         item.TenantId == payload.Scope.TenantId && item.OwnerUserId == payload.Scope.OwnerUserId &&
                         item.Protocol == payload.Scope.Protocol && item.BackendInstanceId == payload.Scope.BackendInstanceId &&
                         item.LibraryScopeId == payload.Scope.LibraryScopeId &&
-                        item.CanonicalRecordingId != null && canonicalIds.Contains(item.CanonicalRecordingId.Value))
+                        item.CanonicalRecordingId != null && resolvedCanonicalIds.Contains(item.CanonicalRecordingId.Value))
                     .OrderBy(item => item.Id).ToListAsync(cancellationToken);
             var libraryByCanonical = libraryTracks.GroupBy(item => item.CanonicalRecordingId!.Value)
                 .ToDictionary(group => group.Key, group => group.First());
@@ -391,22 +398,24 @@ public sealed class ListeningHistoryImportJobHandler(
                     continue;
                 }
                 ProviderTrackIdentityRecord? identity = null;
-                if (row.ProviderTrackReference != null)
-                {
-                    var externalHash = ListeningHistoryImportService.Hash(row.ProviderTrackReference["spotify:track:".Length..]);
+                var externalHash = ListeningHistoryImportService.ProviderIdentityHash(row);
+                if (externalHash != null)
                     identityByHash.TryGetValue(externalHash, out identity);
-                }
                 LibraryTrackRecord? libraryTrack = null;
                 CanonicalRecordingRecord? canonical = null;
                 if (identity != null)
                 {
-                    libraryByCanonical.TryGetValue(identity.CanonicalRecordingId, out libraryTrack);
                     canonicalById.TryGetValue(identity.CanonicalRecordingId, out canonical);
                 }
+                else if (row.RecordingMusicBrainzId != null)
+                {
+                    canonicalByMbid.TryGetValue(row.RecordingMusicBrainzId, out canonical);
+                }
+                if (canonical != null) libraryByCanonical.TryGetValue(canonical.Id, out libraryTrack);
                 db.ListeningEvents.Add(ListeningHistoryImportJobHandler.CreateEvent(
                     payload, row, occurrenceKey, identity, canonical, libraryTrack, enrichWithMusicBrainz));
                 imported++;
-                if (identity == null) unresolved++; else resolved++;
+                if (canonical == null) unresolved++; else resolved++;
             }
             _nextSequence = _rows.Max(row => row.Sequence);
             import.NextSequence = _nextSequence;

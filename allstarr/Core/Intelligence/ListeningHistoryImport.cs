@@ -11,6 +11,7 @@ public enum ListeningHistoryImportClassification
 
 public sealed record ListeningHistoryImportRow(
     long Sequence,
+    string SourceService,
     string SourceUserKey,
     string SourceItemKey,
     DateTimeOffset StartedAt,
@@ -20,6 +21,7 @@ public sealed record ListeningHistoryImportRow(
     string Artist,
     string? Album,
     string? ProviderTrackReference,
+    string? RecordingMusicBrainzId,
     string? Client,
     string? ReasonStart,
     string? ReasonEnd,
@@ -54,6 +56,7 @@ public sealed record ListeningHistoryImportScanContext(
 public interface IListeningHistoryImporter
 {
     string Format { get; }
+    string Revision { get; }
 
     Task<ListeningHistoryImportScan?> ScanAsync(
         Stream source,
@@ -83,6 +86,12 @@ public sealed class ListeningHistoryImporterRegistry(IEnumerable<IListeningHisto
             "history_import_format_unsupported",
             "The file does not match a supported listening-history format.");
     }
+
+    public string RevisionFor(string format) =>
+        _importers.FirstOrDefault(importer => importer.Format == format)?.Revision ??
+        throw new ListeningHistoryImportException(
+            "history_import_format_unsupported",
+            "The previewed listening-history format is no longer supported.");
 }
 
 public sealed class ListeningHistoryImportException(string code, string message, Exception? inner = null)
@@ -100,6 +109,7 @@ public static class ListeningHistoryImportRegistration
         options.Validate();
         services.AddSingleton(options);
         services.AddSingleton<IListeningHistoryImporter, SpotifyListeningHistoryImporter>();
+        services.AddSingleton<IListeningHistoryImporter, LastFmListeningHistoryImporter>();
         services.AddSingleton<ListeningHistoryImporterRegistry>();
         services.AddSingleton<ListeningHistoryImportArtifactStore>();
         services.AddSingleton<ListeningHistoryImportService>();

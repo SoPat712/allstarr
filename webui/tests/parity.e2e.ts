@@ -729,7 +729,7 @@ for (const viewport of viewports) {
       await page.getByRole("tab", { name: "Listening history" }).click();
       await expect(page.getByRole("heading", { name: "Listening history", level: 3, exact: true })).toBeVisible();
       await expect(page.locator(".history-list").getByText("Moon Song", { exact: true })).toBeVisible();
-      await expect(page.getByRole("heading", { name: "Import Spotify listening history" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Import listening history" })).toBeVisible();
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
@@ -844,7 +844,7 @@ test("Intelligence history imports, corrections, and schedules use the selected 
 
   const preview = page.waitForRequest((request) => request.method() === "POST" &&
     request.url().endsWith("/api/admin/intelligence/history/imports/preview"));
-  await page.getByLabel("Spotify JSON file").setInputFiles({
+  await page.getByLabel("History JSON file").setInputFiles({
     name: "Streaming_History.json", mimeType: "application/json", buffer: Buffer.from("[]"),
   });
   await page.getByRole("button", { name: "Preview import" }).click();

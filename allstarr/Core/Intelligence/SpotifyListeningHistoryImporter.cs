@@ -13,6 +13,7 @@ public sealed class SpotifyListeningHistoryImporter : IListeningHistoryImporter
     private const long MaximumMillisecondsPlayed = 24L * 60 * 60 * 1000;
 
     public string Format => "spotify-extended-streaming-history";
+    public string Revision => ImporterRevision;
 
     public async Task<ListeningHistoryImportScan?> ScanAsync(
         Stream source,
@@ -188,6 +189,7 @@ public sealed class SpotifyListeningHistoryImporter : IListeningHistoryImporter
             : Hash(spotifyUri);
         return new(
             sequence,
+            "spotify",
             sourceUserKey,
             sourceItemKey,
             listenedAt.AddMilliseconds(-milliseconds),
@@ -197,6 +199,7 @@ public sealed class SpotifyListeningHistoryImporter : IListeningHistoryImporter
             artist,
             album,
             spotifyUri,
+            null,
             platform,
             reasonStart,
             reasonEnd,

@@ -316,7 +316,7 @@ public sealed class ListeningHistoryImportService(
                 scan.Latest,
                 scan.ReasonCounts);
             var previewJson = JsonSerializer.Serialize(preview);
-            var revision = Revision(scope, artifact.ContentSha256, previewJson);
+            var revision = Revision(scope, scan.Format, importers.RevisionFor(scan.Format), artifact.ContentSha256, previewJson);
             var expiresAt = previewedAt.AddHours(options.PreviewLifetimeHours);
             await using var db = await factory.CreateDbContextAsync(cancellationToken);
             db.ListeningHistoryImports.Add(new()
@@ -488,7 +488,12 @@ public sealed class ListeningHistoryImportService(
                 resume ? "Only a failed history import can be resumed." : "This history import was already applied or cancelled.");
         if (initial.ExpiresAt <= clock.UtcNow)
             throw new ListeningHistoryImportException("history_import_expired", "This history import preview has expired.");
-        if (initial.PreviewRevision != Revision(scope, initial.ContentSha256, initial.PreviewJson))
+        if (initial.PreviewRevision != Revision(
+                scope,
+                initial.Format,
+                importers.RevisionFor(initial.Format),
+                initial.ContentSha256,
+                initial.PreviewJson))
             throw new ListeningHistoryImportException(
                 "history_import_revision_conflict",
                 "The importer changed after this preview. Preview the file again.");
@@ -536,10 +541,24 @@ public sealed class ListeningHistoryImportService(
     }
 
     internal static string OccurrenceKey(IntelligenceScope scope, ListeningHistoryImportRow row) =>
-        Hash($"{scope.TenantId:N}\u001f{scope.OwnerUserId:N}\u001f{scope.Protocol}\u001f{scope.BackendInstanceId}\u001f{scope.LibraryScopeId}\u001fimport\u001fspotify\u001f{row.SourceUserKey}\u001f{row.ListenedAt.ToUnixTimeMilliseconds()}\u001f{row.SourceItemKey}");
+        Hash($"{scope.TenantId:N}\u001f{scope.OwnerUserId:N}\u001f{scope.Protocol}\u001f{scope.BackendInstanceId}\u001f{scope.LibraryScopeId}\u001fimport\u001f{row.SourceService}\u001f{row.SourceUserKey}\u001f{row.ListenedAt.ToUnixTimeMilliseconds()}\u001f{row.SourceItemKey}");
 
-    private static string Revision(IntelligenceScope scope, string contentSha256, string previewJson) =>
-        Hash($"{SpotifyListeningHistoryImporter.ImporterRevision}\u001f{scope.TenantId:N}\u001f{scope.OwnerUserId:N}\u001f{scope.Protocol}\u001f{scope.BackendInstanceId}\u001f{scope.LibraryScopeId}\u001f{contentSha256}\u001f{previewJson}");
+    internal static string? ProviderIdentityHash(ListeningHistoryImportRow row)
+    {
+        const string spotifyPrefix = "spotify:track:";
+        return row.SourceService == "spotify" &&
+               row.ProviderTrackReference?.StartsWith(spotifyPrefix, StringComparison.Ordinal) == true
+            ? Hash(row.ProviderTrackReference[spotifyPrefix.Length..])
+            : null;
+    }
+
+    private static string Revision(
+        IntelligenceScope scope,
+        string format,
+        string importerRevision,
+        string contentSha256,
+        string previewJson) =>
+        Hash($"{format}\u001f{importerRevision}\u001f{scope.TenantId:N}\u001f{scope.OwnerUserId:N}\u001f{scope.Protocol}\u001f{scope.BackendInstanceId}\u001f{scope.LibraryScopeId}\u001f{contentSha256}\u001f{previewJson}");
 
     internal static string Hash(string value) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
@@ -595,7 +614,7 @@ public sealed class ListeningHistoryImportService(
         IDbContextFactory<AllstarrDbContext> factory,
         IntelligenceScope scope)
     {
-        private readonly List<(string OccurrenceKey, string? ExternalIdHash)> _rows = new(500);
+        private readonly List<(string OccurrenceKey, string? ExternalIdHash, string? RecordingMbid)> _rows = new(500);
         public long DuplicateRows { get; private set; }
         public long NewRows { get; private set; }
         public long ResolvedRows { get; private set; }
@@ -603,8 +622,7 @@ public sealed class ListeningHistoryImportService(
 
         public async ValueTask AddAsync(ListeningHistoryImportRow row, CancellationToken cancellationToken)
         {
-            var externalId = row.ProviderTrackReference?["spotify:track:".Length..];
-            _rows.Add((OccurrenceKey(scope, row), externalId == null ? null : Hash(externalId)));
+            _rows.Add((OccurrenceKey(scope, row), ProviderIdentityHash(row), row.RecordingMusicBrainzId));
             if (_rows.Count == 500) await FlushAsync(cancellationToken);
         }
 
@@ -626,10 +644,21 @@ public sealed class ListeningHistoryImportService(
                         item.ResourceKind == ProviderResourceKind.Track &&
                         item.Scope == ProviderIdentityScope.Catalog && identityHashes.Contains(item.ExternalIdHash))
                     .Select(item => item.ExternalIdHash).ToHashSetAsync(cancellationToken);
+            var recordingMbids = newRows.Select(item => item.RecordingMbid).OfType<string>().Distinct().ToArray();
+            var resolvedMbids = recordingMbids.Length == 0
+                ? []
+                : await db.CanonicalRecordings.AsNoTracking().Where(item =>
+                        item.TenantId == scope.TenantId && item.MusicBrainzRecordingId != null &&
+                        recordingMbids.Contains(item.MusicBrainzRecordingId))
+                    .Select(item => item.MusicBrainzRecordingId!).ToHashSetAsync(cancellationToken);
             DuplicateRows += existing.Count;
             NewRows += newRows.Length;
-            ResolvedRows += newRows.LongCount(item => item.ExternalIdHash != null && resolved.Contains(item.ExternalIdHash));
-            UnresolvedRows += newRows.LongCount(item => item.ExternalIdHash == null || !resolved.Contains(item.ExternalIdHash));
+            ResolvedRows += newRows.LongCount(item =>
+                item.ExternalIdHash != null && resolved.Contains(item.ExternalIdHash) ||
+                item.RecordingMbid != null && resolvedMbids.Contains(item.RecordingMbid));
+            UnresolvedRows += newRows.LongCount(item =>
+                (item.ExternalIdHash == null || !resolved.Contains(item.ExternalIdHash)) &&
+                (item.RecordingMbid == null || !resolvedMbids.Contains(item.RecordingMbid)));
             _rows.Clear();
         }
     }

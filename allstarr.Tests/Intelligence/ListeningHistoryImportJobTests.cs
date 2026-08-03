@@ -17,9 +17,9 @@ public sealed class ListeningHistoryImportJobTests
         var payload = new ListeningHistoryImportJobPayload(importId, scope, new string('a', 64), 1);
         var listenedAt = new DateTimeOffset(2026, 7, 1, 12, 0, 0, TimeSpan.Zero);
         var row = new ListeningHistoryImportRow(
-            7, new string('b', 64), new string('c', 64), listenedAt.AddMinutes(-3), listenedAt,
+            7, "spotify", new string('b', 64), new string('c', 64), listenedAt.AddMinutes(-3), listenedAt,
             180_000, "Song", "Artist", "Album", "spotify:track:1111111111111111111111",
-            "desktop", "trackdone", "trackdone", true, listenedAt.AddHours(-1), true,
+            null, "desktop", "trackdone", "trackdone", true, listenedAt.AddHours(-1), true,
             ListeningHistoryImportClassification.Completed, "track_finished");
         var identity = new ProviderTrackIdentityRecord
         {
@@ -52,6 +52,16 @@ public sealed class ListeningHistoryImportJobTests
             new string('e', 64), null, null, null, enrichWithMusicBrainz: true);
         var unresolved = ListeningHistoryImportJobHandler.CreateEvent(
             payload, row, new string('f', 64), null, null, null, enrichWithMusicBrainz: true);
+        var lastFm = ListeningHistoryImportJobHandler.CreateEvent(
+            payload,
+            row with
+            {
+                SourceService = "lastfm",
+                ProviderTrackReference = null,
+                RecordingMusicBrainzId = canonical.MusicBrainzRecordingId,
+                Client = "Last.fm"
+            },
+            new string('1', 64), null, canonical, null, enrichWithMusicBrainz: true);
 
         Assert.Equal(ListeningEventState.Completed, completed.State);
         Assert.Equal(listenedAt, completed.ListenedAt);
@@ -65,6 +75,12 @@ public sealed class ListeningHistoryImportJobTests
         Assert.Equal("spotify:" + row.SourceItemKey, skipped.TrackReference);
         Assert.DoesNotContain("1111111111111111111111", skipped.TrackReference, StringComparison.Ordinal);
         Assert.Contains("private", completed.ImportProvenance, StringComparison.Ordinal);
+        Assert.Equal("lastfm", lastFm.ProviderId);
+        Assert.Equal("lastfm:" + row.SourceItemKey, lastFm.TrackReference);
+        Assert.Equal(canonical.MusicBrainzRecordingId, lastFm.RecordingMusicBrainzId);
+        Assert.Equal(canonicalId, lastFm.CanonicalRecordingId);
+        Assert.Equal(MusicBrainzEnrichmentState.NotRequested, lastFm.MusicBrainzEnrichmentState);
+        Assert.Contains(":lastfm:", lastFm.ImportProvenance, StringComparison.Ordinal);
     }
 
     [Fact]

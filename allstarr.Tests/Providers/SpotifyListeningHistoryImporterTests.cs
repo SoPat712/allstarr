@@ -69,6 +69,10 @@ public sealed class SpotifyListeningHistoryImporterTests
     public async Task RegistryRejectsUnknownFormatsAndParserEnforcesTheRowLimit()
     {
         var registry = new ListeningHistoryImporterRegistry([new SpotifyListeningHistoryImporter()]);
+        Assert.Equal(SpotifyListeningHistoryImporter.ImporterRevision,
+            registry.RevisionFor("spotify-extended-streaming-history"));
+        var missingRevision = Assert.Throws<ListeningHistoryImportException>(() => registry.RevisionFor("missing"));
+        Assert.Equal("history_import_format_unsupported", missingRevision.Code);
         var unknown = Encoding.UTF8.GetBytes("[{\"foo\":1}]");
         var unsupported = await Assert.ThrowsAsync<ListeningHistoryImportException>(() =>
             registry.ScanAsync(() => new MemoryStream(unknown), new(DateTimeOffset.UtcNow)));
