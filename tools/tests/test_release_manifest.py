@@ -35,7 +35,6 @@ class ReleaseManifestTests(unittest.TestCase):
         expected_digests = {
             "databaseMigrationsSha256",
             "composeFilesSha256",
-            "firstPartyExtensionLocksSha256",
             "appleGatewayLocksSha256",
             "webUiPackageLockSha256",
         }
