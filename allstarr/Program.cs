@@ -439,7 +439,9 @@ builder.Services.AddSingleton<QobuzBundleService>();
 builder.Services.AddSingleton<DeezerMetadataService>();
 builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
     provider.GetRequiredService<DeezerMetadataService>());
-builder.Services.AddSingleton<IConcreteMetadataService, QobuzMetadataService>();
+builder.Services.AddSingleton<QobuzMetadataService>();
+builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
+    provider.GetRequiredService<QobuzMetadataService>());
 builder.Services.AddSingleton<IConcreteMetadataService, AppleMusicMetadataService>();
 builder.Services.AddSingleton<IAppleDownloadEndpointDiscovery, AppleDownloadEndpointDiscovery>();
 builder.Services.AddSingleton<IConcreteMetadataService>(sp =>

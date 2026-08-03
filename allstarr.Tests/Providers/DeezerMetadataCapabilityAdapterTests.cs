@@ -147,6 +147,26 @@ public sealed class DeezerMetadataCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task CancellationSwallowedByConcreteServiceStillReturnsCanceled()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        legacy.Setup(item => item.SearchSongsAsync("query", 1, cancellation.Token))
+            .ReturnsAsync(() =>
+            {
+                cancellation.Cancel();
+                return [];
+            });
+        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+
+        var outcome = await adapter.SearchTracksAsync(
+            Context(cancellation.Token),
+            new ProviderMetadataSearchRequest("query", new ProviderPageRequest(1)));
+
+        Assert.Equal(ProviderErrorKind.Canceled, outcome.Error!.Kind);
+    }
+
+    [Fact]
     public void BuiltInRegistration_IsAtomicAndResolvesTypedImplementation()
     {
         var adapter = new DeezerMetadataCapabilityAdapter(
@@ -253,7 +273,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
         legacy.VerifyAll();
     }
 
-    private static ProviderExecutionContext Context()
+    private static ProviderExecutionContext Context(CancellationToken cancellationToken = default)
     {
         var actor = new ProviderActorContext(
             Guid.CreateVersion7(),
@@ -278,6 +298,6 @@ public sealed class DeezerMetadataCapabilityAdapterTests
             operationId: "metadata-search",
             correlationId: "metadata-search-fixture",
             deadline: DateTimeOffset.UtcNow.AddMinutes(1),
-            cancellationToken: CancellationToken.None);
+            cancellationToken: cancellationToken);
     }
 }

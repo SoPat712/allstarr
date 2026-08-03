@@ -181,7 +181,8 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
 
     public static ProviderRegistration CreateRegistration(
         IProviderDownloadCapability adapter,
-        IProviderStreamingCapability? streaming = null) => new(
+        IProviderStreamingCapability? streaming = null,
+        IProviderMetadataCapability? metadata = null) => new(
         new ProviderDescriptor(
             StableProviderId,
             "Qobuz",
@@ -191,7 +192,24 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
             compatibilityVersion: "qobuz-download-v1",
             capabilities:
             [
-                ConfiguredLane(ProviderCapabilityKind.Metadata, ProviderAccountRequirement.Optional),
+                metadata == null
+                    ? ConfiguredLane(ProviderCapabilityKind.Metadata, ProviderAccountRequirement.Optional)
+                    : new ProviderCapabilityDescriptor(
+                        ProviderCapabilityKind.Metadata,
+                        ProviderCapabilitySupportState.Supported,
+                        ProviderAccountRequirement.Optional,
+                        compatibilityVersion: "1",
+                        hooks:
+                        [
+                            "searchTracks", "getTrack", "lookupByIsrc", "searchAlbums", "getAlbum",
+                            "searchArtists", "getArtist", "getArtistAlbums", "getArtistTracks"
+                        ],
+                        allowedAccountScopes:
+                        [
+                            ProviderAccountScope.Global,
+                            ProviderAccountScope.User,
+                            ProviderAccountScope.Library
+                        ]),
                 streaming == null
                     ? ConfiguredLane(ProviderCapabilityKind.Streaming)
                     : new ProviderCapabilityDescriptor(
@@ -228,7 +246,18 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
                     new Uri("https://play.qobuz.com/")
                 ],
                 cache: true)),
-        streaming == null ? [adapter] : [adapter, streaming]);
+        Implementations(adapter, streaming, metadata));
+
+    private static IProviderCapability[] Implementations(
+        IProviderDownloadCapability download,
+        IProviderStreamingCapability? streaming,
+        IProviderMetadataCapability? metadata)
+    {
+        var values = new List<IProviderCapability> { download };
+        if (streaming != null) values.Add(streaming);
+        if (metadata != null) values.Add(metadata);
+        return values.ToArray();
+    }
 
     private static ProviderCapabilityDescriptor ConfiguredLane(
         ProviderCapabilityKind capability,

@@ -26,6 +26,8 @@ public sealed class BuiltInProviderDescriptorCatalogTests
         var deezerStreaming = Streaming("deezer");
         var qobuzDownload = Download("qobuz");
         var qobuzStreaming = Streaming("qobuz");
+        var qobuzMetadata = new QobuzMetadataCapabilityAdapter(
+            new Mock<IConcreteMetadataService>(MockBehavior.Strict).Object);
         var apple = new AppleMusicKitPlaylistCapabilityAdapter(
             new HttpClient(new Mock<HttpMessageHandler>().Object),
             new Mock<IProviderAccountSecretAccessor>(MockBehavior.Strict).Object);
@@ -51,7 +53,8 @@ public sealed class BuiltInProviderDescriptorCatalogTests
         [
             DeezerMetadataCapabilityAdapter.CreateRegistration(
                 deezer, deezerDownload, deezerStreaming),
-            QobuzDownloadCapabilityAdapter.CreateRegistration(qobuzDownload, qobuzStreaming),
+            QobuzDownloadCapabilityAdapter.CreateRegistration(
+                qobuzDownload, qobuzStreaming, qobuzMetadata),
             AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(apple),
             SpotifyPlaylistCapabilityAdapter.CreateRegistration(spotify, spotifyLyrics),
             AppleDownloadCapabilityAdapter.CreateRegistration(
@@ -77,7 +80,7 @@ public sealed class BuiltInProviderDescriptorCatalogTests
         ];
         Assert.Equal(expected, registry.Providers.Select(item => item.Id));
         Assert.Equal(
-            ["deezer"],
+            ["deezer", "qobuz"],
             registry.FindByCapability(ProviderCapabilityKind.Metadata)
                 .Select(item => item.Id));
         var deezerDescriptor = registry.GetRequired("deezer");
@@ -111,6 +114,8 @@ public sealed class BuiltInProviderDescriptorCatalogTests
             "qobuz", ProviderCapabilityKind.Download));
         Assert.Same(qobuzStreaming, registry.GetRequiredCapability<IProviderStreamingCapability>(
             "qobuz", ProviderCapabilityKind.Streaming));
+        Assert.Same(qobuzMetadata, registry.GetRequiredCapability<IProviderMetadataCapability>(
+            "qobuz", ProviderCapabilityKind.Metadata));
         Assert.Same(appleDownloadStreaming,
             registry.GetRequiredCapability<IProviderStreamingCapability>(
                 "apple-download", ProviderCapabilityKind.Streaming));
