@@ -299,7 +299,11 @@ const responses: Record<string, unknown> = {
   "/api/admin/intelligence/history/activity": {
     period: { from: "2025-12-01T00:00:00Z", to: "2026-01-01T00:00:00Z", timeZoneId: "UTC" },
     currentStreakDays: 3, longestStreakDays: 9,
-    buckets: [{ date: "2025-12-30", count: 4, durationMilliseconds: 720_000 }, { date: "2025-12-31", count: 8, durationMilliseconds: 1_440_000 }],
+    buckets: Array.from({ length: 31 }, (_, index) => ({
+      date: `2025-12-${String(index + 1).padStart(2, "0")}`,
+      count: index + 1,
+      durationMilliseconds: (index + 1) * 180_000,
+    })),
   },
   "/api/admin/intelligence/history/top/artist": {
     kind: "artist", period: {}, items: [{ artist: "The Comets", listenCount: 7, listeningTimeMilliseconds: 1_260_000, lastListenedAt: "2025-12-31T18:00:00Z" }],
@@ -864,6 +868,11 @@ for (const viewport of viewports) {
       await expect(recap).toContainText("Your first recorded listen was");
       await expect(page.locator(".history-list").getByText("Moon Song", { exact: true })).toBeVisible();
       await expect(page.getByRole("heading", { name: "Import listening history" })).toBeVisible();
+      const activityCard = page.locator(".activity-card");
+      await expect(activityCard.getByText(viewport.width <= 620
+        ? "Showing 2025-12-02 through 2025-12-31"
+        : "Showing 2025-12-01 through 2025-12-31", { exact: true })).toBeVisible();
+      await expect(activityCard.locator(".activity-grid span:visible")).toHaveCount(viewport.width <= 620 ? 30 : 31);
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
