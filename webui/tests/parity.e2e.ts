@@ -844,7 +844,7 @@ test("Intelligence history imports, corrections, and schedules use the selected 
 
   const preview = page.waitForRequest((request) => request.method() === "POST" &&
     request.url().endsWith("/api/admin/intelligence/history/imports/preview"));
-  await page.getByLabel("History JSON file").setInputFiles({
+  await page.getByLabel("History export file").setInputFiles({
     name: "Streaming_History.json", mimeType: "application/json", buffer: Buffer.from("[]"),
   });
   await page.getByRole("button", { name: "Preview import" }).click();

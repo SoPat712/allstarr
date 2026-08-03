@@ -265,7 +265,7 @@ public sealed class ListeningHistoryImportJobHandler(
             ListenedAt = completed ? row.ListenedAt : null,
             UpdatedAt = row.ListenedAt,
             PositionTicks = row.MillisecondsPlayed * TimeSpan.TicksPerMillisecond,
-            DurationMilliseconds = libraryTrack?.DurationMilliseconds,
+            DurationMilliseconds = libraryTrack?.DurationMilliseconds ?? row.DurationMilliseconds,
             ClientClass = row.Client,
             SourceKind = "import",
             ImportProvenance = $"history-import:{payload.ImportId:N}:{row.SourceService}:{row.Sequence}:{row.ReasonCode}:{(row.Offline ? "offline" : "online")}:{(row.PrivateSession ? "private" : "standard")}",

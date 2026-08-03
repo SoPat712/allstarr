@@ -283,8 +283,11 @@ public sealed partial class IntelligenceController
         if (request.File == null || request.File.Length is < 1 or > MaximumHistoryImportUploadBytes)
             return BadRequest(new { error = "history_import_file_invalid", message = "Choose a history file up to 64 MB." });
         var contentType = request.File.ContentType?.Trim().ToLowerInvariant();
-        if (contentType is not (null or "" or "application/json" or "text/json" or "application/octet-stream"))
-            return BadRequest(new { error = "history_import_content_type_invalid", message = "Choose a JSON history file." });
+        if (contentType is not (null or "" or "application/json" or "text/json" or "text/plain" or
+            "application/jsonl" or "application/ndjson" or "application/x-ndjson" or
+            "application/zip" or "application/x-zip" or "application/x-zip-compressed" or
+            "application/octet-stream"))
+            return BadRequest(new { error = "history_import_content_type_invalid", message = "Choose a supported history export file." });
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         if (!await OwnsBackend(db, scope, cancellationToken)) return NotFound();
         try

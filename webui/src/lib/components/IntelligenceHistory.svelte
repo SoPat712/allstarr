@@ -317,10 +317,10 @@
   </section>
 
   <section class="panel import-card">
-    <header><div><p class="eyebrow">Bring your history</p><h3>Import listening history</h3><p>Preview a Spotify or Last.fm JSON export before adding anything. Files stay private and expire automatically.</p></div></header>
+    <header><div><p class="eyebrow">Bring your history</p><h3>Import listening history</h3><p>Preview a Spotify, Last.fm, or ListenBrainz export before adding anything. Files stay private and expire automatically.</p></div></header>
     {#if importError}<p class="notice-error" role="alert">{importError}</p>{/if}
     <form onsubmit={previewImport}>
-      <label class="field"><span>History JSON file</span><input type="file" accept="application/json,.json" onchange={(event) => importFile = event.currentTarget.files?.[0] ?? null} required /></label>
+      <label class="field"><span>History export file</span><input type="file" accept="application/json,text/plain,application/zip,.json,.jsonl,.zip" onchange={(event) => importFile = event.currentTarget.files?.[0] ?? null} required /></label>
       <button class="button-secondary" type="submit" disabled={!importFile || Boolean(action)}>{action === "preview-import" ? "Reading file…" : "Preview import"}</button>
     </form>
     {#if historyImport?.preview}

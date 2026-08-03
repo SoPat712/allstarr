@@ -17,6 +17,7 @@ public sealed record ListeningHistoryImportRow(
     DateTimeOffset StartedAt,
     DateTimeOffset ListenedAt,
     long MillisecondsPlayed,
+    long? DurationMilliseconds,
     string Title,
     string Artist,
     string? Album,
@@ -110,6 +111,7 @@ public static class ListeningHistoryImportRegistration
         services.AddSingleton(options);
         services.AddSingleton<IListeningHistoryImporter, SpotifyListeningHistoryImporter>();
         services.AddSingleton<IListeningHistoryImporter, LastFmListeningHistoryImporter>();
+        services.AddSingleton<IListeningHistoryImporter, ListenBrainzListeningHistoryImporter>();
         services.AddSingleton<ListeningHistoryImporterRegistry>();
         services.AddSingleton<ListeningHistoryImportArtifactStore>();
         services.AddSingleton<ListeningHistoryImportService>();

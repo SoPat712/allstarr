@@ -18,7 +18,7 @@ public sealed class ListeningHistoryImportJobTests
         var listenedAt = new DateTimeOffset(2026, 7, 1, 12, 0, 0, TimeSpan.Zero);
         var row = new ListeningHistoryImportRow(
             7, "spotify", new string('b', 64), new string('c', 64), listenedAt.AddMinutes(-3), listenedAt,
-            180_000, "Song", "Artist", "Album", "spotify:track:1111111111111111111111",
+            180_000, null, "Song", "Artist", "Album", "spotify:track:1111111111111111111111",
             null, "desktop", "trackdone", "trackdone", true, listenedAt.AddHours(-1), true,
             ListeningHistoryImportClassification.Completed, "track_finished");
         var identity = new ProviderTrackIdentityRecord
@@ -62,6 +62,17 @@ public sealed class ListeningHistoryImportJobTests
                 Client = "Last.fm"
             },
             new string('1', 64), null, canonical, null, enrichWithMusicBrainz: true);
+        var listenBrainz = ListeningHistoryImportJobHandler.CreateEvent(
+            payload,
+            row with
+            {
+                SourceService = "listenbrainz",
+                ProviderTrackReference = null,
+                RecordingMusicBrainzId = null,
+                DurationMilliseconds = 210_000,
+                Client = "Navidrome"
+            },
+            new string('2', 64), null, null, null, enrichWithMusicBrainz: true);
 
         Assert.Equal(ListeningEventState.Completed, completed.State);
         Assert.Equal(listenedAt, completed.ListenedAt);
@@ -81,6 +92,9 @@ public sealed class ListeningHistoryImportJobTests
         Assert.Equal(canonicalId, lastFm.CanonicalRecordingId);
         Assert.Equal(MusicBrainzEnrichmentState.NotRequested, lastFm.MusicBrainzEnrichmentState);
         Assert.Contains(":lastfm:", lastFm.ImportProvenance, StringComparison.Ordinal);
+        Assert.Equal("listenbrainz", listenBrainz.ProviderId);
+        Assert.Equal(210_000, listenBrainz.DurationMilliseconds);
+        Assert.Equal(MusicBrainzEnrichmentState.Pending, listenBrainz.MusicBrainzEnrichmentState);
     }
 
     [Fact]

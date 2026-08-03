@@ -195,6 +195,7 @@ public sealed class SpotifyListeningHistoryImporter : IListeningHistoryImporter
             listenedAt.AddMilliseconds(-milliseconds),
             listenedAt,
             milliseconds,
+            null,
             title,
             artist,
             album,

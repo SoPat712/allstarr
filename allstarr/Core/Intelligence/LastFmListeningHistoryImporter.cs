@@ -129,6 +129,7 @@ public sealed class LastFmListeningHistoryImporter : IListeningHistoryImporter
             listenedAt,
             listenedAt,
             0,
+            null,
             title,
             artist,
             album,
