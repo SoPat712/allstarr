@@ -27,6 +27,20 @@ public sealed class LocalRecommendationCatalog(IDbContextFactory<AllstarrDbConte
         }).Where(item => item.Signals.Count > 0).OrderByDescending(item => item.Score).ThenBy(item => item.TrackKey, StringComparer.Ordinal).Take(query.Limit).ToArray();
     }
 
+    public async Task<IReadOnlyDictionary<string, RecommendationTrackIdentity>> ResolveBackendItemsAsync(
+        IntelligenceScope scope, IReadOnlyList<string> backendItemIds, CancellationToken cancellationToken)
+    {
+        IntelligencePolicyService.ValidateScope(scope);
+        var ids = backendItemIds.Select(NormalizeTrackKey).Distinct(StringComparer.Ordinal).Take(201).ToArray();
+        if (ids.Length > 200) throw new ArgumentOutOfRangeException(nameof(backendItemIds));
+        if (ids.Length == 0) return new Dictionary<string, RecommendationTrackIdentity>(StringComparer.Ordinal);
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        return await Scoped(db, scope).AsNoTracking().Where(item => ids.Contains(item.BackendItemId))
+            .ToDictionaryAsync(item => item.BackendItemId, item => new RecommendationTrackIdentity(
+                "local", null, item.MusicBrainzRecordingId, item.Isrc, item.Title, item.Artist,
+                item.Album, item.Id, item.BackendItemId), StringComparer.Ordinal, cancellationToken);
+    }
+
     internal static IQueryable<LibraryTrackRecord> Scoped(AllstarrDbContext db, IntelligenceScope scope) => db.LibraryTracks.Where(track =>
         track.TenantId == scope.TenantId && track.OwnerUserId == scope.OwnerUserId && track.Protocol == scope.Protocol &&
         track.BackendInstanceId == scope.BackendInstanceId && track.LibraryScopeId == scope.LibraryScopeId);

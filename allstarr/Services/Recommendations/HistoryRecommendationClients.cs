@@ -12,7 +12,8 @@ namespace allstarr.Services.Recommendations;
 
 public sealed class AudioMuseRecommendationClient(
     IProviderRegistry providers,
-    IScopedRecommendationAccountAccessor accounts) : IAudioMuseRecommendationClient
+    IScopedRecommendationAccountAccessor accounts,
+    ILocalRecommendationCatalog catalog) : IAudioMuseRecommendationClient
 {
     private const string ProviderId = "audiomuse-ai";
     public bool IsAvailable => providers.TryGetCapability<IProviderIntelligenceCapability>(
@@ -30,33 +31,101 @@ public sealed class AudioMuseRecommendationClient(
 
     public async Task<IReadOnlyList<RecommendationSourceItem>> RecommendAsync(ScopedRecommendationQuery query, CancellationToken cancellationToken)
     {
+        var limit = Math.Min(query.Limit, 200);
+        var (capability, context) = await CapabilityAsync(query.Scope, "intelligence-recommend", cancellationToken);
+        var outcome = await capability.RecommendAsync(context, query.SeedTrackKeys, limit);
+        var excluded = query.SeedTrackKeys.Select(LocalRecommendationCatalog.NormalizeTrackKey)
+            .ToHashSet(StringComparer.Ordinal);
+        return await MapTracksAsync(query.Scope, context, Require(outcome, cancellationToken), excluded,
+            limit, "audiomuse-intelligence",
+            "AudioMuse-AI found this song from your selected listening profile.", cancellationToken);
+    }
+
+    public async Task<AudioMusePathResult> FindPathAsync(IntelligenceScope scope, string startTrackId,
+        string endTrackId, int limit, CancellationToken cancellationToken)
+    {
+        var start = LocalRecommendationCatalog.NormalizeTrackKey(startTrackId);
+        var end = LocalRecommendationCatalog.NormalizeTrackKey(endTrackId);
+        var (capability, context) = await CapabilityAsync(scope, "intelligence-path", cancellationToken);
+        var result = Require(await capability.FindPathAsync(context, start, end, limit), cancellationToken);
+        var tracks = await MapTracksAsync(scope, context, result.Tracks,
+            new HashSet<string>(StringComparer.Ordinal), limit, "audiomuse-path",
+            "AudioMuse-AI placed this song in the selected path.", cancellationToken);
+        if (tracks.Count < 2 || tracks[0].Identity?.BackendItemId != start ||
+            tracks[^1].Identity?.BackendItemId != end ||
+            tracks.Select(item => item.Identity!.BackendItemId).Distinct(StringComparer.Ordinal).Count() != tracks.Count)
+            throw new InvalidOperationException("AudioMuse-AI returned an invalid song path.");
+        return new(tracks, result.TotalDistance);
+    }
+
+    public async Task<IReadOnlyList<RecommendationSourceItem>> BlendAsync(IntelligenceScope scope,
+        IReadOnlyList<string> positiveSeedTrackIds, IReadOnlyList<string> negativeSeedTrackIds,
+        int limit, CancellationToken cancellationToken)
+    {
+        var positive = positiveSeedTrackIds.Select(LocalRecommendationCatalog.NormalizeTrackKey).ToArray();
+        var negative = negativeSeedTrackIds.Select(LocalRecommendationCatalog.NormalizeTrackKey).ToArray();
+        var (capability, context) = await CapabilityAsync(scope, "intelligence-blend", cancellationToken);
+        var result = Require(await capability.BlendAsync(context, positive, negative, limit), cancellationToken);
+        var excluded = positive.Concat(negative).ToHashSet(StringComparer.Ordinal);
+        return await MapTracksAsync(scope, context, result, excluded, limit, "audiomuse-blend",
+            "AudioMuse-AI matched your selected song choices.", cancellationToken);
+    }
+
+    public async Task<AudioMuseMapPage> GetMapAsync(IntelligenceScope scope, ProviderPageRequest page,
+        CancellationToken cancellationToken)
+    {
+        var (capability, context) = await CapabilityAsync(scope, "intelligence-map", cancellationToken);
+        var result = Require(await capability.GetMapAsync(context, page), cancellationToken);
+        var local = await catalog.ResolveBackendItemsAsync(scope,
+            result.Items.Select(item => item.TrackId).ToArray(), cancellationToken);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var items = result.Items.Where(item => seen.Add(item.TrackId) && local.ContainsKey(item.TrackId))
+            .Select(item => new AudioMuseMapPoint(local[item.TrackId] with { ProviderId = ProviderId },
+                item.X, item.Y, item.ClusterId)).ToArray();
+        return new(items, result.Projection, result.NextCursor,
+            result.IsPartial || items.Length != result.Items.Count, result.SnapshotVersion);
+    }
+
+    private async Task<(IProviderIntelligenceCapability Capability, ProviderExecutionContext Context)> CapabilityAsync(
+        IntelligenceScope scope, string operation, CancellationToken cancellationToken)
+    {
         if (!providers.TryGetCapability<IProviderIntelligenceCapability>(
                 ProviderId, ProviderCapabilityKind.Intelligence, out var capability))
             throw new NotSupportedException("AudioMuse-AI extension is not installed.");
-        var context = await ContextAsync(query.Scope, "intelligence-recommend", cancellationToken)
+        var context = await ContextAsync(scope, operation, cancellationToken)
             ?? throw new NotSupportedException("AudioMuse-AI has no exact-scope account.");
-        var outcome = await capability!.RecommendAsync(context, query.SeedTrackKeys, query.Limit);
-        if (!outcome.IsSuccess)
+        return (capability!, context);
+    }
+
+    private async Task<IReadOnlyList<RecommendationSourceItem>> MapTracksAsync(
+        IntelligenceScope scope, ProviderExecutionContext context,
+        IReadOnlyList<ProviderIntelligenceTrack> tracks, IReadOnlySet<string> excluded, int limit,
+        string signalCode, string fallbackExplanation, CancellationToken cancellationToken)
+    {
+        var local = await catalog.ResolveBackendItemsAsync(scope,
+            tracks.Select(item => item.TrackId).ToArray(), cancellationToken);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        return tracks.Where(item => !excluded.Contains(item.TrackId) && seen.Add(item.TrackId) &&
+                local.ContainsKey(item.TrackId)).Take(limit)
+            .Select(item => new RecommendationSourceItem(item.TrackId, item.Score,
+                [new(signalCode, item.Score, item.Explanation ?? fallbackExplanation)],
+                local[item.TrackId] with { ProviderId = ProviderId }, context.Account!.AccountId,
+                $"account:{context.Account.Revision}"))
+            .ToArray();
+    }
+
+    private static T Require<T>(ProviderOutcome<T> outcome, CancellationToken cancellationToken)
+    {
+        if (outcome.IsSuccess) return outcome.Value!;
+        throw outcome.Error?.Kind switch
         {
-            switch (outcome.Error?.Kind)
-            {
-                case ProviderErrorKind.AccountNeedsConfiguration:
-                case ProviderErrorKind.NotSupported:
-                case ProviderErrorKind.CapabilityUnavailable:
-                    throw new NotSupportedException();
-                case ProviderErrorKind.Forbidden:
-                    throw new UnauthorizedAccessException();
-                default:
-                    throw new InvalidOperationException("AudioMuse-AI recommendation failed.");
-            }
-        }
-        return outcome.Value!.Select(item => new RecommendationSourceItem(
-            $"provider:{ProviderId}:{item.TrackId}", item.Score,
-            [new("audiomuse-intelligence", item.Score,
-                item.Explanation ?? "AudioMuse-AI identified this track from the scoped listening profile.")],
-            new(ProviderId, Title: item.Title, Artist: item.Artist, Album: item.Album,
-                BackendItemId: item.TrackId), context.Account!.AccountId,
-            $"account:{context.Account.Revision}")).ToArray();
+            ProviderErrorKind.AccountNeedsConfiguration or ProviderErrorKind.NotSupported or
+                ProviderErrorKind.CapabilityUnavailable => new NotSupportedException(),
+            ProviderErrorKind.AccountNeedsReauthentication or ProviderErrorKind.Unauthorized or
+                ProviderErrorKind.Forbidden => new UnauthorizedAccessException(),
+            ProviderErrorKind.Canceled => new OperationCanceledException(cancellationToken),
+            _ => new InvalidOperationException("AudioMuse-AI discovery failed.")
+        };
     }
 
     private async Task<ProviderExecutionContext?> ContextAsync(

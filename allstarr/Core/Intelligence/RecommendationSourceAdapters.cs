@@ -1,3 +1,5 @@
+using allstarr.Core.Capabilities;
+
 namespace allstarr.Core.Intelligence;
 
 public sealed record RecommendationSourceItem(string TrackKey, double Score,
@@ -6,6 +8,23 @@ public sealed record RecommendationSourceItem(string TrackKey, double Score,
 
 public sealed record ScopedRecommendationQuery(IntelligenceScope Scope, ListeningProfile Profile,
     IReadOnlyList<string> SeedTrackKeys, int Limit);
+
+public sealed record AudioMusePathResult(
+    IReadOnlyList<RecommendationSourceItem> Tracks,
+    double TotalDistance);
+
+public sealed record AudioMuseMapPoint(
+    RecommendationTrackIdentity Identity,
+    double X,
+    double Y,
+    string? ClusterId = null);
+
+public sealed record AudioMuseMapPage(
+    IReadOnlyList<AudioMuseMapPoint> Items,
+    string Projection,
+    string? NextCursor = null,
+    bool IsPartial = false,
+    string? SnapshotVersion = null);
 
 public enum ListenBrainzDiscoveryKind
 {
@@ -37,11 +56,20 @@ public interface IAudioMuseRecommendationClient
     bool IsAvailable { get; }
     Task<bool> CheckHealthAsync(IntelligenceScope scope, CancellationToken cancellationToken);
     Task<IReadOnlyList<RecommendationSourceItem>> RecommendAsync(ScopedRecommendationQuery query, CancellationToken cancellationToken);
+    Task<AudioMusePathResult> FindPathAsync(IntelligenceScope scope, string startTrackId,
+        string endTrackId, int limit, CancellationToken cancellationToken);
+    Task<IReadOnlyList<RecommendationSourceItem>> BlendAsync(IntelligenceScope scope,
+        IReadOnlyList<string> positiveSeedTrackIds, IReadOnlyList<string> negativeSeedTrackIds,
+        int limit, CancellationToken cancellationToken);
+    Task<AudioMuseMapPage> GetMapAsync(IntelligenceScope scope, ProviderPageRequest page,
+        CancellationToken cancellationToken);
 }
 public interface ILocalRecommendationCatalog
 {
     Task<bool> HasCoverageAsync(IntelligenceScope scope, bool requireMusicBrainz, CancellationToken cancellationToken);
     Task<IReadOnlyList<RecommendationSourceItem>> FindRelatedAsync(ScopedRecommendationQuery query, CancellationToken cancellationToken);
+    Task<IReadOnlyDictionary<string, RecommendationTrackIdentity>> ResolveBackendItemsAsync(
+        IntelligenceScope scope, IReadOnlyList<string> backendItemIds, CancellationToken cancellationToken);
 }
 
 public abstract class BoundedRecommendationProvider(string id) : IRecommendationProvider, IRecommendationProviderReadiness

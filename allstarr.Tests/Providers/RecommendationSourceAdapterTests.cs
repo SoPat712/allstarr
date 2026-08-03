@@ -199,22 +199,42 @@ public sealed class RecommendationSourceAdapterTests
     public async Task AudioMuseConcreteClientUsesInstalledExtensionCapabilityAndPreservesIdentity()
     {
         var accounts = new SecretAccessor("""{"token":"protected"}""");
-        var unavailable = new AudioMuseRecommendationClient(new ProviderRegistry([]), accounts);
+        var catalog = new FakeClient
+        {
+            BackendIdentities = new Dictionary<string, RecommendationTrackIdentity>(StringComparer.Ordinal)
+            {
+                ["audio-333"] = new("audiomuse-ai", Title: "Future Song", Artist: "Future Artist", BackendItemId: "audio-333"),
+                ["audio-start"] = new("audiomuse-ai", Title: "Start", Artist: "Artist", BackendItemId: "audio-start"),
+                ["audio-bridge"] = new("audiomuse-ai", Title: "Bridge", Artist: "Artist", BackendItemId: "audio-bridge"),
+                ["audio-end"] = new("audiomuse-ai", Title: "End", Artist: "Artist", BackendItemId: "audio-end")
+            }
+        };
+        var unavailable = new AudioMuseRecommendationClient(new ProviderRegistry([]), accounts, catalog);
         Assert.False(unavailable.IsAvailable);
 
         var capability = new IntelligenceCapability();
         var descriptor = new ProviderDescriptor("audiomuse-ai", "AudioMuse-AI", "External intelligence service",
             ProviderOrigin.Extension, "1", "1.0",
             [new(ProviderCapabilityKind.Intelligence, ProviderCapabilitySupportState.Supported,
-                ProviderAccountRequirement.Required, "1.0", ["recommend"], [ProviderAccountScope.User])],
+                ProviderAccountRequirement.Required, "1.0", ["recommend", "findPath", "blend", "getMap"], [ProviderAccountScope.User])],
             new ProviderPermissionDescriptor(), entryPoint: "index.js");
         var configured = new AudioMuseRecommendationClient(
-            new ProviderRegistry([new ProviderRegistration(descriptor, [capability])]), accounts);
+            new ProviderRegistry([new ProviderRegistration(descriptor, [capability])]), accounts, catalog);
         var item = Assert.Single(await configured.RecommendAsync(Query(), default));
         Assert.Equal("audio-333", item.Identity!.BackendItemId);
         Assert.NotNull(item.ProviderAccountId);
         Assert.Equal("account:1", item.SourceRevision);
         Assert.Equal(["backend:seed"], capability.Seeds);
+        Assert.Equal(["audio-start", "audio-bridge", "audio-end"],
+            (await configured.FindPathAsync(Query().Scope, "audio-start", "audio-end", 10, default))
+            .Tracks.Select(value => value.TrackKey));
+        Assert.Equal("audio-333", Assert.Single(await configured.BlendAsync(
+            Query().Scope, ["audio-start"], ["audio-end"], 10, default)).TrackKey);
+        var map = await configured.GetMapAsync(Query().Scope, new ProviderPageRequest(10), default);
+        Assert.True(map.IsPartial);
+        Assert.Equal("audio-333", Assert.Single(map.Items).Identity.BackendItemId);
+        Assert.Equal("next", map.NextCursor);
+        Assert.Equal(Query().Scope, catalog.LastResolvedScope);
     }
 
     [Fact]
@@ -256,6 +276,9 @@ public sealed class RecommendationSourceAdapterTests
         public ListenBrainzDiscoveryKind? LastListenBrainzKind { get; private set; }
         public IReadOnlyList<RecommendationSourceItem> Items { get; set; } = [];
         public Exception? Failure { get; set; }
+        public IReadOnlyDictionary<string, RecommendationTrackIdentity> BackendIdentities { get; set; } =
+            new Dictionary<string, RecommendationTrackIdentity>(StringComparer.Ordinal);
+        public IntelligenceScope? LastResolvedScope { get; private set; }
         private Task<IReadOnlyList<RecommendationSourceItem>> Call(ScopedRecommendationQuery query)
         { Calls++; LastQuery = query; return Failure is null ? Task.FromResult(Items) : Task.FromException<IReadOnlyList<RecommendationSourceItem>>(Failure); }
         public Task<IReadOnlyList<RecommendationSourceItem>> GetInstantMixAsync(ScopedRecommendationQuery query, CancellationToken token) => Call(query);
@@ -266,8 +289,19 @@ public sealed class RecommendationSourceAdapterTests
         { LastListenBrainzKind = kind; return Call(query); }
         public Task<IReadOnlyList<RecommendationSourceItem>> RecommendAsync(ScopedRecommendationQuery query, CancellationToken token) => Call(query);
         public Task<bool> CheckHealthAsync(IntelligenceScope scope, CancellationToken token) => Task.FromResult(IsAvailable);
+        public Task<AudioMusePathResult> FindPathAsync(IntelligenceScope scope, string startTrackId, string endTrackId, int limit, CancellationToken token) => throw new NotSupportedException();
+        public Task<IReadOnlyList<RecommendationSourceItem>> BlendAsync(IntelligenceScope scope, IReadOnlyList<string> positiveSeedTrackIds, IReadOnlyList<string> negativeSeedTrackIds, int limit, CancellationToken token) => throw new NotSupportedException();
+        public Task<AudioMuseMapPage> GetMapAsync(IntelligenceScope scope, ProviderPageRequest page, CancellationToken token) => throw new NotSupportedException();
         public Task<IReadOnlyList<RecommendationSourceItem>> FindRelatedAsync(ScopedRecommendationQuery query, CancellationToken token) => Call(query);
         public Task<bool> HasCoverageAsync(IntelligenceScope scope, bool requireMusicBrainz, CancellationToken token) => Task.FromResult(true);
+        public Task<IReadOnlyDictionary<string, RecommendationTrackIdentity>> ResolveBackendItemsAsync(
+            IntelligenceScope scope, IReadOnlyList<string> backendItemIds, CancellationToken token)
+        {
+            LastResolvedScope = scope;
+            return Task.FromResult<IReadOnlyDictionary<string, RecommendationTrackIdentity>>(backendItemIds
+                .Where(BackendIdentities.ContainsKey).Distinct(StringComparer.Ordinal)
+                .ToDictionary(item => item, item => BackendIdentities[item], StringComparer.Ordinal));
+        }
     }
 
     private sealed class SecretAccessor(string json) : IScopedRecommendationAccountAccessor
@@ -290,15 +324,26 @@ public sealed class RecommendationSourceAdapterTests
         {
             Seeds = seedTrackIds;
             return Task.FromResult(ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>.Success(
-                [new("audio-333", "Future Song", "Future Artist", .8, "Future Album")]));
+                [new("audio-333", "Future Song", "Future Artist", .8, "Future Album"),
+                 new("audio-333", "Duplicate Song", "Duplicate Artist", .6),
+                 new("other-user-track", "Private Song", "Private Artist", .7)]));
         }
         public Task<ProviderOutcome<ProviderAnalysisProgress>> StartAnalysisAsync(ProviderExecutionContext context, bool rebuild = false) => throw new NotSupportedException();
         public Task<ProviderOutcome<ProviderAnalysisProgress>> GetAnalysisProgressAsync(ProviderExecutionContext context, string jobId) => throw new NotSupportedException();
         public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceCluster>>> GetClustersAsync(ProviderExecutionContext context, int limit = 50) => throw new NotSupportedException();
         public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> SearchAsync(ProviderExecutionContext context, string query, bool includeLyrics, int limit) => throw new NotSupportedException();
-        public Task<ProviderOutcome<ProviderIntelligencePath>> FindPathAsync(ProviderExecutionContext context, string startTrackId, string endTrackId, int limit) => throw new NotSupportedException();
-        public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> BlendAsync(ProviderExecutionContext context, IReadOnlyList<string> positiveSeedTrackIds, IReadOnlyList<string> negativeSeedTrackIds, int limit) => throw new NotSupportedException();
-        public Task<ProviderOutcome<ProviderIntelligenceMapPage>> GetMapAsync(ProviderExecutionContext context, ProviderPageRequest page) => throw new NotSupportedException();
+        public Task<ProviderOutcome<ProviderIntelligencePath>> FindPathAsync(ProviderExecutionContext context, string startTrackId, string endTrackId, int limit) =>
+            Task.FromResult(ProviderOutcome<ProviderIntelligencePath>.Success(new(
+                [new(startTrackId, "Start", "Artist", 1), new("audio-bridge", "Bridge", "Artist", .8),
+                 new(endTrackId, "End", "Artist", 1)], .4)));
+        public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> BlendAsync(ProviderExecutionContext context, IReadOnlyList<string> positiveSeedTrackIds, IReadOnlyList<string> negativeSeedTrackIds, int limit) =>
+            Task.FromResult(ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>.Success(
+                [new(positiveSeedTrackIds[0], "Seed", "Artist", 1),
+                 new("audio-333", "Future Song", "Future Artist", .8)]));
+        public Task<ProviderOutcome<ProviderIntelligenceMapPage>> GetMapAsync(ProviderExecutionContext context, ProviderPageRequest page) =>
+            Task.FromResult(ProviderOutcome<ProviderIntelligenceMapPage>.Success(new(
+                [new("audio-333", "Future Song", "Future Artist", .2, -.3),
+                 new("other-user-track", "Private Song", "Private Artist", .4, .5)], "umap", "next")));
         public Task<ProviderOutcome<bool>> DisconnectAsync(ProviderExecutionContext context) => throw new NotSupportedException();
     }
 
