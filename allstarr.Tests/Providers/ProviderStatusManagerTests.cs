@@ -104,8 +104,6 @@ public sealed class ProviderStatusManagerTests
         Assert.Null(status.TestedAt);
         Assert.True(status.CanAttempt);
         Assert.False(status.IsReady);
-        Assert.False(manager.IsProviderHealthy("deezer"));
-        Assert.Empty(manager.GetStatusCache());
         Assert.Equal(0, factory.CreateCount);
     }
 
@@ -214,27 +212,6 @@ public sealed class ProviderStatusManagerTests
         var metadata = manager.GetStatus("deezer", ProviderCapabilities.Metadata);
         Assert.Equal(ProviderHealthState.Unknown, metadata.Health);
         Assert.True(metadata.CanAttempt);
-    }
-
-    [Fact]
-    public async Task CompatibilityCache_ContainsOnlyCompletedCompatibilityProbe()
-    {
-        var manager = CreateManager(
-            new Dictionary<string, string?>(),
-            httpClientFactory: new HandlerHttpClientFactory(
-                new QueuedResponseHandler(Json(
-                    HttpStatusCode.OK,
-                    "{\"results\":{\"USER\":{\"USER_ID\":42}}}"))),
-            deezerSettings: new DeezerSettings { Arl = "configured-arl" });
-
-        Assert.Empty(manager.GetStatusCache());
-
-        Assert.True(await manager.TestProviderConnectionAsync("deezer"));
-
-        var cache = manager.GetStatusCache();
-        var entry = Assert.Contains("deezer", cache);
-        Assert.True(entry.IsHealthy);
-        Assert.NotEqual(default, entry.TestedAt);
     }
 
     [Fact]

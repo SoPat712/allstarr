@@ -490,40 +490,6 @@ public class ProviderStatusManager
         }
     }
 
-    /// <summary>
-    /// Legacy provider-wide adapter. It is now a pure read and returns true only
-    /// when the compatibility capability has actually passed a probe.
-    /// </summary>
-    public bool IsProviderHealthy(string provider)
-    {
-        var normalized = Normalize(provider);
-        var capability = GetCompatibilityCapability(normalized);
-        return capability != null &&
-               GetStatus(normalized, capability).Health == ProviderHealthState.Healthy;
-    }
-
-    /// <summary>
-    /// Legacy manual-test adapter used by the current admin endpoint.
-    /// </summary>
-    public async Task<bool> TestProviderConnectionAsync(
-        string provider,
-        CancellationToken cancellationToken = default)
-    {
-        var normalized = Normalize(provider);
-        var capability = GetCompatibilityCapability(normalized);
-        if (capability == null)
-        {
-            return false;
-        }
-
-        var result = await TestProviderCapabilityAsync(
-            normalized,
-            capability,
-            ProviderRuntimeAccounts.LegacyGlobal,
-            cancellationToken);
-        return result.Health == ProviderHealthState.Healthy;
-    }
-
     public async Task<bool> TestManagedProviderConnectionAsync(
         string provider,
         Guid providerAccountId,
@@ -563,33 +529,6 @@ public class ProviderStatusManager
         }
 
         return attempted && healthy;
-    }
-
-    /// <summary>
-    /// Legacy cache projection. Only completed compatibility probes are included;
-    /// unknown and testing observations have no fabricated test time.
-    /// </summary>
-    public IReadOnlyDictionary<string, (bool IsHealthy, DateTime TestedAt)> GetStatusCache()
-    {
-        var results = new Dictionary<string, (bool IsHealthy, DateTime TestedAt)>(
-            StringComparer.OrdinalIgnoreCase);
-
-        foreach (var provider in new[] { "spotify", "apple-download", "deezer", "qobuz", "squidwtf" })
-        {
-            var capability = GetCompatibilityCapability(provider)!;
-            var status = GetStatus(provider, capability);
-            if (status.TestedAt is not { } testedAt ||
-                status.Health is ProviderHealthState.Unknown or ProviderHealthState.Testing)
-            {
-                continue;
-            }
-
-            results[provider] = (
-                status.Health == ProviderHealthState.Healthy,
-                testedAt.UtcDateTime);
-        }
-
-        return results;
     }
 
     private ProviderRuntimeStatus BuildBaselineStatus(ProviderRuntimeStatusKey key)
@@ -1089,17 +1028,6 @@ public class ProviderStatusManager
 
     private HashSet<string> GetDisabledProviders() =>
         GetProviderSet("MULTI_PROVIDER_DISABLED_PROVIDERS", string.Empty);
-
-    private static string? GetCompatibilityCapability(string provider) => provider switch
-    {
-        "spotify" => ProviderCapabilities.Playlist,
-        "apple-download" => ProviderCapabilities.Download,
-        "deezer" => ProviderCapabilities.Download,
-        "qobuz" => ProviderCapabilities.Download,
-        "squidwtf" => ProviderCapabilities.Metadata,
-        "lastfm" or "listenbrainz" => ProviderCapabilities.Scrobbling,
-        _ => null
-    };
 
     private static bool BaselineReasonTakesPrecedence(ProviderRuntimeStatus baseline) =>
         !baseline.IsSupported ||
