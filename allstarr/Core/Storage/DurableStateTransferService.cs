@@ -26,7 +26,7 @@ public sealed record DurableStateTransferArtifact(
 
 public sealed class DurableStateTransferService
 {
-    private const int CurrentFormatVersion = 3;
+    private const int CurrentFormatVersion = 4;
     private const long MaximumManifestBytes = 64 * 1024;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -1231,15 +1231,25 @@ public sealed class DurableStateTransferService
         var checkpointKeys = new HashSet<(Guid, Guid, string, string)>();
         foreach (var checkpoint in playbackCheckpoints)
         {
-            var lineageValid = signalsByDeliveryKey.TryGetValue(
-                (checkpoint.TenantId, checkpoint.OwnerUserId, checkpoint.SignalKey), out var signal) &&
+            var signalLineage = signalsByDeliveryKey.TryGetValue(
+                    (checkpoint.TenantId, checkpoint.OwnerUserId, checkpoint.SignalKey), out var signal) &&
                 signal.SourceJobId is { } sourceJobId && jobById.TryGetValue(sourceJobId, out var sourceJob) &&
                 sourceJob.TenantId == checkpoint.TenantId && sourceJob.OwnerUserId == checkpoint.OwnerUserId &&
-                sourceJob.LibraryScopeId == signal.LibraryScopeId && sourceJob.Type == "playback.signal";
+                sourceJob.LibraryScopeId == signal.LibraryScopeId && sourceJob.Type is "playback.signal" or "playback.signal.process";
+            var occurrenceLineage = checkpoint.OccurrenceKey != null && occurrenceKeys.Contains(
+                (checkpoint.TenantId, checkpoint.OwnerUserId, checkpoint.OccurrenceKey));
             if (!Owner(checkpoint.TenantId, checkpoint.OwnerUserId) || checkpoint.SignalKey.Length != 64 ||
-                checkpoint.TargetId is not ("lastfm" or "listenbrainz") || checkpoint.CompletedAt == default ||
+                !IsOptionalText(checkpoint.OccurrenceKey, 64) ||
+                checkpoint.OccurrenceKey != null && !IsNormalizedSha256(checkpoint.OccurrenceKey) ||
+                checkpoint.TargetId is not ("lastfm" or "listenbrainz") || checkpoint.UpdatedAt == default ||
+                !Enum.IsDefined(checkpoint.Kind) || !Enum.IsDefined(checkpoint.State) ||
+                !IsOptionalText(checkpoint.ProviderCode, 100) || !IsOptionalText(checkpoint.SafeMessage, 500) ||
+                !IsJsonObject(checkpoint.DetailsJson, 64 * 1024) ||
+                checkpoint.State != ScopedPlaybackScrobbleOutcome.Retrying && checkpoint.RetryAfter.HasValue ||
+                checkpoint.RetryAfter < checkpoint.UpdatedAt ||
+                checkpoint.RequiresReauthentication && checkpoint.State != ScopedPlaybackScrobbleOutcome.PermanentFailure ||
                 !checkpointKeys.Add((checkpoint.TenantId, checkpoint.OwnerUserId, checkpoint.SignalKey, checkpoint.TargetId)) ||
-                !lineageValid)
+                !occurrenceLineage && !signalLineage)
                 RejectIntelligenceArchive("a playback delivery checkpoint is malformed, duplicated, or crosses its listening-signal and job scope");
         }
         foreach (var profile in profiles)

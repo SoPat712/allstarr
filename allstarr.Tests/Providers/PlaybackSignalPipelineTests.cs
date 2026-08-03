@@ -256,12 +256,46 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         var checkpoints = new Checkpoints();
         var delivery = new ScopedPlaybackScrobbleDelivery(factory, [rejected, healthy], checkpoints);
 
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => delivery.DeliverAsync(Payload(), default));
+        var firstFailure = await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() =>
+            delivery.DeliverAsync(Payload(), default));
+        Assert.Equal("playback_scrobble_unauthorized", firstFailure.Code);
         Assert.Equal(0, rejected.Successes);
         Assert.Equal(1, healthy.Successes);
 
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => delivery.DeliverAsync(Payload(), default));
+        await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => delivery.DeliverAsync(Payload(), default));
         Assert.Equal(1, healthy.Successes);
+    }
+
+    [Fact]
+    public async Task ScopedDelivery_IgnoredOutcomeIsCheckpointedWithoutRetry()
+    {
+        var target = new Target("lastfm", true)
+        {
+            Result = ScopedPlaybackScrobbleResult.Ignored("1", "Timestamp is too old", "{\"ignored\":1}")
+        };
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new Checkpoints());
+
+        await delivery.DeliverAsync(Payload(), default);
+        await delivery.DeliverAsync(Payload(), default);
+
+        Assert.Equal(1, target.Successes);
+    }
+
+    [Fact]
+    public async Task ScopedDelivery_RetryingOutcomePreservesProviderDelay()
+    {
+        var target = new Target("lastfm", true)
+        {
+            Result = ScopedPlaybackScrobbleResult.Retrying("29", "Last.fm could not accept the listen yet.",
+                TimeSpan.FromSeconds(42))
+        };
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new Checkpoints());
+
+        var failure = await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() =>
+            delivery.DeliverAsync(Payload(), default));
+
+        Assert.True(failure.Retryable);
+        Assert.Equal(TimeSpan.FromSeconds(42), failure.RetryAfter);
     }
 
     [Theory]
@@ -506,10 +540,11 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         public int Successes;
         public bool FailFirst;
         public bool Reject;
+        public ScopedPlaybackScrobbleResult Result = ScopedPlaybackScrobbleResult.Delivered();
         public DateTimeOffset? LastObservedAt;
         public ScopedPlaybackTrack? LastTrack;
         public Task<bool> IsConfiguredAsync(IntelligenceScope s, CancellationToken c) => Task.FromResult(configured);
-        public Task DeliverAsync(IntelligenceScope s, PlaybackTransition t, ScopedPlaybackTrack track, long? p,
+        public Task<ScopedPlaybackScrobbleResult> DeliverAsync(IntelligenceScope s, PlaybackTransition t, ScopedPlaybackTrack track, long? p,
             DateTimeOffset o, string key, CancellationToken c)
         {
             if (Reject) throw new UnauthorizedAccessException();
@@ -517,10 +552,23 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
             LastObservedAt = o;
             LastTrack = track;
             Successes++;
+            return Task.FromResult(Result);
+        }
+    }
+    private sealed class Checkpoints : IPlaybackDeliveryCheckpointStore
+    {
+        private readonly HashSet<string> values = [];
+        public Task<bool> IsCompletedAsync(Guid t, Guid u, string k, string target, CancellationToken c) =>
+            Task.FromResult(values.Contains(k + target));
+        public Task RecordAsync(Guid t, Guid u, string occurrenceKey, string signalKey,
+            PlaybackScrobbleDeliveryKind kind, string target, ScopedPlaybackScrobbleResult result,
+            CancellationToken c)
+        {
+            if (result.Outcome is ScopedPlaybackScrobbleOutcome.Delivered or ScopedPlaybackScrobbleOutcome.Ignored)
+                values.Add(signalKey + target);
             return Task.CompletedTask;
         }
     }
-    private sealed class Checkpoints : IPlaybackDeliveryCheckpointStore { private readonly HashSet<string> values = []; public Task<bool> IsCompletedAsync(Guid t, Guid u, string k, string target, CancellationToken c) => Task.FromResult(values.Contains(k + target)); public Task MarkCompletedAsync(Guid t, Guid u, string k, string target, CancellationToken c) { values.Add(k + target); return Task.CompletedTask; } }
     private sealed class EmptyServices : IServiceProvider { public static readonly EmptyServices Instance = new(); public object? GetService(Type t) => null; }
     private sealed class BackendMetadataResolver(allstarr.Services.Common.PlaybackTrackMetadata metadata)
         : allstarr.Services.Common.IPlaybackMetadataResolver
@@ -577,5 +625,24 @@ public sealed class PlaybackOccurrenceKeyTests
 
         Assert.NotEqual(jellyfin, subsonic);
         Assert.NotEqual(jellyfin, otherUser);
+    }
+
+    [Fact]
+    public void NowPlayingAndCompletedScrobblesUseSeparateCheckpointKeys()
+    {
+        var occurrence = new string('c', 64);
+        var nowPlaying = new PlaybackSignalPayload(scope, PlaybackTransition.Start, "track", "device", "session",
+            0, DateTimeOffset.UtcNow, new string('a', 64), occurrence);
+        var completed = nowPlaying with
+        {
+            Transition = PlaybackTransition.Stop,
+            PositionTicks = TimeSpan.FromMinutes(2).Ticks,
+            SignalKey = new string('b', 64)
+        };
+
+        Assert.NotEqual(ScopedPlaybackScrobbleDelivery.CheckpointKey(nowPlaying),
+            ScopedPlaybackScrobbleDelivery.CheckpointKey(completed));
+        Assert.Equal(PlaybackSignalPipeline.Hash($"{occurrence}|completed"),
+            ScopedPlaybackScrobbleDelivery.CheckpointKey(completed));
     }
 }

@@ -153,6 +153,109 @@ public sealed class ScopedLastFmTargetTests
         Assert.DoesNotContain("mbid", form.Keys);
     }
 
+    [Fact]
+    public async Task JsonIgnoredResponse_IsVisibleAndTerminal()
+    {
+        var handler = new CaptureHandler(responseBody: """
+            {"scrobbles":{"scrobble":{"ignoredMessage":{"#text":"Timestamp is too old","code":"1"}},"@attr":{"accepted":"0","ignored":"1"}}}
+            """);
+        var target = new LastFmScopedPlaybackScrobbleTarget(new HttpClient(handler), new AccountAccessor());
+
+        var result = await target.DeliverAsync(Scope(), PlaybackTransition.Stop,
+            new ScopedPlaybackTrack("Track", "Artist", null, 180_000), null,
+            DateTimeOffset.UtcNow, "signal", CancellationToken.None);
+
+        Assert.Equal(ScopedPlaybackScrobbleOutcome.Ignored, result.Outcome);
+        Assert.Equal("1", result.ProviderCode);
+        Assert.Equal("Timestamp is too old", result.SafeMessage);
+        using var details = JsonDocument.Parse(result.DetailsJson);
+        Assert.Equal(0, details.RootElement.GetProperty("accepted").GetInt32());
+        Assert.Equal(1, details.RootElement.GetProperty("ignored").GetInt32());
+    }
+
+    [Fact]
+    public async Task XmlAcceptedResponse_PreservesCorrectedValues()
+    {
+        var handler = new CaptureHandler(responseBody: """
+            <lfm status="ok"><scrobbles accepted="1" ignored="0"><scrobble><artist corrected="0">Artist</artist><track corrected="1">Corrected track</track><ignoredMessage code="0"></ignoredMessage></scrobble></scrobbles></lfm>
+            """);
+        var target = new LastFmScopedPlaybackScrobbleTarget(new HttpClient(handler), new AccountAccessor());
+
+        var result = await target.DeliverAsync(Scope(), PlaybackTransition.Stop,
+            new ScopedPlaybackTrack("Track", "Artist", null, 180_000), null,
+            DateTimeOffset.UtcNow, "signal", CancellationToken.None);
+
+        Assert.Equal(ScopedPlaybackScrobbleOutcome.Delivered, result.Outcome);
+        using var details = JsonDocument.Parse(result.DetailsJson);
+        var correction = details.RootElement.GetProperty("corrections").GetProperty("track");
+        Assert.True(correction.GetProperty("corrected").GetBoolean());
+        Assert.Equal("Corrected track", correction.GetProperty("value").GetString());
+    }
+
+    [Theory]
+    [InlineData(9, ScopedPlaybackScrobbleOutcome.PermanentFailure, true)]
+    [InlineData(6, ScopedPlaybackScrobbleOutcome.PermanentFailure, false)]
+    [InlineData(16, ScopedPlaybackScrobbleOutcome.Retrying, false)]
+    [InlineData(29, ScopedPlaybackScrobbleOutcome.Retrying, false)]
+    public async Task ApiErrors_AreClassified(int code, ScopedPlaybackScrobbleOutcome expected, bool reauthenticate)
+    {
+        var handler = new CaptureHandler(responseBody: JsonSerializer.Serialize(new { error = code, message = "Provider detail" }));
+        var target = new LastFmScopedPlaybackScrobbleTarget(new HttpClient(handler), new AccountAccessor());
+
+        var result = await target.DeliverAsync(Scope(), PlaybackTransition.Stop,
+            new ScopedPlaybackTrack("Track", "Artist", null, 180_000), null,
+            DateTimeOffset.UtcNow, "signal", CancellationToken.None);
+
+        Assert.Equal(expected, result.Outcome);
+        Assert.Equal(reauthenticate, result.RequiresReauthentication);
+        Assert.Equal(code.ToString(), result.ProviderCode);
+        if (code == 29) Assert.Equal(TimeSpan.FromSeconds(30), result.RetryAfter);
+    }
+
+    [Fact]
+    public async Task RateLimit_HonorsRetryAfter()
+    {
+        var handler = new CaptureHandler(HttpStatusCode.TooManyRequests, "", TimeSpan.FromSeconds(42));
+        var target = new LastFmScopedPlaybackScrobbleTarget(new HttpClient(handler), new AccountAccessor());
+
+        var result = await target.DeliverAsync(Scope(), PlaybackTransition.Stop,
+            new ScopedPlaybackTrack("Track", "Artist", null, 180_000), null,
+            DateTimeOffset.UtcNow, "signal", CancellationToken.None);
+
+        Assert.Equal(ScopedPlaybackScrobbleOutcome.Retrying, result.Outcome);
+        Assert.Equal(TimeSpan.FromSeconds(42), result.RetryAfter);
+    }
+
+    [Fact]
+    public async Task MalformedServicePayload_IsRetryableWithoutLeakingBody()
+    {
+        var handler = new CaptureHandler(responseBody: "[\"token=do-not-copy\"]");
+        var target = new LastFmScopedPlaybackScrobbleTarget(new HttpClient(handler), new AccountAccessor());
+
+        var result = await target.DeliverAsync(Scope(), PlaybackTransition.Stop,
+            new ScopedPlaybackTrack("Track", "Artist", null, 180_000), null,
+            DateTimeOffset.UtcNow, "signal", CancellationToken.None);
+
+        Assert.Equal(ScopedPlaybackScrobbleOutcome.Retrying, result.Outcome);
+        Assert.DoesNotContain("do-not-copy", result.DetailsJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ServerFailure_CannotBeMaskedByAcceptedBody()
+    {
+        var handler = new CaptureHandler(HttpStatusCode.ServiceUnavailable,
+            "{\"scrobbles\":{\"scrobble\":{},\"@attr\":{\"accepted\":\"1\",\"ignored\":\"0\"}}}");
+        var target = new LastFmScopedPlaybackScrobbleTarget(new HttpClient(handler), new AccountAccessor());
+
+        var result = await target.DeliverAsync(Scope(), PlaybackTransition.Stop,
+            new ScopedPlaybackTrack("Track", "Artist", null, 180_000), null,
+            DateTimeOffset.UtcNow, "signal", CancellationToken.None);
+
+        Assert.Equal(ScopedPlaybackScrobbleOutcome.Retrying, result.Outcome);
+        using var details = JsonDocument.Parse(result.DetailsJson);
+        Assert.Equal(503, details.RootElement.GetProperty("httpStatus").GetInt32());
+    }
+
     private static IntelligenceScope Scope() => new(Guid.NewGuid(), Guid.NewGuid(), "jellyfin", "backend", "library");
 
     private static Dictionary<string, string> ParseForm(string body) => body.Split('&')
@@ -172,14 +275,23 @@ public sealed class ScopedLastFmTargetTests
         }
     }
 
-    private sealed class CaptureHandler : HttpMessageHandler
+    private sealed class CaptureHandler(
+        HttpStatusCode statusCode = HttpStatusCode.OK,
+        string? responseBody = null,
+        TimeSpan? retryAfter = null) : HttpMessageHandler
     {
         public string? Body { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Body = await request.Content!.ReadAsStringAsync(cancellationToken);
-            return new HttpResponseMessage(HttpStatusCode.OK);
+            var body = responseBody ?? (Body.Contains("track.scrobble", StringComparison.Ordinal)
+                ? "{\"scrobbles\":{\"scrobble\":{\"ignoredMessage\":{\"#text\":\"\",\"code\":\"0\"}},\"@attr\":{\"accepted\":\"1\",\"ignored\":\"0\"}}}"
+                : "{\"nowplaying\":{\"track\":{\"#text\":\"Track\",\"corrected\":\"0\"}}}");
+            var response = new HttpResponseMessage(statusCode) { Content = new StringContent(body) };
+            if (retryAfter.HasValue)
+                response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(retryAfter.Value);
+            return response;
         }
     }
 }

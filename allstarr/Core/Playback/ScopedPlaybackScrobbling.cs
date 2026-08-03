@@ -9,6 +9,35 @@ using allstarr.Services.Common;
 
 namespace allstarr.Core.Playback;
 
+public enum PlaybackScrobbleDeliveryKind { NowPlaying, Completed }
+public enum ScopedPlaybackScrobbleOutcome { Delivered, Ignored, Retrying, PermanentFailure }
+public sealed record ScopedPlaybackScrobbleResult(
+    ScopedPlaybackScrobbleOutcome Outcome,
+    string? ProviderCode = null,
+    string? SafeMessage = null,
+    string DetailsJson = "{}",
+    TimeSpan? RetryAfter = null,
+    bool RequiresReauthentication = false)
+{
+    public static ScopedPlaybackScrobbleResult Delivered(string detailsJson = "{}") =>
+        new(ScopedPlaybackScrobbleOutcome.Delivered, DetailsJson: detailsJson);
+    public static ScopedPlaybackScrobbleResult Ignored(string? providerCode, string? safeMessage, string detailsJson) =>
+        new(ScopedPlaybackScrobbleOutcome.Ignored, providerCode, safeMessage, detailsJson);
+    public static ScopedPlaybackScrobbleResult Retrying(string? providerCode, string safeMessage,
+        TimeSpan? retryAfter = null, string detailsJson = "{}") =>
+        new(ScopedPlaybackScrobbleOutcome.Retrying, providerCode, safeMessage, detailsJson, retryAfter);
+    public static ScopedPlaybackScrobbleResult Permanent(string? providerCode, string safeMessage,
+        bool requiresReauthentication = false, string detailsJson = "{}") =>
+        new(ScopedPlaybackScrobbleOutcome.PermanentFailure, providerCode, safeMessage, detailsJson,
+            RequiresReauthentication: requiresReauthentication);
+}
+public sealed class ScopedPlaybackScrobbleDeliveryException(
+    string code, string safeMessage, bool retryable, TimeSpan? retryAfter = null) : Exception(safeMessage)
+{
+    public string Code { get; } = code;
+    public bool Retryable { get; } = retryable;
+    public TimeSpan? RetryAfter { get; } = retryAfter;
+}
 public sealed record ScopedPlaybackTrack(string Title, string Artist, string? Album, long? DurationMilliseconds,
     string? AlbumArtist = null, string? RecordingMusicBrainzId = null, int? TrackNumber = null,
     bool ChosenByUser = true, string? ClientClass = null, string? DeviceClass = null);
@@ -16,7 +45,7 @@ public interface IExactScopePlaybackScrobbleTarget
 {
     string ProviderId { get; }
     Task<bool> IsConfiguredAsync(IntelligenceScope scope, CancellationToken cancellationToken);
-    Task DeliverAsync(IntelligenceScope scope, PlaybackTransition transition, ScopedPlaybackTrack track,
+    Task<ScopedPlaybackScrobbleResult> DeliverAsync(IntelligenceScope scope, PlaybackTransition transition, ScopedPlaybackTrack track,
         long? positionTicks, DateTimeOffset observedAt, string signalKey, CancellationToken cancellationToken);
 }
 
@@ -52,11 +81,14 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
             occurrence?.DeviceClass ?? payload.DeviceClass);
         if (payload.Transition is PlaybackTransition.Progress or PlaybackTransition.Stop or PlaybackTransition.InferredStop &&
             !EligibleForCompletedScrobble(track.DurationMilliseconds, payload.PositionTicks)) return;
-        var completion = payload.Transition is PlaybackTransition.Progress or PlaybackTransition.Stop or PlaybackTransition.InferredStop or PlaybackTransition.Submission;
-        var checkpointKey = completion ? CompletedListenKey(payload) : payload.SignalKey;
+        var kind = payload.Transition is PlaybackTransition.Start or PlaybackTransition.InferredStart
+            ? PlaybackScrobbleDeliveryKind.NowPlaying
+            : PlaybackScrobbleDeliveryKind.Completed;
+        var completion = kind == PlaybackScrobbleDeliveryKind.Completed;
+        var checkpointKey = CheckpointKey(payload);
         var occurredAt = occurrence?.ListenedAt ?? occurrence?.StartedAt ?? payload.ObservedAt;
-        Exception? unauthorizedFailure = null;
-        Exception? retryableFailure = null;
+        ScopedPlaybackScrobbleDeliveryException? permanentFailure = null;
+        ScopedPlaybackScrobbleDeliveryException? retryableFailure = null;
         var delivered = false;
         var completedTargets = new List<string>();
         foreach (var target in targets)
@@ -69,22 +101,59 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
                     delivered |= completion;
                     continue;
                 }
-                await target.DeliverAsync(payload.Scope, payload.Transition, track, payload.PositionTicks, occurredAt, checkpointKey, cancellationToken);
-                await checkpoints.MarkCompletedAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId, checkpointKey, target.ProviderId, cancellationToken);
-                delivered |= completion;
-                if (completion) completedTargets.Add(target.ProviderId);
+                var result = await target.DeliverAsync(payload.Scope, payload.Transition, track, payload.PositionTicks,
+                    occurredAt, checkpointKey, cancellationToken);
+                await checkpoints.RecordAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId,
+                    occurrenceKey, checkpointKey, kind, target.ProviderId, result, cancellationToken);
+                switch (result.Outcome)
+                {
+                    case ScopedPlaybackScrobbleOutcome.Delivered:
+                        delivered |= completion;
+                        if (completion) completedTargets.Add(target.ProviderId);
+                        break;
+                    case ScopedPlaybackScrobbleOutcome.Ignored:
+                        delivered |= completion;
+                        break;
+                    case ScopedPlaybackScrobbleOutcome.Retrying:
+                        retryableFailure ??= new("playback_scrobble_retrying",
+                            result.SafeMessage ?? "The scoped scrobble target asked Allstarr to retry.", true,
+                            result.RetryAfter);
+                        break;
+                    case ScopedPlaybackScrobbleOutcome.PermanentFailure:
+                        permanentFailure ??= new(result.RequiresReauthentication
+                                ? "playback_scrobble_unauthorized"
+                                : "playback_scrobble_rejected",
+                            result.SafeMessage ?? "The scoped scrobble target rejected this listen.", false);
+                        break;
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
             }
-            catch (UnauthorizedAccessException ex)
+            catch (UnauthorizedAccessException)
             {
-                unauthorizedFailure ??= ex;
+                var result = ScopedPlaybackScrobbleResult.Permanent("unauthorized",
+                    "Reconnect the selected scrobble account and replace its expired or revoked credentials.", true);
+                await checkpoints.RecordAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId,
+                    occurrenceKey, checkpointKey, kind, target.ProviderId, result, cancellationToken);
+                permanentFailure ??= new("playback_scrobble_unauthorized", result.SafeMessage!, false);
             }
-            catch (Exception ex)
+            catch (InvalidOperationException)
             {
-                retryableFailure ??= ex;
+                var result = ScopedPlaybackScrobbleResult.Permanent("account-incomplete",
+                    "The selected scrobble account needs configuration.");
+                await checkpoints.RecordAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId,
+                    occurrenceKey, checkpointKey, kind, target.ProviderId, result, cancellationToken);
+                permanentFailure ??= new("playback_scrobble_account_incomplete", result.SafeMessage!, false);
+            }
+            catch (Exception)
+            {
+                var result = ScopedPlaybackScrobbleResult.Retrying("transport-failure",
+                    "The scoped scrobble target could not be reached.");
+                await checkpoints.RecordAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId,
+                    occurrenceKey, checkpointKey, kind, target.ProviderId, result, cancellationToken);
+                retryableFailure ??= new("playback_scrobble_retrying", result.SafeMessage!, true);
             }
         }
         if (delivered)
@@ -134,8 +203,13 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
             }
         }
         if (retryableFailure != null) ExceptionDispatchInfo.Capture(retryableFailure).Throw();
-        if (unauthorizedFailure != null) ExceptionDispatchInfo.Capture(unauthorizedFailure).Throw();
+        if (permanentFailure != null) ExceptionDispatchInfo.Capture(permanentFailure).Throw();
     }
+
+    internal static string CheckpointKey(PlaybackSignalPayload payload) =>
+        payload.Transition is PlaybackTransition.Start or PlaybackTransition.InferredStart
+            ? payload.SignalKey
+            : CompletedListenKey(payload);
 
     private static string CompletedListenKey(PlaybackSignalPayload payload)
     {

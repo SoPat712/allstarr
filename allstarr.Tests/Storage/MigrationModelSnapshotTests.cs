@@ -14,6 +14,6 @@ public sealed class MigrationModelSnapshotTests
         using var context = new AllstarrDbContext(options);
 
         Assert.False(context.Database.HasPendingModelChanges());
-        Assert.Equal("20260802223000_EnrichListeningOccurrenceMetadata", context.Database.GetMigrations().Last());
+        Assert.Equal("20260802233000_ClassifyScrobbleDeliveryOutcomes", context.Database.GetMigrations().Last());
     }
 }

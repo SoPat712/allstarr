@@ -99,6 +99,10 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
             return DurableJobCompletion.Success();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return DurableJobCompletion.Cancelled(); }
+        catch (ScopedPlaybackScrobbleDeliveryException ex) when (ex.Retryable)
+        { return DurableJobCompletion.Retry(ex.Code, ex.Message, ex.RetryAfter); }
+        catch (ScopedPlaybackScrobbleDeliveryException ex)
+        { return DurableJobCompletion.Failure(ex.Code, ex.Message); }
         catch (UnauthorizedAccessException) { return DurableJobCompletion.Failure("playback_scrobble_unauthorized", "The scoped scrobble account is unauthorized."); }
         catch { return DurableJobCompletion.Retry("playback_signal_temporary_failure", "Playback side effects will retry."); }
     }

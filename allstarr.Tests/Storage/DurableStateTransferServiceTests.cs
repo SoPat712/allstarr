@@ -530,9 +530,13 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             Id = Guid.CreateVersion7(),
             TenantId = tenantId,
             OwnerUserId = userId,
+            OccurrenceKey = new string('9', 64),
             SignalKey = new string('f', 64),
             TargetId = "lastfm",
-            CompletedAt = now
+            Kind = PlaybackScrobbleDeliveryKind.Completed,
+            State = ScopedPlaybackScrobbleOutcome.Delivered,
+            DetailsJson = "{\"accepted\":1}",
+            UpdatedAt = now
         });
         var profile = new ListeningProfile(tenantId, userId, "transfer-backend", "music", 1, 0, 1,
             new Dictionary<string, double>(), now, now)
@@ -927,7 +931,9 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         Assert.Equal(ListeningEventState.Completed, listeningEvent.State);
         Assert.Equal("local-42", listeningEvent.TrackReference);
         Assert.StartsWith("library:", (await target.ListeningSignals.SingleAsync()).TrackReference, StringComparison.Ordinal);
-        Assert.Equal("lastfm", (await target.PlaybackDeliveryCheckpoints.SingleAsync()).TargetId);
+        var playbackCheckpoint = await target.PlaybackDeliveryCheckpoints.SingleAsync();
+        Assert.Equal("lastfm", playbackCheckpoint.TargetId);
+        Assert.Equal(ScopedPlaybackScrobbleOutcome.Delivered, playbackCheckpoint.State);
         Assert.Single(await target.ListeningProfiles.ToListAsync());
         Assert.Equal(RecommendationRunState.Succeeded, (await target.RecommendationRuns.SingleAsync()).State);
         Assert.Contains("shared-artist", (await target.RecommendationCandidates.SingleAsync()).SignalsJson, StringComparison.Ordinal);

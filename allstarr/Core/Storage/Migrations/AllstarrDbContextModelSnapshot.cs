@@ -1418,16 +1418,45 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid");
 
-                    b.Property<long>("CompletedAt")
-                        .HasColumnType("bigint");
+                    b.Property<string>("DetailsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("OccurrenceKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<Guid>("OwnerUserId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("ProviderCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<bool>("RequiresReauthentication")
+                        .HasColumnType("boolean");
+
+                    b.Property<long?>("RetryAfter")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("SafeMessage")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
 
                     b.Property<string>("SignalKey")
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
 
                     b.Property<string>("TargetId")
                         .IsRequired()
@@ -1437,13 +1466,22 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid");
 
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("bigint");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "OwnerUserId", "OccurrenceKey", "Kind")
+                        .HasDatabaseName("IX_playback_delivery_occurrence_status");
 
                     b.HasIndex("TenantId", "OwnerUserId", "SignalKey", "TargetId")
                         .IsUnique()
                         .HasDatabaseName("IX_playback_delivery_idempotency");
 
-                    b.ToTable("playback_delivery_checkpoints", (string)null);
+                    b.ToTable("playback_delivery_checkpoints", t =>
+                        {
+                            t.HasCheckConstraint("CK_playback_delivery_checkpoint_state", "\"State\" IN ('Delivered', 'Ignored', 'Retrying', 'PermanentFailure')");
+                        });
                 });
 
             modelBuilder.Entity("allstarr.Core.Routing.ProviderRouteDecisionEntity", b =>
