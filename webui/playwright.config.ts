@@ -10,7 +10,6 @@ export default defineConfig({
   testDir: "./tests",
   testMatch: "**/*.e2e.ts",
   fullyParallel: true,
-  retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? "github" : "line",
   use: {
     baseURL: "http://127.0.0.1:4173/",

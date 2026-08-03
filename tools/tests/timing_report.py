@@ -151,6 +151,21 @@ def _parse_retries(output: str) -> int:
     return attempts
 
 
+def _required_test_failures(returncode: int, counts: Counts, retried: int) -> list[str]:
+    if returncode != 0:
+        return []
+    failures = []
+    if counts.discovered == 0:
+        failures.append("zero tests discovered")
+    if counts.failed:
+        failures.append(f"{counts.failed} failed")
+    if counts.skipped:
+        failures.append(f"{counts.skipped} skipped")
+    if retried:
+        failures.append(f"{retried} retried")
+    return failures
+
+
 def _duration(value: str) -> float | None:
     value = value.strip()
     if value.endswith("ms"):
@@ -294,6 +309,12 @@ def _self_test() -> None:
     assert _parse_retries("34 passed (11.9s)") == 0
     assert _parse_retries("Retry #1\n1 flaky") == 1
     assert _parse_retries("Retries: 2") == 2
+    assert _required_test_failures(0, Counts(discovered=1, passed=1), 0) == []
+    assert _required_test_failures(0, Counts(), 0) == ["zero tests discovered"]
+    assert _required_test_failures(0, Counts(discovered=2, passed=1, failed=1), 0) == ["1 failed"]
+    assert _required_test_failures(0, Counts(discovered=2, passed=1, skipped=1), 0) == ["1 skipped"]
+    assert _required_test_failures(0, Counts(discovered=1, passed=1), 1) == ["1 retried"]
+    assert _required_test_failures(7, Counts(), 1) == []
     assert _duration("PT1.25S") == 1250
     assert _duration("12ms") == 12
     assert _duration("00:00:01.2500000") == 1250
@@ -312,6 +333,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--name", required=True)
     parser.add_argument("--cwd", default=".")
     parser.add_argument("--trx", action="append", default=[])
+    parser.add_argument("--require-tests", action="store_true")
     options = parser.parse_args(argv[:separator])
     command = argv[separator + 1 :]
     if not command:
@@ -329,6 +351,15 @@ def main(argv: list[str] | None = None) -> int:
     if summary_path:
         with open(summary_path, "a", encoding="utf-8") as summary:
             summary.write(f"### {options.name}\n\n```text\n{report}```\n")
+    if options.require_tests:
+        counts = _parse_counts(output)
+        for path in trx_paths:
+            parsed, _ = _parse_trx(path)
+            _merge_counts(counts, parsed)
+        failures = _required_test_failures(result.returncode, counts, _parse_retries(output))
+        if failures:
+            print("TEST_GATE failure=" + ", ".join(failures))
+            return 1
     return result.returncode
 
 

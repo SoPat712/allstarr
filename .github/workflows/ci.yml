@@ -78,6 +78,7 @@ jobs:
         run: >-
           python3 tools/tests/timing_report.py
           --name dotnet-test
+          --require-tests
           --trx "${{ runner.temp }}/build-and-test.trx"
           --
           dotnet test --configuration Release --no-build
@@ -129,6 +130,7 @@ jobs:
         run: >-
           python3 tools/tests/timing_report.py
           --name state-transfer-test
+          --require-tests
           --trx "${{ runner.temp }}/state-transfer-tests.trx"
           --
           dotnet test --configuration Release --no-build
@@ -186,7 +188,7 @@ jobs:
 
       - name: WebUI unit tests
         working-directory: webui
-        run: python3 ../tools/tests/timing_report.py --name webui-unit -- npm test
+        run: python3 ../tools/tests/timing_report.py --name webui-unit --require-tests -- npm test
 
       - name: WebUI build
         working-directory: webui
@@ -198,7 +200,7 @@ jobs:
 
       - name: WebUI E2E
         working-directory: webui
-        run: python3 ../tools/tests/timing_report.py --name webui-e2e -- npm run test:e2e:existing-build
+        run: python3 ../tools/tests/timing_report.py --name webui-e2e --require-tests -- npm run test:e2e:existing-build
 
   release-manifest:
     needs:
