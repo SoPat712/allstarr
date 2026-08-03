@@ -19,6 +19,7 @@ public sealed class ProviderCtsTrackSelector(
     private readonly object _rotationLock = new();
 
     public async Task<ProviderCtsTrackSelection?> SelectAsync(
+        Guid tenantId,
         string providerId,
         Guid providerAccountId,
         CancellationToken cancellationToken)
@@ -42,6 +43,23 @@ public sealed class ProviderCtsTrackSelector(
             .Select(group => group.First())
             .Take(CorpusLimit)
             .ToArray();
+        if (corpus.Length == 0)
+        {
+            corpus = await db.ProviderTrackIdentities
+                .AsNoTracking()
+                .Where(identity =>
+                    identity.TenantId == tenantId &&
+                    identity.ProviderId == providerId &&
+                    identity.ResourceKind == ProviderResourceKind.Track &&
+                    identity.Scope == ProviderIdentityScope.Catalog &&
+                    (identity.Verification == ProviderIdentityVerification.Verified ||
+                     identity.Verification == ProviderIdentityVerification.Pinned))
+                .OrderByDescending(identity => identity.VerifiedAt)
+                .ThenBy(identity => identity.Id)
+                .Select(identity => new { identity.Id, identity.ExternalId })
+                .Take(CorpusLimit)
+                .ToArrayAsync(cancellationToken);
+        }
         if (corpus.Length == 0) return null;
 
         var key = $"{providerId}:{providerAccountId:N}";

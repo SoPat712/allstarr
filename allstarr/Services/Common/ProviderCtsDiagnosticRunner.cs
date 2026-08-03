@@ -52,21 +52,6 @@ public sealed class ProviderCtsDiagnosticRunner(
                 retryAfterSeconds: 5);
         }
 
-        var automaticTrack = string.IsNullOrWhiteSpace(trackId)
-            ? await trackSelector.SelectAsync(providerId, providerAccountId, cancellationToken)
-            : null;
-        if (string.IsNullOrWhiteSpace(trackId) && automaticTrack == null)
-        {
-            return ProviderCtsDiagnosticResult.Failure(
-                StatusCodes.Status409Conflict,
-                providerId,
-                providerAccountId,
-                "track-selection",
-                "No known provider tracks are available for automatic CTS rotation. Refresh playlist metadata first.");
-        }
-
-        trackId = string.IsNullOrWhiteSpace(trackId) ? automaticTrack!.TrackId : trackId.Trim();
-
         var total = Stopwatch.StartNew();
         ProviderRouteAccountResolution? resolved;
         try
@@ -98,6 +83,22 @@ public sealed class ProviderCtsDiagnosticRunner(
                 "The selected provider account is unavailable.");
         }
         var routeMilliseconds = total.Elapsed.TotalMilliseconds;
+
+        var automaticTrack = string.IsNullOrWhiteSpace(trackId)
+            ? await trackSelector.SelectAsync(
+                actor.TenantId, providerId, providerAccountId, cancellationToken)
+            : null;
+        if (string.IsNullOrWhiteSpace(trackId) && automaticTrack == null)
+        {
+            return ProviderCtsDiagnosticResult.Failure(
+                StatusCodes.Status409Conflict,
+                providerId,
+                providerAccountId,
+                "track-selection",
+                "No known provider tracks are available for automatic CTS rotation. Refresh playlist metadata first.");
+        }
+
+        trackId = string.IsNullOrWhiteSpace(trackId) ? automaticTrack!.TrackId : trackId.Trim();
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
