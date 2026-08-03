@@ -254,10 +254,10 @@ public sealed class ExtensionIntelligenceCapabilityAdapter : ExtensionCapability
     {
         Limit(limit, 100);
         return InvokeAsync(context, "getClusters", new { limit }, value =>
-            (IReadOnlyList<ProviderIntelligenceCluster>)value.GetProperty("items").EnumerateArray().Take(limit)
-                .Select(item => new ProviderIntelligenceCluster(
+            Bounded(value.GetProperty("items"), limit, item => new ProviderIntelligenceCluster(
                     Required(item, "id", 300), Required(item, "name", 300),
-                    item.GetProperty("tracks").EnumerateArray().Take(200).Select(MapTrack).ToArray())).ToArray(), accountRequired);
+                    Bounded(item.GetProperty("tracks"), 200, MapTrack, "Cluster track")),
+                "Cluster"), accountRequired);
     }
 
     public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> RecommendAsync(
@@ -267,8 +267,7 @@ public sealed class ExtensionIntelligenceCapabilityAdapter : ExtensionCapability
         if (seedTrackIds.Count > 100) throw new ArgumentOutOfRangeException(nameof(seedTrackIds));
         foreach (var trackId in seedTrackIds) ProviderContractValidation.RequiredText(trackId, nameof(seedTrackIds), 500);
         return InvokeAsync(context, "recommend", new { seedTrackIds, limit }, value =>
-            (IReadOnlyList<ProviderIntelligenceTrack>)value.GetProperty("items").EnumerateArray().Take(limit)
-                .Select(MapTrack).ToArray(), accountRequired);
+            BoundedTracks(value, limit), accountRequired);
     }
 
     public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> SearchAsync(
@@ -277,8 +276,7 @@ public sealed class ExtensionIntelligenceCapabilityAdapter : ExtensionCapability
         Limit(limit, 200);
         ProviderContractValidation.RequiredText(query, nameof(query), 500);
         return InvokeAsync(context, "search", new { query, includeLyrics, limit }, value =>
-            (IReadOnlyList<ProviderIntelligenceTrack>)value.GetProperty("items").EnumerateArray().Take(limit)
-                .Select(MapTrack).ToArray(), accountRequired);
+            BoundedTracks(value, limit), accountRequired);
     }
 
     public Task<ProviderOutcome<ProviderIntelligencePath>> FindPathAsync(
@@ -313,12 +311,11 @@ public sealed class ExtensionIntelligenceCapabilityAdapter : ExtensionCapability
         ArgumentNullException.ThrowIfNull(page);
         return InvokeAsync(context, "getMap", new { page.Limit, page.Cursor }, value =>
         {
-            var items = value.GetProperty("items").EnumerateArray().Take(page.Limit + 1)
-                .Select(item => new ProviderIntelligenceMapPoint(
+            var items = Bounded(value.GetProperty("items"), page.Limit,
+                item => new ProviderIntelligenceMapPoint(
                     Required(item, "trackId", 500), Required(item, "title", 500),
                     Required(item, "artist", 500), Coordinate(item, "x"), Coordinate(item, "y"),
-                    OptionalText(item, "album"), OptionalText(item, "clusterId"))).ToArray();
-            if (items.Length > page.Limit) throw new JsonException("Map page exceeds the requested limit.");
+                    Optional(item, "album", 500), Optional(item, "clusterId", 300)), "Map point");
             return new ProviderIntelligenceMapPage(items, Required(value, "projection", 100),
                 ProviderContractValidation.OptionalText(OptionalText(value, "nextCursor"), "nextCursor", 2000),
                 Bool(value, "isPartial"),
@@ -339,22 +336,29 @@ public sealed class ExtensionIntelligenceCapabilityAdapter : ExtensionCapability
         var total = NonNegative(value, "total");
         if (completed > total) throw new JsonException();
         return new(Required(value, "jobId", 300), EnumValue<ProviderAnalysisState>(value, "state"),
-            completed, total, OptionalText(value, "safeCode"));
+            completed, total, Optional(value, "safeCode", 300));
     }
 
     private static ProviderIntelligenceTrack MapTrack(JsonElement value) =>
         new(Required(value, "trackId", 500), Required(value, "title", 500), Required(value, "artist", 500),
-            Math.Clamp(Double(value, "score"), 0, 1), OptionalText(value, "album"),
-            OptionalText(value, "clusterId"), OptionalText(value, "explanation"));
+            Math.Clamp(Double(value, "score"), 0, 1), Optional(value, "album", 500),
+            Optional(value, "clusterId", 300), Optional(value, "explanation", 2000));
 
     private static IReadOnlyList<ProviderIntelligenceTrack> BoundedTracks(JsonElement value, int limit)
+        => Bounded(value.GetProperty("items"), limit, MapTrack, "Track result");
+
+    private static IReadOnlyList<T> Bounded<T>(JsonElement value, int limit,
+        Func<JsonElement, T> map, string label)
     {
-        var items = value.GetProperty("items").EnumerateArray().Take(limit + 1).Select(MapTrack).ToArray();
-        return items.Length <= limit ? items : throw new JsonException("Track result exceeds the requested limit.");
+        var items = value.EnumerateArray().Take(limit + 1).Select(map).ToArray();
+        return items.Length <= limit ? items : throw new JsonException($"{label} exceeds the requested limit.");
     }
 
     private static string Required(JsonElement value, string name, int maximumLength) =>
         ProviderContractValidation.RequiredText(Text(value, name), name, maximumLength);
+
+    private static string? Optional(JsonElement value, string name, int maximumLength) =>
+        ProviderContractValidation.OptionalText(OptionalText(value, name), name, maximumLength);
 
     private static int NonNegative(JsonElement value, string name)
     {

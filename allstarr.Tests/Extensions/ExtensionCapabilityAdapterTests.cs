@@ -565,6 +565,50 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task Intelligence_RejectsMalformedAndOversizedExtensionResults()
+    {
+        string[] hooks = ["startAnalysis", "getAnalysisProgress", "getClusters", "recommend",
+            "search", "findPath", "blend", "getMap"];
+        var manifest = new ExtensionSdkManifest("fixture-extension", "Fixture", "1.0.0", "1", "index.js",
+        [
+            new ExtensionSdkCapability(ProviderCapabilityKind.Intelligence, hooks, [ProviderAccountScope.User])
+        ], []);
+        var sandbox = Sandbox(manifest, """
+            function tracks(count) {
+              var result = [];
+              for (var i = 0; i < count; i++) result.push({ trackId: 'track-' + i, title: 'Track', artist: 'Artist', score: 0.9 });
+              return result;
+            }
+            registerExtension({
+              startAnalysis: function() { return { jobId: '', state: 'Queued', completed: 0, total: 1 }; },
+              getAnalysisProgress: function() { return { jobId: 'job-1', state: 'Running', completed: 2, total: 1 }; },
+              getClusters: function() { return { items: [
+                { id: 'one', name: 'One', tracks: [] }, { id: 'two', name: 'Two', tracks: [] }
+              ] }; },
+              recommend: function() { return { items: tracks(2) }; },
+              search: function() { return { items: [{ trackId: 'track-1', title: 'Track', artist: 'Artist', score: 0.9, album: Array(502).join('x') }] }; },
+              findPath: function() { return { items: tracks(3), totalDistance: 0.4 }; },
+              blend: function() { return { items: tracks(2) }; },
+              getMap: function() { return { items: [{ trackId: 'track-1', title: 'Track', artist: 'Artist', x: 2, y: 0 }], projection: 'umap' }; }
+            });
+            """);
+        var intelligence = new ExtensionIntelligenceCapabilityAdapter(sandbox, manifest);
+        var context = Context(includeAccount: true);
+
+        static void Transient<T>(ProviderOutcome<T> outcome) =>
+            Assert.Equal(ProviderErrorKind.TransientFailure, outcome.Error!.Kind);
+
+        Transient(await intelligence.StartAnalysisAsync(context));
+        Transient(await intelligence.GetAnalysisProgressAsync(context, "job-1"));
+        Transient(await intelligence.GetClustersAsync(context, 1));
+        Transient(await intelligence.RecommendAsync(context, ["seed"], 1));
+        Transient(await intelligence.SearchAsync(context, "query", false, 1));
+        Transient(await intelligence.FindPathAsync(context, "start", "end", 2));
+        Transient(await intelligence.BlendAsync(context, ["start"], [], 1));
+        Transient(await intelligence.GetMapAsync(context, new ProviderPageRequest(1)));
+    }
+
+    [Fact]
     public async Task Intelligence_OmittedSonicHooksReportNotSupported()
     {
         var manifest = Manifest(ProviderCapabilityKind.Intelligence, "recommend");
