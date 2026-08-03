@@ -121,6 +121,7 @@ const responses: Record<string, unknown> = {
       sourceProviderId: "lumen-audio", sourcePlaylistId: "source-list",
       providerAccountId: "lumen", libraryScopeId: "music",
       targetProtocol: "jellyfin", targetBackendInstanceId: "main",
+      targetCredentialReferenceId: "33333333-3333-3333-3333-333333333333",
       targetPlaylistId: "jellyfin-playlist", mode: "hybrid", projectionMode: "resolved",
       materializationMode: "reconcile", mirrorStaleEntries: false,
       preserveManualEntries: true, syncName: true, syncDescription: true, syncArtwork: true,
@@ -153,6 +154,7 @@ const responses: Record<string, unknown> = {
     targets: [{
       id: "22222222-2222-2222-2222-222222222222", protocol: "jellyfin", backendInstanceId: "main",
       libraryScopeId: "music", displayName: "Jellyfin Music",
+      credentialReferenceId: "33333333-3333-3333-3333-333333333333",
     }],
   },
   "/api/admin/provider-accounts": {
@@ -239,7 +241,7 @@ const responses: Record<string, unknown> = {
   "/api/admin/intelligence": {
     state: "configured",
     scope: { protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music" },
-    policy: { enabled: true, retentionDays: 30, revision: 1 },
+    policy: { enabled: true, retentionDays: 30, revision: 1, targetCredentialReferenceId: "33333333-3333-3333-3333-333333333333", targetCredentialConfigured: true },
     availableSignalTypes: [{ id: "play", label: "Play", enabled: true }],
     providers: [{
       id: "lumen-audio", label: "Lumen Audio", description: "Private similarity source.",
@@ -263,7 +265,52 @@ const responses: Record<string, unknown> = {
     generatedSets: [{
       id: "set-1", name: "Morning discovery", trackCount: 25, state: "succeeded", materialized: true,
     }],
+    schedules: [{
+      id: "schedule-1", cronExpression: "0 8 * * 1", timeZoneId: "America/New_York",
+      overlapPolicy: "skip", misfirePolicy: "runOnce", enabled: true,
+      nextRunAt: "2026-01-05T13:00:00Z", revision: 1, name: "Monday discoveries", limit: 25,
+    }],
     visualization: [{ key: "plays", label: "Plays", value: .7 }],
+  },
+  "/api/admin/intelligence/history/overview": {
+    period: { from: "2025-12-01T00:00:00Z", to: "2026-01-01T00:00:00Z", timeZoneId: "UTC" },
+    allTime: { completedListens: 42, distinctTracks: 20, distinctArtists: 8, listeningTimeMilliseconds: 7_200_000, firstListen: "2025-01-01T00:00:00Z" },
+    selected: { completedListens: 12, distinctTracks: 9, distinctArtists: 5, listeningTimeMilliseconds: 3_660_000, firstListen: "2025-12-01T00:00:00Z" },
+    currentStreakDays: 3, longestStreakDays: 9, nowPlaying: null, recent: [],
+  },
+  "/api/admin/intelligence/history/activity": {
+    period: { from: "2025-12-01T00:00:00Z", to: "2026-01-01T00:00:00Z", timeZoneId: "UTC" },
+    currentStreakDays: 3, longestStreakDays: 9,
+    buckets: [{ date: "2025-12-30", count: 4, durationMilliseconds: 720_000 }, { date: "2025-12-31", count: 8, durationMilliseconds: 1_440_000 }],
+  },
+  "/api/admin/intelligence/history/top/artist": {
+    kind: "artist", period: {}, items: [{ artist: "The Comets", listenCount: 7, listeningTimeMilliseconds: 1_260_000, lastListenedAt: "2025-12-31T18:00:00Z" }],
+  },
+  "/api/admin/intelligence/history/top/album": {
+    kind: "album", period: {}, items: [{ album: "Night Drive", artist: "The Comets", listenCount: 5, listeningTimeMilliseconds: 900_000, lastListenedAt: "2025-12-31T18:00:00Z" }],
+  },
+  "/api/admin/intelligence/history/top/track": {
+    kind: "track", period: {}, items: [{ title: "Moon Song", artist: "The Comets", album: "Night Drive", listenCount: 4, listeningTimeMilliseconds: 720_000, lastListenedAt: "2025-12-31T18:00:00Z" }],
+  },
+  "/api/admin/intelligence/history": {
+    period: { from: "2025-12-01T00:00:00Z", to: "2026-01-01T00:00:00Z", timeZoneId: "UTC" },
+    items: [{
+      id: "44444444-4444-4444-4444-444444444444", title: "Moon Song", artist: "The Comets", album: "Night Drive",
+      listenedAt: "2025-12-31T18:00:00Z", durationMilliseconds: 180_000, client: "Jellyfin Web",
+      source: "playback", provider: "jellyfin", state: "completed", enrichmentState: "resolved",
+      targetStatuses: [{ target: "lastfm", state: "delivered", requiresReauthentication: false, updatedAt: "2025-12-31T18:05:00Z" }], revision: 2,
+    }],
+    nextCursor: null,
+  },
+  "/api/admin/intelligence/history/44444444-4444-4444-4444-444444444444": {
+    item: {
+      id: "44444444-4444-4444-4444-444444444444", title: "Moon Song", artist: "The Comets", album: "Night Drive",
+      listenedAt: "2025-12-31T18:00:00Z", durationMilliseconds: 180_000, client: "Jellyfin Web",
+      source: "playback", provider: "jellyfin", state: "completed", enrichmentState: "resolved",
+      targetStatuses: [{ target: "lastfm", state: "delivered", requiresReauthentication: false, updatedAt: "2025-12-31T18:05:00Z" }], revision: 2,
+    },
+    identity: { albumArtist: "The Comets", musicBrainzEnrichmentConfidence: .98 },
+    provenance: { source: "playback", client: "Jellyfin Web", device: "browser", provider: "jellyfin", imported: false },
   },
 };
 
@@ -411,7 +458,7 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
         ...route.request().postDataJSON(),
         revision: 2,
       };
-    if (url.pathname.endsWith("/schedules") && route.request().method() === "POST")
+    if (url.pathname.endsWith("/schedules") && url.pathname !== "/api/admin/intelligence/schedules" && route.request().method() === "POST")
       body = {
         id: "schedule", cronExpression: "0 3 * * *", timeZoneId: "America/New_York",
         overlapPolicy: "skip", misfirePolicy: "runOnce", enabled: true, revision: 1,
@@ -488,6 +535,33 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
     if (url.pathname === "/api/admin/intelligence/policy")
       body = { revision: 2 };
     if (url.pathname === "/api/admin/intelligence/data")
+      body = {};
+    if (url.pathname === "/api/admin/intelligence/history/44444444-4444-4444-4444-444444444444" && route.request().method() === "PUT")
+      body = { id: "44444444-4444-4444-4444-444444444444", revision: 3 };
+    if (url.pathname === "/api/admin/intelligence/history/44444444-4444-4444-4444-444444444444" && route.request().method() === "DELETE")
+      body = {};
+    if (url.pathname === "/api/admin/intelligence/history/imports/preview")
+      body = {
+        importId: "55555555-5555-5555-5555-555555555555", revision: "preview-revision",
+        displayFileName: "Streaming_History.json", sizeBytes: 1024, expiresAt: "2026-01-02T00:00:00Z",
+        state: "previewed", outboundReplay: false,
+        preview: {
+          format: "spotify-extended-history", fileRows: 15, musicRows: 14, completed: 12, partial: 1,
+          skipped: 1, episodes: 1, nonTrack: 0, malformed: 0, duplicateInFile: 1, duplicateExisting: 2,
+          newRows: 9, resolvedNewRows: 7, unresolvedNewRows: 2, rowsWithoutProviderIdentity: 0,
+          sourceUserCount: 1, estimatedMusicBrainzLookups: 2, earliest: "2025-01-01T00:00:00Z",
+          latest: "2025-12-31T00:00:00Z", reasonCounts: {},
+        },
+      };
+    if (url.pathname === "/api/admin/intelligence/history/imports/55555555-5555-5555-5555-555555555555")
+      body = { importId: "55555555-5555-5555-5555-555555555555", revision: "done-revision", state: "completed", importedRows: 9, duplicateRows: 3, resolvedRows: 7, unresolvedRows: 2, outboundReplay: false };
+    if (url.pathname.match(/^\/api\/admin\/intelligence\/history\/imports\/[^/]+\/(apply|resume|cancel)$/))
+      body = { importId: "55555555-5555-5555-5555-555555555555", revision: "done-revision", state: "completed", importedRows: 9, duplicateRows: 3, resolvedRows: 7, unresolvedRows: 2, outboundReplay: false };
+    if (url.pathname === "/api/admin/intelligence/schedules" && route.request().method() === "POST")
+      body = { id: "schedule-2", ...route.request().postDataJSON(), revision: 1, nextRunAt: "2026-01-02T13:00:00Z" };
+    if (url.pathname.startsWith("/api/admin/intelligence/schedules/") && route.request().method() === "PUT")
+      body = { id: url.pathname.split("/").at(-1), ...route.request().postDataJSON(), revision: 2, nextRunAt: "2026-01-02T13:00:00Z" };
+    if (url.pathname.startsWith("/api/admin/intelligence/schedules/") && route.request().method() === "DELETE")
       body = {};
     await route.fulfill({
       status: body === undefined ? 404 : 200,
@@ -647,12 +721,25 @@ for (const viewport of viewports) {
       delayed.release();
       await expect(page.getByText("Future Song", { exact: true })).toBeVisible();
       await expect(page.getByText("Morning discovery")).toBeVisible();
-      await expect(page.getByText("Private similarity source. · ready")).toBeVisible();
       await expect(page.getByText("Searching Lumen Audio.")).toBeVisible();
       await expect(page.getByRole("button", { name: "Cancel refresh" })).toBeInViewport();
       await expect(page.getByRole("button", { name: "Refresh recommendations" })).toBeInViewport();
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      await page.getByRole("tab", { name: "Listening history" }).click();
+      await expect(page.getByRole("heading", { name: "Listening history", level: 3, exact: true })).toBeVisible();
+      await expect(page.locator(".history-list").getByText("Moon Song", { exact: true })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Import Spotify listening history" })).toBeVisible();
+      await expect.poll(() => page.evaluate(() =>
+        document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      if (process.env.ALLSTARR_SCREENSHOT_DIR)
+        await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-history.png`, fullPage: true });
+      await page.getByRole("tab", { name: "Settings" }).click();
+      await expect(page.getByText("Monday discoveries", { exact: true })).toBeVisible();
+      await expect(page.getByText("Private similarity source. · ready")).toBeVisible();
+      await expect(page.getByText("Where generated playlists are created", { exact: true })).toBeVisible();
+      if (process.env.ALLSTARR_SCREENSHOT_DIR)
+        await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-settings.png`, fullPage: true });
 
       const errorPage = await context.newPage();
       await mockApi(errorPage, { fail: ["/api/admin/intelligence"] });
@@ -729,6 +816,69 @@ for (const viewport of viewports) {
     });
   });
 }
+
+test("Intelligence history imports, corrections, and schedules use the selected scope", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+  await page.goto("#/intelligence");
+  await page.getByLabel("Backend instance").fill("main");
+  await page.getByLabel("Library scope").fill("music");
+  await page.getByRole("button", { name: "Open library" }).click();
+
+  await page.getByLabel("Backend instance").fill("typed-but-not-opened");
+  const overviewRequest = page.waitForRequest((request) => request.url().includes("/api/admin/intelligence/history/overview"));
+  await page.getByRole("tab", { name: "Listening history" }).click();
+  expect(new URL((await overviewRequest).url()).searchParams.get("backendInstanceId")).toBe("main");
+  await page.locator(".history-list").getByRole("button").click();
+  const detail = page.getByRole("dialog", { name: "Edit listen" });
+  await expect(detail).toBeVisible();
+  await detail.getByLabel("Song").fill("Moon Song (live)");
+  const correction = page.waitForRequest((request) => request.method() === "PUT" &&
+    request.url().includes("/api/admin/intelligence/history/44444444-4444-4444-4444-444444444444"));
+  await detail.getByRole("button", { name: "Save changes" }).click();
+  expect((await correction).postDataJSON()).toMatchObject({
+    protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music",
+    title: "Moon Song (live)", expectedRevision: 2,
+  });
+  await detail.getByRole("button", { name: "Close listen details" }).click();
+
+  const preview = page.waitForRequest((request) => request.method() === "POST" &&
+    request.url().endsWith("/api/admin/intelligence/history/imports/preview"));
+  await page.getByLabel("Spotify JSON file").setInputFiles({
+    name: "Streaming_History.json", mimeType: "application/json", buffer: Buffer.from("[]"),
+  });
+  await page.getByRole("button", { name: "Preview import" }).click();
+  await preview;
+  await expect(page.getByText("9", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("It will not send them to Last.fm or ListenBrainz.", { exact: false })).toBeVisible();
+  const apply = page.waitForRequest((request) => request.method() === "POST" &&
+    request.url().endsWith("/api/admin/intelligence/history/imports/55555555-5555-5555-5555-555555555555/apply"));
+  await page.getByRole("button", { name: "Add to my history" }).click();
+  expect((await apply).postDataJSON()).toMatchObject({
+    protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music", revision: "preview-revision",
+  });
+
+  await page.getByRole("tab", { name: "Settings" }).click();
+  await expect(page.getByRole("button", { name: "Generated playlist destination" })).toContainText("Jellyfin Music");
+  await page.getByRole("button", { name: "New schedule" }).click();
+  await page.getByLabel("Playlist name").fill("Friday discoveries");
+  await page.getByRole("button", { name: "When to create it" }).click();
+  await page.getByRole("option", { name: "Every Friday at 8:00 AM" }).click();
+  const schedule = page.waitForRequest((request) => request.method() === "POST" &&
+    request.url().endsWith("/api/admin/intelligence/schedules"));
+  await page.getByRole("button", { name: "Create schedule" }).click();
+  expect((await schedule).postDataJSON()).toMatchObject({
+    protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music",
+    name: "Friday discoveries", cronExpression: "0 8 * * 5", limit: 25,
+  });
+  await expect(page.getByText("Monday discoveries", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Remove" }).click();
+  const removal = page.getByRole("alertdialog", { name: "Remove this automatic playlist schedule?" });
+  const remove = page.waitForRequest((request) => request.method() === "DELETE" &&
+    request.url().endsWith("/api/admin/intelligence/schedules/schedule-1"));
+  await removal.getByRole("button", { name: "Remove schedule" }).click();
+  await remove;
+});
 
 test("Home stays inside runtime and request budgets", async ({ page }) => {
   const requests: string[] = [];

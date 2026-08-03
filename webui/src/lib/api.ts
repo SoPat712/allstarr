@@ -803,6 +803,8 @@ export type IntelligenceState = {
     enabled: boolean;
     retentionDays: number;
     revision: number;
+    targetCredentialReferenceId?: string | null;
+    targetCredentialConfigured?: boolean;
   } | null;
   availableSignalTypes: Array<{ id: string; label: string; enabled: boolean }>;
   providers: Array<{
@@ -859,7 +861,147 @@ export type IntelligenceState = {
     backendPlaylistId?: string | null;
     errorCode?: string | null;
   }>;
+  schedules: IntelligenceSchedule[];
   visualization: Array<{ key: string; label: string; value: number }>;
+};
+
+export type IntelligenceSchedule = {
+  id: string;
+  cronExpression: string;
+  timeZoneId: string;
+  overlapPolicy: "skip" | "queue";
+  misfirePolicy: "skip" | "runOnce";
+  enabled: boolean;
+  nextRunAt?: string | null;
+  revision: number;
+  name: string;
+  limit: number;
+};
+
+export type ListeningHistoryStats = {
+  completedListens: number;
+  distinctTracks: number;
+  distinctArtists: number;
+  listeningTimeMilliseconds: number;
+  firstListen?: string | null;
+};
+
+export type ListeningHistoryTargetStatus = {
+  target: string;
+  state: string;
+  code?: string | null;
+  message?: string | null;
+  retryAfter?: string | null;
+  requiresReauthentication: boolean;
+  updatedAt: string;
+};
+
+export type ListeningHistoryItem = {
+  id: string;
+  title?: string | null;
+  artist?: string | null;
+  album?: string | null;
+  listenedAt?: string | null;
+  durationMilliseconds?: number | null;
+  client?: string | null;
+  source: string;
+  provider?: string | null;
+  state: string;
+  enrichmentState: string;
+  artworkUrl?: string | null;
+  targetStatuses: ListeningHistoryTargetStatus[];
+  revision: number;
+};
+
+export type ListeningHistoryPeriod = { from: string; to: string; timeZoneId: string };
+
+export type ListeningHistoryOverview = {
+  period: ListeningHistoryPeriod;
+  allTime: ListeningHistoryStats;
+  selected: ListeningHistoryStats;
+  currentStreakDays: number;
+  longestStreakDays: number;
+  nowPlaying?: ListeningHistoryItem | null;
+  recent: ListeningHistoryItem[];
+};
+
+export type ListeningHistoryActivity = {
+  period: ListeningHistoryPeriod;
+  currentStreakDays: number;
+  longestStreakDays: number;
+  buckets: Array<{ date: string; count: number; durationMilliseconds: number }>;
+};
+
+export type ListeningHistoryTopItem = {
+  title?: string | null;
+  artist?: string | null;
+  album?: string | null;
+  listenCount: number;
+  listeningTimeMilliseconds: number;
+  lastListenedAt?: string | null;
+};
+
+export type ListeningHistoryDetail = {
+  item: ListeningHistoryItem;
+  identity: {
+    recordingMusicBrainzId?: string | null;
+    isrc?: string | null;
+    albumArtist?: string | null;
+    trackNumber?: number | null;
+    musicBrainzEnrichmentConfidence?: number | null;
+    musicBrainzSourceRevision?: string | null;
+    musicBrainzEnrichedAt?: string | null;
+    musicBrainzFacts?: Record<string, unknown> | null;
+  };
+  provenance: {
+    source: string;
+    client?: string | null;
+    device?: string | null;
+    provider?: string | null;
+    imported: boolean;
+  };
+};
+
+export type ListeningHistoryImportPreview = {
+  format: string;
+  fileRows: number;
+  musicRows: number;
+  completed: number;
+  partial: number;
+  skipped: number;
+  episodes: number;
+  nonTrack: number;
+  malformed: number;
+  duplicateInFile: number;
+  duplicateExisting: number;
+  newRows: number;
+  resolvedNewRows: number;
+  unresolvedNewRows: number;
+  rowsWithoutProviderIdentity: number;
+  sourceUserCount: number;
+  estimatedMusicBrainzLookups: number;
+  earliest?: string | null;
+  latest?: string | null;
+  reasonCounts: Record<string, number>;
+};
+
+export type ListeningHistoryImport = {
+  importId: string;
+  revision: string;
+  displayFileName?: string;
+  sizeBytes?: number;
+  expiresAt?: string;
+  state: string;
+  jobId?: string | null;
+  jobState?: string | null;
+  lastErrorCode?: string | null;
+  lastErrorMessage?: string | null;
+  importedRows?: number;
+  duplicateRows?: number;
+  resolvedRows?: number;
+  unresolvedRows?: number;
+  outboundReplay: false;
+  preview?: ListeningHistoryImportPreview;
 };
 
 async function request(input: RequestInfo | URL, init?: RequestInit) {
@@ -939,6 +1081,13 @@ const intelligenceBody = (value: object, method = "POST") => ({
   body: JSON.stringify(value),
 });
 
+const intelligenceQuery = (scope: IntelligenceScope, input: Record<string, string | number | undefined> = {}) => {
+  const query = new URLSearchParams(scope);
+  for (const [key, value] of Object.entries(input))
+    if (value !== undefined && value !== "") query.set(key, String(value));
+  return query;
+};
+
 export const intelligence = {
   get: (scope: IntelligenceScope) =>
     json<IntelligenceState>(`/api/admin/intelligence?${new URLSearchParams(scope)}`),
@@ -956,6 +1105,65 @@ export const intelligence = {
       intelligenceBody({ ...scope, kind, expectedRevision }, "PUT")),
   purge: (scope: IntelligenceScope) =>
     json<void>("/api/admin/intelligence/data", intelligenceBody(scope, "DELETE")),
+  historyOverview: (scope: IntelligenceScope, from: string, to: string, timeZoneId: string) =>
+    json<ListeningHistoryOverview>(`/api/admin/intelligence/history/overview?${intelligenceQuery(scope, { from, to, timeZoneId })}`),
+  history: (scope: IntelligenceScope, input: {
+    from: string;
+    to: string;
+    timeZoneId: string;
+    limit?: number;
+    cursor?: string;
+    source?: string;
+    client?: string;
+    artist?: string;
+    album?: string;
+    track?: string;
+    search?: string;
+  }) => json<{ period: ListeningHistoryPeriod; items: ListeningHistoryItem[]; nextCursor?: string | null }>(
+    `/api/admin/intelligence/history?${intelligenceQuery(scope, input)}`,
+  ),
+  historyActivity: (scope: IntelligenceScope, from: string, to: string, timeZoneId: string) =>
+    json<ListeningHistoryActivity>(`/api/admin/intelligence/history/activity?${intelligenceQuery(scope, { from, to, timeZoneId })}`),
+  historyTop: (scope: IntelligenceScope, kind: "artist" | "album" | "track", from: string, to: string, timeZoneId: string) =>
+    json<{ period: ListeningHistoryPeriod; kind: string; items: ListeningHistoryTopItem[] }>(
+      `/api/admin/intelligence/history/top/${kind}?${intelligenceQuery(scope, { from, to, timeZoneId, limit: 10 })}`,
+    ),
+  historyDetail: (scope: IntelligenceScope, id: string) =>
+    json<ListeningHistoryDetail>(`/api/admin/intelligence/history/${encodeURIComponent(id)}?${intelligenceQuery(scope)}`),
+  correctHistory: (scope: IntelligenceScope, id: string, input: {
+    title: string;
+    artist: string;
+    album?: string | null;
+    albumArtist?: string | null;
+    expectedRevision: number;
+  }) => json<{ id: string; revision: number }>(
+    `/api/admin/intelligence/history/${encodeURIComponent(id)}`,
+    intelligenceBody({ ...scope, ...input }, "PUT"),
+  ),
+  deleteHistory: (scope: IntelligenceScope, id: string, expectedRevision: number) =>
+    json<void>(`/api/admin/intelligence/history/${encodeURIComponent(id)}`,
+      intelligenceBody({ ...scope, expectedRevision, confirmed: true }, "DELETE")),
+  historyExportUrl: (scope: IntelligenceScope) =>
+    `/api/admin/intelligence/history/export?${intelligenceQuery(scope)}`,
+  previewHistoryImport: (scope: IntelligenceScope, file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    for (const [key, value] of Object.entries(scope)) body.append(key, value);
+    return json<ListeningHistoryImport>("/api/admin/intelligence/history/imports/preview", { method: "POST", body });
+  },
+  historyImport: (scope: IntelligenceScope, id: string) =>
+    json<ListeningHistoryImport>(`/api/admin/intelligence/history/imports/${encodeURIComponent(id)}?${intelligenceQuery(scope)}`),
+  changeHistoryImport: (scope: IntelligenceScope, item: ListeningHistoryImport, operation: "apply" | "resume" | "cancel") =>
+    json<ListeningHistoryImport>(`/api/admin/intelligence/history/imports/${encodeURIComponent(item.importId)}/${operation}`,
+      intelligenceBody({ ...scope, revision: item.revision })),
+  createSchedule: (scope: IntelligenceScope, input: Omit<IntelligenceSchedule, "id" | "revision" | "nextRunAt">) =>
+    json<IntelligenceSchedule>("/api/admin/intelligence/schedules", intelligenceBody({ ...scope, ...input })),
+  updateSchedule: (scope: IntelligenceScope, schedule: IntelligenceSchedule, input: Omit<IntelligenceSchedule, "id" | "revision" | "nextRunAt">) =>
+    json<IntelligenceSchedule>(`/api/admin/intelligence/schedules/${encodeURIComponent(schedule.id)}`,
+      intelligenceBody({ ...scope, ...input, expectedRevision: schedule.revision }, "PUT")),
+  deleteSchedule: (scope: IntelligenceScope, schedule: IntelligenceSchedule) =>
+    json<void>(`/api/admin/intelligence/schedules/${encodeURIComponent(schedule.id)}`,
+      intelligenceBody({ ...scope, expectedRevision: schedule.revision }, "DELETE")),
 };
 
 export const home = {
