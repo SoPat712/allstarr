@@ -2,6 +2,7 @@ using System.Text.Json;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
+using allstarr.Core.Playback;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
@@ -242,10 +243,13 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
                 "purged-preview");
         var schedule = Schedule(policy.Id, "music");
         var childJobId = Guid.CreateVersion7();
+        var otherScope = _scope with { BackendInstanceId = "other" };
+        var exactEnrichment = HistoryJob(_scope, new string('a', 64));
+        var otherEnrichment = HistoryJob(otherScope, new string('b', 64));
         await using (var setup = await _factory.CreateDbContextAsync())
         {
             setup.JobSchedules.Add(schedule);
-            setup.Jobs.Add(new()
+            setup.Jobs.AddRange(exactEnrichment, otherEnrichment, new()
             {
                 Id = childJobId,
                 ScopeKey = $"{_tenant:N}:{_user:N}",
@@ -264,6 +268,15 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
                 CreatedAt = _clock.UtcNow,
                 UpdatedAt = _clock.UtcNow
             });
+            setup.ListeningEvents.AddRange(
+                HistoryEvent(_scope, new string('a', 64)),
+                HistoryEvent(otherScope, new string('b', 64)));
+            setup.ListeningHistoryImports.AddRange(
+                HistoryImport(_scope, new string('c', 64)),
+                HistoryImport(otherScope, new string('d', 64)));
+            setup.PlaybackDeliveryCheckpoints.AddRange(
+                HistoryCheckpoint(new string('a', 64), new string('e', 64)),
+                HistoryCheckpoint(new string('b', 64), new string('f', 64)));
             await setup.SaveChangesAsync();
         }
         await _policies.DisableAndPurgeAsync(_scope);
@@ -276,6 +289,11 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
             x.IdempotencyKey == $"generated-set:{directSetId:N}")).State);
         Assert.Empty(await db.GeneratedSets.ToListAsync());
         Assert.Empty(await db.GeneratedSetEntries.ToListAsync());
+        Assert.Equal("other", Assert.Single(await db.ListeningEvents.ToListAsync()).BackendInstanceId);
+        Assert.Equal("other", Assert.Single(await db.ListeningHistoryImports.ToListAsync()).BackendInstanceId);
+        Assert.Equal(new string('b', 64), Assert.Single(await db.PlaybackDeliveryCheckpoints.ToListAsync()).OccurrenceKey);
+        Assert.Equal(DurableJobState.Cancelled, (await db.Jobs.SingleAsync(item => item.Id == exactEnrichment.Id)).State);
+        Assert.Equal(DurableJobState.Pending, (await db.Jobs.SingleAsync(item => item.Id == otherEnrichment.Id)).State);
         Assert.False((await db.JobSchedules.SingleAsync()).Enabled);
         Assert.Null(await _jobs.ClaimNextAsync("purge-restart", ["recommendation.generate"]));
         await Assert.ThrowsAsync<InvalidOperationException>(() => new RecommendationRunService(_factory, _jobs, _clock).EnqueueAsync(_scope, [], 10, "disabled"));
@@ -297,6 +315,74 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
             1, policyId, 25, "Daily discovery")),
         Enabled = true,
         NextRunAt = _clock.UtcNow.AddMinutes(1),
+        CreatedAt = _clock.UtcNow,
+        UpdatedAt = _clock.UtcNow
+    };
+
+    private ListeningEventRecord HistoryEvent(IntelligenceScope scope, string occurrenceKey) => new()
+    {
+        Id = Guid.CreateVersion7(),
+        TenantId = scope.TenantId,
+        OwnerUserId = scope.OwnerUserId,
+        Protocol = scope.Protocol,
+        BackendInstanceId = scope.BackendInstanceId,
+        LibraryScopeId = scope.LibraryScopeId,
+        OccurrenceKey = occurrenceKey,
+        State = ListeningEventState.Completed,
+        ListenedAt = _clock.UtcNow,
+        UpdatedAt = _clock.UtcNow,
+        SourceKind = "protocol",
+        TrackReference = "track"
+    };
+
+    private ListeningHistoryImportRecord HistoryImport(IntelligenceScope scope, string hash) => new()
+    {
+        Id = Guid.CreateVersion7(),
+        TenantId = scope.TenantId,
+        OwnerUserId = scope.OwnerUserId,
+        Protocol = scope.Protocol,
+        BackendInstanceId = scope.BackendInstanceId,
+        LibraryScopeId = scope.LibraryScopeId,
+        DisplayFileName = "history.json",
+        Format = "spotify",
+        ContentSha256 = hash,
+        SizeBytes = 1,
+        PreviewJson = "{}",
+        PreviewRevision = hash,
+        State = ListeningHistoryImportState.Completed,
+        CreatedAt = _clock.UtcNow,
+        UpdatedAt = _clock.UtcNow,
+        ExpiresAt = _clock.UtcNow.AddDays(1)
+    };
+
+    private PlaybackDeliveryCheckpointEntity HistoryCheckpoint(string occurrenceKey, string signalKey) => new()
+    {
+        Id = Guid.CreateVersion7(),
+        TenantId = _tenant,
+        OwnerUserId = _user,
+        OccurrenceKey = occurrenceKey,
+        SignalKey = signalKey,
+        TargetId = "lastfm",
+        State = ScopedPlaybackScrobbleOutcome.Delivered,
+        UpdatedAt = _clock.UtcNow
+    };
+
+    private DurableJobRecord HistoryJob(IntelligenceScope scope, string occurrenceKey) => new()
+    {
+        Id = Guid.CreateVersion7(),
+        ScopeKey = $"{scope.TenantId:N}:{scope.OwnerUserId:N}",
+        TenantId = scope.TenantId,
+        OwnerUserId = scope.OwnerUserId,
+        LibraryScopeId = scope.LibraryScopeId,
+        Type = MusicBrainzListeningEnrichmentQueue.JobType,
+        PayloadJson = JsonSerializer.Serialize(new MusicBrainzListeningEnrichmentPayload(scope, occurrenceKey)),
+        PolicySnapshotJson = "{}",
+        RequestFingerprint = occurrenceKey,
+        IdempotencyKey = $"history-{occurrenceKey}",
+        CorrelationId = occurrenceKey,
+        State = DurableJobState.Pending,
+        MaxAttempts = 3,
+        AvailableAt = _clock.UtcNow,
         CreatedAt = _clock.UtcNow,
         UpdatedAt = _clock.UtcNow
     };

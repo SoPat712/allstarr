@@ -242,8 +242,8 @@
 
 <ConfirmDialog
   bind:open={purgeOpen}
-  title="Clear this library’s Intelligence data?"
-  description="Listening signals, recommendations, feedback, and saved playlists for this account and music library will be removed."
+  title="Clear private listening data for this library?"
+  description="Allstarr will remove this account’s private listening history, recommendations, feedback, and saved imports from this music library. It will forget which playlists it generated, but it will not change Jellyfin playlists or connected Last.fm or ListenBrainz accounts."
   confirmLabel="Turn off and clear"
   cancelLabel="Keep my data"
   onConfirm={() => perform("purge", () => intelligence.purge(activeScope))}

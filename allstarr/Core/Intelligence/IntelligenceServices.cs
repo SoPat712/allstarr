@@ -26,7 +26,8 @@ public interface IRecommendationRunService
         int limit, string idempotencyKey, CancellationToken cancellationToken = default);
 }
 
-public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock)
+public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock,
+    ListeningHistoryImportArtifactStore? historyArtifacts = null)
     : IIntelligencePolicyService
 {
     private static readonly HashSet<string> Signals = new(["play", "skip", "complete", "favorite", "playlist"], StringComparer.Ordinal);
@@ -76,6 +77,42 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         var policy = await Query(db, scope).SingleOrDefaultAsync(cancellationToken);
         if (policy != null) { policy.Enabled = false; policy.UpdatedAt = clock.UtcNow; policy.Revision++; }
+        var imports = await db.ListeningHistoryImports.AsNoTracking().Where(item =>
+            item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+            item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
+            item.LibraryScopeId == scope.LibraryScopeId).ToListAsync(cancellationToken);
+        if (historyArtifacts != null)
+            foreach (var import in imports) historyArtifacts.Delete(import.Id);
+        var importJobIds = imports.Select(item => item.JobId).OfType<Guid>().ToHashSet();
+        var historyJobs = await db.Jobs.Where(item =>
+            item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+            item.LibraryScopeId == scope.LibraryScopeId &&
+            (item.Type == ListeningHistoryImportJobHandler.JobTypeName ||
+             item.Type == MusicBrainzListeningEnrichmentQueue.JobType) &&
+            (item.State == DurableJobState.Pending || item.State == DurableJobState.RetryScheduled ||
+             item.State == DurableJobState.Running)).ToListAsync(cancellationToken);
+        foreach (var job in historyJobs.Where(item => importJobIds.Contains(item.Id) ||
+                     item.Type == MusicBrainzListeningEnrichmentQueue.JobType && JobMatchesScope(item.PayloadJson, scope)))
+        {
+            job.CancellationRequestedAt ??= clock.UtcNow; job.UpdatedAt = clock.UtcNow; job.Revision++;
+            if (job.State is DurableJobState.Pending or DurableJobState.RetryScheduled)
+            { job.State = DurableJobState.Cancelled; job.CompletedAt = clock.UtcNow; }
+        }
+        var history = db.ListeningEvents.Where(item =>
+            item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+            item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
+            item.LibraryScopeId == scope.LibraryScopeId);
+        var occurrenceKeys = history.Select(item => item.OccurrenceKey);
+        await db.PlaybackDeliveryCheckpoints.Where(item =>
+                item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+                item.OccurrenceKey != null && occurrenceKeys.Contains(item.OccurrenceKey))
+            .ExecuteDeleteAsync(cancellationToken);
+        await history.ExecuteDeleteAsync(cancellationToken);
+        await db.ListeningHistoryImports.Where(item =>
+                item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+                item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
+                item.LibraryScopeId == scope.LibraryScopeId)
+            .ExecuteDeleteAsync(cancellationToken);
         var runs = await ScopedRuns(db, scope).ToListAsync(cancellationToken); var runIds = runs.Select(x => x.Id).ToArray();
         var jobIds = runs.Select(x => x.JobId).ToArray(); var jobs = await db.Jobs.Where(x => jobIds.Contains(x.Id)).ToListAsync(cancellationToken);
         foreach (var job in jobs.Where(x => x.State is DurableJobState.Pending or DurableJobState.RetryScheduled or DurableJobState.Running))
@@ -163,6 +200,11 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
     internal static IQueryable<ListeningSignalRecord> ScopedSignals(AllstarrDbContext db, IntelligenceScope s) => db.ListeningSignals.Where(x => x.TenantId == s.TenantId && x.OwnerUserId == s.OwnerUserId && x.Protocol == s.Protocol && x.BackendInstanceId == s.BackendInstanceId && x.LibraryScopeId == s.LibraryScopeId);
     internal static IQueryable<ListeningProfileRecord> ScopedProfiles(AllstarrDbContext db, IntelligenceScope s) => db.ListeningProfiles.Where(x => x.TenantId == s.TenantId && x.OwnerUserId == s.OwnerUserId && x.Protocol == s.Protocol && x.BackendInstanceId == s.BackendInstanceId && x.LibraryScopeId == s.LibraryScopeId);
     internal static IQueryable<RecommendationRunRecord> ScopedRuns(AllstarrDbContext db, IntelligenceScope s) => db.RecommendationRuns.Where(x => x.TenantId == s.TenantId && x.OwnerUserId == s.OwnerUserId && x.Protocol == s.Protocol && x.BackendInstanceId == s.BackendInstanceId && x.LibraryScopeId == s.LibraryScopeId);
+    private static bool JobMatchesScope(string payloadJson, IntelligenceScope scope)
+    {
+        try { return JsonSerializer.Deserialize<MusicBrainzListeningEnrichmentPayload>(payloadJson)?.Scope == scope; }
+        catch (JsonException) { return false; }
+    }
     internal static string Normalize(string value) { value = value?.Trim().ToLowerInvariant() ?? ""; if (value.Length is < 1 or > 100 || value.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '-' and not '_')) throw new ArgumentException("An intelligence catalog value is invalid."); return value; }
 }
 

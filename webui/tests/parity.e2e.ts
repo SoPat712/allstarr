@@ -824,6 +824,10 @@ for (const viewport of viewports) {
       await expect(page.getByText("Allstarr keeps private listening history and uses it for recommendations.", { exact: true })).toBeVisible();
       await expect(page.getByText("Private similarity source. · Ready")).toBeVisible();
       await expect(page.getByText("Where generated playlists are created", { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "Turn off and clear" }).click();
+      const clearDialog = page.getByRole("alertdialog", { name: "Clear private listening data for this library?" });
+      await expect(clearDialog).toContainText("it will not change Jellyfin playlists or connected Last.fm or ListenBrainz accounts.");
+      await clearDialog.getByRole("button", { name: "Keep my data" }).click();
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
         await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-settings.png`, fullPage: true });
 
