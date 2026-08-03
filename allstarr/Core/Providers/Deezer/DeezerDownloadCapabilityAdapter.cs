@@ -74,7 +74,7 @@ public sealed class DeezerDownloadCapabilityAdapter : IProviderDownloadCapabilit
                 ? ProviderOutcome<ProviderDownloadAvailability>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration))
                 : ProviderOutcome<ProviderDownloadAvailability>.Success(new(
                     ProviderDownloadAvailabilityState.Available,
-                    [ProviderAudioQuality.Lossy, ProviderAudioQuality.Lossless]));
+                    [ProviderAudioQuality.DataSaver, ProviderAudioQuality.Lossy, ProviderAudioQuality.Lossless]));
         }
         catch (OperationCanceledException)
         {
@@ -193,6 +193,7 @@ public sealed class DeezerDownloadCapabilityAdapter : IProviderDownloadCapabilit
         };
         return requested switch
         {
+            ProviderAudioQuality.DataSaver when ceiling != "MP3_128" => "MP3_128",
             ProviderAudioQuality.Lossy when ceiling == "FLAC" => "MP3_320",
             ProviderAudioQuality.Lossy => ceiling,
             _ => ceiling

@@ -1,14 +1,16 @@
+using allstarr.Core.Capabilities;
+
 namespace allstarr.Services.Common;
 
 /// <summary>
 /// Represents the quality tier requested by a client for streaming.
 /// Used to map client transcoding parameters to provider-specific quality levels.
-/// The .env quality setting acts as a ceiling — client requests can only go equal or lower.
+/// The shared audio-quality setting is the maximum; client requests can only go lower.
 /// </summary>
 public enum StreamQuality
 {
     /// <summary>
-    /// Use the quality configured in .env / appsettings (default behavior).
+    /// Use the quality configured in Settings (default behavior).
     /// This is the "Lossless" / "no transcoding" selection in a client.
     /// </summary>
     Original,
@@ -34,10 +36,15 @@ public enum StreamQuality
 /// 
 /// Typical client quality options: Lossless, 320K, 256K, 192K, 128K, 64K
 /// These are mapped to StreamQuality tiers which providers then translate
-/// to their own quality levels, capped at the .env ceiling.
+/// to their own quality levels, capped at the shared setting.
 /// </summary>
 public static class StreamQualityHelper
 {
+    public static ProviderAudioQuality FromSubsonicMaxBitRate(string? kilobitsPerSecond) =>
+        long.TryParse(kilobitsPerSecond, out var value) && value > 0
+            ? value < 192 ? ProviderAudioQuality.DataSaver : ProviderAudioQuality.Lossy
+            : ProviderAudioQuality.Any;
+
     /// <summary>
     /// Parses the request query string to determine what quality the client wants.
     /// Jellyfin clients send parameters like AudioBitRate, MaxStreamingBitrate,
@@ -84,7 +91,7 @@ public static class StreamQualityHelper
             }
         }
 
-        // No transcoding parameters — use original quality from .env
+        // No transcoding parameters — use the quality selected in Settings.
         return StreamQuality.Original;
     }
 
@@ -95,7 +102,7 @@ public static class StreamQualityHelper
     /// >= 192kbps → High (covers 320K, 256K, 192K selections)
     /// &lt; 192kbps → Low (covers 128K, 64K selections)
     /// </summary>
-    private static StreamQuality MapBitRateToQuality(int bitRate)
+    internal static StreamQuality MapBitRateToQuality(int bitRate)
     {
         // >= 192kbps → High (320kbps tier)
         // Covers client selections: 320K, 256K, 192K

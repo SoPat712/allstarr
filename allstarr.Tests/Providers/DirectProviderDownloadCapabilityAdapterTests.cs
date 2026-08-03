@@ -239,6 +239,7 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
     }
 
     [Theory]
+    [InlineData(ProviderAudioQuality.DataSaver, "FLAC", "MP3_128")]
     [InlineData(ProviderAudioQuality.Lossy, "FLAC", "MP3_320")]
     [InlineData(ProviderAudioQuality.Lossless, "MP3_128", "MP3_128")]
     public void DeezerQuality_DoesNotExceedTheConfiguredCeiling(
@@ -248,6 +249,7 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
         Assert.Equal(expected, DeezerDownloadCapabilityAdapter.Quality(requested, configured));
 
     [Theory]
+    [InlineData(ProviderAudioQuality.DataSaver, "FLAC_24_HIGH", "MP3_320")]
     [InlineData(ProviderAudioQuality.Lossy, "FLAC_24_HIGH", "MP3_320")]
     [InlineData(ProviderAudioQuality.Lossless, "FLAC_24_HIGH", "FLAC_16")]
     [InlineData(ProviderAudioQuality.HighResolution, "FLAC_24_LOW", "FLAC_24_LOW")]

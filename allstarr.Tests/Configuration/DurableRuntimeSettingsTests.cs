@@ -3,6 +3,7 @@ using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using allstarr.Core.Identity;
 using allstarr.Core.Matching;
+using allstarr.Core.Capabilities;
 using allstarr.Models.Settings;
 using allstarr.Services.AppleMusic;
 using Microsoft.EntityFrameworkCore;
@@ -158,15 +159,17 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         var service = new DurableRuntimeSettingsService(_factory, configuration, _clock, signal);
         await service.ApplyBatchAsync(_tenantId,
         [
-            new("Cache:SearchResultsMinutes", "15"), new("Deezer:Quality", "MP3_320"),
+            new("Cache:SearchResultsMinutes", "15"), new("Deezer:Quality", "FLAC"),
             new("Providers:StreamingOrder", "deezer,qobuz"), new("Library:DownloadMode", "Album"),
             new("AppleDownload:BaseUrl", "http://apple-gateway.lan/base"),
             new("AppleDownload:Quality", "alac-24-96"),
+            new("Qobuz:Quality", "FLAC_24_LOW"),
             new("Matching:LocalPreferencePercent", "11"),
             new("SpotifyApi:LyricsApiUrl", "http://spotify-lyrics:8080"),
             new("SpotifyImport:Playlists", "[[\"Discover Weekly\",\"source-id\",\"target-id\",\"last\",\"0 8 * * *\"]]")
         ], "webui", _userId);
         var cache = new CacheSettings(); var deezer = new DeezerSettings { Arl = "bootstrap-secret" };
+        var qobuz = new QobuzSettings();
         var apple = new AppleDownloadSettings { BaseUrl = "http://compose-apple-gateway:8000" };
         var spotifyApi = new SpotifyApiSettings();
         var spotifyImport = new SpotifyImportSettings();
@@ -174,22 +177,28 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         var identity = new IdentityOptions { DefaultTenantId = _tenantId.ToString() };
         var matching = new TrackMatchPolicy();
         var projector = new DefaultTenantRuntimeSettingsProjector(service, signal, identity, configuration,
-            Options.Create(cache), Options.Create(deezer), Options.Create(new QobuzSettings()), Options.Create(new SquidWTFSettings()),
+            Options.Create(cache), Options.Create(deezer), Options.Create(qobuz), Options.Create(new SquidWTFSettings()),
             Options.Create(apple), Options.Create(spotifyApi), Options.Create(spotifyImport),
             Options.Create(new MusicBrainzSettings()), Options.Create(new ScrobblingSettings()), Options.Create(jellyfin), Options.Create(subsonic),
             matching,
             NullLogger<DefaultTenantRuntimeSettingsProjector>.Instance);
         await projector.StartAsync(CancellationToken.None);
         for (var attempt = 0; attempt < 50 && cache.SearchResultsMinutes != 15; attempt++) await Task.Delay(10);
-        await service.ApplyBatchAsync(_tenantId, [new("Cache:SearchResultsMinutes", "22", 1)], "webui", _userId);
-        for (var attempt = 0; attempt < 50 && cache.SearchResultsMinutes != 22; attempt++) await Task.Delay(10);
+        var migrated = await service.GetAsync(_tenantId, AudioQualityPolicy.SettingKey);
+        Assert.Equal(RuntimeSettingOrigin.Durable, migrated.Origin);
+        Assert.Equal("HiResLossless", migrated.Value);
+        await service.ApplyBatchAsync(_tenantId,
+            [new("Cache:SearchResultsMinutes", "22", 1), new(AudioQualityPolicy.SettingKey, "CdLossless", migrated.Revision)],
+            "webui", _userId);
+        for (var attempt = 0; attempt < 50 && (cache.SearchResultsMinutes != 22 || apple.Quality != "alac-16-44"); attempt++) await Task.Delay(10);
         await projector.StopAsync(CancellationToken.None);
 
-        Assert.Equal(22, cache.SearchResultsMinutes); Assert.Equal("MP3_320", deezer.Quality);
+        Assert.Equal(22, cache.SearchResultsMinutes); Assert.Equal("FLAC", deezer.Quality);
         Assert.Equal("bootstrap-secret", deezer.Arl);
         Assert.Equal("deezer,qobuz", configuration["MULTI_PROVIDER_STREAMING_ORDER"]);
         Assert.Equal("http://compose-apple-gateway:8000", apple.BaseUrl);
-        Assert.Equal("alac-24-96", apple.Quality);
+        Assert.Equal("alac-16-44", apple.Quality);
+        Assert.Equal("FLAC_16", qobuz.Quality);
         Assert.Equal(0.11, matching.LocalPreferenceBoost);
         Assert.Equal("http://spotify-lyrics:8080", spotifyApi.LyricsApiUrl);
         var importedPlaylist = Assert.Single(spotifyImport.Playlists);

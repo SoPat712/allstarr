@@ -33,6 +33,7 @@ const schema = {
   configSections: [
     {
       id: "general", label: "General", fields: [
+      { key: "AUDIO_QUALITY", label: "Audio quality", type: "audio-quality", valuePath: "audio.quality" },
       { key: "Theme", label: "Theme", type: "select", valuePath: "general.theme", options: ["Dark"] },
       { key: "PublicUrl", label: "Public URL", type: "text", valuePath: "deployment.url", ownership: "deployment", readOnly: true },
       ],
@@ -176,6 +177,7 @@ const responses: Record<string, unknown> = {
   },
   "/api/admin/config": {
     general: { theme: "Dark" }, deployment: { url: "https://music.example.test" },
+    audio: { quality: "BestAvailable" },
     appleDownload: { baseUrl: "http://apple-download.test" },
     cache: { searchResultsMinutes: 1, mediaMaximumMegabytes: 512 },
     providers: { streamingOrder: "lumen-audio" },
@@ -1564,6 +1566,55 @@ test("Settings loads only the active section owners", async ({ page }) => {
   expect(requests).toContain("/api/admin/cache");
   expect(requests).not.toContain("/api/admin/config");
   expect(requests).not.toContain("/api/admin/provider-accounts");
+});
+
+test("Audio quality supports keyboard changes, provider outcomes, save, and reload", async ({ page }) => {
+  await mockApi(page);
+  let quality = "BestAvailable";
+  let saved = "";
+  await page.route("**/api/admin/config", (route) => {
+    if (route.request().method() === "POST") {
+      saved = route.request().postDataJSON().updates.AUDIO_QUALITY;
+      quality = saved;
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ message: "Runtime configuration updated.", updatedKeys: ["AUDIO_QUALITY"] }),
+      });
+    }
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...(responses["/api/admin/config"] as Record<string, unknown>),
+        audio: { quality },
+      }),
+    });
+  });
+
+  await page.goto("#/settings/general");
+  const slider = page.getByRole("slider", { name: "Audio quality" });
+  await expect(slider).toHaveAttribute("aria-valuetext", /Best available/);
+  await slider.focus();
+  await page.keyboard.press("Home");
+  await expect(slider).toHaveAttribute("aria-valuetext", /Data saver/);
+  await page.keyboard.press("End");
+  await expect(slider).toHaveAttribute("aria-valuetext", /Best available/);
+  await page.keyboard.press("Home");
+  await page.keyboard.press("ArrowRight");
+  await expect(slider).toHaveAttribute("aria-valuetext", /High lossy/);
+  await expect(page.getByText(/Smaller files and streams with high sound quality/)).toBeVisible();
+
+  await page.getByText("What each music source will use").click();
+  await expect(page.getByText("Apple Music: AAC 320 kbps")).toBeVisible();
+  await expect(page.getByText("Deezer: MP3 320 kbps")).toBeVisible();
+  await page.getByRole("button", { name: "Save General" }).click();
+  await expect.poll(() => saved).toBe("High");
+  await page.reload();
+  await expect(page.getByRole("slider", { name: "Audio quality" }))
+    .toHaveAttribute("aria-valuetext", /High lossy/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator(".audio-quality-field")).toBeVisible();
+  expect(await page.locator(".audio-quality-field").evaluate((element) =>
+    element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
 test("Settings preserves dirty drafts during live refresh and scrolls mobile tabs", async ({ page }) => {

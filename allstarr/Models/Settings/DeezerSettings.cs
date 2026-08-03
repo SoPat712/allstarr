@@ -21,7 +21,7 @@ public class DeezerSettings
     /// Preferred audio quality: FLAC, MP3_320, MP3_128
     /// If not specified or unavailable, the highest available quality will be used.
     /// </summary>
-    public string? Quality { get; set; }
+    public string? Quality { get; set; } = "FLAC";
 
     /// <summary>
     /// Minimum interval between requests in milliseconds.

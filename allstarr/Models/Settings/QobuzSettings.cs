@@ -18,10 +18,10 @@ public class QobuzSettings
     public string? UserId { get; set; }
 
     /// <summary>
-    /// Preferred audio quality: FLAC, MP3_320, MP3_128
+    /// Preferred audio quality: FLAC_24_HIGH, FLAC_24_LOW, FLAC_16, MP3_320
     /// If not specified or unavailable, the highest available quality will be used.
     /// </summary>
-    public string? Quality { get; set; }
+    public string? Quality { get; set; } = "FLAC_24_HIGH";
 
     /// <summary>
     /// Minimum interval between requests in milliseconds.

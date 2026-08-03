@@ -169,9 +169,12 @@ public partial class JellyfinController
                     HttpContext.RequireProtocolExecutionContext(),
                     provider,
                     externalId,
-                    quality is StreamQuality.High or StreamQuality.Low
-                        ? ProviderAudioQuality.Lossy
-                        : ProviderAudioQuality.Any,
+                    quality switch
+                    {
+                        StreamQuality.Low => ProviderAudioQuality.DataSaver,
+                        StreamQuality.High => ProviderAudioQuality.Lossy,
+                        _ => ProviderAudioQuality.Any
+                    },
                     Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null);
                 if (routed != null)
                 {

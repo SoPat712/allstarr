@@ -84,6 +84,8 @@ public static class RuntimeEnvConfiguration
             ["DEBUG_LOG_ALL_REQUESTS"] = ["Debug:LogAllRequests"],
             ["DEBUG_REDACT_SENSITIVE_REQUEST_VALUES"] = ["Debug:RedactSensitiveRequestValues"],
 
+            ["AUDIO_QUALITY"] = ["Audio:Quality"],
+
             ["DEEZER_ARL"] = ["Deezer:Arl"],
             ["DEEZER_ARL_FALLBACK"] = ["Deezer:ArlFallback"],
             ["DEEZER_QUALITY"] = ["Deezer:Quality"],

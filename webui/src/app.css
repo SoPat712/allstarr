@@ -5497,6 +5497,75 @@
     line-height: 1.45;
   }
 
+  .audio-quality-field {
+    grid-column: 1 / -1;
+  }
+
+  .audio-quality-control {
+    display: grid;
+    gap: 0.65rem;
+  }
+
+  .setting-field .audio-quality-control > input[type="range"] {
+    width: 100%;
+    min-height: 1.5rem;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 0;
+    accent-color: var(--color-signal-text);
+  }
+
+  .setting-field .audio-quality-control > input[type="range"]:focus-visible {
+    outline: 2px solid var(--color-signal-text);
+    outline-offset: 0.25rem;
+  }
+
+  .audio-quality-steps {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.4rem;
+    color: var(--color-ink-muted);
+    font-size: var(--text-xs);
+    text-align: center;
+  }
+
+  .audio-quality-steps .active {
+    color: var(--color-ink);
+    font-weight: 700;
+  }
+
+  .audio-quality-control p {
+    display: grid;
+    gap: 0.2rem;
+    margin: 0;
+    color: var(--color-ink-muted);
+    font-size: var(--text-xs);
+    line-height: 1.45;
+  }
+
+  .audio-quality-control p strong {
+    color: var(--color-ink);
+  }
+
+  .audio-quality-control details {
+    color: var(--color-ink-muted);
+    font-size: var(--text-xs);
+  }
+
+  .audio-quality-control summary {
+    width: fit-content;
+    cursor: pointer;
+    color: var(--color-signal-text);
+  }
+
+  .audio-quality-control ul {
+    display: grid;
+    gap: 0.25rem;
+    margin: 0.55rem 0 0;
+    padding-left: 1.1rem;
+  }
+
   .setting-field.read-only {
     background: rgb(255 255 255 / 1.5%);
   }

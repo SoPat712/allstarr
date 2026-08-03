@@ -171,6 +171,30 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task UpdateConfig_SavesTheSharedAudioQualitySetting()
+    {
+        var controller = CreateController(CreateHttpContextWithSession(isAdmin: true));
+
+        var result = Assert.IsType<OkObjectResult>(await controller.UpdateConfig(new ConfigUpdateRequest
+        {
+            Updates = new Dictionary<string, string> { ["AUDIO_QUALITY"] = "HiResLossless" }
+        }));
+
+        Assert.Equal(StatusCodes.Status200OK, result.StatusCode);
+        await using var db = await _factory.CreateDbContextAsync();
+        var setting = Assert.Single(await db.TenantRuntimeSettings.ToListAsync());
+        Assert.Equal("Audio:Quality", setting.Key);
+        Assert.Equal("\"HiResLossless\"", setting.ValueJson);
+
+        var getResult = Assert.IsType<OkObjectResult>(await controller.GetConfig());
+        using var config = JsonDocument.Parse(JsonSerializer.Serialize(
+            getResult.Value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        Assert.Equal("HiResLossless",
+            config.RootElement.GetProperty("audio").GetProperty("quality").GetString());
+    }
+
+    [Fact]
     public async Task WholesaleImportEnv_IsRetiredForAdministrators()
     {
         var controller = CreateController(CreateHttpContextWithSession(isAdmin: true));

@@ -259,7 +259,7 @@ public class SubsonicController : ControllerBase
                     CurrentProtocolContext,
                     provider!,
                     externalId!,
-                    ProviderAudioQuality.Any,
+                    StreamQualityHelper.FromSubsonicMaxBitRate(parameters.GetValueOrDefault("maxBitRate")),
                     Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null);
                 if (routed != null)
                 {

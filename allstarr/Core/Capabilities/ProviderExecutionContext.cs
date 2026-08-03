@@ -213,6 +213,7 @@ public enum ProviderExplicitContentPolicy
 public enum ProviderAudioQuality
 {
     Any,
+    DataSaver,
     Lossy,
     Lossless,
     HighResolution

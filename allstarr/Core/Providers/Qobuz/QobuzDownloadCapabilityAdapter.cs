@@ -75,7 +75,7 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
                 ? ProviderOutcome<ProviderDownloadAvailability>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration))
                 : ProviderOutcome<ProviderDownloadAvailability>.Success(new(
                     ProviderDownloadAvailabilityState.Available,
-                    [ProviderAudioQuality.Lossy, ProviderAudioQuality.Lossless, ProviderAudioQuality.HighResolution]));
+                    [ProviderAudioQuality.DataSaver, ProviderAudioQuality.Lossy, ProviderAudioQuality.Lossless, ProviderAudioQuality.HighResolution]));
         }
         catch (OperationCanceledException)
         {
@@ -257,6 +257,7 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
         };
         return requested switch
         {
+            ProviderAudioQuality.DataSaver => "MP3_320",
             ProviderAudioQuality.Lossy => "MP3_320",
             ProviderAudioQuality.Lossless when ceiling != "MP3_320" => "FLAC_16",
             ProviderAudioQuality.Lossless => ceiling,

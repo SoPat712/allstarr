@@ -287,6 +287,7 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
             ProviderAudioQuality.HighResolution => "alac-24-96",
             ProviderAudioQuality.Lossless => "alac-16-44",
             ProviderAudioQuality.Lossy => "aac-320",
+            ProviderAudioQuality.DataSaver => "aac-96",
             _ => configuredQuality
         };
         return ApplyClientQuality(ideal, configuredQuality);

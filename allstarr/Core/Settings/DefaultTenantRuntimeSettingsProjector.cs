@@ -1,5 +1,6 @@
 using allstarr.Core.Identity;
 using allstarr.Core.Matching;
+using allstarr.Core.Capabilities;
 using allstarr.Models.Settings;
 using Microsoft.Extensions.Options;
 
@@ -84,12 +85,39 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
         try
         {
             var values = await _settings.GetManyAsync(_tenantId, RuntimeSettingCatalog.Definitions.Keys, cancellationToken);
-            foreach (var setting in values.Values.Where(item => item.Origin == RuntimeSettingOrigin.Durable)) Apply(setting);
+            foreach (var setting in values.Values.Where(item =>
+                         item.Origin == RuntimeSettingOrigin.Durable && item.Key != AudioQualityPolicy.SettingKey))
+                Apply(setting);
+
+            var audio = values[AudioQualityPolicy.SettingKey];
+            if (audio.Origin == RuntimeSettingOrigin.Durable || _configuration[AudioQualityPolicy.SettingKey] != null)
+            {
+                ApplyAudioQuality((string)audio.Value);
+            }
+            else if (LegacyQualityIsDurable(values))
+            {
+                var migrated = AudioQualityPolicy.FromProviderCeilings(_apple.Quality, _deezer.Quality, _qobuz.Quality);
+                await _settings.ApplyBatchAsync(_tenantId,
+                    [new RuntimeSettingWrite(AudioQualityPolicy.SettingKey, migrated)],
+                    "audio-quality-migration", cancellationToken: cancellationToken);
+                ApplyAudioQuality(migrated);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Failed to project durable runtime settings for the default tenant");
         }
+    }
+
+    private static bool LegacyQualityIsDurable(IReadOnlyDictionary<string, EffectiveRuntimeSetting> values) =>
+        values["AppleDownload:Quality"].Origin == RuntimeSettingOrigin.Durable ||
+        values["Deezer:Quality"].Origin == RuntimeSettingOrigin.Durable ||
+        values["Qobuz:Quality"].Origin == RuntimeSettingOrigin.Durable;
+
+    private void ApplyAudioQuality(string step)
+    {
+        var quality = AudioQualityPolicy.ProviderCeilings(step);
+        (_apple.Quality, _deezer.Quality, _qobuz.Quality) = (quality.Apple, quality.Deezer, quality.Qobuz);
     }
 
     private void Apply(EffectiveRuntimeSetting setting)

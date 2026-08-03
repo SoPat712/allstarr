@@ -78,6 +78,7 @@ public static class LegacyEnvParser
             ["SCROBBLING_SYNTHETIC_LOCAL_PLAYED_SIGNAL_ENABLED"] = "Scrobbling:SyntheticLocalPlayedSignalEnabled",
             ["SCROBBLING_LASTFM_ENABLED"] = "Scrobbling:LastFm:Enabled",
             ["SCROBBLING_LISTENBRAINZ_ENABLED"] = "Scrobbling:ListenBrainz:Enabled",
+            ["AUDIO_QUALITY"] = "Audio:Quality",
             ["DEEZER_QUALITY"] = "Deezer:Quality",
             ["DEEZER_MIN_REQUEST_INTERVAL_MS"] = "Deezer:MinRequestIntervalMs",
             ["QOBUZ_QUALITY"] = "Qobuz:Quality",

@@ -771,8 +771,7 @@ public class AdminUiController : ControllerBase
             RouteId = "builtin:apple-download",
             ConfigSchema =
             [
-                Field("APPLE_DOWNLOAD_URL", "External provider URL", "url", "appleDownload.baseUrl"),
-                Field("APPLE_DOWNLOAD_QUALITY", "Quality", "select", "appleDownload.quality", ["alac-24-192", "alac-24-96", "alac-24-48", "alac-16-44"])
+                Field("APPLE_DOWNLOAD_URL", "External provider URL", "url", "appleDownload.baseUrl")
             ]
         },
         new()
@@ -816,7 +815,6 @@ public class AdminUiController : ControllerBase
             Categories = ["metadata", "download", "streaming", "playlist"],
             ConfigSchema =
             [
-                Field("DEEZER_QUALITY", "Quality", "select", "deezer.quality", ["MP3_128", "MP3_320", "FLAC"]),
                 Field("DEEZER_MIN_REQUEST_INTERVAL_MS", "Minimum request interval", "number", "deezer.minRequestIntervalMs", min: 0)
             ]
         },
@@ -830,7 +828,6 @@ public class AdminUiController : ControllerBase
             Categories = ["metadata", "download", "streaming", "playlist"],
             ConfigSchema =
             [
-                Field("QOBUZ_QUALITY", "Quality", "select", "qobuz.quality", ["MP3_320", "FLAC", "HI_RES"]),
                 Field("QOBUZ_MIN_REQUEST_INTERVAL_MS", "Minimum request interval", "number", "qobuz.minRequestIntervalMs", min: 0)
             ]
         },
@@ -1174,6 +1171,13 @@ public class AdminUiController : ControllerBase
     [
         Section("general", "General",
         [
+            Field(
+                "AUDIO_QUALITY",
+                "Audio quality",
+                "audio-quality",
+                "audio.quality",
+                AudioQualityPolicy.Steps.ToList(),
+                helpText: "Sets the maximum quality Allstarr uses for playback and downloads. A listener's bandwidth limit can lower playback quality."),
             DeploymentField("BACKEND_TYPE", "Backend", "select", "backendType", ["Jellyfin", "Subsonic"]),
             Field("STORAGE_MODE", "Storage mode", "select", "library.storageMode", ["Permanent", "Cache"]),
             Field("DOWNLOAD_MODE", "Download mode", "select", "library.downloadMode", ["Track", "Album"]),

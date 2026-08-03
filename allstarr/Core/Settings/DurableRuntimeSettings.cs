@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Text.Json;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -113,6 +114,7 @@ public static class RuntimeSettingCatalog
         Int("Cache:MediaMaximumMegabytes", 1, 1048576);
         Int("Cache:MediaMaximumEntryMegabytes", 1, 1024);
         Int("Cache:MediaCleanupFileLimit", 100, 1000000);
+        Text(AudioQualityPolicy.SettingKey, AudioQualityPolicy.Steps.ToArray());
         Text("SquidWTF:Quality", ["LOW", "HIGH", "LOSSLESS", "FLAC", "HI_RES", "HI_RES_LOSSLESS"], allowEmpty: true);
         Int("SquidWTF:MinRequestIntervalMs", 0, 60000);
         Text("Deezer:Quality", ["FLAC", "MP3_320", "MP3_128"], allowEmpty: true); Int("Deezer:MinRequestIntervalMs", 0, 60000);
@@ -361,6 +363,7 @@ public sealed class DurableRuntimeSettingsService : IDurableRuntimeSettings
 
     private static string DefaultRaw(RuntimeSettingDefinition definition) => definition.ValueType switch
     {
+        RuntimeSettingValueType.String when definition.Key == AudioQualityPolicy.SettingKey => AudioQualityPolicy.DefaultStep,
         RuntimeSettingValueType.Boolean => "false",
         RuntimeSettingValueType.Integer => definition.Minimum?.ToString(CultureInfo.InvariantCulture) ?? "0",
         RuntimeSettingValueType.StringList => string.Empty,

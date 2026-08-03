@@ -868,6 +868,7 @@ public sealed class ProtocolProviderGateway(
             availableQualities:
             [
                 ProviderAudioQuality.Any,
+                ProviderAudioQuality.DataSaver,
                 ProviderAudioQuality.Lossy,
                 ProviderAudioQuality.Lossless,
                 ProviderAudioQuality.HighResolution

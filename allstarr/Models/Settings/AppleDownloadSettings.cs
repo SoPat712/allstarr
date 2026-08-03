@@ -13,13 +13,13 @@ public class AppleDownloadSettings
 
     /// <summary>
     /// Preferred quality tier:
-    /// - alac-16-44: 16-bit/44.1kHz ALAC (standard CD Lossless, default)
+    /// - alac-16-44: 16-bit/44.1kHz ALAC (standard CD Lossless)
     /// - alac-24-96: 24-bit/96kHz ALAC (Hi-Res Lossless)
-    /// - alac-24-192: 24-bit/192kHz ALAC (Highest Hi-Res Lossless)
+    /// - alac-24-192: 24-bit/192kHz ALAC (Highest Hi-Res Lossless, default)
     /// - aac-320: 320kbps AAC (standard lossy)
     /// - aac-96: 96kbps AAC (low quality lossy)
     /// </summary>
-    public string? Quality { get; set; } = "alac-16-44";
+    public string? Quality { get; set; } = "alac-24-192";
 
     /// <summary>
     /// Host-mounted staging directory used by the administrator WebUI for an

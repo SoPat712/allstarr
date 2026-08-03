@@ -19,6 +19,7 @@
   import CacheDiagnosticsCard from "$lib/components/CacheDiagnosticsCard.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
+  import AudioQualityField from "$lib/components/AudioQualityField.svelte";
   import { audienceLabel, humanize } from "$lib/sources";
   import { fieldValue, move, routingOrder } from "$lib/settings";
   import { liveUpdates } from "$lib/live-updates.svelte";
@@ -294,7 +295,18 @@
             <summary><span><strong>{item.label}</strong><small>{item.fields.filter((field) => !field.readOnly).length} editable</small></span></summary>
             <form class="settings-fields" oninput={() => markDirty(item.id)} onsubmit={(event) => void saveSection(event, item)}>
               {#each item.fields as field}
-                <label class="setting-field" class:read-only={field.readOnly || field.ownership === "deployment"}>
+                {#if field.type === "audio-quality"}
+                  <div class="setting-field audio-quality-field">
+                    <span><strong>{field.label}</strong></span>
+                    <AudioQualityField
+                      name={field.key}
+                      value={String(fieldValue(config, field))}
+                      onchange={() => markDirty(item.id)}
+                    />
+                    {#if field.helpText}<small>{field.helpText}</small>{/if}
+                  </div>
+                {:else}
+                  <label class="setting-field" class:read-only={field.readOnly || field.ownership === "deployment"}>
                   <span><strong>{field.label}</strong>{#if field.ownership === "deployment"}<small>Deployment-owned</small>{/if}</span>
                   {#if field.readOnly || field.ownership === "deployment"}
                     <output>{String(fieldValue(config, field))}</output>
@@ -318,7 +330,8 @@
                     />
                   {/if}
                   {#if field.helpText}<small>{field.helpText}</small>{/if}
-                </label>
+                  </label>
+                {/if}
               {/each}
               {#if item.id === "cache"}
                 <p class="settings-impact">

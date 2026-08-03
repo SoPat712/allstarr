@@ -63,6 +63,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
     [InlineData(ProviderAudioQuality.Lossless, "alac-24-96", "alac-16-44")]
     [InlineData(ProviderAudioQuality.Lossy, "alac-16-44", "aac-320")]
     [InlineData(ProviderAudioQuality.Lossy, "aac-96", "aac-96")]
+    [InlineData(ProviderAudioQuality.DataSaver, "alac-24-192", "aac-96")]
     public void Quality_UsesConfiguredQualityOrAnAppropriateLowerClientTier(
         ProviderAudioQuality requested,
         string configured,

@@ -10,6 +10,7 @@ using allstarr.Core.Secrets;
 using allstarr.Core.Storage;
 using allstarr.Core.Configuration;
 using allstarr.Core.Settings;
+using allstarr.Core.Capabilities;
 using allstarr.Middleware;
 using System.Text.Json;
 using System.Net.Sockets;
@@ -117,6 +118,13 @@ public class ConfigController : ControllerBase
 
         var storageModeValue = RuntimeString("Library:StorageMode", fallbackStorageMode);
         var isCacheStorageMode = storageModeValue.Equals(nameof(StorageMode.Cache), StringComparison.OrdinalIgnoreCase);
+        runtimeSettings.TryGetValue(AudioQualityPolicy.SettingKey, out var sharedAudioQuality);
+        var audioQuality = sharedAudioQuality != null &&
+                           (sharedAudioQuality.Origin == RuntimeSettingOrigin.Durable ||
+                            _configuration[AudioQualityPolicy.SettingKey] != null)
+            ? sharedAudioQuality.NormalizedValue
+            : AudioQualityPolicy.FromProviderCeilings(
+                _appleMusicSettings.Quality, _deezerSettings.Quality, _qobuzSettings.Quality);
 
         var libraryDownloadRoot = _configuration["Library:DownloadPath"] ?? "./downloads";
         var libraryKeptPath = _configuration["Library:KeptPath"] ?? Path.Combine(libraryDownloadRoot, "kept");
@@ -147,6 +155,7 @@ public class ConfigController : ControllerBase
             {
                 localPreferencePercent = RuntimeInt("Matching:LocalPreferencePercent", 7)
             },
+            audio = new { quality = audioQuality },
             playlistsDirectory = RuntimeString("Library:PlaylistsDirectory", fallbackPlaylistsDirectory),
             providers = new
             {
