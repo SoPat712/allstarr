@@ -9,6 +9,7 @@
   } from "$lib/api";
   import SelectField from "$lib/components/SelectField.svelte";
   import {
+    playlistBehaviorSummary,
     playlistDestinationOptions,
     playlistProjectionOptions,
     scheduleCadence,
@@ -54,8 +55,26 @@
   const targetPlaylistName = $derived(
     targetPlaylists.find((item) => item.id === targetPlaylistId)?.name ?? `the selected ${targetName} playlist`,
   );
-  const destinationOptions = $derived(playlistDestinationOptions(targetName, targetPlaylistName));
+  const sourcePlaylistName = $derived(playlist?.name ?? "this playlist");
+  const destinationOptions = $derived(playlistDestinationOptions(
+    targetName,
+    targetPlaylistName,
+    sourcePlaylistName,
+  ));
   const projectionOptions = $derived(playlistProjectionOptions(sourceName, targetName, targetPlaylistName));
+  const updateCadence = $derived.by(() => {
+    if (!details?.schedule) return undefined;
+    const cadence = scheduleCadence(details.schedule.cronExpression);
+    return cadence.charAt(0).toLocaleLowerCase() + cadence.slice(1);
+  });
+  const behaviorSummary = $derived(playlistBehaviorSummary(
+    mode,
+    materializationMode,
+    sourcePlaylistName,
+    targetName,
+    targetPlaylistName,
+    updateCadence,
+  ));
 
   $effect(() => {
     if (!open) {
@@ -151,7 +170,7 @@
         policyVersion: playlist.policyVersion,
       });
       open = false;
-      await onSaved("Playlist settings saved.");
+      await onSaved(`Playlist settings saved. ${behaviorSummary}`);
     } catch (cause) {
       error = cause instanceof Error
         ? cause.message
@@ -208,21 +227,23 @@
 
         {#if mode !== "virtual"}
           <div class="setting-field">
-            <span><strong>How {targetName} is updated</strong><small>Keep the same playlist, or replace the songs Allstarr added.</small></span>
+            <span><strong>Which playlist Allstarr changes</strong><small>Change {targetPlaylistName}, or create a new playlist in {targetName} instead.</small></span>
             <SelectField bind:value={materializationMode} label={`How ${targetName} is updated`} options={[
-              { value: "reconcile", label: "Update the existing playlist" },
-              { value: "recreate", label: "Replace the songs Allstarr added" },
+              { value: "reconcile", label: `Change ${targetPlaylistName}` },
+              { value: "recreate", label: `Create a new playlist in ${targetName}` },
             ]} />
           </div>
-          <div class="setting-field">
-            <span><strong>Playlist ordering</strong><small>Choose how local additions are handled.</small></span>
-            <SelectField bind:value={syncBehavior} label="Playlist ordering" options={[
-              { value: "preserve", label: "Keep local additions" },
-              { value: "mirror", label: "Mirror source exactly" },
-            ]} />
-          </div>
+          {#if materializationMode === "reconcile"}
+            <div class="setting-field">
+              <span><strong>When songs leave {sourcePlaylistName}</strong><small>Choose whether {targetPlaylistName} keeps songs that are no longer in {sourcePlaylistName}.</small></span>
+              <SelectField bind:value={syncBehavior} label={`Songs no longer in ${sourcePlaylistName}`} options={[
+                { value: "preserve", label: `Keep them in ${targetPlaylistName}` },
+                { value: "mirror", label: "Remove songs Allstarr previously added" },
+              ]} />
+            </div>
+          {/if}
           <fieldset class="playlist-sync-fields">
-            <legend>Keep these details updated</legend>
+            <legend>{materializationMode === "recreate" ? "Copy these details to the new playlist" : "Keep these details updated"}</legend>
             <label><input bind:checked={syncName} type="checkbox" /> Playlist name</label>
             <label><input bind:checked={syncDescription} type="checkbox" /> Description</label>
             <label><input bind:checked={syncArtwork} type="checkbox" /> Artwork</label>
@@ -230,9 +251,11 @@
         {/if}
 
         <div class="setting-field playlist-schedule-setting">
-          <span><strong>Automatic sync</strong><small>{details?.schedule ? scheduleCadence(details.schedule.cronExpression) : "Manual only"}</small></span>
+          <span><strong>Automatic updates</strong><small>{details?.schedule ? scheduleCadence(details.schedule.cronExpression) : "Manual only"}</small></span>
           <button class="button-secondary" type="button" onclick={() => { open = false; onEditSchedule(); }}>Edit schedule</button>
         </div>
+
+        <p class="credential-safety">{behaviorSummary}</p>
 
         <footer>
           <Dialog.Close class="button-secondary">Cancel</Dialog.Close>

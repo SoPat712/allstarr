@@ -15,6 +15,7 @@
   import SelectField from "$lib/components/SelectField.svelte";
   import {
     orderPlaylistSources,
+    playlistBehaviorSummary,
     playlistDestinationOptions,
     playlistProjectionOptions,
   } from "$lib/playlists";
@@ -71,6 +72,9 @@
   const selectedTarget = $derived(targets.find((item) => item.id === targetId));
   const selectedLibraryScope = $derived(selectedAccount?.libraryScopeId || selectedTarget?.libraryScopeId);
   const sourceName = $derived(selectedAccount?.displayName ?? "the source service");
+  const sourcePlaylistName = $derived(
+    sourcePlaylists.find((item) => item.id === sourcePlaylistId)?.name ?? "this playlist",
+  );
   const targetName = $derived(
     selectedTarget?.protocol === "jellyfin"
       ? "Jellyfin"
@@ -81,8 +85,27 @@
   const targetPlaylistName = $derived(
     targetPlaylists.find((item) => item.id === targetPlaylistId)?.name ?? `the selected ${targetName} playlist`,
   );
-  const destinationOptions = $derived(playlistDestinationOptions(targetName, targetPlaylistName));
+  const destinationOptions = $derived(playlistDestinationOptions(
+    targetName,
+    targetPlaylistName,
+    sourcePlaylistName,
+  ));
   const projectionOptions = $derived(playlistProjectionOptions(sourceName, targetName, targetPlaylistName));
+  const updateCadence = $derived(schedule === "hourly"
+    ? "every hour"
+    : schedule === "daily"
+      ? "every day at 3:00 AM"
+      : schedule === "weekly"
+        ? "every Monday at 3:00 AM"
+        : undefined);
+  const behaviorSummary = $derived(playlistBehaviorSummary(
+    mode,
+    materializationMode,
+    sourcePlaylistName,
+    targetName,
+    targetPlaylistName,
+    updateCadence,
+  ));
   const needsTargetPlaylist = $derived(mode !== "virtual" || projectionMode === "target");
   const stepReady = $derived(
     step === 1
@@ -279,11 +302,7 @@
         }
       }
       open = false;
-      await onSaved(mode === "virtual"
-        ? `Playlist linked. Allstarr will show it but will not create or change a playlist in ${targetName}.`
-        : mode === "hybrid"
-          ? `Playlist linked. Allstarr will show it and keep ${targetPlaylistName} updated in ${targetName}.`
-          : `Playlist linked. Allstarr will keep ${targetPlaylistName} updated in ${targetName}. It will not show a second playlist.`);
+      await onSaved(`Playlist linked. ${behaviorSummary}`);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Playlist could not be linked.";
     } finally {
@@ -326,7 +345,7 @@
         {:else if step === 3}
           <section class="playlist-add-step">
             <div class="dialog-section-heading">
-              <div><strong>Choose where listeners find this playlist</strong><small>You can show it through Allstarr, keep a playlist updated in {targetName}, or do both.</small></div>
+              <div><strong>Choose where listeners find this playlist</strong><small>Show it through Allstarr, add songs to a playlist in {targetName}, or do both.</small></div>
             </div>
             <fieldset class="audience-options playlist-mode-options">
               <legend>Where it appears</legend>
@@ -424,37 +443,42 @@
           </section>
         {:else}
           <section class="playlist-add-step playlist-sync-settings">
+            <p class="credential-safety">{behaviorSummary}</p>
             {#if mode !== "virtual"}
               <div class="setting-field">
-                <span><strong>How {targetName} is updated</strong><small>Keep the same playlist, or replace the songs Allstarr added.</small></span>
+                <span><strong>Which playlist Allstarr changes</strong><small>Change {targetPlaylistName}, or create a new playlist in {targetName} instead.</small></span>
                 <SelectField bind:value={materializationMode} label={`How ${targetName} is updated`} options={[
-                  { value: "reconcile", label: "Update the existing playlist" },
-                  { value: "recreate", label: "Replace the songs Allstarr added" },
+                  { value: "reconcile", label: `Change ${targetPlaylistName}` },
+                  { value: "recreate", label: `Create a new playlist in ${targetName}` },
                 ]} />
               </div>
             {/if}
             <div class="setting-field">
-              <span><strong>Automatic sync</strong><small>Times use {Intl.DateTimeFormat().resolvedOptions().timeZone}.</small></span>
-              <SelectField bind:value={schedule} label="Automatic sync" options={[
+              <span><strong>Automatic updates</strong><small>Times use {Intl.DateTimeFormat().resolvedOptions().timeZone}.</small></span>
+              <SelectField bind:value={schedule} label="Automatic updates" options={[
                 { value: "manual", label: "Manual only" },
                 { value: "hourly", label: "Every hour" },
                 { value: "daily", label: "Daily at 3:00 AM" },
                 { value: "weekly", label: "Mondays at 3:00 AM" },
               ]} />
             </div>
-            <div class="setting-field">
-              <span><strong>Playlist ordering</strong><small>Choose how local changes are handled.</small></span>
-              <SelectField bind:value={syncBehavior} label="Playlist ordering" options={[
-                { value: "preserve", label: "Keep local additions" },
-                { value: "mirror", label: "Mirror source exactly" },
-              ]} />
-            </div>
-            <fieldset class="playlist-sync-fields">
-              <legend>Keep these details updated</legend>
-              <label><input bind:checked={syncName} type="checkbox" /> Playlist name</label>
-              <label><input bind:checked={syncDescription} type="checkbox" /> Description</label>
-              <label><input bind:checked={syncArtwork} type="checkbox" /> Artwork</label>
-            </fieldset>
+            {#if mode !== "virtual"}
+              {#if materializationMode === "reconcile"}
+                <div class="setting-field">
+                  <span><strong>When songs leave {sourcePlaylistName}</strong><small>Choose whether {targetPlaylistName} keeps songs that are no longer in {sourcePlaylistName}.</small></span>
+                  <SelectField bind:value={syncBehavior} label={`Songs no longer in ${sourcePlaylistName}`} options={[
+                    { value: "preserve", label: `Keep them in ${targetPlaylistName}` },
+                    { value: "mirror", label: "Remove songs Allstarr previously added" },
+                  ]} />
+                </div>
+              {/if}
+              <fieldset class="playlist-sync-fields">
+                <legend>{materializationMode === "recreate" ? "Copy these details to the new playlist" : "Keep these details updated"}</legend>
+                <label><input bind:checked={syncName} type="checkbox" /> Playlist name</label>
+                <label><input bind:checked={syncDescription} type="checkbox" /> Description</label>
+                <label><input bind:checked={syncArtwork} type="checkbox" /> Artwork</label>
+              </fieldset>
+            {/if}
           </section>
         {/if}
       </div>

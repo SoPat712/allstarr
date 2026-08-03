@@ -7,11 +7,12 @@ export type TrackRouteFilter = "all" | PlaylistTrack["routeKind"] | "review";
 export function playlistDestinationOptions(
   targetName = "your media server",
   playlistName = `the selected ${targetName} playlist`,
+  sourcePlaylistName = "this playlist",
 ) {
   return [
-    { id: "virtual", label: "Show only in Allstarr", description: `Allstarr will show this playlist but will not create or change a playlist in ${targetName}.` },
-    { id: "materialized", label: `Update ${playlistName} in ${targetName}`, description: `Allstarr will keep ${playlistName} updated with the songs ${targetName} can play. It will not show a second playlist in Allstarr.` },
-    { id: "hybrid", label: `Show in Allstarr and update ${targetName}`, description: `Allstarr will show the full playlist and keep ${playlistName} updated with the songs ${targetName} can play.` },
+    { id: "virtual", label: "Show only through Allstarr", description: `Allstarr will show ${sourcePlaylistName} and will not create or change a playlist in ${targetName}.` },
+    { id: "materialized", label: `Add songs to ${playlistName} in ${targetName}`, description: `Allstarr will add playable ${sourcePlaylistName} songs to ${playlistName}, without showing another copy.` },
+    { id: "hybrid", label: `Show through Allstarr and add songs to ${playlistName}`, description: `Allstarr will show every ${sourcePlaylistName} song and add the playable ones to ${playlistName} in ${targetName}.` },
   ] as const;
 }
 
@@ -20,11 +21,37 @@ export function playlistProjectionOptions(
   targetName = "your media server",
   playlistName = `the selected ${targetName} playlist`,
 ) {
+  const targetLabel = playlistName.startsWith("the selected ")
+    ? `${targetName} playlist`
+    : `${playlistName} in ${targetName}`;
   return [
-    { id: "resolved", label: "Best available", description: `Use songs already in ${targetName} when possible, then play the rest from their original service.` },
-    { id: "source", label: sourceName, description: `Keep every song from ${sourceName} in its original order.` },
-    { id: "target", label: targetName, description: `Show exactly what is currently in ${playlistName}.` },
+    { id: "resolved", label: `${targetName} when available`, description: `Listeners get songs from ${targetName} when available and the original ${sourceName} version for anything else.` },
+    { id: "source", label: `Every song from ${sourceName}`, description: `Keep the songs and order from ${sourceName}, even when a song is not in ${targetName}.` },
+    { id: "target", label: targetLabel, description: `Show exactly the songs currently in ${playlistName}.` },
   ] as const;
+}
+
+export function playlistBehaviorSummary(
+  mode: "virtual" | "materialized" | "hybrid",
+  materializationMode: "reconcile" | "recreate",
+  sourcePlaylistName: string,
+  targetName: string,
+  targetPlaylistName: string,
+  cadence?: string,
+) {
+  if (mode === "virtual")
+    return cadence
+      ? `Allstarr will refresh ${sourcePlaylistName} through Allstarr ${cadence} and will not create or change a playlist in ${targetName}.`
+      : `Allstarr will refresh ${sourcePlaylistName} only when you run an update and will not create or change a playlist in ${targetName}.`;
+
+  const visibility = mode === "hybrid"
+    ? ` Allstarr will also show every song from ${sourcePlaylistName} to listeners.`
+    : " It will not show a second playlist through Allstarr.";
+  if (materializationMode === "recreate")
+    return `Allstarr will create a new playlist in ${targetName} ${cadence ?? "when you run an update"} instead of changing ${targetPlaylistName}.${visibility}`;
+  return cadence
+    ? `Allstarr will keep ${targetPlaylistName} in ${targetName} updated ${cadence} with songs from ${sourcePlaylistName} that ${targetName} can play.${visibility}`
+    : `Allstarr will add songs from ${sourcePlaylistName} to ${targetPlaylistName} in ${targetName} only when you run an update. It will not keep that playlist updated automatically.${visibility}`;
 }
 
 export function playlistOutcomeLabel(code?: string | null, targetName = "the media server playlist") {
@@ -39,7 +66,7 @@ export function playlistOutcomeLabel(code?: string | null, targetName = "the med
     skipped_wrong_backend_or_library: `Not added to ${targetName}: belongs to a different library`,
     skipped_stale_revision: `Not added to ${targetName}: the source changed`,
   };
-  return code ? labels[code] ?? code.replaceAll("_", " ") : "Eligibility unavailable";
+  return code ? labels[code] ?? `Eligibility for ${targetName} is unavailable` : "Eligibility unavailable";
 }
 
 export function isReviewTrack(track: Pick<PlaylistTrack, "matchState">) {

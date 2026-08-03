@@ -545,7 +545,7 @@ for (const viewport of viewports) {
       await page.goto("#/library/playlists");
       await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
       const details = page.getByRole("dialog", { name: "Test playlist" });
-      await details.getByRole("tab", { name: "Jellyfin" }).click();
+      await details.getByRole("tab", { name: "Jellyfin playlist", exact: true }).click();
       await expect(details.getByText("target track", { exact: true })).toBeVisible();
       await expect(details).toHaveCSS("overflow", "hidden");
       await expect(details.locator(".track-scroll")).toHaveCSS("overflow", "auto");
@@ -1082,10 +1082,10 @@ test("Add playlist separates source, client view, destination, and sync on mobil
   await dialog.getByRole("button", { name: "Continue" }).click();
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
     await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/playlist-390-listener-choice.png` });
-  await dialog.getByRole("radio", { name: /Spotify Keep every song/ }).check();
+  await dialog.getByRole("radio", { name: /Every song from Spotify Keep the songs/ }).check();
   await dialog.getByRole("button", { name: "Continue" }).click();
   await expect.poll(() => dialog.locator(".playlist-add-body").evaluate((body) => body.scrollTop)).toBe(0);
-  await dialog.getByRole("radio", { name: /Show in Allstarr and update Jellyfin Allstarr will show/ }).check();
+  await dialog.getByRole("radio", { name: /Show through Allstarr and add songs to.*Allstarr will show/ }).check();
   await expect(dialog.getByRole("radio", { name: /Road trip/ })).toBeVisible();
   await dialog.getByRole("radio", { name: /Road trip/ }).check();
   if (process.env.ALLSTARR_SCREENSHOT_DIR) {
@@ -1093,7 +1093,7 @@ test("Add playlist separates source, client view, destination, and sync on mobil
     await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/playlist-390-appearance-choice.png` });
   }
   await dialog.getByRole("button", { name: "Continue" }).click();
-  await dialog.getByRole("button", { name: "Automatic sync" }).click();
+  await dialog.getByRole("button", { name: "Automatic updates" }).click();
   await page.getByRole("option", { name: "Daily at 3:00 AM" }).click();
   await expect(dialog.getByRole("button", { name: "Link playlist" })).toBeInViewport();
   await expect(dialog.locator(".playlist-add-body")).toHaveCSS("overflow-y", "auto");
@@ -1140,13 +1140,13 @@ test("Playlist views and revisioned settings stay keyboard-safe", async ({ page 
   await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
   const details = page.getByRole("dialog", { name: "Test playlist" });
   await expect(details).toBeVisible();
-  const resolved = details.getByRole("tab", { name: "Best available" });
+  const resolved = details.getByRole("tab", { name: "Jellyfin when available", exact: true });
   await resolved.focus();
   await page.keyboard.press("ArrowRight");
-  await expect(details.getByRole("tab", { name: "Lumen Audio" })).toHaveAttribute("aria-selected", "true");
+  await expect(details.getByRole("tab", { name: "Every song from Lumen Audio", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(details.getByText("source track", { exact: true })).toBeVisible();
   await page.keyboard.press("ArrowRight");
-  await expect(details.getByRole("tab", { name: "Jellyfin" })).toHaveAttribute("aria-selected", "true");
+  await expect(details.getByRole("tab", { name: "Jellyfin playlist", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(details.getByText("target track", { exact: true })).toBeVisible();
   await expect(details).toHaveCSS("overflow", "hidden");
   await expect(details.locator(".track-scroll")).toHaveCSS("overflow", "auto");
@@ -1157,8 +1157,8 @@ test("Playlist views and revisioned settings stay keyboard-safe", async ({ page 
   await page.getByRole("menuitem", { name: "Edit settings" }).click();
   let settings = page.getByRole("dialog", { name: "Edit playlist settings" });
   await exactTarget;
-  await settings.getByRole("radio", { name: /Lumen Audio Keep every song/ }).check();
-  await settings.getByRole("radio", { name: /Show only in Allstarr Allstarr will show/ }).check();
+  await settings.getByRole("radio", { name: /Every song from Lumen Audio Keep the songs/ }).check();
+  await settings.getByRole("radio", { name: /Show only through Allstarr Allstarr will show/ }).check();
   const update = page.waitForRequest((request) =>
     request.method() === "PUT" && request.url().endsWith("/api/admin/playlist-links/playlist-link"));
   await settings.getByRole("button", { name: "Save settings" }).click();
@@ -1900,7 +1900,7 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await expect(openPlaylist).toBeVisible();
   await expect(page.getByText("1 to review", { exact: true })).toBeVisible();
   await expect(page.getByText("1 unresolved", { exact: true })).toBeVisible();
-  await expect(page.getByText("Not yet synced", { exact: true })).toBeVisible();
+  await expect(page.getByText("Not updated yet", { exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "0% confirmed, 1 of 2 playable" })).toBeVisible();
   const metricsFit = await page.locator(".playlist-summary").evaluate((summary) => {
     const parent = summary.getBoundingClientRect();
@@ -1922,7 +1922,7 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await expect(dialog.getByRole("table", { name: "Test playlist tracks" })).toBeVisible();
   await expect(dialog.locator(".coverage-bar")).toContainText("Lumen Audio: 1, Unresolved: 1");
   await expect(dialog.getByText("Needs review", { exact: true })).toBeVisible();
-  await expect(dialog.getByText("No automatic sync", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("No automatic updates", { exact: true })).toBeVisible();
   await dialog.getByRole("button", { name: "Show 1 track needing review" }).click();
   await expect(dialog.getByRole("button", { name: "Track route" })).toContainText("To review (1)");
   await dialog.getByRole("button", { name: "Close playlist details" }).click();
@@ -1930,7 +1930,7 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await expect(dialog.getByRole("button", { name: "Track route" })).toContainText("All routes");
   await expect(dialog.getByRole("button", { name: "Actions" })).toBeInViewport();
   await dialog.getByRole("button", { name: "Actions" }).click();
-  await expect(page.getByRole("menuitem", { name: "Sync" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Update playlist now" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Rematch" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Refresh source" })).toBeVisible();
   await page.keyboard.press("Escape");
@@ -2081,7 +2081,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await filter.focus();
     const before = await scroll.evaluate((element) => element.scrollTop);
     await dialog.getByRole("button", { name: "Actions" }).click();
-    await page.getByRole("menuitem", { name: "Sync" }).click();
+    await page.getByRole("menuitem", { name: "Update playlist now" }).click();
     await filter.focus();
     await expect.poll(() => detailRequests).toBe(2);
 
@@ -2091,7 +2091,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await expect(filter).toBeFocused();
     expect(Math.abs(await scroll.evaluate((element) => element.scrollTop) - before)).toBeLessThanOrEqual(1);
     releaseRefresh();
-    await expect(dialog.getByText("Sync queued.")).toBeVisible();
+    await expect(dialog.getByText("Playlist update queued.")).toBeVisible();
     await expect(scroll).toHaveAttribute("data-instance", "reading-position");
     expect(Math.abs(await scroll.evaluate((element) => element.scrollTop) - before)).toBeLessThanOrEqual(1);
 

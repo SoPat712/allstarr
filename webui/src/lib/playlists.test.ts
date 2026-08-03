@@ -6,6 +6,7 @@ import {
   formatDuration,
   isReviewTrack,
   orderPlaylistSources,
+  playlistBehaviorSummary,
   playlistDestinationOptions,
   playlistOutcomeLabel,
   playlistProjectionOptions,
@@ -106,7 +107,7 @@ describe("playlist presentation", () => {
   });
 
   it("keeps consequence copy and eligibility reasons explicit", () => {
-    const destinations = playlistDestinationOptions("Jellyfin", "Road trip");
+    const destinations = playlistDestinationOptions("Jellyfin", "Road trip", "Morning mix");
     const views = playlistProjectionOptions("Spotify", "Jellyfin", "Road trip");
     expect(destinations.map((item) => item.id)).toEqual([
       "virtual", "materialized", "hybrid",
@@ -115,16 +116,28 @@ describe("playlist presentation", () => {
       "resolved", "source", "target",
     ]);
     expect(destinations.map((item) => item.label)).toEqual([
-      "Show only in Allstarr",
-      "Update Road trip in Jellyfin",
-      "Show in Allstarr and update Jellyfin",
+      "Show only through Allstarr",
+      "Add songs to Road trip in Jellyfin",
+      "Show through Allstarr and add songs to Road trip",
     ]);
     expect(destinations[0].description).toContain("will not create or change");
-    expect(destinations[1].description).toContain("Allstarr will keep Road trip updated");
-    expect(views.map((item) => item.label)).toEqual(["Best available", "Spotify", "Jellyfin"]);
+    expect(destinations[1].description).toContain("playable Morning mix songs");
+    expect(views.map((item) => item.label)).toEqual([
+      "Jellyfin when available", "Every song from Spotify", "Road trip in Jellyfin",
+    ]);
+    expect(playlistBehaviorSummary(
+      "materialized", "reconcile", "Morning mix", "Jellyfin", "Road trip",
+    )).toContain("only when you run an update");
+    expect(playlistBehaviorSummary(
+      "virtual", "reconcile", "Morning mix", "Jellyfin", "Road trip", "every hour",
+    )).toContain("will not create or change a playlist in Jellyfin");
+    expect(playlistBehaviorSummary(
+      "hybrid", "recreate", "Morning mix", "Jellyfin", "Road trip", "every day at 3:00 AM",
+    )).toContain("create a new playlist in Jellyfin every day at 3:00 AM instead of changing Road trip");
     expect(playlistOutcomeLabel("skipped_wrong_backend_or_library", "Jellyfin playlist")).toBe(
       "Not added to Jellyfin playlist: belongs to a different library",
     );
+    expect(playlistOutcomeLabel("future_internal_code", "Jellyfin playlist")).not.toContain("future_internal_code");
   });
 
   it("orders local targets, Spotify, then configured playlist Sources", () => {

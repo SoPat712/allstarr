@@ -151,7 +151,7 @@
     detailProjectionOptions.find((option) => option.id === viewMode)?.label ?? "Selected songs",
   );
   const savedProjectionLabel = $derived(
-    detailProjectionOptions.find((option) => option.id === selected?.projectionMode)?.label ?? "Best available",
+    detailProjectionOptions.find((option) => option.id === selected?.projectionMode)?.label ?? "Media server when available",
   );
   const visibleTrackColumnCount = $derived(
     trackColumnOptions.filter((column) => trackColumns[column.id]).length,
@@ -248,7 +248,7 @@
           });
       details = { ...details, schedule: next };
       scheduleEditorOpen = false;
-      feedback = "Automatic sync schedule saved.";
+      feedback = "Automatic update schedule saved.";
       await refresh();
     } catch (cause) {
       scheduleError = cause instanceof Error ? cause.message : "The schedule could not be saved.";
@@ -350,7 +350,7 @@
         if (!details) return;
         const result = await playlistLinks.run(selected.id, details.snapshotId);
         operationJobId = result.jobId;
-        feedback = result.created ? "Sync queued." : "Sync is already queued.";
+        feedback = result.created ? "Playlist update queued." : "A playlist update is already queued.";
       } else if (name === "rematch") {
         const result = await playlistLinks.run(selected.id);
         operationJobId = result.jobId;
@@ -489,7 +489,7 @@
     <span class="empty-orbit" aria-hidden="true">♫</span>
     <p class="eyebrow">Library playlists</p>
     <h2>No linked playlists yet.</h2>
-    <p>Add a playlist from an installed Source. Its matches, routes, and sync state will appear here.</p>
+    <p>Add a playlist from a connected Source. Allstarr will show which songs can play and whether the playlist needs attention.</p>
     <button class="button-primary empty-action" type="button" onclick={() => addOpen = true}>Add playlist</button>
   </section>
 {:else}
@@ -571,7 +571,11 @@
                 <span>{playlist.matchedCount} confirmed</span>
                 <span>{playlist.metrics.review} to review</span>
                 <span>{playlist.unmatchedCount} unresolved</span>
-                <span>{playlist.lastRunAt ? `${playlist.materializedCount} synced` : "Not yet synced"}</span>
+                <span>{playlist.lastRunAt
+                  ? playlist.mode === "virtual"
+                    ? "Updated in Allstarr"
+                    : `${playlist.materializedCount} in ${providerName(playlist.targetProtocol)}`
+                  : "Not updated yet"}</span>
               </small>
             </span>
             <span
@@ -651,7 +655,7 @@
             </DropdownMenu.Trigger>
             <DropdownMenu.Portal>
               <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
-                <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("sync")}>Sync</DropdownMenu.Item>
+                <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("sync")}>Update playlist now</DropdownMenu.Item>
                 <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("rematch")}>Rematch</DropdownMenu.Item>
                 <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void refreshSources([selected.id])}>Refresh source</DropdownMenu.Item>
                 {#if selected.sourceUpdateAvailable}
@@ -725,11 +729,11 @@
               · next {relativeTime(details.schedule.nextRunAt)}
               · {details.schedule.timeZoneId}
             {:else if details.schedule}
-              <strong>Automatic sync paused</strong>
+              <strong>Automatic updates paused</strong>
               · {scheduleCadence(details.schedule.cronExpression)}
               · {details.schedule.timeZoneId}
             {:else}
-              <strong>No automatic sync</strong>
+              <strong>No automatic updates</strong>
             {/if}
           </span>
           <Popover.Root bind:open={scheduleEditorOpen}>
@@ -749,7 +753,7 @@
                   </label>
                   <label class="schedule-enabled">
                     <input type="checkbox" bind:checked={scheduleEnabled} />
-                    Automatic sync enabled
+                    Automatic updates enabled
                   </label>
                   {#if scheduleError}<p class="field-error" role="alert">{scheduleError}</p>{/if}
                   <button class="button-primary" type="submit" disabled={scheduleSaving}>
