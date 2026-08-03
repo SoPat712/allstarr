@@ -2,6 +2,7 @@ using System.Data.Common;
 using System.Diagnostics;
 using System.Text.Json;
 using allstarr.Controllers;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Storage;
@@ -97,6 +98,26 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
 
         Assert.Contains("configured", json, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("\"schedules\":[]", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AudioMuseSimilarUsesTheExactSessionScopeAndReturnsPlainSongFacts()
+    {
+        var audioMuse = new FakeAudioMuse();
+        var result = Assert.IsType<OkObjectResult>(await Controller(audioMuse).GetAudioMuseSimilar(new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            SeedTrackIds = ["seed-1"],
+            Limit = 10
+        }, default));
+        var json = JsonSerializer.Serialize(result.Value);
+
+        Assert.Equal(_tenant, audioMuse.Scope!.TenantId);
+        Assert.Equal(_user, audioMuse.Scope.OwnerUserId);
+        Assert.Contains("A song", json, StringComparison.Ordinal);
+        Assert.Contains("A clear reason", json, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -595,10 +616,11 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
             StringComparison.Ordinal);
     }
 
-    private IntelligenceController Controller()
+    private IntelligenceController Controller(FakeAudioMuse? audioMuse = null)
     {
         var value = new IntelligenceController(_factory, _policy, _runs, _smart, _readiness,
-            [new FakeProvider("lastfm"), new FakeProvider("musicbrainz-local"), new FakeProvider("audiomuse-ai")]);
+            [new FakeProvider("lastfm"), new FakeProvider("musicbrainz-local"), new FakeProvider("audiomuse-ai")],
+            audioMuse ?? new FakeAudioMuse());
         value.ControllerContext = new() { HttpContext = new DefaultHttpContext() };
         value.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
         {
@@ -684,5 +706,41 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
         }
     }
     private sealed class FakeProvider(string id) : IRecommendationProvider { public string Id => id; public Task<RecommendationProviderResult> RecommendAsync(RecommendationRequest request) => Task.FromResult(new RecommendationProviderResult(RecommendationProviderState.Succeeded, [])); }
+    private sealed class FakeAudioMuse : IAudioMuseRecommendationClient
+    {
+        public bool IsAvailable => true;
+        public IntelligenceScope? Scope { get; private set; }
+        public Task<bool> CheckHealthAsync(IntelligenceScope scope, CancellationToken cancellationToken) => Task.FromResult(true);
+        public Task<IReadOnlyList<RecommendationSourceItem>> RecommendAsync(ScopedRecommendationQuery query, CancellationToken cancellationToken) =>
+            FindSimilarAsync(query.Scope, query.SeedTrackKeys, query.Limit, cancellationToken);
+        public Task<IReadOnlyList<RecommendationSourceItem>> FindSimilarAsync(IntelligenceScope scope,
+            IReadOnlyList<string> seedTrackIds, int limit, CancellationToken cancellationToken)
+        {
+            Scope = scope;
+            return Task.FromResult<IReadOnlyList<RecommendationSourceItem>>([
+                new("song-1", .8, [new("similar", .8, "A clear reason")],
+                    new("audiomuse-ai", Title: "A song", Artist: "An artist", BackendItemId: "song-1"))]);
+        }
+        public Task<ProviderAnalysisProgress> StartAnalysisAsync(IntelligenceScope scope, bool rebuild,
+            string idempotencyKey, CancellationToken cancellationToken) =>
+            Task.FromResult(new ProviderAnalysisProgress("job-1", ProviderAnalysisState.Queued, 0, 1));
+        public Task<ProviderAnalysisProgress> GetAnalysisProgressAsync(IntelligenceScope scope, string jobId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new ProviderAnalysisProgress(jobId, ProviderAnalysisState.Completed, 1, 1));
+        public Task<IReadOnlyList<AudioMuseCluster>> GetClustersAsync(IntelligenceScope scope, int limit,
+            CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AudioMuseCluster>>([]);
+        public Task<IReadOnlyList<RecommendationSourceItem>> SearchAsync(IntelligenceScope scope, string query,
+            bool includeLyrics, int limit, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<RecommendationSourceItem>>([]);
+        public Task<AudioMusePathResult> FindPathAsync(IntelligenceScope scope, string startTrackId,
+            string endTrackId, int limit, CancellationToken cancellationToken) =>
+            Task.FromResult(new AudioMusePathResult([], 0));
+        public Task<IReadOnlyList<RecommendationSourceItem>> BlendAsync(IntelligenceScope scope,
+            IReadOnlyList<string> positiveSeedTrackIds, IReadOnlyList<string> negativeSeedTrackIds,
+            int limit, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<RecommendationSourceItem>>([]);
+        public Task<AudioMuseMapPage> GetMapAsync(IntelligenceScope scope, ProviderPageRequest page,
+            CancellationToken cancellationToken) => Task.FromResult(new AudioMuseMapPage([], "none"));
+    }
     private sealed class FakeReadiness : IRecommendationProviderStatusService { public RecommendationProviderReadinessState LastFmState { get; set; } = RecommendationProviderReadinessState.Ready; public Task<IReadOnlyList<RecommendationProviderReadiness>> ListAsync(IntelligenceScope scope, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<RecommendationProviderReadiness>>([new("lastfm", LastFmState, LastFmState == RecommendationProviderReadinessState.Ready ? "fixture_ready" : "account_unauthorized"), new("musicbrainz-local", RecommendationProviderReadinessState.Ready, "fixture_ready"), new("audiomuse-ai", RecommendationProviderReadinessState.Ready, "fixture_ready")]); }
 }

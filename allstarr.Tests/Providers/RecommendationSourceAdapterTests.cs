@@ -217,7 +217,9 @@ public sealed class RecommendationSourceAdapterTests
         var descriptor = new ProviderDescriptor("audiomuse-ai", "AudioMuse-AI", "External intelligence service",
             ProviderOrigin.Extension, "1", "1.0",
             [new(ProviderCapabilityKind.Intelligence, ProviderCapabilitySupportState.Supported,
-                ProviderAccountRequirement.Required, "1.0", ["recommend", "findPath", "blend", "getMap"], [ProviderAccountScope.User])],
+                ProviderAccountRequirement.Required, "1.0", ["startAnalysis", "getAnalysisProgress",
+                    "getClusters", "recommend", "search", "findPath", "blend", "getMap"],
+                [ProviderAccountScope.User])],
             new ProviderPermissionDescriptor(), entryPoint: "index.js");
         var configured = new AudioMuseRecommendationClient(
             new ProviderRegistry([new ProviderRegistration(descriptor, [capability])]), accounts, catalog);
@@ -226,6 +228,8 @@ public sealed class RecommendationSourceAdapterTests
         Assert.NotNull(item.ProviderAccountId);
         Assert.Equal("account:1", item.SourceRevision);
         Assert.Equal(["seed"], capability.Seeds);
+        Assert.Equal("audio-333", Assert.Single(await configured.FindSimilarAsync(
+            Query().Scope, ["audio-start"], 10, default)).TrackKey);
         Assert.Equal(["audio-start", "audio-bridge", "audio-end"],
             (await configured.FindPathAsync(Query().Scope, "audio-start", "audio-end", 10, default))
             .Tracks.Select(value => value.TrackKey));
@@ -236,6 +240,14 @@ public sealed class RecommendationSourceAdapterTests
         Assert.Equal("audio-333", Assert.Single(map.Items).Identity.BackendItemId);
         Assert.Equal("next", map.NextCursor);
         Assert.Equal(Query().Scope, catalog.LastResolvedScope);
+        Assert.Equal("job-1", (await configured.StartAnalysisAsync(
+            Query().Scope, false, "analysis-1", default)).JobId);
+        Assert.Equal(5, (await configured.GetAnalysisProgressAsync(
+            Query().Scope, "job-1", default)).Completed);
+        Assert.Equal("cluster-1", Assert.Single(await configured.GetClustersAsync(
+            Query().Scope, 10, default)).Id);
+        Assert.Equal("audio-333", Assert.Single(await configured.SearchAsync(
+            Query().Scope, "future", false, 10, default)).TrackKey);
         var callsBeforeRejectedSeed = capability.CallCount;
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => configured.BlendAsync(
             Query().Scope, ["other-user-track"], [], 10, default));
@@ -294,6 +306,11 @@ public sealed class RecommendationSourceAdapterTests
         { LastListenBrainzKind = kind; return Call(query); }
         public Task<IReadOnlyList<RecommendationSourceItem>> RecommendAsync(ScopedRecommendationQuery query, CancellationToken token) => Call(query);
         public Task<bool> CheckHealthAsync(IntelligenceScope scope, CancellationToken token) => Task.FromResult(IsAvailable);
+        public Task<IReadOnlyList<RecommendationSourceItem>> FindSimilarAsync(IntelligenceScope scope, IReadOnlyList<string> seedTrackIds, int limit, CancellationToken token) => throw new NotSupportedException();
+        public Task<ProviderAnalysisProgress> StartAnalysisAsync(IntelligenceScope scope, bool rebuild, string idempotencyKey, CancellationToken token) => throw new NotSupportedException();
+        public Task<ProviderAnalysisProgress> GetAnalysisProgressAsync(IntelligenceScope scope, string jobId, CancellationToken token) => throw new NotSupportedException();
+        public Task<IReadOnlyList<AudioMuseCluster>> GetClustersAsync(IntelligenceScope scope, int limit, CancellationToken token) => throw new NotSupportedException();
+        public Task<IReadOnlyList<RecommendationSourceItem>> SearchAsync(IntelligenceScope scope, string query, bool includeLyrics, int limit, CancellationToken token) => throw new NotSupportedException();
         public Task<AudioMusePathResult> FindPathAsync(IntelligenceScope scope, string startTrackId, string endTrackId, int limit, CancellationToken token) => throw new NotSupportedException();
         public Task<IReadOnlyList<RecommendationSourceItem>> BlendAsync(IntelligenceScope scope, IReadOnlyList<string> positiveSeedTrackIds, IReadOnlyList<string> negativeSeedTrackIds, int limit, CancellationToken token) => throw new NotSupportedException();
         public Task<AudioMuseMapPage> GetMapAsync(IntelligenceScope scope, ProviderPageRequest page, CancellationToken token) => throw new NotSupportedException();
@@ -343,10 +360,30 @@ public sealed class RecommendationSourceAdapterTests
                  new("audio-333", "Duplicate Song", "Duplicate Artist", .6),
                  new("other-user-track", "Private Song", "Private Artist", .7)]));
         }
-        public Task<ProviderOutcome<ProviderAnalysisProgress>> StartAnalysisAsync(ProviderExecutionContext context, bool rebuild = false) => throw new NotSupportedException();
-        public Task<ProviderOutcome<ProviderAnalysisProgress>> GetAnalysisProgressAsync(ProviderExecutionContext context, string jobId) => throw new NotSupportedException();
-        public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceCluster>>> GetClustersAsync(ProviderExecutionContext context, int limit = 50) => throw new NotSupportedException();
-        public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> SearchAsync(ProviderExecutionContext context, string query, bool includeLyrics, int limit) => throw new NotSupportedException();
+        public Task<ProviderOutcome<ProviderAnalysisProgress>> StartAnalysisAsync(ProviderExecutionContext context, bool rebuild = false)
+        {
+            CallCount++;
+            return Task.FromResult(ProviderOutcome<ProviderAnalysisProgress>.Success(
+                new("job-1", ProviderAnalysisState.Queued, 0, 10)));
+        }
+        public Task<ProviderOutcome<ProviderAnalysisProgress>> GetAnalysisProgressAsync(ProviderExecutionContext context, string jobId)
+        {
+            CallCount++;
+            return Task.FromResult(ProviderOutcome<ProviderAnalysisProgress>.Success(
+                new(jobId, ProviderAnalysisState.Running, 5, 10)));
+        }
+        public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceCluster>>> GetClustersAsync(ProviderExecutionContext context, int limit = 50)
+        {
+            CallCount++;
+            return Task.FromResult(ProviderOutcome<IReadOnlyList<ProviderIntelligenceCluster>>.Success(
+                [new("cluster-1", "Bright songs", [new("audio-333", "Future Song", "Future Artist", .8)])]));
+        }
+        public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> SearchAsync(ProviderExecutionContext context, string query, bool includeLyrics, int limit)
+        {
+            CallCount++;
+            return Task.FromResult(ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>.Success(
+                [new("audio-333", "Future Song", "Future Artist", .8)]));
+        }
         public Task<ProviderOutcome<ProviderIntelligencePath>> FindPathAsync(ProviderExecutionContext context, string startTrackId, string endTrackId, int limit)
         {
             CallCount++;

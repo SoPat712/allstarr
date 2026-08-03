@@ -26,6 +26,11 @@ public sealed record AudioMuseMapPage(
     bool IsPartial = false,
     string? SnapshotVersion = null);
 
+public sealed record AudioMuseCluster(
+    string Id,
+    string Name,
+    IReadOnlyList<RecommendationSourceItem> Tracks);
+
 public enum ListenBrainzDiscoveryKind
 {
     CollaborativeFiltering,
@@ -56,6 +61,16 @@ public interface IAudioMuseRecommendationClient
     bool IsAvailable { get; }
     Task<bool> CheckHealthAsync(IntelligenceScope scope, CancellationToken cancellationToken);
     Task<IReadOnlyList<RecommendationSourceItem>> RecommendAsync(ScopedRecommendationQuery query, CancellationToken cancellationToken);
+    Task<IReadOnlyList<RecommendationSourceItem>> FindSimilarAsync(IntelligenceScope scope,
+        IReadOnlyList<string> seedTrackIds, int limit, CancellationToken cancellationToken);
+    Task<ProviderAnalysisProgress> StartAnalysisAsync(IntelligenceScope scope, bool rebuild,
+        string idempotencyKey, CancellationToken cancellationToken);
+    Task<ProviderAnalysisProgress> GetAnalysisProgressAsync(IntelligenceScope scope, string jobId,
+        CancellationToken cancellationToken);
+    Task<IReadOnlyList<AudioMuseCluster>> GetClustersAsync(IntelligenceScope scope, int limit,
+        CancellationToken cancellationToken);
+    Task<IReadOnlyList<RecommendationSourceItem>> SearchAsync(IntelligenceScope scope, string query,
+        bool includeLyrics, int limit, CancellationToken cancellationToken);
     Task<AudioMusePathResult> FindPathAsync(IntelligenceScope scope, string startTrackId,
         string endTrackId, int limit, CancellationToken cancellationToken);
     Task<IReadOnlyList<RecommendationSourceItem>> BlendAsync(IntelligenceScope scope,

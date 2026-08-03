@@ -43,9 +43,71 @@ public sealed class AudioMuseRecommendationClient(
             "AudioMuse-AI found this song from your selected listening profile.", cancellationToken);
     }
 
+    public async Task<IReadOnlyList<RecommendationSourceItem>> FindSimilarAsync(IntelligenceScope scope,
+        IReadOnlyList<string> seedTrackIds, int limit, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(seedTrackIds);
+        var seeds = await catalog.ResolveTrackKeysAsync(scope, seedTrackIds, cancellationToken);
+        if (seeds.Count != seedTrackIds.Distinct(StringComparer.Ordinal).Count())
+            throw new UnauthorizedAccessException("A similar-song seed is outside the selected library.");
+        var (capability, context) = await CapabilityAsync(scope, "intelligence-similar", cancellationToken);
+        var result = Require(await capability.RecommendAsync(context, seeds, limit), cancellationToken);
+        return await MapTracksAsync(scope, context, result, seeds.ToHashSet(StringComparer.Ordinal), limit,
+            "audiomuse-similar", "AudioMuse-AI found a song with a similar sound.", cancellationToken);
+    }
+
+    public async Task<ProviderAnalysisProgress> StartAnalysisAsync(IntelligenceScope scope, bool rebuild,
+        string idempotencyKey, CancellationToken cancellationToken)
+    {
+        var (capability, context) = await CapabilityAsync(
+            scope, "intelligence-analysis-start", cancellationToken, idempotencyKey);
+        return Require(await capability.StartAnalysisAsync(context, rebuild), cancellationToken);
+    }
+
+    public async Task<ProviderAnalysisProgress> GetAnalysisProgressAsync(IntelligenceScope scope,
+        string jobId, CancellationToken cancellationToken)
+    {
+        var (capability, context) = await CapabilityAsync(
+            scope, "intelligence-analysis-progress", cancellationToken);
+        return Require(await capability.GetAnalysisProgressAsync(context, jobId), cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<AudioMuseCluster>> GetClustersAsync(IntelligenceScope scope,
+        int limit, CancellationToken cancellationToken)
+    {
+        var (capability, context) = await CapabilityAsync(scope, "intelligence-clusters", cancellationToken);
+        var clusters = Require(await capability.GetClustersAsync(context, limit), cancellationToken);
+        var local = await catalog.ResolveBackendItemsAsync(scope, clusters.SelectMany(item => item.Tracks)
+            .Select(item => item.TrackId).Distinct(StringComparer.Ordinal).Take(200).ToArray(), cancellationToken);
+        var used = new HashSet<string>(StringComparer.Ordinal);
+        var result = new List<AudioMuseCluster>();
+        foreach (var cluster in clusters)
+        {
+            var tracks = MapTracks(cluster.Tracks, local, context, used, 200 - used.Count,
+                "audiomuse-cluster", $"AudioMuse-AI grouped this song in {cluster.Name}.");
+            foreach (var track in tracks) used.Add(track.TrackKey);
+            if (tracks.Count > 0) result.Add(new(cluster.Id, cluster.Name, tracks));
+            if (used.Count >= 200) break;
+        }
+        return result;
+    }
+
+    public async Task<IReadOnlyList<RecommendationSourceItem>> SearchAsync(IntelligenceScope scope,
+        string query, bool includeLyrics, int limit, CancellationToken cancellationToken)
+    {
+        var (capability, context) = await CapabilityAsync(scope, "intelligence-search", cancellationToken);
+        var result = Require(await capability.SearchAsync(context, query, includeLyrics, limit), cancellationToken);
+        return await MapTracksAsync(scope, context, result, new HashSet<string>(StringComparer.Ordinal), limit,
+            includeLyrics ? "audiomuse-lyrics-search" : "audiomuse-text-search",
+            includeLyrics ? "AudioMuse-AI matched the words in this song."
+                : "AudioMuse-AI matched this song to your description.", cancellationToken);
+    }
+
     public async Task<AudioMusePathResult> FindPathAsync(IntelligenceScope scope, string startTrackId,
         string endTrackId, int limit, CancellationToken cancellationToken)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(startTrackId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(endTrackId);
         var start = LocalRecommendationCatalog.NormalizeTrackKey(startTrackId);
         var end = LocalRecommendationCatalog.NormalizeTrackKey(endTrackId);
         var endpoints = await catalog.ResolveTrackKeysAsync(scope, [start, end], cancellationToken);
@@ -67,6 +129,8 @@ public sealed class AudioMuseRecommendationClient(
         IReadOnlyList<string> positiveSeedTrackIds, IReadOnlyList<string> negativeSeedTrackIds,
         int limit, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(positiveSeedTrackIds);
+        ArgumentNullException.ThrowIfNull(negativeSeedTrackIds);
         var positive = positiveSeedTrackIds.Select(LocalRecommendationCatalog.NormalizeTrackKey).ToArray();
         var negative = negativeSeedTrackIds.Select(LocalRecommendationCatalog.NormalizeTrackKey).ToArray();
         var accessible = await catalog.ResolveTrackKeysAsync(scope, positive.Concat(negative).ToArray(), cancellationToken);
@@ -95,12 +159,13 @@ public sealed class AudioMuseRecommendationClient(
     }
 
     private async Task<(IProviderIntelligenceCapability Capability, ProviderExecutionContext Context)> CapabilityAsync(
-        IntelligenceScope scope, string operation, CancellationToken cancellationToken)
+        IntelligenceScope scope, string operation, CancellationToken cancellationToken,
+        string? idempotencyKey = null)
     {
         if (!providers.TryGetCapability<IProviderIntelligenceCapability>(
                 ProviderId, ProviderCapabilityKind.Intelligence, out var capability))
             throw new NotSupportedException("AudioMuse-AI extension is not installed.");
-        var context = await ContextAsync(scope, operation, cancellationToken)
+        var context = await ContextAsync(scope, operation, cancellationToken, idempotencyKey)
             ?? throw new NotSupportedException("AudioMuse-AI has no exact-scope account.");
         return (capability!, context);
     }
@@ -112,6 +177,15 @@ public sealed class AudioMuseRecommendationClient(
     {
         var local = await catalog.ResolveBackendItemsAsync(scope,
             tracks.Select(item => item.TrackId).ToArray(), cancellationToken);
+        return MapTracks(tracks, local, context, excluded, limit, signalCode, fallbackExplanation);
+    }
+
+    private static IReadOnlyList<RecommendationSourceItem> MapTracks(
+        IReadOnlyList<ProviderIntelligenceTrack> tracks,
+        IReadOnlyDictionary<string, RecommendationTrackIdentity> local,
+        ProviderExecutionContext context, IReadOnlySet<string> excluded, int limit,
+        string signalCode, string fallbackExplanation)
+    {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         return tracks.Where(item => !excluded.Contains(item.TrackId) && seen.Add(item.TrackId) &&
                 local.ContainsKey(item.TrackId)).Take(limit)
@@ -137,7 +211,8 @@ public sealed class AudioMuseRecommendationClient(
     }
 
     private async Task<ProviderExecutionContext?> ContextAsync(
-        IntelligenceScope scope, string operation, CancellationToken cancellationToken)
+        IntelligenceScope scope, string operation, CancellationToken cancellationToken,
+        string? idempotencyKey = null)
     {
         var account = await accounts.FindAccountAsync(scope, ProviderId, cancellationToken);
         if (account == null) return null;
@@ -146,7 +221,8 @@ public sealed class AudioMuseRecommendationClient(
         return new(actor, ProviderId, account, new(scope.TenantId, scope.LibraryScopeId),
             new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
                 ProviderExplicitContentPolicy.Allow, false, false, false, [ProviderId]),
-            operation, Guid.CreateVersion7().ToString("N"), DateTimeOffset.UtcNow.AddSeconds(10),
+            operation, idempotencyKey ?? Guid.CreateVersion7().ToString("N"),
+            DateTimeOffset.UtcNow.AddSeconds(10),
             cancellationToken);
     }
 }

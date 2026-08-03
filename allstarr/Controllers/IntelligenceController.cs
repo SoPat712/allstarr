@@ -20,11 +20,13 @@ public sealed partial class IntelligenceController(
     ISmartPlaylistService smartPlaylists,
     IRecommendationProviderStatusService readiness,
     IEnumerable<IRecommendationProvider> providers,
+    IAudioMuseRecommendationClient audioMuse,
     IPlatformClock? clock = null) : ControllerBase
 {
     private static readonly string[] SignalCatalog = ["play", "skip", "complete", "favorite", "playlist"];
     private readonly IDbContextFactory<AllstarrDbContext> _factory = factory;
     private readonly IPlatformClock? _clock = clock;
+    private readonly IAudioMuseRecommendationClient _audioMuse = audioMuse;
     private readonly IReadOnlyDictionary<string, IRecommendationProvider> _providers = providers.ToDictionary(item => item.Id, StringComparer.Ordinal);
 
     [HttpGet]
