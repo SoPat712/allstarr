@@ -1092,8 +1092,10 @@ test("Intelligence history imports, corrections, and schedules use the selected 
   await expect(page.getByRole("button", { name: "Generated playlist destination" })).toContainText("Jellyfin Music");
   await page.getByRole("button", { name: "New schedule" }).click();
   await page.getByLabel("Playlist name").fill("Friday discoveries");
-  await page.getByRole("button", { name: "When to create it" }).click();
+  const cadence = page.getByRole("button", { name: "When to create it" });
+  await cadence.click();
   await page.getByRole("option", { name: "Every Friday at 8:00 AM" }).click();
+  await expect(cadence).toContainText("Every Friday at 8:00 AM");
   const schedule = page.waitForRequest((request) => request.method() === "POST" &&
     request.url().endsWith("/api/admin/intelligence/schedules"));
   await page.getByRole("button", { name: "Create schedule" }).click();
