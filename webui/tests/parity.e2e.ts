@@ -562,12 +562,22 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
       body = { jobId: "sound-scan-1", state: "completed", completed: 200, total: 200 };
     if (url.pathname === "/api/admin/intelligence/audiomuse/similar")
       body = { tracks: [{ trackId: "track-3", title: "Nearby Song", artist: "Sound Artist", album: "Sound Album", score: .92, explanation: "AudioMuse found a song with a similar sound." }] };
+    if (url.pathname === "/api/admin/intelligence/audiomuse/path")
+      body = { tracks: [
+        { trackId: "track-1", title: "Future Song", artist: "Future Artist", score: 1 },
+        { trackId: "track-8", title: "Bridge Song", artist: "Sound Artist", score: .8 },
+        { trackId: "track-2", title: "Second Song", artist: "Future Artist", score: 1 },
+      ], totalDistance: .4 };
+    if (url.pathname === "/api/admin/intelligence/audiomuse/blend")
+      body = { tracks: [{ trackId: "track-9", title: "Blend Song", artist: "Sound Artist", score: .89 }] };
     if (url.pathname === "/api/admin/intelligence/audiomuse/fingerprint")
       body = { tracks: [{ trackId: "track-5", title: "Taste Song", artist: "Sound Artist", score: .9, explanation: "AudioMuse matched what you played most." }], periodDays: 90, completedListens: 42, seedCount: 8 };
     if (url.pathname === "/api/admin/intelligence/audiomuse/generated-sets")
       body = { id: "sound-playlist-1", state: "creating" };
-    if (url.pathname === "/api/admin/intelligence/audiomuse/search")
-      body = { mode: "text", tracks: [{ trackId: "track-4", title: "Quiet Light", artist: "Sound Artist", score: .88, explanation: "AudioMuse matched this song to your description." }] };
+    if (url.pathname === "/api/admin/intelligence/audiomuse/search") {
+      const mode = route.request().postDataJSON().mode;
+      body = { mode, tracks: [{ trackId: "track-4", title: mode === "lyrics" ? "Rain Words" : "Quiet Light", artist: "Sound Artist", score: .88, explanation: "AudioMuse matched this song to your description." }] };
+    }
     if (url.pathname === "/api/admin/intelligence/audiomuse/clusters")
       body = url.searchParams.get("cursor")
         ? { clusters: [{ id: "bright", name: "Bright and quick", tracks: [{ trackId: "track-6", title: "Day Song", artist: "Sound Artist", score: .86 }] }], nextCursor: null }
@@ -782,6 +792,32 @@ for (const viewport of viewports) {
         protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music", seedTrackIds: ["track-1"],
       });
       await expect(soundDiscovery.getByText("Nearby Song", { exact: true })).toBeVisible();
+      await soundDiscovery.getByLabel("How to explore").click();
+      await page.getByRole("option", { name: "Connect two songs" }).click();
+      const pathRequest = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/audiomuse/path"));
+      await soundDiscovery.getByRole("button", { name: "Find songs" }).click();
+      expect((await pathRequest).postDataJSON()).toMatchObject({ startTrackId: "track-1", endTrackId: "track-2" });
+      await expect(soundDiscovery.getByText("Bridge Song", { exact: true })).toBeVisible();
+      await soundDiscovery.getByLabel("How to explore").click();
+      await page.getByRole("option", { name: "Include one sound and avoid another" }).click();
+      const blendRequest = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/audiomuse/blend"));
+      await soundDiscovery.getByRole("button", { name: "Find songs" }).click();
+      expect((await blendRequest).postDataJSON()).toMatchObject({ includeTrackIds: ["track-1"], avoidTrackIds: ["track-2"] });
+      await expect(soundDiscovery.getByText("Blend Song", { exact: true })).toBeVisible();
+      await soundDiscovery.getByLabel("How to explore").click();
+      await page.getByRole("option", { name: "Describe what you want" }).click();
+      await soundDiscovery.getByLabel("Describe a sound").fill("warm and quiet");
+      const textRequest = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/audiomuse/search"));
+      await soundDiscovery.getByRole("button", { name: "Find songs" }).click();
+      expect((await textRequest).postDataJSON()).toMatchObject({ query: "warm and quiet", mode: "text" });
+      await expect(soundDiscovery.getByText("Quiet Light", { exact: true })).toBeVisible();
+      await soundDiscovery.getByLabel("What to match").click();
+      await page.getByRole("option", { name: "Song lyrics" }).click();
+      await soundDiscovery.getByLabel("Words to find").fill("city lights in the rain");
+      const lyricsRequest = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/audiomuse/search"));
+      await soundDiscovery.getByRole("button", { name: "Find songs" }).click();
+      expect((await lyricsRequest).postDataJSON()).toMatchObject({ query: "city lights in the rain", mode: "lyrics" });
+      await expect(soundDiscovery.getByText("Rain Words", { exact: true })).toBeVisible();
       await soundDiscovery.getByLabel("How to explore").click();
       await page.getByRole("option", { name: "Use what I played most" }).click();
       const fingerprintRequest = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/audiomuse/fingerprint"));
