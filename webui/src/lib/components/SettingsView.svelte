@@ -354,9 +354,9 @@
             {#each accounts as account}
               <article>
                 <ProviderArtwork id={account.providerId} definition={provider(account.providerId)} />
-                <span><strong>{account.sourceDisplayName || account.displayName}</strong><small>{audienceLabel(account)} · {account.enabled ? "Enabled" : "Disabled"}</small></span>
-                <span class={`status-pill ${account.secret.configured && !account.secret.revoked ? "healthy" : "needs_config"}`}>
-                  {account.secret.configured && !account.secret.revoked ? "Stored" : "Setup needed"}
+                <span><strong>{account.sourceDisplayName || account.displayName}</strong><small>{audienceLabel(account)}</small></span>
+                <span class={`status-pill ${!account.enabled ? "suggested" : account.secret.configured && !account.secret.revoked ? "healthy" : "needs_config"}`}>
+                  {account.enabled ? "Enabled" : "Disabled"} · {account.secret.configured && !account.secret.revoked ? "Stored" : "Setup needed"}
                 </span>
               </article>
             {:else}

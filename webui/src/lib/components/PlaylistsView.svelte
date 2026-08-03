@@ -588,7 +588,7 @@
                 <small>confirmed</small>
               </span>
               <small>{playlist.playableCount} of {playlist.trackCount} playable</small>
-              {#if !playlist.enabled}<small class="attention">Paused</small>{/if}
+              {#if !playlist.enabled}<small class="status-pill suggested">Paused</small>{/if}
             </span>
             <CoverageBar
               routes={playlist.routeCoverage}

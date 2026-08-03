@@ -81,7 +81,8 @@
         <article>
           <span>
             <strong>{humanize(category.category)}</strong>
-            <small>{category.owner} · {humanize(category.storageTier)} · {category.enabled ? "Enabled" : "Disabled"}</small>
+            <small>{category.owner} · {humanize(category.storageTier)}</small>
+            <span class={`status-pill ${category.enabled ? "healthy" : "suggested"}`}>{category.enabled ? "Enabled" : "Disabled"}</span>
           </span>
           <span>
             <strong>{bytes(category.payloadBytes)} / {bytes(category.maximumBytes)}</strong>

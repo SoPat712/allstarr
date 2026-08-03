@@ -1,4 +1,5 @@
 import type {
+  CtsMeasurement,
   ProviderAccount,
   ProviderDefinition,
   ProviderHealth,
@@ -64,6 +65,9 @@ export function sourceMetrics(
 
 export const supportsStreamingDiagnostic = (health: ProviderHealth[]) =>
   health.some((item) => item.capability.toLowerCase() === "streaming" && item.supported);
+
+export const ctsMeasurementLabel = (measurement: CtsMeasurement) =>
+  measurement.health === "healthy" ? `${measurement.latencyMs} ms` : "Failed";
 
 const builtInSettings: Record<string, ProviderSetting[]> = {
   spotify: [{

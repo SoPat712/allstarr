@@ -25,6 +25,7 @@
   import {
     accountSettings,
     audienceLabel,
+    ctsMeasurementLabel,
     humanize,
     sourceMetrics,
     sourceNeedsAccount,
@@ -97,6 +98,9 @@
     return summaries.find((item) =>
       item.providerId.toLowerCase() === id.toLowerCase());
   }
+
+  const readinessClass = (ready: boolean, health?: string | null) =>
+    ready ? "healthy" : health === "degraded" ? "degraded" : "suggested";
 
   function relativeTime(value?: string | null) {
     if (!value) return "Not checked";
@@ -312,14 +316,14 @@
                     <summary>More details</summary>
                     <dl>
                       <div><dt>Capabilities</dt><dd>{(item.categories ?? []).map(humanize).join(", ") || "Pending"}</dd></div>
-                      <div><dt>Timing</dt><dd>{summary(item.id)?.p95LatencyMilliseconds != null ? `${summary(item.id)?.p95LatencyMilliseconds} ms p95` : "Not measured"}{cts ? ` · ${cts.latencyMs} ms CTS` : ""}</dd></div>
+                      <div><dt>Timing</dt><dd>{summary(item.id)?.p95LatencyMilliseconds != null ? `${summary(item.id)?.p95LatencyMilliseconds} ms p95` : "Not measured"}{#if cts} · <span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>CTS {ctsMeasurementLabel(cts)}</span>{/if}</dd></div>
                     </dl>
                   </details>
                 </td>
                 <td>{(item.categories ?? []).map(humanize).join(", ") || "Pending"}</td>
                 <td><span class={`status-pill ${state}`}>{state === "needs_config" ? "Needs setup" : humanize(state)}</span><small>{metrics.passing}/{metrics.total || 0} passing · {relativeTime(metrics.checkedAt)}</small></td>
-                <td>{state === "disabled" ? "No" : "Yes"}{connected.length ? ` · ${connected.filter((account) => account.enabled).length} account${connected.length === 1 ? "" : "s"}` : ""}</td>
-                <td>{summary(item.id)?.p95LatencyMilliseconds != null ? `${summary(item.id)?.p95LatencyMilliseconds} ms p95` : "—"}{cts ? ` · ${cts.latencyMs} ms CTS` : ""}</td>
+                <td><span class={`status-pill ${state === "disabled" ? "suggested" : "healthy"}`}>{state === "disabled" ? "Disabled" : "Enabled"}</span>{connected.length ? ` · ${connected.filter((account) => account.enabled).length} account${connected.length === 1 ? "" : "s"}` : ""}</td>
+                <td>{summary(item.id)?.p95LatencyMilliseconds != null ? `${summary(item.id)?.p95LatencyMilliseconds} ms p95` : "—"}{#if cts} · <span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>CTS {ctsMeasurementLabel(cts)}</span>{/if}</td>
               </tr>
             {:else}
               <tr><td colspan="5"><div class="compact-empty"><strong>No Sources are registered</strong><p>Enable a built-in provider or install an extension.</p></div></td></tr>
@@ -354,7 +358,7 @@
                     <dl>
                       <div><dt>Owner</dt><dd>{account.creatorDisplayName || account.ownerDisplayName || "Unknown"}</dd></div>
                       <div><dt>Audience</dt><dd>{audienceLabel(account)}</dd></div>
-                      <div><dt>Health</dt><dd>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready{cts ? ` · ${cts.latencyMs} ms CTS` : ""}</dd></div>
+                      <div><dt>Health</dt><dd><span class={`status-pill ${readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}`}>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready</span>{#if cts} · <span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>CTS {ctsMeasurementLabel(cts)}</span>{/if}</dd></div>
                     </dl>
                   </details>
                 </td>
@@ -362,7 +366,7 @@
                 <td>{account.creatorDisplayName || account.ownerDisplayName || "Unknown"}</td>
                 <td>{audienceLabel(account)}</td>
                 <td><span class={`status-pill ${account.enabled ? "healthy" : "disabled"}`}>{account.enabled ? "Enabled" : "Disabled"}</span></td>
-                <td>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready{cts ? ` · ${cts.latencyMs} ms CTS` : ""}</td>
+                <td><span class={`status-pill ${readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}`}>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready</span>{#if cts} · <span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>CTS {ctsMeasurementLabel(cts)}</span>{/if}</td>
                 <td>
                   <DropdownMenu.Root>
                     <DropdownMenu.Trigger class="icon-button" aria-label={`Actions for ${account.displayName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
@@ -439,7 +443,7 @@
               </dl>
               <div class="source-detail-capabilities">
                 {#each selectedSource.runtimeCapabilities ?? [] as capability}
-                  <span><strong>{humanize(capability.id)}</strong><small>{capability.ready ? "Ready" : humanize(capability.reasonCode || capability.configuration || capability.health || "Unavailable")}</small></span>
+                  <span><strong>{humanize(capability.id)}</strong><span class={`status-pill ${readinessClass(capability.ready, capability.health)}`}>{capability.ready ? "Ready" : humanize(capability.reasonCode || capability.configuration || capability.health || "Unavailable")}</span></span>
                 {:else}<p>No runtime capability probes are published for this Source.</p>{/each}
               </div>
             {:else if detailTab === "data" && selectedAccount}
@@ -449,10 +453,10 @@
                 <div><dt>Provider</dt><dd>{selectedSource?.name ?? selectedAccount.providerId}</dd></div>
                 <div><dt>Owner</dt><dd>{selectedAccount.creatorDisplayName || selectedAccount.ownerDisplayName || "Unknown"}</dd></div>
                 <div><dt>Audience</dt><dd>{audienceLabel(selectedAccount)}</dd></div>
-                <div><dt>State</dt><dd>{selectedAccount.enabled ? "Enabled" : "Disabled"}</dd></div>
-                <div><dt>Account details</dt><dd>{selectedAccount.secret.configured && !selectedAccount.secret.revoked ? "Stored" : "Setup needed"}</dd></div>
-                <div><dt>Health</dt><dd>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready</dd></div>
-                <div><dt>Click to stream</dt><dd>{cts ? `${cts.latencyMs} ms · ${relativeTime(cts.testedAt)}` : "Not measured"}</dd></div>
+                <div><dt>State</dt><dd><span class={`status-pill ${selectedAccount.enabled ? "healthy" : "suggested"}`}>{selectedAccount.enabled ? "Enabled" : "Disabled"}</span></dd></div>
+                <div><dt>Account details</dt><dd><span class={`status-pill ${selectedAccount.secret.configured && !selectedAccount.secret.revoked ? "healthy" : "needs_config"}`}>{selectedAccount.secret.configured && !selectedAccount.secret.revoked ? "Stored" : "Setup needed"}</span></dd></div>
+                <div><dt>Health</dt><dd><span class={`status-pill ${readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}`}>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready</span></dd></div>
+                <div><dt>Click to stream</dt><dd>{#if cts}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>{ctsMeasurementLabel(cts)}</span> · {relativeTime(cts.testedAt)}{:else}Not measured{/if}</dd></div>
               </dl>
             {:else if detailTab === "configuration" && detailKind === "source" && selectedSource}
               <div class="source-detail-actions">
@@ -481,7 +485,7 @@
                   {@const result = testResults[`${selectedAccount.id}:${capability.capability}`]}
                   <span>
                     <strong>{humanize(capability.capability)}</strong>
-                    <small>{capability.ready ? "Ready" : humanize(capability.reasonCode || capability.configuration)}</small>
+                    <span class={`status-pill ${readinessClass(capability.ready, capability.health)}`}>{capability.ready ? "Ready" : humanize(capability.reasonCode || capability.configuration)}</span>
                     {#if result?.bars != null}<ConnectivityBars bars={result.healthy ?? result.success ? result.bars : 0} latency={result.latencyMs} />{/if}
                     {#if capability.canTest}<button type="button" disabled={!selectedAccount.enabled || Boolean(action)} onclick={() => void test(selectedAccount!, capability.capability)}>Test</button>{/if}
                   </span>

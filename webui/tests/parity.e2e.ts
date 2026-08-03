@@ -938,7 +938,8 @@ for (const viewport of viewports) {
       await expect(page.getByText("Allstarr sent the latest completed listen to Last.fm.", { exact: true })).toBeVisible();
       await expect(page.getByText("Allstarr will not send listens to ListenBrainz.", { exact: true })).toBeVisible();
       await expect(page.getByText("Allstarr is checking 2 saved listens for more song details.", { exact: true })).toBeVisible();
-      await expect(page.getByText("Private similarity source. · Ready")).toBeVisible();
+      const intelligenceSource = page.getByText("Private similarity source.", { exact: true }).locator("..");
+      await expect(intelligenceSource.locator(".status-pill")).toHaveText("Ready");
       await expect(page.getByText("Where generated playlists are created", { exact: true })).toBeVisible();
       expect(await page.locator(".status-list").evaluate((element) => element.tagName)).toBe("UL");
       expect(await page.locator(".schedule-list").evaluate((element) => element.tagName)).toBe("UL");
@@ -1940,6 +1941,7 @@ test("Sources keep primary actions visible and report scoped degradation", async
   await appleManager.getByLabel("2FA code").fill("123456");
   await appleManager.getByRole("button", { name: "Submit 2FA" }).click();
   await expect(appleManager.getByText("Apple Music - Gamdl is ready")).toBeVisible();
+  await expect(appleManager.locator(".source-metrics .status-pill")).toHaveCount(3);
   await expect(appleManager.getByRole("link", { name: "Provider settings" }))
     .toHaveAttribute("href", "#/settings/general?provider=provider-apple-download");
   await page.keyboard.press("Escape");

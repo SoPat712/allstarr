@@ -95,10 +95,10 @@
 
       <div class="apple-manager-body">
         <dl class="source-metrics">
-          <div><dt>Gateway</dt><dd>{gatewayReady ? "Ready" : humanize(status?.state ?? "unknown")}</dd></div>
-          <div><dt>Session</dt><dd>{status?.logged_in ? "Authenticated" : humanize(loginState)}</dd></div>
+          <div><dt>Gateway</dt><dd><span class={`status-pill ${gatewayReady ? "healthy" : "suggested"}`}>{gatewayReady ? "Ready" : humanize(status?.state ?? "unknown")}</span></dd></div>
+          <div><dt>Session</dt><dd><span class={`status-pill ${status?.logged_in ? "healthy" : "suggested"}`}>{status?.logged_in ? "Authenticated" : humanize(loginState)}</span></dd></div>
           <div><dt>API contract</dt><dd>{status?.api_version || "Not discovered"}</dd></div>
-          <div><dt>Provider</dt><dd>{status?.ready ? "Playable" : "Needs setup"}</dd></div>
+          <div><dt>Provider</dt><dd><span class={`status-pill ${status?.ready ? "healthy" : "needs_config"}`}>{status?.ready ? "Playable" : "Needs setup"}</span></dd></div>
         </dl>
 
         <ol class="apple-setup-progress" aria-label="Apple download setup progress">

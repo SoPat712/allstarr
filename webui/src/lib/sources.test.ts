@@ -3,6 +3,7 @@ import type { ProviderAccount, ProviderDefinition, ProviderHealth } from "./api"
 import {
   accountSettings,
   audienceLabel,
+  ctsMeasurementLabel,
   sourceMetrics,
   sourceNeedsAccount,
   sourceStatus,
@@ -117,5 +118,21 @@ describe("source presentation", () => {
     expect(supportsStreamingDiagnostic([streaming])).toBe(true);
     expect(supportsStreamingDiagnostic([{ ...streaming, supported: false }])).toBe(false);
     expect(supportsStreamingDiagnostic([{ ...streaming, capability: "metadata" }])).toBe(false);
+  });
+
+  it("does not present a failed CTS probe as zero-millisecond playback", () => {
+    const measurement = {
+      providerAccountId: "account-1",
+      providerId: "future-extension",
+      health: "degraded",
+      latencyMs: 0,
+      bars: 0,
+      testedAt: "2026-08-03T00:00:00Z",
+      failureCode: "Unauthorized",
+    };
+
+    expect(ctsMeasurementLabel(measurement)).toBe("Failed");
+    expect(ctsMeasurementLabel({ ...measurement, health: "healthy", latencyMs: 42.1 }))
+      .toBe("42.1 ms");
   });
 });

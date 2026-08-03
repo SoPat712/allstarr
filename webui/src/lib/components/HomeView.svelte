@@ -154,7 +154,7 @@
         <p>Media server</p>
         <strong>{snapshot.status?.backendType ?? "Unknown"}</strong>
       </div>
-      <small class:attention={snapshot.status?.durableStorage?.readiness !== "Ready"}>
+      <small class={`status-pill ${snapshot.status?.durableStorage?.readiness === "Ready" ? "healthy" : "degraded"}`}>
         {snapshot.status?.durableStorage?.readiness ?? "Unavailable"}
       </small>
     </article>
