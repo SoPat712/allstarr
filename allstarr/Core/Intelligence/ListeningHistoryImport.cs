@@ -112,6 +112,7 @@ public static class ListeningHistoryImportRegistration
         services.AddSingleton<IListeningHistoryImporter, SpotifyListeningHistoryImporter>();
         services.AddSingleton<IListeningHistoryImporter, LastFmListeningHistoryImporter>();
         services.AddSingleton<IListeningHistoryImporter, ListenBrainzListeningHistoryImporter>();
+        services.AddSingleton<IListeningHistoryImporter, KoitoListeningHistoryImporter>();
         services.AddSingleton<ListeningHistoryImporterRegistry>();
         services.AddSingleton<ListeningHistoryImportArtifactStore>();
         services.AddSingleton<ListeningHistoryImportService>();
