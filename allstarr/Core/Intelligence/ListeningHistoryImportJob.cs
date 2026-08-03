@@ -309,7 +309,11 @@ public sealed class ListeningHistoryImportJobHandler(
                 record.ImportedRows,
                 record.DuplicateRows,
                 record.ResolvedRows,
-                record.UnresolvedRows
+                record.UnresolvedRows,
+                sourceProvider = record.Format,
+                runId = record.JobId,
+                durationMilliseconds = Math.Max(0L, (long)(now - record.CreatedAt).TotalMilliseconds),
+                reasonCode = outcome == "success" ? $"history_import_{action}" : outcome
             }),
             CreatedAt = now
         };

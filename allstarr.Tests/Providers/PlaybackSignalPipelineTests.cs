@@ -297,16 +297,29 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
             [new Target("lastfm", true), new Target("listenbrainz", true)],
             new Checkpoints());
 
-        await delivery.DeliverAsync(Payload(), default);
+        var payload = Payload();
+        await delivery.DeliverAsync(payload, default);
 
         await using var database = await factory.CreateDbContextAsync();
         var audit = Assert.Single(await database.AuditEvents.AsNoTracking()
             .Where(item => item.Category == "scrobble" && item.Action == "delivered")
             .ToListAsync());
         using var details = System.Text.Json.JsonDocument.Parse(audit.DetailsJson);
+        Assert.Equal("success", audit.Outcome);
+        Assert.Equal(ScopedPlaybackScrobbleDelivery.CheckpointKey(payload), audit.CorrelationId);
         Assert.Equal(2, details.RootElement.GetProperty("providerCount").GetInt32());
         Assert.Equal(["lastfm", "listenbrainz"], details.RootElement.GetProperty("providerIds")
             .EnumerateArray().Select(item => item.GetString()));
+        Assert.Equal(["Last.fm", "ListenBrainz"], details.RootElement.GetProperty("providerNames")
+            .EnumerateArray().Select(item => item.GetString()));
+        Assert.Equal(2, details.RootElement.GetProperty("attemptedCount").GetInt32());
+        Assert.Equal(2, details.RootElement.GetProperty("deliveredCount").GetInt32());
+        Assert.Equal("playback_scrobble_delivered", details.RootElement.GetProperty("reasonCode").GetString());
+        Assert.True(details.RootElement.GetProperty("durationMilliseconds").GetInt64() >= 0);
+        Assert.False(details.RootElement.TryGetProperty("Title", out _));
+        Assert.False(details.RootElement.TryGetProperty("Artist", out _));
+        Assert.False(details.RootElement.TryGetProperty("Album", out _));
+        Assert.False(details.RootElement.TryGetProperty("observedAt", out _));
     }
 
     [Fact]
@@ -322,6 +335,18 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         Assert.Equal("playback_scrobble_unauthorized", firstFailure.Code);
         Assert.Equal(0, rejected.Successes);
         Assert.Equal(1, healthy.Successes);
+
+        await using (var database = await factory.CreateDbContextAsync())
+        {
+            var audit = Assert.Single(await database.AuditEvents.AsNoTracking()
+                .Where(item => item.Category == "scrobble" && item.Action == "delivered")
+                .ToListAsync());
+            using var details = System.Text.Json.JsonDocument.Parse(audit.DetailsJson);
+            Assert.Equal("partial-failure", audit.Outcome);
+            Assert.Equal("playback_scrobble_unauthorized", details.RootElement.GetProperty("reasonCode").GetString());
+            Assert.Equal(1, details.RootElement.GetProperty("deliveredCount").GetInt32());
+            Assert.Equal(1, details.RootElement.GetProperty("failedCount").GetInt32());
+        }
 
         await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => delivery.DeliverAsync(Payload(), default));
         Assert.Equal(1, healthy.Successes);

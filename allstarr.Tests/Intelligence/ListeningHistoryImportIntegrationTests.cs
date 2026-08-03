@@ -120,6 +120,28 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
             });
         Assert.Single(await db.Jobs.Where(item => item.Type == MusicBrainzListeningEnrichmentQueue.JobType).ToListAsync());
         Assert.Empty(await db.PlaybackDeliveryCheckpoints.ToListAsync());
+        var audits = await db.AuditEvents.AsNoTracking()
+            .Where(item => item.Category == "listening-history-import")
+            .OrderBy(item => item.CreatedAt)
+            .ToListAsync();
+        var previewAudit = Assert.Single(audits, item => item.Action == "previewed");
+        var completedAudit = Assert.Single(audits, item => item.Action == "completed");
+        Assert.All(audits, item => Assert.Equal(preview.ImportId.ToString("N"), item.CorrelationId));
+        using (var details = JsonDocument.Parse(previewAudit.DetailsJson))
+        {
+            Assert.Equal("spotify-export-v1", details.RootElement.GetProperty("sourceProvider").GetString());
+            Assert.Equal("history_import_previewed", details.RootElement.GetProperty("reasonCode").GetString());
+            Assert.True(details.RootElement.GetProperty("durationMilliseconds").GetInt64() >= 0);
+            Assert.False(details.RootElement.TryGetProperty("title", out _));
+            Assert.False(details.RootElement.TryGetProperty("artist", out _));
+        }
+        using (var details = JsonDocument.Parse(completedAudit.DetailsJson))
+        {
+            Assert.Equal("spotify-export-v1", details.RootElement.GetProperty("sourceProvider").GetString());
+            Assert.Equal(queued!.JobId, details.RootElement.GetProperty("runId").GetGuid());
+            Assert.Equal("history_import_completed", details.RootElement.GetProperty("reasonCode").GetString());
+            Assert.True(details.RootElement.GetProperty("durationMilliseconds").GetInt64() >= 0);
+        }
         Assert.Null(await service.GetAsync(
             _scope with { OwnerUserId = Guid.NewGuid() }, preview.ImportId, CancellationToken.None));
         Assert.False(File.Exists(Path.Combine(_root, $"{preview.ImportId:N}.json")));

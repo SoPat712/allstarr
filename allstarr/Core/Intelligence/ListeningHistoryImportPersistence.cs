@@ -318,6 +318,7 @@ public sealed class ListeningHistoryImportService(
             var previewJson = JsonSerializer.Serialize(preview);
             var revision = Revision(scope, scan.Format, importers.RevisionFor(scan.Format), artifact.ContentSha256, previewJson);
             var expiresAt = previewedAt.AddHours(options.PreviewLifetimeHours);
+            var previewCompletedAt = clock.UtcNow;
             await using var db = await factory.CreateDbContextAsync(cancellationToken);
             db.ListeningHistoryImports.Add(new()
             {
@@ -351,14 +352,18 @@ public sealed class ListeningHistoryImportService(
                 DetailsJson = JsonSerializer.Serialize(new
                 {
                     format = scan.Format,
+                    sourceProvider = scan.Format,
                     sizeBytes = artifact.SizeBytes,
                     fileRows = scan.Rows,
                     preview.NewRows,
                     duplicateRows = scan.Duplicate + accumulator.DuplicateRows,
                     preview.ResolvedNewRows,
-                    preview.UnresolvedNewRows
+                    preview.UnresolvedNewRows,
+                    durationMilliseconds = Math.Max(0L, (long)(previewCompletedAt - previewedAt).TotalMilliseconds),
+                    reasonCode = "history_import_previewed",
+                    runId = importId
                 }),
-                CreatedAt = previewedAt
+                CreatedAt = previewCompletedAt
             });
             await db.SaveChangesAsync(cancellationToken);
             return new(importId, revision, displayFileName, artifact.SizeBytes, expiresAt,
@@ -605,7 +610,11 @@ public sealed class ListeningHistoryImportService(
                 record.ImportedRows,
                 record.DuplicateRows,
                 record.ResolvedRows,
-                record.UnresolvedRows
+                record.UnresolvedRows,
+                sourceProvider = record.Format,
+                runId = record.JobId,
+                durationMilliseconds = Math.Max(0L, (long)(now - record.CreatedAt).TotalMilliseconds),
+                reasonCode = outcome is "success" or "queued" ? $"history_import_{action}" : outcome
             }),
             CreatedAt = now
         };

@@ -1,6 +1,7 @@
 using allstarr.Core.Intelligence;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -58,6 +59,7 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
 {
     public async Task DeliverAsync(PlaybackSignalPayload payload, CancellationToken cancellationToken)
     {
+        var timer = Stopwatch.StartNew();
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var occurrenceKey = payload.OccurrenceKey ?? payload.SignalKey;
         var occurrence = await db.ListeningEvents.AsNoTracking().SingleOrDefaultAsync(item =>
@@ -90,15 +92,22 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
         ScopedPlaybackScrobbleDeliveryException? permanentFailure = null;
         ScopedPlaybackScrobbleDeliveryException? retryableFailure = null;
         var delivered = false;
-        var completedTargets = new List<string>();
+        var providerIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var deliveredCount = 0;
+        var ignoredCount = 0;
+        var retryingCount = 0;
+        var failedCount = 0;
+        var checkpointedCount = 0;
         foreach (var target in targets)
         {
             try
             {
                 if (!await target.IsConfiguredAsync(payload.Scope, cancellationToken)) continue;
+                providerIds.Add(target.ProviderId);
                 if (await checkpoints.IsCompletedAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId, checkpointKey, target.ProviderId, cancellationToken))
                 {
                     delivered |= completion;
+                    checkpointedCount++;
                     continue;
                 }
                 var result = await target.DeliverAsync(payload.Scope, payload.Transition, track, payload.PositionTicks,
@@ -109,17 +118,20 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
                 {
                     case ScopedPlaybackScrobbleOutcome.Delivered:
                         delivered |= completion;
-                        if (completion) completedTargets.Add(target.ProviderId);
+                        deliveredCount++;
                         break;
                     case ScopedPlaybackScrobbleOutcome.Ignored:
                         delivered |= completion;
+                        ignoredCount++;
                         break;
                     case ScopedPlaybackScrobbleOutcome.Retrying:
+                        retryingCount++;
                         retryableFailure ??= new("playback_scrobble_retrying",
                             result.SafeMessage ?? "The scoped scrobble target asked Allstarr to retry.", true,
                             result.RetryAfter);
                         break;
                     case ScopedPlaybackScrobbleOutcome.PermanentFailure:
+                        failedCount++;
                         permanentFailure ??= new(result.RequiresReauthentication
                                 ? "playback_scrobble_unauthorized"
                                 : "playback_scrobble_rejected",
@@ -133,6 +145,8 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
             }
             catch (UnauthorizedAccessException)
             {
+                providerIds.Add(target.ProviderId);
+                failedCount++;
                 var result = ScopedPlaybackScrobbleResult.Permanent("unauthorized",
                     "Reconnect the selected scrobble account and replace its expired or revoked credentials.", true);
                 await checkpoints.RecordAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId,
@@ -141,6 +155,8 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
             }
             catch (InvalidOperationException)
             {
+                providerIds.Add(target.ProviderId);
+                failedCount++;
                 var result = ScopedPlaybackScrobbleResult.Permanent("account-incomplete",
                     "The selected scrobble account needs configuration.");
                 await checkpoints.RecordAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId,
@@ -149,6 +165,8 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
             }
             catch (Exception)
             {
+                providerIds.Add(target.ProviderId);
+                retryingCount++;
                 var result = ScopedPlaybackScrobbleResult.Retrying("transport-failure",
                     "The scoped scrobble target could not be reached.");
                 await checkpoints.RecordAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId,
@@ -160,34 +178,64 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
         {
             activity?.MarkDelivered(payload.ItemId, payload.DeviceId);
         }
-        if (completedTargets.Count > 0)
+        if (providerIds.Count > 0)
         {
             try
             {
                 var now = DateTimeOffset.UtcNow;
-                var providerIds = completedTargets
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                var recordedProviderIds = providerIds
                     .OrderBy(providerId => providerId, StringComparer.OrdinalIgnoreCase)
                     .Take(16)
                     .ToArray();
+                var providerNames = recordedProviderIds.Select(providerId => providerId.ToLowerInvariant() switch
+                {
+                    "lastfm" => "Last.fm",
+                    "listenbrainz" => "ListenBrainz",
+                    _ => providerId
+                }).ToArray();
+                var reasonCode = retryableFailure?.Code ?? permanentFailure?.Code ??
+                    (ignoredCount > 0 && deliveredCount == 0
+                        ? "playback_scrobble_ignored"
+                        : checkpointedCount > 0 && deliveredCount == 0
+                            ? "playback_scrobble_checkpointed"
+                            : completion ? "playback_scrobble_delivered" : "playback_now_playing_delivered");
+                var outcome = retryableFailure != null
+                    ? "retrying"
+                    : permanentFailure != null
+                        ? deliveredCount + ignoredCount + checkpointedCount > 0 ? "partial-failure" : "failed"
+                        : "success";
+                var destination = string.Join(", ", providerNames);
+                var message = outcome switch
+                {
+                    "success" => $"Allstarr sent the listening update to {destination}.",
+                    "retrying" => $"Allstarr could not send the listening update to {destination} yet and will retry.",
+                    "partial-failure" => $"Allstarr could not send the listening update to every selected service ({destination}).",
+                    _ => $"Allstarr could not send the listening update to {destination}."
+                };
                 db.AuditEvents.Add(new AuditEventRecord
                 {
                     Id = Guid.CreateVersion7(),
                     TenantId = payload.Scope.TenantId,
                     ActorUserId = payload.Scope.OwnerUserId,
                     Category = "scrobble",
-                    Action = "delivered",
-                    Outcome = "success",
+                    Action = completion ? "delivered" : "now-playing",
+                    Outcome = outcome,
                     CorrelationId = checkpointKey,
                     DetailsJson = JsonSerializer.Serialize(new
                     {
-                        providerIds,
-                        providerCount = providerIds.Length,
-                        track.Title,
-                        track.Artist,
-                        track.Album,
+                        providerIds = recordedProviderIds,
+                        providerNames,
+                        providerCount = providerIds.Count,
+                        attemptedCount = deliveredCount + ignoredCount + retryingCount + failedCount,
+                        deliveredCount,
+                        ignoredCount,
+                        retryingCount,
+                        failedCount,
+                        checkpointedCount,
+                        durationMilliseconds = timer.ElapsedMilliseconds,
+                        reasonCode,
                         transition = payload.Transition.ToString(),
-                        observedAt = occurredAt
+                        message
                     }),
                     CreatedAt = now
                 });

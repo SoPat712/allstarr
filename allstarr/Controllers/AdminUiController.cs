@@ -500,7 +500,7 @@ public class AdminUiController : ControllerBase
             ?? item.Category;
         var detail = category switch
         {
-            "scrobble" => TrackDetail(item.DetailsJson),
+            "scrobble" => AuditDetail(item.DetailsJson, "message") ?? TrackDetail(item.DetailsJson),
             "provider-route" => RouteDetail(item.DetailsJson),
             _ => AuditDetail(item.DetailsJson, "message") ?? HumanizeAuditCategory(item.Category)
         };
