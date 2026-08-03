@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -47,6 +48,12 @@ def _version(command: str, cwd: Path | None = None) -> str:
         return "unavailable"
     value = (result.stdout or result.stderr).strip().splitlines()
     return value[0] if value else "unavailable"
+
+
+def _local_node_tool_version(tool: str, cwd: Path) -> str:
+    if not (cwd / "node_modules" / ".bin" / tool).is_file():
+        return "unavailable"
+    return _version(f"npx --no-install {tool} --version", cwd)
 
 
 def _git_sha(cwd: Path) -> str:
@@ -276,8 +283,8 @@ def _report(
         "node": _version("node --version", cwd),
         "npm": _version("npm --version", cwd),
         "dotnet": _version("dotnet --version", cwd),
-        "playwright": _version("npx --no-install playwright --version", cwd),
-        "vitest": _version("npx --no-install vitest --version", cwd),
+        "playwright": _local_node_tool_version("playwright", cwd),
+        "vitest": _local_node_tool_version("vitest", cwd),
     }
     lines = [
         f"TIMING name={name} duration_ms={elapsed_ms:.0f} exit_code={returncode}",
@@ -315,6 +322,10 @@ def _self_test() -> None:
     assert _required_test_failures(0, Counts(discovered=2, passed=1, skipped=1), 0) == ["1 skipped"]
     assert _required_test_failures(0, Counts(discovered=1, passed=1), 1) == ["1 retried"]
     assert _required_test_failures(7, Counts(), 1) == []
+    with tempfile.TemporaryDirectory() as directory:
+        cwd = Path(directory)
+        assert _local_node_tool_version("playwright", cwd) == "unavailable"
+        assert _local_node_tool_version("vitest", cwd) == "unavailable"
     assert _duration("PT1.25S") == 1250
     assert _duration("12ms") == 12
     assert _duration("00:00:01.2500000") == 1250
