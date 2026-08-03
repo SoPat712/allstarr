@@ -311,7 +311,7 @@ public sealed class ProtocolProviderGateway(
             ThrowRouteFailure(outcome.Error);
         }
         await RequireCompatibilityProviderAsync(protocol, routedProviderId);
-        return await legacyMetadata.GetSongAsync(providerId, externalId, protocol.CancellationToken);
+        return null;
     }
 
     public async Task<Album?> GetAlbumAsync(
@@ -367,7 +367,7 @@ public sealed class ProtocolProviderGateway(
             ThrowRouteFailure(outcome.Error);
         }
         await RequireCompatibilityProviderAsync(protocol, routedProviderId);
-        return await legacyMetadata.GetArtistAsync(providerId, externalId, protocol.CancellationToken);
+        return null;
     }
 
     public async Task<List<Album>> GetArtistAlbumsAsync(
@@ -396,7 +396,7 @@ public sealed class ProtocolProviderGateway(
                 {
                     if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return [];
                     if (outcome.Error.Kind is ProviderErrorKind.NotSupported or ProviderErrorKind.CapabilityUnavailable)
-                        return await legacyMetadata.GetArtistAlbumsAsync(providerId, externalId, protocol.CancellationToken);
+                        return [];
                     ThrowRouteFailure(outcome.Error);
                 }
                 var page = outcome.RequireValue();
@@ -408,7 +408,7 @@ public sealed class ProtocolProviderGateway(
             return albums;
         }
         await RequireCompatibilityProviderAsync(protocol, routedProviderId);
-        return await legacyMetadata.GetArtistAlbumsAsync(providerId, externalId, protocol.CancellationToken);
+        return [];
     }
 
     public async Task<List<Song>> GetArtistTracksAsync(
@@ -437,7 +437,7 @@ public sealed class ProtocolProviderGateway(
                 {
                     if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return [];
                     if (outcome.Error.Kind is ProviderErrorKind.NotSupported or ProviderErrorKind.CapabilityUnavailable)
-                        return await legacyMetadata.GetArtistTracksAsync(providerId, externalId, protocol.CancellationToken);
+                        return [];
                     ThrowRouteFailure(outcome.Error);
                 }
                 var page = outcome.RequireValue();
@@ -449,7 +449,7 @@ public sealed class ProtocolProviderGateway(
             return tracks;
         }
         await RequireCompatibilityProviderAsync(protocol, routedProviderId);
-        return await legacyMetadata.GetArtistTracksAsync(providerId, externalId, protocol.CancellationToken);
+        return [];
     }
 
     public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(

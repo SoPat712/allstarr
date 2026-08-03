@@ -82,6 +82,40 @@ public sealed class ProtocolProviderGatewayContractTests
         Assert.DoesNotContain("SourceUri = {", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void AuthenticatedMetadataLookupsDoNotFallbackToLegacy()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            RepositoryRoot(), "allstarr", "Core", "Protocols", "ProtocolProviderGateway.cs"));
+        var methods = new[]
+        {
+            "public async Task<Song?> GetSongAsync(",
+            "public async Task<Artist?> GetArtistAsync(",
+            "public async Task<List<Album>> GetArtistAlbumsAsync(",
+            "public async Task<List<Song>> GetArtistTracksAsync("
+        };
+
+        foreach (var method in methods)
+        {
+            var methodStart = source.IndexOf(method, StringComparison.Ordinal);
+            var authenticatedStart = source.IndexOf(
+                "var routedProviderId = NormalizeProvider(providerId);",
+                methodStart,
+                StringComparison.Ordinal);
+            var methodEnd = source.IndexOf(
+                "\n    public async Task",
+                authenticatedStart,
+                StringComparison.Ordinal);
+
+            Assert.True(methodStart >= 0 && authenticatedStart > methodStart && methodEnd > authenticatedStart, method);
+            Assert.Contains(
+                "await RequireCompatibilityProviderAsync(protocol, routedProviderId);",
+                source[authenticatedStart..methodEnd],
+                StringComparison.Ordinal);
+            Assert.DoesNotContain("legacyMetadata", source[authenticatedStart..methodEnd], StringComparison.Ordinal);
+        }
+    }
+
     private static string RepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
