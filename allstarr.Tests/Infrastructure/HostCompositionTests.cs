@@ -17,6 +17,7 @@ using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc.Routing;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -238,6 +239,33 @@ public sealed class HostCompositionTests
     }
 
     [Fact]
+    public void Host_ResolvesTypedCapabilitiesForEveryOperationalDescriptor()
+    {
+        using var factory = new AllstarrFactory("Jellyfin");
+        var registry = factory.Services.GetRequiredService<IProviderRegistry>();
+
+        AssertOperationalTypedCapabilityContract(registry);
+
+        const string providerId = "fixture-contract-extension";
+        factory.Services.GetRequiredService<IDynamicProviderRegistry>().RegisterOrReplaceExtension(
+            new ProviderRegistration(
+                ExtensionContractDescriptor(providerId),
+                [
+                    MockCapability<IProviderMetadataCapability>(
+                        providerId, ProviderCapabilityKind.Metadata),
+                    MockCapability<IProviderPlaylistCapability>(
+                        providerId, ProviderCapabilityKind.Playlist),
+                    MockCapability<IProviderStreamingCapability>(
+                        providerId, ProviderCapabilityKind.Streaming),
+                    MockCapability<IProviderLyricsCapability>(
+                        providerId, ProviderCapabilityKind.Lyrics)
+                ]));
+
+        Assert.Contains(registry.Providers, provider => provider.Id == providerId);
+        AssertOperationalTypedCapabilityContract(registry);
+    }
+
+    [Fact]
     public void LyricsFallbackClients_HaveBoundedProviderTimeouts()
     {
         using var factory = new AllstarrFactory("Jellyfin");
@@ -262,6 +290,101 @@ public sealed class HostCompositionTests
         };
         return new ControllerContext { HttpContext = httpContext };
     }
+
+    private static void AssertOperationalTypedCapabilityContract(IProviderRegistry registry)
+    {
+        foreach (var provider in registry.Providers)
+        {
+            foreach (var capability in provider.Capabilities.Where(item =>
+                         item.HasUsableImplementation &&
+                         item.Capability is ProviderCapabilityKind.Metadata or
+                             ProviderCapabilityKind.Playlist or
+                             ProviderCapabilityKind.Streaming or
+                             ProviderCapabilityKind.Lyrics))
+            {
+                switch (capability.Capability)
+                {
+                    case ProviderCapabilityKind.Metadata:
+                        AssertTypedCapability<IProviderMetadataCapability>(
+                            registry, provider.Id, capability);
+                        break;
+                    case ProviderCapabilityKind.Playlist:
+                        AssertTypedCapability<IProviderPlaylistCapability>(
+                            registry, provider.Id, capability);
+                        break;
+                    case ProviderCapabilityKind.Streaming:
+                        AssertTypedCapability<IProviderStreamingCapability>(
+                            registry, provider.Id, capability);
+                        break;
+                    case ProviderCapabilityKind.Lyrics:
+                        AssertTypedCapability<IProviderLyricsCapability>(
+                            registry, provider.Id, capability);
+                        break;
+                }
+            }
+        }
+    }
+
+    private static void AssertTypedCapability<TCapability>(
+        IProviderRegistry registry,
+        string providerId,
+        ProviderCapabilityDescriptor descriptor)
+        where TCapability : class, IProviderCapability
+    {
+        var implementation = registry.GetRequiredCapability<TCapability>(providerId, descriptor.Capability);
+
+        Assert.Equal(providerId, implementation.ProviderId);
+        Assert.Equal(descriptor.Capability, implementation.Capability);
+    }
+
+    private static TCapability MockCapability<TCapability>(
+        string providerId,
+        ProviderCapabilityKind capability)
+        where TCapability : class, IProviderCapability
+    {
+        var mock = new Mock<TCapability>(MockBehavior.Strict);
+        mock.SetupGet(item => item.ProviderId).Returns(providerId);
+        mock.SetupGet(item => item.Capability).Returns(capability);
+        return mock.Object;
+    }
+
+    private static ProviderDescriptor ExtensionContractDescriptor(string providerId) => new(
+        providerId,
+        "Fixture Contract Extension",
+        "Four typed capabilities for registry contract coverage.",
+        ProviderOrigin.Extension,
+        sdkVersion: "1",
+        compatibilityVersion: "fixture-v1",
+        capabilities:
+        [
+            new ProviderCapabilityDescriptor(
+                ProviderCapabilityKind.Metadata,
+                ProviderCapabilitySupportState.Supported,
+                ProviderAccountRequirement.None,
+                compatibilityVersion: "1",
+                hooks: ["searchTracks", "getTrack"]),
+            new ProviderCapabilityDescriptor(
+                ProviderCapabilityKind.Playlist,
+                ProviderCapabilitySupportState.Supported,
+                ProviderAccountRequirement.Required,
+                compatibilityVersion: "1",
+                hooks: ["getUserPlaylists", "getPlaylistTracks"],
+                allowedAccountScopes: [ProviderAccountScope.User]),
+            new ProviderCapabilityDescriptor(
+                ProviderCapabilityKind.Streaming,
+                ProviderCapabilitySupportState.Supported,
+                ProviderAccountRequirement.None,
+                compatibilityVersion: "1",
+                hooks: ["getStreamLease"]),
+            new ProviderCapabilityDescriptor(
+                ProviderCapabilityKind.Lyrics,
+                ProviderCapabilitySupportState.Supported,
+                ProviderAccountRequirement.None,
+                compatibilityVersion: "1",
+                hooks: ["fetchLyrics"])
+        ],
+        permissions: new ProviderPermissionDescriptor(),
+        entryPoint: "index.js");
 
     private sealed class FixtureExtensionMetadata : IProviderMetadataCapability
     {
