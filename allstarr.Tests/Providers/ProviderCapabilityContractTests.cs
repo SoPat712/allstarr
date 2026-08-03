@@ -23,7 +23,7 @@ public sealed class ProviderCapabilityContractTests
         {
             Assert.True(typeof(IProviderCapability).IsAssignableFrom(capabilityInterface));
             Assert.All(
-                capabilityInterface.GetMethods(),
+                capabilityInterface.GetMethods().Where(method => !method.IsSpecialName),
                 method => Assert.Equal(
                     typeof(ProviderExecutionContext),
                     method.GetParameters()[0].ParameterType));
