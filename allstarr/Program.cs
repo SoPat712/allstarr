@@ -3,6 +3,7 @@ using allstarr.Services;
 using allstarr.Services.Deezer;
 using allstarr.Services.Qobuz;
 using allstarr.Core.Providers.Qobuz;
+using allstarr.Core.Providers.SquidWTF;
 using allstarr.Services.SquidWTF;
 using allstarr.Services.AppleMusic;
 using allstarr.Services.Local;
@@ -446,7 +447,7 @@ builder.Services.AddSingleton<AppleMusicMetadataService>();
 builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
     provider.GetRequiredService<AppleMusicMetadataService>());
 builder.Services.AddSingleton<IAppleDownloadEndpointDiscovery, AppleDownloadEndpointDiscovery>();
-builder.Services.AddSingleton<IConcreteMetadataService>(sp =>
+builder.Services.AddSingleton<SquidWTFMetadataService>(sp =>
     new SquidWTFMetadataService(
         sp.GetRequiredService<IHttpClientFactory>(),
         sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SubsonicSettings>>(),
@@ -455,8 +456,11 @@ builder.Services.AddSingleton<IConcreteMetadataService>(sp =>
         sp.GetRequiredService<IApplicationCache>(),
         squidWtfApiUrls,
         sp.GetService<GenreEnrichmentService>()));
+builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
+    provider.GetRequiredService<SquidWTFMetadataService>());
 builder.Services.AddDeezerMetadataCapability();
 builder.Services.AddQobuzDownloadCapability();
+builder.Services.AddSquidWTFMetadataCapability();
 builder.Services.AddSpotifyPlaylistCapability();
 builder.Services.AddAppleMusicKitPlaylistCapability();
 builder.Services.AddAppleDownloadCapability();

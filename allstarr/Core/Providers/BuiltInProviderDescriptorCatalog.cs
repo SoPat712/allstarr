@@ -19,18 +19,6 @@ public static class BuiltInProviderDescriptorCatalog
     public static IReadOnlyList<ProviderRegistration> LegacyRegistrations { get; } =
     [
         Registration(
-            "squidwtf",
-            "SquidWTF",
-            "The discovered public metadata lane; stream and download remain policy-blocked.",
-            NoAccount(ProviderCapabilityKind.Metadata),
-            NoAccount(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Unavailable),
-            NoAccount(ProviderCapabilityKind.Download, ProviderCapabilitySupportState.Unavailable),
-            Required(
-                ProviderCapabilityKind.Playlist,
-                MixedAccountScopes,
-                ProviderCapabilitySupportState.Unavailable),
-            NoAccount(ProviderCapabilityKind.Health)),
-        Registration(
             "musicbrainz",
             "MusicBrainz",
             "The current identity and enrichment helper before its typed metadata adapter.",

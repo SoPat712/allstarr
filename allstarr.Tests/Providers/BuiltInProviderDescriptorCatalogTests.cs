@@ -4,6 +4,7 @@ using allstarr.Core.Providers.Deezer;
 using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Providers.AppleDownload;
 using allstarr.Core.Providers.Qobuz;
+using allstarr.Core.Providers.SquidWTF;
 using allstarr.Core.Downloads;
 using allstarr.Models.Settings;
 using allstarr.Services.AppleMusic;
@@ -27,6 +28,8 @@ public sealed class BuiltInProviderDescriptorCatalogTests
         var qobuzDownload = Download("qobuz");
         var qobuzStreaming = Streaming("qobuz");
         var qobuzMetadata = new QobuzMetadataCapabilityAdapter(
+            new Mock<IConcreteMetadataService>(MockBehavior.Strict).Object);
+        var squidWtfMetadata = new SquidWTFMetadataCapabilityAdapter(
             new Mock<IConcreteMetadataService>(MockBehavior.Strict).Object);
         var apple = new AppleMusicKitPlaylistCapabilityAdapter(
             new HttpClient(new Mock<HttpMessageHandler>().Object),
@@ -57,6 +60,7 @@ public sealed class BuiltInProviderDescriptorCatalogTests
                 deezer, deezerDownload, deezerStreaming),
             QobuzDownloadCapabilityAdapter.CreateRegistration(
                 qobuzDownload, qobuzStreaming, qobuzMetadata),
+            SquidWTFMetadataCapabilityAdapter.CreateRegistration(squidWtfMetadata),
             AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(apple),
             SpotifyPlaylistCapabilityAdapter.CreateRegistration(spotify, spotifyLyrics),
             AppleDownloadCapabilityAdapter.CreateRegistration(
@@ -82,7 +86,7 @@ public sealed class BuiltInProviderDescriptorCatalogTests
         ];
         Assert.Equal(expected, registry.Providers.Select(item => item.Id));
         Assert.Equal(
-            ["apple-download", "deezer", "qobuz"],
+            ["apple-download", "deezer", "qobuz", "squidwtf"],
             registry.FindByCapability(ProviderCapabilityKind.Metadata)
                 .Select(item => item.Id));
         var deezerDescriptor = registry.GetRequired("deezer");
@@ -118,6 +122,8 @@ public sealed class BuiltInProviderDescriptorCatalogTests
             "qobuz", ProviderCapabilityKind.Streaming));
         Assert.Same(qobuzMetadata, registry.GetRequiredCapability<IProviderMetadataCapability>(
             "qobuz", ProviderCapabilityKind.Metadata));
+        Assert.Same(squidWtfMetadata, registry.GetRequiredCapability<IProviderMetadataCapability>(
+            "squidwtf", ProviderCapabilityKind.Metadata));
         Assert.Same(appleDownloadStreaming,
             registry.GetRequiredCapability<IProviderStreamingCapability>(
                 "apple-download", ProviderCapabilityKind.Streaming));
