@@ -180,9 +180,10 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
     public static PlaybackTrackMetadata ParseMetadata(JsonElement root, string itemId)
     {
         var title = TryGetString(root, "Name") ?? "Local Jellyfin track";
-        var artist = TryGetString(root, "AlbumArtist") ??
-                     TryGetFirstArrayString(root, "Artists") ??
+        var artist = TryGetFirstArrayString(root, "Artists") ??
+                     TryGetString(root, "AlbumArtist") ??
                      "Jellyfin";
+        var albumArtist = TryGetString(root, "AlbumArtist");
         var album = TryGetString(root, "Album");
         var hasPrimaryImage = root.TryGetProperty("ImageTags", out var imageTags) &&
                               imageTags.ValueKind == JsonValueKind.Object &&
@@ -197,6 +198,14 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
                               runTimeTicks.TryGetInt64(out var ticks) && ticks > 0
             ? (int)Math.Ceiling(ticks / (double)TimeSpan.TicksPerSecond)
             : (int?)null;
+        var trackNumber = root.TryGetProperty("IndexNumber", out var indexNumber) &&
+                          indexNumber.TryGetInt32(out var parsedTrackNumber) && parsedTrackNumber > 0
+            ? parsedTrackNumber
+            : (int?)null;
+        var recordingMbid = root.TryGetProperty("ProviderIds", out var providerIds) &&
+                            providerIds.ValueKind == JsonValueKind.Object
+            ? TryGetString(providerIds, "MusicBrainzTrack") ?? TryGetString(providerIds, "MusicBrainzRecording")
+            : null;
 
         return new PlaybackTrackMetadata(
             title,
@@ -205,7 +214,10 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
             artworkItemId != null
                 ? $"/api/admin/downloads/artwork/{Uri.EscapeDataString(artworkItemId)}"
                 : null,
-            durationSeconds);
+            durationSeconds,
+            albumArtist,
+            recordingMbid,
+            trackNumber);
     }
 
     private bool CanQueryBackend() =>

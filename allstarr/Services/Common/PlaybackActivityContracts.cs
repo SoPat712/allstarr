@@ -11,7 +11,10 @@ public sealed record PlaybackTrackMetadata(
     string Artist,
     string? Album,
     string? CoverArtUrl,
-    int? DurationSeconds = null);
+    int? DurationSeconds = null,
+    string? AlbumArtist = null,
+    string? RecordingMusicBrainzId = null,
+    int? TrackNumber = null);
 
 public sealed record PlaybackArtwork(byte[] Content, string ContentType);
 

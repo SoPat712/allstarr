@@ -9,7 +9,9 @@ using allstarr.Services.Common;
 
 namespace allstarr.Core.Playback;
 
-public sealed record ScopedPlaybackTrack(string Title, string Artist, string? Album, long? DurationMilliseconds);
+public sealed record ScopedPlaybackTrack(string Title, string Artist, string? Album, long? DurationMilliseconds,
+    string? AlbumArtist = null, string? RecordingMusicBrainzId = null, int? TrackNumber = null,
+    bool ChosenByUser = true, string? ClientClass = null, string? DeviceClass = null);
 public interface IExactScopePlaybackScrobbleTarget
 {
     string ProviderId { get; }
@@ -27,13 +29,32 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
 {
     public async Task DeliverAsync(PlaybackSignalPayload payload, CancellationToken cancellationToken)
     {
-        var item = await (trackResolver ?? new PlaybackTrackResolver(factory)).ResolveAsync(payload, cancellationToken);
-        if (item == null) return;
-        var track = new ScopedPlaybackTrack(item.Title, item.Artist, item.Album, item.DurationMilliseconds);
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        var occurrenceKey = payload.OccurrenceKey ?? payload.SignalKey;
+        var occurrence = await db.ListeningEvents.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.TenantId == payload.Scope.TenantId && item.OwnerUserId == payload.Scope.OwnerUserId &&
+            item.Protocol == payload.Scope.Protocol && item.BackendInstanceId == payload.Scope.BackendInstanceId &&
+            item.LibraryScopeId == payload.Scope.LibraryScopeId &&
+            item.OccurrenceKey == occurrenceKey, cancellationToken);
+        var item = occurrence == null || string.IsNullOrWhiteSpace(occurrence.Title) || string.IsNullOrWhiteSpace(occurrence.Artist)
+            ? await (trackResolver ?? new PlaybackTrackResolver(factory)).ResolveAsync(payload, cancellationToken)
+            : null;
+        var title = occurrence?.Title ?? item?.Title;
+        var artist = occurrence?.Artist ?? item?.Artist;
+        if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(artist)) return;
+        var track = new ScopedPlaybackTrack(title, artist, occurrence?.Album ?? item?.Album,
+            occurrence?.DurationMilliseconds ?? item?.DurationMilliseconds,
+            occurrence?.AlbumArtist ?? item?.AlbumArtist,
+            occurrence?.RecordingMusicBrainzId ?? item?.RecordingMusicBrainzId,
+            occurrence?.TrackNumber ?? item?.TrackNumber,
+            occurrence?.ChosenByUser ?? true,
+            occurrence?.ClientClass ?? payload.ClientClass,
+            occurrence?.DeviceClass ?? payload.DeviceClass);
         if (payload.Transition is PlaybackTransition.Progress or PlaybackTransition.Stop or PlaybackTransition.InferredStop &&
             !EligibleForCompletedScrobble(track.DurationMilliseconds, payload.PositionTicks)) return;
         var completion = payload.Transition is PlaybackTransition.Progress or PlaybackTransition.Stop or PlaybackTransition.InferredStop or PlaybackTransition.Submission;
         var checkpointKey = completion ? CompletedListenKey(payload) : payload.SignalKey;
+        var occurredAt = occurrence?.ListenedAt ?? occurrence?.StartedAt ?? payload.ObservedAt;
         Exception? unauthorizedFailure = null;
         Exception? retryableFailure = null;
         var delivered = false;
@@ -48,7 +69,7 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
                     delivered |= completion;
                     continue;
                 }
-                await target.DeliverAsync(payload.Scope, payload.Transition, track, payload.PositionTicks, payload.ObservedAt, checkpointKey, cancellationToken);
+                await target.DeliverAsync(payload.Scope, payload.Transition, track, payload.PositionTicks, occurredAt, checkpointKey, cancellationToken);
                 await checkpoints.MarkCompletedAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId, checkpointKey, target.ProviderId, cancellationToken);
                 delivered |= completion;
                 if (completion) completedTargets.Add(target.ProviderId);
@@ -74,7 +95,6 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
         {
             try
             {
-                await using var db = await factory.CreateDbContextAsync(cancellationToken);
                 var now = DateTimeOffset.UtcNow;
                 var providerIds = completedTargets
                     .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -98,7 +118,7 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
                         track.Artist,
                         track.Album,
                         transition = payload.Transition.ToString(),
-                        observedAt = payload.ObservedAt
+                        observedAt = occurredAt
                     }),
                     CreatedAt = now
                 });
@@ -119,6 +139,8 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
 
     private static string CompletedListenKey(PlaybackSignalPayload payload)
     {
+        if (!string.IsNullOrWhiteSpace(payload.OccurrenceKey))
+            return PlaybackSignalPipeline.Hash($"{payload.OccurrenceKey}|completed");
         var inferredStart = payload.ObservedAt - TimeSpan.FromTicks(Math.Max(0, payload.PositionTicks ?? 0));
         var occurrence = payload.PlaySessionId ??
                          $"{payload.DeviceId}:{inferredStart.ToUnixTimeSeconds() / 30}";

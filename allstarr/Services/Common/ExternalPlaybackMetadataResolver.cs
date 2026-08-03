@@ -81,7 +81,8 @@ public sealed class ExternalPlaybackMetadataResolver(
             if (song != null)
             {
                 metadata = new(song.Title, song.Artist, song.Album,
-                    song.CoverArtUrlLarge ?? song.CoverArtUrl, song.Duration);
+                    song.CoverArtUrlLarge ?? song.CoverArtUrl, song.Duration,
+                    song.AlbumArtist, TrackNumber: song.Track);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

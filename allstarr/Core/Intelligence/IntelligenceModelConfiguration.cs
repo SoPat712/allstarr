@@ -23,6 +23,7 @@ public static class IntelligenceModelConfiguration
                 {
                     table.HasCheckConstraint("CK_listening_event_position", "\"PositionTicks\" IS NULL OR \"PositionTicks\" >= 0");
                     table.HasCheckConstraint("CK_listening_event_duration", "\"DurationMilliseconds\" IS NULL OR \"DurationMilliseconds\" > 0");
+                    table.HasCheckConstraint("CK_listening_event_track_number", "\"TrackNumber\" IS NULL OR \"TrackNumber\" > 0");
                 });
                 entity.Property(x => x.OccurrenceKey).HasMaxLength(64).IsRequired();
                 entity.Property(x => x.State).HasConversion<string>().HasMaxLength(32);
@@ -34,6 +35,8 @@ public static class IntelligenceModelConfiguration
                 entity.Property(x => x.Title).HasMaxLength(500);
                 entity.Property(x => x.Artist).HasMaxLength(500);
                 entity.Property(x => x.Album).HasMaxLength(500);
+                entity.Property(x => x.AlbumArtist).HasMaxLength(500);
+                entity.Property(x => x.RecordingMusicBrainzId).HasMaxLength(100);
                 entity.Property(x => x.ProviderId).HasMaxLength(100);
                 entity.Property(x => x.ProviderTrackReference).HasMaxLength(500);
                 entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.OccurrenceKey }).IsUnique().HasDatabaseName("IX_listening_event_occurrence");

@@ -177,6 +177,9 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         record.Title ??= Trim(track?.Title, 500);
         record.Artist ??= Trim(track?.Artist, 500);
         record.Album ??= Trim(track?.Album, 500);
+        record.AlbumArtist ??= Trim(track?.AlbumArtist, 500);
+        record.RecordingMusicBrainzId ??= ValidMusicBrainzId(track?.RecordingMusicBrainzId);
+        record.TrackNumber ??= track?.TrackNumber is > 0 ? track.TrackNumber : null;
         record.LibraryTrackId ??= track?.LibraryTrackId;
         record.CanonicalRecordingId ??= track?.CanonicalRecordingId;
         record.ProviderId ??= Trim(track?.ProviderId, 100);
@@ -219,4 +222,7 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         var trimmed = value.Trim();
         return trimmed[..Math.Min(trimmed.Length, maxLength)];
     }
+
+    private static string? ValidMusicBrainzId(string? value) =>
+        Guid.TryParseExact(value, "D", out var id) && id != Guid.Empty ? id.ToString("D") : null;
 }

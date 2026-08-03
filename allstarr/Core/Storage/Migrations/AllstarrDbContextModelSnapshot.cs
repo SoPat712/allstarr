@@ -768,6 +768,10 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<string>("AlbumArtist")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.Property<string>("Artist")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
@@ -779,6 +783,9 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.Property<Guid?>("CanonicalRecordingId")
                         .HasColumnType("uuid");
+
+                    b.Property<bool>("ChosenByUser")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("ClientClass")
                         .HasMaxLength(200)
@@ -836,6 +843,10 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<string>("RecordingMusicBrainzId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
                     b.Property<string>("SourceKind")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -860,6 +871,9 @@ namespace allstarr.Core.Storage.Migrations
                         .IsRequired()
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
+
+                    b.Property<int?>("TrackNumber")
+                        .HasColumnType("integer");
 
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("bigint");
@@ -886,6 +900,8 @@ namespace allstarr.Core.Storage.Migrations
                             t.HasCheckConstraint("CK_listening_event_duration", "\"DurationMilliseconds\" IS NULL OR \"DurationMilliseconds\" > 0");
 
                             t.HasCheckConstraint("CK_listening_event_position", "\"PositionTicks\" IS NULL OR \"PositionTicks\" >= 0");
+
+                            t.HasCheckConstraint("CK_listening_event_track_number", "\"TrackNumber\" IS NULL OR \"TrackNumber\" > 0");
                         });
                 });
 

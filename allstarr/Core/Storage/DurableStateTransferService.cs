@@ -1203,7 +1203,9 @@ public sealed class DurableStateTransferService
                 occurrence.SourceKind == "import" && !IsRequiredText(occurrence.ImportProvenance, 500) ||
                 !IsRequiredText(occurrence.TrackReference, 500) || occurrence.TrackReference.Contains("://", StringComparison.Ordinal) ||
                 !IsOptionalText(occurrence.Title, 500) || !IsOptionalText(occurrence.Artist, 500) ||
-                !IsOptionalText(occurrence.Album, 500) || !IsOptionalText(occurrence.ProviderId, 100) ||
+                !IsOptionalText(occurrence.Album, 500) || !IsOptionalText(occurrence.AlbumArtist, 500) ||
+                occurrence.RecordingMusicBrainzId != null && !IsNormalizedMusicBrainzId(occurrence.RecordingMusicBrainzId) ||
+                occurrence.TrackNumber is <= 0 || !IsOptionalText(occurrence.ProviderId, 100) ||
                 !IsOptionalText(occurrence.ProviderTrackReference, 500) || !validLibraryTrack ||
                 occurrence.CanonicalRecordingId is { } canonicalId && !canonicalIds.Contains((occurrence.TenantId, canonicalId)) ||
                 !validAccount || !validProviderIdentity)

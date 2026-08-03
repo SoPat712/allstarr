@@ -54,6 +54,10 @@ public sealed class ListeningEventRecord
     public string? Title { get; set; }
     public string? Artist { get; set; }
     public string? Album { get; set; }
+    public string? AlbumArtist { get; set; }
+    public string? RecordingMusicBrainzId { get; set; }
+    public int? TrackNumber { get; set; }
+    public bool ChosenByUser { get; set; } = true;
     public Guid? CanonicalRecordingId { get; set; }
     public Guid? LibraryTrackId { get; set; }
     public string? ProviderId { get; set; }

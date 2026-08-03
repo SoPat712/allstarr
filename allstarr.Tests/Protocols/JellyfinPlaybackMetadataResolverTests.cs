@@ -23,8 +23,11 @@ public sealed class JellyfinPlaybackMetadataResolverTests
             return Json("""
                 {
                   "Name": "Fixture title",
+                  "Artists": ["Track artist"],
                   "AlbumArtist": "Fixture artist",
                   "Album": "Fixture album",
+                  "IndexNumber": 7,
+                  "ProviderIds": { "MusicBrainzTrack": "11111111-1111-1111-1111-111111111111" },
                   "ImageTags": { "Primary": "etag-1" }
                 }
                 """);
@@ -35,8 +38,11 @@ public sealed class JellyfinPlaybackMetadataResolverTests
 
         Assert.NotNull(first);
         Assert.Equal("Fixture title", first.Title);
-        Assert.Equal("Fixture artist", first.Artist);
+        Assert.Equal("Track artist", first.Artist);
         Assert.Equal("Fixture album", first.Album);
+        Assert.Equal("Fixture artist", first.AlbumArtist);
+        Assert.Equal("11111111-1111-1111-1111-111111111111", first.RecordingMusicBrainzId);
+        Assert.Equal(7, first.TrackNumber);
         Assert.Equal("/api/admin/downloads/artwork/item-1", first.CoverArtUrl);
         Assert.NotNull(second);
         Assert.Equal(first.Title, second.Title);

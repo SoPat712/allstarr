@@ -15,6 +15,9 @@ public sealed record PlaybackTrackSnapshot(
     string Artist,
     string? Album,
     long? DurationMilliseconds,
+    string? AlbumArtist = null,
+    string? RecordingMusicBrainzId = null,
+    int? TrackNumber = null,
     string? ProviderId = null,
     Guid? ProviderAccountId = null,
     Guid? ProviderTrackIdentityId = null,
@@ -57,7 +60,9 @@ public sealed class PlaybackTrackResolver(
                 track.Title,
                 track.Artist,
                 track.Album,
-                track.DurationMilliseconds);
+                track.DurationMilliseconds,
+                track.AlbumArtist,
+                track.MusicBrainzRecordingId);
         }
 
         foreach (var resolver in metadataResolvers ?? [])
@@ -85,6 +90,9 @@ public sealed class PlaybackTrackResolver(
                     metadata.Artist,
                     metadata.Album,
                     metadata.DurationSeconds is > 0 ? metadata.DurationSeconds.Value * 1000L : null,
+                    metadata.AlbumArtist,
+                    metadata.RecordingMusicBrainzId,
+                    metadata.TrackNumber,
                     external?.Provider,
                     identity?.ProviderAccountId,
                     identity?.Id,

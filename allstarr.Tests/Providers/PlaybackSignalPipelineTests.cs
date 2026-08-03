@@ -408,6 +408,59 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ScopedDelivery_UsesDurableOccurrenceMetadataAndOriginalListenTime()
+    {
+        var startedAt = clock.UtcNow.AddMinutes(-4);
+        var occurrenceKey = new string('b', 64);
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.ListeningEvents.Add(new ListeningEventRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = tenant,
+                OwnerUserId = user,
+                Protocol = "jellyfin",
+                BackendInstanceId = "backend",
+                LibraryScopeId = "music",
+                OccurrenceKey = occurrenceKey,
+                State = ListeningEventState.Completed,
+                StartedAt = startedAt,
+                ListenedAt = startedAt,
+                UpdatedAt = clock.UtcNow,
+                DurationMilliseconds = 180_000,
+                ClientClass = "Finamp",
+                DeviceClass = "mobile",
+                SourceKind = "protocol",
+                TrackReference = "track-1",
+                Title = "Durable title",
+                Artist = "Durable artist",
+                Album = "Durable album",
+                AlbumArtist = "Durable album artist",
+                RecordingMusicBrainzId = "11111111-1111-1111-1111-111111111111",
+                TrackNumber = 4,
+                ChosenByUser = false
+            });
+            await db.SaveChangesAsync();
+        }
+        var target = new Target("lastfm", true);
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new Checkpoints());
+
+        await delivery.DeliverAsync(Payload() with
+        {
+            Transition = PlaybackTransition.Submission,
+            PositionTicks = null,
+            OccurrenceKey = occurrenceKey,
+            ObservedAt = clock.UtcNow
+        }, default);
+
+        Assert.Equal(startedAt, target.LastObservedAt);
+        Assert.Equal(new ScopedPlaybackTrack(
+            "Durable title", "Durable artist", "Durable album", 180_000,
+            "Durable album artist", "11111111-1111-1111-1111-111111111111", 4, false, "Finamp", "mobile"),
+            target.LastTrack);
+    }
+
+    [Fact]
     public async Task ProviderTrackId_ResolvesForScopedScrobbleDelivery()
     {
         await using (var db = await factory.CreateDbContextAsync())
@@ -447,7 +500,26 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     private sealed class Writer : IIdempotentRecommendationSignalWriter { private readonly HashSet<string> keys = []; public int Calls; public string? LastType; public Task<bool> WriteAsync(IntelligenceScope s, string t, string k, double v, DateTimeOffset o, CancellationToken c = default) { Calls++; LastType = t; return Task.FromResult(true); } public Task<bool> WriteIdempotentAsync(IntelligenceScope s, string t, string k, double v, DateTimeOffset o, string key, Guid job, CancellationToken c = default) { if (keys.Add(key)) { Calls++; LastType = t; } return Task.FromResult(true); } }
     private sealed class Scrobbles : IScopedPlaybackScrobbleDelivery { public int Calls; public int Successes; public bool FailFirst; public Task DeliverAsync(PlaybackSignalPayload p, CancellationToken c) { Calls++; if (FailFirst) { FailFirst = false; throw new IOException(); } Successes++; return Task.CompletedTask; } }
     private sealed class Lyrics : IPlaybackLyricsPrefetch { public int Calls; public Task PrefetchAsync(PlaybackSignalPayload p, CancellationToken c) { Calls++; return Task.CompletedTask; } }
-    private sealed class Target(string id, bool configured) : IExactScopePlaybackScrobbleTarget { public string ProviderId => id; public int Successes; public bool FailFirst; public bool Reject; public Task<bool> IsConfiguredAsync(IntelligenceScope s, CancellationToken c) => Task.FromResult(configured); public Task DeliverAsync(IntelligenceScope s, PlaybackTransition t, ScopedPlaybackTrack track, long? p, DateTimeOffset o, string key, CancellationToken c) { if (Reject) throw new UnauthorizedAccessException(); if (FailFirst) { FailFirst = false; throw new IOException(); } Successes++; return Task.CompletedTask; } }
+    private sealed class Target(string id, bool configured) : IExactScopePlaybackScrobbleTarget
+    {
+        public string ProviderId => id;
+        public int Successes;
+        public bool FailFirst;
+        public bool Reject;
+        public DateTimeOffset? LastObservedAt;
+        public ScopedPlaybackTrack? LastTrack;
+        public Task<bool> IsConfiguredAsync(IntelligenceScope s, CancellationToken c) => Task.FromResult(configured);
+        public Task DeliverAsync(IntelligenceScope s, PlaybackTransition t, ScopedPlaybackTrack track, long? p,
+            DateTimeOffset o, string key, CancellationToken c)
+        {
+            if (Reject) throw new UnauthorizedAccessException();
+            if (FailFirst) { FailFirst = false; throw new IOException(); }
+            LastObservedAt = o;
+            LastTrack = track;
+            Successes++;
+            return Task.CompletedTask;
+        }
+    }
     private sealed class Checkpoints : IPlaybackDeliveryCheckpointStore { private readonly HashSet<string> values = []; public Task<bool> IsCompletedAsync(Guid t, Guid u, string k, string target, CancellationToken c) => Task.FromResult(values.Contains(k + target)); public Task MarkCompletedAsync(Guid t, Guid u, string k, string target, CancellationToken c) { values.Add(k + target); return Task.CompletedTask; } }
     private sealed class EmptyServices : IServiceProvider { public static readonly EmptyServices Instance = new(); public object? GetService(Type t) => null; }
     private sealed class BackendMetadataResolver(allstarr.Services.Common.PlaybackTrackMetadata metadata)

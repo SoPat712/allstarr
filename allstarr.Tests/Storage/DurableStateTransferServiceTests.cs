@@ -502,6 +502,9 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             TrackReference = "local-42",
             Title = "Transfer",
             Artist = "Fixture",
+            AlbumArtist = "Fixture album artist",
+            RecordingMusicBrainzId = "11111111-1111-1111-1111-111111111111",
+            TrackNumber = 3,
             CanonicalRecordingId = canonicalRecordingId,
             LibraryTrackId = libraryTrackId
         });
