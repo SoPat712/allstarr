@@ -1151,6 +1151,10 @@ export const intelligence = {
   audioMuseBlend: (scope: IntelligenceScope, includeTrackIds: string[], avoidTrackIds: string[], limit = 25) =>
     json<{ tracks: AudioMuseTrack[] }>("/api/admin/intelligence/audiomuse/blend",
       intelligenceBody({ ...scope, includeTrackIds, avoidTrackIds, limit })),
+  audioMuseFingerprint: (scope: IntelligenceScope, periodDays: 30 | 90 | 365, limit = 25) =>
+    json<{ tracks: AudioMuseTrack[]; periodDays: number; completedListens: number; seedCount: number }>(
+      "/api/admin/intelligence/audiomuse/fingerprint",
+      intelligenceBody({ ...scope, periodDays, limit })),
   audioMuseSearch: (scope: IntelligenceScope, query: string, mode: "text" | "lyrics", limit = 25) =>
     json<{ tracks: AudioMuseTrack[]; mode: string }>("/api/admin/intelligence/audiomuse/search",
       intelligenceBody({ ...scope, query, mode, limit })),

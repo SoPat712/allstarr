@@ -24,6 +24,7 @@
   let avoidSong = $state("");
   let query = $state("");
   let searchMode = $state<"text" | "lyrics">("text");
+  let listeningPeriod = $state("90");
   let action = $state("");
   let error = $state("");
   let resultTitle = $state("");
@@ -167,11 +168,17 @@
       { value: "similar", label: "Find a similar sound" },
       { value: "path", label: "Connect two songs" },
       { value: "blend", label: "Include one sound and avoid another" },
+      { value: "listening", label: "Use what I played most" },
       { value: "search", label: "Describe what you want" },
       { value: "library", label: "Browse the whole library by sound" },
     ]} /></label>
 
-    {#if mode === "search"}
+    {#if mode === "listening"}
+      <form class="sound-form" onsubmit={(event) => { event.preventDefault(); void discover("listening", "Songs based on what you played", async () => (await intelligence.audioMuseFingerprint(scope, Number(listeningPeriod) as 30 | 90 | 365)).tracks); }}>
+        <label class="field grow"><span>Listening period</span><SelectField bind:value={listeningPeriod} label="Listening period" options={[{ value: "30", label: "Past month" }, { value: "90", label: "Past 3 months" }, { value: "365", label: "Past year" }]} /></label>
+        <button class="button-primary" type="submit" disabled={Boolean(action)}>{action === "listening" ? "Finding…" : "Find songs"}</button>
+      </form>
+    {:else if mode === "search"}
       <form class="sound-form" onsubmit={(event) => { event.preventDefault(); void discover("search", searchMode === "lyrics" ? "Songs with matching words" : "Songs matching your description", async () => (await intelligence.audioMuseSearch(scope, query.trim(), searchMode)).tracks); }}>
         <label class="field grow"><span>{searchMode === "lyrics" ? "Words to find" : "Describe a sound"}</span><input bind:value={query} maxlength="500" placeholder={searchMode === "lyrics" ? "city lights in the rain" : "warm, quiet acoustic music"} required /></label>
         <label class="field"><span>Match</span><SelectField bind:value={searchMode} label="What to match" options={[{ value: "text", label: "The sound" }, { value: "lyrics", label: "Song lyrics" }]} /></label>

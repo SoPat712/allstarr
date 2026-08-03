@@ -1,6 +1,7 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Intelligence;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Controllers;
 
@@ -63,6 +64,70 @@ public sealed partial class IntelligenceController
         {
             tracks = (await _audioMuse.BlendAsync(scope, request.IncludeTrackIds,
                 request.AvoidTrackIds, request.Limit, cancellationToken)).Select(TrackDto)
+        });
+    }
+
+    [HttpPost("audiomuse/fingerprint")]
+    public async Task<IActionResult> GetAudioMuseFingerprint(
+        [FromBody] AudioMuseFingerprintRequest request, CancellationToken cancellationToken)
+    {
+        if (!TrySessionScope(request, out var scope, out var error)) return error!;
+        if (!await OwnsAudioMuseScope(scope, cancellationToken)) return NotFound();
+        if (request.PeriodDays is not (30 or 90 or 365) || request.Limit is < 1 or > 200)
+            return BadRequest(new { error = "audiomuse_request_invalid" });
+
+        return await AudioMuseResult(async () =>
+        {
+            var now = _clock?.UtcNow ?? DateTimeOffset.UtcNow;
+            var from = now.AddDays(-request.PeriodDays);
+            await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+            var history = db.ListeningEvents.AsNoTracking().Where(item =>
+                item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+                item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
+                item.LibraryScopeId == scope.LibraryScopeId && item.State == ListeningEventState.Completed &&
+                item.ListenedAt >= from && item.ListenedAt <= now);
+            var completedListens = await history.CountAsync(cancellationToken);
+            var summaries = await history.Where(item =>
+                    item.LibraryTrackId != null || item.SourceKind == "protocol")
+                .GroupBy(item => new { item.LibraryTrackId, item.TrackReference, item.Album })
+                .Select(group => new
+                {
+                    group.Key.LibraryTrackId,
+                    group.Key.TrackReference,
+                    group.Key.Album,
+                    Plays = group.Count(),
+                    LastPlayed = group.Max(item => item.ListenedAt)!.Value
+                })
+                .OrderByDescending(item => item.Plays).ThenByDescending(item => item.LastPlayed)
+                .Take(100).ToListAsync(cancellationToken);
+            var albumCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var seeds = new List<string>(20);
+            foreach (var item in summaries.OrderByDescending(item => item.Plays *
+                         Math.Pow(.5, Math.Max(0, (now - item.LastPlayed).TotalDays) / 30d))
+                         .ThenBy(item => item.TrackReference, StringComparer.Ordinal))
+            {
+                if (!string.IsNullOrWhiteSpace(item.Album) &&
+                    albumCounts.GetValueOrDefault(item.Album) >= 3) continue;
+                var key = item.LibraryTrackId is { } id ? $"library:{id:N}" : item.TrackReference;
+                if (!seeds.Contains(key, StringComparer.Ordinal)) seeds.Add(key);
+                if (!string.IsNullOrWhiteSpace(item.Album))
+                    albumCounts[item.Album] = albumCounts.GetValueOrDefault(item.Album) + 1;
+                if (seeds.Count == 20) break;
+            }
+
+            var profile = new ListeningProfile(scope.TenantId, scope.OwnerUserId,
+                scope.BackendInstanceId, scope.LibraryScopeId, completedListens, 0, 0,
+                new Dictionary<string, double>(), from, now)
+            { TopTrackKeys = seeds };
+            var tracks = await _audioMuse.RecommendAsync(
+                new(scope, profile, seeds, request.Limit), cancellationToken);
+            return new
+            {
+                tracks = tracks.Select(TrackDto),
+                request.PeriodDays,
+                completedListens,
+                seedCount = seeds.Count
+            };
         });
     }
 
@@ -195,6 +260,12 @@ public sealed class AudioMuseBlendRequest : IntelligenceScopeRequest
 {
     public List<string> IncludeTrackIds { get; set; } = [];
     public List<string> AvoidTrackIds { get; set; } = [];
+    public int Limit { get; set; } = 25;
+}
+
+public sealed class AudioMuseFingerprintRequest : IntelligenceScopeRequest
+{
+    public int PeriodDays { get; set; } = 90;
     public int Limit { get; set; } = 25;
 }
 

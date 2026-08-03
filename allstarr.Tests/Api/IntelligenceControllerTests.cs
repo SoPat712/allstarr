@@ -121,6 +121,38 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AudioMuseFingerprintSendsOnlyBoundedExactScopeCompletedHistory()
+    {
+        var now = DateTimeOffset.UtcNow;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.ListeningEvents.AddRange(
+                HistoryEvent("recent", now.AddDays(-1)),
+                HistoryEvent("frequent", now.AddDays(-10)),
+                HistoryEvent("frequent", now.AddDays(-9)),
+                HistoryEvent("too-old", now.AddDays(-45)),
+                HistoryEvent("other-library", now.AddDays(-1), "other"));
+            await db.SaveChangesAsync();
+        }
+        var audioMuse = new FakeAudioMuse();
+
+        var result = Assert.IsType<OkObjectResult>(await Controller(audioMuse).GetAudioMuseFingerprint(new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            PeriodDays = 30,
+            Limit = 10
+        }, default));
+        var json = JsonSerializer.Serialize(result.Value);
+
+        Assert.Equal(["frequent", "recent"], audioMuse.Seeds);
+        Assert.Contains("\"completedListens\":3", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("too-old", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("other-library", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task HistoryRoutesPageCorrectAndDeleteOnlyTheExactScope()
     {
         var now = DateTimeOffset.UtcNow;
@@ -710,9 +742,13 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
     {
         public bool IsAvailable => true;
         public IntelligenceScope? Scope { get; private set; }
+        public IReadOnlyList<string>? Seeds { get; private set; }
         public Task<bool> CheckHealthAsync(IntelligenceScope scope, CancellationToken cancellationToken) => Task.FromResult(true);
-        public Task<IReadOnlyList<RecommendationSourceItem>> RecommendAsync(ScopedRecommendationQuery query, CancellationToken cancellationToken) =>
-            FindSimilarAsync(query.Scope, query.SeedTrackKeys, query.Limit, cancellationToken);
+        public Task<IReadOnlyList<RecommendationSourceItem>> RecommendAsync(ScopedRecommendationQuery query, CancellationToken cancellationToken)
+        {
+            Seeds = query.SeedTrackKeys;
+            return FindSimilarAsync(query.Scope, query.SeedTrackKeys, query.Limit, cancellationToken);
+        }
         public Task<IReadOnlyList<RecommendationSourceItem>> FindSimilarAsync(IntelligenceScope scope,
             IReadOnlyList<string> seedTrackIds, int limit, CancellationToken cancellationToken)
         {

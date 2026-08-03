@@ -549,6 +549,8 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
       body = { jobId: "sound-scan-1", state: "completed", completed: 200, total: 200 };
     if (url.pathname === "/api/admin/intelligence/audiomuse/similar")
       body = { tracks: [{ trackId: "track-3", title: "Nearby Song", artist: "Sound Artist", album: "Sound Album", score: .92, explanation: "AudioMuse found a song with a similar sound." }] };
+    if (url.pathname === "/api/admin/intelligence/audiomuse/fingerprint")
+      body = { tracks: [{ trackId: "track-5", title: "Taste Song", artist: "Sound Artist", score: .9, explanation: "AudioMuse matched what you played most." }], periodDays: 90, completedListens: 42, seedCount: 8 };
     if (url.pathname === "/api/admin/intelligence/audiomuse/search")
       body = { mode: "text", tracks: [{ trackId: "track-4", title: "Quiet Light", artist: "Sound Artist", score: .88, explanation: "AudioMuse matched this song to your description." }] };
     if (url.pathname === "/api/admin/intelligence/audiomuse/clusters")
@@ -753,6 +755,14 @@ for (const viewport of viewports) {
         protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music", seedTrackIds: ["track-1"],
       });
       await expect(soundDiscovery.getByText("Nearby Song", { exact: true })).toBeVisible();
+      await soundDiscovery.getByLabel("How to explore").click();
+      await page.getByRole("option", { name: "Use what I played most" }).click();
+      const fingerprintRequest = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/audiomuse/fingerprint"));
+      await soundDiscovery.getByRole("button", { name: "Find songs" }).click();
+      expect((await fingerprintRequest).postDataJSON()).toMatchObject({
+        protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music", periodDays: 90,
+      });
+      await expect(soundDiscovery.getByText("Taste Song", { exact: true })).toBeVisible();
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
         await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-discover.png`, fullPage: true });
       await expect.poll(() => page.evaluate(() =>
