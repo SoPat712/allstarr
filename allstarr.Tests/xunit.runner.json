@@ -1,4 +1,4 @@
 {
   "$schema": "https://xunit.net/schema/v2.8/xunit.runner.schema.json",
-  "maxParallelThreads": 6
+  "maxParallelThreads": 8
 }

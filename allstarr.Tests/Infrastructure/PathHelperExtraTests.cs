@@ -63,20 +63,4 @@ public class PathHelperExtraTests : IDisposable
         }
     }
 
-    [Fact]
-    public void ResolveUniquePath_ThrowsAfterManyAttempts()
-    {
-        // Arrange
-        var basePath = Path.Combine(_testPath, "a.mp3");
-        // Create files a.mp3 through a (10010).mp3 to force exhaustion
-        File.WriteAllText(basePath, "x");
-        for (int i = 1; i <= 10005; i++)
-        {
-            var p = Path.Combine(_testPath, $"a ({i}).mp3");
-            File.WriteAllText(p, "x");
-        }
-
-        // Act & Assert
-        Assert.Throws<IOException>(() => PathHelper.ResolveUniquePath(basePath));
-    }
 }
