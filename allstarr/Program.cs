@@ -640,10 +640,6 @@ builder.Services.AddHttpClient("ListenBrainz", client =>
     client.Timeout = TimeSpan.FromSeconds(30);
 });
 
-// Register scrobbling services
-builder.Services.AddSingleton<IScrobblingService, LastFmScrobblingService>();
-builder.Services.AddSingleton<IScrobblingService, ListenBrainzScrobblingService>();
-builder.Services.AddSingleton<ScrobblingOrchestrator>();
 builder.Services.AddSingleton<ScrobblingHelper>();
 
 // Register the capability unconditionally. MusicBrainzSettings.Enabled gates every

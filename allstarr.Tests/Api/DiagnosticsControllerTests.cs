@@ -50,6 +50,17 @@ public sealed class DiagnosticsControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task ScrobblingSessions_RequiresDurableCheckpointStore()
+    {
+        var controller = CreateController([], new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)));
+
+        var result = Assert.IsType<BadRequestObjectResult>(
+            await controller.GetScrobblingSessions(CancellationToken.None));
+
+        Assert.Contains("Durable scrobble status", JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task MediaProbe_VerifiesMetadataAndArtworkThroughInternalProxy()
     {
         var handler = new StubHandler(request =>

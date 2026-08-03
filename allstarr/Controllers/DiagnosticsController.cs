@@ -7,9 +7,9 @@ using allstarr.Services.Jellyfin;
 using allstarr.Services.Common;
 using allstarr.Services.Admin;
 using allstarr.Services.Spotify;
-using allstarr.Services.Scrobbling;
 using allstarr.Services.SquidWTF;
 using System.Runtime;
+using Microsoft.EntityFrameworkCore;
 using allstarr.Core.Storage;
 using allstarr.Core.Operations;
 
@@ -659,18 +659,41 @@ public class DiagnosticsController : ControllerBase
     /// Gets current active scrobbling sessions for debugging.
     /// </summary>
     [HttpGet("scrobbling-sessions")]
-    public IActionResult GetScrobblingSessions()
+    public async Task<IActionResult> GetScrobblingSessions(CancellationToken cancellationToken)
     {
         try
         {
-            var scrobblingOrchestrator = HttpContext.RequestServices.GetService<ScrobblingOrchestrator>();
-            if (scrobblingOrchestrator == null)
+            var factory = HttpContext.RequestServices.GetService<IDbContextFactory<AllstarrDbContext>>();
+            if (factory == null)
             {
-                return BadRequest(new { error = "Scrobbling orchestrator not available" });
+                return BadRequest(new { error = "Durable scrobble status is not available" });
             }
 
-            var sessionInfo = scrobblingOrchestrator.GetSessionsInfo();
-            return Ok(sessionInfo);
+            await using var context = await factory.CreateDbContextAsync(cancellationToken);
+            var rows = await context.PlaybackDeliveryCheckpoints.AsNoTracking()
+                .OrderByDescending(item => item.UpdatedAt)
+                .Take(200)
+                .ToListAsync(cancellationToken);
+            return Ok(new
+            {
+                mode = "durable",
+                count = rows.Count,
+                deliveries = rows.Select(item => new
+                {
+                    item.TenantId,
+                    item.OwnerUserId,
+                    item.OccurrenceKey,
+                    item.TargetId,
+                    kind = item.Kind.ToString(),
+                    state = item.State.ToString(),
+                    item.ProviderCode,
+                    item.SafeMessage,
+                    item.DetailsJson,
+                    item.RetryAfter,
+                    item.RequiresReauthentication,
+                    item.UpdatedAt
+                })
+            });
         }
         catch (Exception ex)
         {

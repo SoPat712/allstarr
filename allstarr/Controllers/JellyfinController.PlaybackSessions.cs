@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Globalization;
-using allstarr.Models.Scrobbling;
 using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
 using allstarr.Services.Common;
@@ -114,7 +113,7 @@ public partial class JellyfinController
             positionTicks = ParsePlaybackPositionTicks(doc.RootElement);
             playSessionId = ParsePlaybackSessionId(doc.RootElement);
 
-            // Track the playing item for scrobbling on session cleanup (local tracks only)
+            // Track local playback so missing start/stop events can be inferred.
             var (deviceId, client, device, version) = ExtractDeviceInfo(Request.Headers);
             deviceId = ResolveDeviceId(deviceId, doc.RootElement);
 
@@ -236,17 +235,6 @@ public partial class JellyfinController
                         await QueuePlaybackSignalAsync(PlaybackTransition.Start, itemId, deviceId, playSessionId, positionTicks);
                     }
 
-                    // Scrobble external track playback start
-                    _logger.LogDebug(
-                        "Checking scrobbling: orchestrator={HasOrchestrator}, helper={HasHelper}, deviceId={DeviceId}",
-                        _scrobblingOrchestrator != null, _scrobblingHelper != null, deviceId ?? "null");
-
-                    if (CanRunOptionalUserScopedWork() && _scrobblingOrchestrator != null && _scrobblingHelper != null &&
-                        !string.IsNullOrEmpty(deviceId) && song != null)
-                    {
-                        _logger.LogDebug("Starting scrobble task for external track");
-                    }
-
                     if (sessionReady)
                     {
                         _sessionManager.UpdateActivity(deviceId!);
@@ -319,12 +307,6 @@ public partial class JellyfinController
                         playbackStartAccepted = true;
                         _logger.LogDebug("✓ Playback start forwarded to Jellyfin ({StatusCode})", statusCode);
 
-                        // Scrobble local track playback start (only if enabled)
-                        if (CanRunOptionalUserScopedWork() && _scrobblingSettings.LocalTracksEnabled && _scrobblingOrchestrator != null &&
-                            _scrobblingHelper != null && !string.IsNullOrEmpty(deviceId) &&
-                            !string.IsNullOrEmpty(itemId))
-                        {
-                        }
                     }
                     else
                     {
@@ -441,14 +423,6 @@ public partial class JellyfinController
                     string.Join(", ", doc.RootElement.EnumerateObject().Select(p => p.Name)));
             }
 
-            // Scrobble progress check (both local and external)
-            if (!string.IsNullOrEmpty(deviceId) && !string.IsNullOrEmpty(itemId))
-            {
-                if (CanRunOptionalUserScopedWork() && _scrobblingOrchestrator != null && _scrobblingHelper != null && positionTicks.HasValue)
-                {
-                }
-            }
-
             if (!string.IsNullOrEmpty(itemId))
             {
                 var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
@@ -530,10 +504,6 @@ public partial class JellyfinController
                                     inferredStartStatusCode);
                             }
 
-                            if (CanRunOptionalUserScopedWork() && _scrobblingOrchestrator != null && _scrobblingHelper != null &&
-                                !string.IsNullOrEmpty(deviceId) && song != null)
-                            {
-                            }
                         }
                         else if (inferredStart)
                         {
@@ -660,11 +630,6 @@ public partial class JellyfinController
                             _logger.LogDebug("Inferred playback start returned {StatusCode}", inferredStartStatusCode);
                         }
 
-                        // Scrobble local track playback start (only if enabled)
-                        if (CanRunOptionalUserScopedWork() && _scrobblingSettings.LocalTracksEnabled && _scrobblingOrchestrator != null &&
-                            _scrobblingHelper != null)
-                        {
-                        }
                     }
                     else if (inferredStart)
                     {
@@ -779,11 +744,6 @@ public partial class JellyfinController
                 provider,
                 externalId);
 
-            if (CanRunOptionalUserScopedWork() && _scrobblingOrchestrator != null && _scrobblingHelper != null &&
-                !string.IsNullOrEmpty(deviceId) && previousPositionTicks.HasValue && song != null)
-            {
-            }
-
             var ghostUuid = GenerateUuidFromString(previousItemId);
             var inferredExternalStopPayload = JsonSerializer.Serialize(new
             {
@@ -812,12 +772,6 @@ public partial class JellyfinController
             "🎵 Local track playback stopped (inferred from progress): {Name} (ID: {ItemId})",
             previousTrackName ?? "Unknown",
             previousItemId);
-
-        // Scrobble local track playback stop (only if enabled)
-        if (CanRunOptionalUserScopedWork() && _scrobblingSettings.LocalTracksEnabled && _scrobblingOrchestrator != null &&
-            _scrobblingHelper != null && previousPositionTicks.HasValue)
-        {
-        }
 
         var inferredStopPayload = JsonSerializer.Serialize(new
         {
@@ -1175,12 +1129,6 @@ public partial class JellyfinController
                     return NoContent();
                 }
 
-                // Scrobble local track playback stop (only if enabled)
-                if (CanRunOptionalUserScopedWork() && _scrobblingSettings.LocalTracksEnabled && _scrobblingOrchestrator != null &&
-                    _scrobblingHelper != null && !string.IsNullOrEmpty(deviceId) && !string.IsNullOrEmpty(itemId) &&
-                    positionTicks.HasValue)
-                {
-                }
             }
 
             // For local tracks, forward to Jellyfin

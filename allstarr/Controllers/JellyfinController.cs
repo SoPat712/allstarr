@@ -58,7 +58,6 @@ public partial class JellyfinController : ControllerBase
     private readonly JellyfinProxyService _proxyService;
     private readonly JellyfinSessionManager _sessionManager;
     private readonly IProtocolLyricsResolver _protocolLyricsResolver;
-    private readonly ScrobblingOrchestrator? _scrobblingOrchestrator;
     private readonly ScrobblingHelper? _scrobblingHelper;
     private readonly OdesliService _odesliService;
     private readonly IApplicationCache _cache;
@@ -93,7 +92,6 @@ public partial class JellyfinController : ControllerBase
         IProtocolLyricsResolver protocolLyricsResolver,
         IConfiguration configuration,
         ILogger<JellyfinController> logger,
-        ScrobblingOrchestrator? scrobblingOrchestrator = null,
         ScrobblingHelper? scrobblingHelper = null,
         IFavoriteActionPipeline? favoriteActions = null,
         IPlaybackSignalPipeline? playbackSignals = null,
@@ -117,7 +115,6 @@ public partial class JellyfinController : ControllerBase
         _proxyService = proxyService;
         _sessionManager = sessionManager;
         _protocolLyricsResolver = protocolLyricsResolver;
-        _scrobblingOrchestrator = scrobblingOrchestrator;
         _scrobblingHelper = scrobblingHelper;
         _odesliService = odesliService;
         _cache = cache;
