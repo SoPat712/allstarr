@@ -6,9 +6,7 @@ using allstarr.Models.Lyrics;
 using allstarr.Models.Subsonic;
 using allstarr.Services;
 using allstarr.Services.Local;
-using allstarr.Services.Lyrics;
 using allstarr.Services.Subsonic;
-using allstarr.Core.Capabilities;
 
 namespace allstarr.Core.Protocols.Subsonic;
 
@@ -24,17 +22,17 @@ public interface ISubsonicLyricsLookup
 public sealed partial class SubsonicLyricsLookup : ISubsonicLyricsLookup
 {
     private readonly IMusicMetadataService _metadataService;
-    private readonly LyricsOrchestrator _lyricsOrchestrator;
     private readonly IProtocolProviderGateway _providerGateway;
+    private readonly IProtocolLyricsResolver _lyrics;
 
     public SubsonicLyricsLookup(
         IMusicMetadataService metadataService,
-        LyricsOrchestrator lyricsOrchestrator,
-        IProtocolProviderGateway providerGateway)
+        IProtocolProviderGateway providerGateway,
+        IProtocolLyricsResolver lyrics)
     {
         _metadataService = metadataService;
-        _lyricsOrchestrator = lyricsOrchestrator;
         _providerGateway = providerGateway;
+        _lyrics = lyrics;
     }
 
     public async Task<SubsonicStructuredLyrics?> FindAsync(
@@ -50,30 +48,8 @@ public sealed partial class SubsonicLyricsLookup : ISubsonicLyricsLookup
             return null;
         }
 
-        var artists = song.Artists.Count > 0
-            ? song.Artists.ToArray()
-            : [song.Artist];
-        LyricsInfo? lyrics = null;
-        var providerLyrics = await _providerGateway.GetLyricsAsync(
-            protocol, provider, externalId, ProviderLyricsFormat.LineTimed);
-        if (!string.IsNullOrWhiteSpace(providerLyrics?.Content))
-        {
-            lyrics = new LyricsInfo
-            {
-                TrackName = song.Title,
-                ArtistName = song.Artist,
-                AlbumName = song.Album,
-                Duration = song.Duration ?? 0,
-                PlainLyrics = providerLyrics.Format == ProviderLyricsFormat.PlainText ? providerLyrics.Content : null,
-                SyncedLyrics = providerLyrics.Format != ProviderLyricsFormat.PlainText ? providerLyrics.Content : null
-            };
-        }
-        lyrics ??= await _lyricsOrchestrator.GetLyricsAsync(
-            song.Title,
-            artists,
-            song.Album,
-            song.Duration ?? 0,
-            song.SpotifyId);
+        var lyrics = await _lyrics.FindAsync(
+            protocol, song, $"{provider}:{externalId}", provider, externalId, song.SpotifyId);
         cancellationToken.ThrowIfCancellationRequested();
 
         return SubsonicStructuredLyricsMapper.Map(song, lyrics);

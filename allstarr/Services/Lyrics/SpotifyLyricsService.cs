@@ -142,7 +142,8 @@ public class SpotifyLyricsService
             Duration = (int)(spotifyLyrics.DurationMs / 1000),
             Instrumental = spotifyLyrics.Lines.Count == 0,
             SyncedLyrics = string.Join("\n", lrcLines),
-            PlainLyrics = string.Join("\n", spotifyLyrics.Lines.Select(l => l.Words))
+            PlainLyrics = string.Join("\n", spotifyLyrics.Lines.Select(l => l.Words)),
+            Source = "spotify"
         };
     }
 

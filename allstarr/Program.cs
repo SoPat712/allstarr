@@ -29,6 +29,7 @@ using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Providers.AppleDownload;
 using allstarr.Core.Providers;
+using allstarr.Core.Providers.Lyrics;
 using allstarr.Core.Protocols;
 using allstarr.Core.Protocols.Jellyfin;
 using allstarr.Core.Playlists;
@@ -386,6 +387,7 @@ builder.Services.AddSingleton<IManualLyricsMappingStore, EfManualLyricsMappingSt
 builder.Services.AddSingleton<ILocalLibraryService, LocalLibraryService>();
 builder.Services.AddSingleton<LrclibService>();
 builder.Services.AddSingleton<ProtocolStreamingResponseAdapter>();
+builder.Services.AddSingleton<IProtocolLyricsResolver, ProtocolLyricsResolver>();
 builder.Services.AddSingleton<JellyfinProxyService>();
 
 // Register backend-specific services
@@ -452,6 +454,7 @@ builder.Services.AddQobuzDownloadCapability();
 builder.Services.AddSpotifyPlaylistCapability();
 builder.Services.AddAppleMusicKitPlaylistCapability();
 builder.Services.AddAppleDownloadCapability();
+builder.Services.AddBuiltInLyricsCapabilities();
 builder.Services.AddLegacyBuiltInProviderDescriptors();
 
 // 2. Concrete Download Services

@@ -44,17 +44,7 @@ public static class BuiltInProviderDescriptorCatalog
             "listenbrainz",
             "ListenBrainz",
             "The existing scrobbling integration represented by its future typed health lane.",
-            Required(ProviderCapabilityKind.Health)),
-        Registration(
-            "lyricsplus",
-            "LyricsPlus",
-            "The current public lyrics source before its typed lyrics adapter.",
-            NoAccount(ProviderCapabilityKind.Lyrics)),
-        Registration(
-            "lrclib",
-            "LRCLib",
-            "The current public lyrics source before its typed lyrics adapter.",
-            NoAccount(ProviderCapabilityKind.Lyrics))
+            Required(ProviderCapabilityKind.Health))
     ];
 
     public static IServiceCollection AddLegacyBuiltInProviderDescriptors(

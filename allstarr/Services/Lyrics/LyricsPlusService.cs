@@ -159,7 +159,8 @@ public class LyricsPlusService
             Duration = durationSeconds,
             Instrumental = false,
             PlainLyrics = plainLyrics,
-            SyncedLyrics = syncedLyrics
+            SyncedLyrics = syncedLyrics,
+            Source = response.Metadata?.Source ?? "lyricsplus"
         };
     }
 

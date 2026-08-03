@@ -122,7 +122,9 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
             context,
             (token, cancellationToken) => MutateAsync(token, request, cancellationToken));
 
-    public static ProviderRegistration CreateRegistration(SpotifyPlaylistCapabilityAdapter adapter) => new(
+    public static ProviderRegistration CreateRegistration(
+        SpotifyPlaylistCapabilityAdapter adapter,
+        IProviderLyricsCapability? lyrics = null) => new(
         new ProviderDescriptor(
             StableProviderId,
             "Spotify",
@@ -139,7 +141,14 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
                     "1",
                     ["getUserPlaylists", "getPlaylistTracks", "searchPlaylists", "resolveArtwork", "mutatePlaylist"],
                     [Core.Storage.ProviderAccountScope.Global, Core.Storage.ProviderAccountScope.User, Core.Storage.ProviderAccountScope.Library]),
-                ConfiguredLane(ProviderCapabilityKind.Lyrics),
+                lyrics == null
+                    ? ConfiguredLane(ProviderCapabilityKind.Lyrics)
+                    : new ProviderCapabilityDescriptor(
+                        ProviderCapabilityKind.Lyrics,
+                        ProviderCapabilitySupportState.Supported,
+                        ProviderAccountRequirement.None,
+                        "1",
+                        ["fetchLyrics"]),
                 ConfiguredLane(ProviderCapabilityKind.Health)
             ],
             new ProviderPermissionDescriptor(
@@ -155,7 +164,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
                     "Spotify session cookie",
                     required: true)
             ]),
-        [adapter]);
+        lyrics == null ? [adapter] : [adapter, lyrics]);
 
     private async Task<ProviderOutcome<ProviderPlaylistMutationReceipt>> MutateAsync(
         string token,

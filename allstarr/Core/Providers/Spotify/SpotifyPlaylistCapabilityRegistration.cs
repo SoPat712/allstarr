@@ -1,4 +1,6 @@
 using allstarr.Core.Capabilities;
+using allstarr.Core.Providers.Lyrics;
+using allstarr.Services.Lyrics;
 using allstarr.Services.Common;
 
 namespace allstarr.Core.Providers.Spotify;
@@ -16,7 +18,9 @@ public static class SpotifyPlaylistCapabilityRegistration
             provider.GetRequiredService<ILogger<SpotifyPathfinderPlaylistClient>>()));
         services.AddSingleton<ProviderRegistration>(provider =>
             SpotifyPlaylistCapabilityAdapter.CreateRegistration(
-                provider.GetRequiredService<SpotifyPlaylistCapabilityAdapter>()));
+                provider.GetRequiredService<SpotifyPlaylistCapabilityAdapter>(),
+                BuiltInLyricsCapabilityRegistration.CreateSpotify(
+                    provider.GetRequiredService<SpotifyLyricsService>())));
         return services;
     }
 }

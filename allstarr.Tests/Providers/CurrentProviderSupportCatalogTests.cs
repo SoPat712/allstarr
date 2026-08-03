@@ -33,6 +33,7 @@ public sealed class CurrentProviderSupportCatalogTests
         AssertState("apple-musickit", "playlist", CurrentProviderSupportCatalog.Supported);
         AssertState("apple-musickit", "metadata", CurrentProviderSupportCatalog.Supported);
         AssertState("spotify", "playlist", CurrentProviderSupportCatalog.Supported);
+        AssertState("spotify", "lyrics", CurrentProviderSupportCatalog.Supported);
         AssertState("spotify", "metadata", CurrentProviderSupportCatalog.Unavailable);
         AssertState("qobuz", "metadata", CurrentProviderSupportCatalog.Supported);
         AssertState("qobuz", "streaming", CurrentProviderSupportCatalog.Supported);
@@ -45,12 +46,15 @@ public sealed class CurrentProviderSupportCatalogTests
         AssertState("lastfm", "recommendation", CurrentProviderSupportCatalog.Supported);
         AssertState("listenbrainz", "scrobbling", CurrentProviderSupportCatalog.Supported);
         AssertState("listenbrainz", "recommendation", CurrentProviderSupportCatalog.Supported);
+        AssertState("lyricsplus", "lyrics", CurrentProviderSupportCatalog.Supported);
+        AssertState("lrclib", "lyrics", CurrentProviderSupportCatalog.Supported);
         AssertState("squidwtf", "streaming", CurrentProviderSupportCatalog.PolicyBlocked);
         AssertState("squidwtf", "download", CurrentProviderSupportCatalog.PolicyBlocked);
         AssertState("extensions", "metadata", CurrentProviderSupportCatalog.Supported);
         AssertState("extensions", "streaming", CurrentProviderSupportCatalog.Supported);
         AssertState("extensions", "download", CurrentProviderSupportCatalog.Supported);
         AssertState("extensions", "playlist", CurrentProviderSupportCatalog.Supported);
+        AssertState("extensions", "lyrics", CurrentProviderSupportCatalog.Supported);
     }
 
     [Fact]

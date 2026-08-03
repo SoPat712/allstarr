@@ -10,4 +10,6 @@ public class LyricsInfo
     public bool Instrumental { get; set; }
     public string? PlainLyrics { get; set; }
     public string? SyncedLyrics { get; set; }
+    public string? Source { get; set; }
+    public string? Revision { get; set; }
 }

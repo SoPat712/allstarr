@@ -84,8 +84,8 @@ public static class CurrentProviderSupportCatalog
             "A selected managed account cookie is resolved from its encrypted provider-account secret.",
             Capability("metadata", Unavailable, "No generic IConcreteMetadataService is registered.", "none (unsupported)"),
             Capability("playlist", Supported, "Account-bound source paging, snapshots, artwork, provider-neutral matching, virtual reads, and manual/scheduled Jellyfin or Navidrome materialization.", "SpotifyPlaylistCapabilityAdapterTests; PlaylistOrchestrationIntegrationTests; VirtualPlaylistProtocolAdapterTests"),
-            Capability("lyrics", Partial, "Optional Spotify lyrics sidecar path.", "lyrics contract gap"),
-            Capability("health", Partial, "Account-scoped playlist cookie probe; the optional lyrics lane has no direct probe yet.", "ProviderStatusManagerTests; ConfigControllerAuthorizationTests")),
+            Capability("lyrics", Supported, "Typed optional Spotify lyrics sidecar preserves plain/timed content, source, and stable content revision through shared Jellyfin/Subsonic routing.", "BuiltInLyricsCapabilityAdapterTests; ProtocolLyricsResolverTests"),
+            Capability("health", Partial, "Playlist and optional lyrics probes remain independently sampled, so one lane does not mask the other.", "ProviderStatusManagerTests; ConfigControllerAuthorizationTests")),
         Provider(
             "musicbrainz",
             "musicbrainz",
@@ -119,14 +119,14 @@ public static class CurrentProviderSupportCatalog
             "LyricsPlus",
             "none",
             "Optional sidecar URL.",
-            Capability("lyrics", Partial, "Built-in lyrics orchestrator source; sidecar contract is not fully characterized.", "lyrics contract gap")),
+            Capability("lyrics", Supported, "Typed metadata lookup preserves plain/timed content, source, and stable content revision through shared Jellyfin/Subsonic routing.", "BuiltInLyricsCapabilityAdapterTests; ProtocolLyricsResolverTests")),
         Provider(
             "lrclib",
             "lrclib",
             "LRCLib",
             "none",
             "Public API.",
-            Capability("lyrics", Partial, "Built-in lyrics orchestrator source.", "LrclibServiceTests")),
+            Capability("lyrics", Supported, "Typed metadata lookup preserves plain/timed content, source, and stable content revision through shared Jellyfin/Subsonic routing.", "BuiltInLyricsCapabilityAdapterTests; ProtocolLyricsResolverTests; LrclibServiceTests")),
         Provider(
             "extensions",
             "extensions",
@@ -137,7 +137,7 @@ public static class CurrentProviderSupportCatalog
             Capability("streaming", Supported, "Typed stream leases route through the shared Jellyfin/Subsonic provider gateway with network and secret permissions; signed source URLs stay server-side and ranges are forwarded only when advertised.", "ExtensionCapabilityAdapterTests; ProviderRouterTests; ProtocolProviderGatewayContractTests"),
             Capability("download", Supported, "Typed download hooks stream approved HTTPS responses through the host-owned artifact broker into the exact durable job workspace; host-derived IDs, checksums, size limits, cancellation, and lineage are enforced.", "ExtensionCapabilityAdapterTests; ProviderDownloadArtifactResolverTests"),
             Capability("playlist", Supported, "Typed playlist discovery, item paging, and permissioned artwork resolution are available; provider mutation remains host-only.", "ExtensionCapabilityAdapterTests; PlaylistOrchestrationIntegrationTests"),
-            Capability("lyrics", Partial, "Typed lyrics lookup is available through the permissioned capability adapter; legacy protocol lyrics orchestration still has built-in-only paths.", "ExtensionCapabilityAdapterTests; ExtensionSdkV1Tests; protocol exposure gap"),
+            Capability("lyrics", Supported, "Permissioned typed lyrics lookup reaches both Jellyfin and Subsonic through the shared scoped protocol resolver.", "ExtensionCapabilityAdapterTests; ExtensionSdkV1Tests; ProtocolLyricsResolverTests"),
             Capability("health", Supported, "Account-aware health hooks feed the same provider health path.", "ExtensionCapabilityAdapterTests; ProviderStatusManagerTests"))
     ];
 

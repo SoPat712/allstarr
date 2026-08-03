@@ -8,6 +8,8 @@ using allstarr.Core.Downloads;
 using allstarr.Models.Settings;
 using allstarr.Services.AppleMusic;
 using allstarr.Core.Providers.Spotify;
+using allstarr.Core.Providers.Lyrics;
+using allstarr.Models.Lyrics;
 using allstarr.Services;
 using Moq;
 
@@ -30,6 +32,9 @@ public sealed class BuiltInProviderDescriptorCatalogTests
         var spotify = new SpotifyPlaylistCapabilityAdapter(
             new HttpClient(new Mock<HttpMessageHandler>().Object),
             new Mock<IProviderAccountSecretAccessor>(MockBehavior.Strict).Object);
+        var spotifyLyrics = Lyrics("spotify");
+        var lyricsPlus = Lyrics("lyricsplus");
+        var lrclib = Lyrics("lrclib");
         var appleDownload = new AppleDownloadCapabilityAdapter(
             new HttpClient(new Mock<HttpMessageHandler>().Object),
             new AppleDownloadSettings(),
@@ -48,9 +53,11 @@ public sealed class BuiltInProviderDescriptorCatalogTests
                 deezer, deezerDownload, deezerStreaming),
             QobuzDownloadCapabilityAdapter.CreateRegistration(qobuzDownload, qobuzStreaming),
             AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(apple),
-            SpotifyPlaylistCapabilityAdapter.CreateRegistration(spotify),
+            SpotifyPlaylistCapabilityAdapter.CreateRegistration(spotify, spotifyLyrics),
             AppleDownloadCapabilityAdapter.CreateRegistration(
                 appleDownload, streaming: appleDownloadStreaming),
+            BuiltInLyricsCapabilityRegistration.CreateRegistration("lyricsplus", "LyricsPlus", lyricsPlus),
+            BuiltInLyricsCapabilityRegistration.CreateRegistration("lrclib", "LRCLib", lrclib),
             .. BuiltInProviderDescriptorCatalog.LegacyRegistrations
         ]);
 
@@ -107,6 +114,9 @@ public sealed class BuiltInProviderDescriptorCatalogTests
         Assert.Same(appleDownloadStreaming,
             registry.GetRequiredCapability<IProviderStreamingCapability>(
                 "apple-download", ProviderCapabilityKind.Streaming));
+        Assert.Equal(
+            ["lrclib", "lyricsplus", "spotify"],
+            registry.FindByCapability(ProviderCapabilityKind.Lyrics).Select(item => item.Id));
         Assert.All(
             BuiltInProviderDescriptorCatalog.LegacyRegistrations,
             registration => Assert.All(
@@ -129,4 +139,8 @@ public sealed class BuiltInProviderDescriptorCatalogTests
         mock.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
         return mock.Object;
     }
+
+    private static BuiltInLyricsCapabilityAdapter Lyrics(string providerId) => new(
+        providerId,
+        (_, _) => Task.FromResult<LyricsInfo?>(null));
 }

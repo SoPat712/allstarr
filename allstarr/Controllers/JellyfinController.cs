@@ -5,7 +5,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using allstarr.Models.Domain;
-using allstarr.Models.Lyrics;
 using allstarr.Models.Scrobbling;
 using allstarr.Models.Settings;
 using allstarr.Models.Subsonic;
@@ -14,7 +13,6 @@ using allstarr.Services.Common;
 using allstarr.Services.Local;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Subsonic;
-using allstarr.Services.Lyrics;
 using allstarr.Services.Spotify;
 using allstarr.Services.Scrobbling;
 using allstarr.Services.Admin;
@@ -44,7 +42,6 @@ public partial class JellyfinController : ControllerBase
 
     private readonly JellyfinSettings _settings;
     private readonly SpotifyImportSettings _spotifySettings;
-    private readonly SpotifyApiSettings _spotifyApiSettings;
     private readonly ScrobblingSettings _scrobblingSettings;
     private readonly IMusicMetadataService _metadataService;
     private readonly ILocalLibraryService _localLibraryService;
@@ -60,10 +57,7 @@ public partial class JellyfinController : ControllerBase
     private readonly JellyfinModelMapper _modelMapper;
     private readonly JellyfinProxyService _proxyService;
     private readonly JellyfinSessionManager _sessionManager;
-    private readonly SpotifyLyricsService? _spotifyLyricsService;
-    private readonly LyricsPlusService? _lyricsPlusService;
-    private readonly LrclibService? _lrclibService;
-    private readonly LyricsOrchestrator? _lyricsOrchestrator;
+    private readonly IProtocolLyricsResolver _protocolLyricsResolver;
     private readonly ScrobblingOrchestrator? _scrobblingOrchestrator;
     private readonly ScrobblingHelper? _scrobblingHelper;
     private readonly OdesliService _odesliService;
@@ -78,7 +72,6 @@ public partial class JellyfinController : ControllerBase
     public JellyfinController(
         IOptions<JellyfinSettings> settings,
         IOptions<SpotifyImportSettings> spotifySettings,
-        IOptions<SpotifyApiSettings> spotifyApiSettings,
         IOptions<ScrobblingSettings> scrobblingSettings,
         IMusicMetadataService metadataService,
         ILocalLibraryService localLibraryService,
@@ -97,12 +90,9 @@ public partial class JellyfinController : ControllerBase
         OdesliService odesliService,
         IApplicationCache cache,
         IMediaAssetResolver mediaAssets,
+        IProtocolLyricsResolver protocolLyricsResolver,
         IConfiguration configuration,
         ILogger<JellyfinController> logger,
-        SpotifyLyricsService? spotifyLyricsService = null,
-        LyricsPlusService? lyricsPlusService = null,
-        LrclibService? lrclibService = null,
-        LyricsOrchestrator? lyricsOrchestrator = null,
         ScrobblingOrchestrator? scrobblingOrchestrator = null,
         ScrobblingHelper? scrobblingHelper = null,
         IFavoriteActionPipeline? favoriteActions = null,
@@ -111,7 +101,6 @@ public partial class JellyfinController : ControllerBase
     {
         _settings = settings.Value;
         _spotifySettings = spotifySettings.Value;
-        _spotifyApiSettings = spotifyApiSettings.Value;
         _scrobblingSettings = scrobblingSettings.Value;
         _metadataService = metadataService;
         _localLibraryService = localLibraryService;
@@ -127,10 +116,7 @@ public partial class JellyfinController : ControllerBase
         _modelMapper = modelMapper;
         _proxyService = proxyService;
         _sessionManager = sessionManager;
-        _spotifyLyricsService = spotifyLyricsService;
-        _lyricsPlusService = lyricsPlusService;
-        _lrclibService = lrclibService;
-        _lyricsOrchestrator = lyricsOrchestrator;
+        _protocolLyricsResolver = protocolLyricsResolver;
         _scrobblingOrchestrator = scrobblingOrchestrator;
         _scrobblingHelper = scrobblingHelper;
         _odesliService = odesliService;
