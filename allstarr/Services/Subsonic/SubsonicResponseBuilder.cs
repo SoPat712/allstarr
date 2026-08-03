@@ -346,8 +346,20 @@ public class SubsonicResponseBuilder
             ["isDir"] = false,
             ["title"] = song.Title,
             ["type"] = "music",
+            ["mediaType"] = "song",
             ["isVideo"] = false,
-            ["isExternal"] = !song.IsLocal
+            ["isExternal"] = !song.IsLocal,
+            ["isrc"] = string.IsNullOrWhiteSpace(song.Isrc) ? [] : new[] { song.Isrc },
+            ["genres"] = string.IsNullOrWhiteSpace(song.Genre)
+                ? []
+                : new[] { new Dictionary<string, string> { ["name"] = song.Genre } },
+            ["artists"] = KnownArtists(song)
+                .Select(artist => new Dictionary<string, string>
+                {
+                    ["id"] = artist.Id,
+                    ["name"] = artist.Name
+                }).ToList(),
+            ["explicitStatus"] = ExplicitStatus(song)
         };
 
         if (!string.IsNullOrWhiteSpace(song.AlbumId))
@@ -450,9 +462,20 @@ public class SubsonicResponseBuilder
             new XAttribute("isDir", "false"),
             new XAttribute("title", song.Title),
             new XAttribute("type", "music"),
+            new XAttribute("mediaType", "song"),
             new XAttribute("isVideo", "false"),
-            new XAttribute("isExternal", (!song.IsLocal).ToString().ToLower())
+            new XAttribute("isExternal", (!song.IsLocal).ToString().ToLowerInvariant()),
+            new XAttribute("explicitStatus", ExplicitStatus(song))
         );
+
+        if (!string.IsNullOrWhiteSpace(song.Isrc))
+            element.Add(new XElement(ns + "isrc", song.Isrc));
+        if (!string.IsNullOrWhiteSpace(song.Genre))
+            element.Add(new XElement(ns + "genres", new XAttribute("name", song.Genre)));
+        foreach (var artist in KnownArtists(song))
+            element.Add(new XElement(ns + "artists",
+                new XAttribute("id", artist.Id),
+                new XAttribute("name", artist.Name)));
 
         if (!string.IsNullOrWhiteSpace(song.AlbumId))
         {
@@ -498,6 +521,33 @@ public class SubsonicResponseBuilder
 
         return element;
     }
+
+    private static List<(string Id, string Name)> KnownArtists(Song song)
+    {
+        var artists = song.Artists
+            .Select((name, index) => (Name: name, Index: index))
+            .Where(artist => !string.IsNullOrWhiteSpace(artist.Name) &&
+                             artist.Index < song.ArtistIds.Count &&
+                             !string.IsNullOrWhiteSpace(song.ArtistIds[artist.Index]))
+            .Select(artist => (song.ArtistIds[artist.Index], artist.Name))
+            .ToList();
+
+        if (artists.Count == 0 &&
+            !string.IsNullOrWhiteSpace(song.ArtistId) &&
+            !string.IsNullOrWhiteSpace(song.Artist))
+        {
+            artists.Add((song.ArtistId, song.Artist));
+        }
+
+        return artists;
+    }
+
+    private static string ExplicitStatus(Song song) => song.ExplicitContentLyrics switch
+    {
+        1 => "explicit",
+        0 or 3 => "clean",
+        _ => string.Empty
+    };
 
     /// <summary>
     /// Converts an Album domain model to Subsonic XML format.

@@ -254,6 +254,55 @@ public class SubsonicResponseBuilderTests
     }
 
     [Fact]
+    public void ConvertSong_EmitsKnownOpenSubsonicFactsInJsonAndXml()
+    {
+        var song = new Song
+        {
+            Id = "song-1",
+            Title = "Fixture",
+            Artist = "Lead & Guest",
+            ArtistId = "display-artist",
+            Artists = ["Lead", "Guest", "Unknown"],
+            ArtistIds = ["artist-1", "artist-2"],
+            Genre = "Rock",
+            Isrc = "USRC17607839",
+            ExplicitContentLyrics = 1
+        };
+
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(_builder.ConvertSongToJson(song)));
+        Assert.Equal("song", json.RootElement.GetProperty("mediaType").GetString());
+        Assert.Equal("USRC17607839", Assert.Single(json.RootElement.GetProperty("isrc").EnumerateArray()).GetString());
+        Assert.Equal("Rock", Assert.Single(json.RootElement.GetProperty("genres").EnumerateArray()).GetProperty("name").GetString());
+        var artists = json.RootElement.GetProperty("artists").EnumerateArray().ToArray();
+        Assert.Equal(["artist-1", "artist-2"], artists.Select(artist => artist.GetProperty("id").GetString()));
+        Assert.Equal(["Lead", "Guest"], artists.Select(artist => artist.GetProperty("name").GetString()));
+        Assert.Equal("explicit", json.RootElement.GetProperty("explicitStatus").GetString());
+
+        XNamespace ns = "http://subsonic.org/restapi";
+        var xml = _builder.ConvertSongToXml(song, ns);
+        Assert.Equal("song", xml.Attribute("mediaType")?.Value);
+        Assert.Equal("USRC17607839", Assert.Single(xml.Elements(ns + "isrc")).Value);
+        Assert.Equal("Rock", Assert.Single(xml.Elements(ns + "genres")).Attribute("name")?.Value);
+        Assert.Equal(["artist-1", "artist-2"], xml.Elements(ns + "artists").Select(artist => artist.Attribute("id")?.Value));
+        Assert.Equal(["Lead", "Guest"], xml.Elements(ns + "artists").Select(artist => artist.Attribute("name")?.Value));
+        Assert.Equal("explicit", xml.Attribute("explicitStatus")?.Value);
+    }
+
+    [Theory]
+    [InlineData(null, "")]
+    [InlineData(0, "clean")]
+    [InlineData(1, "explicit")]
+    [InlineData(2, "")]
+    [InlineData(3, "clean")]
+    public void ConvertSong_MapsOnlyKnownExplicitStates(int? value, string expected)
+    {
+        var song = new Song { ExplicitContentLyrics = value };
+
+        Assert.Equal(expected, _builder.ConvertSongToJson(song)["explicitStatus"]);
+        Assert.Equal(expected, _builder.ConvertSongToXml(song, XNamespace.None).Attribute("explicitStatus")?.Value);
+    }
+
+    [Fact]
     public void CreateAlbumResponse_JsonFormat_ReturnsAlbumWithSongs()
     {
         // Arrange

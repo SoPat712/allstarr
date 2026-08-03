@@ -137,7 +137,7 @@
     "authBoundary": "Backend verification and the shared ProtocolExecutionContext precede both relayed and synthesized item/image handling. Typed providers use ProviderRouter; compatibility-only providers require an allowed durable account unless their metadata contract is explicitly public and accountless.",
     "fixture": "subsonic-auth-boundary.json; subsonic-item-relay.json",
     "testLocation": "ProtocolRouteFixtureTests; SubsonicModelMapperTests; SubsonicResponseBuilderTests; ProtocolProviderGatewayContractTests",
-    "notes": "Local item errors preserve the exact .view route, protocol body, and status. Conditional cover-art validators and end-to-end response headers are preserved. Several optional OpenSubsonic song fields remain incomplete."
+    "notes": "Local item errors preserve the exact .view route, protocol body, and status. Conditional cover-art validators and end-to-end response headers are preserved. JSON/XML songs expose known media type, ISRC, genre, identified artist credits, display fields, BPM, and explicit status without inventing missing IDs or media facts."
   },
   {
     "protocol": "subsonic",
