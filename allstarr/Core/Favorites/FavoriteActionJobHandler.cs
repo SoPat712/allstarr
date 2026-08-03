@@ -210,6 +210,10 @@ public static class FavoriteActionRegistration
         services.AddSingleton<IFavoriteActionExecutor, FavoritePlaceActionExecutor>();
         services.AddSingleton<IFavoriteActionExecutor, FavoriteEnrichActionExecutor>();
         services.AddSingleton<IFavoriteActionExecutor, FavoriteRefreshActionExecutor>();
+        services.AddHttpClient(LastFmFavoriteActionExecutor.HttpClientName, client =>
+            client.Timeout = TimeSpan.FromSeconds(10))
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+        services.AddSingleton<IFavoriteActionExecutor, LastFmFavoriteActionExecutor>();
         services.AddSingleton<IDurableJobHandler, FavoriteActionJobHandler>();
         return services;
     }

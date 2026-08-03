@@ -1,4 +1,5 @@
 using allstarr.Core.Favorites;
+using allstarr.Core.Intelligence;
 using allstarr.Core.Identity;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
@@ -201,6 +202,26 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         Assert.Empty(await database.Jobs.Where(item => item.Type == FavoriteActionPipeline.JobType).ToListAsync());
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LastFmAction_IsGatedByExactScopedAccount(bool configured)
+    {
+        var accounts = new RecordingRecommendationAccountAccessor(configured);
+        var pipeline = new FavoriteActionPipeline(_factory, _jobs, _clock,
+            recommendationAccounts: accounts);
+        var request = Request(FavoriteOperation.Favorite, "lastfm-scope", libraryScopeId: "music");
+
+        var receipt = await pipeline.RecordAsync(request);
+
+        await using var database = await _factory.CreateDbContextAsync();
+        var actions = await database.Set<FavoriteActionRecord>()
+            .Where(item => item.EventId == receipt.EventId).Select(item => item.ActionType).ToListAsync();
+        Assert.Equal(configured, actions.Contains(FavoriteActionPipeline.LastFmAction));
+        Assert.Equal(new IntelligenceScope(_tenantId, _userId, "jellyfin", "jellyfin-main", "music"),
+            accounts.LastScope);
+    }
+
     [Fact]
     public async Task MatchAction_UsesExactOwnerBackendLibraryAndProviderIdentity()
     {
@@ -378,10 +399,12 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         Assert.DoesNotContain("token", job.PayloadJson, StringComparison.OrdinalIgnoreCase);
     }
 
-    private FavoriteMutationRequest Request(FavoriteOperation operation, string revision, Guid? userId = null) => new(
+    private FavoriteMutationRequest Request(FavoriteOperation operation, string revision, Guid? userId = null,
+        string? libraryScopeId = null) => new(
         new ProtocolExecutionContext(ProtocolKind.Jellyfin, "jellyfin-main", "backend-user", new AllstarrPrincipal(
             _tenantId, userId ?? _userId, "jellyfin", "jellyfin-main", "backend-user", "Favorite user", false),
-            $"favorite-test-{operation.ToString().ToLowerInvariant()}", _clock.UtcNow.AddMinutes(1), default),
+            $"favorite-test-{operation.ToString().ToLowerInvariant()}", _clock.UtcNow.AddMinutes(1), default,
+            libraryScopeId: libraryScopeId),
         "external:fixture:track-1", operation, revision);
 
     private DurableJobQueue CreateQueue()
@@ -421,5 +444,23 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
             calls.Add(actionType);
             return Task.FromResult(result?.Invoke() ?? FavoriteActionExecutionResult.Success());
         }
+    }
+
+    private sealed class RecordingRecommendationAccountAccessor(bool configured)
+        : IScopedRecommendationAccountAccessor
+    {
+        public IntelligenceScope? LastScope { get; private set; }
+
+        public Task<bool> HasAccountAsync(IntelligenceScope scope, string providerId,
+            CancellationToken cancellationToken)
+        {
+            LastScope = scope;
+            Assert.Equal("lastfm", providerId);
+            return Task.FromResult(configured);
+        }
+
+        public Task<T> UseAsync<T>(IntelligenceScope scope, string providerId,
+            Func<JsonElement, CancellationToken, Task<T>> operation,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 }

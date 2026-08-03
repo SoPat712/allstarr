@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Jobs;
+using allstarr.Core.Intelligence;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
@@ -67,12 +68,14 @@ public sealed class FavoriteActionPipeline(
     IPlatformClock clock,
     FavoriteActionPolicyOptions? policy = null,
     IDurableFavoriteActionPolicyResolver? policyResolver = null,
-    IProtocolLibraryScopeResolver? libraryScopes = null) : IFavoriteActionPipeline
+    IProtocolLibraryScopeResolver? libraryScopes = null,
+    IScopedRecommendationAccountAccessor? recommendationAccounts = null) : IFavoriteActionPipeline
 {
     public const string JobType = "favorite.process";
     public const string VirtualLikedAction = "virtual-liked";
+    public const string LastFmAction = "lastfm";
     private static readonly string[] OrderedActionTypes =
-        [VirtualLikedAction, "match", "download", "place", "enrich", "refresh"];
+        [VirtualLikedAction, "match", "download", "place", "enrich", "refresh", LastFmAction];
     private readonly IDurableFavoriteActionPolicyResolver _policyResolver = policyResolver ??
         new ConfiguredPolicyResolver(policy ?? new FavoriteActionPolicyOptions());
 
@@ -119,6 +122,10 @@ public sealed class FavoriteActionPipeline(
             return new FavoriteEventReceipt(existing.Id, existing.JobId, false, existing.State);
         }
 
+        var effectivePolicy = await _policyResolver.ResolveAsync(actor.TenantId, userId, protocol, backend,
+            execution.LibraryScopeId, cancellationToken);
+        var includeLastFm = await HasLastFmAccountAsync(actor.TenantId, userId, execution, cancellationToken);
+
         await using var transaction = await context.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         existing = await context.Set<FavoriteEventRecord>()
             .SingleOrDefaultAsync(item => item.EventKey == eventKey, cancellationToken);
@@ -134,9 +141,7 @@ public sealed class FavoriteActionPipeline(
             await CancelPendingFavoriteWorkAsync(context, actor.TenantId, userId, protocol, backend, itemId, now, cancellationToken);
         }
 
-        var effectivePolicy = await _policyResolver.ResolveAsync(actor.TenantId, userId, protocol, backend,
-            execution.LibraryScopeId, cancellationToken);
-        var actionTypes = BuildActions(request, effectivePolicy);
+        var actionTypes = BuildActions(request, effectivePolicy, includeLastFm);
         var job = await jobs.EnqueueInExistingTransactionAsync(
             context,
             new DurableJobEnqueueRequest<FavoriteJobPayload>(
@@ -234,7 +239,19 @@ public sealed class FavoriteActionPipeline(
             item.LastErrorCode, item.LastErrorMessage, actions);
     }
 
-    private static IReadOnlyList<string> BuildActions(FavoriteMutationRequest request, EffectiveFavoriteActionPolicy policy)
+    private async Task<bool> HasLastFmAccountAsync(Guid tenantId, Guid userId,
+        ProtocolExecutionContext execution, CancellationToken cancellationToken)
+    {
+        if (recommendationAccounts == null || string.IsNullOrWhiteSpace(execution.LibraryScopeId))
+            return false;
+        var scope = new IntelligenceScope(tenantId, userId,
+            execution.Protocol.ToString().ToLowerInvariant(), execution.BackendInstanceId,
+            execution.LibraryScopeId);
+        return await recommendationAccounts.HasAccountAsync(scope, "lastfm", cancellationToken);
+    }
+
+    private static IReadOnlyList<string> BuildActions(FavoriteMutationRequest request,
+        EffectiveFavoriteActionPolicy policy, bool includeLastFm)
     {
         if (policy.PlaceManagedFile && !policy.AutoDownload || policy.EnrichMetadata && !policy.PlaceManagedFile)
             throw new InvalidOperationException("The effective favorite action policy has invalid download, placement, or enrichment dependencies.");
@@ -262,6 +279,7 @@ public sealed class FavoriteActionPipeline(
         {
             actions.UnionWith(enabled);
         }
+        if (includeLastFm) actions.Add(LastFmAction);
         return OrderedActionTypes.Where(actions.Contains).ToArray();
     }
 
