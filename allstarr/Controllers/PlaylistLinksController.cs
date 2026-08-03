@@ -333,6 +333,10 @@ public sealed class PlaylistLinksController(
             if (asset == null)
                 return NotFound(new { error = "Playlist artwork is unavailable", reasonCode = failure?.Code });
             Response.Headers.CacheControl = "private, max-age=300";
+            var etag = ImageConditionalRequestHelper.ComputeStrongETag(asset.Bytes);
+            Response.Headers.ETag = etag;
+            if (ImageConditionalRequestHelper.MatchesIfNoneMatch(Request.Headers, etag))
+                return StatusCode(StatusCodes.Status304NotModified);
             return File(asset.Bytes, asset.ContentType);
         });
     }

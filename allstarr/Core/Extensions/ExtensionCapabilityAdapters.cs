@@ -1,9 +1,11 @@
 using System.Diagnostics;
+using System.Net;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Services.Common;
+using SkiaSharp;
 
 namespace allstarr.Core.Extensions;
 
@@ -82,6 +84,12 @@ public abstract class ExtensionCapabilityAdapterBase
 
     protected static ProviderOutcome<T> Failure<T>(ProviderErrorKind kind) =>
         ProviderOutcome<T>.Failure(new ProviderError(kind));
+
+    private protected Task<ExtensionBoundedHttpPayload> FetchBytesAsync(
+        Uri uri,
+        int maximumBytes,
+        CancellationToken cancellationToken) =>
+        _sandbox.FetchBytesAsync(uri, maximumBytes, cancellationToken);
 
     protected static string Text(JsonElement value, string name) =>
         value.TryGetProperty(name, out var item) && item.ValueKind == JsonValueKind.String
@@ -324,6 +332,8 @@ public sealed class ExtensionIntelligenceCapabilityAdapter : ExtensionCapability
 
 public sealed class ExtensionPlaylistCapabilityAdapter : ExtensionCapabilityAdapterBase, IProviderPlaylistCapability
 {
+    private const int MaximumArtworkPixels = 16_000_000;
+
     public ExtensionPlaylistCapabilityAdapter(ExtensionSandbox sandbox, ExtensionSdkManifest manifest,
         IProviderAccountSecretAccessor? secrets = null) : base(sandbox, manifest, ProviderCapabilityKind.Playlist, secrets) { }
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Playlist;
@@ -342,6 +352,83 @@ public sealed class ExtensionPlaylistCapabilityAdapter : ExtensionCapabilityAdap
             return new ProviderPlaylistTrackPage(summary, new ProviderPage<ProviderPlaylistTrack>(ProviderId, tracks,
                 OptionalText(tracksValue, "nextCursor"), Bool(tracksValue, "isPartial"), OptionalText(tracksValue, "snapshotVersion")));
         }, true);
+    }
+    public async Task<ProviderOutcome<ProviderPlaylistArtwork>> ResolveArtworkAsync(
+        ProviderExecutionContext context,
+        ProviderPlaylistArtworkRequest request)
+    {
+        var resource = request.Artwork.ResourceId;
+        if (resource == null || resource.ProviderId != ProviderId || resource.ResourceKind != ProviderResourceKind.Playlist)
+            return Failure<ProviderPlaylistArtwork>(ProviderErrorKind.Forbidden);
+        var location = await InvokeAsync(
+            context,
+            "resolveArtwork",
+            new { playlistId = resource.Value, revision = request.Artwork.Revision, request.MaximumBytes },
+            value =>
+            {
+                var revision = ProviderContractValidation.RequiredText(Text(value, "revision"), "revision", 300);
+                if (!Uri.TryCreate(Text(value, "artworkUrl"), UriKind.Absolute, out var uri) ||
+                    uri.Scheme != Uri.UriSchemeHttps)
+                    throw new JsonException();
+                return new ExtensionArtworkLocation(uri, revision);
+            },
+            true);
+        if (!location.IsSuccess)
+            return ProviderOutcome<ProviderPlaylistArtwork>.Failure(location.Error!);
+        var target = location.RequireValue();
+        if (request.Artwork.Revision != null &&
+            !request.Artwork.Revision.Equals(target.Revision, StringComparison.Ordinal))
+            return Failure<ProviderPlaylistArtwork>(ProviderErrorKind.PermanentFailure);
+
+        try
+        {
+            var payload = await FetchBytesAsync(
+                target.Uri,
+                request.MaximumBytes,
+                context.CancellationToken);
+            if (payload.Bytes.Length == 0)
+                return Failure<ProviderPlaylistArtwork>(ProviderErrorKind.NotFound);
+            if (payload.ContentType is not ("image/jpeg" or "image/png" or "image/webp") ||
+                !IsValidArtwork(payload.Bytes, payload.ContentType))
+                return Failure<ProviderPlaylistArtwork>(ProviderErrorKind.PermanentFailure);
+            return ProviderOutcome<ProviderPlaylistArtwork>.Success(
+                new ProviderPlaylistArtwork(payload.Bytes, payload.ContentType));
+        }
+        catch (OperationCanceledException)
+        {
+            return Failure<ProviderPlaylistArtwork>(ProviderErrorKind.Canceled);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Failure<ProviderPlaylistArtwork>(ProviderErrorKind.Forbidden);
+        }
+        catch (InvalidDataException)
+        {
+            return Failure<ProviderPlaylistArtwork>(ProviderErrorKind.PermanentFailure);
+        }
+        catch (HttpRequestException exception)
+        {
+            return Failure<ProviderPlaylistArtwork>(exception.StatusCode == HttpStatusCode.NotFound
+                ? ProviderErrorKind.NotFound
+                : exception.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
+                    ? ProviderErrorKind.Unauthorized
+                    : ProviderErrorKind.TransientFailure);
+        }
+    }
+
+    internal static bool IsAllowedArtworkDimensions(int width, int height) =>
+        width > 0 && height > 0 && (long)width * height <= MaximumArtworkPixels;
+
+    private static bool IsValidArtwork(byte[] bytes, string contentType)
+    {
+        using var data = SKData.CreateCopy(bytes);
+        using var codec = SKCodec.Create(data);
+        return codec != null &&
+               IsAllowedArtworkDimensions(codec.Info.Width, codec.Info.Height) &&
+               (codec.EncodedFormat, contentType) is
+               (SKEncodedImageFormat.Jpeg, "image/jpeg") or
+               (SKEncodedImageFormat.Png, "image/png") or
+               (SKEncodedImageFormat.Webp, "image/webp");
     }
     private static object PageRequest(ProviderPageRequest page) => new { page.Limit, page.Cursor };
     private ProviderPlaylistTrack MapTrack(JsonElement item)
@@ -385,11 +472,18 @@ public sealed class ExtensionPlaylistCapabilityAdapter : ExtensionCapabilityAdap
         value.GetProperty("items").EnumerateArray().Select(MapPlaylist), OptionalText(value, "nextCursor"), Bool(value, "isPartial"), OptionalText(value, "snapshotVersion"));
     private ProviderPlaylistSummary MapPlaylist(JsonElement value)
     {
+        var resource = new ProviderExternalResourceId(ProviderId, ProviderResourceKind.Playlist, Text(value, "id"));
+        var artworkRevision = OptionalText(value, "artworkRevision");
         ProviderArtworkReference? artwork = null;
-        if (Uri.TryCreate(OptionalText(value, "artworkUrl"), UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps) artwork = new ProviderArtworkReference(publicUri: uri);
+        if (Hooks.Contains("resolveArtwork") && Bool(value, "hasArtwork", artworkRevision != null))
+            artwork = new ProviderArtworkReference(resource, revision: artworkRevision ?? Text(value, "sourceRevision"));
+        else if (Uri.TryCreate(OptionalText(value, "artworkUrl"), UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps)
+            artwork = new ProviderArtworkReference(publicUri: uri, revision: artworkRevision);
         var owner = value.GetProperty("owner");
-        return new ProviderPlaylistSummary(new ProviderExternalResourceId(ProviderId, ProviderResourceKind.Playlist, Text(value, "id")), Text(value, "name"),
+        return new ProviderPlaylistSummary(resource, Text(value, "name"),
             new ProviderPlaylistOwner(Text(owner, "providerUserId"), OptionalText(owner, "displayName")), Text(value, "sourceRevision"),
             OptionalText(value, "description"), artwork, Int(value, "trackCount"), OptionalText(value, "sourceETag"));
     }
+
+    private sealed record ExtensionArtworkLocation(Uri Uri, string Revision);
 }

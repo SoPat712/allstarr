@@ -566,6 +566,10 @@ public sealed record ExtensionRuntimePermissionSet(
         new HashSet<string>(StringComparer.Ordinal));
 }
 
+internal sealed record ExtensionBoundedHttpPayload(
+    byte[] Bytes,
+    string? ContentType);
+
 public class ExtensionSandbox
 {
     private const int MaximumHookResultCharacters = 4 * 1024 * 1024;
@@ -820,6 +824,12 @@ public class ExtensionSandbox
         !string.IsNullOrWhiteSpace(hook) && IsCallable(hook);
 
     public bool HasSignedSession => _hostBridge.HasSignedSession;
+    internal Task<ExtensionBoundedHttpPayload> FetchBytesAsync(
+        Uri uri,
+        int maximumBytes,
+        CancellationToken cancellationToken) =>
+        _hostBridge.FetchBytesAsync(uri, maximumBytes, cancellationToken);
+
     public (int EntryCount, long PayloadBytes) StorageUsage()
     {
         lock (_engineLock)
@@ -1260,6 +1270,45 @@ public class ExtensionHostBridge
 
     public object HttpRequest(string method, string url, string? body, object? headers) =>
         HttpCall(method, url, body, headers);
+
+    internal async Task<ExtensionBoundedHttpPayload> FetchBytesAsync(
+        Uri uri,
+        int maximumBytes,
+        CancellationToken cancellationToken)
+    {
+        if (maximumBytes is < 1 or > 16 * 1024 * 1024)
+            throw new ArgumentOutOfRangeException(nameof(maximumBytes));
+        if (uri.Scheme != Uri.UriSchemeHttps || !IsNetworkAllowed(uri))
+            throw new UnauthorizedAccessException("Extension artwork origin is not approved.");
+
+        using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
+        client.Timeout = TimeSpan.FromSeconds(15);
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        using var response = await client.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+        if (response.RequestMessage?.RequestUri is not { } finalUri || !IsNetworkAllowed(finalUri))
+            throw new UnauthorizedAccessException("Extension artwork redirect left its approved origin.");
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException("Extension artwork request failed.", null, response.StatusCode);
+        if (response.Content.Headers.ContentLength > maximumBytes)
+            throw new InvalidDataException("Extension artwork exceeds the size limit.");
+
+        await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var destination = new MemoryStream(Math.Min(maximumBytes, 256 * 1024));
+        var buffer = new byte[64 * 1024];
+        int read;
+        while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
+        {
+            if (destination.Length + read > maximumBytes)
+                throw new InvalidDataException("Extension artwork exceeds the size limit.");
+            destination.Write(buffer, 0, read);
+        }
+        return new(
+            destination.ToArray(),
+            response.Content.Headers.ContentType?.MediaType?.ToLowerInvariant());
+    }
 
     public object ArtifactDownload(string url, string artifactId, object? headersObj)
     {

@@ -213,6 +213,8 @@ public sealed class PlaylistLinksControllerContractTests
         Assert.Contains("PlaylistDiscoveryPageCacheEntry", source, StringComparison.Ordinal);
         Assert.Contains("requestCoalescer.RunAsync", source, StringComparison.Ordinal);
         Assert.Contains("applicationCache.SetAsync(", source, StringComparison.Ordinal);
+        Assert.Contains("ImageConditionalRequestHelper.ComputeStrongETag(asset.Bytes)", source, StringComparison.Ordinal);
+        Assert.Contains("ImageConditionalRequestHelper.MatchesIfNoneMatch(Request.Headers, etag)", source, StringComparison.Ordinal);
         Assert.Contains("configuration[\"Providers:PlaylistOrder\"]", source, StringComparison.Ordinal);
         Assert.Contains("configuredProviderOrder.GetValueOrDefault", source, StringComparison.Ordinal);
         Assert.DoesNotContain("value.Artwork?.PublicUri", source, StringComparison.Ordinal);

@@ -451,6 +451,70 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task PlaylistArtwork_UsesDeclaredHookApprovedOriginAndBoundedImage()
+    {
+        var bytes = Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z0i8AAAAASUVORK5CYII=");
+        var handler = new BytesHandler(bytes, "image/png");
+        var manifest = new ExtensionSdkManifest(
+            "fixture-extension", "Fixture", "1.0.0", "1", "index.js",
+            [new ExtensionSdkCapability(ProviderCapabilityKind.Playlist,
+                ["getUserPlaylists", "resolveArtwork"], [ProviderAccountScope.User])],
+            [new ExtensionPermissionRequest(
+                ExtensionPermissionKind.Network, "https://images.example.test/", true)]);
+        const string script = """
+            registerExtension({
+              getUserPlaylists: function() { return { items: [{ id: 'playlist-1', name: 'Mix',
+                owner: { providerUserId: 'owner' }, sourceRevision: 'r2', hasArtwork: true,
+                artworkRevision: 'r2' }] }; },
+              resolveArtwork: function(request) { return {
+                artworkUrl: 'https://images.example.test/cover.png', revision: 'r2'
+              }; }
+            });
+            """;
+        var allowed = new ExtensionRuntimePermissionSet(
+            new HashSet<string>(["https://images.example.test/"], StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal));
+        var sandbox = new ExtensionSandbox(
+            Path.GetTempPath(),
+            """{"id":"fixture-extension","displayName":"Fixture","version":"1.0.0"}""",
+            script,
+            new HttpClientFactory(handler),
+            NullLogger.Instance,
+            allowed);
+        var adapter = new ExtensionPlaylistCapabilityAdapter(sandbox, manifest);
+        var context = Context(includeAccount: true);
+
+        var summary = Assert.Single((await adapter.GetUserPlaylistsAsync(
+            context, new ProviderUserPlaylistsRequest(new ProviderPageRequest()))).RequireValue().Items);
+        var outcome = await adapter.ResolveArtworkAsync(
+            context,
+            new ProviderPlaylistArtworkRequest(summary.Artwork!, 1024));
+
+        Assert.Equal("playlist-1", summary.Artwork!.ResourceId!.Value);
+        Assert.Equal("r2", summary.Artwork.Revision);
+        Assert.True(outcome.IsSuccess, outcome.Error?.Kind.ToString());
+        Assert.Equal(bytes, outcome.Value!.Bytes);
+        Assert.Equal("image/png", outcome.Value.ContentType);
+        Assert.Equal(1, handler.CallCount);
+        Assert.True(ExtensionPlaylistCapabilityAdapter.IsAllowedArtworkDimensions(4_000, 4_000));
+        Assert.False(ExtensionPlaylistCapabilityAdapter.IsAllowedArtworkDimensions(4_001, 4_000));
+
+        var deniedSandbox = new ExtensionSandbox(
+            Path.GetTempPath(),
+            """{"id":"fixture-extension","displayName":"Fixture","version":"1.0.0"}""",
+            script,
+            new HttpClientFactory(handler),
+            NullLogger.Instance,
+            ExtensionRuntimePermissionSet.None);
+        var denied = await new ExtensionPlaylistCapabilityAdapter(deniedSandbox, manifest)
+            .ResolveArtworkAsync(context, new ProviderPlaylistArtworkRequest(summary.Artwork!, 1024));
+        Assert.Equal(ProviderErrorKind.Forbidden, denied.Error!.Kind);
+        Assert.Equal(1, handler.CallCount);
+    }
+
+    [Fact]
     public async Task Intelligence_MapsAnalysisDiscoverySearchExportAndDisconnectContracts()
     {
         string[] hooks = ["startAnalysis", "getAnalysisProgress", "getClusters", "recommend",
@@ -650,11 +714,16 @@ public sealed class ExtensionCapabilityAdapterTests
             : new HttpClient(handler, disposeHandler: false);
     }
 
-    private sealed class BytesHandler(byte[] bytes) : HttpMessageHandler
+    private sealed class BytesHandler(byte[] bytes, string? contentType = null) : HttpMessageHandler
     {
+        public int CallCount { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            CallCount++;
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
+            if (contentType != null)
+                response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
             response.RequestMessage = request;
             return Task.FromResult(response);
         }
