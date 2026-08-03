@@ -83,14 +83,6 @@ public static class BuiltInProviderDescriptorCatalog
         ProviderAccountRequirement.None,
         compatibilityVersion: "legacy-seam-v1");
 
-    private static ProviderCapabilityDescriptor Optional(
-        ProviderCapabilityKind capability) => new(
-        capability,
-        ProviderCapabilitySupportState.ConfiguredOnly,
-        ProviderAccountRequirement.Optional,
-        compatibilityVersion: "legacy-seam-v1",
-        allowedAccountScopes: MixedAccountScopes);
-
     private static ProviderCapabilityDescriptor Required(
         ProviderCapabilityKind capability,
         IEnumerable<ProviderAccountScope>? scopes = null,
