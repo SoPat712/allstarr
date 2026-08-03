@@ -825,7 +825,9 @@ for (const viewport of viewports) {
       await expect(page.getByText("Created in Jellyfin", { exact: true })).toBeVisible();
       await expect(page.getByText("Searching Lumen Audio.")).toBeVisible();
       await expect(page.getByRole("progressbar", { name: "Recommendation refresh progress" })).toHaveAttribute("value", "1");
+      await page.getByRole("button", { name: "Cancel refresh" }).scrollIntoViewIfNeeded();
       await expect(page.getByRole("button", { name: "Cancel refresh" })).toBeInViewport();
+      await page.getByRole("button", { name: "Refresh recommendations" }).scrollIntoViewIfNeeded();
       await expect(page.getByRole("button", { name: "Refresh recommendations" })).toBeInViewport();
       const soundDiscovery = page.locator(".sound-discovery");
       await expect(soundDiscovery).toContainText("Allstarr will not create or change a Jellyfin playlist");
