@@ -87,6 +87,7 @@ builder.Services.AddManagedFilePlacement();
 builder.Services.AddProviderDownloadArtifacts(builder.Configuration);
 builder.Services.AddFavoriteActions(builder.Configuration);
 builder.Services.AddIntelligenceCore();
+builder.Services.AddListeningHistoryImport();
 builder.Services.AddGeneratedSetMaterializers();
 builder.Services.AddBuiltInRecommendationSources();
 builder.Services.AddDurablePlaybackSignals();
