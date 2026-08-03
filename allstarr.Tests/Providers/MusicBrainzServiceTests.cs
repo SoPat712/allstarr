@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using allstarr.Models.Settings;
+using allstarr.Core.Intelligence;
 using allstarr.Services.Common;
 using allstarr.Services.MusicBrainz;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -113,6 +114,41 @@ public sealed class MusicBrainzServiceTests
         await Assert.ThrowsAsync<ArgumentException>(() => service.LookupByMbidAsync(value));
         await Assert.ThrowsAsync<ArgumentException>(() => service.LookupByIsrcAsync(value));
         Assert.Equal(0, handler.Calls);
+    }
+
+    [Fact]
+    public void DurableResult_SurfacesConfidenceWithoutReplacingAcceptedMetadata()
+    {
+        var occurrence = new ListeningEventRecord
+        {
+            Title = "Accepted title",
+            Artist = "Accepted artist",
+            Album = "Accepted album"
+        };
+        var enrichedAt = new DateTimeOffset(2026, 8, 3, 0, 0, 0, TimeSpan.Zero);
+        MusicBrainzListeningEnrichmentJobHandler.ApplyResult(
+            occurrence,
+            new(new MusicBrainzRecording
+            {
+                Id = "31e68c1d-31f9-432c-a3a4-13aef4a53833",
+                Title = "Remote title",
+                Releases = [new() { Id = "41e68c1d-31f9-432c-a3a4-13aef4a53833", Title = "Remote album" }]
+            }, .96, MusicBrainzService.SourceRevision),
+            enrichedAt);
+
+        Assert.Equal(MusicBrainzEnrichmentState.Resolved, occurrence.MusicBrainzEnrichmentState);
+        Assert.Equal(.96, occurrence.MusicBrainzEnrichmentConfidence);
+        Assert.Equal("31e68c1d-31f9-432c-a3a4-13aef4a53833", occurrence.RecordingMusicBrainzId);
+        Assert.Contains("41e68c1d-31f9-432c-a3a4-13aef4a53833", occurrence.MusicBrainzFactsJson);
+        Assert.Equal("Accepted title", occurrence.Title);
+        Assert.Equal("Accepted artist", occurrence.Artist);
+        Assert.Equal("Accepted album", occurrence.Album);
+
+        MusicBrainzListeningEnrichmentJobHandler.ApplyResult(occurrence, null, enrichedAt.AddHours(1));
+        Assert.Equal(MusicBrainzEnrichmentState.Unresolved, occurrence.MusicBrainzEnrichmentState);
+        Assert.Null(occurrence.MusicBrainzEnrichmentConfidence);
+        Assert.Null(occurrence.MusicBrainzFactsJson);
+        Assert.Equal("Accepted title", occurrence.Title);
     }
 
     private static MusicBrainzService Create(RecordingFactory factory) => new(

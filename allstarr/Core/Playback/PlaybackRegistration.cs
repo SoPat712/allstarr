@@ -1,4 +1,5 @@
 using allstarr.Core.Jobs;
+using allstarr.Core.Intelligence;
 using allstarr.Services.Common;
 using allstarr.Services.Scrobbling;
 
@@ -16,6 +17,8 @@ public static class PlaybackRegistration
         services.AddSingleton<IPlaybackLyricsPrefetch, PlaybackLyricsPrefetch>();
         services.AddSingleton<IScopedPlaybackScrobbleDelivery, ScopedPlaybackScrobbleDelivery>();
         services.AddSingleton<IPlaybackDeliveryCheckpointStore, EfPlaybackDeliveryCheckpointStore>();
+        services.AddSingleton<MusicBrainzListeningEnrichmentQueue>();
+        services.AddSingleton<IDurableJobHandler, MusicBrainzListeningEnrichmentJobHandler>();
         services.AddHttpClient<IExactScopePlaybackScrobbleTarget, LastFmScopedPlaybackScrobbleTarget>(client => client.Timeout = TimeSpan.FromSeconds(10))
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddHttpClient<IExactScopePlaybackScrobbleTarget, ListenBrainzScopedPlaybackScrobbleTarget>(client => client.Timeout = TimeSpan.FromSeconds(10))

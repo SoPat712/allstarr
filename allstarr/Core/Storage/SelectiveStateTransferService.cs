@@ -84,7 +84,7 @@ public sealed class SelectiveTransferSchemaMismatchException : Exception
 /// </summary>
 public sealed class SelectiveStateTransferService
 {
-    public const int CurrentFormatVersion = 5;
+    public const int CurrentFormatVersion = 6;
     public const long MaximumArchiveBytes = 128L * 1024 * 1024;
     public const long MaximumRequestBytes = MaximumArchiveBytes + (1024 * 1024);
     public const long MaximumExpandedBytes = 512L * 1024 * 1024;

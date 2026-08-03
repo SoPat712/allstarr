@@ -5,6 +5,7 @@ using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Services.MusicBrainz;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Playback;
@@ -78,7 +79,8 @@ public sealed class PlaybackSignalPipeline(
 
 public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals,
     IScopedPlaybackScrobbleDelivery scrobbles, IPlaybackLyricsPrefetch lyrics,
-    IDbContextFactory<AllstarrDbContext> factory, IPlaybackTrackResolver? tracks = null) : IDurableJobHandler
+    IDbContextFactory<AllstarrDbContext> factory, IPlaybackTrackResolver? tracks = null,
+    MusicBrainzListeningEnrichmentQueue? musicBrainz = null) : IDurableJobHandler
 {
     public string JobType => PlaybackSignalPipeline.JobType;
     public async Task<DurableJobCompletion> ExecuteAsync(DurableJobExecutionContext execution, CancellationToken cancellationToken)
@@ -90,11 +92,18 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         try
         {
             var track = tracks == null ? null : await tracks.ResolveAsync(payload, cancellationToken);
-            var state = await RecordOccurrenceAsync(payload, track, cancellationToken);
+            var state = await RecordOccurrenceAsync(
+                payload, track, musicBrainz?.Enabled == true, cancellationToken);
             var signalType = SignalType(payload.Transition, state);
             if (signalType != null)
                 await WriteSignalAsync(payload, execution.Claim.JobId, signalType, cancellationToken);
             if (payload.Transition is PlaybackTransition.Start or PlaybackTransition.InferredStart) await lyrics.PrefetchAsync(payload, cancellationToken);
+            if (musicBrainz != null)
+                await musicBrainz.EnqueueAsync(
+                    payload.Scope,
+                    payload.OccurrenceKey ?? payload.SignalKey,
+                    execution.Claim.CorrelationId,
+                    cancellationToken);
             await scrobbles.DeliverAsync(payload, cancellationToken);
             return DurableJobCompletion.Success();
         }
@@ -124,7 +133,7 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
     };
 
     private async Task<ListeningEventState> RecordOccurrenceAsync(PlaybackSignalPayload payload,
-        PlaybackTrackSnapshot? track, CancellationToken cancellationToken)
+        PlaybackTrackSnapshot? track, bool enrichWithMusicBrainz, CancellationToken cancellationToken)
     {
         var occurrenceKey = payload.OccurrenceKey ?? payload.SignalKey;
         for (var attempt = 0; ; attempt++)
@@ -147,7 +156,7 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
                 SourceKind = "protocol",
                 TrackReference = payload.ItemId
             };
-            Apply(record, payload, track, added);
+            Apply(record, payload, track, added, enrichWithMusicBrainz);
             if (added) db.ListeningEvents.Add(record);
             try
             {
@@ -162,7 +171,7 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
     }
 
     private static void Apply(ListeningEventRecord record, PlaybackSignalPayload payload,
-        PlaybackTrackSnapshot? track, bool added)
+        PlaybackTrackSnapshot? track, bool added, bool enrichWithMusicBrainz)
     {
         var next = Classify(payload, track);
         record.State = added || Rank(next) > Rank(record.State) ? next : record.State;
@@ -183,6 +192,9 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         record.Album ??= Trim(track?.Album, 500);
         record.AlbumArtist ??= Trim(track?.AlbumArtist, 500);
         record.RecordingMusicBrainzId ??= ValidMusicBrainzId(track?.RecordingMusicBrainzId);
+        record.Isrc ??= MusicBrainzService.NormalizeIsrc(track?.Isrc);
+        if (enrichWithMusicBrainz && record.MusicBrainzEnrichmentState == MusicBrainzEnrichmentState.NotRequested)
+            record.MusicBrainzEnrichmentState = MusicBrainzEnrichmentState.Pending;
         record.TrackNumber ??= track?.TrackNumber is > 0 ? track.TrackNumber : null;
         record.LibraryTrackId ??= track?.LibraryTrackId;
         record.CanonicalRecordingId ??= track?.CanonicalRecordingId;
@@ -229,4 +241,5 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
 
     private static string? ValidMusicBrainzId(string? value) =>
         Guid.TryParseExact(value, "D", out var id) && id != Guid.Empty ? id.ToString("D") : null;
+
 }

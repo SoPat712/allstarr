@@ -56,6 +56,12 @@ public sealed class ListeningEventRecord
     public string? Album { get; set; }
     public string? AlbumArtist { get; set; }
     public string? RecordingMusicBrainzId { get; set; }
+    public string? Isrc { get; set; }
+    public MusicBrainzEnrichmentState MusicBrainzEnrichmentState { get; set; }
+    public double? MusicBrainzEnrichmentConfidence { get; set; }
+    public string? MusicBrainzSourceRevision { get; set; }
+    public string? MusicBrainzFactsJson { get; set; }
+    public DateTimeOffset? MusicBrainzEnrichedAt { get; set; }
     public int? TrackNumber { get; set; }
     public bool ChosenByUser { get; set; } = true;
     public Guid? CanonicalRecordingId { get; set; }
@@ -64,6 +70,15 @@ public sealed class ListeningEventRecord
     public Guid? ProviderAccountId { get; set; }
     public Guid? ProviderTrackIdentityId { get; set; }
     public string? ProviderTrackReference { get; set; }
+}
+
+public enum MusicBrainzEnrichmentState
+{
+    NotRequested,
+    Pending,
+    Resolved,
+    Unresolved,
+    Failed
 }
 public sealed class ListeningProfileRecord
 {

@@ -26,7 +26,7 @@ public sealed record DurableStateTransferArtifact(
 
 public sealed class DurableStateTransferService
 {
-    private const int CurrentFormatVersion = 4;
+    private const int CurrentFormatVersion = 5;
     private const long MaximumManifestBytes = 64 * 1024;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -1205,6 +1205,11 @@ public sealed class DurableStateTransferService
                 !IsOptionalText(occurrence.Title, 500) || !IsOptionalText(occurrence.Artist, 500) ||
                 !IsOptionalText(occurrence.Album, 500) || !IsOptionalText(occurrence.AlbumArtist, 500) ||
                 occurrence.RecordingMusicBrainzId != null && !IsNormalizedMusicBrainzId(occurrence.RecordingMusicBrainzId) ||
+                occurrence.Isrc != null && !IsNormalizedIsrc(occurrence.Isrc) ||
+                !Enum.IsDefined(occurrence.MusicBrainzEnrichmentState) ||
+                !IsOptionalText(occurrence.MusicBrainzSourceRevision, 100) ||
+                occurrence.MusicBrainzFactsJson != null && !IsJsonObject(occurrence.MusicBrainzFactsJson, 1024 * 1024) ||
+                !ValidMusicBrainzEnrichment(occurrence) ||
                 occurrence.TrackNumber is <= 0 || !IsOptionalText(occurrence.ProviderId, 100) ||
                 !IsOptionalText(occurrence.ProviderTrackReference, 500) || !validLibraryTrack ||
                 occurrence.CanonicalRecordingId is { } canonicalId && !canonicalIds.Contains((occurrence.TenantId, canonicalId)) ||
@@ -1544,6 +1549,28 @@ public sealed class DurableStateTransferService
         Guid.TryParseExact(value, "D", out var id) &&
         id != Guid.Empty &&
         id.ToString("D").Equals(value, StringComparison.Ordinal);
+
+    private static bool ValidMusicBrainzEnrichment(ListeningEventRecord occurrence) =>
+        occurrence.MusicBrainzEnrichmentState switch
+        {
+            MusicBrainzEnrichmentState.NotRequested or MusicBrainzEnrichmentState.Pending =>
+                occurrence.MusicBrainzEnrichmentConfidence == null &&
+                occurrence.MusicBrainzSourceRevision == null &&
+                occurrence.MusicBrainzFactsJson == null &&
+                occurrence.MusicBrainzEnrichedAt == null,
+            MusicBrainzEnrichmentState.Resolved =>
+                occurrence.MusicBrainzEnrichmentConfidence is >= 0 and <= 1 &&
+                occurrence.RecordingMusicBrainzId != null &&
+                IsRequiredText(occurrence.MusicBrainzSourceRevision, 100) &&
+                occurrence.MusicBrainzFactsJson != null &&
+                occurrence.MusicBrainzEnrichedAt != null,
+            MusicBrainzEnrichmentState.Unresolved or MusicBrainzEnrichmentState.Failed =>
+                occurrence.MusicBrainzEnrichmentConfidence == null &&
+                IsRequiredText(occurrence.MusicBrainzSourceRevision, 100) &&
+                occurrence.MusicBrainzFactsJson == null &&
+                occurrence.MusicBrainzEnrichedAt != null,
+            _ => false
+        };
 
     private static bool IsNormalizedSha256(string? value) =>
         value?.Length == 64 &&

@@ -802,6 +802,10 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<string>("Isrc")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
                     b.Property<string>("LibraryScopeId")
                         .IsRequired()
                         .HasMaxLength(300)
@@ -812,6 +816,24 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.Property<long?>("ListenedAt")
                         .HasColumnType("bigint");
+
+                    b.Property<double?>("MusicBrainzEnrichmentConfidence")
+                        .HasColumnType("double precision");
+
+                    b.Property<long?>("MusicBrainzEnrichedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("MusicBrainzEnrichmentState")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("MusicBrainzFactsJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("MusicBrainzSourceRevision")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("OccurrenceKey")
                         .IsRequired()
@@ -898,6 +920,10 @@ namespace allstarr.Core.Storage.Migrations
                     b.ToTable("listening_events", t =>
                         {
                             t.HasCheckConstraint("CK_listening_event_duration", "\"DurationMilliseconds\" IS NULL OR \"DurationMilliseconds\" > 0");
+
+                            t.HasCheckConstraint("CK_listening_event_musicbrainz_confidence", "\"MusicBrainzEnrichmentConfidence\" IS NULL OR (\"MusicBrainzEnrichmentConfidence\" >= 0 AND \"MusicBrainzEnrichmentConfidence\" <= 1)");
+
+                            t.HasCheckConstraint("CK_listening_event_musicbrainz_state", "\"MusicBrainzEnrichmentState\" IN ('NotRequested', 'Pending', 'Resolved', 'Unresolved', 'Failed')");
 
                             t.HasCheckConstraint("CK_listening_event_position", "\"PositionTicks\" IS NULL OR \"PositionTicks\" >= 0");
 

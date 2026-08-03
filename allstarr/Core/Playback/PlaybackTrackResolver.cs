@@ -21,7 +21,8 @@ public sealed record PlaybackTrackSnapshot(
     string? ProviderId = null,
     Guid? ProviderAccountId = null,
     Guid? ProviderTrackIdentityId = null,
-    string? ProviderTrackReference = null);
+    string? ProviderTrackReference = null,
+    string? Isrc = null);
 
 public interface IPlaybackTrackResolver
 {
@@ -62,7 +63,8 @@ public sealed class PlaybackTrackResolver(
                 track.Album,
                 track.DurationMilliseconds,
                 track.AlbumArtist,
-                track.MusicBrainzRecordingId);
+                track.MusicBrainzRecordingId,
+                Isrc: track.Isrc);
         }
 
         foreach (var resolver in metadataResolvers ?? [])

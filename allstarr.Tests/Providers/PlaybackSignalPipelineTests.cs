@@ -5,8 +5,10 @@ using allstarr.Core.Operations;
 using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Models.Settings;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace allstarr.Tests;
 
@@ -204,6 +206,29 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         Assert.Equal(1, scrobbles.Successes);
         await using var db = await factory.CreateDbContextAsync();
         Assert.Single(await db.ListeningEvents.ToListAsync());
+    }
+
+    [Fact]
+    public async Task AcceptedOccurrence_QueuesMusicBrainzWithoutCallingThePublicService()
+    {
+        await new PlaybackSignalPipeline(jobs).RecordAsync(
+            Signal(PlaybackTransition.Start, "track-1", 0));
+        var claim = await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]);
+        var enrichment = new MusicBrainzListeningEnrichmentQueue(
+            jobs, Options.Create(new MusicBrainzSettings { Enabled = true }));
+        var handler = new PlaybackSignalJobHandler(
+            new Writer(), new Scrobbles(), new Lyrics(), factory,
+            new PlaybackTrackResolver(factory), enrichment);
+
+        Assert.Equal(DurableJobCompletionKind.Succeeded,
+            (await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default)).Kind);
+
+        await using var db = await factory.CreateDbContextAsync();
+        Assert.Equal(MusicBrainzEnrichmentState.Pending,
+            Assert.Single(await db.ListeningEvents.AsNoTracking().ToListAsync())
+                .MusicBrainzEnrichmentState);
+        Assert.Single(await db.Jobs.Where(job =>
+            job.Type == MusicBrainzListeningEnrichmentQueue.JobType).ToListAsync());
     }
 
     [Theory]

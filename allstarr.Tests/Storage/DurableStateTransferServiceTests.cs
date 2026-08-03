@@ -504,6 +504,12 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             Artist = "Fixture",
             AlbumArtist = "Fixture album artist",
             RecordingMusicBrainzId = "11111111-1111-1111-1111-111111111111",
+            Isrc = "USABC1234567",
+            MusicBrainzEnrichmentState = MusicBrainzEnrichmentState.Resolved,
+            MusicBrainzEnrichmentConfidence = .98,
+            MusicBrainzSourceRevision = "musicbrainz:ws2",
+            MusicBrainzFactsJson = "{\"id\":\"11111111-1111-1111-1111-111111111111\"}",
+            MusicBrainzEnrichedAt = now,
             TrackNumber = 3,
             CanonicalRecordingId = canonicalRecordingId,
             LibraryTrackId = libraryTrackId
@@ -930,6 +936,10 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         var listeningEvent = await target.ListeningEvents.SingleAsync();
         Assert.Equal(ListeningEventState.Completed, listeningEvent.State);
         Assert.Equal("local-42", listeningEvent.TrackReference);
+        Assert.Equal("USABC1234567", listeningEvent.Isrc);
+        Assert.Equal(MusicBrainzEnrichmentState.Resolved, listeningEvent.MusicBrainzEnrichmentState);
+        Assert.Equal(.98, listeningEvent.MusicBrainzEnrichmentConfidence);
+        Assert.Contains("11111111-1111-1111-1111-111111111111", listeningEvent.MusicBrainzFactsJson);
         Assert.StartsWith("library:", (await target.ListeningSignals.SingleAsync()).TrackReference, StringComparison.Ordinal);
         var playbackCheckpoint = await target.PlaybackDeliveryCheckpoints.SingleAsync();
         Assert.Equal("lastfm", playbackCheckpoint.TargetId);
