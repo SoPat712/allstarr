@@ -36,6 +36,13 @@ class TestTiming:
     milliseconds: float
 
 
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def _strip_ansi(value: str) -> str:
+    return _ANSI_ESCAPE.sub("", value)
+
+
 def _version(command: str, cwd: Path | None = None) -> str:
     executable = command.split()[0]
     if shutil.which(executable) is None:
@@ -79,6 +86,7 @@ def _merge_counts(target: Counts, values: Counts) -> None:
 
 
 def _parse_counts(output: str) -> Counts:
+    output = _strip_ansi(output)
     counts = Counts()
 
     # dotnet test's console summary and common TRX console summaries.
@@ -146,6 +154,7 @@ def _parse_counts(output: str) -> Counts:
 
 def _parse_retries(output: str) -> int:
     """Count retry attempts reported by Playwright or a compatible reporter."""
+    output = _strip_ansi(output)
     attempts = len(re.findall(r"\bretry\s*#\s*\d+\b", output, re.IGNORECASE))
     for pattern in (
         r"\b(\d+)\s+(?:test\s+)?retries?\b",
@@ -230,6 +239,7 @@ def _walk_playwright_json(value: object, timings: list[TestTiming]) -> None:
 
 
 def _parse_timings(output: str, trx_paths: Iterable[Path]) -> list[TestTiming]:
+    output = _strip_ansi(output)
     timings: list[TestTiming] = []
     for path in trx_paths:
         _, parsed = _parse_trx(path)
@@ -313,6 +323,11 @@ def _report(
 def _self_test() -> None:
     counts = _parse_counts("Tests run: 4, Passed: 3, Failed: 1, Skipped: 0, Total: 4")
     assert counts == Counts(discovered=4, passed=3, failed=1)
+    counts = _parse_counts(
+        "\x1b[2m Tests \x1b[22m \x1b[1m\x1b[32m39 passed\x1b[39m\x1b[22m "
+        "\x1b[90m(39)\x1b[39m"
+    )
+    assert counts == Counts(discovered=39, passed=39)
     assert _parse_retries("34 passed (11.9s)") == 0
     assert _parse_retries("Retry #1\n1 flaky") == 1
     assert _parse_retries("Retries: 2") == 2
