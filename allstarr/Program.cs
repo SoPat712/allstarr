@@ -465,7 +465,6 @@ builder.Services.AddSpotifyPlaylistCapability();
 builder.Services.AddAppleMusicKitPlaylistCapability();
 builder.Services.AddAppleDownloadCapability();
 builder.Services.AddBuiltInLyricsCapabilities();
-builder.Services.AddLegacyBuiltInProviderDescriptors();
 
 // 2. Concrete Download Services
 builder.Services.AddSingleton<IConcreteDownloadService>(provider =>

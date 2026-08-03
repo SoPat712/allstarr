@@ -66,8 +66,7 @@ public sealed class BuiltInProviderDescriptorCatalogTests
             AppleDownloadCapabilityAdapter.CreateRegistration(
                 appleDownload, streaming: appleDownloadStreaming, metadata: appleDownloadMetadata),
             BuiltInLyricsCapabilityRegistration.CreateRegistration("lyricsplus", "LyricsPlus", lyricsPlus),
-            BuiltInLyricsCapabilityRegistration.CreateRegistration("lrclib", "LRCLib", lrclib),
-            .. BuiltInProviderDescriptorCatalog.LegacyRegistrations
+            BuiltInLyricsCapabilityRegistration.CreateRegistration("lrclib", "LRCLib", lrclib)
         ]);
 
         string[] expected =
@@ -75,8 +74,6 @@ public sealed class BuiltInProviderDescriptorCatalogTests
             "apple-download",
             "apple-musickit",
             "deezer",
-            "lastfm",
-            "listenbrainz",
             "lrclib",
             "lyricsplus",
             "qobuz",
@@ -84,7 +81,8 @@ public sealed class BuiltInProviderDescriptorCatalogTests
             "squidwtf"
         ];
         Assert.Equal(expected, registry.Providers.Select(item => item.Id));
-        Assert.DoesNotContain(registry.Providers, item => item.Id == "musicbrainz");
+        Assert.DoesNotContain(registry.Providers,
+            item => item.Id is "lastfm" or "listenbrainz" or "musicbrainz");
         Assert.Equal(
             ["apple-download", "deezer", "qobuz", "squidwtf"],
             registry.FindByCapability(ProviderCapabilityKind.Metadata)
@@ -133,11 +131,6 @@ public sealed class BuiltInProviderDescriptorCatalogTests
         Assert.Equal(
             ["lrclib", "lyricsplus", "spotify"],
             registry.FindByCapability(ProviderCapabilityKind.Lyrics).Select(item => item.Id));
-        Assert.All(
-            BuiltInProviderDescriptorCatalog.LegacyRegistrations,
-            registration => Assert.All(
-                registration.Descriptor.Capabilities,
-                capability => Assert.False(capability.HasUsableImplementation)));
     }
 
     private static IProviderDownloadCapability Download(string providerId)
