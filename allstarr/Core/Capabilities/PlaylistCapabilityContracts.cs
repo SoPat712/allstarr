@@ -226,6 +226,13 @@ public enum ProviderPlaylistConflictBehavior
     Recreate
 }
 
+public sealed record ProviderPlaylistMutationSupport(
+    bool CanCreate,
+    bool CanReplaceExisting)
+{
+    public static ProviderPlaylistMutationSupport None { get; } = new(false, false);
+}
+
 /// <summary>
 /// A provider-neutral mutation intent reserved for host-controlled playlist materialization.
 /// It is not an SDK v1 extension hook.
@@ -333,6 +340,8 @@ public sealed record ProviderPlaylistMutationReceipt
 
 public interface IProviderPlaylistCapability : IProviderCapability
 {
+    ProviderPlaylistMutationSupport MutationSupport => ProviderPlaylistMutationSupport.None;
+
     Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetUserPlaylistsAsync(
         ProviderExecutionContext context,
         ProviderUserPlaylistsRequest request);

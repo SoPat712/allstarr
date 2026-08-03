@@ -418,6 +418,36 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
       body = { snapshot: { snapshotId: "playlist-snapshot" }, preview: {} };
     if (url.pathname.endsWith("/run") && route.request().method() === "POST")
       body = { jobId: "11111111-1111-1111-1111-111111111111", created: true };
+    if (url.pathname.endsWith("/source-update/preview") && route.request().method() === "GET")
+      body = {
+        providerId: "spotify",
+        providerName: "Spotify",
+        sourcePlaylistName: "Road trip source",
+        backendPlaylistName: "Road trip",
+        backendProtocol: "jellyfin",
+        sourceVersion: "a1b2c3d4e5f6",
+        expectedRevision: 1,
+        confirmationId: "a".repeat(64),
+        currentCount: 4,
+        includedCount: 4,
+        skippedCount: 1,
+        addedCount: 1,
+        removedCount: 1,
+        movedCount: 1,
+        duplicateCount: 1,
+        canApply: true,
+        message: "Allstarr will update Road trip source in Spotify after you confirm.",
+        changes: [
+          { kind: "add", toPosition: 4, title: "New song", artist: "New artist" },
+          { kind: "move", fromPosition: 3, toPosition: 1, title: "First song", artist: "Artist" },
+          { kind: "remove", fromPosition: 2, title: "Old song", artist: "Old artist" },
+        ],
+        skipped: [{ position: 5, title: "Local only", artist: "Artist", reason: "This song has no confirmed match." }],
+        unshownChangeCount: 0,
+        unshownSkippedCount: 0,
+      };
+    if (url.pathname.endsWith("/source-update/apply") && route.request().method() === "POST")
+      body = { jobId: "22222222-2222-2222-2222-222222222222", created: true };
     if (url.pathname.endsWith("/cancel") && route.request().method() === "POST")
       body = { jobId: "11111111-1111-1111-1111-111111111111", state: "CancellationRequested" };
     if (url.pathname.endsWith("/audience") && route.request().method() === "PUT") {
@@ -1174,6 +1204,60 @@ test("Playlist views and revisioned settings stay keyboard-safe", async ({ page 
   await projectionError.getByRole("button", { name: "Try again" }).click();
   await expect(details.getByText("source track", { exact: true })).toBeVisible();
 });
+
+for (const viewport of [
+  { width: 390, height: 844 },
+  { width: 820, height: 900 },
+  { width: 1280, height: 800 },
+]) {
+test(`Provider playlist update names both playlists and requires the checked confirmation at ${viewport.width}px`, async ({ page }) => {
+  await page.setViewportSize(viewport);
+  await mockApi(page);
+  const response = responses["/api/admin/playlist-links"] as { playlistLinks: Record<string, unknown>[] };
+  await page.route("**/api/admin/playlist-links", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        playlistLinks: response.playlistLinks.map((item) => ({
+          ...item,
+          sourceProviderId: "spotify",
+          sourceUpdateAvailable: true,
+        })),
+      }),
+    });
+  });
+
+  await page.goto("#/library/playlists");
+  await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
+  const details = page.getByRole("dialog", { name: "Test playlist" });
+  await details.getByRole("button", { name: "Actions" }).click();
+  await page.getByRole("menuitem", { name: "Preview changes to Spotify" }).click();
+
+  const preview = page.getByRole("dialog", { name: "Update Spotify?" });
+  await expect(preview).toBeVisible();
+  await expect(preview).toContainText("Allstarr will update “Road trip source” in Spotify to match “Road trip” in Jellyfin.");
+  await expect(preview).toContainText("Allstarr will not change “Road trip” in Jellyfin.");
+  await expect(preview).toContainText("If either changes before this runs, nothing will be updated.");
+  await expect(preview.getByRole("definition")).toHaveCount(4);
+  await expect(preview.getByText("Local only")).toBeVisible();
+  await expect(preview).not.toContainText(/write-back|hybrid|native playlist/i);
+  await expect(preview.locator(".playlist-source-update-body")).toHaveCSS("overflow", "auto");
+  await expect(preview.getByRole("button", { name: "Update Spotify" })).toBeInViewport();
+  if (process.env.ALLSTARR_SCREENSHOT_DIR)
+    await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/playlist-${viewport.width}-update-spotify.png` });
+
+  const request = page.waitForRequest((item) =>
+    item.method() === "POST" && item.url().endsWith("/api/admin/playlist-links/playlist-link/source-update/apply"));
+  await preview.getByRole("button", { name: "Update Spotify" }).click();
+  expect((await request).postDataJSON()).toEqual({
+    expectedRevision: 1,
+    confirmationId: "a".repeat(64),
+  });
+  await expect(preview).toBeHidden();
+  await expect(details.getByText("Spotify update queued.")).toBeVisible();
+});
+}
 
 test("Tentative mappings sort by confidence and deep links open review", async ({ page }) => {
   await mockApi(page);

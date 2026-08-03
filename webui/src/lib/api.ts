@@ -453,6 +453,7 @@ export type PlaylistLink = {
   artworkUrl?: string | null;
   sourceProviderId: string;
   sourcePlaylistId: string;
+  sourceUpdateAvailable?: boolean;
   providerAccountId: string;
   libraryScopeId: string;
   targetProtocol: string;
@@ -480,6 +481,41 @@ export type PlaylistLink = {
   materializedCount: number;
   routeCoverage: Array<{ providerId: string; count: number }>;
   metrics: PlaylistLinkMetrics;
+};
+
+export type PlaylistSourceUpdatePreview = {
+  providerId: string;
+  providerName: string;
+  sourcePlaylistName: string;
+  backendPlaylistName: string;
+  backendProtocol: string;
+  sourceVersion: string;
+  expectedRevision: number;
+  confirmationId: string;
+  currentCount: number;
+  includedCount: number;
+  skippedCount: number;
+  addedCount: number;
+  removedCount: number;
+  movedCount: number;
+  duplicateCount: number;
+  canApply: boolean;
+  message: string;
+  changes: Array<{
+    kind: "add" | "remove" | "move";
+    fromPosition?: number | null;
+    toPosition?: number | null;
+    title: string;
+    artist: string;
+  }>;
+  skipped: Array<{
+    position: number;
+    title: string;
+    artist: string;
+    reason: string;
+  }>;
+  unshownChangeCount: number;
+  unshownSkippedCount: number;
 };
 
 export type PlaylistTrack = {
@@ -1267,6 +1303,19 @@ export const playlistLinks = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(snapshotId ? { snapshotId } : {}),
     }),
+  previewSourceUpdate: (id: string) =>
+    json<PlaylistSourceUpdatePreview>(
+      `/api/admin/playlist-links/${encodeURIComponent(id)}/source-update/preview`,
+    ),
+  applySourceUpdate: (id: string, expectedRevision: number, confirmationId: string) =>
+    json<{ jobId: string; created: boolean }>(
+      `/api/admin/playlist-links/${encodeURIComponent(id)}/source-update/apply`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expectedRevision, confirmationId }),
+      },
+    ),
   setEnabled: (id: string, expectedRevision: number, enabled: boolean) =>
     json<{ id: string; enabled: boolean; revision: number }>(
       `/api/admin/playlist-links/${encodeURIComponent(id)}/state`,

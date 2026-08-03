@@ -31,6 +31,7 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
 
     public string ProviderId => StableProviderId;
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Playlist;
+    public ProviderPlaylistMutationSupport MutationSupport { get; } = new(true, false);
 
     public Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetUserPlaylistsAsync(
         ProviderExecutionContext context, ProviderUserPlaylistsRequest request) => ExecuteAsync(context, async (credential, ct) =>

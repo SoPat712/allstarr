@@ -114,6 +114,8 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
         var adapter = new AppleMusicKitPlaylistCapabilityAdapter(
             new HttpClient(handler),
             new SecretAccessor(new("developer", "user")));
+        Assert.True(adapter.MutationSupport.CanCreate);
+        Assert.False(adapter.MutationSupport.CanReplaceExisting);
         var tracks = new[]
         {
             new ProviderExternalResourceId("apple-musickit", ProviderResourceKind.Track, "i.song-1"),

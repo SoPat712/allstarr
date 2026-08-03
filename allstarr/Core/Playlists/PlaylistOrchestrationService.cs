@@ -1435,9 +1435,11 @@ public static class PlaylistOrchestrationRegistration
         services.AddSingleton<allstarr.Core.Protocols.Subsonic.SubsonicVirtualPlaylistProtocolAdapter>();
         services.AddSingleton<IBackendPlaylistTargetResolver, BackendPlaylistTargetResolver>();
         services.AddSingleton<PlaylistOrchestrationService>();
+        services.AddSingleton<ProviderPlaylistUpdateService>();
         services.AddSingleton<DurablePlaylistProjectionReader>();
         services.AddSingleton<IPlaylistOrchestrationService>(provider => provider.GetRequiredService<PlaylistOrchestrationService>());
         services.AddSingleton<IDurableJobHandler, PlaylistMaterializationJobHandler>();
+        services.AddSingleton<IDurableJobHandler, ProviderPlaylistUpdateJobHandler>();
         return services;
     }
 }

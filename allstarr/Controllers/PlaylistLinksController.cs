@@ -29,6 +29,7 @@ public sealed class PlaylistLinksController(
     ITrackMatchRepository matches,
     PlaylistOrchestrationService orchestration,
     DurableJobQueue jobs,
+    ProviderPlaylistUpdateService providerUpdates,
     EncryptedSecretStore secretStore,
     IProviderRegistry providerRegistry,
     IProviderRouter providerRouter,
@@ -695,6 +696,113 @@ public sealed class PlaylistLinksController(
         });
     }
 
+    [HttpGet("{id:guid}/source-update/preview")]
+    public async Task<IActionResult> PreviewSourceUpdate(Guid id, CancellationToken cancellationToken)
+    {
+        return await Execute(async session =>
+        {
+            if (!session.IsAdministrator)
+                return StatusCode(StatusCodes.Status403Forbidden, new { error = "Only an administrator can update a source playlist." });
+            var link = await LoadScopedLink(session, id, cancellationToken);
+            if (session.AllstarrUserId != link.OwnerUserId)
+                return StatusCode(StatusCodes.Status403Forbidden, new { error = "Only the playlist owner can update its source playlist." });
+            var execution = await CreateExecutionAsync(session, link.LibraryScopeId, cancellationToken);
+            var preview = await providerUpdates.PreviewAsync(
+                execution.RequireActor(),
+                link.Id,
+                link.LibraryScopeId,
+                HttpContext.TraceIdentifier,
+                cancellationToken);
+            const int visibleLimit = 500;
+            return Ok(new
+            {
+                providerId = preview.ProviderId,
+                providerName = preview.ProviderName,
+                sourcePlaylistName = preview.SourcePlaylistName,
+                backendPlaylistName = preview.BackendPlaylistName,
+                backendProtocol = preview.BackendProtocol,
+                sourceVersion = preview.SourceVersion,
+                expectedRevision = preview.LinkRevision,
+                confirmationId = preview.ConfirmationId,
+                currentCount = preview.CurrentCount,
+                includedCount = preview.IncludedCount,
+                skippedCount = preview.Skipped.Count,
+                addedCount = preview.AddedCount,
+                removedCount = preview.RemovedCount,
+                movedCount = preview.MovedCount,
+                duplicateCount = preview.DuplicateCount,
+                canApply = preview.CanApply,
+                message = preview.Message,
+                changes = preview.Changes.Take(visibleLimit).Select(item => new
+                {
+                    item.Kind,
+                    fromPosition = item.FromPosition + 1,
+                    toPosition = item.ToPosition + 1,
+                    item.Title,
+                    item.Artist
+                }),
+                skipped = preview.Skipped.Take(visibleLimit).Select(item => new
+                {
+                    position = item.Position + 1,
+                    item.Title,
+                    item.Artist,
+                    item.Reason
+                }),
+                unshownChangeCount = Math.Max(0, preview.Changes.Count - visibleLimit),
+                unshownSkippedCount = Math.Max(0, preview.Skipped.Count - visibleLimit)
+            });
+        });
+    }
+
+    [HttpPost("{id:guid}/source-update/apply")]
+    public async Task<IActionResult> ApplySourceUpdate(
+        Guid id,
+        [FromBody] ApplyProviderPlaylistUpdateRequest? request,
+        CancellationToken cancellationToken)
+    {
+        return await Execute(async session =>
+        {
+            if (!session.IsAdministrator)
+                return StatusCode(StatusCodes.Status403Forbidden, new { error = "Only an administrator can update a source playlist." });
+            if (request == null || request.ExpectedRevision < 0 ||
+                request.ConfirmationId is not { Length: 64 } ||
+                request.ConfirmationId.Any(character => character is not (>= '0' and <= '9' or >= 'a' and <= 'f')))
+                return BadRequest(new { error = "Review the source update again before applying it." });
+            var link = await LoadScopedLink(session, id, cancellationToken);
+            if (session.AllstarrUserId != link.OwnerUserId)
+                return StatusCode(StatusCodes.Status403Forbidden, new { error = "Only the playlist owner can update its source playlist." });
+            if (link.Revision != request.ExpectedRevision)
+                return Conflict(new { error = "The playlist settings changed. Preview the source update again." });
+            var execution = await CreateExecutionAsync(session, link.LibraryScopeId, cancellationToken);
+            var preview = await providerUpdates.PreviewAsync(
+                execution.RequireActor(),
+                link.Id,
+                link.LibraryScopeId,
+                HttpContext.TraceIdentifier,
+                cancellationToken);
+            if (!preview.CanApply)
+                return Conflict(new { error = preview.Message });
+            if (!preview.ConfirmationId.Equals(request.ConfirmationId, StringComparison.Ordinal))
+                return Conflict(new { error = "One of the playlists changed. Review the changes again before updating the source playlist." });
+            var queued = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<ProviderPlaylistUpdateJobPayload>(
+                "playlist.provider-source-update",
+                $"provider-source-update:{link.Id:N}:{preview.ConfirmationId}",
+                new ProviderPlaylistUpdateJobPayload(
+                    link.Id,
+                    link.Revision,
+                    preview.ConfirmationId,
+                    preview.TargetFingerprint,
+                    preview.DesiredFingerprint),
+                link.TenantId,
+                link.OwnerUserId,
+                ProviderAccountId: link.ProviderAccountId,
+                LibraryScopeId: link.LibraryScopeId,
+                Capability: "playlist",
+                CorrelationId: HttpContext.TraceIdentifier), cancellationToken);
+            return Accepted(new { jobId = queued.JobId, created = queued.Created });
+        });
+    }
+
     [HttpPost("matches/{externalSnapshotId:guid}/override")]
     public async Task<IActionResult> SetOverride(Guid externalSnapshotId, [FromBody] SetMatchOverrideRequest request, CancellationToken cancellationToken)
     {
@@ -826,6 +934,20 @@ public sealed class PlaylistLinksController(
         catch (KeyNotFoundException) { return NotFound(); }
         catch (UnauthorizedAccessException) { return StatusCode(403, new { error = "The resource is outside the authenticated scope" }); }
         catch (DbUpdateConcurrencyException) { return Conflict(new { error = "The resource changed before this update" }); }
+        catch (ProviderPlaylistUpdateException exception)
+        {
+            var status = exception.Forbidden
+                ? StatusCodes.Status403Forbidden
+                : exception.Retryable
+                    ? StatusCodes.Status503ServiceUnavailable
+                    : StatusCodes.Status409Conflict;
+            return StatusCode(status, new
+            {
+                error = exception.Message,
+                code = exception.Code,
+                retryAfterSeconds = exception.RetryAfter?.TotalSeconds
+            });
+        }
         catch (ArgumentException exception) { return BadRequest(new { error = exception.Message }); }
     }
 
@@ -1029,7 +1151,7 @@ public sealed class PlaylistLinksController(
     private static string EncodeOffsetCursor(int offset) =>
         Convert.ToBase64String(Encoding.UTF8.GetBytes(offset.ToString(System.Globalization.CultureInfo.InvariantCulture)));
     private static object ToDto(PlaylistLinkRecord value) => new { id = value.Id, enabled = value.Enabled, providerAccountId = value.ProviderAccountId, sourceProviderId = value.SourceProviderId, sourcePlaylistId = value.SourcePlaylistId, libraryScopeId = value.LibraryScopeId, targetProtocol = value.TargetProtocol, targetBackendInstanceId = value.TargetBackendInstanceId, mode = value.Mode.ToString().ToLowerInvariant(), projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(), materializationMode = value.MaterializationMode.ToString().ToLowerInvariant(), scheduleId = value.ScheduleId, targetPlaylistId = value.TargetPlaylistId, targetCredentialReferenceId = value.TargetCredentialReferenceId, mirrorStaleEntries = value.MirrorStaleEntries, preserveManualEntries = value.PreserveManualEntries, syncName = value.SyncName, syncDescription = value.SyncDescription, syncArtwork = value.SyncArtwork, ruleVersion = value.RuleVersion, policyVersion = value.PolicyVersion, revision = value.Revision, virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id) };
-    private static object ToListDto(PlaylistLinkRecord value, DurablePlaylistProjection? projection) => new
+    private object ToListDto(PlaylistLinkRecord value, DurablePlaylistProjection? projection) => new
     {
         id = value.Id,
         enabled = value.Enabled,
@@ -1039,6 +1161,8 @@ public sealed class PlaylistLinksController(
             $"/api/admin/playlist-sources/{value.ProviderAccountId}/playlists/{Uri.EscapeDataString(value.SourcePlaylistId)}/artwork",
         providerAccountId = value.ProviderAccountId,
         sourceProviderId = value.SourceProviderId,
+        sourcePlaylistId = value.SourcePlaylistId,
+        sourceUpdateAvailable = value.TargetPlaylistId != null && providerUpdates.CanReplaceSource(value.SourceProviderId),
         libraryScopeId = value.LibraryScopeId,
         targetProtocol = value.TargetProtocol,
         targetBackendInstanceId = value.TargetBackendInstanceId,
@@ -1308,6 +1432,7 @@ public sealed record UpdatePlaylistLinkRequest(long ExpectedRevision, string Mod
 public sealed record DeletePlaylistLinkRequest(long ExpectedRevision);
 public sealed record SetPlaylistLinkStateRequest(long ExpectedRevision, bool Enabled);
 public sealed record RunPlaylistLinkRequest(long? Generation = null, Guid? SnapshotId = null);
+public sealed record ApplyProviderPlaylistUpdateRequest(long ExpectedRevision, string ConfirmationId);
 public sealed record SetMatchOverrideRequest(string Decision, Guid? LibraryTrackId, string Reason);
 public sealed record ClearMatchOverrideRequest(long ExpectedRevision);
 public sealed record ScheduleRequest(string CronExpression, string TimeZoneId, string OverlapPolicy,

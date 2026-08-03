@@ -10,6 +10,7 @@
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import OperationConsole from "$lib/components/OperationConsole.svelte";
   import PlaylistSettingsDialog from "$lib/components/PlaylistSettingsDialog.svelte";
+  import PlaylistSourceUpdateDialog from "$lib/components/PlaylistSourceUpdateDialog.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
@@ -102,6 +103,7 @@
   let scheduleError = $state("");
   let viewMode = $state<"resolved" | "source" | "target">("resolved");
   let settingsOpen = $state(false);
+  let sourceUpdateOpen = $state(false);
 
   const visiblePlaylists = $derived(filterPlaylists(playlists, query, stateFilter, sort));
   const pageCount = $derived(Math.max(1, Math.ceil(visiblePlaylists.length / 20)));
@@ -413,6 +415,12 @@
     await refresh();
   }
 
+  async function sourceUpdateQueued(jobId: string, message: string) {
+    operationJobId = jobId;
+    feedback = message;
+    await refresh();
+  }
+
   async function openTrackMatch(externalSnapshotId: string, returnFocus?: HTMLElement) {
     if (matchLoading) return;
     if (returnFocus) matchReturnFocus = returnFocus;
@@ -646,6 +654,11 @@
                 <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("sync")}>Sync</DropdownMenu.Item>
                 <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("rematch")}>Rematch</DropdownMenu.Item>
                 <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void refreshSources([selected.id])}>Refresh source</DropdownMenu.Item>
+                {#if selected.sourceUpdateAvailable}
+                  <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => sourceUpdateOpen = true}>
+                    Preview changes to {providerName(selected.sourceProviderId)}
+                  </DropdownMenu.Item>
+                {/if}
                 <DropdownMenu.Separator />
                 <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => settingsOpen = true}>Edit settings</DropdownMenu.Item>
                 <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run("toggle")}>{selected.enabled ? "Pause" : "Resume"}</DropdownMenu.Item>
@@ -942,6 +955,14 @@
     editSchedule();
     scheduleEditorOpen = true;
   }}
+/>
+
+<PlaylistSourceUpdateDialog
+  bind:open={sourceUpdateOpen}
+  playlist={selected ?? null}
+  providerName={providerName(selected?.sourceProviderId)}
+  targetName={providerName(selected?.targetProtocol)}
+  onQueued={sourceUpdateQueued}
 />
 
 <AddPlaylistDialog bind:open={addOpen} {providers} onSaved={playlistAdded} />

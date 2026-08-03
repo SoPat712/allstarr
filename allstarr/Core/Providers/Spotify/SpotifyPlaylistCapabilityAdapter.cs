@@ -71,6 +71,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
 
     public string ProviderId => StableProviderId;
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Playlist;
+    public ProviderPlaylistMutationSupport MutationSupport { get; } = new(true, true);
 
     public Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetUserPlaylistsAsync(
         ProviderExecutionContext context,

@@ -279,6 +279,8 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         var adapter = new SpotifyPlaylistCapabilityAdapter(
             new HttpClient(handler),
             new FakeSecretAccessor("cookie"));
+        Assert.True(adapter.MutationSupport.CanCreate);
+        Assert.True(adapter.MutationSupport.CanReplaceExisting);
         var trackIds = Enumerable.Range(0, 102)
             .Select(index => new ProviderExternalResourceId(
                 "spotify",
