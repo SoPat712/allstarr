@@ -14,6 +14,9 @@ using allstarr.Core.Protocols.Jellyfin;
 using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
 using allstarr.Core.Storage;
+using allstarr.Core.Intelligence;
+using allstarr.Core.Identity;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.WebUtilities;
@@ -1341,6 +1344,216 @@ public sealed class ProtocolRouteFixtureTests
                 .Select(item => item.GetProperty("Id").GetString()!).Order().ToArray());
         metadata.VerifyAll();
         interaction.VerifyAll();
+    }
+
+    [Fact]
+    public async Task JellyfinLocalInstantMix_UsesSelectedAudioMuseAndPreservesNativeItemOrder()
+    {
+        var audioMuse = new Mock<IAudioMuseRecommendationClient>(MockBehavior.Strict);
+        audioMuse.SetupGet(client => client.IsAvailable).Returns(true);
+        audioMuse.Setup(client => client.FindSimilarAsync(
+                It.Is<IntelligenceScope>(scope => scope.Protocol == "jellyfin" && scope.LibraryScopeId == "music"),
+                It.Is<IReadOnlyList<string>>(ids => ids.SequenceEqual(new[] { "seed" })),
+                2,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                SonicTrack("mix-2", .9, "Second"),
+                SonicTrack("mix-1", .8, "First")
+            ]);
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request =>
+            {
+                if (request.RequestUri!.AbsolutePath == "/Users/Me")
+                    return Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}""");
+                if (request.RequestUri.AbsolutePath == "/Items" &&
+                    QueryHelpers.ParseQuery(request.RequestUri.Query)["Ids"] == "mix-2,mix-1")
+                    return Json(StatusCodes.Status200OK,
+                        """{"Items":[{"Id":"mix-1","Name":"First","RunTimeTicks":100},{"Id":"mix-2","Name":"Second","RunTimeTicks":200}]}""");
+                throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}");
+            },
+            SonicServices(audioMuse.Object));
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/Songs/seed/InstantMix?Limit=2&api_key=fixture-key");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var items = body.RootElement.GetProperty("Items");
+        Assert.Equal(["mix-2", "mix-1"], items.EnumerateArray()
+            .Select(item => item.GetProperty("Id").GetString()!).ToArray());
+        Assert.Equal(200, items[0].GetProperty("RunTimeTicks").GetInt64());
+        audioMuse.VerifyAll();
+    }
+
+    [Fact]
+    public async Task JellyfinLocalInstantMix_StaysNativeWhenAudioMuseIsNotSelected()
+    {
+        var audioMuse = new Mock<IAudioMuseRecommendationClient>(MockBehavior.Strict);
+        audioMuse.SetupGet(client => client.IsAvailable).Returns(true);
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request => request.RequestUri!.AbsolutePath switch
+            {
+                "/Users/Me" => Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}"""),
+                "/Songs/seed/InstantMix" => Json(StatusCodes.Status200OK,
+                    """{"Items":[{"Id":"native-1","Name":"Native mix"}],"TotalRecordCount":1}"""),
+                _ => throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}")
+            },
+            SonicServices(audioMuse.Object, selected: false));
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/Songs/seed/InstantMix?Limit=2&api_key=fixture-key");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("native-1", body.RootElement.GetProperty("Items")[0].GetProperty("Id").GetString());
+        audioMuse.Verify(client => client.FindSimilarAsync(
+            It.IsAny<IntelligenceScope>(),
+            It.IsAny<IReadOnlyList<string>>(),
+            It.IsAny<int>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task OpenSubsonicSonicSimilarTracks_PreserveNativeJsonAndScope()
+    {
+        var audioMuse = new Mock<IAudioMuseRecommendationClient>(MockBehavior.Strict);
+        audioMuse.SetupGet(client => client.IsAvailable).Returns(true);
+        audioMuse.Setup(client => client.FindSimilarAsync(
+                It.Is<IntelligenceScope>(scope => scope.Protocol == "subsonic" && scope.LibraryScopeId == "music"),
+                It.Is<IReadOnlyList<string>>(ids => ids.SequenceEqual(new[] { "seed" })),
+                2,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                SonicTrack("song-2", .9, "Second"),
+                SonicTrack("song-1", .8, "First")
+            ]);
+        using var factory = new ProtocolFactory(
+            "Subsonic",
+            request => SubsonicSonicBackend(request),
+            SonicServices(audioMuse.Object));
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/rest/getSonicSimilarTracks.view?u=fixture&p=fixture-password&v=1.16.1&c=fixture&f=json&id=seed&count=2");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var matches = body.RootElement.GetProperty("subsonic-response").GetProperty("sonicMatch");
+        Assert.Equal(["song-2", "song-1"], matches.EnumerateArray()
+            .Select(item => item.GetProperty("entry").GetProperty("id").GetString()!).ToArray());
+        Assert.Equal(202, matches[0].GetProperty("entry").GetProperty("duration").GetInt32());
+        Assert.Equal(.9, matches[0].GetProperty("similarity").GetDouble(), 5);
+        audioMuse.VerifyAll();
+    }
+
+    [Fact]
+    public async Task OpenSubsonicSonicPath_PreservesNativeXmlEndpointOrder()
+    {
+        var audioMuse = new Mock<IAudioMuseRecommendationClient>(MockBehavior.Strict);
+        audioMuse.SetupGet(client => client.IsAvailable).Returns(true);
+        audioMuse.Setup(client => client.FindPathAsync(
+                It.Is<IntelligenceScope>(scope => scope.Protocol == "subsonic" && scope.LibraryScopeId == "music"),
+                "start", "end", 3, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AudioMusePathResult([
+                SonicTrack("start", .7, "Start"),
+                SonicTrack("bridge", .6, "Bridge"),
+                SonicTrack("end", .5, "End")
+            ], 1.2));
+        using var factory = new ProtocolFactory(
+            "Subsonic",
+            request => SubsonicSonicBackend(request),
+            SonicServices(audioMuse.Object));
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/rest/findSonicPath.view?u=fixture&p=fixture-password&v=1.16.1&c=fixture&startSongId=start&endSongId=end&count=3");
+        var document = XDocument.Parse(await response.Content.ReadAsStringAsync());
+        XNamespace ns = "http://subsonic.org/restapi";
+        var matches = document.Root!.Elements(ns + "sonicMatch").ToArray();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(["start", "bridge", "end"], matches
+            .Select(item => item.Element(ns + "entry")!.Attribute("id")!.Value).ToArray());
+        Assert.Equal("1", matches[0].Attribute("similarity")!.Value);
+        Assert.All(matches, item => Assert.NotNull(item.Element(ns + "entry")!.Attribute("duration")));
+        audioMuse.VerifyAll();
+    }
+
+    [Fact]
+    public async Task OpenSubsonicSonicPath_RejectsEndpointsFromDifferentLibraries()
+    {
+        var audioMuse = new Mock<IAudioMuseRecommendationClient>(MockBehavior.Strict);
+        audioMuse.SetupGet(client => client.IsAvailable).Returns(true);
+        using var factory = new ProtocolFactory(
+            "Subsonic",
+            request => request.RequestUri!.AbsolutePath == "/rest/ping.view"
+                ? Json(StatusCodes.Status200OK,
+                    """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""")
+                : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
+            SonicServices(audioMuse.Object, otherLibraryItem: "end"));
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/rest/findSonicPath.view?u=fixture&p=fixture-password&v=1.16.1&c=fixture&f=json&startSongId=start&endSongId=end&count=3");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(70, body.RootElement.GetProperty("subsonic-response")
+            .GetProperty("error").GetProperty("code").GetInt32());
+        audioMuse.Verify(client => client.FindPathAsync(
+            It.IsAny<IntelligenceScope>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<int>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task OpenSubsonicExtensionDiscovery_IsPublicAndMergesSonicCapability()
+    {
+        var audioMuse = new Mock<IAudioMuseRecommendationClient>(MockBehavior.Strict);
+        audioMuse.SetupGet(client => client.IsAvailable).Returns(true);
+        using var factory = new ProtocolFactory(
+            "Subsonic",
+            request => request.RequestUri!.AbsolutePath == "/rest/getOpenSubsonicExtensions.view"
+                ? Json(StatusCodes.Status200OK,
+                    """{"subsonic-response":{"status":"ok","version":"1.16.1","openSubsonicExtensions":[{"name":"songLyrics","versions":[1]}]}}""")
+                : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
+            SonicServices(audioMuse.Object));
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/rest/getOpenSubsonicExtensions.view?f=json");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(["songLyrics", "sonicSimilarity"], body.RootElement
+            .GetProperty("subsonic-response").GetProperty("openSubsonicExtensions")
+            .EnumerateArray().Select(item => item.GetProperty("name").GetString()!).ToArray());
+        audioMuse.VerifyAll();
+    }
+
+    [Fact]
+    public async Task OpenSubsonicExtensionDiscovery_AdvertisesSonicWhenBackendDiscoveryIsDown()
+    {
+        var audioMuse = new Mock<IAudioMuseRecommendationClient>(MockBehavior.Strict);
+        audioMuse.SetupGet(client => client.IsAvailable).Returns(true);
+        using var factory = new ProtocolFactory(
+            "Subsonic",
+            _ => throw new HttpRequestException("Backend discovery unavailable"),
+            SonicServices(audioMuse.Object));
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/rest/getOpenSubsonicExtensions.view?f=json");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("sonicSimilarity", body.RootElement
+            .GetProperty("subsonic-response").GetProperty("openSubsonicExtensions")[0]
+            .GetProperty("name").GetString());
+        audioMuse.VerifyAll();
     }
 
     [Theory]
@@ -3106,6 +3319,105 @@ public sealed class ProtocolRouteFixtureTests
             StatusCodes.Status200OK,
             $$"""{"Items":[{{item}}],"TotalRecordCount":1,"StartIndex":0}""");
 
+    private static RecommendationSourceItem SonicTrack(string id, double score, string title) => new(
+        id,
+        score,
+        [new RecommendationSignal("sonic", score, "Similar sound")],
+        new RecommendationTrackIdentity(Title: title, Artist: "Fixture Artist", BackendItemId: id));
+
+    private static Action<IServiceCollection> SonicServices(
+        IAudioMuseRecommendationClient audioMuse,
+        bool selected = true,
+        string? otherLibraryItem = null)
+    {
+        var scopes = new Mock<IProtocolLibraryScopeResolver>(MockBehavior.Strict);
+        scopes.Setup(service => service.ResolveAsync(
+                It.IsAny<ProtocolExecutionContext>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProtocolExecutionContext context, string itemId, CancellationToken _) =>
+                context.WithLibraryScope(itemId == otherLibraryItem ? "other" : "music"));
+        var policies = new Mock<IIntelligencePolicyService>(MockBehavior.Strict);
+        policies.Setup(service => service.GetAsync(
+                It.IsAny<IntelligenceScope>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IntelligencePolicyRecord
+            {
+                Enabled = true,
+                EnabledProvidersJson = selected ? "[\"audiomuse-ai\"]" : "[]"
+            });
+        return services =>
+        {
+            services.AddSingleton<IStartupFilter, SonicPrincipalStartupFilter>();
+            services.RemoveAll<IAudioMuseRecommendationClient>();
+            services.AddSingleton(audioMuse);
+            services.RemoveAll<IProtocolLibraryScopeResolver>();
+            services.AddSingleton(scopes.Object);
+            services.RemoveAll<IIntelligencePolicyService>();
+            services.AddSingleton(policies.Object);
+        };
+    }
+
+    private sealed class SonicPrincipalStartupFilter : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use(async (context, continuePipeline) =>
+            {
+                var subsonic = context.Request.Path.StartsWithSegments("/rest");
+                context.Items[BackendIdentityResolver.HttpContextPrincipalItemKey] = new AllstarrPrincipal(
+                    Guid.Parse("018f1f6e-7db7-7ab0-8b32-f26f12ff6d6a"),
+                    Guid.Parse("018f1f6e-8e9c-77f5-9a79-3d8a494d60cd"),
+                    subsonic ? "subsonic" : "jellyfin",
+                    "primary",
+                    subsonic ? "fixture" : "user-1",
+                    "Fixture User",
+                    false);
+                await continuePipeline();
+            });
+            next(app);
+        };
+    }
+
+    private static HttpResponseMessage SubsonicSonicBackend(HttpRequestMessage request)
+    {
+        if (request.RequestUri!.AbsolutePath == "/rest/ping.view")
+            return Json(StatusCodes.Status200OK,
+                """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""");
+        if (request.RequestUri.AbsolutePath != "/rest/getSong.view")
+            throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}");
+
+        var query = QueryHelpers.ParseQuery(request.RequestUri.Query);
+        var id = query["id"].ToString();
+        var duration = id switch { "song-2" => 202, "song-1" => 101, "bridge" => 150, _ => 100 };
+        if (query["f"] == "json")
+            return Json(StatusCodes.Status200OK,
+                JsonSerializer.Serialize(new Dictionary<string, object>
+                {
+                    ["subsonic-response"] = new
+                    {
+                        status = "ok",
+                        version = "1.16.1",
+                        song = new { id, title = id, artist = "Fixture Artist", isDir = false, type = "music", duration }
+                    }
+                }));
+
+        XNamespace ns = "http://subsonic.org/restapi";
+        var xml = new XDocument(new XElement(ns + "subsonic-response",
+            new XAttribute("status", "ok"),
+            new XAttribute("version", "1.16.1"),
+            new XElement(ns + "song",
+                new XAttribute("id", id),
+                new XAttribute("title", id),
+                new XAttribute("artist", "Fixture Artist"),
+                new XAttribute("isDir", "false"),
+                new XAttribute("type", "music"),
+                new XAttribute("duration", duration))));
+        return new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(xml.ToString(), Encoding.UTF8, "application/xml")
+        };
+    }
+
     private static JsonDocument ReadFixture(string fileName)
     {
         var path = Path.Combine(AppContext.BaseDirectory, "Fixtures", "Protocols", fileName);
@@ -3162,6 +3474,12 @@ public sealed class ProtocolRouteFixtureTests
                 services.AddSingleton<IHttpClientFactory>(
                     new StubHttpClientFactory(new StubHttpMessageHandler(_responder)));
                 _configureServices?.Invoke(services);
+                if (!services.Any(service => service.ServiceType == typeof(IProtocolProviderGateway)))
+                {
+                    services.RemoveAll<IProtocolLyricsResolver>();
+                    services.AddSingleton(
+                        new Mock<IProtocolLyricsResolver>(MockBehavior.Strict).Object);
+                }
             });
         }
 

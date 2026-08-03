@@ -45,7 +45,7 @@ public sealed class SubsonicAuthFilter : IAsyncResourceFilter
     public async Task OnResourceExecutionAsync(ResourceExecutingContext context, ResourceExecutionDelegate next)
     {
         var request = context.HttpContext.Request;
-        if (IsBackendValidatedPing(request))
+        if (IsBackendValidatedPing(request) || IsPublicExtensionDiscovery(request))
         {
             await next();
             return;
@@ -158,6 +158,13 @@ public sealed class SubsonicAuthFilter : IAsyncResourceFilter
         var path = request.Path.Value?.TrimEnd('/') ?? string.Empty;
         return path.Equals("/rest/ping", StringComparison.OrdinalIgnoreCase) ||
                path.Equals("/rest/ping.view", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsPublicExtensionDiscovery(HttpRequest request)
+    {
+        var path = request.Path.Value?.TrimEnd('/') ?? string.Empty;
+        return path.Equals("/rest/getOpenSubsonicExtensions", StringComparison.OrdinalIgnoreCase) ||
+               path.Equals("/rest/getOpenSubsonicExtensions.view", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool TryResolveMechanism(

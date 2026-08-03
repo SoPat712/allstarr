@@ -18,6 +18,7 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Favorites;
 using allstarr.Core.Playback;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Intelligence;
 
 namespace allstarr.Controllers;
 
@@ -26,7 +27,7 @@ namespace allstarr.Controllers;
 [ServiceFilter(typeof(SubsonicAuthFilter), Order = int.MinValue)]
 [ServiceFilter(typeof(ProtocolExecutionContextFilter), Order = int.MinValue + 1)]
 [ServiceFilter(typeof(SubsonicExceptionFilter))]
-public class SubsonicController : ControllerBase
+public partial class SubsonicController : ControllerBase
 {
     private const int MaximumArtworkBytes = 10 * 1024 * 1024;
 
@@ -50,6 +51,9 @@ public class SubsonicController : ControllerBase
     private readonly IPlaybackSignalPipeline? _playbackSignals;
     private readonly IProtocolProviderGateway? _providerGateway;
     private readonly ProtocolStreamingResponseAdapter? _streamingResponseAdapter;
+    private readonly IAudioMuseRecommendationClient? _audioMuse;
+    private readonly IProtocolLibraryScopeResolver? _libraryScopes;
+    private readonly IIntelligencePolicyService? _intelligencePolicies;
 
     public SubsonicController(
         IOptions<SubsonicSettings> subsonicSettings,
@@ -71,7 +75,10 @@ public class SubsonicController : ControllerBase
         IFavoriteActionPipeline? favoriteActions = null,
         IPlaybackSignalPipeline? playbackSignals = null,
         IProtocolProviderGateway? providerGateway = null,
-        ProtocolStreamingResponseAdapter? streamingResponseAdapter = null)
+        ProtocolStreamingResponseAdapter? streamingResponseAdapter = null,
+        IAudioMuseRecommendationClient? audioMuse = null,
+        IProtocolLibraryScopeResolver? libraryScopes = null,
+        IIntelligencePolicyService? intelligencePolicies = null)
     {
         _subsonicSettings = subsonicSettings.Value;
         _metadataService = metadataService;
@@ -93,6 +100,9 @@ public class SubsonicController : ControllerBase
         _playbackSignals = playbackSignals;
         _providerGateway = providerGateway;
         _streamingResponseAdapter = streamingResponseAdapter;
+        _audioMuse = audioMuse;
+        _libraryScopes = libraryScopes;
+        _intelligencePolicies = intelligencePolicies;
 
         if (string.IsNullOrWhiteSpace(_subsonicSettings.Url))
         {

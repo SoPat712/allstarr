@@ -124,6 +124,16 @@ public sealed class SubsonicRequestParameters : IReadOnlyDictionary<string, stri
         return new SubsonicRequestParameters(Method, ContentType, BuildBody(replaced), replaced);
     }
 
+    public SubsonicRequestParameters SetValue(string name, string value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(value);
+        if (ContainsKey(name)) return ReplaceValue(name, value);
+        var updated = _parameters.Append(new SubsonicParameter(
+            name, value, SubsonicParameterSource.Query)).ToList();
+        return new SubsonicRequestParameters(Method, ContentType, BuildBody(updated), updated);
+    }
+
     public static SubsonicRequestParameters FromDictionary(
         IReadOnlyDictionary<string, string> parameters,
         string method = "GET")

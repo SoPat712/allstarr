@@ -22,6 +22,7 @@ using allstarr.Core.Protocols.Jellyfin;
 using allstarr.Core.Protocols;
 using allstarr.Core.Favorites;
 using allstarr.Core.Playback;
+using allstarr.Core.Intelligence;
 using SkiaSharp;
 
 namespace allstarr.Controllers;
@@ -67,6 +68,9 @@ public partial class JellyfinController : ControllerBase
     private readonly IFavoriteActionPipeline? _favoriteActions;
     private readonly IPlaybackSignalPipeline? _playbackSignals;
     private readonly IProtocolProviderGateway? _providerGateway;
+    private readonly IAudioMuseRecommendationClient? _audioMuse;
+    private readonly IProtocolLibraryScopeResolver? _libraryScopes;
+    private readonly IIntelligencePolicyService? _intelligencePolicies;
 
     public JellyfinController(
         IOptions<JellyfinSettings> settings,
@@ -95,7 +99,10 @@ public partial class JellyfinController : ControllerBase
         ScrobblingHelper? scrobblingHelper = null,
         IFavoriteActionPipeline? favoriteActions = null,
         IPlaybackSignalPipeline? playbackSignals = null,
-        IProtocolProviderGateway? providerGateway = null)
+        IProtocolProviderGateway? providerGateway = null,
+        IAudioMuseRecommendationClient? audioMuse = null,
+        IProtocolLibraryScopeResolver? libraryScopes = null,
+        IIntelligencePolicyService? intelligencePolicies = null)
     {
         _settings = settings.Value;
         _spotifySettings = spotifySettings.Value;
@@ -124,6 +131,9 @@ public partial class JellyfinController : ControllerBase
         _favoriteActions = favoriteActions;
         _playbackSignals = playbackSignals;
         _providerGateway = providerGateway;
+        _audioMuse = audioMuse;
+        _libraryScopes = libraryScopes;
+        _intelligencePolicies = intelligencePolicies;
 
         if (string.IsNullOrWhiteSpace(_settings.Url))
         {
@@ -1355,6 +1365,9 @@ public partial class JellyfinController : ControllerBase
                 Request.Path.Value!.TrimStart('/'),
                 itemId);
         }
+
+        var sonicMix = await TryGetSonicInstantMixAsync(itemId, limit, fields);
+        if (sonicMix != null) return sonicMix;
 
         var (isExternal, provider, resourceType, externalId) =
             _localLibraryService.ParseExternalId(itemId);

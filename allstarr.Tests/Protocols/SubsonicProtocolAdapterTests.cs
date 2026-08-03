@@ -123,6 +123,28 @@ public sealed class SubsonicProtocolAdapterTests
     }
 
     [Fact]
+    public void RequestParameters_SetValuePreservesCredentialSourcesAndAddsNewQueryValue()
+    {
+        var parameters = new SubsonicRequestParameters(
+            "POST",
+            "application/x-www-form-urlencoded",
+            "u=fixture&p=secret",
+            [
+                new("u", "fixture", SubsonicParameterSource.Form),
+                new("p", "secret", SubsonicParameterSource.Form),
+                new("f", "xml", SubsonicParameterSource.Query)
+            ]);
+
+        var updated = parameters.SetValue("f", "json").SetValue("id", "song-1");
+
+        Assert.Equal(SubsonicParameterSource.Form, updated.Ordered.Single(item => item.Name == "u").Source);
+        Assert.Equal(SubsonicParameterSource.Form, updated.Ordered.Single(item => item.Name == "p").Source);
+        Assert.Equal(SubsonicParameterSource.Query, updated.Ordered.Single(item => item.Name == "id").Source);
+        Assert.Equal("u=fixture&p=secret", updated.RawBody);
+        Assert.Equal("json", updated["f"]);
+    }
+
+    [Fact]
     public void ControllerRecordsEachRepeatedFavoriteTrackInsteadOfACommaJoinedId()
     {
         var controller = File.ReadAllText(FindRepositoryFile(
