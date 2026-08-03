@@ -115,9 +115,12 @@ describe("playlist presentation", () => {
       "resolved", "source", "target",
     ]);
     expect(destinations.map((item) => item.label)).toEqual([
-      "Allstarr only", "Update Jellyfin", "Allstarr + Jellyfin",
+      "Show only in Allstarr",
+      "Update Road trip in Jellyfin",
+      "Show in Allstarr and update Jellyfin",
     ]);
-    expect(destinations[0].description).toContain("will not create or update");
+    expect(destinations[0].description).toContain("will not create or change");
+    expect(destinations[1].description).toContain("Allstarr will keep Road trip updated");
     expect(views.map((item) => item.label)).toEqual(["Best available", "Spotify", "Jellyfin"]);
     expect(playlistOutcomeLabel("skipped_wrong_backend_or_library", "Jellyfin playlist")).toBe(
       "Not added to Jellyfin playlist: belongs to a different library",

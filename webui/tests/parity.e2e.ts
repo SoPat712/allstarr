@@ -751,8 +751,8 @@ test("Home stays inside runtime and request budgets", async ({ page }) => {
   await mockApi(page);
   await page.goto("#/");
   await expect(page.getByLabel("Loading Home")).toBeHidden();
-  await expect(page.getByText("Managed", { exact: true })).toBeVisible();
-  await expect(page.getByText("Unmanaged", { exact: true })).toBeVisible();
+  await expect(page.getByText("Linked", { exact: true })).toBeVisible();
+  await expect(page.getByText("Not linked", { exact: true })).toBeVisible();
   await expect(page.getByText("Legacy .env import")).toHaveCount(0);
   await expect(page.locator(".provider-line strong", { hasText: "Lumen Audio" })).toBeVisible();
   await expect(page.getByText("Playlist Check", { exact: true })).toBeVisible();
@@ -902,7 +902,7 @@ test("Legacy Library links open their current shared views", async ({ page }) =>
   await mockApi(page);
   for (const route of ["#/library", "#/library/link", "#/library/injected", "#/library/external"]) {
     await page.goto(route);
-    await expect(page.getByText("Managed playlists", { exact: true })).toBeVisible();
+    await expect(page.getByText("Linked playlists", { exact: true })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Playlists" })).toHaveAttribute("aria-selected", "true");
   }
   for (const route of ["#/library/missing", "#/library/migration"]) {
@@ -1083,7 +1083,7 @@ test("Add playlist separates source, client view, destination, and sync on mobil
   await dialog.getByRole("radio", { name: /Spotify Keep every song/ }).check();
   await dialog.getByRole("button", { name: "Continue" }).click();
   await expect.poll(() => dialog.locator(".playlist-add-body").evaluate((body) => body.scrollTop)).toBe(0);
-  await dialog.getByRole("radio", { name: /Allstarr \+ Jellyfin Listeners see/ }).check();
+  await dialog.getByRole("radio", { name: /Show in Allstarr and update Jellyfin Allstarr will show/ }).check();
   await expect(dialog.getByRole("radio", { name: /Road trip/ })).toBeVisible();
   await dialog.getByRole("radio", { name: /Road trip/ }).check();
   if (process.env.ALLSTARR_SCREENSHOT_DIR) {
@@ -1156,7 +1156,7 @@ test("Playlist views and revisioned settings stay keyboard-safe", async ({ page 
   let settings = page.getByRole("dialog", { name: "Edit playlist settings" });
   await exactTarget;
   await settings.getByRole("radio", { name: /Lumen Audio Keep every song/ }).check();
-  await settings.getByRole("radio", { name: /Allstarr only Listeners see/ }).check();
+  await settings.getByRole("radio", { name: /Show only in Allstarr Allstarr will show/ }).check();
   const update = page.waitForRequest((request) =>
     request.method() === "PUT" && request.url().endsWith("/api/admin/playlist-links/playlist-link"));
   await settings.getByRole("button", { name: "Save settings" }).click();

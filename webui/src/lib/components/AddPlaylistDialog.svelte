@@ -280,10 +280,10 @@
       }
       open = false;
       await onSaved(mode === "virtual"
-        ? `Playlist linked. Listeners will see it through Allstarr; ${targetName} will not create or update a playlist.`
+        ? `Playlist linked. Allstarr will show it but will not create or change a playlist in ${targetName}.`
         : mode === "hybrid"
-          ? `Playlist linked. Listeners will see it through Allstarr, and ${targetPlaylistName} will stay updated in ${targetName}.`
-          : `Playlist linked. ${targetPlaylistName} will stay updated in ${targetName}; no separate Allstarr playlist will be shown.`);
+          ? `Playlist linked. Allstarr will show it and keep ${targetPlaylistName} updated in ${targetName}.`
+          : `Playlist linked. Allstarr will keep ${targetPlaylistName} updated in ${targetName}. It will not show a second playlist.`);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Playlist could not be linked.";
     } finally {
@@ -364,7 +364,7 @@
                   {:else}{#if !loading}<p class="credential-safety">No writable playlists found.</p>{/if}{/each}
                 </fieldset>
               {:else}
-                <p class="credential-safety">Listeners will see this playlist through Allstarr. {targetName} will not create or update a playlist.</p>
+                <p class="credential-safety">Allstarr will show this playlist but will not create or change a playlist in {targetName}.</p>
               {/if}
             {/if}
           </section>
@@ -426,10 +426,10 @@
           <section class="playlist-add-step playlist-sync-settings">
             {#if mode !== "virtual"}
               <div class="setting-field">
-                <span><strong>How {targetName} is updated</strong><small>Keep the same playlist, or replace the songs Allstarr manages.</small></span>
+                <span><strong>How {targetName} is updated</strong><small>Keep the same playlist, or replace the songs Allstarr added.</small></span>
                 <SelectField bind:value={materializationMode} label={`How ${targetName} is updated`} options={[
                   { value: "reconcile", label: "Update the existing playlist" },
-                  { value: "recreate", label: "Replace its managed songs" },
+                  { value: "recreate", label: "Replace the songs Allstarr added" },
                 ]} />
               </div>
             {/if}

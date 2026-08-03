@@ -417,7 +417,7 @@
             <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void run("media", settings.mediaProbe, "Media pipeline checked.")}>{action === "media" ? "Testing…" : "Test media pipeline"}</button>
           </article>
           <article class="panel maintenance-card">
-            <header><div><strong>Playlist pipeline</strong><small>Source access and playable materialization</small></div></header>
+            <header><div><strong>Playlist readiness</strong><small>Source access and songs available to listeners</small></div></header>
             <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void run("playlists", settings.playlistProbe, "Playlist pipeline checked.")}>{action === "playlists" ? "Testing…" : "Test playlist readiness"}</button>
           </article>
           {#if administrator}<SelectiveTransferCard />{/if}

@@ -37,7 +37,7 @@
       ["Provider catalog", home.schema()],
       ["Runtime status", home.status()],
       ["Playlist inventory", home.playlists()],
-      ["Managed playlists", playlistLinks.list()],
+      ["Linked playlists", playlistLinks.list()],
       ["Jobs", home.jobs()],
       ...(administrator
         ? [
@@ -59,7 +59,7 @@
       if (label === "Provider catalog") next.providerCatalog = (result.value as Awaited<ReturnType<typeof home.schema>>).providers;
       if (label === "Runtime status") next.status = result.value as Awaited<ReturnType<typeof home.status>>;
       if (label === "Playlist inventory") next.playlists = result.value as Awaited<ReturnType<typeof home.playlists>>;
-      if (label === "Managed playlists") next.playlistLinks = (result.value as Awaited<ReturnType<typeof playlistLinks.list>>).playlistLinks;
+      if (label === "Linked playlists") next.playlistLinks = (result.value as Awaited<ReturnType<typeof playlistLinks.list>>).playlistLinks;
       if (label === "Jobs") next.jobs = (result.value as Awaited<ReturnType<typeof home.jobs>>).jobs;
       if (label === "Recent activity") next.activity = (result.value as Awaited<ReturnType<typeof home.activity>>).items;
       if (label === "Provider health") next.providers = (result.value as Awaited<ReturnType<typeof home.providers>>).providers;
@@ -162,8 +162,8 @@
     <article class="metric-card">
       <span class="metric-icon playlists" aria-hidden="true">♫</span>
       <div class="split-metric">
-        <a href="#/library/playlists"><p>Managed</p><strong>{summary.managed}</strong></a>
-        <a href="#/library/playlists"><p>Unmanaged</p><strong>{summary.unmanaged}</strong></a>
+        <a href="#/library/playlists"><p>Linked</p><strong>{summary.managed}</strong></a>
+        <a href="#/library/playlists"><p>Not linked</p><strong>{summary.unmanaged}</strong></a>
       </div>
       <small>{summary.managed + summary.unmanaged} playlists in the library</small>
     </article>

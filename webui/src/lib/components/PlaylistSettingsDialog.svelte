@@ -208,10 +208,10 @@
 
         {#if mode !== "virtual"}
           <div class="setting-field">
-            <span><strong>How {targetName} is updated</strong><small>Keep the same playlist, or replace the songs Allstarr manages.</small></span>
+            <span><strong>How {targetName} is updated</strong><small>Keep the same playlist, or replace the songs Allstarr added.</small></span>
             <SelectField bind:value={materializationMode} label={`How ${targetName} is updated`} options={[
               { value: "reconcile", label: "Update the existing playlist" },
-              { value: "recreate", label: "Replace its managed songs" },
+              { value: "recreate", label: "Replace the songs Allstarr added" },
             ]} />
           </div>
           <div class="setting-field">

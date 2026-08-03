@@ -488,7 +488,7 @@
   <section class="panel empty-state">
     <span class="empty-orbit" aria-hidden="true">♫</span>
     <p class="eyebrow">Library playlists</p>
-    <h2>No managed playlists yet.</h2>
+    <h2>No linked playlists yet.</h2>
     <p>Add a playlist from an installed Source. Its matches, routes, and sync state will appear here.</p>
     <button class="button-primary empty-action" type="button" onclick={() => addOpen = true}>Add playlist</button>
   </section>
@@ -505,7 +505,7 @@
     <article class="panel playlist-list">
       <header class="playlist-toolbar">
         <div>
-          <p class="eyebrow">Managed playlists</p>
+          <p class="eyebrow">Linked playlists</p>
           <h2>{playlists.length} linked</h2>
         </div>
         <div class="playlist-toolbar-actions">

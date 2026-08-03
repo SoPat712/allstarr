@@ -9,9 +9,9 @@ export function playlistDestinationOptions(
   playlistName = `the selected ${targetName} playlist`,
 ) {
   return [
-    { id: "virtual", label: "Allstarr only", description: `Listeners see the playlist through Allstarr. ${targetName} will not create or update a playlist.` },
-    { id: "materialized", label: `Update ${targetName}`, description: `Keep ${playlistName} updated with the songs ${targetName} can play. No separate Allstarr playlist is shown.` },
-    { id: "hybrid", label: `Allstarr + ${targetName}`, description: `Listeners see the full playlist through Allstarr, and ${playlistName} is updated with the songs ${targetName} can play.` },
+    { id: "virtual", label: "Show only in Allstarr", description: `Allstarr will show this playlist but will not create or change a playlist in ${targetName}.` },
+    { id: "materialized", label: `Update ${playlistName} in ${targetName}`, description: `Allstarr will keep ${playlistName} updated with the songs ${targetName} can play. It will not show a second playlist in Allstarr.` },
+    { id: "hybrid", label: `Show in Allstarr and update ${targetName}`, description: `Allstarr will show the full playlist and keep ${playlistName} updated with the songs ${targetName} can play.` },
   ] as const;
 }
 
