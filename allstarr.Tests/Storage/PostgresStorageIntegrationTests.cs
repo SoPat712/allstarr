@@ -448,7 +448,6 @@ public sealed class PostgresStorageIntegrationTests
         await using var database = await PostgresTestDatabase.CreateAsync();
         await using var context = new AllstarrDbContext(database.Options);
         var migrator = context.GetService<IMigrator>();
-        await migrator.MigrateAsync();
 
         await migrator.MigrateAsync("20260710145139_InitialDurableFoundation");
 
@@ -481,22 +480,8 @@ public sealed class PostgresStorageIntegrationTests
     [Trait("Category", "Postgres")]
     public async Task NativePostgresMigrationLockAndDurableQueue_WorkAgainstSelectedDatabase()
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await PostgresTestDatabase.CreateAsync(useTemplate: false);
         var factory = new TestDbContextFactory(database.Options);
-        await using (var reset = await factory.CreateDbContextAsync())
-        {
-            await reset.Database.ExecuteSqlRawAsync(
-                "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public");
-        }
-        await using (var sanity = await factory.CreateDbContextAsync())
-        {
-            await sanity.Database.MigrateAsync();
-        }
-        await using (var reset = await factory.CreateDbContextAsync())
-        {
-            await reset.Database.ExecuteSqlRawAsync(
-                "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public");
-        }
 
         var options = new DurableStorageOptions
         {
@@ -598,12 +583,6 @@ public sealed class PostgresStorageIntegrationTests
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
         var factory = new TestDbContextFactory(database.Options);
-        await using (var reset = await factory.CreateDbContextAsync())
-        {
-            await reset.Database.ExecuteSqlRawAsync(
-                "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public");
-            await reset.Database.MigrateAsync();
-        }
 
         var now = new DateTimeOffset(2026, 7, 24, 17, 0, 0, TimeSpan.Zero);
         var clock = new FixedClock(now);

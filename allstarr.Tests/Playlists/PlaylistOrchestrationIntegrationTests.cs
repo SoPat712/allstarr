@@ -139,7 +139,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                         index,
                         $"scale-{count}-entry-{index}",
                         $"scale-{count}-source-{index}",
-                        "One"))
+                        "One") with { CanonicalRecordingId = _canonical })
                     .ToArray());
             commands.Reset();
             var allocatedBefore = GC.GetTotalAllocatedBytes();
@@ -167,7 +167,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             Assert.Equal(
                 refresh.SnapshotId,
                 (await service.RefreshAsync(Context(), _link)).SnapshotId);
-            Assert.InRange(commands.Count, 1, 16);
+            // Exact-canonical resolution adds a fixed identity lookup set; it remains constant across scale.
+            Assert.InRange(commands.Count, 1, 24);
 
             commands.Reset();
             allocatedBefore = GC.GetTotalAllocatedBytes();
