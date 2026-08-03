@@ -75,8 +75,17 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
                 HistoryCheckpoint(expiredKey, new string('f', 64)),
                 HistoryCheckpoint(recentKey, new string('1', 64)),
                 HistoryCheckpoint(otherKey, new string('2', 64)));
+            setup.ListeningSignals.AddRange(
+                HistorySignal(_scope, _clock.UtcNow.AddDays(-1)),
+                HistorySignal(_scope, _clock.UtcNow.AddDays(1)),
+                HistorySignal(otherScope, _clock.UtcNow.AddDays(1)));
+            setup.ListeningProfiles.AddRange(
+                HistoryProfile(_scope, _clock.UtcNow.AddDays(-3)),
+                HistoryProfile(_scope, _clock.UtcNow.AddDays(-1)),
+                HistoryProfile(otherScope, _clock.UtcNow.AddDays(-3)));
             await setup.SaveChangesAsync();
         }
+        await _policies.SetAsync(_scope, new(false, 2, ["play"], ["local"]));
 
         await new ListeningHistoryRetentionSweeper(_factory, _clock).SweepAsync();
 
@@ -90,6 +99,15 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         Assert.Equal("other", events[otherKey].LibraryScopeId);
         Assert.Equal([recentKey, otherKey], await db.PlaybackDeliveryCheckpoints.AsNoTracking()
             .OrderBy(item => item.OccurrenceKey).Select(item => item.OccurrenceKey!).ToArrayAsync());
+        var signals = await db.ListeningSignals.AsNoTracking().ToListAsync();
+        Assert.DoesNotContain(signals, item => item.ExpiresAt <= _clock.UtcNow);
+        Assert.Contains(signals, item => item.LibraryScopeId == "music");
+        Assert.Contains(signals, item => item.LibraryScopeId == "other");
+        var profiles = await db.ListeningProfiles.AsNoTracking().ToListAsync();
+        Assert.DoesNotContain(profiles, item => item.LibraryScopeId == "music" &&
+            item.CreatedAt == _clock.UtcNow.AddDays(-3));
+        Assert.Contains(profiles, item => item.LibraryScopeId == "music");
+        Assert.Contains(profiles, item => item.LibraryScopeId == "other");
     }
 
     [Fact]
@@ -395,6 +413,36 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         CreatedAt = _clock.UtcNow,
         UpdatedAt = _clock.UtcNow,
         ExpiresAt = _clock.UtcNow.AddDays(1)
+    };
+
+    private ListeningSignalRecord HistorySignal(IntelligenceScope scope, DateTimeOffset expiresAt) => new()
+    {
+        Id = Guid.CreateVersion7(),
+        TenantId = scope.TenantId,
+        OwnerUserId = scope.OwnerUserId,
+        Protocol = scope.Protocol,
+        BackendInstanceId = scope.BackendInstanceId,
+        LibraryScopeId = scope.LibraryScopeId,
+        SignalType = "play",
+        TrackKeyHash = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray()),
+        TrackReference = "library:11111111111111111111111111111111",
+        Value = 1,
+        ObservedAt = expiresAt.AddDays(-2),
+        ExpiresAt = expiresAt
+    };
+
+    private ListeningProfileRecord HistoryProfile(IntelligenceScope scope, DateTimeOffset createdAt) => new()
+    {
+        Id = Guid.CreateVersion7(),
+        TenantId = scope.TenantId,
+        OwnerUserId = scope.OwnerUserId,
+        Protocol = scope.Protocol,
+        BackendInstanceId = scope.BackendInstanceId,
+        LibraryScopeId = scope.LibraryScopeId,
+        ProfileJson = "{}",
+        WindowStart = createdAt.AddDays(-1),
+        WindowEnd = createdAt,
+        CreatedAt = createdAt
     };
 
     private PlaybackDeliveryCheckpointEntity HistoryCheckpoint(string occurrenceKey, string signalKey) => new()

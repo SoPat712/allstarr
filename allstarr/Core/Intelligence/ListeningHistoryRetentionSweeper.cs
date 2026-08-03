@@ -41,6 +41,16 @@ public sealed class ListeningHistoryRetentionSweeper(
                     .SetProperty(item => item.Revision, item => item.Revision + 1), cancellationToken);
 
             var expiredBefore = now.AddDays(-Math.Clamp(policy.RetentionDays, 1, 3650));
+            await db.ListeningSignals.Where(item =>
+                    item.TenantId == policy.TenantId && item.OwnerUserId == policy.OwnerUserId &&
+                    item.Protocol == policy.Protocol && item.BackendInstanceId == policy.BackendInstanceId &&
+                    item.LibraryScopeId == policy.LibraryScopeId && item.ExpiresAt <= now)
+                .ExecuteDeleteAsync(cancellationToken);
+            await db.ListeningProfiles.Where(item =>
+                    item.TenantId == policy.TenantId && item.OwnerUserId == policy.OwnerUserId &&
+                    item.Protocol == policy.Protocol && item.BackendInstanceId == policy.BackendInstanceId &&
+                    item.LibraryScopeId == policy.LibraryScopeId && item.CreatedAt < expiredBefore)
+                .ExecuteDeleteAsync(cancellationToken);
             var expired = history.Where(item =>
                 (item.ListenedAt ?? item.StartedAt ?? item.UpdatedAt) < expiredBefore);
             var occurrenceKeys = expired.Select(item => item.OccurrenceKey);
