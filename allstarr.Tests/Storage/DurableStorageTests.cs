@@ -293,29 +293,22 @@ public sealed class DurableStorageTests : IAsyncLifetime
                 UpdatedAt = now,
                 Revision = 1
             });
-        context.PlaylistLinks.Add(new PlaylistLinkRecord
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = tenantId,
-            OwnerUserId = userId,
-            ProviderAccountId = accountId,
-            ScheduleId = scheduleId,
-            Enabled = false,
-            LibraryScopeId = "music",
-            SourceProviderId = "spotify",
-            SourcePlaylistId = "source",
-            SourcePlaylistIdHash = new string('a', 64),
-            TargetProtocol = "jellyfin",
-            TargetBackendInstanceId = "primary",
-            Mode = PlaylistLinkMode.Materialized,
-            MaterializationMode = PlaylistMaterializationMode.Reconcile,
-            RuleVersion = "legacy-env-import-v1",
-            PolicyVersion = "legacy-env-import-v1",
-            CreatedAt = now,
-            UpdatedAt = now,
-            Revision = 1
-        });
         await context.SaveChangesAsync();
+        var linkId = Guid.CreateVersion7();
+        await context.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO playlist_links (
+                "Id", "TenantId", "OwnerUserId", "ProviderAccountId", "ScheduleId", "Enabled",
+                "LibraryScopeId", "SourceProviderId", "SourcePlaylistId", "SourcePlaylistIdHash",
+                "TargetProtocol", "TargetBackendInstanceId", "Mode", "MaterializationMode",
+                "MirrorStaleEntries", "PreserveManualEntries", "SyncName", "SyncDescription", "SyncArtwork",
+                "RuleVersion", "PolicyVersion", "CreatedAt", "UpdatedAt", "Revision")
+            VALUES (
+                {linkId}, {tenantId}, {userId}, {accountId}, {scheduleId}, {false},
+                {"music"}, {"spotify"}, {"source"}, {new string('a', 64)},
+                {"jellyfin"}, {"primary"}, {"Materialized"}, {"Reconcile"},
+                {false}, {true}, {true}, {true}, {true},
+                {"legacy-env-import-v1"}, {"legacy-env-import-v1"}, {now.UtcTicks}, {now.UtcTicks}, {1L})
+            """);
 
         await migrator.MigrateAsync();
         context.ChangeTracker.Clear();

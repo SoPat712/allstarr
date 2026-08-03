@@ -284,7 +284,10 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     {
         var first = new Target("lastfm", true); var second = new Target("listenbrainz", true) { FailFirst = true };
         var checkpoints = new Checkpoints(); var delivery = new ScopedPlaybackScrobbleDelivery(factory, [first, second], checkpoints);
-        await Assert.ThrowsAsync<IOException>(() => delivery.DeliverAsync(Payload(), default));
+        var failure = await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() =>
+            delivery.DeliverAsync(Payload(), default));
+        Assert.Equal("playback_scrobble_retrying", failure.Code);
+        Assert.True(failure.Retryable);
         await delivery.DeliverAsync(Payload(), default);
         Assert.Equal(1, first.Successes); Assert.Equal(1, second.Successes);
     }

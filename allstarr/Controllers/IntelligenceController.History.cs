@@ -928,10 +928,15 @@ internal sealed class ListeningHistoryExportResult(
                 item.MusicBrainzFactsJson,
                 item.MusicBrainzEnrichedAt
             });
-            if (++count % 100 == 0) await writer.FlushAsync(cancellationToken);
+            if (++count % 100 == 0)
+            {
+                await writer.FlushAsync(cancellationToken);
+                await response.BodyWriter.FlushAsync(cancellationToken);
+            }
         }
         writer.WriteEndArray();
         writer.WriteEndObject();
         await writer.FlushAsync(cancellationToken);
+        await response.BodyWriter.FlushAsync(cancellationToken);
     }
 }
