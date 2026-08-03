@@ -680,6 +680,19 @@ for (const viewport of viewports) {
       await expect(details.locator(".track-scroll")).toHaveCSS("overflow", "auto");
       await expect.poll(() => details.locator(".track-scroll").evaluate((scroll) =>
         scroll.clientHeight - scroll.querySelector("table")!.scrollHeight)).toBeLessThan(48);
+      const headerContentClearsSwitcher = () => details.evaluate((dialog) => {
+        const header = dialog.querySelector(".playlist-hero");
+        const switcher = dialog.querySelector(".playlist-view-switcher");
+        if (!header || !switcher) return false;
+        const switcherTop = switcher.getBoundingClientRect().top;
+        return Array.from(header.children).every((child) => child.getBoundingClientRect().bottom <= switcherTop + 1);
+      });
+      await expect.poll(headerContentClearsSwitcher).toBe(true);
+      if (viewport.width === 1280) {
+        await page.setViewportSize({ width: 1168, height: 497 });
+        await expect.poll(headerContentClearsSwitcher).toBe(true);
+        await page.setViewportSize(viewport);
+      }
       const screenshotDirectory = process.env.ALLSTARR_SCREENSHOT_DIR;
       const detailScreenshot = await page.screenshot({
         path: screenshotDirectory ? `${screenshotDirectory}/playlist-${viewport.width}-details.png` : undefined,

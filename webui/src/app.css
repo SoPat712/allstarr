@@ -1630,6 +1630,15 @@
     padding: 0.9rem 3.5rem 0.9rem 1rem;
   }
 
+  .playlist-detail-dialog > .playlist-hero,
+  .playlist-detail-dialog > .playlist-view-switcher,
+  .playlist-detail-dialog > .playlist-detail-coverage,
+  .playlist-detail-dialog > .playlist-meta-strip,
+  .playlist-detail-dialog > .action-feedback,
+  .playlist-detail-dialog > .track-toolbar {
+    flex: none;
+  }
+
   .hero-art {
     width: 3.5rem;
     height: 3.5rem;
