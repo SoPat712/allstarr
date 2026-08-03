@@ -77,9 +77,6 @@ public class ScrobblingAdminController : ControllerBase
                 HasApiKey = hasApiCredentials,
                 HasSessionKey = !string.IsNullOrEmpty(lastFmSessionKey),
                 Username = Secret(lastFmAccount, "username") ?? _settings.LastFm.Username,
-                UsingHardcodedCredentials = LastFmSettings.IsLegacyJellyfinPluginApiKey(lastFmApiKey),
-                RequiresOwnApiAccount = hasApiCredentials &&
-                    LastFmSettings.IsLegacyJellyfinPluginApiKey(lastFmApiKey),
                 Source = lastFmAccount != null ? "user_account" : "runtime_settings"
             },
             ListenBrainz = new
@@ -123,16 +120,6 @@ public class ScrobblingAdminController : ControllerBase
         if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
         {
             return BadRequest(new { error = "Username and password are required for the selected Last.fm provider account." });
-        }
-
-        if (LastFmSettings.IsLegacyJellyfinPluginApiKey(apiKey))
-        {
-            return BadRequest(new
-            {
-                error = "The built-in Jellyfin Last.fm API key is suspended by Last.fm. " +
-                        "Create your own application at https://www.last.fm/api/account/create, " +
-                        "save its credentials on the provider account, then authenticate again."
-            });
         }
 
         if (string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(sharedSecret))

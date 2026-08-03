@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace allstarr.Models.Settings;
 
 /// <summary>
@@ -40,17 +38,6 @@ public class ScrobblingSettings
 /// </summary>
 public class LastFmSettings
 {
-    // Legacy Jellyfin Last.fm plugin credentials (suspended by Last.fm — do not use).
-    private const string LegacyJellyfinPluginApiKeyBase64 = "Y2IzYmRjZDQxNWZjYjQwY2Q1NzJiMTM3YjJiMjU1ZjU=";
-    private const string LegacyJellyfinPluginSharedSecretBase64 = "M2EwOGY5ZmFkNmRkYzRjMzViMGRjZTAwNjJjZWNiNWU=";
-
-    public static string LegacyJellyfinPluginApiKey => DecodeBase64(LegacyJellyfinPluginApiKeyBase64);
-    public static string LegacyJellyfinPluginSharedSecret => DecodeBase64(LegacyJellyfinPluginSharedSecretBase64);
-
-    public static bool IsLegacyJellyfinPluginApiKey(string? apiKey) =>
-        !string.IsNullOrEmpty(apiKey) &&
-        string.Equals(apiKey, LegacyJellyfinPluginApiKey, StringComparison.OrdinalIgnoreCase);
-
     /// <summary>
     /// Whether Last.fm scrobbling is enabled.
     /// </summary>
@@ -84,10 +71,6 @@ public class LastFmSettings
     /// </summary>
     public string? Password { get; set; }
 
-    private static string DecodeBase64(string encoded)
-    {
-        return Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
-    }
 }
 
 /// <summary>

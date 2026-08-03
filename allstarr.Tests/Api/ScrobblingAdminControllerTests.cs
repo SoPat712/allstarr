@@ -83,21 +83,6 @@ public class ScrobblingAdminControllerTests
     private const string TestLastFmSharedSecret = "fedcba9876543210fedcba9876543210";
 
     [Fact]
-    public async Task AuthenticateLastFm_LegacyApiKey_ReturnsBadRequest()
-    {
-        var settings = CreateSettings("testuser", "password123");
-        settings.LastFm.ApiKey = LastFmSettings.LegacyJellyfinPluginApiKey;
-        settings.LastFm.SharedSecret = LastFmSettings.LegacyJellyfinPluginSharedSecret;
-
-        var controller = CreateController(
-            settings,
-            new HttpResponseMessage(HttpStatusCode.OK));
-
-        var result = await controller.AuthenticateLastFm();
-        Assert.IsType<BadRequestObjectResult>(result);
-    }
-
-    [Fact]
     public async Task AuthenticateLastFm_ManagedAccountWithoutSignedInOwner_ReturnsNotFound()
     {
         var controller = CreateController(
