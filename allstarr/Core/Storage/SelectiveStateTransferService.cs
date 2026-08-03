@@ -1244,7 +1244,7 @@ public sealed class SelectiveStateTransferService
             case "listening-history-imports":
                 {
                     var rows = await ReadJsonAsync<ListeningHistoryImportRecord>(archiveEntry, cancellationToken);
-                    foreach (var row in rows) row.ExpireWithoutArtifact();
+                    ListeningHistoryImportStateTransfer.ExpireActiveImports(rows);
                     context.ListeningHistoryImports.AddRange(rows);
                     return rows.Count;
                 }
@@ -1359,12 +1359,20 @@ public sealed class SelectiveStateTransferService
             case "jobs":
                 {
                     var rows = await ReadJsonAsync<DurableJobRecord>(archiveEntry, cancellationToken);
+                    var jobIds = context.ListeningHistoryImports.Local
+                        .Where(item => item.State == ListeningHistoryImportState.Expired)
+                        .Select(item => item.JobId).OfType<Guid>().ToHashSet();
+                    ListeningHistoryImportStateTransfer.CancelJobs(rows, jobIds, DateTimeOffset.UtcNow);
                     context.Jobs.AddRange(rows);
                     return rows.Count;
                 }
             case "job-attempts":
                 {
                     var rows = await ReadJsonAsync<JobAttemptRecord>(archiveEntry, cancellationToken);
+                    var jobIds = context.ListeningHistoryImports.Local
+                        .Where(item => item.State == ListeningHistoryImportState.Expired)
+                        .Select(item => item.JobId).OfType<Guid>().ToHashSet();
+                    ListeningHistoryImportStateTransfer.CancelAttempts(rows, jobIds, DateTimeOffset.UtcNow);
                     context.JobAttempts.AddRange(rows);
                     return rows.Count;
                 }

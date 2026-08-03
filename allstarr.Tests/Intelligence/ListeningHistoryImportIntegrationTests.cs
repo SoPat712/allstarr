@@ -1,0 +1,220 @@
+using System.Text.Json;
+using allstarr.Core.Intelligence;
+using allstarr.Core.Jobs;
+using allstarr.Core.Operations;
+using allstarr.Core.Storage;
+using allstarr.Models.Settings;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+
+namespace allstarr.Tests;
+
+public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
+{
+    private readonly string _root = Path.Combine(
+        Path.GetTempPath(), "allstarr-history-import-tests", Guid.NewGuid().ToString("N"));
+    private PostgresTestDatabase _database = null!;
+    private TestDbContextFactory _factory = null!;
+    private FakeClock _clock = null!;
+    private DurableJobQueue _jobs = null!;
+    private ListeningHistoryImporterRegistry _importers = null!;
+    private ListeningHistoryImportArtifactStore _artifacts = null!;
+    private ListeningHistoryImportOptions _importOptions = null!;
+    private IntelligenceScope _scope = null!;
+
+    public async Task InitializeAsync()
+    {
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new TestDbContextFactory(_database.Options);
+        _clock = new FakeClock(new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero));
+        _scope = new(Guid.NewGuid(), Guid.NewGuid(), "jellyfin", "fixture-server", "music");
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.Tenants.Add(new TenantRecord
+            {
+                Id = _scope.TenantId,
+                Slug = "history-import",
+                Name = "History import",
+                CreatedAt = _clock.UtcNow
+            });
+            db.Users.Add(new PlatformUserRecord
+            {
+                Id = _scope.OwnerUserId,
+                TenantId = _scope.TenantId,
+                DisplayName = "History owner",
+                Status = PlatformUserStatus.Active,
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        var jobOptions = new DurableJobOptions
+        {
+            DefaultMaxAttempts = 3,
+            LeaseSeconds = 30,
+            PollIntervalMilliseconds = 100,
+            MaxPayloadBytes = 64 * 1024
+        };
+        _jobs = new DurableJobQueue(_factory, jobOptions, new JobPayloadPolicy(jobOptions), _clock);
+        _importOptions = new() { RootPath = _root, MaximumUploadBytes = 1024 * 1024 };
+        _artifacts = new(_importOptions);
+        _importers = new([new SpotifyListeningHistoryImporter()]);
+    }
+
+    public async Task DisposeAsync()
+    {
+        await _database.DisposeAsync();
+        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+    }
+
+    [Fact]
+    public async Task ApplyCheckpointsExactScopeWithoutOutboundReplay()
+    {
+        var service = new ListeningHistoryImportService(
+            _factory, _importers, _artifacts, _importOptions, _clock, _jobs);
+        var source = JsonSerializer.SerializeToUtf8Bytes(new[]
+        {
+            Row("2026-07-01T12:00:00Z", "One", "1111111111111111111111", 180_000, "trackdone", false),
+            Row("2026-07-02T12:00:00Z", "Two", "2222222222222222222222", 10_000, "forwardbtn", true),
+            Row("2026-07-03T12:00:00Z", "One again", "1111111111111111111111", 180_000, "trackdone", false)
+        });
+        await using var stream = new MemoryStream(source);
+        var preview = await service.PreviewAsync(_scope, "history.json", stream, source.Length, CancellationToken.None);
+        var queued = await service.ApplyAsync(_scope, preview.ImportId, preview.Revision, CancellationToken.None);
+
+        Assert.NotNull(queued);
+        var claim = await _jobs.ClaimNextAsync(
+            "history-import-test", [ListeningHistoryImportJobHandler.JobTypeName], CancellationToken.None);
+        Assert.NotNull(claim);
+        var musicBrainz = new MusicBrainzListeningEnrichmentQueue(
+            _jobs,
+            Options.Create(new MusicBrainzSettings { Enabled = true }));
+        var handler = new ListeningHistoryImportJobHandler(
+            _factory, _importers, _artifacts, _importOptions, _clock, musicBrainz);
+        using var services = new ServiceCollection().BuildServiceProvider();
+        var completion = await handler.ExecuteAsync(new(claim!, services), CancellationToken.None);
+        await _jobs.CompleteAsync(claim!, completion, CancellationToken.None);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var import = await db.ListeningHistoryImports.SingleAsync();
+        var events = await db.ListeningEvents.OrderBy(item => item.StartedAt).ToListAsync();
+        Assert.Equal(ListeningHistoryImportState.Completed, import.State);
+        Assert.Equal(3, import.ImportedRows);
+        Assert.Equal(3, import.NextSequence);
+        Assert.Collection(events,
+            item =>
+            {
+                Assert.Equal(ListeningEventState.Completed, item.State);
+                Assert.NotNull(item.ListenedAt);
+            },
+            item =>
+            {
+                Assert.Equal(ListeningEventState.Skipped, item.State);
+                Assert.Null(item.ListenedAt);
+            },
+            item =>
+            {
+                Assert.Equal(ListeningEventState.Completed, item.State);
+                Assert.NotNull(item.ListenedAt);
+            });
+        Assert.Single(await db.Jobs.Where(item => item.Type == MusicBrainzListeningEnrichmentQueue.JobType).ToListAsync());
+        Assert.Empty(await db.PlaybackDeliveryCheckpoints.ToListAsync());
+        Assert.Null(await service.GetAsync(
+            _scope with { OwnerUserId = Guid.NewGuid() }, preview.ImportId, CancellationToken.None));
+        Assert.False(File.Exists(Path.Combine(_root, $"{preview.ImportId:N}.json")));
+    }
+
+    [Fact]
+    public async Task PendingApplyCanCancelAndFailedApplyCanResumeFromItsCheckpoint()
+    {
+        var service = new ListeningHistoryImportService(
+            _factory, _importers, _artifacts, _importOptions, _clock, _jobs);
+        var cancelledPreview = await PreviewAsync(service, "Cancelled", "3333333333333333333333");
+        await service.ApplyAsync(_scope, cancelledPreview.ImportId, cancelledPreview.Revision, CancellationToken.None);
+
+        var cancelled = await service.CancelAsync(
+            _scope, cancelledPreview.ImportId, cancelledPreview.Revision, CancellationToken.None);
+
+        Assert.Equal(ListeningHistoryImportState.Cancelled, cancelled!.State);
+        Assert.False(File.Exists(Path.Combine(_root, $"{cancelledPreview.ImportId:N}.json")));
+
+        var failedPreview = await PreviewAsync(service, "Resume", "4444444444444444444444");
+        var firstApply = await service.ApplyAsync(
+            _scope, failedPreview.ImportId, failedPreview.Revision, CancellationToken.None);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var import = await db.ListeningHistoryImports.SingleAsync(item => item.Id == failedPreview.ImportId);
+            var job = await db.Jobs.SingleAsync(item => item.Id == firstApply!.JobId);
+            import.State = ListeningHistoryImportState.Failed;
+            import.NextSequence = 1;
+            import.UpdatedAt = _clock.UtcNow;
+            import.Revision++;
+            job.State = DurableJobState.Failed;
+            job.CompletedAt = _clock.UtcNow;
+            job.UpdatedAt = _clock.UtcNow;
+            job.Revision++;
+            await db.SaveChangesAsync();
+        }
+
+        var resumed = await service.ResumeAsync(
+            _scope, failedPreview.ImportId, failedPreview.Revision, CancellationToken.None);
+
+        Assert.Equal(ListeningHistoryImportState.Pending, resumed!.State);
+        Assert.NotEqual(firstApply!.JobId, resumed.JobId);
+        await using var verify = await _factory.CreateDbContextAsync();
+        var record = await verify.ListeningHistoryImports.SingleAsync(item => item.Id == failedPreview.ImportId);
+        Assert.Equal(2, record.ApplyGeneration);
+        Assert.Equal(1, record.NextSequence);
+    }
+
+    private async Task<ListeningHistoryImportPreviewResult> PreviewAsync(
+        ListeningHistoryImportService service,
+        string title,
+        string trackId)
+    {
+        var source = JsonSerializer.SerializeToUtf8Bytes(new[]
+        {
+            Row("2026-07-03T12:00:00Z", title, trackId, 180_000, "trackdone", false)
+        });
+        await using var stream = new MemoryStream(source);
+        return await service.PreviewAsync(
+            _scope, title + ".json", stream, source.Length, CancellationToken.None);
+    }
+
+    private static Dictionary<string, object?> Row(
+        string timestamp,
+        string title,
+        string trackId,
+        long milliseconds,
+        string reasonEnd,
+        bool skipped) => new()
+        {
+            ["ts"] = timestamp,
+            ["username"] = "private-user",
+            ["platform"] = "desktop",
+            ["ms_played"] = milliseconds,
+            ["master_metadata_track_name"] = title,
+            ["master_metadata_album_artist_name"] = "Artist",
+            ["master_metadata_album_album_name"] = "Album",
+            ["spotify_track_uri"] = "spotify:track:" + trackId,
+            ["reason_start"] = "trackdone",
+            ["reason_end"] = reasonEnd,
+            ["skipped"] = skipped,
+            ["offline"] = false,
+            ["incognito_mode"] = false
+        };
+
+    private sealed class TestDbContextFactory(DbContextOptions<AllstarrDbContext> options)
+        : IDbContextFactory<AllstarrDbContext>
+    {
+        public AllstarrDbContext CreateDbContext() => new(options);
+        public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(CreateDbContext());
+    }
+
+    private sealed class FakeClock(DateTimeOffset now) : IPlatformClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = now;
+    }
+}

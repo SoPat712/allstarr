@@ -38,6 +38,26 @@ public sealed class MusicBrainzListeningEnrichmentQueue(
             LibraryScopeId: scope.LibraryScopeId,
             CorrelationId: correlationId), cancellationToken);
     }
+
+    public async Task<DurableJobEnqueueResult?> EnqueueImportedTrackAsync(
+        IntelligenceScope scope,
+        string trackReference,
+        string occurrenceKey,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        if (!Enabled) return null;
+        if (string.IsNullOrWhiteSpace(trackReference) || trackReference.Length > 500)
+            throw new ArgumentException("The imported track reference is invalid.", nameof(trackReference));
+        return await jobs.EnqueueAsync(new DurableJobEnqueueRequest<MusicBrainzListeningEnrichmentPayload>(
+            JobType,
+            PlaybackSignalPipeline.Hash($"import|{scope.TenantId:N}|{scope.OwnerUserId:N}|{scope.Protocol}|{scope.BackendInstanceId}|{scope.LibraryScopeId}|{correlationId}|{trackReference}|{MusicBrainzService.SourceRevision}"),
+            new(scope, occurrenceKey),
+            scope.TenantId,
+            scope.OwnerUserId,
+            LibraryScopeId: scope.LibraryScopeId,
+            CorrelationId: correlationId), cancellationToken);
+    }
 }
 
 public sealed class MusicBrainzListeningEnrichmentJobHandler(
@@ -72,10 +92,23 @@ public sealed class MusicBrainzListeningEnrichmentJobHandler(
             return DurableJobCompletion.Failure(
                 "musicbrainz_enrichment_occurrence_missing",
                 "The accepted listening occurrence is unavailable.");
-        if (occurrence.MusicBrainzSourceRevision == MusicBrainzService.SourceRevision &&
+        if (occurrence.SourceKind != "import" &&
+            occurrence.MusicBrainzSourceRevision == MusicBrainzService.SourceRevision &&
             occurrence.MusicBrainzEnrichmentState is
                 MusicBrainzEnrichmentState.Resolved or MusicBrainzEnrichmentState.Unresolved)
             return DurableJobCompletion.Success();
+
+        var targets = occurrence.SourceKind == "import"
+            ? await db.ListeningEvents.Where(item =>
+                    item.TenantId == occurrence.TenantId && item.OwnerUserId == occurrence.OwnerUserId &&
+                    item.Protocol == occurrence.Protocol && item.BackendInstanceId == occurrence.BackendInstanceId &&
+                    item.LibraryScopeId == occurrence.LibraryScopeId && item.SourceKind == "import" &&
+                    item.TrackReference == occurrence.TrackReference &&
+                    (item.MusicBrainzSourceRevision == null ||
+                     item.MusicBrainzSourceRevision != MusicBrainzService.SourceRevision))
+                .ToListAsync(cancellationToken)
+            : [occurrence];
+        if (targets.Count == 0) return DurableJobCompletion.Success();
 
         try
         {
@@ -86,8 +119,11 @@ public sealed class MusicBrainzListeningEnrichmentJobHandler(
                 occurrence.Artist,
                 occurrence.DurationMilliseconds,
                 cancellationToken);
-            ApplyResult(occurrence, match, clock.UtcNow);
-            occurrence.Revision++;
+            foreach (var target in targets)
+            {
+                ApplyResult(target, match, clock.UtcNow);
+                target.Revision++;
+            }
             await db.SaveChangesAsync(cancellationToken);
             return DurableJobCompletion.Success();
         }
@@ -101,23 +137,13 @@ public sealed class MusicBrainzListeningEnrichmentJobHandler(
         }
         catch (MusicBrainzLookupException exception)
         {
-            occurrence.MusicBrainzEnrichmentState = MusicBrainzEnrichmentState.Failed;
-            occurrence.MusicBrainzSourceRevision = MusicBrainzService.SourceRevision;
-            occurrence.MusicBrainzEnrichmentConfidence = null;
-            occurrence.MusicBrainzFactsJson = null;
-            occurrence.MusicBrainzEnrichedAt = clock.UtcNow;
-            occurrence.Revision++;
+            foreach (var target in targets) ApplyFailure(target, clock.UtcNow);
             await db.SaveChangesAsync(CancellationToken.None);
             return DurableJobCompletion.Failure(exception.Code, exception.Message);
         }
         catch (ArgumentException)
         {
-            occurrence.MusicBrainzEnrichmentState = MusicBrainzEnrichmentState.Failed;
-            occurrence.MusicBrainzSourceRevision = MusicBrainzService.SourceRevision;
-            occurrence.MusicBrainzEnrichmentConfidence = null;
-            occurrence.MusicBrainzFactsJson = null;
-            occurrence.MusicBrainzEnrichedAt = clock.UtcNow;
-            occurrence.Revision++;
+            foreach (var target in targets) ApplyFailure(target, clock.UtcNow);
             await db.SaveChangesAsync(CancellationToken.None);
             return DurableJobCompletion.Failure(
                 "musicbrainz_enrichment_identity_invalid",
@@ -166,5 +192,15 @@ public sealed class MusicBrainzListeningEnrichmentJobHandler(
         occurrence.MusicBrainzEnrichmentConfidence = match?.Confidence;
         occurrence.RecordingMusicBrainzId ??= recordingId;
         occurrence.MusicBrainzFactsJson = facts;
+    }
+
+    private static void ApplyFailure(ListeningEventRecord occurrence, DateTimeOffset failedAt)
+    {
+        occurrence.MusicBrainzEnrichmentState = MusicBrainzEnrichmentState.Failed;
+        occurrence.MusicBrainzSourceRevision = MusicBrainzService.SourceRevision;
+        occurrence.MusicBrainzEnrichmentConfidence = null;
+        occurrence.MusicBrainzFactsJson = null;
+        occurrence.MusicBrainzEnrichedAt = failedAt;
+        occurrence.Revision++;
     }
 }

@@ -340,6 +340,9 @@ public sealed partial class IntelligenceController
             result.ExpiresAt,
             state = result.State.ToString().ToLowerInvariant(),
             result.JobId,
+            result.JobState,
+            result.LastErrorCode,
+            result.LastErrorMessage,
             result.ImportedRows,
             result.DuplicateRows,
             result.ResolvedRows,
@@ -347,6 +350,87 @@ public sealed partial class IntelligenceController
             outboundReplay = false,
             preview = result.Preview
         });
+    }
+
+    [HttpPost("history/imports/{importId:guid}/apply")]
+    public Task<IActionResult> ApplyHistoryImport(
+        Guid importId,
+        [FromBody] IntelligenceHistoryImportCommandRequest request,
+        [FromServices] ListeningHistoryImportService imports,
+        CancellationToken cancellationToken) =>
+        ChangeHistoryImport(importId, request, imports, "apply", cancellationToken);
+
+    [HttpPost("history/imports/{importId:guid}/resume")]
+    public Task<IActionResult> ResumeHistoryImport(
+        Guid importId,
+        [FromBody] IntelligenceHistoryImportCommandRequest request,
+        [FromServices] ListeningHistoryImportService imports,
+        CancellationToken cancellationToken) =>
+        ChangeHistoryImport(importId, request, imports, "resume", cancellationToken);
+
+    [HttpPost("history/imports/{importId:guid}/cancel")]
+    public Task<IActionResult> CancelHistoryImport(
+        Guid importId,
+        [FromBody] IntelligenceHistoryImportCommandRequest request,
+        [FromServices] ListeningHistoryImportService imports,
+        CancellationToken cancellationToken) =>
+        ChangeHistoryImport(importId, request, imports, "cancel", cancellationToken);
+
+    private async Task<IActionResult> ChangeHistoryImport(
+        Guid importId,
+        IntelligenceHistoryImportCommandRequest request,
+        ListeningHistoryImportService imports,
+        string operation,
+        CancellationToken cancellationToken)
+    {
+        Response.Headers.CacheControl = "no-store";
+        Response.Headers.Pragma = "no-cache";
+        if (!TrySessionScope(request, out var scope, out var error)) return error!;
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        if (!await OwnsBackend(db, scope, cancellationToken)) return NotFound();
+        try
+        {
+            var result = operation switch
+            {
+                "apply" => await imports.ApplyAsync(scope, importId, request.Revision, cancellationToken),
+                "resume" => await imports.ResumeAsync(scope, importId, request.Revision, cancellationToken),
+                _ => await imports.CancelAsync(scope, importId, request.Revision, cancellationToken)
+            };
+            if (result == null) return NotFound();
+            var response = new
+            {
+                scope = PublicScope(scope),
+                result.ImportId,
+                result.Revision,
+                state = result.State.ToString().ToLowerInvariant(),
+                result.JobId,
+                result.JobState,
+                result.LastErrorCode,
+                result.LastErrorMessage,
+                result.ImportedRows,
+                result.DuplicateRows,
+                result.ResolvedRows,
+                result.UnresolvedRows,
+                outboundReplay = false
+            };
+            return operation == "cancel" ? Ok(response) : Accepted(response);
+        }
+        catch (ListeningHistoryImportException exception) when (exception.Code.EndsWith("_conflict", StringComparison.Ordinal))
+        {
+            return Conflict(new { error = exception.Code, message = exception.Message });
+        }
+        catch (ListeningHistoryImportException exception) when (exception.Code == "history_import_expired")
+        {
+            return StatusCode(StatusCodes.Status410Gone, new { error = exception.Code, message = exception.Message });
+        }
+        catch (ListeningHistoryImportException exception)
+        {
+            return BadRequest(new { error = exception.Code, message = exception.Message });
+        }
+        catch (InvalidDataException exception)
+        {
+            return BadRequest(new { error = "history_import_file_invalid", message = exception.Message });
+        }
     }
 
     private DateTimeOffset Now => _clock?.UtcNow ?? DateTimeOffset.UtcNow;
@@ -655,6 +739,11 @@ public sealed class IntelligenceHistoryDeleteRequest : IntelligenceScopeRequest
 public sealed class IntelligenceHistoryImportPreviewRequest : IntelligenceScopeRequest
 {
     public IFormFile? File { get; set; }
+}
+
+public sealed class IntelligenceHistoryImportCommandRequest : IntelligenceScopeRequest
+{
+    public string Revision { get; set; } = "";
 }
 
 internal readonly record struct ListeningHistoryPeriod(DateTimeOffset From, DateTimeOffset To)

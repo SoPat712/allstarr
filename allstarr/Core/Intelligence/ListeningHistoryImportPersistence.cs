@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -52,8 +53,45 @@ public sealed class ListeningHistoryImportRecord
     {
         if (State is not (ListeningHistoryImportState.Previewed or ListeningHistoryImportState.Pending or ListeningHistoryImportState.Running)) return;
         State = ListeningHistoryImportState.Expired;
-        JobId = null;
         Revision++;
+    }
+}
+
+internal static class ListeningHistoryImportStateTransfer
+{
+    public static HashSet<Guid> ExpireActiveImports(IEnumerable<ListeningHistoryImportRecord> imports)
+    {
+        var jobIds = imports.Where(item => item.State is ListeningHistoryImportState.Previewed or
+                ListeningHistoryImportState.Pending or ListeningHistoryImportState.Running)
+            .Select(item => item.JobId).OfType<Guid>().ToHashSet();
+        foreach (var import in imports) import.ExpireWithoutArtifact();
+        return jobIds;
+    }
+
+    public static void CancelJobs(IEnumerable<DurableJobRecord> jobs, IReadOnlySet<Guid> jobIds, DateTimeOffset now)
+    {
+        foreach (var job in jobs.Where(item => jobIds.Contains(item.Id) &&
+                     item.State is DurableJobState.Pending or DurableJobState.RetryScheduled or DurableJobState.Running))
+        {
+            job.State = DurableJobState.Cancelled;
+            job.CancellationRequestedAt ??= now;
+            job.CompletedAt = now;
+            job.LeaseOwner = null;
+            job.LeaseExpiresAt = null;
+            job.UpdatedAt = now;
+            job.Revision++;
+        }
+    }
+
+    public static void CancelAttempts(IEnumerable<JobAttemptRecord> attempts, IReadOnlySet<Guid> jobIds, DateTimeOffset now)
+    {
+        foreach (var attempt in attempts.Where(item => jobIds.Contains(item.JobId) && item.CompletedAt == null))
+        {
+            attempt.CompletedAt = now;
+            attempt.Outcome = "cancelled";
+            attempt.ErrorCode = "history_import_artifact_not_transferred";
+            attempt.ErrorMessage = "The private upload artifact is not included in state transfer.";
+        }
     }
 }
 
@@ -87,6 +125,9 @@ public sealed record ListeningHistoryImportPreviewResult(
     DateTimeOffset ExpiresAt,
     ListeningHistoryImportState State,
     Guid? JobId,
+    string? JobState,
+    string? LastErrorCode,
+    string? LastErrorMessage,
     long ImportedRows,
     long DuplicateRows,
     long ResolvedRows,
@@ -223,7 +264,8 @@ public sealed class ListeningHistoryImportService(
     ListeningHistoryImporterRegistry importers,
     ListeningHistoryImportArtifactStore artifacts,
     ListeningHistoryImportOptions options,
-    IPlatformClock clock)
+    IPlatformClock clock,
+    DurableJobQueue jobs)
 {
     public async Task<ListeningHistoryImportPreviewResult> PreviewAsync(
         IntelligenceScope scope,
@@ -236,14 +278,19 @@ public sealed class ListeningHistoryImportService(
         displayFileName = Path.GetFileName(displayFileName).Trim();
         if (displayFileName.Length is < 1 or > 255 || displayFileName.Any(char.IsControl))
             throw new ListeningHistoryImportException("history_import_filename_invalid", "The selected filename is invalid.");
+        if (sizeBytes is < 1 || sizeBytes > options.MaximumUploadBytes)
+            throw new ListeningHistoryImportException(
+                "history_import_file_invalid",
+                $"Choose a history file up to {options.MaximumUploadBytes / (1024 * 1024)} MB.");
         var importId = Guid.CreateVersion7();
+        var previewedAt = clock.UtcNow;
         try
         {
             var artifact = await artifacts.StageAsync(importId, content, sizeBytes, cancellationToken);
             var accumulator = new PreviewAccumulator(factory, scope);
             var scan = await importers.ScanAsync(
                 () => artifacts.OpenRead(importId),
-                new(clock.UtcNow, options.MaximumRows),
+                new(previewedAt, options.MaximumRows),
                 accumulator.AddAsync,
                 cancellationToken);
             await accumulator.FlushAsync(cancellationToken);
@@ -270,8 +317,7 @@ public sealed class ListeningHistoryImportService(
                 scan.ReasonCounts);
             var previewJson = JsonSerializer.Serialize(preview);
             var revision = Revision(scope, artifact.ContentSha256, previewJson);
-            var now = clock.UtcNow;
-            var expiresAt = now.AddHours(options.PreviewLifetimeHours);
+            var expiresAt = previewedAt.AddHours(options.PreviewLifetimeHours);
             await using var db = await factory.CreateDbContextAsync(cancellationToken);
             db.ListeningHistoryImports.Add(new()
             {
@@ -288,8 +334,8 @@ public sealed class ListeningHistoryImportService(
                 PreviewJson = previewJson,
                 PreviewRevision = revision,
                 State = ListeningHistoryImportState.Previewed,
-                CreatedAt = now,
-                UpdatedAt = now,
+                CreatedAt = previewedAt,
+                UpdatedAt = previewedAt,
                 ExpiresAt = expiresAt,
                 Revision = 1
             });
@@ -312,11 +358,11 @@ public sealed class ListeningHistoryImportService(
                     preview.ResolvedNewRows,
                     preview.UnresolvedNewRows
                 }),
-                CreatedAt = now
+                CreatedAt = previewedAt
             });
             await db.SaveChangesAsync(cancellationToken);
             return new(importId, revision, displayFileName, artifact.SizeBytes, expiresAt,
-                ListeningHistoryImportState.Previewed, null, 0, 0, 0, 0, preview);
+                ListeningHistoryImportState.Previewed, null, null, null, null, 0, 0, 0, 0, preview);
         }
         catch
         {
@@ -331,26 +377,219 @@ public sealed class ListeningHistoryImportService(
         CancellationToken cancellationToken)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        var record = await db.ListeningHistoryImports.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.Id == importId && item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
-            item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
-            item.LibraryScopeId == scope.LibraryScopeId, cancellationToken);
+        var record = await ScopedImport(db, scope, importId).SingleOrDefaultAsync(cancellationToken);
         if (record == null) return null;
+        var job = record.JobId == null
+            ? null
+            : await db.Jobs.AsNoTracking().SingleOrDefaultAsync(item => item.Id == record.JobId, cancellationToken);
+        var reconciled = false;
+        var deleteArtifact = false;
+        if (record.State == ListeningHistoryImportState.Previewed && record.ExpiresAt <= clock.UtcNow)
+        {
+            record.State = ListeningHistoryImportState.Expired;
+            deleteArtifact = reconciled = true;
+        }
+        else if (record.State is ListeningHistoryImportState.Pending or ListeningHistoryImportState.Running &&
+                 job?.State is DurableJobState.Failed or DurableJobState.Cancelled or DurableJobState.Succeeded)
+        {
+            record.State = job.State switch
+            {
+                DurableJobState.Cancelled => ListeningHistoryImportState.Cancelled,
+                _ => ListeningHistoryImportState.Failed
+            };
+            deleteArtifact = job.State == DurableJobState.Cancelled;
+            reconciled = true;
+        }
+        if (reconciled)
+        {
+            if (deleteArtifact) artifacts.Delete(record.Id);
+            var now = clock.UtcNow;
+            record.CompletedAt = now;
+            record.UpdatedAt = now;
+            record.Revision++;
+            db.AuditEvents.Add(Audit(record, "reconciled", record.State.ToString().ToLowerInvariant(), now));
+            await db.SaveChangesAsync(cancellationToken);
+        }
         var preview = JsonSerializer.Deserialize<ListeningHistoryImportPreview>(record.PreviewJson)
                       ?? throw new InvalidDataException("The saved listening-history preview is invalid.");
         return new(record.Id, record.PreviewRevision, record.DisplayFileName, record.SizeBytes, record.ExpiresAt,
-            record.State, record.JobId, record.ImportedRows, record.DuplicateRows, record.ResolvedRows,
+            record.State, record.JobId, job?.State.ToString().ToLowerInvariant(), job?.LastErrorCode,
+            job?.LastErrorMessage, record.ImportedRows, record.DuplicateRows, record.ResolvedRows,
             record.UnresolvedRows, preview);
+    }
+
+    public Task<ListeningHistoryImportPreviewResult?> ApplyAsync(
+        IntelligenceScope scope,
+        Guid importId,
+        string expectedRevision,
+        CancellationToken cancellationToken) =>
+        QueueAsync(scope, importId, expectedRevision, resume: false, cancellationToken);
+
+    public Task<ListeningHistoryImportPreviewResult?> ResumeAsync(
+        IntelligenceScope scope,
+        Guid importId,
+        string expectedRevision,
+        CancellationToken cancellationToken) =>
+        QueueAsync(scope, importId, expectedRevision, resume: true, cancellationToken);
+
+    public async Task<ListeningHistoryImportPreviewResult?> CancelAsync(
+        IntelligenceScope scope,
+        Guid importId,
+        string expectedRevision,
+        CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        var record = await ScopedImport(db, scope, importId).SingleOrDefaultAsync(cancellationToken);
+        if (record == null) return null;
+        RequireRevision(record, expectedRevision);
+        if (record.State is ListeningHistoryImportState.Completed or ListeningHistoryImportState.Expired)
+            throw new ListeningHistoryImportException(
+                "history_import_state_conflict",
+                "This history import can no longer be cancelled.");
+
+        var cancelled = record.JobId == null;
+        if (record.JobId is { } jobId)
+        {
+            await jobs.RequestCancellationAsync(jobId, scope.TenantId, cancellationToken);
+            cancelled = await db.Jobs.AsNoTracking().Where(item => item.Id == jobId)
+                .Select(item => item.State == DurableJobState.Cancelled)
+                .SingleOrDefaultAsync(cancellationToken);
+        }
+        if (cancelled || record.State is ListeningHistoryImportState.Previewed or ListeningHistoryImportState.Failed)
+        {
+            var now = clock.UtcNow;
+            record.State = ListeningHistoryImportState.Cancelled;
+            record.CompletedAt = now;
+            record.UpdatedAt = now;
+            record.Revision++;
+            db.AuditEvents.Add(Audit(record, "cancelled", "success", now));
+            await db.SaveChangesAsync(cancellationToken);
+            artifacts.Delete(importId);
+        }
+        return await GetAsync(scope, importId, cancellationToken);
+    }
+
+    private async Task<ListeningHistoryImportPreviewResult?> QueueAsync(
+        IntelligenceScope scope,
+        Guid importId,
+        string expectedRevision,
+        bool resume,
+        CancellationToken cancellationToken)
+    {
+        await using var initialDb = await factory.CreateDbContextAsync(cancellationToken);
+        var initial = await ScopedImport(initialDb, scope, importId).AsNoTracking()
+            .SingleOrDefaultAsync(cancellationToken);
+        if (initial == null) return null;
+        RequireRevision(initial, expectedRevision);
+        var requiredState = resume ? ListeningHistoryImportState.Failed : ListeningHistoryImportState.Previewed;
+        if (initial.State != requiredState)
+            throw new ListeningHistoryImportException(
+                "history_import_state_conflict",
+                resume ? "Only a failed history import can be resumed." : "This history import was already applied or cancelled.");
+        if (initial.ExpiresAt <= clock.UtcNow)
+            throw new ListeningHistoryImportException("history_import_expired", "This history import preview has expired.");
+        if (initial.PreviewRevision != Revision(scope, initial.ContentSha256, initial.PreviewJson))
+            throw new ListeningHistoryImportException(
+                "history_import_revision_conflict",
+                "The importer changed after this preview. Preview the file again.");
+        try
+        {
+            await artifacts.VerifyAsync(importId, initial.ContentSha256, initial.SizeBytes, cancellationToken);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw new ListeningHistoryImportException(
+                "history_import_file_unavailable",
+                "The previewed history file is unavailable or changed.",
+                exception);
+        }
+
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
+        var record = await ScopedImport(db, scope, importId).SingleAsync(cancellationToken);
+        RequireRevision(record, expectedRevision);
+        if (record.State != requiredState)
+            throw new ListeningHistoryImportException("history_import_state_conflict", "The history import state changed. Refresh and try again.");
+        var generation = checked(record.ApplyGeneration + 1);
+        var queued = await jobs.EnqueueInExistingTransactionAsync(db,
+            new DurableJobEnqueueRequest<ListeningHistoryImportJobPayload>(
+                ListeningHistoryImportJobHandler.JobTypeName,
+                Hash($"{record.Id:N}\u001f{record.PreviewRevision}\u001f{generation}"),
+                new(record.Id, scope, record.PreviewRevision, generation),
+                scope.TenantId,
+                scope.OwnerUserId,
+                LibraryScopeId: scope.LibraryScopeId,
+                CorrelationId: $"history-import:{record.Id:N}"),
+            cancellationToken);
+        var now = clock.UtcNow;
+        record.JobId = queued.JobId;
+        record.ApplyGeneration = generation;
+        record.State = ListeningHistoryImportState.Pending;
+        record.CompletedAt = null;
+        record.ExpiresAt = now.AddHours(options.PreviewLifetimeHours);
+        record.UpdatedAt = now;
+        record.Revision++;
+        db.AuditEvents.Add(Audit(record, resume ? "resumed" : "applied", "queued", now));
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return await GetAsync(scope, importId, cancellationToken);
     }
 
     internal static string OccurrenceKey(IntelligenceScope scope, ListeningHistoryImportRow row) =>
         Hash($"{scope.TenantId:N}\u001f{scope.OwnerUserId:N}\u001f{scope.Protocol}\u001f{scope.BackendInstanceId}\u001f{scope.LibraryScopeId}\u001fimport\u001fspotify\u001f{row.SourceUserKey}\u001f{row.ListenedAt.ToUnixTimeMilliseconds()}\u001f{row.SourceItemKey}");
 
     private static string Revision(IntelligenceScope scope, string contentSha256, string previewJson) =>
-        Hash($"{scope.TenantId:N}\u001f{scope.OwnerUserId:N}\u001f{scope.Protocol}\u001f{scope.BackendInstanceId}\u001f{scope.LibraryScopeId}\u001f{contentSha256}\u001f{previewJson}");
+        Hash($"{SpotifyListeningHistoryImporter.ImporterRevision}\u001f{scope.TenantId:N}\u001f{scope.OwnerUserId:N}\u001f{scope.Protocol}\u001f{scope.BackendInstanceId}\u001f{scope.LibraryScopeId}\u001f{contentSha256}\u001f{previewJson}");
 
-    private static string Hash(string value) =>
+    internal static string Hash(string value) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+
+    private static IQueryable<ListeningHistoryImportRecord> ScopedImport(
+        AllstarrDbContext db,
+        IntelligenceScope scope,
+        Guid importId) =>
+        db.ListeningHistoryImports.Where(item => item.Id == importId &&
+            item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+            item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
+            item.LibraryScopeId == scope.LibraryScopeId);
+
+    private static void RequireRevision(ListeningHistoryImportRecord record, string expectedRevision)
+    {
+        var normalized = expectedRevision?.Trim().ToLowerInvariant();
+        if (normalized is not { Length: 64 } || !normalized.All(Uri.IsHexDigit) ||
+            !CryptographicOperations.FixedTimeEquals(
+                Encoding.ASCII.GetBytes(record.PreviewRevision),
+                Encoding.ASCII.GetBytes(normalized)))
+            throw new ListeningHistoryImportException(
+                "history_import_revision_conflict",
+                "The history import preview changed. Refresh and try again.");
+    }
+
+    private static AuditEventRecord Audit(
+        ListeningHistoryImportRecord record,
+        string action,
+        string outcome,
+        DateTimeOffset now) => new()
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = record.TenantId,
+            ActorUserId = record.OwnerUserId,
+            Category = "listening-history-import",
+            Action = action,
+            Outcome = outcome,
+            CorrelationId = record.Id.ToString("N"),
+            DetailsJson = JsonSerializer.Serialize(new
+            {
+                importId = record.Id,
+                record.ApplyGeneration,
+                record.NextSequence,
+                record.ImportedRows,
+                record.DuplicateRows,
+                record.ResolvedRows,
+                record.UnresolvedRows
+            }),
+            CreatedAt = now
+        };
 
     private sealed class PreviewAccumulator(
         IDbContextFactory<AllstarrDbContext> factory,
@@ -384,7 +623,8 @@ public sealed class ListeningHistoryImportService(
                 ? []
                 : await db.ProviderTrackIdentities.AsNoTracking().Where(item =>
                         item.TenantId == scope.TenantId && item.ProviderId == "spotify" &&
-                        item.ResourceKind == ProviderResourceKind.Track && identityHashes.Contains(item.ExternalIdHash))
+                        item.ResourceKind == ProviderResourceKind.Track &&
+                        item.Scope == ProviderIdentityScope.Catalog && identityHashes.Contains(item.ExternalIdHash))
                     .Select(item => item.ExternalIdHash).ToHashSetAsync(cancellationToken);
             DuplicateRows += existing.Count;
             NewRows += newRows.Length;

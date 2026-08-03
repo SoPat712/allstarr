@@ -1,3 +1,5 @@
+using allstarr.Core.Jobs;
+
 namespace allstarr.Core.Intelligence;
 
 public enum ListeningHistoryImportClassification
@@ -101,6 +103,8 @@ public static class ListeningHistoryImportRegistration
         services.AddSingleton<ListeningHistoryImporterRegistry>();
         services.AddSingleton<ListeningHistoryImportArtifactStore>();
         services.AddSingleton<ListeningHistoryImportService>();
+        services.AddSingleton<IDurableJobHandler, ListeningHistoryImportJobHandler>();
+        services.AddHostedService<ListeningHistoryImportCleanupService>();
         return services;
     }
 }

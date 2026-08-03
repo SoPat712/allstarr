@@ -377,6 +377,7 @@ public sealed class DurableStateTransferService
         var providerRouteDecisions = await ReadEntryAsync<ProviderRouteDecisionEntity>(archive, "provider-route-decisions.json", cancellationToken);
         var providerRouteOutcomes = await ReadEntryAsync<ProviderRouteOutcomeEntity>(archive, "provider-route-outcomes.json", cancellationToken);
         var jobs = await ReadEntryAsync<DurableJobRecord>(archive, "jobs.json", cancellationToken);
+        var jobAttempts = await ReadEntryAsync<JobAttemptRecord>(archive, "job-attempts.json", cancellationToken);
         var jobSchedules = await ReadEntryAsync<JobScheduleRecord>(archive, "job-schedules.json", cancellationToken);
         var backendIdentities = await ReadEntryAsync<BackendIdentityRecord>(archive, "backend-identities.json", cancellationToken);
         var favoriteEvents = await ReadEntryAsync<FavoriteEventRecord>(archive, "favorite-events.json", cancellationToken);
@@ -428,6 +429,10 @@ public sealed class DurableStateTransferService
             playbackDeliveryCheckpoints,
             listeningProfiles, recommendationRuns, recommendationCandidates, recommendationFeedback,
             generatedSets, generatedSetEntries);
+        var unrestorableImportJobs = ListeningHistoryImportStateTransfer.ExpireActiveImports(listeningHistoryImports);
+        var restoredAt = DateTimeOffset.UtcNow;
+        ListeningHistoryImportStateTransfer.CancelJobs(jobs, unrestorableImportJobs, restoredAt);
+        ListeningHistoryImportStateTransfer.CancelAttempts(jobAttempts, unrestorableImportJobs, restoredAt);
 
         await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
         context.Tenants.AddRange(tenants);
@@ -457,7 +462,6 @@ public sealed class DurableStateTransferService
         context.MetadataEnrichmentApplications.AddRange(enrichmentApplications);
         context.IntelligencePolicies.AddRange(intelligencePolicies);
         context.ListeningEvents.AddRange(listeningEvents);
-        foreach (var import in listeningHistoryImports) import.ExpireWithoutArtifact();
         context.ListeningHistoryImports.AddRange(listeningHistoryImports);
         context.ListeningSignals.AddRange(listeningSignals);
         context.PlaybackDeliveryCheckpoints.AddRange(playbackDeliveryCheckpoints);
@@ -469,7 +473,7 @@ public sealed class DurableStateTransferService
         context.GeneratedSetEntries.AddRange(generatedSetEntries);
         context.BackendIdentities.AddRange(backendIdentities);
         context.Jobs.AddRange(jobs);
-        context.JobAttempts.AddRange(await ReadEntryAsync<JobAttemptRecord>(archive, "job-attempts.json", cancellationToken));
+        context.JobAttempts.AddRange(jobAttempts);
         context.OutboxMessages.AddRange(await ReadEntryAsync<OutboxMessageRecord>(archive, "outbox.json", cancellationToken));
         context.ProviderHealthSamples.AddRange(await ReadEntryAsync<ProviderHealthSampleRecord>(archive, "health-samples.json", cancellationToken));
         context.ProviderHealthRollups.AddRange(await ReadEntryAsync<ProviderHealthRollupRecord>(archive, "health-rollups.json", cancellationToken));

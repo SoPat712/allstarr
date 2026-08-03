@@ -7,6 +7,7 @@ namespace allstarr.Core.Intelligence;
 
 public sealed class SpotifyListeningHistoryImporter : IListeningHistoryImporter
 {
+    public const string ImporterRevision = "spotify-extended-streaming-history-v1";
     private static readonly JsonSerializerOptions JsonOptions = new() { MaxDepth = 16 };
     private static readonly DateTimeOffset MinimumTimestamp = new(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
     private const long MaximumMillisecondsPlayed = 24L * 60 * 60 * 1000;
