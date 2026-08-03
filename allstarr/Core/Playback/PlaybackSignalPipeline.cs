@@ -91,19 +91,23 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
             return DurableJobCompletion.Failure("playback_signal_scope_invalid", "The playback signal scope is invalid.");
         try
         {
-            var track = tracks == null ? null : await tracks.ResolveAsync(payload, cancellationToken);
-            var state = await RecordOccurrenceAsync(
-                payload, track, musicBrainz?.Enabled == true, cancellationToken);
-            var signalType = SignalType(payload.Transition, state);
-            if (signalType != null)
-                await WriteSignalAsync(payload, execution.Claim.JobId, signalType, cancellationToken);
+            var retainHistory = await RetainsHistoryAsync(payload.Scope, cancellationToken);
+            if (retainHistory)
+            {
+                var track = tracks == null ? null : await tracks.ResolveAsync(payload, cancellationToken);
+                var state = await RecordOccurrenceAsync(
+                    payload, track, musicBrainz?.Enabled == true, cancellationToken);
+                var signalType = SignalType(payload.Transition, state);
+                if (signalType != null)
+                    await WriteSignalAsync(payload, execution.Claim.JobId, signalType, cancellationToken);
+                if (musicBrainz != null)
+                    await musicBrainz.EnqueueAsync(
+                        payload.Scope,
+                        payload.OccurrenceKey ?? payload.SignalKey,
+                        execution.Claim.CorrelationId,
+                        cancellationToken);
+            }
             if (payload.Transition is PlaybackTransition.Start or PlaybackTransition.InferredStart) await lyrics.PrefetchAsync(payload, cancellationToken);
-            if (musicBrainz != null)
-                await musicBrainz.EnqueueAsync(
-                    payload.Scope,
-                    payload.OccurrenceKey ?? payload.SignalKey,
-                    execution.Claim.CorrelationId,
-                    cancellationToken);
             await scrobbles.DeliverAsync(payload, cancellationToken);
             return DurableJobCompletion.Success();
         }
@@ -121,6 +125,13 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
             ? idempotent.WriteIdempotentAsync(payload.Scope, type, payload.ItemId, 1, payload.ObservedAt,
                 PlaybackSignalPipeline.Hash($"{payload.OccurrenceKey ?? payload.SignalKey}|{type}"), jobId, token)
             : signals.WriteAsync(payload.Scope, type, payload.ItemId, 1, payload.ObservedAt, token);
+
+    private async Task<bool> RetainsHistoryAsync(IntelligenceScope scope, CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        return await IntelligencePolicyService.Query(db, scope).AsNoTracking()
+            .AnyAsync(item => item.Enabled, cancellationToken);
+    }
 
     private static string? SignalType(PlaybackTransition transition, ListeningEventState state) => transition switch
     {

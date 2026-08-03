@@ -198,7 +198,7 @@
               expectedRevision: data!.policy?.revision ?? 0,
             }));
           }}>
-            <label class="toggle-line"><input type="checkbox" bind:checked={enabled} /><span><strong>Use my listening signals</strong><small>Nothing is retained until this is enabled.</small></span></label>
+            <label class="toggle-line"><input type="checkbox" bind:checked={enabled} /><span><strong>Save my listening automatically</strong><small>{enabled ? "Allstarr keeps private listening history and uses it for recommendations." : "Allstarr will not save new playback history or use it for recommendations."}</small></span></label>
             <label class="field"><span>Retention</span><SelectField value={String(retentionDays)} label="Retention" onchange={(value) => { retentionDays = Number(value); }} options={[
               { value: "7", label: "7 days" }, { value: "30", label: "30 days" },
               { value: "90", label: "90 days" }, { value: "365", label: "1 year" },

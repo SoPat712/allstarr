@@ -28,6 +28,19 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         var now = DateTimeOffset.UtcNow; db.Tenants.Add(new() { Id = tenant, Slug = "playback", Name = "Playback", CreatedAt = now });
         db.Users.Add(new() { Id = user, TenantId = tenant, DisplayName = "User", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now }); await db.SaveChangesAsync();
         var identity = Guid.CreateVersion7(); db.BackendIdentities.Add(new() { Id = identity, TenantId = tenant, UserId = user, BackendType = "jellyfin", BackendInstanceId = "backend", PrincipalId = "principal", CreatedAt = now, LastSeenAt = now });
+        db.IntelligencePolicies.Add(new()
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenant,
+            OwnerUserId = user,
+            Protocol = "jellyfin",
+            BackendInstanceId = "backend",
+            LibraryScopeId = "music",
+            Enabled = true,
+            RetentionDays = 30,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
         db.LibraryTracks.Add(new()
         {
             Id = Guid.CreateVersion7(),
@@ -206,6 +219,29 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         Assert.Equal(1, scrobbles.Successes);
         await using var db = await factory.CreateDbContextAsync();
         Assert.Single(await db.ListeningEvents.ToListAsync());
+    }
+
+    [Fact]
+    public async Task DisabledPolicySkipsPrivateHistoryButKeepsPlaybackSideEffects()
+    {
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            (await db.IntelligencePolicies.SingleAsync()).Enabled = false;
+            await db.SaveChangesAsync();
+        }
+        await new PlaybackSignalPipeline(jobs).RecordAsync(Signal(PlaybackTransition.Start, "track-1", 0));
+        var claim = await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]);
+        var writer = new Writer(); var scrobbles = new Scrobbles(); var lyrics = new Lyrics();
+
+        var result = await new PlaybackSignalJobHandler(writer, scrobbles, lyrics, factory)
+            .ExecuteAsync(new(claim!, EmptyServices.Instance), default);
+
+        Assert.Equal(DurableJobCompletionKind.Succeeded, result.Kind);
+        Assert.Equal(0, writer.Calls);
+        Assert.Equal(1, scrobbles.Successes);
+        Assert.Equal(1, lyrics.Calls);
+        await using var verify = await factory.CreateDbContextAsync();
+        Assert.Empty(await verify.ListeningEvents.ToListAsync());
     }
 
     [Fact]
