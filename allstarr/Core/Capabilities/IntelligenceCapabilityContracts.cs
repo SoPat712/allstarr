@@ -23,7 +23,6 @@ public sealed record ProviderIntelligenceTrack(
     double Score,
     string? Album = null,
     string? ClusterId = null,
-    string? Path = null,
     string? Explanation = null);
 
 public sealed record ProviderIntelligenceCluster(
@@ -31,10 +30,25 @@ public sealed record ProviderIntelligenceCluster(
     string Name,
     IReadOnlyList<ProviderIntelligenceTrack> Tracks);
 
-public sealed record ProviderPlaylistExportResult(
-    string PlaylistId,
-    string Revision,
-    int TrackCount);
+public sealed record ProviderIntelligencePath(
+    IReadOnlyList<ProviderIntelligenceTrack> Tracks,
+    double TotalDistance);
+
+public sealed record ProviderIntelligenceMapPoint(
+    string TrackId,
+    string Title,
+    string Artist,
+    double X,
+    double Y,
+    string? Album = null,
+    string? ClusterId = null);
+
+public sealed record ProviderIntelligenceMapPage(
+    IReadOnlyList<ProviderIntelligenceMapPoint> Items,
+    string Projection,
+    string? NextCursor = null,
+    bool IsPartial = false,
+    string? SnapshotVersion = null);
 
 public interface IProviderIntelligenceCapability : IProviderCapability
 {
@@ -53,8 +67,15 @@ public interface IProviderIntelligenceCapability : IProviderCapability
     Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> SearchAsync(
         ProviderExecutionContext context, string query, bool includeLyrics, int limit);
 
-    Task<ProviderOutcome<ProviderPlaylistExportResult>> ExportPlaylistAsync(
-        ProviderExecutionContext context, string name, IReadOnlyList<string> trackIds);
+    Task<ProviderOutcome<ProviderIntelligencePath>> FindPathAsync(
+        ProviderExecutionContext context, string startTrackId, string endTrackId, int limit);
+
+    Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> BlendAsync(
+        ProviderExecutionContext context, IReadOnlyList<string> positiveSeedTrackIds,
+        IReadOnlyList<string> negativeSeedTrackIds, int limit);
+
+    Task<ProviderOutcome<ProviderIntelligenceMapPage>> GetMapAsync(
+        ProviderExecutionContext context, ProviderPageRequest page);
 
     Task<ProviderOutcome<bool>> DisconnectAsync(ProviderExecutionContext context);
 }

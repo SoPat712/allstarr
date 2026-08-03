@@ -287,7 +287,7 @@ public static class ProviderManifestValidator
             [ProviderCapabilityKind.Intelligence] = new HashSet<string>(StringComparer.Ordinal)
             {
                 "startAnalysis", "getAnalysisProgress", "getClusters", "recommend",
-                "search", "exportPlaylist", "disconnect"
+                "search", "findPath", "blend", "getMap", "disconnect"
             },
             [ProviderCapabilityKind.Health] = new HashSet<string>(StringComparer.Ordinal)
             {

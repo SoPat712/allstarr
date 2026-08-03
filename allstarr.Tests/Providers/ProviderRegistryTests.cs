@@ -58,6 +58,23 @@ public sealed class ProviderRegistryTests
     }
 
     [Fact]
+    public void ManifestValidator_AcceptsSonicIntelligenceHooksAndRejectsRetiredPlaylistExport()
+    {
+        ProviderDescriptor DescriptorWith(params string[] hooks) => BaseDescriptor(
+            "sonic-provider",
+            capabilities: [new(ProviderCapabilityKind.Intelligence,
+                ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.Required,
+                "1.0", hooks, [ProviderAccountScope.User])],
+            origin: ProviderOrigin.Extension,
+            entryPoint: "index.js");
+
+        var current = DescriptorWith("recommend", "findPath", "blend", "getMap");
+        Assert.Same(current, ProviderManifestValidator.Validate(current));
+        Assert.Throws<InvalidOperationException>(() =>
+            ProviderManifestValidator.Validate(DescriptorWith("recommend", "exportPlaylist")));
+    }
+
+    [Fact]
     public void ManifestValidator_RejectsUnsupportedSdkEntryTraversalAndHealthMismatch()
     {
         Assert.Throws<InvalidOperationException>(() => ProviderManifestValidator.Validate(

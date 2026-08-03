@@ -30,7 +30,8 @@ SDK v1 recognizes typed metadata, streaming, download, playlist, lyrics, intelli
 - Playlist lists user-visible playlists and ordered tracks for the selected account.
 - Lyrics returns normalized timed or plain lyrics.
 - Intelligence starts and observes analysis jobs, returns clusters and recommendations, searches
-  text or lyrics, exports playlists, and disconnects a remote service.
+  text or lyrics, finds ordered song paths, blends positive/negative song seeds, pages map points,
+  and disconnects a remote service.
 - Health tests one account and capability without changing unrelated state.
 
 Metadata extensions may also expose `getArtistAlbums` and `getArtistTracks`. Both receive the
@@ -59,12 +60,14 @@ The intelligence capability requires `recommend`; the remaining hooks are option
 | `getClusters` | limit | named clusters with normalized tracks |
 | `recommend` | seed track IDs, limit | normalized tracks with score and explanation |
 | `search` | query, include lyrics, limit | normalized tracks |
-| `exportPlaylist` | name, track IDs, idempotency key | playlist ID, revision, track count |
+| `findPath` | distinct start/end track IDs, limit | ordered normalized tracks and total distance |
+| `blend` | positive/negative track IDs, limit | normalized tracks with score and explanation |
+| `getMap` | limit and cursor | normalized 2D track points, projection, and next cursor |
 | `disconnect` | idempotency key | disconnected flag |
 
-Normalized intelligence tracks may include a cluster ID and service-owned song path. They never
-grant filesystem access to the extension; the values are service results carried through the
-permission-scoped call.
+Normalized intelligence tracks may include a cluster ID, but never a service filesystem path.
+Extensions return the selected catalog's stable track IDs. Allstarr owns generated playlists and
+media-server writes; intelligence extensions do not write playlists through this capability.
 
 For the SpotiFLAC Apple Music package, catalog metadata can work without a subscription token. Subscription lyrics require the package's `mediaUserToken`. This is separate from Allstarr's built-in Apple MusicKit playlist account and the optional Apple download gateway.
 

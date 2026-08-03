@@ -281,16 +281,49 @@ public sealed class ExtensionIntelligenceCapabilityAdapter : ExtensionCapability
                 .Select(MapTrack).ToArray(), accountRequired);
     }
 
-    public Task<ProviderOutcome<ProviderPlaylistExportResult>> ExportPlaylistAsync(
-        ProviderExecutionContext context, string name, IReadOnlyList<string> trackIds)
+    public Task<ProviderOutcome<ProviderIntelligencePath>> FindPathAsync(
+        ProviderExecutionContext context, string startTrackId, string endTrackId, int limit)
     {
-        context.RequireIdempotencyKey();
-        ProviderContractValidation.RequiredText(name, nameof(name), 500);
-        if (trackIds.Count is < 1 or > 10_000) throw new ArgumentOutOfRangeException(nameof(trackIds));
-        foreach (var trackId in trackIds) ProviderContractValidation.RequiredText(trackId, nameof(trackIds), 500);
-        return InvokeAsync(context, "exportPlaylist", new { name, trackIds, context.IdempotencyKey }, value =>
-            new ProviderPlaylistExportResult(Required(value, "playlistId", 500), Required(value, "revision", 300),
-                NonNegative(value, "trackCount")), accountRequired);
+        ProviderContractValidation.RequiredText(startTrackId, nameof(startTrackId), 500);
+        ProviderContractValidation.RequiredText(endTrackId, nameof(endTrackId), 500);
+        if (startTrackId.Equals(endTrackId, StringComparison.Ordinal))
+            throw new ArgumentException("Path endpoints must be different.", nameof(endTrackId));
+        if (limit is < 2 or > 200) throw new ArgumentOutOfRangeException(nameof(limit));
+        return InvokeAsync(context, "findPath", new { startTrackId, endTrackId, limit }, value =>
+            new ProviderIntelligencePath(BoundedTracks(value, limit), NonNegativeDouble(value, "totalDistance")),
+            accountRequired);
+    }
+
+    public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> BlendAsync(
+        ProviderExecutionContext context, IReadOnlyList<string> positiveSeedTrackIds,
+        IReadOnlyList<string> negativeSeedTrackIds, int limit)
+    {
+        Limit(limit, 200);
+        ValidateSeeds(positiveSeedTrackIds, nameof(positiveSeedTrackIds), 1, 50);
+        ValidateSeeds(negativeSeedTrackIds, nameof(negativeSeedTrackIds), 0, 50);
+        if (positiveSeedTrackIds.Intersect(negativeSeedTrackIds, StringComparer.Ordinal).Any())
+            throw new ArgumentException("Positive and negative seeds cannot overlap.", nameof(negativeSeedTrackIds));
+        return InvokeAsync(context, "blend", new { positiveSeedTrackIds, negativeSeedTrackIds, limit },
+            value => BoundedTracks(value, limit), accountRequired);
+    }
+
+    public Task<ProviderOutcome<ProviderIntelligenceMapPage>> GetMapAsync(
+        ProviderExecutionContext context, ProviderPageRequest page)
+    {
+        ArgumentNullException.ThrowIfNull(page);
+        return InvokeAsync(context, "getMap", new { page.Limit, page.Cursor }, value =>
+        {
+            var items = value.GetProperty("items").EnumerateArray().Take(page.Limit + 1)
+                .Select(item => new ProviderIntelligenceMapPoint(
+                    Required(item, "trackId", 500), Required(item, "title", 500),
+                    Required(item, "artist", 500), Coordinate(item, "x"), Coordinate(item, "y"),
+                    OptionalText(item, "album"), OptionalText(item, "clusterId"))).ToArray();
+            if (items.Length > page.Limit) throw new JsonException("Map page exceeds the requested limit.");
+            return new ProviderIntelligenceMapPage(items, Required(value, "projection", 100),
+                ProviderContractValidation.OptionalText(OptionalText(value, "nextCursor"), "nextCursor", 2000),
+                Bool(value, "isPartial"),
+                ProviderContractValidation.OptionalText(OptionalText(value, "snapshotVersion"), "snapshotVersion", 300));
+        }, accountRequired);
     }
 
     public Task<ProviderOutcome<bool>> DisconnectAsync(ProviderExecutionContext context)
@@ -312,8 +345,13 @@ public sealed class ExtensionIntelligenceCapabilityAdapter : ExtensionCapability
     private static ProviderIntelligenceTrack MapTrack(JsonElement value) =>
         new(Required(value, "trackId", 500), Required(value, "title", 500), Required(value, "artist", 500),
             Math.Clamp(Double(value, "score"), 0, 1), OptionalText(value, "album"),
-            OptionalText(value, "clusterId"), OptionalText(value, "path"),
-            OptionalText(value, "explanation"));
+            OptionalText(value, "clusterId"), OptionalText(value, "explanation"));
+
+    private static IReadOnlyList<ProviderIntelligenceTrack> BoundedTracks(JsonElement value, int limit)
+    {
+        var items = value.GetProperty("items").EnumerateArray().Take(limit + 1).Select(MapTrack).ToArray();
+        return items.Length <= limit ? items : throw new JsonException("Track result exceeds the requested limit.");
+    }
 
     private static string Required(JsonElement value, string name, int maximumLength) =>
         ProviderContractValidation.RequiredText(Text(value, name), name, maximumLength);
@@ -322,6 +360,27 @@ public sealed class ExtensionIntelligenceCapabilityAdapter : ExtensionCapability
     {
         var result = value.GetProperty(name).GetInt32();
         return result >= 0 ? result : throw new JsonException();
+    }
+
+    private static double NonNegativeDouble(JsonElement value, string name)
+    {
+        var result = Double(value, name);
+        return double.IsFinite(result) && result >= 0 ? result : throw new JsonException();
+    }
+
+    private static double Coordinate(JsonElement value, string name)
+    {
+        var result = Double(value, name);
+        return double.IsFinite(result) && result is >= -1 and <= 1 ? result : throw new JsonException();
+    }
+
+    private static void ValidateSeeds(IReadOnlyList<string> seeds, string name, int minimum, int maximum)
+    {
+        ArgumentNullException.ThrowIfNull(seeds);
+        if (seeds.Count < minimum || seeds.Count > maximum ||
+            seeds.Distinct(StringComparer.Ordinal).Count() != seeds.Count)
+            throw new ArgumentOutOfRangeException(name);
+        foreach (var seed in seeds) ProviderContractValidation.RequiredText(seed, name, 500);
     }
 
     private static void Limit(int value, int maximum)

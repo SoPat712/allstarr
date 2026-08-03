@@ -515,10 +515,10 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Fact]
-    public async Task Intelligence_MapsAnalysisDiscoverySearchExportAndDisconnectContracts()
+    public async Task Intelligence_MapsAnalysisDiscoveryAndOptionalSonicContracts()
     {
         string[] hooks = ["startAnalysis", "getAnalysisProgress", "getClusters", "recommend",
-            "search", "exportPlaylist", "disconnect"];
+            "search", "findPath", "blend", "getMap", "disconnect"];
         var manifest = new ExtensionSdkManifest("fixture-extension", "Fixture", "1.0.0", "1", "index.js",
         [
             new ExtensionSdkCapability(ProviderCapabilityKind.Intelligence, hooks, [ProviderAccountScope.User]),
@@ -526,14 +526,16 @@ public sealed class ExtensionCapabilityAdapterTests
         ], []);
         var sandbox = Sandbox(manifest, """
             const track = { trackId: 'track-1', title: 'Track', artist: 'Artist', album: 'Album',
-              score: 0.9, clusterId: 'cluster-1', path: '/music/track.flac', explanation: 'Similar sound' };
+              score: 0.9, clusterId: 'cluster-1', explanation: 'Similar sound' };
             registerExtension({
               startAnalysis: function() { return { jobId: 'job-1', state: 'Queued', completed: 0, total: 10 }; },
               getAnalysisProgress: function() { return { jobId: 'job-1', state: 'Running', completed: 4, total: 10 }; },
               getClusters: function() { return { items: [{ id: 'cluster-1', name: 'Cluster', tracks: [track] }] }; },
               recommend: function() { return { items: [track] }; },
               search: function() { return { items: [track] }; },
-              exportPlaylist: function() { return { playlistId: 'playlist-1', revision: 'r1', trackCount: 1 }; },
+              findPath: function() { return { items: [track, { trackId: 'track-2', title: 'Bridge', artist: 'Artist', score: 0.8 }], totalDistance: 0.4 }; },
+              blend: function() { return { items: [track] }; },
+              getMap: function() { return { items: [{ trackId: 'track-1', title: 'Track', artist: 'Artist', x: 0.25, y: -0.5 }], projection: 'umap', nextCursor: 'next', snapshotVersion: 'map-1' }; },
               disconnect: function() { return { disconnected: true }; },
               probeIntelligence: function() { return { status: 'Healthy', observedAt: '2030-01-01T00:00:00Z', latencyMs: 1 }; }
             });
@@ -545,14 +547,37 @@ public sealed class ExtensionCapabilityAdapterTests
         Assert.Equal("job-1", (await intelligence.StartAnalysisAsync(context)).RequireValue().JobId);
         Assert.Equal(4, (await intelligence.GetAnalysisProgressAsync(context, "job-1")).RequireValue().Completed);
         Assert.Equal("cluster-1", Assert.Single((await intelligence.GetClustersAsync(context)).RequireValue()).Id);
-        Assert.Equal("/music/track.flac", Assert.Single((await intelligence.RecommendAsync(context, ["seed"], 10)).RequireValue()).Path);
+        Assert.Equal("Similar sound", Assert.Single((await intelligence.RecommendAsync(context, ["seed"], 10)).RequireValue()).Explanation);
         Assert.Equal("Track", Assert.Single((await intelligence.SearchAsync(context, "lyrics", true, 10)).RequireValue()).Title);
-        Assert.Equal("playlist-1", (await intelligence.ExportPlaylistAsync(context, "Mix", ["track-1"])).RequireValue().PlaylistId);
+        Assert.Equal(["track-1", "track-2"], (await intelligence.FindPathAsync(context, "track-1", "track-2", 10)).RequireValue().Tracks.Select(item => item.TrackId));
+        Assert.Equal("track-1", Assert.Single((await intelligence.BlendAsync(context, ["track-1"], ["track-2"], 10)).RequireValue()).TrackId);
+        var map = (await intelligence.GetMapAsync(context, new ProviderPageRequest(10))).RequireValue();
+        Assert.Equal("umap", map.Projection);
+        Assert.Equal(0.25, Assert.Single(map.Items).X);
+        Assert.Equal("next", map.NextCursor);
         Assert.True((await intelligence.DisconnectAsync(context)).RequireValue());
         Assert.Equal(ProviderProbeStatus.Healthy,
             (await health.ProbeAsync(context, new(ProviderCapabilityKind.Intelligence))).RequireValue().Status);
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
             intelligence.RecommendAsync(context, ["seed"], 0));
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            intelligence.BlendAsync(context, ["same"], ["same"], 10));
+    }
+
+    [Fact]
+    public async Task Intelligence_OmittedSonicHooksReportNotSupported()
+    {
+        var manifest = Manifest(ProviderCapabilityKind.Intelligence, "recommend");
+        var adapter = new ExtensionIntelligenceCapabilityAdapter(Sandbox(manifest,
+            "registerExtension({ recommend: function() { return { items: [] }; } });"), manifest);
+        var context = Context();
+
+        Assert.Equal(ProviderErrorKind.NotSupported,
+            (await adapter.FindPathAsync(context, "one", "two", 2)).Error!.Kind);
+        Assert.Equal(ProviderErrorKind.NotSupported,
+            (await adapter.BlendAsync(context, ["one"], [], 1)).Error!.Kind);
+        Assert.Equal(ProviderErrorKind.NotSupported,
+            (await adapter.GetMapAsync(context, new ProviderPageRequest(1))).Error!.Kind);
     }
 
     [Fact]

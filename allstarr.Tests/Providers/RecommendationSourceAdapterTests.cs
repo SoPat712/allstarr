@@ -296,7 +296,9 @@ public sealed class RecommendationSourceAdapterTests
         public Task<ProviderOutcome<ProviderAnalysisProgress>> GetAnalysisProgressAsync(ProviderExecutionContext context, string jobId) => throw new NotSupportedException();
         public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceCluster>>> GetClustersAsync(ProviderExecutionContext context, int limit = 50) => throw new NotSupportedException();
         public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> SearchAsync(ProviderExecutionContext context, string query, bool includeLyrics, int limit) => throw new NotSupportedException();
-        public Task<ProviderOutcome<ProviderPlaylistExportResult>> ExportPlaylistAsync(ProviderExecutionContext context, string name, IReadOnlyList<string> trackIds) => throw new NotSupportedException();
+        public Task<ProviderOutcome<ProviderIntelligencePath>> FindPathAsync(ProviderExecutionContext context, string startTrackId, string endTrackId, int limit) => throw new NotSupportedException();
+        public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> BlendAsync(ProviderExecutionContext context, IReadOnlyList<string> positiveSeedTrackIds, IReadOnlyList<string> negativeSeedTrackIds, int limit) => throw new NotSupportedException();
+        public Task<ProviderOutcome<ProviderIntelligenceMapPage>> GetMapAsync(ProviderExecutionContext context, ProviderPageRequest page) => throw new NotSupportedException();
         public Task<ProviderOutcome<bool>> DisconnectAsync(ProviderExecutionContext context) => throw new NotSupportedException();
     }
 
