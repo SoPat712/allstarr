@@ -27,7 +27,7 @@ public class GenreEnrichmentService
     /// Enriches a song with genre information from MusicBrainz (with caching).
     /// Updates the song's Genre property with the top genre.
     /// </summary>
-    public async Task EnrichSongGenreAsync(Song song)
+    public async Task EnrichSongGenreAsync(Song song, CancellationToken cancellationToken = default)
     {
         // Skip if song already has a genre
         if (!string.IsNullOrEmpty(song.Genre))
@@ -54,7 +54,12 @@ public class GenreEnrichmentService
         // Fetch from MusicBrainz
         try
         {
-            var genres = await _musicBrainz.GetGenresForSongAsync(song.Title, song.Artist, song.Isrc);
+            var genres = await _musicBrainz.GetGenresForSongAsync(
+                song.Title,
+                song.Artist,
+                song.Isrc,
+                durationMilliseconds: song.Duration is > 0 ? song.Duration.Value * 1000L : null,
+                cancellationToken: cancellationToken);
 
             if (genres.Count > 0)
             {
@@ -81,11 +86,11 @@ public class GenreEnrichmentService
     /// <summary>
     /// Enriches multiple songs with genre information (batch operation).
     /// </summary>
-    public async Task EnrichSongsGenresAsync(List<Song> songs)
+    public async Task EnrichSongsGenresAsync(List<Song> songs, CancellationToken cancellationToken = default)
     {
         var tasks = songs
             .Where(s => string.IsNullOrEmpty(s.Genre))
-            .Select(s => EnrichSongGenreAsync(s));
+            .Select(s => EnrichSongGenreAsync(s, cancellationToken));
 
         await Task.WhenAll(tasks);
     }

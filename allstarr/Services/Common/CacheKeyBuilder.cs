@@ -175,18 +175,21 @@ public static class CacheKeyBuilder
 
     public static string BuildMusicBrainzIsrcKey(string isrc)
     {
-        return $"musicbrainz:isrc:v1:{Normalize(isrc)}";
+        return $"musicbrainz:isrc:v2:{Normalize(isrc)}";
     }
 
     public static string BuildMusicBrainzSearchKey(string title, string artist, int limit)
     {
-        return $"musicbrainz:search:v1:{DigestIdentity(title, artist, limit)}";
+        return $"musicbrainz:search:v2:{DigestIdentity(title, artist, limit)}";
     }
 
     public static string BuildMusicBrainzMbidKey(string mbid)
     {
-        return $"musicbrainz:mbid:v1:{Normalize(mbid)}";
+        return $"musicbrainz:mbid:v2:{Normalize(mbid)}";
     }
+
+    public static string BuildMusicBrainzNegativeKey(string positiveKey) =>
+        $"negative:{positiveKey}";
 
     #endregion
 

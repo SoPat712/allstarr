@@ -659,6 +659,14 @@ builder.Services.Configure<allstarr.Models.Settings.MusicBrainzSettings>(options
     var password = builder.Configuration.GetValue<string>("MusicBrainz:Password");
     if (!string.IsNullOrEmpty(password)) options.Password = password;
 });
+builder.Services.AddHttpClient(allstarr.Services.MusicBrainz.MusicBrainzService.HttpClientName, client =>
+{
+    client.DefaultRequestHeaders.UserAgent.ParseAdd(
+        allstarr.Services.MusicBrainz.MusicBrainzService.UserAgent);
+    client.DefaultRequestHeaders.Accept.Add(
+        new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+    client.Timeout = TimeSpan.FromSeconds(15);
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<allstarr.Services.MusicBrainz.MusicBrainzService>();
 builder.Services.AddSingleton<allstarr.Services.Common.GenreEnrichmentService>();
 

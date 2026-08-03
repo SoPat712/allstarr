@@ -64,7 +64,7 @@ public static class ApplicationCachePolicyRegistry
             category = ApplicationCacheCategory.Artwork;
         if (StartsWithAny(key, "lyrics:v2:", "lyrics:id:v2:", "lyricsplus:v2:"))
             category = ApplicationCacheCategory.Lyrics;
-        if (key.StartsWith("negative:playback:metadata:v1:", StringComparison.Ordinal))
+        if (StartsWithAny(key, "negative:playback:metadata:v1:", "negative:musicbrainz:"))
             category = ApplicationCacheCategory.NegativeResult;
         if (key.StartsWith("playback:signal:dedupe:v1:", StringComparison.Ordinal))
             category = ApplicationCacheCategory.Coordination;
@@ -74,9 +74,9 @@ public static class ApplicationCachePolicyRegistry
                 "playlist:artwork-descriptor:v1:",
                 "metadata:album:v1:",
                 "metadata:artist:v1:",
-                "musicbrainz:isrc:v1:",
-                "musicbrainz:search:v1:",
-                "musicbrainz:mbid:v1:",
+                "musicbrainz:isrc:v2:",
+                "musicbrainz:search:v2:",
+                "musicbrainz:mbid:v2:",
                 "genre:v2:",
                 "playback:metadata:v1:"))
             category = ApplicationCacheCategory.CanonicalMetadata;
