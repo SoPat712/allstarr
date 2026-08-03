@@ -80,16 +80,18 @@
             ? { storage: "cache" }
             : route === "/library/kept"
               ? { storage: "kept" }
-              : route === "/sources"
-                ? { administrator: session?.user?.isAdministrator ?? false }
-                : route.startsWith("/settings")
-                  ? {
-                      section: route.split("/")[2] || "general",
-                      initialPanel: routeQuery.get("provider") ?? "",
-                      administrator: session?.user?.isAdministrator ?? false,
-                      onOpenSetup: reopenSetup,
-                    }
-                  : {},
+              : route === "/intelligence"
+                ? { initialSection: routeQuery.get("section") ?? "overview" }
+                : route === "/sources"
+                  ? { administrator: session?.user?.isAdministrator ?? false }
+                  : route.startsWith("/settings")
+                    ? {
+                        section: route.split("/")[2] || "general",
+                        initialPanel: routeQuery.get("provider") ?? "",
+                        administrator: session?.user?.isAdministrator ?? false,
+                        onOpenSetup: reopenSetup,
+                      }
+                    : {},
   );
 
   async function loadOnboarding(current: Session) {

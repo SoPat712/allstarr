@@ -5356,12 +5356,14 @@
     gap: 1rem;
   }
 
-  .settings-workspace > nav {
+  .settings-workspace > nav,
+  .intelligence-view > nav {
     min-width: 0;
     max-width: 100%;
   }
 
-  .settings-tabs {
+  .settings-tabs,
+  .intelligence-tabs {
     width: min(100%, 46rem);
     max-width: 100%;
   }
@@ -6156,7 +6158,8 @@
 }
 
 @media (max-width: 650px) {
-  .settings-tabs {
+  .settings-tabs,
+  .intelligence-tabs {
     --segmented-selected-background: var(--color-signal-muted);
     display: flex;
     overflow-x: auto;
@@ -6164,11 +6167,13 @@
     scroll-snap-type: inline proximity;
   }
 
-  .settings-tabs::before {
+  .settings-tabs::before,
+  .intelligence-tabs::before {
     display: none;
   }
 
-  .settings-tabs :is(a, button) {
+  .settings-tabs :is(a, button),
+  .intelligence-tabs :is(a, button) {
     min-height: var(--control-md);
     flex: 0 0 auto;
     padding-inline: var(--space-4);

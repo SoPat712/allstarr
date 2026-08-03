@@ -16,7 +16,9 @@
   } from "$lib/api";
   import { formatDuration } from "$lib/playlists";
 
-  let { scope }: { scope: IntelligenceScope } = $props();
+  type HistorySection = "overview" | "history" | "imports";
+
+  let { scope, section }: { scope: IntelligenceScope; section: HistorySection } = $props();
 
   let period = $state("30");
   let fromDate = $state(isoDate(new Date(Date.now() - 29 * 86_400_000)));
@@ -58,6 +60,7 @@
   const periodName = $derived(period === "365" ? "Last year" : period === "custom" ? "Selected dates" : `Last ${period} days`);
   const exportUrl = $derived(intelligence.historyExportUrl(scope));
   const activeImport = $derived(historyImport?.state === "pending" || historyImport?.state === "running");
+  const hasHistoryFilters = $derived(Boolean(search.trim() || source.trim() || client.trim() || artist.trim() || album.trim() || track.trim()));
 
   $effect(() => {
     if (scopeKey !== previousScopeKey) {
@@ -243,36 +246,42 @@
 </script>
 
 <section class="history-workspace">
-  <header class="history-heading">
-    <div><p class="eyebrow">Your listening</p><h3>Listening history</h3><p>Private activity for this account and library only.</p></div>
-    <div class="history-actions"><a class="button-secondary" href={exportUrl} download>Download my history</a></div>
-  </header>
+  {#if section !== "imports"}
+    <header class="history-heading">
+      <div><p class="eyebrow">Your listening</p><h3>{section === "overview" ? "Listening overview" : "Listening history"}</h3><p>Private activity for this account and library only.</p></div>
+      {#if section === "history"}<div class="history-actions"><a class="button-secondary" href={exportUrl} download>Download my history</a></div>{/if}
+    </header>
 
-  <form class="history-toolbar panel" onsubmit={(event) => { event.preventDefault(); void loadHistory(); }}>
-    <SearchField bind:value={search} label="Search listening history" placeholder="Search songs, artists, or albums" />
-    <SelectField bind:value={period} label="History period" options={[
-      { value: "30", label: "Last 30 days" }, { value: "90", label: "Last 90 days" },
-      { value: "365", label: "Last year" }, { value: "custom", label: "Custom dates" },
-    ]} />
-    <button class="button-primary" type="submit" disabled={loading || historyLoading}>{historyLoading ? "Filtering…" : "Apply filters"}</button>
-    <details>
-      <summary>More filters</summary>
-      <div class="advanced-filters">
-        {#if period === "custom"}<label class="field"><span>From</span><input bind:value={fromDate} type="date" required /></label><label class="field"><span>Through</span><input bind:value={toDate} type="date" required /></label>{/if}
-        <label class="field"><span>Artist</span><input bind:value={artist} maxlength="500" /></label>
-        <label class="field"><span>Album</span><input bind:value={album} maxlength="500" /></label>
-        <label class="field"><span>Song</span><input bind:value={track} maxlength="500" /></label>
-        <label class="field"><span>Source</span><input bind:value={source} maxlength="32" placeholder="import or playback" /></label>
-        <label class="field"><span>Client</span><input bind:value={client} maxlength="200" placeholder="Jellyfin or Subsonic" /></label>
-        <label class="field"><span>Time zone</span><input bind:value={timeZoneId} maxlength="100" /></label>
-      </div>
-    </details>
-  </form>
+    <form class="history-toolbar panel" onsubmit={(event) => { event.preventDefault(); void (section === "overview" ? loadAll() : loadHistory()); }}>
+      {#if section === "history"}<SearchField bind:value={search} label="Search listening history" placeholder="Search songs, artists, or albums" />{/if}
+      <SelectField bind:value={period} label="History period" options={[
+        { value: "30", label: "Last 30 days" }, { value: "90", label: "Last 90 days" },
+        { value: "365", label: "Last year" }, { value: "custom", label: "Custom dates" },
+      ]} />
+      <button class="button-primary" type="submit" disabled={loading || historyLoading}>{loading || historyLoading ? "Updating…" : section === "overview" ? "Update overview" : "Apply filters"}</button>
+      <details>
+        <summary>{section === "overview" ? "Dates and time zone" : "More filters"}</summary>
+        <div class="advanced-filters">
+          {#if period === "custom"}<label class="field"><span>From</span><input bind:value={fromDate} type="date" required /></label><label class="field"><span>Through</span><input bind:value={toDate} type="date" required /></label>{/if}
+          {#if section === "history"}
+            <label class="field"><span>Artist</span><input bind:value={artist} maxlength="500" /></label>
+            <label class="field"><span>Album</span><input bind:value={album} maxlength="500" /></label>
+            <label class="field"><span>Song</span><input bind:value={track} maxlength="500" /></label>
+            <label class="field"><span>Source</span><input bind:value={source} maxlength="32" placeholder="import or playback" /></label>
+            <label class="field"><span>Client</span><input bind:value={client} maxlength="200" placeholder="Jellyfin or Subsonic" /></label>
+          {/if}
+          <label class="field"><span>Time zone</span><input bind:value={timeZoneId} maxlength="100" /></label>
+        </div>
+      </details>
+    </form>
 
-  {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
-  {#if loading}
-    <div class="history-stats" aria-busy="true" aria-label="Loading listening history">{#each Array(5) as _}<div class="panel skeleton-panel"></div>{/each}</div>
-  {:else if overview}
+    {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
+    {#if loading}
+      <div class="history-stats" aria-busy="true" aria-label="Loading listening history">{#each Array(5) as _}<div class="panel skeleton-panel"></div>{/each}</div>
+    {/if}
+  {/if}
+
+  {#if section === "overview" && !loading && overview}
     {#if overview.nowPlaying}
       <button class="panel now-playing" type="button" onclick={() => void openDetail(overview!.nowPlaying!)}><span aria-hidden="true">▶</span><span><small>Playing now</small><strong>{overview.nowPlaying.title ?? "Unknown song"}</strong><small>{overview.nowPlaying.artist ?? "Unknown artist"}</small></span></button>
     {/if}
@@ -288,7 +297,7 @@
       <div><p class="eyebrow">Listening recap</p><h3>{periodName}</h3></div>
       {#if overview.selected.completedListens}
         <p>You listened {overview.selected.completedListens.toLocaleString()} times across {overview.selected.distinctTracks.toLocaleString()} songs and {overview.selected.distinctArtists.toLocaleString()} artists, for {listeningTime(overview.selected.listeningTimeMilliseconds)}.{#if topTrack} Your most-played song was <strong>{topTrack.title ?? "Unknown song"}</strong>{topTrack.artist ? ` by ${topTrack.artist}` : ""}.{/if}</p>
-      {:else}<p>No completed listens were recorded for this period.</p>{/if}
+      {:else}<p>No completed listens were recorded for this period. Play music or import a history file to build this recap.</p>{/if}
       {#if overview.allTime.firstListen}<p class="muted">Your first recorded listen was <time datetime={overview.allTime.firstListen}>{new Date(overview.allTime.firstListen).toLocaleDateString()}</time>.</p>{/if}
     </section>
 
@@ -307,32 +316,38 @@
               <span style={`--activity:${Math.min(1, .18 + bucket.count / 20)}`} title={`${bucket.date}: ${bucket.count} listens`} aria-label={`${bucket.date}: ${bucket.count} listens`}></span>
             {/each}
           </div>
-        {:else}<p class="muted">No completed listens in this period.</p>{/if}
+        {:else}<p class="muted">No activity in this period. Play music or import a history file to begin.</p>{/if}
       </section>
 
       <section class="panel top-card">
         <header><div><p class="eyebrow">Most played</p><h3>Top {topKind === "track" ? "songs" : `${topKind}s`}</h3></div><div class="mini-tabs" role="tablist" aria-label="Top listening category">{#each [["artist", "Artists"], ["album", "Albums"], ["track", "Songs"]] as option}<button type="button" role="tab" aria-selected={topKind === option[0]} onclick={() => topKind = option[0] as typeof topKind}>{option[1]}</button>{/each}</div></header>
-        <ol>{#each selectedTop.slice(0, 5) as item}<li><span><strong>{topKind === "artist" ? item.artist : topKind === "album" ? item.album : item.title}</strong>{#if topKind !== "artist"}<small>{item.artist}</small>{/if}</span><span>{item.listenCount} listens</span></li>{:else}<li class="muted">Nothing to rank yet.</li>{/each}</ol>
+        <ol>{#each selectedTop.slice(0, 5) as item}<li><span><strong>{topKind === "artist" ? item.artist : topKind === "album" ? item.album : item.title}</strong>{#if topKind !== "artist"}<small>{item.artist}</small>{/if}</span><span>{item.listenCount} listens</span></li>{:else}<li class="muted">Nothing to rank yet. Play music or import a history file to begin.</li>{/each}</ol>
       </section>
     </div>
   {/if}
 
-  <section class="panel history-list-card">
-    <header><div><p class="eyebrow">Recent listens</p><h3>History</h3></div><span>{items.length} shown</span></header>
-    <div class="history-list">
-      {#each items as item}
-        <button type="button" onclick={() => void openDetail(item)}>
-          <span class="track-art">{#if item.artworkUrl}<img src={item.artworkUrl} alt="" loading="lazy" />{:else}<span aria-hidden="true">♪</span>{/if}</span>
-          <span class="history-copy"><strong>{item.title ?? "Unknown song"}</strong><small>{item.artist ?? "Unknown artist"}{item.album ? ` · ${item.album}` : ""}</small><small>{item.listenedAt ? new Date(item.listenedAt).toLocaleString() : "Time unavailable"} · {formatDuration(item.durationMilliseconds)}</small></span>
-          <span class="history-route"><strong>{item.provider ?? words(item.source)}</strong><small>{item.client ?? "Unknown client"}</small>{#if item.targetStatuses.length}<small>{item.targetStatuses.map((status) => `${words(status.target)}: ${words(status.state)}`).join(" · ")}</small>{/if}</span>
-          <span class={`status-pill ${item.enrichmentState === "resolved" ? "healthy" : "suggested"}`}>{words(item.enrichmentState)}</span>
-        </button>
-      {:else}<div class="compact-empty"><strong>No listens match these filters</strong><p>Try a wider period or clear a filter.</p></div>{/each}
-    </div>
-    {#if nextCursor}<button class="button-secondary load-more" type="button" disabled={historyLoading} onclick={() => void loadHistory(false)}>{historyLoading ? "Loading…" : "Load older listens"}</button>{/if}
-  </section>
+  {#if (section === "overview" || section === "history") && !loading}
+    {@const shownItems = section === "overview" ? items.slice(0, 5) : items}
+    <section class="panel history-list-card">
+      <header><div><p class="eyebrow">Recent listens</p><h3>{section === "overview" ? "Recently played" : "History"}</h3></div><span>{shownItems.length} shown</span></header>
+      <div class="history-list">
+        {#each shownItems as item}
+          <button type="button" onclick={() => void openDetail(item)}>
+            <span class="track-art">{#if item.artworkUrl}<img src={item.artworkUrl} alt="" loading="lazy" />{:else}<span aria-hidden="true">♪</span>{/if}</span>
+            <span class="history-copy"><strong>{item.title ?? "Unknown song"}</strong><small>{item.artist ?? "Unknown artist"}{item.album ? ` · ${item.album}` : ""}</small><small>{item.listenedAt ? new Date(item.listenedAt).toLocaleString() : "Time unavailable"} · {formatDuration(item.durationMilliseconds)}</small></span>
+            <span class="history-route"><strong>{item.provider ?? words(item.source)}</strong><small>{item.client ?? "Unknown client"}</small>{#if item.targetStatuses.length}<small>{item.targetStatuses.map((status) => `${words(status.target)}: ${words(status.state)}`).join(" · ")}</small>{/if}</span>
+            <span class={`status-pill ${item.enrichmentState === "resolved" ? "healthy" : "suggested"}`}>{words(item.enrichmentState)}</span>
+          </button>
+        {:else}
+          {#if section === "history" && hasHistoryFilters}<div class="compact-empty"><strong>No listens match these filters</strong><p>Try a wider period or clear a filter.</p></div>
+          {:else}<div class="compact-empty"><strong>No completed listens yet</strong><p>Turn on automatic history in Settings, then play music or import a history file.</p></div>{/if}
+        {/each}
+      </div>
+      {#if section === "history" && nextCursor}<button class="button-secondary load-more" type="button" disabled={historyLoading} onclick={() => void loadHistory(false)}>{historyLoading ? "Loading…" : "Load older listens"}</button>{/if}
+    </section>
+  {/if}
 
-  <section class="panel import-card">
+  {#if section === "imports"}<section class="panel import-card">
     <header><div><p class="eyebrow">Bring your history</p><h3>Import listening history</h3><p>Preview a Spotify, Last.fm, ListenBrainz, Koito, or Maloja export before adding anything. Files stay private and expire automatically.</p></div></header>
     {#if importError}<p class="notice-error" role="alert">{importError}</p>{/if}
     <form onsubmit={previewImport}>
@@ -353,7 +368,7 @@
       </div></div>
       {#if historyImport.lastErrorMessage}<p class="notice-error" role="alert">{historyImport.lastErrorMessage}</p>{/if}
     {/if}
-  </section>
+  </section>{/if}
 </section>
 
 <Dialog.Root bind:open={detailOpen}>

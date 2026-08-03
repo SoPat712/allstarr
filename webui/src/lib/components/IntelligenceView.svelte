@@ -10,6 +10,9 @@
   import SelectField from "$lib/components/SelectField.svelte";
   import { home, intelligence, playlistLinks, type IntelligenceScope, type IntelligenceState, type MediaTarget } from "$lib/api";
 
+  type IntelligenceSection = "overview" | "history" | "recommendations" | "imports" | "settings";
+
+  let { initialSection = "overview" }: { initialSection?: string } = $props();
   let protocol = $state("jellyfin");
   let backendInstanceId = $state("");
   let libraryScopeId = $state("");
@@ -25,9 +28,13 @@
   let selectedProviders = $state<string[]>([]);
   let targetCredentialReferenceId = $state("");
   let mediaTargets = $state<MediaTarget[]>([]);
-  let activeSection = $state("discover");
   let loadedScope = $state<IntelligenceScope | null>(null);
 
+  const activeSection = $derived<IntelligenceSection>(
+    initialSection === "history" || initialSection === "recommendations" || initialSection === "imports" || initialSection === "settings"
+      ? initialSection
+      : "overview",
+  );
   const scope = $derived<IntelligenceScope>({ protocol, backendInstanceId, libraryScopeId });
   const activeScope = $derived(loadedScope ?? scope);
   const visibleCandidates = $derived(data?.candidates.filter((item) => !item.exclusions.length) ?? []);
@@ -152,7 +159,7 @@
       <h2>Listen deeper, without exposing your history.</h2>
       <p>Recommendations, listening history, and generated playlists stay private to this account and music library.</p>
     </div>
-    {#if data?.actions.canRun && activeSection === "discover"}
+    {#if data?.actions.canRun && activeSection === "recommendations"}
       <div class="heading-actions">
         {#if runStatus}<span class={`status-pill ${runState === "succeeded" ? "healthy" : "suggested"}`}>{runStatus}</span>{/if}
         <button class="button-primary" type="button" disabled={Boolean(action)}
@@ -181,7 +188,7 @@
       <span class="empty-orbit" aria-hidden="true">✦</span>
       <p class="eyebrow">Choose a library</p>
       <h2>Choose a music library.</h2>
-      <p>Enter the connection and library names configured for your media server.</p>
+      <p>Enter the connection and library names configured for your media server. If you have not connected a music source yet, <a href="#/sources">open Sources</a>.</p>
     </section>
   {:else if data.state === "unauthorized" || data.state === "error"}
     <RouteError
@@ -194,7 +201,7 @@
     {#if data.state === "degraded"}
       <div class="degraded-banner" role="status"><span aria-hidden="true">!</span><p><strong>Some discovery sources need attention.</strong> Existing results remain available.</p></div>
     {/if}
-    {#if activeSection === "discover" && data.actions.progress}
+    {#if activeSection === "recommendations" && data.actions.progress}
       <section class="panel run-progress" role="status">
         <div><p class="eyebrow">Refreshing recommendations</p><strong>{data.actions.progress.message}</strong>
           {#if data.actions.progress.provider || data.actions.progress.playlist || data.actions.progress.track}<small>{[data.actions.progress.provider, data.actions.progress.playlist, data.actions.progress.track].filter(Boolean).join(" · ")}</small>{/if}
@@ -205,13 +212,15 @@
       </section>
     {/if}
     <SegmentedNav items={[
-      { id: "discover", label: "Discover" },
-      { id: "history", label: "Listening history" },
-      { id: "settings", label: "Settings" },
-    ]} active={activeSection} label="Intelligence sections" class="intelligence-tabs" onchange={(value) => activeSection = value} />
+      { id: "overview", label: "Overview", href: "#/intelligence?section=overview" },
+      { id: "history", label: "History", href: "#/intelligence?section=history" },
+      { id: "recommendations", label: "Recommendations", href: "#/intelligence?section=recommendations" },
+      { id: "imports", label: "Imports", href: "#/intelligence?section=imports" },
+      { id: "settings", label: "Settings", href: "#/intelligence?section=settings" },
+    ]} active={activeSection} label="Intelligence sections" class="intelligence-tabs" />
 
-    {#if activeSection === "history"}
-      <IntelligenceHistory scope={activeScope} />
+    {#if activeSection === "overview" || activeSection === "history" || activeSection === "imports"}
+      <IntelligenceHistory scope={activeScope} section={activeSection} />
     {:else if activeSection === "settings"}
       <div class="settings-stack">
         <section class="panel privacy-card">
@@ -269,11 +278,11 @@
                 </li>
               {/each}
             </ol>
-          {:else}<div class="compact-empty"><strong>No recommendations yet</strong><p>Enable at least one ready source, then run a refresh.</p></div>{/if}
+          {:else}<div class="compact-empty"><strong>No recommendations yet</strong><p><a href="#/sources">Connect or configure a source</a>, then refresh. Listening-based recommendations also need automatic history and completed plays.</p></div>{/if}
         </section>
 
         <aside class="side-stack">
-          <section class="panel profile-card"><p class="eyebrow">Recent listening</p><h3>Your profile</h3>{#if data.visualization.length}{#each data.visualization as item}<label><span>{item.label}</span><meter min="0" max="1" value={item.value}>{item.value}</meter></label>{/each}{:else}<p class="muted">No saved listening activity yet.</p>{/if}</section>
+          <section class="panel profile-card"><p class="eyebrow">Recent listening</p><h3>Your profile</h3>{#if data.visualization.length}{#each data.visualization as item}<label><span>{item.label}</span><meter min="0" max="1" value={item.value}>{item.value}</meter></label>{/each}{:else}<p class="muted">Turn on automatic history in <a href="#/intelligence?section=settings">Settings</a>, then play music or import a history file.</p>{/if}</section>
           <section class="panel generated-card"><p class="eyebrow">Saved output</p><h3>Generated playlists</h3>{#each data.generatedSets as item}<div class="generated-row"><span><strong>{item.name}</strong><small>{item.trackCount} tracks</small></span><span class={`status-pill ${item.materialized ? "healthy" : "suggested"}`}>{generatedStatus(item)}</span></div>{:else}<p class="muted">No generated playlists yet.</p>{/each}{#if data.actions.canGenerate && data.actions.latestRunId}<form class="generate-form" onsubmit={(event) => { event.preventDefault(); void perform("generate", () => intelligence.generate(activeScope, data!.actions.latestRunId!, generatedName)); }}><label class="field"><span>Playlist name</span><input bind:value={generatedName} maxlength="200" required /></label><button class="button-primary" type="submit" disabled={Boolean(action)}>{action === "generate" ? "Creating…" : "Create playlist"}</button></form>{/if}</section>
         </aside>
       </div>

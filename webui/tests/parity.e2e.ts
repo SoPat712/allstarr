@@ -775,6 +775,25 @@ for (const viewport of viewports) {
       await page.getByRole("button", { name: "Open library" }).click();
       await expect(page.getByLabel("Loading Intelligence")).toBeVisible();
       delayed.release();
+      await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+      if (viewport.width <= 650) {
+        const sectionTabs = page.getByRole("navigation", { name: "Intelligence sections" }).locator(".segmented-tabs");
+        await expect(sectionTabs).toHaveCSS("overflow-x", "auto");
+        expect(Math.min(...await sectionTabs.getByRole("tab").evaluateAll((tabs) => tabs.map((tab) => tab.clientWidth)))).toBeGreaterThanOrEqual(72);
+      }
+      const recap = page.locator(".recap-card");
+      await expect(recap).toContainText("12 times across 9 songs and 5 artists");
+      await expect(recap).toContainText("Your most-played song was Moon Song by The Comets");
+      await expect(recap).toContainText("Your first recorded listen was");
+      await expect(page.getByRole("heading", { name: "Recently played", level: 3 })).toBeVisible();
+      await expect(page.locator(".history-list").getByText("Moon Song", { exact: true })).toBeVisible();
+      const activityCard = page.locator(".activity-card");
+      await expect(activityCard.getByText(viewport.width <= 620
+        ? "Showing 2025-12-02 through 2025-12-31"
+        : "Showing 2025-12-01 through 2025-12-31", { exact: true })).toBeVisible();
+      await expect(activityCard.locator(".activity-grid span:visible")).toHaveCount(viewport.width <= 620 ? 30 : 31);
+      await page.getByRole("tab", { name: "Recommendations" }).click();
+      await expect(page).toHaveURL(/#\/intelligence\?section=recommendations$/);
       await expect(page.getByText("Future Song", { exact: true })).toBeVisible();
       await expect(page.getByText("Morning discovery")).toBeVisible();
       await expect(page.getByText("Created in Jellyfin", { exact: true })).toBeVisible();
@@ -857,26 +876,25 @@ for (const viewport of viewports) {
       await nextMap;
       await expect(soundDiscovery.getByText("Far Song", { exact: true })).toBeVisible();
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
-        await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-discover.png`, fullPage: true });
+        await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-recommendations.png`, fullPage: true });
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-      await page.getByRole("tab", { name: "Listening history" }).click();
+      await page.getByRole("tab", { name: "History" }).click();
       await expect(page.getByRole("heading", { name: "Listening history", level: 3, exact: true })).toBeVisible();
-      const recap = page.locator(".recap-card");
-      await expect(recap).toContainText("12 times across 9 songs and 5 artists");
-      await expect(recap).toContainText("Your most-played song was Moon Song by The Comets");
-      await expect(recap).toContainText("Your first recorded listen was");
       await expect(page.locator(".history-list").getByText("Moon Song", { exact: true })).toBeVisible();
-      await expect(page.getByRole("heading", { name: "Import listening history" })).toBeVisible();
-      const activityCard = page.locator(".activity-card");
-      await expect(activityCard.getByText(viewport.width <= 620
-        ? "Showing 2025-12-02 through 2025-12-31"
-        : "Showing 2025-12-01 through 2025-12-31", { exact: true })).toBeVisible();
-      await expect(activityCard.locator(".activity-grid span:visible")).toHaveCount(viewport.width <= 620 ? 30 : 31);
+      await expect(page.getByRole("heading", { name: "Import listening history" })).toHaveCount(0);
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
         await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-history.png`, fullPage: true });
+      await page.getByRole("tab", { name: "Imports" }).click();
+      await expect(page.getByRole("heading", { name: "Import listening history" })).toBeVisible();
+      await expect(page.locator(".history-list")).toHaveCount(0);
+      const previewImport = page.getByRole("button", { name: "Preview import" });
+      await previewImport.scrollIntoViewIfNeeded();
+      await expect(previewImport).toBeInViewport();
+      await expect.poll(() => page.evaluate(() =>
+        document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.getByRole("tab", { name: "Settings" }).click();
       await expect(page.getByText("Monday discoveries", { exact: true })).toBeVisible();
       await expect(page.getByText("Allstarr keeps private listening history and uses it for recommendations.", { exact: true })).toBeVisible();
@@ -991,15 +1009,15 @@ for (const viewport of viewports) {
 test("Intelligence history imports, corrections, and schedules use the selected scope", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
-  await page.goto("#/intelligence");
+  await page.goto("#/intelligence?section=history");
   await page.getByLabel("Server connection").fill("main");
   await page.getByLabel("Music library").fill("music");
+  const overviewRequest = page.waitForRequest((request) => request.url().includes("/api/admin/intelligence/history/overview"));
   await page.getByRole("button", { name: "Open library" }).click();
+  await expect(page.getByRole("tab", { name: "History" })).toHaveAttribute("aria-selected", "true");
+  expect(new URL((await overviewRequest).url()).searchParams.get("backendInstanceId")).toBe("main");
 
   await page.getByLabel("Server connection").fill("typed-but-not-opened");
-  const overviewRequest = page.waitForRequest((request) => request.url().includes("/api/admin/intelligence/history/overview"));
-  await page.getByRole("tab", { name: "Listening history" }).click();
-  expect(new URL((await overviewRequest).url()).searchParams.get("backendInstanceId")).toBe("main");
   await page.locator(".history-list").getByRole("button").click();
   const detail = page.getByRole("dialog", { name: "Edit listen" });
   await expect(detail).toBeVisible();
@@ -1013,6 +1031,8 @@ test("Intelligence history imports, corrections, and schedules use the selected 
   });
   await detail.getByRole("button", { name: "Close listen details" }).click();
 
+  await page.getByRole("tab", { name: "Imports" }).click();
+  await expect(page).toHaveURL(/#\/intelligence\?section=imports$/);
   const preview = page.waitForRequest((request) => request.method() === "POST" &&
     request.url().endsWith("/api/admin/intelligence/history/imports/preview"));
   await page.getByLabel("History export file").setInputFiles({
@@ -1049,6 +1069,49 @@ test("Intelligence history imports, corrections, and schedules use the selected 
     request.url().endsWith("/api/admin/intelligence/schedules/schedule-1"));
   await removal.getByRole("button", { name: "Remove schedule" }).click();
   await remove;
+});
+
+test("Intelligence empty states explain how to get results", async ({ page }) => {
+  await mockApi(page);
+  await page.route("**/api/admin/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    let body: unknown;
+    if (path === "/api/admin/intelligence")
+      body = { ...(responses[path] as Record<string, unknown>), candidates: [], visualization: [], generatedSets: [], providers: [] };
+    else if (path === "/api/admin/intelligence/history/overview") {
+      const empty = { completedListens: 0, distinctTracks: 0, distinctArtists: 0, listeningTimeMilliseconds: 0, firstListen: null };
+      body = { ...(responses[path] as Record<string, unknown>), allTime: empty, selected: empty, currentStreakDays: 0, longestStreakDays: 0 };
+    } else if (path === "/api/admin/intelligence/history/activity")
+      body = { ...(responses[path] as Record<string, unknown>), buckets: [], currentStreakDays: 0, longestStreakDays: 0 };
+    else if (path.startsWith("/api/admin/intelligence/history/top/"))
+      body = { ...(responses[path] as Record<string, unknown>), items: [] };
+    else if (path === "/api/admin/intelligence/history")
+      body = { ...(responses[path] as Record<string, unknown>), items: [], nextCursor: null };
+    else {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  });
+
+  await page.goto("#/intelligence?section=unknown");
+  await page.getByLabel("Server connection").fill("main");
+  await page.getByLabel("Music library").fill("music");
+  await page.getByRole("button", { name: "Open library" }).click();
+  await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: "Listening overview" })).toBeVisible();
+  await page.getByRole("tab", { name: "Recommendations" }).click();
+  await expect(page.getByRole("link", { name: "Connect or configure a source" })).toBeVisible();
+  await expect(page.getByText("Turn on automatic history in Settings, then play music or import a history file.")).toBeVisible();
+
+  await page.getByRole("tab", { name: "Overview" }).click();
+  await expect(page.getByText("No completed listens were recorded for this period. Play music or import a history file to build this recap.")).toBeVisible();
+  await expect(page.getByText("No activity in this period. Play music or import a history file to begin.")).toBeVisible();
+  await expect(page.getByText("Nothing to rank yet. Play music or import a history file to begin.")).toBeVisible();
+
+  await page.getByRole("tab", { name: "History" }).click();
+  await expect(page.getByText("No completed listens yet")).toBeVisible();
+  await expect(page.getByText("Turn on automatic history in Settings, then play music or import a history file.")).toBeVisible();
 });
 
 test("Home stays inside runtime and request budgets", async ({ page }) => {
