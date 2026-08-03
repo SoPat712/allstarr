@@ -206,7 +206,7 @@
             {#if credentialOptions.length}
               <label class="field"><span>Where generated playlists are created</span><SelectField bind:value={targetCredentialReferenceId} label="Generated playlist destination" options={[{ value: "", label: "Use the connected media server" }, ...credentialOptions]} /></label>
             {/if}
-            <fieldset><legend>Signals</legend>{#each data.availableSignalTypes as item}<label><input type="checkbox" checked={selectedSignals.includes(item.id)} onchange={(event) => selectedSignals = toggle(selectedSignals, item.id, event.currentTarget.checked)} /> {item.label}</label>{/each}</fieldset>
+            <fieldset><legend>Use these actions for recommendations</legend>{#each data.availableSignalTypes as item}<label><input type="checkbox" checked={selectedSignals.includes(item.id)} onchange={(event) => selectedSignals = toggle(selectedSignals, item.id, event.currentTarget.checked)} /> {item.label}</label>{/each}</fieldset>
             <fieldset><legend>Sources</legend>{#each data.providers as provider}<label class:unavailable={!provider.available}><input type="checkbox" disabled={!provider.available} checked={selectedProviders.includes(provider.id)} onchange={(event) => selectedProviders = toggle(selectedProviders, provider.id, event.currentTarget.checked)} /> <span><strong>{provider.label}</strong><small>{provider.description} · {providerStatus(provider.state)}</small></span></label>{/each}</fieldset>
             <footer><button class="button-danger" type="button" onclick={() => purgeOpen = true}>Turn off and clear</button><button class="button-primary" type="submit" disabled={Boolean(action)}>{action === "policy" ? "Saving…" : "Save settings"}</button></footer>
           </form>
@@ -232,7 +232,7 @@
         </section>
 
         <aside class="side-stack">
-          <section class="panel profile-card"><p class="eyebrow">Recent listening</p><h3>Your profile</h3>{#if data.visualization.length}{#each data.visualization as item}<label><span>{item.label}</span><meter min="0" max="1" value={item.value}>{item.value}</meter></label>{/each}{:else}<p class="muted">No retained listening signals yet.</p>{/if}</section>
+          <section class="panel profile-card"><p class="eyebrow">Recent listening</p><h3>Your profile</h3>{#if data.visualization.length}{#each data.visualization as item}<label><span>{item.label}</span><meter min="0" max="1" value={item.value}>{item.value}</meter></label>{/each}{:else}<p class="muted">No saved listening activity yet.</p>{/if}</section>
           <section class="panel generated-card"><p class="eyebrow">Saved output</p><h3>Generated playlists</h3>{#each data.generatedSets as item}<div class="generated-row"><span><strong>{item.name}</strong><small>{item.trackCount} tracks</small></span><span class={`status-pill ${item.materialized ? "healthy" : "suggested"}`}>{generatedStatus(item)}</span></div>{:else}<p class="muted">No generated playlists yet.</p>{/each}{#if data.actions.canGenerate && data.actions.latestRunId}<form class="generate-form" onsubmit={(event) => { event.preventDefault(); void perform("generate", () => intelligence.generate(activeScope, data!.actions.latestRunId!, generatedName)); }}><label class="field"><span>Playlist name</span><input bind:value={generatedName} maxlength="200" required /></label><button class="button-primary" type="submit" disabled={Boolean(action)}>{action === "generate" ? "Creating…" : "Create playlist"}</button></form>{/if}</section>
         </aside>
       </div>

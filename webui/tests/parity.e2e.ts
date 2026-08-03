@@ -823,6 +823,8 @@ for (const viewport of viewports) {
       await expect(page.getByText("Monday discoveries", { exact: true })).toBeVisible();
       await expect(page.getByText("Allstarr keeps private listening history and uses it for recommendations.", { exact: true })).toBeVisible();
       await expect(page.getByText("Keep listening history for", { exact: true })).toBeVisible();
+      await expect(page.getByText("Use these actions for recommendations", { exact: true })).toBeVisible();
+      await expect(page.locator(".settings-stack")).not.toContainText(/\bsignals?\b/i);
       await expect(page.getByText("Private similarity source. · Ready")).toBeVisible();
       await expect(page.getByText("Where generated playlists are created", { exact: true })).toBeVisible();
       await page.getByRole("button", { name: "Turn off and clear" }).click();

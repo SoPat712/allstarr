@@ -99,7 +99,7 @@
     <button class="button-secondary" type="button" disabled={!policyEnabled || Boolean(action)} onclick={() => begin()}>New schedule</button>
   </header>
 
-  {#if !policyEnabled}<p class="credential-safety">Turn on listening signals before creating an automatic playlist.</p>{/if}
+  {#if !policyEnabled}<p class="credential-safety">Save listening automatically before creating an automatic playlist.</p>{/if}
   {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
 
   {#if formOpen}

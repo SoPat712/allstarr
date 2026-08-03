@@ -530,15 +530,15 @@ public sealed partial class IntelligenceController(
     };
     private static string SourceDescription(string id) => id switch
     {
-        "lastfm" => "Personalized from your opted-in Last.fm listening context.",
-        "audiomuse-ai" => "Personalized sonic similarity from the optional AudioMuse-AI extension service.",
-        "musicbrainz-local" => "Local similarity using MusicBrainz-enriched genres, credits, and relationships. MusicBrainz is metadata, not a personalized recommendation account.",
+        "lastfm" => "Uses your connected Last.fm listening history to suggest songs.",
+        "audiomuse-ai" => "Finds songs that sound alike through the optional AudioMuse-AI connection.",
+        "musicbrainz-local" => "Finds related songs from this library's genres, performers, and credits. It does not send listening history to MusicBrainz.",
         "jellyfin-instant-mix" => "Your linked Jellyfin library's Instant Mix results.",
-        "listenbrainz" => "Personalized from your opted-in ListenBrainz listening context.",
+        "listenbrainz" => "Uses your connected ListenBrainz listening history to suggest songs.",
         "listenbrainz-weekly-exploration" => "Tracks from the latest Weekly Exploration playlist ListenBrainz made for you.",
         "listenbrainz-weekly-jams" => "Tracks from the latest Weekly Jams playlist ListenBrainz made for you.",
         "listenbrainz-top-recordings" => "Tracks you played most on ListenBrainz this month.",
-        "local-rules" => "Private rules over retained local listening and library signals.",
+        "local-rules" => "Uses saved listening and library activity without sending it to another service.",
         _ => "Registered recommendation source."
     };
     private static string ReadinessState(RecommendationProviderReadinessState state) => state switch
