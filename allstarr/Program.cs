@@ -634,13 +634,6 @@ builder.Services.AddHttpClient("LastFm", client =>
     client.Timeout = TimeSpan.FromSeconds(30);
 });
 
-// Register ListenBrainz HTTP client with proper User-Agent
-builder.Services.AddHttpClient("ListenBrainz", client =>
-{
-    client.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0 (https://github.com/sopat712/allstarr)");
-    client.Timeout = TimeSpan.FromSeconds(30);
-});
-
 builder.Services.AddSingleton<ScrobblingHelper>();
 
 // Register the capability unconditionally. MusicBrainzSettings.Enabled gates every

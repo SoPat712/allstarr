@@ -76,7 +76,7 @@
     "target": "Verified identity, durable playback/scrobble events, and preserved protocol responses.",
     "authBoundary": "Verified playback requests remain transparent, while scrobbling and synthetic played signals require a resolved canonical actor and cannot trust payload or route user IDs.",
     "fixture": "jellyfin-favorite-playback.json",
-    "testLocation": "ProtocolRouteFixtureTests; JellyfinItemLyricsImageProtocolAdapterTests; JellyfinSessionManagerTests; PlaybackSessionTests; PlaybackSignalPipelineTests; ScrobblingOrchestratorTests",
+    "testLocation": "ProtocolRouteFixtureTests; JellyfinItemLyricsImageProtocolAdapterTests; JellyfinSessionManagerTests; PlaybackSignalPipelineTests",
     "notes": "Capabilities status mapping and progress best-effort 204 behavior are route-fixture covered. Accepted playback reports enter the durable exact-scope pipeline, retries are occurrence-idempotent, short stops become skip signals, and provider IDs resolve for scoped scrobble delivery."
   },
   {
@@ -196,7 +196,7 @@
     "target": "Repeated id/time/submission events with durable provider-scoped idempotency.",
     "authBoundary": "Backend verification and the shared ProtocolExecutionContext precede transparent scrobble relay; accepted events require a linked actor before exact-scope durable provider work is recorded.",
     "fixture": "subsonic-relay-fidelity.json",
-    "testLocation": "ProtocolRouteFixtureTests; SubsonicRequestParserTests; SubsonicProtocolAdapterTests; PlaybackSignalPipelineTests; ScrobblingOrchestratorTests",
+    "testLocation": "ProtocolRouteFixtureTests; SubsonicRequestParserTests; SubsonicProtocolAdapterTests; PlaybackSignalPipelineTests",
     "notes": "Repeated id/time/submission form pairs retain order and source and backend status/body/headers are preserved. After an accepted relay, paired events enter the exact-scope durable pipeline; explicit time is the stable occurrence identity and provider IDs resolve against indexed track identities."
   },
   {

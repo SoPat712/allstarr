@@ -1,37 +1,11 @@
-using allstarr.Models.Settings;
 using allstarr.Services.Common;
-using allstarr.Services.Scrobbling;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Moq;
 
 namespace allstarr.Tests;
 
 public sealed class OperationalNoiseRegressionTests
 {
-    [Fact]
-    public void ScrobblingServices_DoNotLogConfigurationDuringConstruction()
-    {
-        var factory = new Mock<IHttpClientFactory>();
-        factory
-            .Setup(item => item.CreateClient(It.IsAny<string>()))
-            .Returns(() => new HttpClient());
-        var settings = Options.Create(new ScrobblingSettings
-        {
-            Enabled = true,
-            LastFm = new LastFmSettings { Enabled = true },
-            ListenBrainz = new ListenBrainzSettings { Enabled = true }
-        });
-        var lastFmLogger = new Mock<ILogger<LastFmScrobblingService>>();
-        var listenBrainzLogger = new Mock<ILogger<ListenBrainzScrobblingService>>();
-
-        _ = new LastFmScrobblingService(settings, factory.Object, lastFmLogger.Object);
-        _ = new ListenBrainzScrobblingService(settings, factory.Object, listenBrainzLogger.Object);
-
-        VerifyNoLogs(lastFmLogger);
-        VerifyNoLogs(listenBrainzLogger);
-    }
-
     [Fact]
     public void LegacyMissingTrackFileAuthority_IsRemoved()
     {
@@ -86,18 +60,6 @@ public sealed class OperationalNoiseRegressionTests
             "LogWarning(\n                \"🔍 Request logging ENABLED",
             requestLogging,
             StringComparison.Ordinal);
-    }
-
-    private static void VerifyNoLogs<T>(Mock<ILogger<T>> logger)
-    {
-        logger.Verify(
-            item => item.Log(
-                It.IsAny<LogLevel>(),
-                It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((_, _) => true),
-                It.IsAny<Exception?>(),
-                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.Never);
     }
 
     private static void VerifyNoLevel(Mock<ILogger> logger, LogLevel level)
