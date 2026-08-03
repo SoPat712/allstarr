@@ -246,6 +246,9 @@ const responses: Record<string, unknown> = {
     providers: [{
       id: "lumen-audio", label: "Lumen Audio", description: "Private similarity source.",
       enabled: true, available: true, state: "ready",
+    }, {
+      id: "audiomuse-ai", label: "AudioMuse", description: "Explore this library by sound.",
+      enabled: true, available: true, state: "ready",
     }],
     actions: {
       canRun: true, canGenerate: true, latestRunId: "run-1", latestRunState: "running",
@@ -260,6 +263,12 @@ const responses: Record<string, unknown> = {
       album: "Album", score: .91, source: "lumen-audio", providerId: "lumen-audio",
       sourceRevision: "fixture:1", revision: 1, explanations: [{
         code: "similar", weight: .9, explanation: "Similar to recent listening.",
+      }], exclusions: [], feedback: null,
+    }, {
+      id: "candidate-2", trackKey: "track-2", title: "Second Song", artist: "Another Artist",
+      album: "Second Album", score: .84, source: "audiomuse-ai", providerId: "audiomuse-ai",
+      sourceRevision: "fixture:1", revision: 1, explanations: [{
+        code: "similar", weight: .8, explanation: "A nearby sound in this library.",
       }], exclusions: [], feedback: null,
     }],
     generatedSets: [{
@@ -536,6 +545,16 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
       body = { revision: 2 };
     if (url.pathname === "/api/admin/intelligence/data")
       body = {};
+    if (url.pathname === "/api/admin/intelligence/audiomuse/analysis")
+      body = { jobId: "sound-scan-1", state: "completed", completed: 200, total: 200 };
+    if (url.pathname === "/api/admin/intelligence/audiomuse/similar")
+      body = { tracks: [{ trackId: "track-3", title: "Nearby Song", artist: "Sound Artist", album: "Sound Album", score: .92, explanation: "AudioMuse found a song with a similar sound." }] };
+    if (url.pathname === "/api/admin/intelligence/audiomuse/search")
+      body = { mode: "text", tracks: [{ trackId: "track-4", title: "Quiet Light", artist: "Sound Artist", score: .88, explanation: "AudioMuse matched this song to your description." }] };
+    if (url.pathname === "/api/admin/intelligence/audiomuse/clusters")
+      body = { clusters: [{ id: "soft", name: "Soft and warm", tracks: [{ trackId: "track-4", title: "Quiet Light", artist: "Sound Artist", score: .88 }] }] };
+    if (url.pathname === "/api/admin/intelligence/audiomuse/map")
+      body = { items: [{ trackId: "track-4", title: "Quiet Light", artist: "Sound Artist", score: .88, x: .2, y: .6, clusterId: "soft" }], projection: "fixture", nextCursor: null, isPartial: false };
     if (url.pathname === "/api/admin/intelligence/history/44444444-4444-4444-4444-444444444444" && route.request().method() === "PUT")
       body = { id: "44444444-4444-4444-4444-444444444444", revision: 3 };
     if (url.pathname === "/api/admin/intelligence/history/44444444-4444-4444-4444-444444444444" && route.request().method() === "DELETE")
@@ -714,16 +733,28 @@ for (const viewport of viewports) {
       const delayed = routeRelease();
       await mockApi(page, { releasePath: "/api/admin/intelligence", release: delayed.promise });
       await page.goto("#/intelligence");
-      await page.getByLabel("Backend instance").fill("main");
-      await page.getByLabel("Library scope").fill("music");
+      await page.getByLabel("Server connection").fill("main");
+      await page.getByLabel("Music library").fill("music");
       await page.getByRole("button", { name: "Open library" }).click();
       await expect(page.getByLabel("Loading Intelligence")).toBeVisible();
       delayed.release();
       await expect(page.getByText("Future Song", { exact: true })).toBeVisible();
       await expect(page.getByText("Morning discovery")).toBeVisible();
+      await expect(page.getByText("Created in Jellyfin", { exact: true })).toBeVisible();
       await expect(page.getByText("Searching Lumen Audio.")).toBeVisible();
       await expect(page.getByRole("button", { name: "Cancel refresh" })).toBeInViewport();
       await expect(page.getByRole("button", { name: "Refresh recommendations" })).toBeInViewport();
+      const soundDiscovery = page.locator(".sound-discovery");
+      await expect(soundDiscovery).toContainText("Allstarr will not create or change a Jellyfin playlist");
+      await expect(soundDiscovery).not.toContainText(/native playlist|hybrid|materialized|write-back/i);
+      const similarRequest = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/audiomuse/similar"));
+      await soundDiscovery.getByRole("button", { name: "Find songs" }).click();
+      expect((await similarRequest).postDataJSON()).toMatchObject({
+        protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music", seedTrackIds: ["track-1"],
+      });
+      await expect(soundDiscovery.getByText("Nearby Song", { exact: true })).toBeVisible();
+      if (process.env.ALLSTARR_SCREENSHOT_DIR)
+        await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-discover.png`, fullPage: true });
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.getByRole("tab", { name: "Listening history" }).click();
@@ -736,7 +767,7 @@ for (const viewport of viewports) {
         await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-history.png`, fullPage: true });
       await page.getByRole("tab", { name: "Settings" }).click();
       await expect(page.getByText("Monday discoveries", { exact: true })).toBeVisible();
-      await expect(page.getByText("Private similarity source. · ready")).toBeVisible();
+      await expect(page.getByText("Private similarity source. · Ready")).toBeVisible();
       await expect(page.getByText("Where generated playlists are created", { exact: true })).toBeVisible();
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
         await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-settings.png`, fullPage: true });
@@ -744,8 +775,8 @@ for (const viewport of viewports) {
       const errorPage = await context.newPage();
       await mockApi(errorPage, { fail: ["/api/admin/intelligence"] });
       await errorPage.goto("#/intelligence");
-      await errorPage.getByLabel("Backend instance").fill("main");
-      await errorPage.getByLabel("Library scope").fill("music");
+      await errorPage.getByLabel("Server connection").fill("main");
+      await errorPage.getByLabel("Music library").fill("music");
       await errorPage.getByRole("button", { name: "Open library" }).click();
       await expect(errorPage.getByRole("alert")).toContainText("Fixture unavailable");
       await expect(errorPage.getByRole("button", { name: "Open library" })).toBeInViewport();
@@ -821,11 +852,11 @@ test("Intelligence history imports, corrections, and schedules use the selected 
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
   await page.goto("#/intelligence");
-  await page.getByLabel("Backend instance").fill("main");
-  await page.getByLabel("Library scope").fill("music");
+  await page.getByLabel("Server connection").fill("main");
+  await page.getByLabel("Music library").fill("music");
   await page.getByRole("button", { name: "Open library" }).click();
 
-  await page.getByLabel("Backend instance").fill("typed-but-not-opened");
+  await page.getByLabel("Server connection").fill("typed-but-not-opened");
   const overviewRequest = page.waitForRequest((request) => request.url().includes("/api/admin/intelligence/history/overview"));
   await page.getByRole("tab", { name: "Listening history" }).click();
   expect(new URL((await overviewRequest).url()).searchParams.get("backendInstanceId")).toBe("main");

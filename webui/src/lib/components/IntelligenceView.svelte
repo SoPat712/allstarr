@@ -1,6 +1,7 @@
 <script lang="ts">
   import { X } from "lucide-svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import AudioMuseDiscovery from "$lib/components/AudioMuseDiscovery.svelte";
   import IntelligenceHistory from "$lib/components/IntelligenceHistory.svelte";
   import IntelligenceSchedules from "$lib/components/IntelligenceSchedules.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
@@ -29,7 +30,9 @@
   const scope = $derived<IntelligenceScope>({ protocol, backendInstanceId, libraryScopeId });
   const activeScope = $derived(loadedScope ?? scope);
   const visibleCandidates = $derived(data?.candidates.filter((item) => !item.exclusions.length) ?? []);
+  const audioMuseReady = $derived(data?.providers.some((item) => item.id === "audiomuse-ai" && item.available && item.state === "ready") ?? false);
   const runState = $derived(data?.actions.latestRunState?.replace("retryscheduled", "retry scheduled"));
+  const runStatus = $derived(runState === "succeeded" ? "Ready" : ["pending", "running", "retry scheduled"].includes(runState ?? "") ? "Refreshing" : runState);
   const credentialOptions = $derived(mediaTargets
     .filter((item) => item.protocol === activeScope.protocol && item.backendInstanceId === activeScope.backendInstanceId &&
       (!item.libraryScopeId || item.libraryScopeId === activeScope.libraryScopeId) && item.credentialReferenceId)
@@ -98,6 +101,21 @@
   function toggle(values: string[], value: string, checked: boolean) {
     return checked ? [...new Set([...values, value])] : values.filter((item) => item !== value);
   }
+
+  function generatedStatus(item: IntelligenceState["generatedSets"][number]) {
+    const server = activeScope.protocol === "jellyfin" ? "Jellyfin" : activeScope.protocol === "subsonic" ? "Subsonic" : "the media server";
+    if (item.materialized) return `Created in ${server}`;
+    if (["pending", "running"].includes(item.state)) return `Creating in ${server}`;
+    if (item.state === "failed") return `Not created in ${server}`;
+    return "Saved in Allstarr";
+  }
+
+  function providerStatus(state: string) {
+    if (state === "ready") return "Ready";
+    if (["unsupported", "unavailable"].includes(state)) return "Unavailable";
+    if (["unauthorized", "degraded", "failed"].includes(state)) return "Needs attention";
+    return state.replaceAll("_", " ");
+  }
 </script>
 
 <section class="intelligence-view">
@@ -105,11 +123,11 @@
     <div>
       <p class="eyebrow">Private discovery</p>
       <h2>Listen deeper, without exposing your history.</h2>
-      <p>Explainable recommendations and generated playlists stay scoped to one account and library.</p>
+      <p>Recommendations, listening history, and generated playlists stay private to this account and music library.</p>
     </div>
     {#if data?.actions.canRun && activeSection === "discover"}
       <div class="heading-actions">
-        {#if runState}<span class={`status-pill ${runState === "succeeded" ? "healthy" : "suggested"}`}>{runState}</span>{/if}
+        {#if runStatus}<span class={`status-pill ${runState === "succeeded" ? "healthy" : "suggested"}`}>{runStatus}</span>{/if}
         <button class="button-primary" type="button" disabled={Boolean(action)}
           onclick={() => void perform("run", () => intelligence.run(activeScope))}>
           {action === "run" ? "Starting…" : "Refresh recommendations"}
@@ -120,8 +138,8 @@
 
   <form class="panel scope-card" onsubmit={(event) => { event.preventDefault(); void load(); }}>
     <label class="field"><span>Media server</span><SelectField bind:value={protocol} label="Media server" options={[{ value: "jellyfin", label: "Jellyfin" }, { value: "subsonic", label: "Subsonic" }]} /></label>
-    <label class="field"><span>Backend instance</span><input bind:value={backendInstanceId} maxlength="200" placeholder="main" required /></label>
-    <label class="field"><span>Library scope</span><input bind:value={libraryScopeId} maxlength="300" placeholder="music" required /></label>
+    <label class="field"><span>Server connection</span><input bind:value={backendInstanceId} maxlength="200" placeholder="main" required /></label>
+    <label class="field"><span>Music library</span><input bind:value={libraryScopeId} maxlength="300" placeholder="music" required /></label>
     <button class="button-secondary" type="submit" disabled={loading}>{loading ? "Loading…" : "Open library"}</button>
   </form>
 
@@ -135,8 +153,8 @@
     <section class="panel empty-state">
       <span class="empty-orbit" aria-hidden="true">✦</span>
       <p class="eyebrow">Choose a library</p>
-      <h2>Your recommendations begin with an exact scope.</h2>
-      <p>Enter the backend instance and library IDs used by your media server.</p>
+      <h2>Choose a music library.</h2>
+      <p>Enter the connection and library names configured for your media server.</p>
     </section>
   {:else if data.state === "unauthorized" || data.state === "error"}
     <RouteError
@@ -151,7 +169,7 @@
     {/if}
     {#if activeSection === "discover" && data.actions.progress}
       <section class="panel run-progress" role="status">
-        <div><p class="eyebrow">{data.actions.progress.stage}</p><strong>{data.actions.progress.message}</strong>
+        <div><p class="eyebrow">Refreshing recommendations</p><strong>{data.actions.progress.message}</strong>
           {#if data.actions.progress.provider || data.actions.progress.playlist || data.actions.progress.track}<small>{[data.actions.progress.provider, data.actions.progress.playlist, data.actions.progress.track].filter(Boolean).join(" · ")}</small>{/if}
           {#if data.actions.attemptCount && data.actions.maxAttempts}<small>Attempt {data.actions.attemptCount} of {data.actions.maxAttempts}{data.actions.failureCount ? ` · ${data.actions.failureCount} failed` : ""}</small>{/if}
         </div>
@@ -189,13 +207,14 @@
               <label class="field"><span>Where generated playlists are created</span><SelectField bind:value={targetCredentialReferenceId} label="Generated playlist destination" options={[{ value: "", label: "Use the connected media server" }, ...credentialOptions]} /></label>
             {/if}
             <fieldset><legend>Signals</legend>{#each data.availableSignalTypes as item}<label><input type="checkbox" checked={selectedSignals.includes(item.id)} onchange={(event) => selectedSignals = toggle(selectedSignals, item.id, event.currentTarget.checked)} /> {item.label}</label>{/each}</fieldset>
-            <fieldset><legend>Sources</legend>{#each data.providers as provider}<label class:unavailable={!provider.available}><input type="checkbox" disabled={!provider.available} checked={selectedProviders.includes(provider.id)} onchange={(event) => selectedProviders = toggle(selectedProviders, provider.id, event.currentTarget.checked)} /> <span><strong>{provider.label}</strong><small>{provider.description} · {provider.state}</small></span></label>{/each}</fieldset>
+            <fieldset><legend>Sources</legend>{#each data.providers as provider}<label class:unavailable={!provider.available}><input type="checkbox" disabled={!provider.available} checked={selectedProviders.includes(provider.id)} onchange={(event) => selectedProviders = toggle(selectedProviders, provider.id, event.currentTarget.checked)} /> <span><strong>{provider.label}</strong><small>{provider.description} · {providerStatus(provider.state)}</small></span></label>{/each}</fieldset>
             <footer><button class="button-danger" type="button" onclick={() => purgeOpen = true}>Turn off and clear</button><button class="button-primary" type="submit" disabled={Boolean(action)}>{action === "policy" ? "Saving…" : "Save settings"}</button></footer>
           </form>
         </section>
         <IntelligenceSchedules scope={activeScope} schedules={data.schedules ?? []} policyEnabled={enabled} onChanged={refresh} />
       </div>
     {:else}
+      {#if audioMuseReady}<AudioMuseDiscovery scope={activeScope} songs={visibleCandidates} />{/if}
       <div class="intelligence-grid">
         <section class="panel recommendations">
           <header><div><p class="eyebrow">For you</p><h3>Recommendations</h3></div><span>{visibleCandidates.length} tracks</span></header>
@@ -214,7 +233,7 @@
 
         <aside class="side-stack">
           <section class="panel profile-card"><p class="eyebrow">Recent listening</p><h3>Your profile</h3>{#if data.visualization.length}{#each data.visualization as item}<label><span>{item.label}</span><meter min="0" max="1" value={item.value}>{item.value}</meter></label>{/each}{:else}<p class="muted">No retained listening signals yet.</p>{/if}</section>
-          <section class="panel generated-card"><p class="eyebrow">Saved output</p><h3>Generated playlists</h3>{#each data.generatedSets as item}<div class="generated-row"><span><strong>{item.name}</strong><small>{item.trackCount} tracks</small></span><span class={`status-pill ${item.materialized ? "healthy" : "suggested"}`}>{item.state}</span></div>{:else}<p class="muted">No generated playlists yet.</p>{/each}{#if data.actions.canGenerate && data.actions.latestRunId}<form class="generate-form" onsubmit={(event) => { event.preventDefault(); void perform("generate", () => intelligence.generate(activeScope, data!.actions.latestRunId!, generatedName)); }}><label class="field"><span>Playlist name</span><input bind:value={generatedName} maxlength="200" required /></label><button class="button-primary" type="submit" disabled={Boolean(action)}>{action === "generate" ? "Creating…" : "Create playlist"}</button></form>{/if}</section>
+          <section class="panel generated-card"><p class="eyebrow">Saved output</p><h3>Generated playlists</h3>{#each data.generatedSets as item}<div class="generated-row"><span><strong>{item.name}</strong><small>{item.trackCount} tracks</small></span><span class={`status-pill ${item.materialized ? "healthy" : "suggested"}`}>{generatedStatus(item)}</span></div>{:else}<p class="muted">No generated playlists yet.</p>{/each}{#if data.actions.canGenerate && data.actions.latestRunId}<form class="generate-form" onsubmit={(event) => { event.preventDefault(); void perform("generate", () => intelligence.generate(activeScope, data!.actions.latestRunId!, generatedName)); }}><label class="field"><span>Playlist name</span><input bind:value={generatedName} maxlength="200" required /></label><button class="button-primary" type="submit" disabled={Boolean(action)}>{action === "generate" ? "Creating…" : "Create playlist"}</button></form>{/if}</section>
         </aside>
       </div>
     {/if}
@@ -224,7 +243,7 @@
 <ConfirmDialog
   bind:open={purgeOpen}
   title="Clear this library’s Intelligence data?"
-  description="Retained signals, profiles, recommendations, feedback, and generated sets for this exact scope will be removed."
+  description="Listening signals, recommendations, feedback, and saved playlists for this account and music library will be removed."
   confirmLabel="Turn off and clear"
   cancelLabel="Keep my data"
   onConfirm={() => perform("purge", () => intelligence.purge(activeScope))}

@@ -795,6 +795,38 @@ export type IntelligenceScope = {
   libraryScopeId: string;
 };
 
+export type AudioMuseTrack = {
+  trackId: string;
+  title?: string | null;
+  artist?: string | null;
+  album?: string | null;
+  libraryTrackId?: string | null;
+  score: number;
+  explanation?: string | null;
+};
+
+export type AudioMuseAnalysis = {
+  jobId: string;
+  state: "queued" | "running" | "completed" | "failed" | "canceled";
+  completed: number;
+  total: number;
+  safeCode?: string | null;
+};
+
+export type AudioMuseCluster = {
+  id: string;
+  name: string;
+  tracks: AudioMuseTrack[];
+};
+
+export type AudioMuseMapPage = {
+  items: Array<AudioMuseTrack & { x: number; y: number; clusterId?: string | null }>;
+  projection: string;
+  nextCursor?: string | null;
+  isPartial: boolean;
+  snapshotVersion?: string | null;
+};
+
 export type IntelligenceState = {
   state: string;
   message?: string | null;
@@ -1105,6 +1137,27 @@ export const intelligence = {
       intelligenceBody({ ...scope, kind, expectedRevision }, "PUT")),
   purge: (scope: IntelligenceScope) =>
     json<void>("/api/admin/intelligence/data", intelligenceBody(scope, "DELETE")),
+  startAudioMuseAnalysis: (scope: IntelligenceScope, rebuild = false) =>
+    json<AudioMuseAnalysis>("/api/admin/intelligence/audiomuse/analysis",
+      intelligenceBody({ ...scope, rebuild, idempotencyKey: crypto.randomUUID() })),
+  audioMuseAnalysis: (scope: IntelligenceScope, jobId: string) =>
+    json<AudioMuseAnalysis>(`/api/admin/intelligence/audiomuse/analysis/${encodeURIComponent(jobId)}?${intelligenceQuery(scope)}`),
+  audioMuseSimilar: (scope: IntelligenceScope, seedTrackIds: string[], limit = 25) =>
+    json<{ tracks: AudioMuseTrack[] }>("/api/admin/intelligence/audiomuse/similar",
+      intelligenceBody({ ...scope, seedTrackIds, limit })),
+  audioMusePath: (scope: IntelligenceScope, startTrackId: string, endTrackId: string, limit = 25) =>
+    json<{ tracks: AudioMuseTrack[]; totalDistance: number }>("/api/admin/intelligence/audiomuse/path",
+      intelligenceBody({ ...scope, startTrackId, endTrackId, limit })),
+  audioMuseBlend: (scope: IntelligenceScope, includeTrackIds: string[], avoidTrackIds: string[], limit = 25) =>
+    json<{ tracks: AudioMuseTrack[] }>("/api/admin/intelligence/audiomuse/blend",
+      intelligenceBody({ ...scope, includeTrackIds, avoidTrackIds, limit })),
+  audioMuseSearch: (scope: IntelligenceScope, query: string, mode: "text" | "lyrics", limit = 25) =>
+    json<{ tracks: AudioMuseTrack[]; mode: string }>("/api/admin/intelligence/audiomuse/search",
+      intelligenceBody({ ...scope, query, mode, limit })),
+  audioMuseClusters: (scope: IntelligenceScope, limit = 50) =>
+    json<{ clusters: AudioMuseCluster[] }>(`/api/admin/intelligence/audiomuse/clusters?${intelligenceQuery(scope, { limit })}`),
+  audioMuseMap: (scope: IntelligenceScope, limit = 50, cursor?: string) =>
+    json<AudioMuseMapPage>(`/api/admin/intelligence/audiomuse/map?${intelligenceQuery(scope, { limit, cursor })}`),
   historyOverview: (scope: IntelligenceScope, from: string, to: string, timeZoneId: string) =>
     json<ListeningHistoryOverview>(`/api/admin/intelligence/history/overview?${intelligenceQuery(scope, { from, to, timeZoneId })}`),
   history: (scope: IntelligenceScope, input: {
