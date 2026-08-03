@@ -759,6 +759,136 @@ namespace allstarr.Core.Storage.Migrations
                     b.ToTable("intelligence_policies", (string)null);
                 });
 
+            modelBuilder.Entity("allstarr.Core.Intelligence.ListeningEventRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Album")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Artist")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("BackendInstanceId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid?>("CanonicalRecordingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ClientClass")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("DeviceClass")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<long?>("DurationMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ImportProvenance")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("LibraryScopeId")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<Guid?>("LibraryTrackId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long?>("ListenedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("OccurrenceKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long?>("PositionTicks")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Protocol")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<Guid?>("ProviderAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProviderId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid?>("ProviderTrackIdentityId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProviderTrackReference")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("SourceKind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<long?>("StartedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("TrackReference")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProviderAccountId");
+
+                    b.HasIndex("ProviderTrackIdentityId");
+
+                    b.HasIndex("TenantId", "CanonicalRecordingId");
+
+                    b.HasIndex("TenantId", "LibraryTrackId");
+
+                    b.HasIndex("TenantId", "OwnerUserId", "OccurrenceKey")
+                        .IsUnique()
+                        .HasDatabaseName("IX_listening_event_occurrence");
+
+                    b.HasIndex("TenantId", "OwnerUserId", "Protocol", "BackendInstanceId", "LibraryScopeId", "ListenedAt")
+                        .HasDatabaseName("IX_listening_event_scope_history");
+
+                    b.ToTable("listening_events", t =>
+                        {
+                            t.HasCheckConstraint("CK_listening_event_duration", "\"DurationMilliseconds\" IS NULL OR \"DurationMilliseconds\" > 0");
+
+                            t.HasCheckConstraint("CK_listening_event_position", "\"PositionTicks\" IS NULL OR \"PositionTicks\" >= 0");
+                        });
+                });
+
             modelBuilder.Entity("allstarr.Core.Intelligence.ListeningProfileRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4074,6 +4204,48 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Intelligence.IntelligencePolicyRecord", b =>
                 {
+                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "OwnerUserId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("allstarr.Core.Intelligence.ListeningEventRecord", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "CanonicalRecordingId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_listening_event_canonical_recording");
+
+                    b.HasOne("allstarr.Core.Storage.LibraryTrackRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "LibraryTrackId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_listening_event_library_track");
+
+                    b.HasOne("allstarr.Core.Storage.ProviderAccountRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProviderAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_listening_event_provider_account");
+
+                    b.HasOne("allstarr.Core.Storage.ProviderTrackIdentityRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProviderTrackIdentityId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_listening_event_provider_identity");
+
                     b.HasOne("allstarr.Core.Storage.TenantRecord", null)
                         .WithMany()
                         .HasForeignKey("TenantId")

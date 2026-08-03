@@ -16,6 +16,33 @@ public static class IntelligenceModelConfiguration
             });
         ConfigureOwned<ListeningSignalRecord>(modelBuilder, "listening_signals", e => e.Id,
             entity => { entity.Property(x => x.SignalType).HasMaxLength(32).IsRequired(); entity.Property(x => x.TrackKeyHash).HasMaxLength(64).IsRequired(); entity.Property(x => x.TrackReference).HasMaxLength(100).IsRequired(); entity.Property(x => x.SignalKey).HasMaxLength(64); entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.ExpiresAt }); entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.SignalKey }).IsUnique().HasFilter("\"SignalKey\" IS NOT NULL").HasDatabaseName("IX_listening_signal_idempotency"); entity.HasOne<DurableJobRecord>().WithMany().HasForeignKey(x => x.SourceJobId).HasConstraintName("FK_listening_signal_job").OnDelete(DeleteBehavior.Restrict); });
+        ConfigureOwned<ListeningEventRecord>(modelBuilder, "listening_events", e => e.Id,
+            entity =>
+            {
+                entity.ToTable("listening_events", table =>
+                {
+                    table.HasCheckConstraint("CK_listening_event_position", "\"PositionTicks\" IS NULL OR \"PositionTicks\" >= 0");
+                    table.HasCheckConstraint("CK_listening_event_duration", "\"DurationMilliseconds\" IS NULL OR \"DurationMilliseconds\" > 0");
+                });
+                entity.Property(x => x.OccurrenceKey).HasMaxLength(64).IsRequired();
+                entity.Property(x => x.State).HasConversion<string>().HasMaxLength(32);
+                entity.Property(x => x.ClientClass).HasMaxLength(200);
+                entity.Property(x => x.DeviceClass).HasMaxLength(200);
+                entity.Property(x => x.SourceKind).HasMaxLength(32).IsRequired();
+                entity.Property(x => x.ImportProvenance).HasMaxLength(500);
+                entity.Property(x => x.TrackReference).HasMaxLength(500).IsRequired();
+                entity.Property(x => x.Title).HasMaxLength(500);
+                entity.Property(x => x.Artist).HasMaxLength(500);
+                entity.Property(x => x.Album).HasMaxLength(500);
+                entity.Property(x => x.ProviderId).HasMaxLength(100);
+                entity.Property(x => x.ProviderTrackReference).HasMaxLength(500);
+                entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.OccurrenceKey }).IsUnique().HasDatabaseName("IX_listening_event_occurrence");
+                entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.Protocol, x.BackendInstanceId, x.LibraryScopeId, x.ListenedAt }).HasDatabaseName("IX_listening_event_scope_history");
+                entity.HasOne<LibraryTrackRecord>().WithMany().HasForeignKey(x => new { x.TenantId, x.LibraryTrackId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).HasConstraintName("FK_listening_event_library_track").OnDelete(DeleteBehavior.Restrict);
+                entity.HasOne<CanonicalRecordingRecord>().WithMany().HasForeignKey(x => new { x.TenantId, x.CanonicalRecordingId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).HasConstraintName("FK_listening_event_canonical_recording").OnDelete(DeleteBehavior.Restrict);
+                entity.HasOne<ProviderAccountRecord>().WithMany().HasForeignKey(x => x.ProviderAccountId).HasConstraintName("FK_listening_event_provider_account").OnDelete(DeleteBehavior.Restrict);
+                entity.HasOne<ProviderTrackIdentityRecord>().WithMany().HasForeignKey(x => x.ProviderTrackIdentityId).HasConstraintName("FK_listening_event_provider_identity").OnDelete(DeleteBehavior.Restrict);
+            });
         ConfigureOwned<ListeningProfileRecord>(modelBuilder, "listening_profiles", e => e.Id,
             entity => { entity.Property(x => x.ProfileJson).IsRequired(); entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.CreatedAt }); });
         ConfigureOwned<RecommendationRunRecord>(modelBuilder, "recommendation_runs", e => e.Id,

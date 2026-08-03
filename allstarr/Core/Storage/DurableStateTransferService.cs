@@ -26,7 +26,7 @@ public sealed record DurableStateTransferArtifact(
 
 public sealed class DurableStateTransferService
 {
-    private const int CurrentFormatVersion = 2;
+    private const int CurrentFormatVersion = 3;
     private const long MaximumManifestBytes = 64 * 1024;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -65,6 +65,7 @@ public sealed class DurableStateTransferService
         "metadata-enrichment-plans.json",
         "metadata-enrichment-applications.json",
         "intelligence-policies.json",
+        "listening-events.json",
         "listening-signals.json",
         "playback-delivery-checkpoints.json",
         "listening-profiles.json",
@@ -187,6 +188,7 @@ public sealed class DurableStateTransferService
             await WriteEntryAsync(archive, "metadata-enrichment-plans.json", await context.MetadataEnrichmentPlans.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "metadata-enrichment-applications.json", await context.MetadataEnrichmentApplications.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "intelligence-policies.json", await context.IntelligencePolicies.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
+            await WriteEntryAsync(archive, "listening-events.json", await context.ListeningEvents.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "listening-signals.json", await context.ListeningSignals.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "playback-delivery-checkpoints.json", await context.PlaybackDeliveryCheckpoints.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "listening-profiles.json", await context.ListeningProfiles.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
@@ -326,6 +328,7 @@ public sealed class DurableStateTransferService
             await context.MetadataEnrichmentPlans.AnyAsync(cancellationToken) ||
             await context.MetadataEnrichmentApplications.AnyAsync(cancellationToken) ||
             await context.IntelligencePolicies.AnyAsync(cancellationToken) ||
+            await context.ListeningEvents.AnyAsync(cancellationToken) ||
             await context.ListeningSignals.AnyAsync(cancellationToken) ||
             await context.PlaybackDeliveryCheckpoints.AnyAsync(cancellationToken) ||
             await context.ListeningProfiles.AnyAsync(cancellationToken) ||
@@ -384,6 +387,7 @@ public sealed class DurableStateTransferService
         var enrichmentPlans = await ReadEntryAsync<MetadataEnrichmentPlanRecord>(archive, "metadata-enrichment-plans.json", cancellationToken);
         var enrichmentApplications = await ReadEntryAsync<MetadataEnrichmentApplicationRecord>(archive, "metadata-enrichment-applications.json", cancellationToken);
         var intelligencePolicies = await ReadEntryAsync<IntelligencePolicyRecord>(archive, "intelligence-policies.json", cancellationToken);
+        var listeningEvents = await ReadEntryAsync<ListeningEventRecord>(archive, "listening-events.json", cancellationToken);
         var listeningSignals = await ReadEntryAsync<ListeningSignalRecord>(archive, "listening-signals.json", cancellationToken);
         var playbackDeliveryCheckpoints = await ReadEntryAsync<PlaybackDeliveryCheckpointEntity>(archive, "playback-delivery-checkpoints.json", cancellationToken);
         var listeningProfiles = await ReadEntryAsync<ListeningProfileRecord>(archive, "listening-profiles.json", cancellationToken);
@@ -415,7 +419,8 @@ public sealed class DurableStateTransferService
             favoritePolicies, managedFiles, managedFileReferences, enrichmentPlans, enrichmentApplications);
         ValidateDownloadArtifactArchive(tenants, users, jobs, providerAccounts, managedFiles, downloadWorkspaces, downloadArtifacts);
         ValidateIntelligenceArchive(tenants, users, backendIdentities, jobs, jobSchedules, secretReferences,
-            providerAccounts, canonicalRecordings, libraryTracks, intelligencePolicies, listeningSignals,
+            providerAccounts, providerTrackIdentities, canonicalRecordings, libraryTracks, intelligencePolicies,
+            listeningEvents, listeningSignals,
             playbackDeliveryCheckpoints,
             listeningProfiles, recommendationRuns, recommendationCandidates, recommendationFeedback,
             generatedSets, generatedSetEntries);
@@ -447,6 +452,7 @@ public sealed class DurableStateTransferService
         context.MetadataEnrichmentPlans.AddRange(enrichmentPlans);
         context.MetadataEnrichmentApplications.AddRange(enrichmentApplications);
         context.IntelligencePolicies.AddRange(intelligencePolicies);
+        context.ListeningEvents.AddRange(listeningEvents);
         context.ListeningSignals.AddRange(listeningSignals);
         context.PlaybackDeliveryCheckpoints.AddRange(playbackDeliveryCheckpoints);
         context.ListeningProfiles.AddRange(listeningProfiles);
@@ -1089,9 +1095,11 @@ public sealed class DurableStateTransferService
         IReadOnlyCollection<JobScheduleRecord> schedules,
         IReadOnlyCollection<SecretReferenceRecord> secretReferences,
         IReadOnlyCollection<ProviderAccountRecord> providerAccounts,
+        IReadOnlyCollection<ProviderTrackIdentityRecord> providerTrackIdentities,
         IReadOnlyCollection<CanonicalRecordingRecord> canonicalRecordings,
         IReadOnlyCollection<LibraryTrackRecord> libraryTracks, IReadOnlyCollection<IntelligencePolicyRecord> policies,
-        IReadOnlyCollection<ListeningSignalRecord> signals, IReadOnlyCollection<PlaybackDeliveryCheckpointEntity> playbackCheckpoints,
+        IReadOnlyCollection<ListeningEventRecord> events, IReadOnlyCollection<ListeningSignalRecord> signals,
+        IReadOnlyCollection<PlaybackDeliveryCheckpointEntity> playbackCheckpoints,
         IReadOnlyCollection<ListeningProfileRecord> profiles,
         IReadOnlyCollection<RecommendationRunRecord> runs, IReadOnlyCollection<RecommendationCandidateRecord> candidates,
         IReadOnlyCollection<RecommendationFeedbackRecord> feedback,
@@ -1103,7 +1111,8 @@ public sealed class DurableStateTransferService
         var setById = IndexUnique(sets, x => x.Id, "generated set");
         var policyById = IndexUnique(policies, x => x.Id, "intelligence policy");
         var scheduleById = IndexUnique(schedules, x => x.Id, "job schedule");
-        IndexUnique(signals, x => x.Id, "listening signal"); IndexUnique(profiles, x => x.Id, "listening profile");
+        IndexUnique(events, x => x.Id, "listening event"); IndexUnique(signals, x => x.Id, "listening signal");
+        IndexUnique(profiles, x => x.Id, "listening profile");
         IndexUnique(playbackCheckpoints, x => x.Id, "playback delivery checkpoint");
         IndexUnique(candidates, x => x.Id, "recommendation candidate"); IndexUnique(entries, x => x.Id, "generated set entry");
         bool Owner(Guid tenant, Guid user) => tenantIds.ContainsKey(tenant) && userById.TryGetValue(user, out var value) && value.TenantId == tenant;
@@ -1154,6 +1163,52 @@ public sealed class DurableStateTransferService
             recommendationSchedulePolicies.Add(schedule.Id, schedulePolicy!);
         }
         var trackByReference = libraryTracks.Where(x => Owner(x.TenantId, x.OwnerUserId)).ToDictionary(x => $"library:{x.Id:N}", StringComparer.Ordinal);
+        var libraryTrackById = libraryTracks.ToDictionary(x => x.Id);
+        var canonicalIds = canonicalRecordings.Select(x => (x.TenantId, x.Id)).ToHashSet();
+        var accountById = providerAccounts.ToDictionary(x => x.Id);
+        var providerIdentityById = providerTrackIdentities.ToDictionary(x => x.Id);
+        var occurrenceKeys = new HashSet<(Guid, Guid, string)>();
+        foreach (var occurrence in events)
+        {
+            var validLibraryTrack = occurrence.LibraryTrackId is not { } libraryTrackId ||
+                libraryTrackById.TryGetValue(libraryTrackId, out var libraryTrack) &&
+                libraryTrack.TenantId == occurrence.TenantId && libraryTrack.OwnerUserId == occurrence.OwnerUserId &&
+                libraryTrack.Protocol == occurrence.Protocol && libraryTrack.BackendInstanceId == occurrence.BackendInstanceId &&
+                libraryTrack.LibraryScopeId == occurrence.LibraryScopeId;
+            var validAccount = occurrence.ProviderAccountId is not { } accountId ||
+                accountById.TryGetValue(accountId, out var account) &&
+                occurrence.ProviderId == account.ProviderId &&
+                (account.TenantId == null || account.TenantId == occurrence.TenantId) &&
+                (account.OwnerUserId == null || account.OwnerUserId == occurrence.OwnerUserId) &&
+                (account.LibraryScopeId == null || account.LibraryScopeId == occurrence.LibraryScopeId);
+            var validProviderIdentity = occurrence.ProviderTrackIdentityId is not { } identityId ||
+                providerIdentityById.TryGetValue(identityId, out var identity) &&
+                identity.TenantId == occurrence.TenantId && identity.ProviderId == occurrence.ProviderId &&
+                identity.ProviderAccountId == occurrence.ProviderAccountId &&
+                (occurrence.CanonicalRecordingId == null || identity.CanonicalRecordingId == occurrence.CanonicalRecordingId);
+            if (!Owner(occurrence.TenantId, occurrence.OwnerUserId) ||
+                occurrence.Protocol is not ("jellyfin" or "subsonic") ||
+                !Backend(occurrence.TenantId, occurrence.OwnerUserId, occurrence.Protocol, occurrence.BackendInstanceId) ||
+                !IsRequiredText(occurrence.BackendInstanceId, 200) || !IsRequiredText(occurrence.LibraryScopeId, 300) ||
+                !IsNormalizedSha256(occurrence.OccurrenceKey) ||
+                !occurrenceKeys.Add((occurrence.TenantId, occurrence.OwnerUserId, occurrence.OccurrenceKey)) ||
+                !Enum.IsDefined(occurrence.State) || occurrence.UpdatedAt == default ||
+                occurrence.StartedAt > occurrence.UpdatedAt || occurrence.ListenedAt > occurrence.UpdatedAt ||
+                occurrence.State == ListeningEventState.Completed && occurrence.ListenedAt == null ||
+                occurrence.State != ListeningEventState.Completed && occurrence.ListenedAt != null ||
+                occurrence.PositionTicks is < 0 || occurrence.DurationMilliseconds is <= 0 ||
+                !IsOptionalText(occurrence.ClientClass, 200) || !IsOptionalText(occurrence.DeviceClass, 200) ||
+                occurrence.SourceKind is not ("protocol" or "import") ||
+                occurrence.SourceKind == "protocol" && occurrence.ImportProvenance != null ||
+                occurrence.SourceKind == "import" && !IsRequiredText(occurrence.ImportProvenance, 500) ||
+                !IsRequiredText(occurrence.TrackReference, 500) || occurrence.TrackReference.Contains("://", StringComparison.Ordinal) ||
+                !IsOptionalText(occurrence.Title, 500) || !IsOptionalText(occurrence.Artist, 500) ||
+                !IsOptionalText(occurrence.Album, 500) || !IsOptionalText(occurrence.ProviderId, 100) ||
+                !IsOptionalText(occurrence.ProviderTrackReference, 500) || !validLibraryTrack ||
+                occurrence.CanonicalRecordingId is { } canonicalId && !canonicalIds.Contains((occurrence.TenantId, canonicalId)) ||
+                !validAccount || !validProviderIdentity)
+                RejectIntelligenceArchive("a listening event is malformed, duplicated, or crosses its exact playback scope");
+        }
         foreach (var signal in signals)
         {
             var key = Scope(signal.TenantId, signal.OwnerUserId, signal.Protocol, signal.BackendInstanceId, signal.LibraryScopeId);
@@ -1478,8 +1533,8 @@ public sealed class DurableStateTransferService
         id != Guid.Empty &&
         id.ToString("D").Equals(value, StringComparison.Ordinal);
 
-    private static bool IsNormalizedSha256(string value) =>
-        value.Length == 64 &&
+    private static bool IsNormalizedSha256(string? value) =>
+        value?.Length == 64 &&
         value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
 
     private static string HashExternalId(string externalId) =>

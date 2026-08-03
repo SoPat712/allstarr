@@ -84,7 +84,7 @@ public sealed class SelectiveTransferSchemaMismatchException : Exception
 /// </summary>
 public sealed class SelectiveStateTransferService
 {
-    public const int CurrentFormatVersion = 3;
+    public const int CurrentFormatVersion = 4;
     public const long MaximumArchiveBytes = 128L * 1024 * 1024;
     public const long MaximumRequestBytes = MaximumArchiveBytes + (1024 * 1024);
     public const long MaximumExpandedBytes = 512L * 1024 * 1024;
@@ -137,6 +137,7 @@ public sealed class SelectiveStateTransferService
             [TransferCategory.Intelligence] = new[]
             {
                 "intelligence-policies",
+                "listening-events",
                 "listening-signals",
                 "listening-profiles",
                 "recommendation-runs",
@@ -882,6 +883,12 @@ public sealed class SelectiveStateTransferService
                     await WriteJsonAsync(archive, entry, rows, cancellationToken);
                     return rows.Count;
                 }
+            case "listening-events":
+                {
+                    var rows = await context.ListeningEvents.AsNoTracking().ToListAsync(cancellationToken);
+                    await WriteJsonAsync(archive, entry, rows, cancellationToken);
+                    return rows.Count;
+                }
             case "listening-signals":
                 {
                     var rows = await context.ListeningSignals.AsNoTracking().ToListAsync(cancellationToken);
@@ -1219,6 +1226,12 @@ public sealed class SelectiveStateTransferService
                 {
                     var rows = await ReadJsonAsync<IntelligencePolicyRecord>(archiveEntry, cancellationToken);
                     context.IntelligencePolicies.AddRange(rows);
+                    return rows.Count;
+                }
+            case "listening-events":
+                {
+                    var rows = await ReadJsonAsync<ListeningEventRecord>(archiveEntry, cancellationToken);
+                    context.ListeningEvents.AddRange(rows);
                     return rows.Count;
                 }
             case "listening-signals":

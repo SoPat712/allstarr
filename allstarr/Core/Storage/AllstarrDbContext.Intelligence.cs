@@ -6,6 +6,7 @@ namespace allstarr.Core.Storage;
 public sealed partial class AllstarrDbContext
 {
     public DbSet<IntelligencePolicyRecord> IntelligencePolicies => Set<IntelligencePolicyRecord>();
+    public DbSet<ListeningEventRecord> ListeningEvents => Set<ListeningEventRecord>();
     public DbSet<ListeningSignalRecord> ListeningSignals => Set<ListeningSignalRecord>();
     public DbSet<ListeningProfileRecord> ListeningProfiles => Set<ListeningProfileRecord>();
     public DbSet<RecommendationRunRecord> RecommendationRuns => Set<RecommendationRunRecord>();

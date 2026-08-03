@@ -181,7 +181,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     public async Task HandlerRejectsCrossTenantClaimBeforeAnySideEffect()
     {
         var writer = new Writer(); var scrobbles = new Scrobbles(); var lyrics = new Lyrics();
-        var handler = new PlaybackSignalJobHandler(writer, scrobbles, lyrics);
+        var handler = new PlaybackSignalJobHandler(writer, scrobbles, lyrics, factory);
         var payload = Signal(PlaybackTransition.Start, "track-1", 0);
         await new PlaybackSignalPipeline(jobs).RecordAsync(payload);
         var claim = await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]); Assert.NotNull(claim);
@@ -197,11 +197,13 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         await new PlaybackSignalPipeline(jobs).RecordAsync(Signal(PlaybackTransition.Start, "track-1", 0));
         var claim = await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]); Assert.NotNull(claim);
         var writer = new Writer(); var scrobbles = new Scrobbles { FailFirst = true }; var lyrics = new Lyrics();
-        var handler = new PlaybackSignalJobHandler(writer, scrobbles, lyrics);
+        var handler = new PlaybackSignalJobHandler(writer, scrobbles, lyrics, factory);
         Assert.Equal(DurableJobCompletionKind.Retry, (await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default)).Kind);
         Assert.Equal(DurableJobCompletionKind.Succeeded, (await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default)).Kind);
         Assert.Equal(1, writer.Calls);
         Assert.Equal(1, scrobbles.Successes);
+        await using var db = await factory.CreateDbContextAsync();
+        Assert.Single(await db.ListeningEvents.ToListAsync());
     }
 
     [Theory]
@@ -317,7 +319,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
             Signal(PlaybackTransition.Submission, "track-1", 0));
         var claim = await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]);
         var writer = new Writer();
-        var handler = new PlaybackSignalJobHandler(writer, new Scrobbles(), new Lyrics());
+        var handler = new PlaybackSignalJobHandler(writer, new Scrobbles(), new Lyrics(), factory);
 
         var result = await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default);
 
@@ -338,12 +340,71 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
             writer,
             new Scrobbles(),
             new Lyrics(),
+            factory,
             new PlaybackTrackResolver(factory));
 
         var result = await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default);
 
         Assert.Equal(DurableJobCompletionKind.Succeeded, result.Kind);
         Assert.Equal(expectedType, writer.LastType);
+    }
+
+    [Fact]
+    public async Task StartProgressAndStopUpdateOneDurableOccurrence()
+    {
+        var startedAt = clock.UtcNow;
+        var pipeline = new PlaybackSignalPipeline(jobs);
+        Assert.True(await pipeline.RecordAsync(Signal(PlaybackTransition.Start, "track-1", 0)));
+        clock.UtcNow = startedAt.AddSeconds(60);
+        Assert.True(await pipeline.RecordAsync(Signal(PlaybackTransition.Progress, "track-1", TimeSpan.FromSeconds(60).Ticks)));
+        clock.UtcNow = startedAt.AddSeconds(61);
+        Assert.True(await pipeline.RecordAsync(Signal(PlaybackTransition.Stop, "track-1", TimeSpan.FromSeconds(61).Ticks)));
+
+        var handler = new PlaybackSignalJobHandler(
+            new Writer(), new Scrobbles(), new Lyrics(), factory, new PlaybackTrackResolver(factory));
+        for (var index = 0; index < 3; index++)
+        {
+            var claim = await jobs.ClaimNextAsync($"worker-{index}", [PlaybackSignalPipeline.JobType]);
+            Assert.NotNull(claim);
+            Assert.Equal(DurableJobCompletionKind.Succeeded,
+                (await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default)).Kind);
+        }
+
+        await using var db = await factory.CreateDbContextAsync();
+        var occurrence = Assert.Single(await db.ListeningEvents.AsNoTracking().ToListAsync());
+        Assert.Equal(ListeningEventState.Completed, occurrence.State);
+        Assert.Equal(startedAt, occurrence.StartedAt);
+        Assert.Equal(startedAt, occurrence.ListenedAt);
+        Assert.Equal(TimeSpan.FromSeconds(61).Ticks, occurrence.PositionTicks);
+        Assert.Equal(120_000, occurrence.DurationMilliseconds);
+        Assert.Equal("Track", occurrence.Title);
+        Assert.Equal("Artist", occurrence.Artist);
+        Assert.NotNull(occurrence.LibraryTrackId);
+    }
+
+    [Fact]
+    public async Task ExternalSubmissionPersistsWithoutALibraryTrack()
+    {
+        const string itemId = "ext-deezer-song-provider-track";
+        var pipeline = new PlaybackSignalPipeline(jobs);
+        Assert.True(await pipeline.RecordAsync(Signal(PlaybackTransition.Submission, itemId, 0)));
+        var claim = await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]);
+        var resolver = new PlaybackTrackResolver(factory,
+            [new BackendMetadataResolver(new("External title", "External artist", "External album", null, 180))]);
+        var handler = new PlaybackSignalJobHandler(
+            new RecommendationSignalWriter(factory, clock), new Scrobbles(), new Lyrics(), factory, resolver);
+
+        Assert.Equal(DurableJobCompletionKind.Succeeded,
+            (await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default)).Kind);
+
+        await using var db = await factory.CreateDbContextAsync();
+        var occurrence = Assert.Single(await db.ListeningEvents.AsNoTracking().ToListAsync());
+        Assert.Equal(ListeningEventState.Completed, occurrence.State);
+        Assert.Null(occurrence.LibraryTrackId);
+        Assert.Equal("External title", occurrence.Title);
+        Assert.Equal("deezer", occurrence.ProviderId);
+        Assert.Equal("deezer:provider-track", occurrence.ProviderTrackReference);
+        Assert.Empty(await db.ListeningSignals.ToListAsync());
     }
 
     [Fact]
@@ -397,5 +458,52 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
 
         public Task<allstarr.Services.Common.PlaybackArtwork?> ResolveArtworkAsync(string itemId, CancellationToken cancellationToken) =>
             Task.FromResult<allstarr.Services.Common.PlaybackArtwork?>(null);
+    }
+}
+
+public sealed class PlaybackOccurrenceKeyTests
+{
+    private readonly IntelligenceScope scope = new(Guid.Parse("11111111-1111-1111-1111-111111111111"),
+        Guid.Parse("22222222-2222-2222-2222-222222222222"), "jellyfin", "backend", "music");
+
+    [Fact]
+    public void SessionVariantsShareOneOccurrenceKey()
+    {
+        var startedAt = DateTimeOffset.Parse("2026-01-01T00:00:00Z");
+
+        var start = PlaybackSignalPipeline.CreateOccurrenceKey(scope, "track", "device", "session", 0, startedAt);
+        var stop = PlaybackSignalPipeline.CreateOccurrenceKey(scope, "track", "device", "session",
+            TimeSpan.FromMinutes(3).Ticks, startedAt.AddMinutes(3));
+
+        Assert.Equal(start, stop);
+    }
+
+    [Fact]
+    public void InferredVariantsShareAStartButLaterReplayIsDistinct()
+    {
+        var startedAt = DateTimeOffset.Parse("2026-01-01T00:00:00Z");
+
+        var start = PlaybackSignalPipeline.CreateOccurrenceKey(scope, "track", "device", null, 0, startedAt);
+        var progress = PlaybackSignalPipeline.CreateOccurrenceKey(scope, "track", "device", null,
+            TimeSpan.FromSeconds(60).Ticks, startedAt.AddSeconds(60));
+        var replay = PlaybackSignalPipeline.CreateOccurrenceKey(scope, "track", "device", null, 0,
+            startedAt.AddSeconds(31));
+
+        Assert.Equal(start, progress);
+        Assert.NotEqual(start, replay);
+    }
+
+    [Fact]
+    public void ProtocolAndUserRemainPartOfTheOccurrenceScope()
+    {
+        var observedAt = DateTimeOffset.Parse("2026-01-01T00:00:00Z");
+        var jellyfin = PlaybackSignalPipeline.CreateOccurrenceKey(scope, "track", "device", "event", null, observedAt);
+        var subsonic = PlaybackSignalPipeline.CreateOccurrenceKey(scope with { Protocol = "subsonic" },
+            "track", "device", "event", null, observedAt);
+        var otherUser = PlaybackSignalPipeline.CreateOccurrenceKey(scope with { OwnerUserId = Guid.NewGuid() },
+            "track", "device", "event", null, observedAt);
+
+        Assert.NotEqual(jellyfin, subsonic);
+        Assert.NotEqual(jellyfin, otherUser);
     }
 }

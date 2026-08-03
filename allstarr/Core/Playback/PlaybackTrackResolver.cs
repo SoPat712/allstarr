@@ -2,16 +2,23 @@ using allstarr.Core.Storage;
 using allstarr.Core.Protocols;
 using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace allstarr.Core.Playback;
 
 public sealed record PlaybackTrackSnapshot(
-    Guid LibraryTrackId,
+    Guid? LibraryTrackId,
+    Guid? CanonicalRecordingId,
     string BackendItemId,
     string Title,
     string Artist,
     string? Album,
-    long? DurationMilliseconds);
+    long? DurationMilliseconds,
+    string? ProviderId = null,
+    Guid? ProviderAccountId = null,
+    Guid? ProviderTrackIdentityId = null,
+    string? ProviderTrackReference = null);
 
 public interface IPlaybackTrackResolver
 {
@@ -45,6 +52,7 @@ public sealed class PlaybackTrackResolver(
         {
             return new PlaybackTrackSnapshot(
                 track.Id,
+                track.CanonicalRecordingId,
                 track.BackendItemId,
                 track.Title,
                 track.Artist,
@@ -55,15 +63,32 @@ public sealed class PlaybackTrackResolver(
         foreach (var resolver in metadataResolvers ?? [])
         {
             var metadata = await resolver.ResolveAsync(itemId, cancellationToken);
-            if (metadata != null && metadata.DurationSeconds > 0)
+            if (metadata != null)
             {
+                var external = ExternalPlaybackMetadataResolver.ParseTrackIdentity(itemId);
+                ProviderTrackIdentityRecord? identity = null;
+                if (external != null)
+                {
+                    var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(external.Value.ExternalId)));
+                    var candidates = await db.ProviderTrackIdentities.AsNoTracking()
+                        .Where(candidate => candidate.TenantId == payload.Scope.TenantId && candidate.ExternalIdHash == hash)
+                        .ToListAsync(cancellationToken);
+                    var matching = candidates.Where(candidate => candidate.ProviderId.Equals(external.Value.Provider, StringComparison.OrdinalIgnoreCase)).ToList();
+                    identity = matching.FirstOrDefault(candidate => candidate.ProviderAccountId == null) ??
+                               (matching.Count == 1 ? matching[0] : null);
+                }
                 return new PlaybackTrackSnapshot(
-                    Guid.Empty,
+                    null,
+                    identity?.CanonicalRecordingId,
                     itemId,
                     metadata.Title,
                     metadata.Artist,
                     metadata.Album,
-                    metadata.DurationSeconds.Value * 1000L);
+                    metadata.DurationSeconds is > 0 ? metadata.DurationSeconds.Value * 1000L : null,
+                    external?.Provider,
+                    identity?.ProviderAccountId,
+                    identity?.Id,
+                    external == null ? null : $"{external.Value.Provider}:{external.Value.ExternalId}");
             }
         }
 

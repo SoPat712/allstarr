@@ -2,6 +2,7 @@ namespace allstarr.Core.Intelligence;
 
 public enum RecommendationRunState { Pending, Running, Succeeded, Failed, Cancelled }
 public enum GeneratedSetMaterializationState { Pending, Running, Succeeded, Failed, Unsupported, Cancelled }
+public enum ListeningEventState { Playing, Completed, Skipped, Abandoned }
 
 public sealed class IntelligencePolicyRecord
 {
@@ -29,6 +30,36 @@ public sealed class ListeningSignalRecord
     public Guid? SourceJobId { get; set; }
     public DateTimeOffset ObservedAt { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
+}
+public sealed class ListeningEventRecord
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid OwnerUserId { get; set; }
+    public string Protocol { get; set; } = "";
+    public string BackendInstanceId { get; set; } = "";
+    public string LibraryScopeId { get; set; } = "";
+    public string OccurrenceKey { get; set; } = "";
+    public ListeningEventState State { get; set; }
+    public DateTimeOffset? StartedAt { get; set; }
+    public DateTimeOffset? ListenedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+    public long? PositionTicks { get; set; }
+    public long? DurationMilliseconds { get; set; }
+    public string? ClientClass { get; set; }
+    public string? DeviceClass { get; set; }
+    public string SourceKind { get; set; } = "protocol";
+    public string? ImportProvenance { get; set; }
+    public string TrackReference { get; set; } = "";
+    public string? Title { get; set; }
+    public string? Artist { get; set; }
+    public string? Album { get; set; }
+    public Guid? CanonicalRecordingId { get; set; }
+    public Guid? LibraryTrackId { get; set; }
+    public string? ProviderId { get; set; }
+    public Guid? ProviderAccountId { get; set; }
+    public Guid? ProviderTrackIdentityId { get; set; }
+    public string? ProviderTrackReference { get; set; }
 }
 public sealed class ListeningProfileRecord
 {

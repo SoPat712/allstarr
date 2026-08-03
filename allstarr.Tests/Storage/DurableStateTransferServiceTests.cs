@@ -481,6 +481,30 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             UpdatedAt = now,
             Revision = 1
         });
+        context.ListeningEvents.Add(new ListeningEventRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            Protocol = "jellyfin",
+            BackendInstanceId = "transfer-backend",
+            LibraryScopeId = "music",
+            OccurrenceKey = new string('9', 64),
+            State = ListeningEventState.Completed,
+            StartedAt = now,
+            ListenedAt = now,
+            UpdatedAt = now,
+            PositionTicks = TimeSpan.FromSeconds(62).Ticks,
+            DurationMilliseconds = 123_000,
+            ClientClass = "fixture-client",
+            DeviceClass = "fixture-device",
+            SourceKind = "protocol",
+            TrackReference = "local-42",
+            Title = "Transfer",
+            Artist = "Fixture",
+            CanonicalRecordingId = canonicalRecordingId,
+            LibraryTrackId = libraryTrackId
+        });
         context.ListeningSignals.Add(new ListeningSignalRecord
         {
             Id = Guid.CreateVersion7(),
@@ -896,6 +920,9 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         Assert.Equal(MetadataEnrichmentApplicationState.Applied,
             (await target.MetadataEnrichmentApplications.SingleAsync()).State);
         Assert.True((await target.IntelligencePolicies.SingleAsync()).Enabled);
+        var listeningEvent = await target.ListeningEvents.SingleAsync();
+        Assert.Equal(ListeningEventState.Completed, listeningEvent.State);
+        Assert.Equal("local-42", listeningEvent.TrackReference);
         Assert.StartsWith("library:", (await target.ListeningSignals.SingleAsync()).TrackReference, StringComparison.Ordinal);
         Assert.Equal("lastfm", (await target.PlaybackDeliveryCheckpoints.SingleAsync()).TargetId);
         Assert.Single(await target.ListeningProfiles.ToListAsync());
@@ -914,6 +941,8 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
     [InlineData("intelligence-policies.json", "retentionDays", 0)]
     [InlineData("intelligence-policies.json", "allowedSignalTypesJson", "[\"Play\"]")]
     [InlineData("intelligence-policies.json", "targetCredentialReferenceId", "00000000-0000-0000-0000-000000000001")]
+    [InlineData("listening-events.json", "occurrenceKey", "short")]
+    [InlineData("listening-events.json", "libraryTrackId", "00000000-0000-0000-0000-000000000001")]
     [InlineData("listening-signals.json", "ownerUserId", "00000000-0000-0000-0000-000000000001")]
     [InlineData("listening-signals.json", "trackReference", "library:00000000000000000000000000000001")]
     [InlineData("playback-delivery-checkpoints.json", "signalKey", "short")]

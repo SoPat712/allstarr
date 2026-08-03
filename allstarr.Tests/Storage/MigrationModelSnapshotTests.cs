@@ -14,6 +14,6 @@ public sealed class MigrationModelSnapshotTests
         using var context = new AllstarrDbContext(options);
 
         Assert.False(context.Database.HasPendingModelChanges());
-        Assert.Equal("20260802183000_AddPlaylistProjectionMode", context.Database.GetMigrations().Last());
+        Assert.Equal("20260802210000_Phase5AListeningOccurrences", context.Database.GetMigrations().Last());
     }
 }
