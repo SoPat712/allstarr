@@ -114,7 +114,7 @@
             </label>
             <label class:active={audience === "library"}>
               <input bind:group={audience} type="radio" value="library" />
-              <span><strong>One library</strong><small>Only requests in the named backend library may use this account.</small></span>
+              <span><strong>One library</strong><small>Only requests in the selected media library may use this account.</small></span>
             </label>
           </fieldset>
           {#if audience === "user"}

@@ -337,7 +337,7 @@
       {#if onboardingError || onboardingState?.recoveryNotices.includes("backend_identity_missing")}
         <div class="degraded-banner" role="status">
           <span aria-hidden="true">!</span>
-          <p><strong>Media server connection needs attention.</strong> {onboardingError || "The identity saved during setup is no longer available. Sign in again or review the backend connection."}</p>
+          <p><strong>Media server connection needs attention.</strong> {onboardingError || "The identity saved during setup is no longer available. Sign in again or review the media server connection."}</p>
         </div>
       {/if}
 

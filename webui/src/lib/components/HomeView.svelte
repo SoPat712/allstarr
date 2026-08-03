@@ -151,7 +151,7 @@
     <article class="metric-card">
       <span class="metric-icon backend" aria-hidden="true">◇</span>
       <div>
-        <p>Backend</p>
+        <p>Media server</p>
         <strong>{snapshot.status?.backendType ?? "Unknown"}</strong>
       </div>
       <small class:attention={snapshot.status?.durableStorage?.readiness !== "Ready"}>

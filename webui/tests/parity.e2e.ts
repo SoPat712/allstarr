@@ -646,6 +646,7 @@ for (const viewport of viewports) {
       await page.goto("#/library/playlists");
       await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
       const details = page.getByRole("dialog", { name: "Test playlist" });
+      await expect(details).not.toContainText(/native playlist|hybrid|materialized|write-back|projection mode|backend/i);
       await details.getByRole("tab", { name: "Jellyfin playlist", exact: true }).click();
       await expect(details.getByText("target track", { exact: true })).toBeVisible();
       await expect(details).toHaveCSS("overflow", "hidden");
@@ -664,6 +665,7 @@ for (const viewport of viewports) {
       await details.getByRole("button", { name: "Actions" }).click();
       await page.getByRole("menuitem", { name: "Edit settings" }).click();
       const settings = page.getByRole("dialog", { name: "Edit playlist settings" });
+      await expect(settings).not.toContainText(/native playlist|hybrid|materialized|write-back|projection mode|backend/i);
       await expect(settings.locator(".playlist-settings-form")).toHaveCSS("overflow-y", "auto");
       await expect(settings.getByRole("button", { name: "Save settings" })).toBeInViewport();
       const settingsScreenshot = await page.screenshot({
@@ -852,6 +854,7 @@ for (const viewport of viewports) {
       await page.getByRole("tab", { name: "Access" }).click();
       await page.getByRole("button", { name: "Edit access" }).click();
       await page.getByRole("radio", { name: "One library" }).check();
+      await expect(page.getByText("Only requests in the selected media library may use this account.")).toBeVisible();
       await page.getByLabel("Library ID").fill("music");
       await page.getByRole("button", { name: "Save access" }).click();
       const libraryShare = page.getByRole("alertdialog", {
@@ -1671,6 +1674,7 @@ test("Event log groups matching work and preserves actionable history", async ({
   await expect(technical).toBeVisible();
   await expect(page.getByText("Title Similarity").first()).toBeHidden();
   await technical.click();
+  await expect(page.getByText("Media server item ID").first()).toBeVisible();
   await expect(page.getByText("Title Similarity").first()).toBeVisible();
   await page.getByRole("button", { name: "Refresh" }).click();
   await expect(group).toHaveAttribute("open", "");
@@ -2078,6 +2082,7 @@ test("Durable onboarding controls first setup and targeted recovery", async ({ p
   recovery = true;
   await page.reload();
   await expect(page.getByText("Media server connection needs attention.")).toBeVisible();
+  await expect(page.getByText(/review the media server connection/i)).toBeVisible();
   await expect(setup).toBeHidden();
 });
 
