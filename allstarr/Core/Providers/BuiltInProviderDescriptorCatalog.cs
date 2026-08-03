@@ -19,11 +19,6 @@ public static class BuiltInProviderDescriptorCatalog
     public static IReadOnlyList<ProviderRegistration> LegacyRegistrations { get; } =
     [
         Registration(
-            "musicbrainz",
-            "MusicBrainz",
-            "The current identity and enrichment helper before its typed metadata adapter.",
-            NoAccount(ProviderCapabilityKind.Metadata)),
-        Registration(
             "lastfm",
             "Last.fm",
             "The existing scrobbling integration represented by its future typed health lane.",

@@ -79,12 +79,12 @@ public sealed class BuiltInProviderDescriptorCatalogTests
             "listenbrainz",
             "lrclib",
             "lyricsplus",
-            "musicbrainz",
             "qobuz",
             "spotify",
             "squidwtf"
         ];
         Assert.Equal(expected, registry.Providers.Select(item => item.Id));
+        Assert.DoesNotContain(registry.Providers, item => item.Id == "musicbrainz");
         Assert.Equal(
             ["apple-download", "deezer", "qobuz", "squidwtf"],
             registry.FindByCapability(ProviderCapabilityKind.Metadata)
