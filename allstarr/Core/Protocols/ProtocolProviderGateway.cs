@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
@@ -601,47 +602,74 @@ public sealed class ProtocolProviderGateway(
         ArgumentNullException.ThrowIfNull(protocol);
         if (protocol.Actor is null) return null;
 
-        var rangeStart = ParseRangeStart(rangeHeader);
-        var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Streaming);
-        var plan = await router.PlanAsync<IProviderStreamingCapability>(Request(
+        providerId = NormalizeProvider(providerId);
+        var parsedRange = ParseRange(rangeHeader);
+        var rangeStart = parsedRange?.Ranges.Single().From;
+        var trackId = new ProviderExternalResourceId(
+            providerId, ProviderResourceKind.Track, externalId);
+        var routed = await PlanExactAsync<IProviderStreamingCapability>(
             protocol,
-            protocol.RequireActor(),
+            providerId,
             ProviderCapabilityKind.Streaming,
             "protocol-stream-open",
-            providerOrder,
-            new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, externalId),
-            quality,
-            allowFallback: true));
-        for (var index = 0; index < plan.Candidates.Count; index++)
+            trackId,
+            quality);
+        if (routed.Candidate == null) return null;
+        var candidate = routed.Candidate;
+        var leaseRequest = new ProviderStreamLeaseRequest(
+            trackId, quality, rangeStart);
+
+        async Task<ProviderStreamLease> ResolveLeaseAsync()
         {
-            var candidate = plan.Candidates[index];
-            var trackId = candidate.TrackId ??
-                          new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, externalId);
             var outcome = await candidate.Implementation.GetStreamLeaseAsync(
                 candidate.Context,
-                new ProviderStreamLeaseRequest(trackId, quality, rangeStart));
+                leaseRequest);
             if (!outcome.IsSuccess)
-            {
-                if (router.EvaluateFallback(plan, index, outcome.Error!).Disposition ==
-                    ProviderFallbackDisposition.Advance)
-                    continue;
                 ThrowRouteFailure(outcome.Error!);
-            }
-
-            var lease = outcome.RequireValue();
-            using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
-            if (rangeHeader != null && lease.SupportsByteRanges)
-            {
-                request.Headers.Range = RangeHeaderValue.Parse(rangeHeader);
-            }
-            var response = await httpClientFactory.CreateClient(StreamingClientName).SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                protocol.CancellationToken);
-            return new ProtocolProviderStream(response, lease);
+            return outcome.RequireValue();
         }
-        return null;
+
+        async Task<HttpResponseMessage> OpenLeaseAsync(ProviderStreamLease lease)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+            if (parsedRange != null && lease.SupportsByteRanges)
+                request.Headers.Range = parsedRange;
+            return lease.ProtectedResponseFactory != null
+                ? await lease.ProtectedResponseFactory(request, protocol.CancellationToken)
+                : await httpClientFactory.CreateClient(StreamingClientName).SendAsync(
+                    request,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    protocol.CancellationToken);
+        }
+
+        var lease = await ResolveLeaseAsync();
+        HttpResponseMessage response;
+        try
+        {
+            response = await OpenLeaseAsync(lease);
+        }
+        catch (HttpRequestException) when (lease.RetryBehavior != ProviderStreamRetryBehavior.DoNotRetry)
+        {
+            if (lease.RetryBehavior == ProviderStreamRetryBehavior.RefreshLease)
+                lease = await ResolveLeaseAsync();
+            response = await OpenLeaseAsync(lease);
+        }
+        if (ShouldRetry(lease, response.StatusCode))
+        {
+            response.Dispose();
+            if (lease.RetryBehavior == ProviderStreamRetryBehavior.RefreshLease)
+                lease = await ResolveLeaseAsync();
+            response = await OpenLeaseAsync(lease);
+        }
+        return new ProtocolProviderStream(response, lease);
     }
+
+    private static bool ShouldRetry(ProviderStreamLease lease, HttpStatusCode statusCode) =>
+        lease.RetryBehavior != ProviderStreamRetryBehavior.DoNotRetry &&
+        (statusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests ||
+         statusCode >= HttpStatusCode.InternalServerError ||
+         lease.RetryBehavior == ProviderStreamRetryBehavior.RefreshLease &&
+         statusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden);
 
     public async Task<ProviderLyricsResult?> GetLyricsAsync(
         ProtocolExecutionContext protocol,
@@ -851,15 +879,14 @@ public sealed class ProtocolProviderGateway(
         idempotencyKey: idempotencyKey,
         cancellationToken: protocol.CancellationToken);
 
-    private static long? ParseRangeStart(string? rangeHeader)
+    private static RangeHeaderValue? ParseRange(string? rangeHeader)
     {
         if (string.IsNullOrWhiteSpace(rangeHeader)) return null;
         if (!RangeHeaderValue.TryParse(rangeHeader, out var parsed) || parsed.Ranges.Count != 1)
         {
             throw new InvalidOperationException("Only one valid byte range may be requested.");
         }
-        var range = parsed.Ranges.Single();
-        return range.From;
+        return parsed;
     }
 
     private static void ThrowRouteFailure(ProviderError error) => throw error.Kind switch

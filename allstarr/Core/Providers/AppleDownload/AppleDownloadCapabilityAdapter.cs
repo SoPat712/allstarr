@@ -164,7 +164,8 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
 
     public static ProviderRegistration CreateRegistration(
         AppleDownloadCapabilityAdapter adapter,
-        AppleDownloadLyricsCapabilityAdapter? lyrics = null) => new(
+        AppleDownloadLyricsCapabilityAdapter? lyrics = null,
+        AppleDownloadStreamingCapabilityAdapter? streaming = null) => new(
         new ProviderDescriptor(
             StableProviderId,
             "Apple Music - Gamdl",
@@ -175,7 +176,14 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
             capabilities:
             [
                 ConfiguredLane(ProviderCapabilityKind.Metadata),
-                ConfiguredLane(ProviderCapabilityKind.Streaming),
+                streaming == null
+                    ? ConfiguredLane(ProviderCapabilityKind.Streaming)
+                    : new ProviderCapabilityDescriptor(
+                        ProviderCapabilityKind.Streaming,
+                        ProviderCapabilitySupportState.Supported,
+                        ProviderAccountRequirement.None,
+                        compatibilityVersion: "1",
+                        hooks: ["getStreamLease", "probeStream"]),
                 new ProviderCapabilityDescriptor(
                     ProviderCapabilityKind.Download,
                     ProviderCapabilitySupportState.Supported,
@@ -193,7 +201,18 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
                 ConfiguredLane(ProviderCapabilityKind.Health)
             ],
             permissions: new ProviderPermissionDescriptor()),
-        lyrics == null ? [adapter] : [adapter, lyrics]);
+        Implementations(adapter, lyrics, streaming));
+
+    private static IProviderCapability[] Implementations(
+        IProviderDownloadCapability download,
+        IProviderLyricsCapability? lyrics,
+        IProviderStreamingCapability? streaming)
+    {
+        var values = new List<IProviderCapability> { download };
+        if (lyrics != null) values.Add(lyrics);
+        if (streaming != null) values.Add(streaming);
+        return values.ToArray();
+    }
 
     private static ProviderCapabilityDescriptor ConfiguredLane(ProviderCapabilityKind capability) => new(
         capability,

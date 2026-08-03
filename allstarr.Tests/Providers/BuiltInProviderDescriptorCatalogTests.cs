@@ -21,7 +21,9 @@ public sealed class BuiltInProviderDescriptorCatalogTests
         var deezer = new DeezerMetadataCapabilityAdapter(
             new Mock<IConcreteMetadataService>(MockBehavior.Strict).Object);
         var deezerDownload = Download("deezer");
+        var deezerStreaming = Streaming("deezer");
         var qobuzDownload = Download("qobuz");
+        var qobuzStreaming = Streaming("qobuz");
         var apple = new AppleMusicKitPlaylistCapabilityAdapter(
             new HttpClient(new Mock<HttpMessageHandler>().Object),
             new Mock<IProviderAccountSecretAccessor>(MockBehavior.Strict).Object);
@@ -36,13 +38,19 @@ public sealed class BuiltInProviderDescriptorCatalogTests
                 new Mock<IProviderDownloadArtifactStore>(MockBehavior.Strict).Object,
                 new ProviderDownloadWorkspaceOptions { RootPath = Path.GetTempPath() }),
             1024);
+        var appleDownloadStreaming = new AppleDownloadStreamingCapabilityAdapter(
+            new HttpClient(new Mock<HttpMessageHandler>().Object),
+            new AppleDownloadSettings(),
+            new Mock<IAppleDownloadEndpointDiscovery>(MockBehavior.Strict).Object);
         var registry = new ProviderRegistry(
         [
-            DeezerMetadataCapabilityAdapter.CreateRegistration(deezer, deezerDownload),
-            QobuzDownloadCapabilityAdapter.CreateRegistration(qobuzDownload),
+            DeezerMetadataCapabilityAdapter.CreateRegistration(
+                deezer, deezerDownload, deezerStreaming),
+            QobuzDownloadCapabilityAdapter.CreateRegistration(qobuzDownload, qobuzStreaming),
             AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(apple),
             SpotifyPlaylistCapabilityAdapter.CreateRegistration(spotify),
-            AppleDownloadCapabilityAdapter.CreateRegistration(appleDownload),
+            AppleDownloadCapabilityAdapter.CreateRegistration(
+                appleDownload, streaming: appleDownloadStreaming),
             .. BuiltInProviderDescriptorCatalog.LegacyRegistrations
         ]);
 
@@ -77,11 +85,15 @@ public sealed class BuiltInProviderDescriptorCatalogTests
             deezerDescriptor.Capabilities.Select(item => item.Capability));
         Assert.True(deezerDescriptor.Capabilities.Single(item =>
             item.Capability == ProviderCapabilityKind.Metadata).HasUsableImplementation);
-        Assert.True(deezerDescriptor.Capabilities.Single(item =>
-            item.Capability == ProviderCapabilityKind.Download).HasUsableImplementation);
+        Assert.All(
+            deezerDescriptor.Capabilities.Where(item => item.Capability is
+                ProviderCapabilityKind.Metadata or
+                ProviderCapabilityKind.Streaming or
+                ProviderCapabilityKind.Download),
+            capability => Assert.True(capability.HasUsableImplementation));
         Assert.All(
             deezerDescriptor.Capabilities.Where(item =>
-                item.Capability is not (ProviderCapabilityKind.Metadata or ProviderCapabilityKind.Download)),
+                item.Capability is ProviderCapabilityKind.Playlist or ProviderCapabilityKind.Health),
             capability => Assert.Equal(
                 ProviderCapabilitySupportState.ConfiguredOnly,
                 capability.SupportState));
@@ -90,6 +102,11 @@ public sealed class BuiltInProviderDescriptorCatalogTests
             item => item.Id == "apple-musickit");
         Assert.Same(qobuzDownload, registry.GetRequiredCapability<IProviderDownloadCapability>(
             "qobuz", ProviderCapabilityKind.Download));
+        Assert.Same(qobuzStreaming, registry.GetRequiredCapability<IProviderStreamingCapability>(
+            "qobuz", ProviderCapabilityKind.Streaming));
+        Assert.Same(appleDownloadStreaming,
+            registry.GetRequiredCapability<IProviderStreamingCapability>(
+                "apple-download", ProviderCapabilityKind.Streaming));
         Assert.All(
             BuiltInProviderDescriptorCatalog.LegacyRegistrations,
             registration => Assert.All(
@@ -102,6 +119,14 @@ public sealed class BuiltInProviderDescriptorCatalogTests
         var mock = new Mock<IProviderDownloadCapability>(MockBehavior.Strict);
         mock.SetupGet(item => item.ProviderId).Returns(providerId);
         mock.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Download);
+        return mock.Object;
+    }
+
+    private static IProviderStreamingCapability Streaming(string providerId)
+    {
+        var mock = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
+        mock.SetupGet(item => item.ProviderId).Returns(providerId);
+        mock.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
         return mock.Object;
     }
 }

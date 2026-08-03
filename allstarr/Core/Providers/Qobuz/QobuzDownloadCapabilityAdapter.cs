@@ -180,7 +180,8 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
     }
 
     public static ProviderRegistration CreateRegistration(
-        IProviderDownloadCapability adapter) => new(
+        IProviderDownloadCapability adapter,
+        IProviderStreamingCapability? streaming = null) => new(
         new ProviderDescriptor(
             StableProviderId,
             "Qobuz",
@@ -191,7 +192,20 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
             capabilities:
             [
                 ConfiguredLane(ProviderCapabilityKind.Metadata, ProviderAccountRequirement.Optional),
-                ConfiguredLane(ProviderCapabilityKind.Streaming),
+                streaming == null
+                    ? ConfiguredLane(ProviderCapabilityKind.Streaming)
+                    : new ProviderCapabilityDescriptor(
+                        ProviderCapabilityKind.Streaming,
+                        ProviderCapabilitySupportState.Supported,
+                        ProviderAccountRequirement.Required,
+                        compatibilityVersion: "1",
+                        hooks: ["getStreamLease", "probeStream"],
+                        allowedAccountScopes:
+                        [
+                            ProviderAccountScope.Global,
+                            ProviderAccountScope.User,
+                            ProviderAccountScope.Library
+                        ]),
                 new ProviderCapabilityDescriptor(
                     ProviderCapabilityKind.Download,
                     ProviderCapabilitySupportState.Supported,
@@ -214,7 +228,7 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
                     new Uri("https://play.qobuz.com/")
                 ],
                 cache: true)),
-        [adapter]);
+        streaming == null ? [adapter] : [adapter, streaming]);
 
     private static ProviderCapabilityDescriptor ConfiguredLane(
         ProviderCapabilityKind capability,
@@ -290,7 +304,7 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
             : null;
     }
 
-    private static bool TryMedia(
+    internal static bool TryMedia(
         QobuzDownloadService.QobuzDownloadResult prepared,
         out ProviderMediaFormat? media,
         out string extension)
@@ -318,11 +332,11 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
         return false;
     }
 
-    private static bool ValidTransportType(string? actual, string expected) =>
+    internal static bool ValidTransportType(string? actual, string expected) =>
         actual?.Equals(expected, StringComparison.OrdinalIgnoreCase) == true ||
         actual?.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) == true;
 
-    private static bool TryProviderUri(string value, out Uri uri)
+    internal static bool TryProviderUri(string value, out Uri uri)
     {
         uri = null!;
         return OutboundRequestGuard.TryCreateSafeHttpUri(value, out var parsed, out _) &&
@@ -332,7 +346,7 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
     private static string ArtifactId(string trackId, string extension) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(trackId))).ToLowerInvariant() + extension;
 
-    private static ProviderError HttpError(HttpRequestException exception) => exception.StatusCode switch
+    internal static ProviderError HttpError(HttpRequestException exception) => exception.StatusCode switch
     {
         HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => new(ProviderErrorKind.Unauthorized),
         HttpStatusCode.NotFound => new(ProviderErrorKind.NotFound),

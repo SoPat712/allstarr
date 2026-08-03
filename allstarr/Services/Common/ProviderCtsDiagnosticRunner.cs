@@ -169,7 +169,8 @@ public sealed class ProviderCtsDiagnosticRunner(
 
             using var sampleClient = CreateSampleClient();
             using var sampleRequest = new HttpRequestMessage(HttpMethod.Get, safeUri);
-            sampleRequest.Headers.Range = new RangeHeaderValue(0, SampleLimitBytes - 1);
+            if (lease.SupportsByteRanges)
+                sampleRequest.Headers.Range = new RangeHeaderValue(0, SampleLimitBytes - 1);
             sampleRequest.Headers.CacheControl = new CacheControlHeaderValue
             {
                 NoCache = true,
@@ -177,8 +178,10 @@ public sealed class ProviderCtsDiagnosticRunner(
                 MaxAge = TimeSpan.Zero
             };
             sampleRequest.Headers.Pragma.ParseAdd("no-cache");
-            using var response = await sampleClient.SendAsync(
-                sampleRequest, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+            using var response = lease.ProtectedResponseFactory != null
+                ? await lease.ProtectedResponseFactory(sampleRequest, deadline.Token)
+                : await sampleClient.SendAsync(
+                    sampleRequest, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
             var headersMilliseconds = total.Elapsed.TotalMilliseconds;
             if (IsRedirect(response.StatusCode) || !response.IsSuccessStatusCode)
             {

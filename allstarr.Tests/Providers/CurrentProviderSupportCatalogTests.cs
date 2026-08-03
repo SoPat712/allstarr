@@ -29,12 +29,15 @@ public sealed class CurrentProviderSupportCatalogTests
     public void Matrix_AdvertisesTypedPlaylistSourcesAndKeepsMissingLanesUnavailable()
     {
         AssertState("apple-download", "lyrics", CurrentProviderSupportCatalog.Supported);
+        AssertState("apple-download", "streaming", CurrentProviderSupportCatalog.Supported);
         AssertState("apple-musickit", "playlist", CurrentProviderSupportCatalog.Supported);
         AssertState("apple-musickit", "metadata", CurrentProviderSupportCatalog.Supported);
         AssertState("spotify", "playlist", CurrentProviderSupportCatalog.Supported);
         AssertState("spotify", "metadata", CurrentProviderSupportCatalog.Unavailable);
         AssertState("qobuz", "metadata", CurrentProviderSupportCatalog.Supported);
+        AssertState("qobuz", "streaming", CurrentProviderSupportCatalog.Supported);
         AssertState("qobuz", "download", CurrentProviderSupportCatalog.Supported);
+        AssertState("deezer", "streaming", CurrentProviderSupportCatalog.Supported);
         AssertState("deezer", "download", CurrentProviderSupportCatalog.Supported);
         AssertState("musicbrainz", "metadata", CurrentProviderSupportCatalog.Unavailable);
         AssertState("musicbrainz", "recommendation", CurrentProviderSupportCatalog.Supported);

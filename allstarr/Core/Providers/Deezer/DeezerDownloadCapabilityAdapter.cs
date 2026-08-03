@@ -236,7 +236,7 @@ public sealed class DeezerDownloadCapabilityAdapter : IProviderDownloadCapabilit
             : null;
     }
 
-    private static bool TryMedia(
+    internal static bool TryMedia(
         string format,
         out ProviderMediaFormat? media,
         out string extension)
@@ -262,11 +262,11 @@ public sealed class DeezerDownloadCapabilityAdapter : IProviderDownloadCapabilit
         }
     }
 
-    private static bool ValidTransportType(string? value) =>
+    internal static bool ValidTransportType(string? value) =>
         value?.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) == true ||
         value?.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) == true;
 
-    private static bool TryProviderUri(string value, out Uri uri)
+    internal static bool TryProviderUri(string value, out Uri uri)
     {
         uri = null!;
         return OutboundRequestGuard.TryCreateSafeHttpUri(value, out var parsed, out _) &&
@@ -276,7 +276,7 @@ public sealed class DeezerDownloadCapabilityAdapter : IProviderDownloadCapabilit
     private static string ArtifactId(string trackId, string extension) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(trackId))).ToLowerInvariant() + extension;
 
-    private static ProviderError HttpError(HttpRequestException exception) => exception.StatusCode switch
+    internal static ProviderError HttpError(HttpRequestException exception) => exception.StatusCode switch
     {
         HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => new(ProviderErrorKind.Unauthorized),
         HttpStatusCode.NotFound => new(ProviderErrorKind.NotFound),

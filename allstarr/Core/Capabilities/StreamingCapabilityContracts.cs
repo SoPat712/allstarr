@@ -7,6 +7,10 @@ public enum ProviderStreamRetryBehavior
     RefreshLease
 }
 
+public delegate Task<HttpResponseMessage> ProviderStreamResponseFactory(
+    HttpRequestMessage request,
+    CancellationToken cancellationToken);
+
 public sealed record ProviderStreamLeaseRequest
 {
     public ProviderStreamLeaseRequest(
@@ -50,7 +54,8 @@ public sealed class ProviderStreamLease
         bool supportsByteRanges,
         bool supportsSeeking,
         ProviderMediaFormat media,
-        ProviderStreamRetryBehavior retryBehavior)
+        ProviderStreamRetryBehavior retryBehavior,
+        ProviderStreamResponseFactory? responseFactory = null)
     {
         ArgumentNullException.ThrowIfNull(sourceUri);
         ArgumentNullException.ThrowIfNull(media);
@@ -78,6 +83,7 @@ public sealed class ProviderStreamLease
         SupportsSeeking = supportsSeeking;
         Media = media;
         RetryBehavior = retryBehavior;
+        ProtectedResponseFactory = responseFactory;
     }
 
     public string LeaseId { get; }
@@ -93,6 +99,8 @@ public sealed class ProviderStreamLease
     public ProviderMediaFormat Media { get; }
 
     public ProviderStreamRetryBehavior RetryBehavior { get; }
+
+    internal ProviderStreamResponseFactory? ProtectedResponseFactory { get; }
 
     public override string ToString() =>
         $"ProviderStreamLease {{ LeaseId = {LeaseId}, ExpiresAt = {ExpiresAt:O}, SourceUri = \u003Credacted\u003E }}";

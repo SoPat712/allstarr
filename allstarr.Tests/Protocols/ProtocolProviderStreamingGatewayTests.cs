@@ -169,55 +169,146 @@ public sealed class ProtocolProviderStreamingGatewayTests
     }
 
     [Fact]
-    public async Task OpenStream_UsesVerifiedRouterFallbackAndPreservesSuffixRange()
+    public async Task OpenStream_UsesOnlyTheStoredProviderAndTrack()
     {
         var first = Capability("deezer", ProviderOutcome<ProviderStreamLease>.Failure(
             new ProviderError(ProviderErrorKind.TransientFailure)));
-        var lease = new ProviderStreamLease(
-            "qobuz-lease",
-            new Uri("https://media.example.test/qobuz"),
-            DateTimeOffset.UtcNow.AddMinutes(1),
-            true,
-            true,
-            new ProviderMediaFormat("audio/flac", "flac", "flac"),
-            ProviderStreamRetryBehavior.DoNotRetry);
-        var second = Capability("qobuz", ProviderOutcome<ProviderStreamLease>.Success(lease));
+        var second = Capability("qobuz", ProviderOutcome<ProviderStreamLease>.Failure(
+            new ProviderError(ProviderErrorKind.TransientFailure)));
         var registry = Registry(first.Object, second.Object);
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
         router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(
                 It.Is<ProviderRouteRequest>(request =>
-                    request.Policy.AllowFallback &&
+                    !request.Policy.AllowFallback &&
                     request.SourceTrackId!.ProviderId == "deezer" &&
-                    request.SourceTrackId.Value == "source-track")))
-            .ReturnsAsync((ProviderRouteRequest request) => Plan(
-                request, registry, first.Object, second.Object));
-        router.Setup(item => item.EvaluateFallback(
-                It.IsAny<ProviderRoutePlan<IProviderStreamingCapability>>(),
-                0,
-                It.Is<ProviderError>(error => error.Kind == ProviderErrorKind.TransientFailure)))
-            .Returns((ProviderRoutePlan<IProviderStreamingCapability> plan, int _, ProviderError _) =>
-                new ProviderFallbackDecision<IProviderStreamingCapability>(
-                    ProviderFallbackDisposition.Advance, "fallback-transient-failure", plan.Candidates[1]));
-        var http = new HttpClientFactory();
+                    request.SourceTrackId.Value == "source-track" &&
+                    request.ProviderPriority.SequenceEqual(new[] { "deezer" }))))
+            .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry, first.Object));
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
             Mock.Of<IProviderRouteAccountResolver>(),
             Mock.Of<IMusicMetadataService>(),
-            http);
+            new HttpClientFactory());
 
-        var stream = await gateway.OpenStreamAsync(
-            Context(), "deezer", "source-track", ProviderAudioQuality.Lossless, "bytes=-4096");
+        await Assert.ThrowsAsync<HttpRequestException>(() => gateway.OpenStreamAsync(
+            Context(), "deezer", "source-track", ProviderAudioQuality.Lossless, null));
 
-        Assert.NotNull(stream);
-        Assert.Equal("qobuz-lease", stream.Lease.LeaseId);
-        Assert.Equal("bytes=-4096", http.Range);
+        first.Verify(item => item.GetStreamLeaseAsync(
+            It.IsAny<ProviderExecutionContext>(),
+            It.Is<ProviderStreamLeaseRequest>(request =>
+                request.TrackId.ProviderId == "deezer" &&
+                request.TrackId.Value == "source-track")), Times.Once);
         second.Verify(item => item.GetStreamLeaseAsync(
             It.IsAny<ProviderExecutionContext>(),
-            It.Is<ProviderStreamLeaseRequest>(request => request.RangeStart == null)), Times.Once);
-        stream.Response.Dispose();
+            It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
         first.VerifyAll();
-        second.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData(true, HttpStatusCode.PartialContent, "bytes=10-19")]
+    [InlineData(false, HttpStatusCode.OK, null)]
+    public async Task OpenStream_ForwardsRangesOnlyWhenTheLeaseCanHonorThem(
+        bool supportsRanges,
+        HttpStatusCode expectedStatus,
+        string? expectedRange)
+    {
+        string? observedRange = null;
+        var lease = new ProviderStreamLease(
+            "lease",
+            new Uri("https://media.example.test/track"),
+            DateTimeOffset.UtcNow.AddMinutes(1),
+            supportsRanges,
+            supportsRanges,
+            new ProviderMediaFormat("audio/flac", "flac", "flac"),
+            ProviderStreamRetryBehavior.DoNotRetry,
+            (request, _) =>
+            {
+                observedRange = request.Headers.Range?.ToString();
+                return Task.FromResult(new HttpResponseMessage(
+                    observedRange == null ? HttpStatusCode.OK : HttpStatusCode.PartialContent));
+            });
+        var capability = Capability("qobuz", ProviderOutcome<ProviderStreamLease>.Success(lease));
+        var registry = Registry(capability.Object);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(
+                It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry, capability.Object));
+        var gateway = new ProtocolProviderGateway(
+            router.Object,
+            registry,
+            Mock.Of<IProviderRouteAccountResolver>(),
+            Mock.Of<IMusicMetadataService>(),
+            new HttpClientFactory());
+
+        var stream = await gateway.OpenStreamAsync(
+            Context(), "qobuz", "source-track", ProviderAudioQuality.Lossless, "bytes=10-19");
+
+        Assert.NotNull(stream);
+        Assert.Equal(expectedStatus, stream.Response.StatusCode);
+        Assert.Equal(expectedRange, observedRange);
+        capability.Verify(item => item.GetStreamLeaseAsync(
+            It.IsAny<ProviderExecutionContext>(),
+            It.Is<ProviderStreamLeaseRequest>(request => request.RangeStart == 10)), Times.Once);
+        stream.Response.Dispose();
+    }
+
+    [Theory]
+    [InlineData(ProviderStreamRetryBehavior.RetrySameLeaseOnce, 1)]
+    [InlineData(ProviderStreamRetryBehavior.RefreshLease, 2)]
+    public async Task OpenStream_RetriesOnceAccordingToTheLease(
+        ProviderStreamRetryBehavior retryBehavior,
+        int expectedLeaseCount)
+    {
+        var leaseCount = 0;
+        var openCount = 0;
+        var capability = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
+        capability.SetupGet(item => item.ProviderId).Returns("qobuz");
+        capability.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+        capability.Setup(item => item.GetStreamLeaseAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderStreamLeaseRequest>()))
+            .ReturnsAsync(() =>
+            {
+                var ordinal = ++leaseCount;
+                return ProviderOutcome<ProviderStreamLease>.Success(new(
+                    $"lease-{ordinal}",
+                    new Uri("https://media.example.test/track"),
+                    DateTimeOffset.UtcNow.AddMinutes(1),
+                    true,
+                    true,
+                    new ProviderMediaFormat("audio/flac", "flac", "flac"),
+                    retryBehavior,
+                    (_, _) =>
+                    {
+                        openCount++;
+                        var status = retryBehavior == ProviderStreamRetryBehavior.RefreshLease
+                            ? ordinal == 1 ? HttpStatusCode.Forbidden : HttpStatusCode.OK
+                            : openCount == 1 ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK;
+                        return Task.FromResult(new HttpResponseMessage(status));
+                    }));
+            });
+        var registry = Registry(capability.Object);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(
+                It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry, capability.Object));
+        var gateway = new ProtocolProviderGateway(
+            router.Object,
+            registry,
+            Mock.Of<IProviderRouteAccountResolver>(),
+            Mock.Of<IMusicMetadataService>(),
+            new HttpClientFactory());
+
+        var stream = await gateway.OpenStreamAsync(
+            Context(), "qobuz", "source-track", ProviderAudioQuality.Lossless, null);
+
+        Assert.NotNull(stream);
+        Assert.Equal(HttpStatusCode.OK, stream.Response.StatusCode);
+        Assert.Equal(expectedLeaseCount, leaseCount);
+        Assert.Equal(2, openCount);
+        Assert.Equal($"lease-{expectedLeaseCount}", stream.Lease.LeaseId);
+        stream.Response.Dispose();
     }
 
     private static Mock<IProviderStreamingCapability> Capability(

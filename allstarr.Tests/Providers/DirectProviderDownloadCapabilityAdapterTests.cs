@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using allstarr.Core.Capabilities;
@@ -112,6 +113,105 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
         var verified = await resolver.ResolveAsync(workspace.Reference, output);
         Assert.Equal(audio, await File.ReadAllBytesAsync(verified.SourcePath));
         Assert.Single(store.Artifacts);
+    }
+
+    [Fact]
+    public async Task DeezerStream_DecryptsIncrementallyAndDoesNotAdvertiseRanges()
+    {
+        const string trackId = "42";
+        var plain = Enumerable.Range(0, 8192).Select(index => (byte)(index % 251)).ToArray();
+        var handler = new DeezerHandler(
+            EncryptDeezer(plain, trackId),
+            failFirstMediaRequest: false,
+            invalidFirstMediaResponse: true);
+        var client = new HttpClient(handler);
+        var service = DeezerService(client);
+        var adapter = new DeezerStreamingCapabilityAdapter(
+            client,
+            new RawSecretAccessor("""{"arl":"selected-arl","arlFallback":null}"""),
+            service,
+            configuredQuality: "FLAC");
+        var resolver = Resolver(new MemoryStore());
+        var (context, _, _) = await SetupAsync(resolver, DeezerDownloadCapabilityAdapter.StableProviderId);
+        var track = new ProviderExternalResourceId(
+            DeezerDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, trackId);
+
+        var lease = (await adapter.GetStreamLeaseAsync(
+            context, new(track, ProviderAudioQuality.Lossless))).RequireValue();
+
+        Assert.False(lease.SupportsByteRanges);
+        Assert.False(lease.SupportsSeeking);
+        Assert.Equal(ProviderStreamRetryBehavior.RefreshLease, lease.RetryBehavior);
+        using (var invalidRequest = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri))
+        {
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                lease.ProtectedResponseFactory!(invalidRequest, CancellationToken.None));
+        }
+        using (var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri))
+        using (var response = await lease.ProtectedResponseFactory!(request, CancellationToken.None))
+        await using (var stream = await response.Content.ReadAsStreamAsync())
+        {
+            var prefix = new byte[17];
+            Assert.Equal(prefix.Length, await stream.ReadAsync(prefix));
+            Assert.Equal(plain[..prefix.Length], prefix);
+            Assert.Equal(2048, handler.MediaBytesRead);
+            Assert.True(handler.MediaBytesRead < plain.Length);
+
+            var remainder = new byte[2048 - prefix.Length];
+            Assert.Equal(remainder.Length, await stream.ReadAsync(remainder));
+            using var canceled = new CancellationTokenSource();
+            canceled.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                stream.ReadExactlyAsync(new byte[1], canceled.Token).AsTask());
+        }
+
+        using var completeRequest = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+        using var completeResponse = await lease.ProtectedResponseFactory!(
+            completeRequest, CancellationToken.None);
+        Assert.Equal(plain, await completeResponse.Content.ReadAsByteArrayAsync());
+    }
+
+    [Fact]
+    public async Task QobuzStream_PreservesARealUpstreamByteRange()
+    {
+        var audio = Enumerable.Range(0, 64).Select(index => (byte)index).ToArray();
+        var handler = new QobuzHandler(audio, invalidFirstMediaResponse: true);
+        var client = new HttpClient(handler);
+        var factory = Factory(client);
+        var bundle = new Mock<QobuzBundleService>(
+            factory, NullLogger<QobuzBundleService>.Instance)
+        { CallBase = false };
+        bundle.Setup(item => item.GetAppIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync("123456789");
+        bundle.Setup(item => item.GetSecretsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["fixture-signing-secret"]);
+        var adapter = new QobuzStreamingCapabilityAdapter(
+            client,
+            new RawSecretAccessor("""{"userAuthToken":"selected-token","userId":"selected-user"}"""),
+            QobuzService(factory, bundle.Object),
+            configuredQuality: "FLAC_24_LOW");
+        var resolver = Resolver(new MemoryStore());
+        var (context, _, _) = await SetupAsync(resolver, QobuzDownloadCapabilityAdapter.StableProviderId);
+        var track = new ProviderExternalResourceId(
+            QobuzDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "77");
+        var lease = (await adapter.GetStreamLeaseAsync(
+            context, new(track, ProviderAudioQuality.HighResolution, rangeStart: 10))).RequireValue();
+        using (var invalidRequest = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri))
+        {
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                lease.ProtectedResponseFactory!(invalidRequest, CancellationToken.None));
+        }
+        using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+        request.Headers.Range = new RangeHeaderValue(10, 19);
+
+        using var response = await lease.ProtectedResponseFactory!(request, CancellationToken.None);
+
+        Assert.True(lease.SupportsByteRanges);
+        Assert.True(lease.SupportsSeeking);
+        Assert.Equal(ProviderStreamRetryBehavior.RefreshLease, lease.RetryBehavior);
+        Assert.Equal(HttpStatusCode.PartialContent, response.StatusCode);
+        Assert.Equal("bytes 10-19/64", response.Content.Headers.ContentRange?.ToString());
+        Assert.Equal(audio[10..20], await response.Content.ReadAsByteArrayAsync());
+        Assert.Equal("bytes=10-19", handler.MediaRange);
     }
 
     [Fact]
@@ -248,10 +348,11 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
         var key = Enumerable.Range(0, 16)
             .Select(index => (byte)(hash[index] ^ hash[index + 16] ^ secret[index]))
             .ToArray();
-        var cipher = new CbcBlockCipher(new BlowfishEngine());
-        cipher.Init(true, new ParametersWithIV(new KeyParameter(key), [0, 1, 2, 3, 4, 5, 6, 7]));
         for (var offset = 0; offset + 2048 <= output.Length; offset += 6144)
         {
+            var cipher = new CbcBlockCipher(new BlowfishEngine());
+            cipher.Init(true, new ParametersWithIV(
+                new KeyParameter(key), [0, 1, 2, 3, 4, 5, 6, 7]));
             for (var block = offset; block < offset + 2048; block += cipher.GetBlockSize())
                 cipher.ProcessBlock(output, block, output, block);
         }
@@ -278,10 +379,14 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
         public void Report(T value) => Values.Add(value);
     }
 
-    private sealed class DeezerHandler(byte[] encrypted) : HttpMessageHandler
+    private sealed class DeezerHandler(
+        byte[] encrypted,
+        bool failFirstMediaRequest = true,
+        bool invalidFirstMediaResponse = false) : HttpMessageHandler
     {
         public List<RequestSnapshot> Requests { get; } = [];
         public int MediaRequests { get; private set; }
+        public long MediaBytesRead { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -314,9 +419,12 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
             else if (uri.Host == "cdn.deezer.test")
             {
                 MediaRequests++;
-                response = MediaRequests == 1
+                response = invalidFirstMediaResponse && MediaRequests == 1
+                    ? Audio(encrypted, "text/html")
+                    : failFirstMediaRequest && MediaRequests == 1
                     ? new(HttpStatusCode.ServiceUnavailable)
-                    : Audio(encrypted, "application/octet-stream");
+                    : Audio(new TrackingReadStream(
+                        encrypted, count => MediaBytesRead += count), "application/octet-stream");
             }
             else
             {
@@ -327,9 +435,13 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
         }
     }
 
-    private sealed class QobuzHandler(byte[] audio) : HttpMessageHandler
+    private sealed class QobuzHandler(
+        byte[] audio,
+        bool invalidFirstMediaResponse = false) : HttpMessageHandler
     {
         public List<RequestSnapshot> Requests { get; } = [];
+        public string? MediaRange { get; private set; }
+        private int mediaRequests;
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -347,11 +459,25 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
                 "www.qobuz.com" => Json("""
                     {"url":"https://cdn.qobuz.test/audio/77","mime_type":"audio/flac","bit_depth":24,"sampling_rate":96,"sample":false}
                     """),
-                "cdn.qobuz.test" => Audio(audio, "audio/flac"),
+                "cdn.qobuz.test" => QobuzAudio(request),
                 _ => new HttpResponseMessage(HttpStatusCode.NotFound)
             };
             response.RequestMessage = request;
             return Task.FromResult(response);
+        }
+
+        private HttpResponseMessage QobuzAudio(HttpRequestMessage request)
+        {
+            if (invalidFirstMediaResponse && ++mediaRequests == 1)
+                return Audio(audio, "text/html");
+            MediaRange = request.Headers.Range?.ToString();
+            var range = request.Headers.Range?.Ranges.SingleOrDefault();
+            if (range?.From is not long from || range.To is not long to)
+                return Audio(audio, "audio/flac");
+            var response = Audio(audio[(int)from..((int)to + 1)], "audio/flac");
+            response.StatusCode = HttpStatusCode.PartialContent;
+            response.Content.Headers.ContentRange = new(from, to, audio.Length);
+            return response;
         }
     }
 
@@ -370,6 +496,30 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
         };
         response.Content.Headers.ContentType = new(contentType);
         return response;
+    }
+
+    private static HttpResponseMessage Audio(Stream value, string contentType)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StreamContent(value)
+        };
+        response.Content.Headers.ContentType = new(contentType);
+        return response;
+    }
+
+    private sealed class TrackingReadStream(byte[] value, Action<int> observed)
+        : MemoryStream(value, writable: false)
+    {
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var count = Read(buffer.Span);
+            observed(count);
+            return ValueTask.FromResult(count);
+        }
     }
 
     private sealed class MemoryStore : IProviderDownloadArtifactStore

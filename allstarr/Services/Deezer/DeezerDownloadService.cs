@@ -1,9 +1,5 @@
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Org.BouncyCastle.Crypto.Engines;
-using Org.BouncyCastle.Crypto.Modes;
-using Org.BouncyCastle.Crypto.Parameters;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
 using allstarr.Models.Download;
@@ -30,10 +26,6 @@ public class DeezerDownloadService : BaseDownloadService
     private readonly string? _preferredQuality;
 
     private const string DeezerApiBase = "https://api.deezer.com";
-
-    // Deezer's standard Blowfish CBC encryption key for track decryption
-    // This is a well-known constant used by the Deezer API, not a user-specific secret
-    private const string BfSecret = "g4el58wc0zvf9na1";
 
     protected override string ProviderName => "deezer";
 
@@ -475,78 +467,14 @@ public class DeezerDownloadService : BaseDownloadService
 
     #region Decryption
 
-    private byte[] GetBlowfishKey(string trackId)
-    {
-        var hash = MD5.HashData(Encoding.UTF8.GetBytes(trackId));
-        var hashHex = Convert.ToHexString(hash).ToLower();
-
-        var bfKey = new byte[16];
-        for (int i = 0; i < 16; i++)
-        {
-            bfKey[i] = (byte)(hashHex[i] ^ hashHex[i + 16] ^ BfSecret[i]);
-        }
-
-        return bfKey;
-    }
-
     internal async Task DecryptDownloadAsync(
         Stream input,
         Stream output,
         string trackId,
         CancellationToken cancellationToken)
     {
-        var bfKey = GetBlowfishKey(trackId);
-        var iv = new byte[] { 0, 1, 2, 3, 4, 5, 6, 7 };
-
-        var buffer = new byte[2048];
-        int chunkIndex = 0;
-
-        while (true)
-        {
-            var bytesRead = await ReadExactAsync(input, buffer, cancellationToken);
-            if (bytesRead == 0) break;
-
-            var chunk = buffer.AsSpan(0, bytesRead).ToArray();
-
-            // Every 3rd chunk (index % 3 == 0) is encrypted
-            if (chunkIndex % 3 == 0 && bytesRead == 2048)
-            {
-                chunk = DecryptBlowfishCbc(chunk, bfKey, iv);
-            }
-
-            await output.WriteAsync(chunk, cancellationToken);
-            chunkIndex++;
-        }
-    }
-
-    private async Task<int> ReadExactAsync(Stream stream, byte[] buffer, CancellationToken cancellationToken)
-    {
-        int totalRead = 0;
-        while (totalRead < buffer.Length)
-        {
-            var bytesRead = await stream.ReadAsync(buffer.AsMemory(totalRead, buffer.Length - totalRead), cancellationToken);
-            if (bytesRead == 0) break;
-            totalRead += bytesRead;
-        }
-        return totalRead;
-    }
-
-    private byte[] DecryptBlowfishCbc(byte[] data, byte[] key, byte[] iv)
-    {
-        // Use BouncyCastle for native Blowfish CBC decryption
-        var engine = new BlowfishEngine();
-        var cipher = new CbcBlockCipher(engine);
-        cipher.Init(false, new ParametersWithIV(new KeyParameter(key), iv));
-
-        var output = new byte[data.Length];
-        var blockSize = cipher.GetBlockSize(); // 8 bytes for Blowfish
-
-        for (int offset = 0; offset < data.Length; offset += blockSize)
-        {
-            cipher.ProcessBlock(data, offset, output, offset);
-        }
-
-        return output;
+        await using var decrypted = new DeezerDecryptedStream(input, trackId, leaveOpen: true);
+        await decrypted.CopyToAsync(output, cancellationToken);
     }
 
     #endregion

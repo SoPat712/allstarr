@@ -25,8 +25,11 @@ public sealed class ProtocolStreamingResponseAdapterTests
         Assert.Equal(HttpMethod.Head, request.Method);
     }
 
-    [Fact]
-    public async Task CreateAsync_PreservesPartialStatusHeadersAndContentType()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateAsync_PreservesPartialStatusHeadersAndContentType(
+        bool enableRangeProcessing)
     {
         var context = new DefaultHttpContext();
         var response = new HttpResponseMessage(HttpStatusCode.PartialContent)
@@ -42,12 +45,12 @@ public sealed class ProtocolStreamingResponseAdapterTests
             context,
             response,
             CancellationToken.None,
-            enableRangeProcessing: true);
+            enableRangeProcessing);
 
         var file = Assert.IsType<FileStreamResult>(result);
         Assert.Equal(StatusCodes.Status206PartialContent, context.Response.StatusCode);
         Assert.Equal("audio/flac", file.ContentType);
-        Assert.True(file.EnableRangeProcessing);
+        Assert.Equal(enableRangeProcessing, file.EnableRangeProcessing);
         Assert.Equal("bytes 8-11/32", context.Response.Headers.ContentRange);
         Assert.Equal("bytes", context.Response.Headers.AcceptRanges);
         Assert.Equal("\"fixture-etag\"", context.Response.Headers.ETag);

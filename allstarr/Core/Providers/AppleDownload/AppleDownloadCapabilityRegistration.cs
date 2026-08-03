@@ -17,10 +17,12 @@ public static class AppleDownloadCapabilityRegistration
             });
         services.AddSingleton<AppleDownloadCapabilityAdapter>();
         services.AddSingleton<AppleDownloadLyricsCapabilityAdapter>();
+        services.AddSingleton<AppleDownloadStreamingCapabilityAdapter>();
         services.AddSingleton<ProviderRegistration>(provider =>
             AppleDownloadCapabilityAdapter.CreateRegistration(
                 provider.GetRequiredService<AppleDownloadCapabilityAdapter>(),
-                provider.GetRequiredService<AppleDownloadLyricsCapabilityAdapter>()));
+                provider.GetRequiredService<AppleDownloadLyricsCapabilityAdapter>(),
+                provider.GetRequiredService<AppleDownloadStreamingCapabilityAdapter>()));
         return services;
     }
 }

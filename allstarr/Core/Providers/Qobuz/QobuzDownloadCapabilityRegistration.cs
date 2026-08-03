@@ -21,9 +21,11 @@ public static class QobuzDownloadCapabilityRegistration
                 PooledConnectionLifetime = TimeSpan.FromMinutes(2)
             });
         services.AddSingleton<QobuzDownloadCapabilityAdapter>();
+        services.AddSingleton<QobuzStreamingCapabilityAdapter>();
         services.AddSingleton<ProviderRegistration>(provider =>
             QobuzDownloadCapabilityAdapter.CreateRegistration(
-                provider.GetRequiredService<QobuzDownloadCapabilityAdapter>()));
+                provider.GetRequiredService<QobuzDownloadCapabilityAdapter>(),
+                provider.GetRequiredService<QobuzStreamingCapabilityAdapter>()));
         return services;
     }
 }

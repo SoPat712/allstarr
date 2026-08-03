@@ -72,7 +72,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
     }
 
     [Fact]
-    public async Task Download_RejectsUnrecognizedMediaBeforeWritingArtifact()
+    public async Task DownloadAndStream_RejectUnrecognizedMedia()
     {
         var gateway = new GatewayHandler(Encoding.UTF8.GetBytes("not audio"), "text/html");
         var settings = new AppleDownloadSettings { BaseUrl = "https://gateway.test/" };
@@ -82,6 +82,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         var store = new MemoryStore();
         var resolver = new ProviderDownloadArtifactResolver(store, new() { RootPath = root });
         var adapter = new AppleDownloadCapabilityAdapter(client, settings, discovery, resolver, 1024);
+        var streaming = new AppleDownloadStreamingCapabilityAdapter(client, settings, discovery);
         var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var job = Guid.CreateVersion7();
@@ -92,9 +93,14 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
 
         var outcome = await adapter.DownloadAsync(Context(tenant, user), new(
             track, job, workspace.Reference, ProviderAudioQuality.Any));
+        var lease = (await streaming.GetStreamLeaseAsync(
+            Context(tenant, user), new(track))).RequireValue();
+        using var streamRequest = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
 
         Assert.False(outcome.IsSuccess);
         Assert.Equal(ProviderErrorKind.IncompatibleMedia, outcome.Error!.Kind);
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            lease.ProtectedResponseFactory!(streamRequest, CancellationToken.None));
         Assert.Empty(Directory.EnumerateFiles(Path.Combine(root, workspace.Reference.WorkspaceId)));
         Assert.Empty(store.Artifacts);
     }
@@ -117,6 +123,45 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         var outcome = await adapter.CheckAvailabilityAsync(Context(tenant, user), new(track));
 
         Assert.Equal(ProviderDownloadAvailabilityState.Unavailable, outcome.RequireValue().State);
+    }
+
+    [Fact]
+    public async Task Stream_UsesTheProgressiveGatewayWithoutAdvertisingRanges()
+    {
+        var audio = Encoding.UTF8.GetBytes("progressive apple audio");
+        var gateway = new GatewayHandler(audio, "audio/flac");
+        var settings = new AppleDownloadSettings
+        {
+            BaseUrl = "https://gateway.test/",
+            Quality = "alac-24-96"
+        };
+        var client = new HttpClient(gateway);
+        var discovery = new AppleDownloadEndpointDiscovery(
+            new StaticClientFactory(client), Options.Create(settings));
+        var adapter = new AppleDownloadStreamingCapabilityAdapter(client, settings, discovery);
+        var tenant = Guid.CreateVersion7();
+        var user = Guid.CreateVersion7();
+        var track = new ProviderExternalResourceId(
+            AppleDownloadCapabilityAdapter.StableProviderId,
+            ProviderResourceKind.Track,
+            "apple/track 1");
+
+        var lease = (await adapter.GetStreamLeaseAsync(
+            Context(tenant, user), new(track, ProviderAudioQuality.HighResolution))).RequireValue();
+        using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+        using var response = await lease.ProtectedResponseFactory!(request, CancellationToken.None);
+
+        Assert.False(lease.SupportsByteRanges);
+        Assert.False(lease.SupportsSeeking);
+        Assert.Equal(ProviderStreamRetryBehavior.RetrySameLeaseOnce, lease.RetryBehavior);
+        Assert.Equal("audio/flac", lease.Media.MimeType);
+        Assert.Equal("flac", lease.Media.Codec);
+        Assert.Null(lease.Media.BitDepth);
+        Assert.Null(lease.Media.SampleRate);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(audio, await response.Content.ReadAsByteArrayAsync());
+        Assert.Contains(gateway.Requests, uri =>
+            uri.PathAndQuery == "/api/stream/apple%2Ftrack%201?quality=alac-24-96");
     }
 
     [Fact]
@@ -195,6 +240,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
                 "/api/health" => Json("{\"staged\":true,\"daemon_running\":true,\"wrapper_healthy\":true,\"logged_in\":true}"),
                 "/api/me" => Json("{\"authenticated\":true}"),
                 _ when path.StartsWith("/api/download/", StringComparison.Ordinal) => Audio(),
+                _ when path.StartsWith("/api/stream/", StringComparison.Ordinal) => Audio(),
                 _ when path.StartsWith("/api/lyrics/", StringComparison.Ordinal) => Json(
                     "{\"source\":\"GAMDL\",\"format\":\"LineTimed\",\"content\":\"[00:01.00]Fixture lyrics\\n\"}"),
                 _ => new(HttpStatusCode.NotFound)

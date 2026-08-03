@@ -82,7 +82,8 @@ public sealed class DeezerMetadataCapabilityAdapter : IProviderMetadataCapabilit
 
     public static ProviderRegistration CreateRegistration(
         DeezerMetadataCapabilityAdapter adapter,
-        IProviderDownloadCapability? download = null) => new(
+        IProviderDownloadCapability? download = null,
+        IProviderStreamingCapability? streaming = null) => new(
         new ProviderDescriptor(
             StableProviderId,
             "Deezer",
@@ -107,7 +108,20 @@ public sealed class DeezerMetadataCapabilityAdapter : IProviderMetadataCapabilit
                         "searchArtists",
                         "getArtist"
                     ]),
-                LegacyLane(ProviderCapabilityKind.Streaming),
+                streaming == null
+                    ? LegacyLane(ProviderCapabilityKind.Streaming)
+                    : new ProviderCapabilityDescriptor(
+                        ProviderCapabilityKind.Streaming,
+                        ProviderCapabilitySupportState.Supported,
+                        ProviderAccountRequirement.Required,
+                        compatibilityVersion: "1",
+                        hooks: ["getStreamLease", "probeStream"],
+                        allowedAccountScopes:
+                        [
+                            ProviderAccountScope.Global,
+                            ProviderAccountScope.User,
+                            ProviderAccountScope.Library
+                        ]),
                 download == null
                     ? LegacyLane(ProviderCapabilityKind.Download)
                     : new ProviderCapabilityDescriptor(
@@ -133,7 +147,18 @@ public sealed class DeezerMetadataCapabilityAdapter : IProviderMetadataCapabilit
                     new Uri("https://www.deezer.com/")
                 ],
                 cache: true)),
-        download == null ? [adapter] : [adapter, download]);
+        Implementations(adapter, download, streaming));
+
+    private static IProviderCapability[] Implementations(
+        IProviderMetadataCapability metadata,
+        IProviderDownloadCapability? download,
+        IProviderStreamingCapability? streaming)
+    {
+        var values = new List<IProviderCapability> { metadata };
+        if (download != null) values.Add(download);
+        if (streaming != null) values.Add(streaming);
+        return values.ToArray();
+    }
 
     private static ProviderCapabilityDescriptor LegacyLane(
         ProviderCapabilityKind capability) => new(
