@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Dialog } from "$lib/components/ui/dialog";
-  import { X } from "lucide-svelte";
+  import { FileUp, X } from "lucide-svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -18,6 +18,15 @@
   import { formatDuration } from "$lib/playlists";
 
   type HistorySection = "overview" | "history" | "imports";
+  type ImportQueueItem = {
+    id: string;
+    file: File | null;
+    fileKey: string;
+    fileName: string;
+    sizeBytes: number;
+    error: string;
+    result: ListeningHistoryImport | null;
+  };
 
   let { scope, section }: { scope: IntelligenceScope; section: HistorySection } = $props();
 
@@ -49,9 +58,10 @@
   let editAlbum = $state("");
   let editAlbumArtist = $state("");
   let deleteOpen = $state(false);
-  let importFile = $state<File | null>(null);
-  let historyImport = $state<ListeningHistoryImport | null>(null);
+  let importItems = $state<ImportQueueItem[]>([]);
+  let readingImportId = $state("");
   let importError = $state("");
+  let importSequence = 0;
   let loadedKey = "";
   let previousScopeKey = "";
 
@@ -60,7 +70,9 @@
   const topTrack = $derived(top.track[0]);
   const periodName = $derived(period === "365" ? "Last year" : period === "custom" ? "Selected dates" : `Last ${period} days`);
   const exportUrl = $derived(intelligence.historyExportUrl(scope));
-  const activeImport = $derived(historyImport?.state === "pending" || historyImport?.state === "running");
+  const pendingImportItems = $derived(importItems.filter((item) => item.file && !item.result));
+  const completedImportItems = $derived(importItems.filter((item) => item.result));
+  const activeImportItems = $derived(completedImportItems.filter((item) => item.result?.state === "pending" || item.result?.state === "running"));
   const hasHistoryFilters = $derived(Boolean(search.trim() || source.trim() || client.trim() || artist.trim() || album.trim() || track.trim()));
 
   $effect(() => {
@@ -68,8 +80,7 @@
       previousScopeKey = scopeKey;
       detailOpen = false;
       detail = null;
-      historyImport = null;
-      importFile = null;
+      importItems = [];
     }
     const key = `${scopeKey}\0${period}\0${fromDate}\0${toDate}\0${timeZoneId}`;
     if (key === loadedKey) return;
@@ -78,9 +89,9 @@
   });
 
   $effect(() => {
-    if (!activeImport || !historyImport) return;
-    const id = historyImport.importId;
-    const timer = setTimeout(() => void refreshImport(id), 1500);
+    if (!activeImportItems.length) return;
+    const imports = activeImportItems.map((item) => ({ queueId: item.id, importId: item.result!.importId }));
+    const timer = setTimeout(() => imports.forEach((item) => void refreshImport(item.queueId, item.importId)), 1500);
     return () => clearTimeout(timer);
   });
 
@@ -198,26 +209,66 @@
     }
   }
 
-  async function previewImport(event: SubmitEvent) {
-    event.preventDefault();
-    if (!importFile) return;
-    action = "preview-import";
-    importError = "";
-    try {
-      historyImport = await intelligence.previewHistoryImport(scope, importFile);
-    } catch (cause) {
-      importError = cause instanceof Error ? cause.message : "This history file could not be read.";
-    } finally {
-      action = "";
-    }
+  function chooseImportFiles(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const existing = new Set(importItems.map((item) => item.fileKey));
+    const additions = Array.from(input.files ?? []).flatMap((file) => {
+      const fileKey = `${file.name}\0${file.size}\0${file.lastModified}`;
+      if (existing.has(fileKey)) return [];
+      existing.add(fileKey);
+      return [{
+        id: `history-file-${++importSequence}`,
+        file,
+        fileKey,
+        fileName: file.name,
+        sizeBytes: file.size,
+        error: "",
+        result: null,
+      }];
+    });
+    importItems = [...importItems, ...additions];
+    input.value = "";
   }
 
-  async function changeImport(operation: "apply" | "resume" | "cancel") {
-    if (!historyImport) return;
-    action = operation;
+  function updateImportItem(id: string, changes: Partial<ImportQueueItem>) {
+    importItems = importItems.map((item) => item.id === id ? { ...item, ...changes } : item);
+  }
+
+  function removeImportItem(id: string) {
+    importItems = importItems.filter((item) => item.id !== id);
+  }
+
+  async function previewImports(event: SubmitEvent) {
+    event.preventDefault();
+    const requestedScope = { ...scope };
+    const requestedScopeKey = scopeKey;
+    const pending = pendingImportItems.map((item) => ({ ...item }));
+    if (!pending.length) return;
+    action = "preview-import";
+    importError = "";
+    for (const item of pending) {
+      readingImportId = item.id;
+      updateImportItem(item.id, { error: "" });
+      try {
+        const result = await intelligence.previewHistoryImport(requestedScope, item.file!);
+        if (scopeKey === requestedScopeKey) updateImportItem(item.id, { file: null, result });
+      } catch (cause) {
+        if (scopeKey === requestedScopeKey) updateImportItem(item.id, {
+          error: cause instanceof Error ? cause.message : "This history file could not be read.",
+        });
+      }
+    }
+    readingImportId = "";
+    action = "";
+  }
+
+  async function changeImport(item: ImportQueueItem, operation: "apply" | "resume" | "cancel") {
+    if (!item.result) return;
+    action = `${operation}:${item.id}`;
     importError = "";
     try {
-      historyImport = await intelligence.changeHistoryImport(scope, historyImport, operation);
+      const result = await intelligence.changeHistoryImport(scope, item.result, operation);
+      updateImportItem(item.id, { result });
     } catch (cause) {
       importError = cause instanceof Error ? cause.message : "The history import could not be changed.";
     } finally {
@@ -225,11 +276,12 @@
     }
   }
 
-  async function refreshImport(id: string) {
+  async function refreshImport(queueId: string, importId: string) {
     try {
-      const next = await intelligence.historyImport(scope, id);
-      const completed = next.state === "completed" && historyImport?.state !== "completed";
-      historyImport = next;
+      const previous = importItems.find((item) => item.id === queueId)?.result;
+      const next = await intelligence.historyImport(scope, importId);
+      const completed = next.state === "completed" && previous?.state !== "completed";
+      updateImportItem(queueId, { result: next });
       if (completed) await loadAll();
     } catch (cause) {
       importError = cause instanceof Error ? cause.message : "Import progress could not be loaded.";
@@ -243,6 +295,12 @@
 
   function words(value?: string | null) {
     return value ? value.replaceAll("_", " ").replaceAll("-", " ") : "Unknown";
+  }
+
+  function fileSize(bytes: number) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`;
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   }
 </script>
 
@@ -351,23 +409,46 @@
   {#if section === "imports"}<section class="panel import-card">
     <header><div><p class="eyebrow">Bring your history</p><h3>Import listening history</h3><p>Preview a Spotify, Last.fm, ListenBrainz, Koito, or Maloja export before adding anything. Files stay private and expire automatically.</p></div></header>
     {#if importError}<p class="notice-error" role="alert">{importError}</p>{/if}
-    <form onsubmit={previewImport}>
-      <label class="field"><span>History export file</span><input type="file" accept="application/json,text/plain,application/zip,.json,.jsonl,.zip" onchange={(event) => importFile = event.currentTarget.files?.[0] ?? null} required /></label>
-      <button class="button-secondary" type="submit" disabled={!importFile || Boolean(action)}>{action === "preview-import" ? "Reading file…" : "Preview import"}</button>
+    <form class="import-picker" onsubmit={previewImports}>
+      <label class="upload-zone">
+        <input aria-label="History export files" type="file" accept="application/json,text/plain,application/zip,.json,.jsonl,.zip" multiple onchange={chooseImportFiles} />
+        <span class="upload-symbol" aria-hidden="true"><FileUp size={22} /></span>
+        <span class="upload-copy"><strong>Choose history exports</strong><small>JSON, JSONL, or ZIP · up to 64 MB per file</small></span>
+        <span class="upload-browse" aria-hidden="true">Browse files</span>
+      </label>
+      {#if pendingImportItems.length}
+        <ul class="upload-queue" aria-label="Selected history exports" aria-live="polite">
+          {#each pendingImportItems as item}
+            <li class:error={Boolean(item.error)}>
+              <span class="file-marker" aria-hidden="true"><FileUp size={16} /></span>
+              <span class="file-copy"><strong>{item.fileName}</strong><small>{readingImportId === item.id ? "Reading file…" : item.error || fileSize(item.sizeBytes)}</small></span>
+              {#if readingImportId !== item.id}<button class="icon-button" type="button" aria-label={`Remove ${item.fileName}`} disabled={Boolean(action)} onclick={() => removeImportItem(item.id)}><X size={16} aria-hidden="true" /></button>{/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      {#if pendingImportItems.length}<button class="button-primary" type="submit" disabled={Boolean(action)}>{action === "preview-import" ? `Reading ${pendingImportItems.length} ${pendingImportItems.length === 1 ? "file" : "files"}…` : `Preview ${pendingImportItems.length} ${pendingImportItems.length === 1 ? "file" : "files"}`}</button>{/if}
     </form>
-    {#if historyImport?.preview}
-      <div class="import-preview">
-        <div><strong>{historyImport.preview.newRows.toLocaleString()}</strong><span>new listens</span></div><div><strong>{(historyImport.preview.duplicateExisting + historyImport.preview.duplicateInFile).toLocaleString()}</strong><span>already present</span></div><div><strong>{historyImport.preview.skipped.toLocaleString()}</strong><span>skipped</span></div><div><strong>{historyImport.preview.estimatedMusicBrainzLookups.toLocaleString()}</strong><span>songs to identify</span></div>
-      </div>
-      <p class="credential-safety">Allstarr will add these past listens to your private history. It will not send them to Last.fm or ListenBrainz.</p>
-    {/if}
-    {#if historyImport}
-      <div class="import-status"><span role="status" aria-atomic="true"><strong>{historyImport.displayFileName ?? "History import"}</strong><small>{words(historyImport.state)}{historyImport.importedRows !== undefined ? ` · ${historyImport.importedRows.toLocaleString()} added` : ""}</small></span><div>
-        {#if historyImport.state === "previewed"}<button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => void changeImport("apply")}>{action === "apply" ? "Starting…" : "Add to my history"}</button>{/if}
-        {#if activeImport}<button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void changeImport("cancel")}>{action === "cancel" ? "Cancelling…" : "Cancel import"}</button>{/if}
-        {#if historyImport.state === "failed" || historyImport.state === "cancelled"}<button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => void changeImport("resume")}>{action === "resume" ? "Resuming…" : "Resume import"}</button>{/if}
-      </div></div>
-      {#if historyImport.lastErrorMessage}<p class="notice-error" role="alert">{historyImport.lastErrorMessage}</p>{/if}
+    {#if completedImportItems.length}
+      <ul class="import-results" aria-label="History import previews">
+        {#each completedImportItems as item}
+          {@const result = item.result!}
+          {@const activeImport = result.state === "pending" || result.state === "running"}
+          <li class="import-result">
+            <header><span role="status" aria-atomic="true"><strong>{result.displayFileName ?? item.fileName}</strong><small>{fileSize(result.sizeBytes ?? item.sizeBytes)} · {words(result.state)}{result.importedRows !== undefined ? ` · ${result.importedRows.toLocaleString()} added` : ""}</small></span><span class={`status-pill ${result.state === "completed" ? "healthy" : result.state === "failed" || result.state === "cancelled" ? "rejected" : "suggested"}`}>{words(result.state)}</span></header>
+            {#if result.preview}
+              <dl class="import-preview"><div><dd>{result.preview.newRows.toLocaleString()}</dd><dt>new listens</dt></div><div><dd>{(result.preview.duplicateExisting + result.preview.duplicateInFile).toLocaleString()}</dd><dt>already present</dt></div><div><dd>{result.preview.skipped.toLocaleString()}</dd><dt>skipped</dt></div><div><dd>{result.preview.estimatedMusicBrainzLookups.toLocaleString()}</dd><dt>songs to identify</dt></div></dl>
+              <p class="credential-safety">Allstarr will add these past listens to your private history. It will not send them to Last.fm or ListenBrainz.</p>
+            {/if}
+            <footer>
+              {#if result.state === "previewed"}<button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => void changeImport(item, "apply")}>{action === `apply:${item.id}` ? "Starting…" : "Add to my history"}</button>{/if}
+              {#if activeImport}<button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void changeImport(item, "cancel")}>{action === `cancel:${item.id}` ? "Cancelling…" : "Cancel import"}</button>{/if}
+              {#if result.state === "failed" || result.state === "cancelled"}<button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => void changeImport(item, "resume")}>{action === `resume:${item.id}` ? "Resuming…" : "Resume import"}</button>{/if}
+            </footer>
+            {#if result.lastErrorMessage}<p class="notice-error" role="alert">{result.lastErrorMessage}</p>{/if}
+          </li>
+        {/each}
+      </ul>
     {/if}
   </section>{/if}
 </section>
@@ -396,8 +477,8 @@
 <ConfirmDialog bind:open={deleteOpen} title="Delete this listen?" description="This removes the listen and its delivery status from this library. This cannot be undone." confirmLabel={action === "delete-detail" ? "Deleting…" : "Delete listen"} cancelLabel="Keep listen" disabled={Boolean(action)} onConfirm={removeDetail} />
 
 <style>
-  .history-workspace{min-width:0}.import-card input[type="file"]{width:100%;min-width:0;max-width:100%}
-  .history-workspace{display:grid;gap:1rem}.history-heading,.history-list-card>header,.activity-card>header,.top-card>header,.import-card>header{display:flex;align-items:start;justify-content:space-between;gap:1rem}.history-heading h3,.history-list-card h3,.activity-card h3,.top-card h3,.import-card h3{margin:.2rem 0}.history-heading p:last-child,.import-card header p:last-child{margin:0;color:var(--color-ink-muted)}.history-toolbar{display:grid;grid-template-columns:minmax(16rem,1fr) minmax(11rem,.35fr) auto;align-items:end;gap:.75rem;padding:1rem}.history-toolbar details{grid-column:1/-1}.history-toolbar summary{cursor:pointer}.advanced-filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem;margin-top:.75rem}.history-stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:.75rem}.history-stats article{display:grid;gap:.2rem;padding:1rem}.history-stats strong{font-family:var(--font-display);font-size:1.35rem}.history-stats span{color:var(--color-ink-muted);font-size:.78rem}.now-playing{display:flex;align-items:center;gap:.8rem;width:100%;padding:1rem;text-align:left}.now-playing>span:first-child{display:grid;place-items:center;width:2.5rem;height:2.5rem;border-radius:50%;background:var(--color-signal);color:var(--color-canvas)}.now-playing small,.now-playing strong{display:block}.recap-card{display:grid;gap:.65rem;padding:1.15rem}.recap-card h3,.recap-card p{margin:0}.history-insights{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.activity-card,.top-card,.history-list-card,.import-card{padding:1.15rem}.activity-range{margin:.75rem 0 0;color:var(--color-ink-muted);font-size:.78rem}.activity-range-mobile{display:none}.activity-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(13px,1fr));gap:.3rem;margin-top:.5rem}.activity-grid span{aspect-ratio:1;border-radius:3px;background:color-mix(in srgb,var(--color-signal) calc(var(--activity) * 100%),var(--color-panel-raised))}.top-card ol{margin:.75rem 0 0;padding:0;list-style:none}.top-card li{display:flex;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.65rem 0}.top-card li span:first-child strong,.top-card li span:first-child small{display:block}.top-card li small,.top-card li>span:last-child{color:var(--color-ink-muted)}.history-list{display:grid;margin:.6rem 0 0;padding:0;list-style:none}.history-list>li>button{display:grid;grid-template-columns:auto minmax(0,1fr) minmax(10rem,.45fr) auto;align-items:center;gap:.85rem;width:100%;border-top:1px solid var(--color-edge);padding:.8rem 0;text-align:left}.history-copy strong,.history-copy small,.history-route strong,.history-route small{display:block}.history-copy small,.history-route small{color:var(--color-ink-muted)}.history-route{text-align:right}.load-more{display:block;margin:1rem auto 0}.import-card{display:grid;gap:1rem}.import-card>form{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:.75rem}.import-preview{display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem}.import-preview div{display:grid;gap:.15rem;border:1px solid var(--color-edge);border-radius:var(--radius-md);padding:.75rem}.import-preview strong{font-size:1.2rem}.import-preview span{color:var(--color-ink-muted);font-size:.76rem}.import-status{display:flex;align-items:center;justify-content:space-between;gap:1rem}.import-status span>*{display:block}.import-status small{color:var(--color-ink-muted)}.import-status>div{display:flex;gap:.5rem}.history-detail-dialog{display:grid;grid-template-rows:auto minmax(0,1fr);width:min(44rem,calc(100vw - 2rem));max-height:min(48rem,calc(100dvh - 2rem));overflow:hidden}.history-detail-form{display:grid;grid-template-columns:1fr 1fr;gap:1rem;overflow:auto;padding:1rem}.history-detail-form dl,.target-statuses,.history-detail-form footer{grid-column:1/-1}.history-detail-form dl{display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem;margin:0}.history-detail-form dl div{border:1px solid var(--color-edge);border-radius:var(--radius-md);padding:.7rem}.history-detail-form dt{color:var(--color-ink-muted);font-size:.72rem}.history-detail-form dd{margin:.2rem 0 0}.target-statuses ul{margin:0;padding:0;list-style:none}.target-statuses li{display:flex;justify-content:space-between;gap:1rem}.target-statuses small{color:var(--color-ink-muted)}.history-detail-form footer{display:flex;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.history-detail-form footer>span{display:flex;gap:.5rem}
+  .history-workspace{min-width:0}
+  .history-workspace{display:grid;gap:1rem}.history-heading,.history-list-card>header,.activity-card>header,.top-card>header,.import-card>header{display:flex;align-items:start;justify-content:space-between;gap:1rem}.history-heading h3,.history-list-card h3,.activity-card h3,.top-card h3,.import-card h3{margin:.2rem 0}.history-heading p:last-child,.import-card>header p:last-child{max-width:70ch;margin:0;color:var(--color-ink-muted)}.history-toolbar{display:grid;grid-template-columns:minmax(16rem,1fr) minmax(11rem,.35fr) auto;align-items:end;gap:.75rem;padding:1rem}.history-toolbar details{grid-column:1/-1}.history-toolbar summary{cursor:pointer}.advanced-filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem;margin-top:.75rem}.history-stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:.75rem}.history-stats article{display:grid;gap:.2rem;padding:1rem}.history-stats strong{font-family:var(--font-display);font-size:1.35rem}.history-stats span{color:var(--color-ink-muted);font-size:.78rem}.now-playing{display:flex;align-items:center;gap:.8rem;width:100%;padding:1rem;text-align:left}.now-playing>span:first-child{display:grid;place-items:center;width:2.5rem;height:2.5rem;border-radius:50%;background:var(--color-signal);color:var(--color-canvas)}.now-playing small,.now-playing strong{display:block}.recap-card{display:grid;gap:.65rem;padding:1.15rem}.recap-card h3,.recap-card p{margin:0}.history-insights{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.activity-card,.top-card,.history-list-card,.import-card{padding:1.15rem}.activity-range{margin:.75rem 0 0;color:var(--color-ink-muted);font-size:.78rem}.activity-range-mobile{display:none}.activity-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(13px,1fr));gap:.3rem;margin-top:.5rem}.activity-grid span{aspect-ratio:1;border-radius:3px;background:color-mix(in srgb,var(--color-signal) calc(var(--activity) * 100%),var(--color-panel-raised))}.top-card ol{margin:.75rem 0 0;padding:0;list-style:none}.top-card li{display:flex;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.65rem 0}.top-card li span:first-child strong,.top-card li span:first-child small{display:block}.top-card li small,.top-card li>span:last-child{color:var(--color-ink-muted)}.history-list{display:grid;margin:.6rem 0 0;padding:0;list-style:none}.history-list>li>button{display:grid;grid-template-columns:auto minmax(0,1fr) minmax(10rem,.45fr) auto;align-items:center;gap:.85rem;width:100%;border-top:1px solid var(--color-edge);padding:.8rem 0;text-align:left}.history-copy strong,.history-copy small,.history-route strong,.history-route small{display:block}.history-copy small,.history-route small{color:var(--color-ink-muted)}.history-route{text-align:right}.load-more{display:block;margin:1rem auto 0}.import-card{display:grid;gap:1.25rem}.import-picker{display:grid;gap:.75rem}.upload-zone{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:1rem;min-height:7rem;border:1px dashed color-mix(in srgb,var(--color-signal) 55%,var(--color-edge));border-radius:var(--radius-lg);background:color-mix(in srgb,var(--color-signal) 4%,var(--color-panel-raised));padding:1rem;cursor:pointer}.upload-zone:hover{background:color-mix(in srgb,var(--color-signal) 7%,var(--color-panel-raised))}.upload-zone:focus-within{outline:2px solid var(--focus-ring);outline-offset:2px}.upload-zone input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}.upload-symbol,.file-marker{display:grid;place-items:center;border-radius:var(--radius-md);background:color-mix(in srgb,var(--color-signal) 12%,transparent);color:var(--color-signal-text)}.upload-symbol{width:3rem;height:3rem}.upload-copy,.file-copy{display:grid;min-width:0;gap:.2rem}.upload-copy strong{font-family:var(--font-display);font-size:1rem}.upload-copy small,.file-copy small,.import-result header small{color:var(--color-ink-muted)}.upload-browse{border:1px solid var(--color-edge);border-radius:var(--radius-md);background:var(--color-panel-raised);padding:.65rem .9rem;font-size:var(--text-sm);font-weight:700}.upload-queue,.import-results{display:grid;margin:0;padding:0;list-style:none}.upload-queue{gap:.4rem}.upload-queue li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.75rem;min-height:3.5rem;border-radius:var(--radius-md);background:var(--color-panel-raised);padding:.55rem .65rem}.upload-queue li.error{background:rgb(255 107 122 / 8%)}.file-marker{width:2rem;height:2rem}.file-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.upload-queue .icon-button{width:var(--control-sm);height:var(--control-sm)}.import-picker>.button-primary{justify-self:end}.import-results{gap:1.25rem}.import-result{display:grid;gap:.85rem;border-top:1px solid var(--color-edge);padding-top:1.25rem}.import-result>header{display:flex;align-items:start;justify-content:space-between;gap:1rem}.import-result>header>span:first-child>*{display:block}.import-preview{display:grid;grid-template-columns:repeat(4,1fr);margin:0;border-block:1px solid var(--color-edge)}.import-preview div{display:flex;flex-direction:column-reverse;gap:.15rem;padding:.75rem}.import-preview div+div{border-left:1px solid var(--color-edge)}.import-preview dd{margin:0;font-family:var(--font-display);font-size:1.2rem;font-weight:750}.import-preview dt{color:var(--color-ink-muted);font-size:.76rem}.credential-safety{margin:0;color:var(--color-ink-muted);font-size:var(--text-sm)}.import-result>footer{display:flex;justify-content:flex-end;gap:.5rem}.history-detail-dialog{display:grid;grid-template-rows:auto minmax(0,1fr);width:min(44rem,calc(100vw - 2rem));max-height:min(48rem,calc(100dvh - 2rem));overflow:hidden}.history-detail-form{display:grid;grid-template-columns:1fr 1fr;gap:1rem;overflow:auto;padding:1rem}.history-detail-form dl,.target-statuses,.history-detail-form footer{grid-column:1/-1}.history-detail-form dl{display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem;margin:0}.history-detail-form dl div{border:1px solid var(--color-edge);border-radius:var(--radius-md);padding:.7rem}.history-detail-form dt{color:var(--color-ink-muted);font-size:.72rem}.history-detail-form dd{margin:.2rem 0 0}.target-statuses ul{margin:0;padding:0;list-style:none}.target-statuses li{display:flex;justify-content:space-between;gap:1rem}.target-statuses small{color:var(--color-ink-muted)}.history-detail-form footer{display:flex;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.history-detail-form footer>span{display:flex;gap:.5rem}
   @media(max-width:900px){.history-stats{grid-template-columns:repeat(3,1fr)}.advanced-filters{grid-template-columns:1fr 1fr}.history-list>li>button{grid-template-columns:auto minmax(0,1fr) auto}.history-route{grid-column:2;text-align:left}.import-preview{grid-template-columns:1fr 1fr}}
-  @media(max-width:620px){.history-heading{flex-direction:column}.history-actions,.history-actions>*{width:100%}.history-toolbar{grid-template-columns:1fr}.history-toolbar details{grid-column:auto}.advanced-filters,.history-insights,.import-card>form,.import-preview,.history-detail-form,.history-detail-form dl{grid-template-columns:1fr}.history-stats{grid-template-columns:1fr 1fr}.history-stats article:last-child{grid-column:1/-1}.history-list>li>button{grid-template-columns:auto minmax(0,1fr)}.history-list>li>button>.status-pill{grid-column:2;justify-self:start}.history-route{grid-column:2}.activity-card>header,.top-card>header,.import-status,.history-detail-form footer{align-items:stretch;flex-direction:column}.activity-range-wide,.activity-grid span:nth-last-child(n+31){display:none}.activity-range-mobile{display:inline}.top-card>header{display:grid}.import-status>div,.import-status>div>*{width:100%}.history-detail-form dl,.target-statuses,.history-detail-form footer{grid-column:auto}.history-detail-form footer>span{display:grid}.history-detail-form footer button{width:100%}}
+  @media(max-width:620px){.history-heading{flex-direction:column}.history-actions,.history-actions>*{width:100%}.history-toolbar{grid-template-columns:1fr}.history-toolbar details{grid-column:auto}.advanced-filters,.history-insights,.history-detail-form,.history-detail-form dl{grid-template-columns:1fr}.history-stats{grid-template-columns:1fr 1fr}.history-stats article:last-child{grid-column:1/-1}.history-list>li>button{grid-template-columns:auto minmax(0,1fr)}.history-list>li>button>.status-pill{grid-column:2;justify-self:start}.history-route{grid-column:2}.activity-card>header,.top-card>header,.history-detail-form footer{align-items:stretch;flex-direction:column}.activity-range-wide,.activity-grid span:nth-last-child(n+31){display:none}.activity-range-mobile{display:inline}.top-card>header{display:grid}.upload-zone{grid-template-columns:auto minmax(0,1fr)}.upload-browse{grid-column:1/-1;text-align:center}.import-picker>.button-primary,.import-result>footer,.import-result>footer>*{width:100%}.import-preview{grid-template-columns:1fr 1fr}.import-preview div:nth-child(3){border-left:0}.import-preview div:nth-child(n+3){border-top:1px solid var(--color-edge)}.import-result>header{align-items:start}.import-result>footer{display:grid}.history-detail-form dl,.target-statuses,.history-detail-form footer{grid-column:auto}.history-detail-form footer>span{display:grid}.history-detail-form footer button{width:100%}}
 </style>

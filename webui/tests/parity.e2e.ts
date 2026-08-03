@@ -594,10 +594,11 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
       body = { id: "44444444-4444-4444-4444-444444444444", revision: 3 };
     if (url.pathname === "/api/admin/intelligence/history/44444444-4444-4444-4444-444444444444" && route.request().method() === "DELETE")
       body = {};
-    if (url.pathname === "/api/admin/intelligence/history/imports/preview")
+    if (url.pathname === "/api/admin/intelligence/history/imports/preview") {
+      const secondFile = route.request().postData()?.includes("ListenBrainz.jsonl") ?? false;
       body = {
-        importId: "55555555-5555-5555-5555-555555555555", revision: "preview-revision",
-        displayFileName: "Streaming_History.json", sizeBytes: 1024, expiresAt: "2026-01-02T00:00:00Z",
+        importId: secondFile ? "66666666-6666-6666-6666-666666666666" : "55555555-5555-5555-5555-555555555555", revision: "preview-revision",
+        displayFileName: secondFile ? "ListenBrainz.jsonl" : "Streaming_History.json", sizeBytes: 1024, expiresAt: "2026-01-02T00:00:00Z",
         state: "previewed", outboundReplay: false,
         preview: {
           format: "spotify-extended-history", fileRows: 15, musicRows: 14, completed: 12, partial: 1,
@@ -607,6 +608,7 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
           latest: "2025-12-31T00:00:00Z", reasonCounts: {},
         },
       };
+    }
     if (url.pathname === "/api/admin/intelligence/history/imports/55555555-5555-5555-5555-555555555555")
       body = { importId: "55555555-5555-5555-5555-555555555555", revision: "done-revision", state: "completed", importedRows: 9, duplicateRows: 3, resolvedRows: 7, unresolvedRows: 2, outboundReplay: false };
     if (url.pathname.match(/^\/api\/admin\/intelligence\/history\/imports\/[^/]+\/(apply|resume|cancel)$/))
@@ -921,9 +923,10 @@ for (const viewport of viewports) {
       await page.getByRole("tab", { name: "Imports" }).click();
       await expect(page.getByRole("heading", { name: "Import listening history" })).toBeVisible();
       await expect(page.locator(".history-list")).toHaveCount(0);
-      const previewImport = page.getByRole("button", { name: "Preview import" });
-      await previewImport.scrollIntoViewIfNeeded();
-      await expect(previewImport).toBeInViewport();
+      const historyUpload = page.locator(".upload-zone");
+      await historyUpload.scrollIntoViewIfNeeded();
+      await expect(historyUpload).toBeInViewport();
+      await expect(page.getByLabel("History export files")).toHaveAttribute("multiple", "");
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.getByRole("tab", { name: "Settings" }).click();
@@ -1060,19 +1063,26 @@ test("Intelligence history imports, corrections, and schedules use the selected 
 
   await page.getByRole("tab", { name: "Imports" }).click();
   await expect(page).toHaveURL(/#\/intelligence\?section=imports$/);
-  const preview = page.waitForRequest((request) => request.method() === "POST" &&
-    request.url().endsWith("/api/admin/intelligence/history/imports/preview"));
-  await page.getByLabel("History export file").setInputFiles({
-    name: "Streaming_History.json", mimeType: "application/json", buffer: Buffer.from("[]"),
+  const previews: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/api/admin/intelligence/history/imports/preview")) previews.push(request.url());
   });
-  await page.getByRole("button", { name: "Preview import" }).click();
-  await preview;
+  await expect(page.getByLabel("History export files")).toHaveAttribute("multiple", "");
+  await page.getByLabel("History export files").setInputFiles([
+    { name: "Streaming_History.json", mimeType: "application/json", buffer: Buffer.from("[]") },
+    { name: "ListenBrainz.jsonl", mimeType: "text/plain", buffer: Buffer.from("{}") },
+  ]);
+  await expect(page.getByRole("list", { name: "Selected history exports" })).toContainText("Streaming_History.json");
+  await expect(page.getByRole("list", { name: "Selected history exports" })).toContainText("ListenBrainz.jsonl");
+  await page.getByRole("button", { name: "Preview 2 files" }).click();
+  await expect.poll(() => previews.length).toBe(2);
   await expect(page.getByText("9", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("It will not send them to Last.fm or ListenBrainz.", { exact: false })).toBeVisible();
+  await expect(page.getByText("It will not send them to Last.fm or ListenBrainz.", { exact: false }).first()).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "Streaming_History.json" })).toContainText("previewed");
+  await expect(page.getByRole("status").filter({ hasText: "ListenBrainz.jsonl" })).toContainText("previewed");
   const apply = page.waitForRequest((request) => request.method() === "POST" &&
     request.url().endsWith("/api/admin/intelligence/history/imports/55555555-5555-5555-5555-555555555555/apply"));
-  await page.getByRole("button", { name: "Add to my history" }).click();
+  await page.locator(".import-result").filter({ hasText: "Streaming_History.json" }).getByRole("button", { name: "Add to my history" }).click();
   expect((await apply).postDataJSON()).toMatchObject({
     protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music", revision: "preview-revision",
   });
