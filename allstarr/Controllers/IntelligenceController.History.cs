@@ -11,6 +11,7 @@ namespace allstarr.Controllers;
 public sealed partial class IntelligenceController
 {
     private const int MaximumHistoryPageSize = 100;
+    private const long MaximumHistoryImportUploadBytes = 64L * 1024 * 1024;
 
     [HttpGet("history/overview")]
     public async Task<IActionResult> GetHistoryOverview(
@@ -265,6 +266,87 @@ public sealed partial class IntelligenceController
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         if (!await OwnsBackend(db, scope, cancellationToken)) return NotFound();
         return new ListeningHistoryExportResult(_factory, scope, Now);
+    }
+
+    [HttpPost("history/imports/preview")]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(MaximumHistoryImportUploadBytes + 1024 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaximumHistoryImportUploadBytes + 1024 * 1024)]
+    public async Task<IActionResult> PreviewHistoryImport(
+        [FromForm] IntelligenceHistoryImportPreviewRequest request,
+        [FromServices] ListeningHistoryImportService imports,
+        CancellationToken cancellationToken)
+    {
+        Response.Headers.CacheControl = "no-store";
+        Response.Headers.Pragma = "no-cache";
+        if (!TrySessionScope(request, out var scope, out var error)) return error!;
+        if (request.File == null || request.File.Length is < 1 or > MaximumHistoryImportUploadBytes)
+            return BadRequest(new { error = "history_import_file_invalid", message = "Choose a history file up to 64 MB." });
+        var contentType = request.File.ContentType?.Trim().ToLowerInvariant();
+        if (contentType is not (null or "" or "application/json" or "text/json" or "application/octet-stream"))
+            return BadRequest(new { error = "history_import_content_type_invalid", message = "Choose a JSON history file." });
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        if (!await OwnsBackend(db, scope, cancellationToken)) return NotFound();
+        try
+        {
+            await using var source = request.File.OpenReadStream();
+            var result = await imports.PreviewAsync(
+                scope,
+                request.File.FileName,
+                source,
+                request.File.Length,
+                cancellationToken);
+            return Ok(new
+            {
+                scope = PublicScope(scope),
+                result.ImportId,
+                result.Revision,
+                result.DisplayFileName,
+                result.SizeBytes,
+                result.ExpiresAt,
+                state = result.State.ToString().ToLowerInvariant(),
+                outboundReplay = false,
+                preview = result.Preview
+            });
+        }
+        catch (ListeningHistoryImportException exception)
+        {
+            return BadRequest(new { error = exception.Code, message = exception.Message });
+        }
+        catch (InvalidDataException exception)
+        {
+            return BadRequest(new { error = "history_import_file_invalid", message = exception.Message });
+        }
+    }
+
+    [HttpGet("history/imports/{importId:guid}")]
+    public async Task<IActionResult> GetHistoryImport(
+        Guid importId,
+        [FromQuery] IntelligenceScopeRequest request,
+        [FromServices] ListeningHistoryImportService imports,
+        CancellationToken cancellationToken)
+    {
+        if (!TrySessionScope(request, out var scope, out var error)) return error!;
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        if (!await OwnsBackend(db, scope, cancellationToken)) return NotFound();
+        var result = await imports.GetAsync(scope, importId, cancellationToken);
+        return result == null ? NotFound() : Ok(new
+        {
+            scope = PublicScope(scope),
+            result.ImportId,
+            result.Revision,
+            result.DisplayFileName,
+            result.SizeBytes,
+            result.ExpiresAt,
+            state = result.State.ToString().ToLowerInvariant(),
+            result.JobId,
+            result.ImportedRows,
+            result.DuplicateRows,
+            result.ResolvedRows,
+            result.UnresolvedRows,
+            outboundReplay = false,
+            preview = result.Preview
+        });
     }
 
     private DateTimeOffset Now => _clock?.UtcNow ?? DateTimeOffset.UtcNow;
@@ -568,6 +650,11 @@ public sealed class IntelligenceHistoryDeleteRequest : IntelligenceScopeRequest
 {
     public long ExpectedRevision { get; set; }
     public bool Confirmed { get; set; }
+}
+
+public sealed class IntelligenceHistoryImportPreviewRequest : IntelligenceScopeRequest
+{
+    public IFormFile? File { get; set; }
 }
 
 internal readonly record struct ListeningHistoryPeriod(DateTimeOffset From, DateTimeOffset To)

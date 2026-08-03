@@ -91,10 +91,16 @@ public sealed class ListeningHistoryImportException(string code, string message,
 
 public static class ListeningHistoryImportRegistration
 {
-    public static IServiceCollection AddListeningHistoryImport(this IServiceCollection services)
+    public static IServiceCollection AddListeningHistoryImport(this IServiceCollection services, IConfiguration configuration)
     {
+        var options = configuration.GetSection(ListeningHistoryImportOptions.SectionName)
+                          .Get<ListeningHistoryImportOptions>() ?? new();
+        options.Validate();
+        services.AddSingleton(options);
         services.AddSingleton<IListeningHistoryImporter, SpotifyListeningHistoryImporter>();
         services.AddSingleton<ListeningHistoryImporterRegistry>();
+        services.AddSingleton<ListeningHistoryImportArtifactStore>();
+        services.AddSingleton<ListeningHistoryImportService>();
         return services;
     }
 }

@@ -935,6 +935,122 @@ namespace allstarr.Core.Storage.Migrations
                         });
                 });
 
+            modelBuilder.Entity("allstarr.Core.Intelligence.ListeningHistoryImportRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ApplyGeneration")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("BackendInstanceId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ContentSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("DisplayFileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<long>("DuplicateRows")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("ExpiresAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Format")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<long>("ImportedRows")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("JobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("LibraryScopeId")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<long>("NextSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PreviewJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PreviewRevision")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Protocol")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<long>("ResolvedRows")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("UnresolvedRows")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("JobId")
+                        .HasDatabaseName("IX_listening_history_import_job");
+
+                    b.HasIndex("TenantId", "OwnerUserId", "ContentSha256")
+                        .HasDatabaseName("IX_listening_history_import_content");
+
+                    b.HasIndex("TenantId", "OwnerUserId", "Protocol", "BackendInstanceId", "LibraryScopeId", "CreatedAt")
+                        .HasDatabaseName("IX_listening_history_import_scope");
+
+                    b.ToTable("listening_history_imports", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_listening_history_import_counts", "\"NextSequence\" >= 0 AND \"ImportedRows\" >= 0 AND \"DuplicateRows\" >= 0 AND \"ResolvedRows\" >= 0 AND \"UnresolvedRows\" >= 0");
+
+                            t.HasCheckConstraint("CK_listening_history_import_size", "\"SizeBytes\" > 0");
+
+                            t.HasCheckConstraint("CK_listening_history_import_state", "\"State\" IN ('Previewed', 'Pending', 'Running', 'Completed', 'Cancelled', 'Failed', 'Expired')");
+                        });
+                });
+
             modelBuilder.Entity("allstarr.Core.Intelligence.ListeningProfileRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4330,6 +4446,22 @@ namespace allstarr.Core.Storage.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_listening_event_provider_identity");
 
+                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "OwnerUserId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("allstarr.Core.Intelligence.ListeningHistoryImportRecord", b =>
+                {
                     b.HasOne("allstarr.Core.Storage.TenantRecord", null)
                         .WithMany()
                         .HasForeignKey("TenantId")

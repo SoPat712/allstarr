@@ -84,7 +84,7 @@ public sealed class SelectiveTransferSchemaMismatchException : Exception
 /// </summary>
 public sealed class SelectiveStateTransferService
 {
-    public const int CurrentFormatVersion = 6;
+    public const int CurrentFormatVersion = 7;
     public const long MaximumArchiveBytes = 128L * 1024 * 1024;
     public const long MaximumRequestBytes = MaximumArchiveBytes + (1024 * 1024);
     public const long MaximumExpandedBytes = 512L * 1024 * 1024;
@@ -138,6 +138,7 @@ public sealed class SelectiveStateTransferService
             {
                 "intelligence-policies",
                 "listening-events",
+                "listening-history-imports",
                 "listening-signals",
                 "listening-profiles",
                 "recommendation-runs",
@@ -889,6 +890,12 @@ public sealed class SelectiveStateTransferService
                     await WriteJsonAsync(archive, entry, rows, cancellationToken);
                     return rows.Count;
                 }
+            case "listening-history-imports":
+                {
+                    var rows = await context.ListeningHistoryImports.AsNoTracking().ToListAsync(cancellationToken);
+                    await WriteJsonAsync(archive, entry, rows, cancellationToken);
+                    return rows.Count;
+                }
             case "listening-signals":
                 {
                     var rows = await context.ListeningSignals.AsNoTracking().ToListAsync(cancellationToken);
@@ -1232,6 +1239,13 @@ public sealed class SelectiveStateTransferService
                 {
                     var rows = await ReadJsonAsync<ListeningEventRecord>(archiveEntry, cancellationToken);
                     context.ListeningEvents.AddRange(rows);
+                    return rows.Count;
+                }
+            case "listening-history-imports":
+                {
+                    var rows = await ReadJsonAsync<ListeningHistoryImportRecord>(archiveEntry, cancellationToken);
+                    foreach (var row in rows) row.ExpireWithoutArtifact();
+                    context.ListeningHistoryImports.AddRange(rows);
                     return rows.Count;
                 }
             case "listening-signals":

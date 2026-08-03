@@ -514,6 +514,28 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             CanonicalRecordingId = canonicalRecordingId,
             LibraryTrackId = libraryTrackId
         });
+        context.ListeningHistoryImports.Add(new ListeningHistoryImportRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            Protocol = "jellyfin",
+            BackendInstanceId = "transfer-backend",
+            LibraryScopeId = "music",
+            DisplayFileName = "StreamingHistory_music_0.json",
+            Format = "spotify-extended-streaming-history",
+            ContentSha256 = new string('a', 64),
+            SizeBytes = 1234,
+            PreviewJson = JsonSerializer.Serialize(new ListeningHistoryImportPreview(
+                "spotify-extended-streaming-history", 2, 2, 1, 1, 0, 0, 0, 0, 0, 0, 2, 1, 1, 0, 1, 1,
+                now.AddDays(-2), now.AddDays(-1), new Dictionary<string, long> { ["completed"] = 1 })),
+            PreviewRevision = new string('b', 64),
+            State = ListeningHistoryImportState.Previewed,
+            CreatedAt = now,
+            UpdatedAt = now,
+            ExpiresAt = now.AddHours(24),
+            Revision = 1
+        });
         context.ListeningSignals.Add(new ListeningSignalRecord
         {
             Id = Guid.CreateVersion7(),
@@ -940,6 +962,9 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         Assert.Equal(MusicBrainzEnrichmentState.Resolved, listeningEvent.MusicBrainzEnrichmentState);
         Assert.Equal(.98, listeningEvent.MusicBrainzEnrichmentConfidence);
         Assert.Contains("11111111-1111-1111-1111-111111111111", listeningEvent.MusicBrainzFactsJson);
+        var listeningImport = await target.ListeningHistoryImports.SingleAsync();
+        Assert.Equal(ListeningHistoryImportState.Expired, listeningImport.State);
+        Assert.Null(listeningImport.JobId);
         Assert.StartsWith("library:", (await target.ListeningSignals.SingleAsync()).TrackReference, StringComparison.Ordinal);
         var playbackCheckpoint = await target.PlaybackDeliveryCheckpoints.SingleAsync();
         Assert.Equal("lastfm", playbackCheckpoint.TargetId);

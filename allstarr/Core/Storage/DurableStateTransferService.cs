@@ -26,7 +26,7 @@ public sealed record DurableStateTransferArtifact(
 
 public sealed class DurableStateTransferService
 {
-    private const int CurrentFormatVersion = 5;
+    private const int CurrentFormatVersion = 6;
     private const long MaximumManifestBytes = 64 * 1024;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -66,6 +66,7 @@ public sealed class DurableStateTransferService
         "metadata-enrichment-applications.json",
         "intelligence-policies.json",
         "listening-events.json",
+        "listening-history-imports.json",
         "listening-signals.json",
         "playback-delivery-checkpoints.json",
         "listening-profiles.json",
@@ -189,6 +190,7 @@ public sealed class DurableStateTransferService
             await WriteEntryAsync(archive, "metadata-enrichment-applications.json", await context.MetadataEnrichmentApplications.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "intelligence-policies.json", await context.IntelligencePolicies.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "listening-events.json", await context.ListeningEvents.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
+            await WriteEntryAsync(archive, "listening-history-imports.json", await context.ListeningHistoryImports.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "listening-signals.json", await context.ListeningSignals.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "playback-delivery-checkpoints.json", await context.PlaybackDeliveryCheckpoints.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "listening-profiles.json", await context.ListeningProfiles.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
@@ -329,6 +331,7 @@ public sealed class DurableStateTransferService
             await context.MetadataEnrichmentApplications.AnyAsync(cancellationToken) ||
             await context.IntelligencePolicies.AnyAsync(cancellationToken) ||
             await context.ListeningEvents.AnyAsync(cancellationToken) ||
+            await context.ListeningHistoryImports.AnyAsync(cancellationToken) ||
             await context.ListeningSignals.AnyAsync(cancellationToken) ||
             await context.PlaybackDeliveryCheckpoints.AnyAsync(cancellationToken) ||
             await context.ListeningProfiles.AnyAsync(cancellationToken) ||
@@ -388,6 +391,7 @@ public sealed class DurableStateTransferService
         var enrichmentApplications = await ReadEntryAsync<MetadataEnrichmentApplicationRecord>(archive, "metadata-enrichment-applications.json", cancellationToken);
         var intelligencePolicies = await ReadEntryAsync<IntelligencePolicyRecord>(archive, "intelligence-policies.json", cancellationToken);
         var listeningEvents = await ReadEntryAsync<ListeningEventRecord>(archive, "listening-events.json", cancellationToken);
+        var listeningHistoryImports = await ReadEntryAsync<ListeningHistoryImportRecord>(archive, "listening-history-imports.json", cancellationToken);
         var listeningSignals = await ReadEntryAsync<ListeningSignalRecord>(archive, "listening-signals.json", cancellationToken);
         var playbackDeliveryCheckpoints = await ReadEntryAsync<PlaybackDeliveryCheckpointEntity>(archive, "playback-delivery-checkpoints.json", cancellationToken);
         var listeningProfiles = await ReadEntryAsync<ListeningProfileRecord>(archive, "listening-profiles.json", cancellationToken);
@@ -420,7 +424,7 @@ public sealed class DurableStateTransferService
         ValidateDownloadArtifactArchive(tenants, users, jobs, providerAccounts, managedFiles, downloadWorkspaces, downloadArtifacts);
         ValidateIntelligenceArchive(tenants, users, backendIdentities, jobs, jobSchedules, secretReferences,
             providerAccounts, providerTrackIdentities, canonicalRecordings, libraryTracks, intelligencePolicies,
-            listeningEvents, listeningSignals,
+            listeningEvents, listeningHistoryImports, listeningSignals,
             playbackDeliveryCheckpoints,
             listeningProfiles, recommendationRuns, recommendationCandidates, recommendationFeedback,
             generatedSets, generatedSetEntries);
@@ -453,6 +457,8 @@ public sealed class DurableStateTransferService
         context.MetadataEnrichmentApplications.AddRange(enrichmentApplications);
         context.IntelligencePolicies.AddRange(intelligencePolicies);
         context.ListeningEvents.AddRange(listeningEvents);
+        foreach (var import in listeningHistoryImports) import.ExpireWithoutArtifact();
+        context.ListeningHistoryImports.AddRange(listeningHistoryImports);
         context.ListeningSignals.AddRange(listeningSignals);
         context.PlaybackDeliveryCheckpoints.AddRange(playbackDeliveryCheckpoints);
         context.ListeningProfiles.AddRange(listeningProfiles);
@@ -1098,7 +1104,8 @@ public sealed class DurableStateTransferService
         IReadOnlyCollection<ProviderTrackIdentityRecord> providerTrackIdentities,
         IReadOnlyCollection<CanonicalRecordingRecord> canonicalRecordings,
         IReadOnlyCollection<LibraryTrackRecord> libraryTracks, IReadOnlyCollection<IntelligencePolicyRecord> policies,
-        IReadOnlyCollection<ListeningEventRecord> events, IReadOnlyCollection<ListeningSignalRecord> signals,
+        IReadOnlyCollection<ListeningEventRecord> events, IReadOnlyCollection<ListeningHistoryImportRecord> imports,
+        IReadOnlyCollection<ListeningSignalRecord> signals,
         IReadOnlyCollection<PlaybackDeliveryCheckpointEntity> playbackCheckpoints,
         IReadOnlyCollection<ListeningProfileRecord> profiles,
         IReadOnlyCollection<RecommendationRunRecord> runs, IReadOnlyCollection<RecommendationCandidateRecord> candidates,
@@ -1112,6 +1119,7 @@ public sealed class DurableStateTransferService
         var policyById = IndexUnique(policies, x => x.Id, "intelligence policy");
         var scheduleById = IndexUnique(schedules, x => x.Id, "job schedule");
         IndexUnique(events, x => x.Id, "listening event"); IndexUnique(signals, x => x.Id, "listening signal");
+        IndexUnique(imports, x => x.Id, "listening history import");
         IndexUnique(profiles, x => x.Id, "listening profile");
         IndexUnique(playbackCheckpoints, x => x.Id, "playback delivery checkpoint");
         IndexUnique(candidates, x => x.Id, "recommendation candidate"); IndexUnique(entries, x => x.Id, "generated set entry");
@@ -1138,6 +1146,28 @@ public sealed class DurableStateTransferService
                 policy.TargetCredentialReferenceId.HasValue && !Credential(policy.TenantId, policy.TargetCredentialReferenceId) ||
                 !policyByScope.TryAdd(Scope(policy.TenantId, policy.OwnerUserId, policy.Protocol, policy.BackendInstanceId, policy.LibraryScopeId), policy))
                 RejectIntelligenceArchive("an intelligence policy is malformed, duplicated, or crosses its exact scope");
+        }
+        foreach (var import in imports)
+        {
+            ListeningHistoryImportPreview? preview = null;
+            var previewJsonValid = IsJsonObject(import.PreviewJson, 64 * 1024);
+            if (previewJsonValid)
+            {
+                try { preview = JsonSerializer.Deserialize<ListeningHistoryImportPreview>(import.PreviewJson); }
+                catch (JsonException) { }
+            }
+            if (!Owner(import.TenantId, import.OwnerUserId) || import.Protocol is not ("jellyfin" or "subsonic") ||
+                !Backend(import.TenantId, import.OwnerUserId, import.Protocol, import.BackendInstanceId) ||
+                !IsRequiredText(import.BackendInstanceId, 200) || !IsRequiredText(import.LibraryScopeId, 300) ||
+                !IsRequiredText(import.DisplayFileName, 255) || import.DisplayFileName.IndexOfAny(['/', '\\']) >= 0 ||
+                import.Format != "spotify-extended-streaming-history" || !IsNormalizedSha256(import.ContentSha256) ||
+                !IsNormalizedSha256(import.PreviewRevision) || !previewJsonValid || preview == null ||
+                import.SizeBytes <= 0 || !Enum.IsDefined(import.State) || import.ApplyGeneration < 0 ||
+                import.NextSequence < 0 || import.ImportedRows < 0 || import.DuplicateRows < 0 ||
+                import.ResolvedRows < 0 || import.UnresolvedRows < 0 || import.CreatedAt == default ||
+                import.UpdatedAt < import.CreatedAt || import.ExpiresAt < import.CreatedAt || import.Revision <= 0 ||
+                import.State == ListeningHistoryImportState.Completed && import.CompletedAt == null)
+                RejectIntelligenceArchive("a listening-history import is malformed or crosses its exact scope");
         }
         foreach (var schedule in schedules.Where(item => item.JobType == DurableScheduleEngine.RecommendationJobType))
         {

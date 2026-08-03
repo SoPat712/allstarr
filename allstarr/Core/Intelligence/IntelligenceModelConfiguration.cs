@@ -52,6 +52,26 @@ public static class IntelligenceModelConfiguration
                 entity.HasOne<ProviderAccountRecord>().WithMany().HasForeignKey(x => x.ProviderAccountId).HasConstraintName("FK_listening_event_provider_account").OnDelete(DeleteBehavior.Restrict);
                 entity.HasOne<ProviderTrackIdentityRecord>().WithMany().HasForeignKey(x => x.ProviderTrackIdentityId).HasConstraintName("FK_listening_event_provider_identity").OnDelete(DeleteBehavior.Restrict);
             });
+        ConfigureOwned<ListeningHistoryImportRecord>(modelBuilder, "listening_history_imports", e => e.Id,
+            entity =>
+            {
+                entity.ToTable("listening_history_imports", table =>
+                {
+                    table.HasCheckConstraint("CK_listening_history_import_size", "\"SizeBytes\" > 0");
+                    table.HasCheckConstraint("CK_listening_history_import_counts", "\"NextSequence\" >= 0 AND \"ImportedRows\" >= 0 AND \"DuplicateRows\" >= 0 AND \"ResolvedRows\" >= 0 AND \"UnresolvedRows\" >= 0");
+                    table.HasCheckConstraint("CK_listening_history_import_state", "\"State\" IN ('Previewed', 'Pending', 'Running', 'Completed', 'Cancelled', 'Failed', 'Expired')");
+                });
+                entity.Property(x => x.DisplayFileName).HasMaxLength(255).IsRequired();
+                entity.Property(x => x.Format).HasMaxLength(100).IsRequired();
+                entity.Property(x => x.ContentSha256).HasMaxLength(64).IsRequired();
+                entity.Property(x => x.PreviewJson).IsRequired();
+                entity.Property(x => x.PreviewRevision).HasMaxLength(64).IsRequired();
+                entity.Property(x => x.State).HasConversion<string>().HasMaxLength(32);
+                entity.Property(x => x.Revision).IsConcurrencyToken();
+                entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.Protocol, x.BackendInstanceId, x.LibraryScopeId, x.CreatedAt }).HasDatabaseName("IX_listening_history_import_scope");
+                entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.ContentSha256 }).HasDatabaseName("IX_listening_history_import_content");
+                entity.HasIndex(x => x.JobId).HasDatabaseName("IX_listening_history_import_job");
+            });
         ConfigureOwned<ListeningProfileRecord>(modelBuilder, "listening_profiles", e => e.Id,
             entity => { entity.Property(x => x.ProfileJson).IsRequired(); entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.CreatedAt }); });
         ConfigureOwned<RecommendationRunRecord>(modelBuilder, "recommendation_runs", e => e.Id,
