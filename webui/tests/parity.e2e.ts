@@ -809,6 +809,10 @@ for (const viewport of viewports) {
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.getByRole("tab", { name: "Listening history" }).click();
       await expect(page.getByRole("heading", { name: "Listening history", level: 3, exact: true })).toBeVisible();
+      const recap = page.locator(".recap-card");
+      await expect(recap).toContainText("12 times across 9 songs and 5 artists");
+      await expect(recap).toContainText("Your most-played song was Moon Song by The Comets");
+      await expect(recap).toContainText("Your first recorded listen was");
       await expect(page.locator(".history-list").getByText("Moon Song", { exact: true })).toBeVisible();
       await expect(page.getByRole("heading", { name: "Import listening history" })).toBeVisible();
       await expect.poll(() => page.evaluate(() =>
