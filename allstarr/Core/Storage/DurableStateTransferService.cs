@@ -1140,7 +1140,8 @@ public sealed class DurableStateTransferService
         bool Backend(Guid tenant, Guid user, string protocol, string backend) => backendIdentities.Any(x =>
             x.TenantId == tenant && x.UserId == user && x.BackendType == protocol && x.BackendInstanceId == backend);
         bool Credential(Guid tenant, Guid? id) => id is { } value && secretById.TryGetValue(value, out var secret) &&
-            secret.TenantId == tenant && secret.RevokedAt == null;
+            secret.TenantId == tenant && secret.Purpose == IntelligencePolicyService.SubsonicCredentialPurpose &&
+            secret.RevokedAt == null;
         var policyByScope = new Dictionary<(Guid, Guid, string, string, string), IntelligencePolicyRecord>();
         var recommendationSchedulePolicies = new Dictionary<Guid, IntelligencePolicyRecord>();
         foreach (var policy in policies)
@@ -1415,7 +1416,7 @@ public sealed class DurableStateTransferService
                 (set.Protocol == "jellyfin" && set.TargetCredentialReferenceId == null ||
                  set.Protocol == "subsonic" && set.TargetCredentialReferenceId is { } credentialId &&
                  secretReferences.Any(item => item.Id == credentialId && item.TenantId == set.TenantId &&
-                     item.RevokedAt == null));
+                     item.Purpose == IntelligencePolicyService.SubsonicCredentialPurpose && item.RevokedAt == null));
             if ((!fromRun && !fromPreview) || !IsRequiredText(set.Name, 200) || !Enum.IsDefined(set.MaterializationState) ||
                 set.CreatedAt == default || set.UpdatedAt < set.CreatedAt || set.Revision <= 0 ||
                 !IsOptionalText(set.BackendPlaylistId, 500) || !IsOptionalText(set.TargetRevision, 300) || !IsOptionalText(set.LastErrorCode, 100) ||

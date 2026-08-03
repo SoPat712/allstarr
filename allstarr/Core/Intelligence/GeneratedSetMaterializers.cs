@@ -36,7 +36,9 @@ public abstract class BackendGeneratedSetMaterializer(
         if (Protocol == "subsonic")
         {
             if (set.TargetCredentialReferenceId is not { } credentialId || !await db.SecretReferences.AsNoTracking().AnyAsync(item =>
-                    item.Id == credentialId && item.TenantId == set.TenantId && item.RevokedAt == null, cancellationToken))
+                    item.Id == credentialId && item.TenantId == set.TenantId &&
+                    item.Purpose == IntelligencePolicyService.SubsonicCredentialPurpose && item.RevokedAt == null,
+                    cancellationToken))
                 return new(false, false, "generated_set_subsonic_credential_unavailable");
             credentialReference = credentialId.ToString();
         }

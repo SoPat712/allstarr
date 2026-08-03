@@ -30,6 +30,7 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
     ListeningHistoryImportArtifactStore? historyArtifacts = null)
     : IIntelligencePolicyService
 {
+    internal const string SubsonicCredentialPurpose = "playlist-backend:subsonic";
     private static readonly HashSet<string> Signals = new(["play", "skip", "complete", "favorite", "playlist"], StringComparer.Ordinal);
     public async Task<IntelligencePolicyRecord?> GetAsync(IntelligenceScope scope, CancellationToken cancellationToken = default)
     { ValidateScope(scope); await using var db = await factory.CreateDbContextAsync(cancellationToken); return await Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken); }
@@ -48,7 +49,8 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
             scope.Protocol == "subsonic" && input.Enabled && !input.TargetCredentialReferenceId.HasValue)
             throw new ArgumentException("Subsonic intelligence requires an exact-scope target credential reference; Jellyfin does not accept one.", nameof(input));
         if (input.TargetCredentialReferenceId.HasValue && !await db.SecretReferences.AsNoTracking().AnyAsync(item =>
-                item.Id == input.TargetCredentialReferenceId && item.TenantId == scope.TenantId && item.RevokedAt == null,
+                item.Id == input.TargetCredentialReferenceId && item.TenantId == scope.TenantId &&
+                item.Purpose == SubsonicCredentialPurpose && item.RevokedAt == null,
                 cancellationToken))
             throw new UnauthorizedAccessException("The intelligence target credential is outside this tenant or revoked.");
         var record = await Query(db, scope).SingleOrDefaultAsync(cancellationToken);

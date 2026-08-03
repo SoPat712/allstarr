@@ -34,6 +34,38 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SubsonicPolicyAcceptsOnlySubsonicBackendCredentials()
+    {
+        var scope = _scope with { Protocol = "subsonic" };
+        var unrelated = Guid.CreateVersion7();
+        var credential = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.BackendIdentities.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = _tenant,
+                UserId = _user,
+                BackendType = "subsonic",
+                BackendInstanceId = "main",
+                PrincipalId = "listener",
+                CreatedAt = _clock.UtcNow,
+                LastSeenAt = _clock.UtcNow
+            });
+            db.SecretReferences.AddRange(
+                new() { Id = unrelated, TenantId = _tenant, Purpose = "unrelated", CreatedAt = _clock.UtcNow, UpdatedAt = _clock.UtcNow },
+                new() { Id = credential, TenantId = _tenant, Purpose = "playlist-backend:subsonic", CreatedAt = _clock.UtcNow, UpdatedAt = _clock.UtcNow });
+            await db.SaveChangesAsync();
+        }
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => _policies.SetAsync(scope,
+            new(true, 30, ["play"], ["local"], unrelated)));
+        var saved = await _policies.SetAsync(scope, new(true, 30, ["play"], ["local"], credential));
+
+        Assert.Equal(credential, saved.TargetCredentialReferenceId);
+    }
+
+    [Fact]
     public async Task SignalsRequireExactOptInAndRetentionPrunesExpiredData()
     {
         var writer = new RecommendationSignalWriter(_factory, _clock);
