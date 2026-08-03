@@ -165,7 +165,8 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
     public static ProviderRegistration CreateRegistration(
         AppleDownloadCapabilityAdapter adapter,
         AppleDownloadLyricsCapabilityAdapter? lyrics = null,
-        AppleDownloadStreamingCapabilityAdapter? streaming = null) => new(
+        AppleDownloadStreamingCapabilityAdapter? streaming = null,
+        IProviderMetadataCapability? metadata = null) => new(
         new ProviderDescriptor(
             StableProviderId,
             "Apple Music - Gamdl",
@@ -175,7 +176,18 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
             compatibilityVersion: "apple-download-gateway-v1",
             capabilities:
             [
-                ConfiguredLane(ProviderCapabilityKind.Metadata),
+                metadata == null
+                    ? ConfiguredLane(ProviderCapabilityKind.Metadata)
+                    : new ProviderCapabilityDescriptor(
+                        ProviderCapabilityKind.Metadata,
+                        ProviderCapabilitySupportState.Supported,
+                        ProviderAccountRequirement.None,
+                        compatibilityVersion: "1",
+                        hooks:
+                        [
+                            "searchTracks", "getTrack", "lookupByIsrc", "searchAlbums", "getAlbum",
+                            "searchArtists", "getArtist", "getArtistAlbums", "getArtistTracks"
+                        ]),
                 streaming == null
                     ? ConfiguredLane(ProviderCapabilityKind.Streaming)
                     : new ProviderCapabilityDescriptor(
@@ -201,16 +213,18 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
                 ConfiguredLane(ProviderCapabilityKind.Health)
             ],
             permissions: new ProviderPermissionDescriptor()),
-        Implementations(adapter, lyrics, streaming));
+        Implementations(adapter, lyrics, streaming, metadata));
 
     private static IProviderCapability[] Implementations(
         IProviderDownloadCapability download,
         IProviderLyricsCapability? lyrics,
-        IProviderStreamingCapability? streaming)
+        IProviderStreamingCapability? streaming,
+        IProviderMetadataCapability? metadata)
     {
         var values = new List<IProviderCapability> { download };
         if (lyrics != null) values.Add(lyrics);
         if (streaming != null) values.Add(streaming);
+        if (metadata != null) values.Add(metadata);
         return values.ToArray();
     }
 

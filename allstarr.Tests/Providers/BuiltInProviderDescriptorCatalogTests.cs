@@ -49,6 +49,8 @@ public sealed class BuiltInProviderDescriptorCatalogTests
             new HttpClient(new Mock<HttpMessageHandler>().Object),
             new AppleDownloadSettings(),
             new Mock<IAppleDownloadEndpointDiscovery>(MockBehavior.Strict).Object);
+        var appleDownloadMetadata = new AppleDownloadMetadataCapabilityAdapter(
+            new Mock<IConcreteMetadataService>(MockBehavior.Strict).Object);
         var registry = new ProviderRegistry(
         [
             DeezerMetadataCapabilityAdapter.CreateRegistration(
@@ -58,7 +60,7 @@ public sealed class BuiltInProviderDescriptorCatalogTests
             AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(apple),
             SpotifyPlaylistCapabilityAdapter.CreateRegistration(spotify, spotifyLyrics),
             AppleDownloadCapabilityAdapter.CreateRegistration(
-                appleDownload, streaming: appleDownloadStreaming),
+                appleDownload, streaming: appleDownloadStreaming, metadata: appleDownloadMetadata),
             BuiltInLyricsCapabilityRegistration.CreateRegistration("lyricsplus", "LyricsPlus", lyricsPlus),
             BuiltInLyricsCapabilityRegistration.CreateRegistration("lrclib", "LRCLib", lrclib),
             .. BuiltInProviderDescriptorCatalog.LegacyRegistrations
@@ -80,7 +82,7 @@ public sealed class BuiltInProviderDescriptorCatalogTests
         ];
         Assert.Equal(expected, registry.Providers.Select(item => item.Id));
         Assert.Equal(
-            ["deezer", "qobuz"],
+            ["apple-download", "deezer", "qobuz"],
             registry.FindByCapability(ProviderCapabilityKind.Metadata)
                 .Select(item => item.Id));
         var deezerDescriptor = registry.GetRequired("deezer");
@@ -119,6 +121,9 @@ public sealed class BuiltInProviderDescriptorCatalogTests
         Assert.Same(appleDownloadStreaming,
             registry.GetRequiredCapability<IProviderStreamingCapability>(
                 "apple-download", ProviderCapabilityKind.Streaming));
+        Assert.Same(appleDownloadMetadata,
+            registry.GetRequiredCapability<IProviderMetadataCapability>(
+                "apple-download", ProviderCapabilityKind.Metadata));
         Assert.Equal(
             ["lrclib", "lyricsplus", "spotify"],
             registry.FindByCapability(ProviderCapabilityKind.Lyrics).Select(item => item.Id));

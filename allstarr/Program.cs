@@ -442,7 +442,9 @@ builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
 builder.Services.AddSingleton<QobuzMetadataService>();
 builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
     provider.GetRequiredService<QobuzMetadataService>());
-builder.Services.AddSingleton<IConcreteMetadataService, AppleMusicMetadataService>();
+builder.Services.AddSingleton<AppleMusicMetadataService>();
+builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
+    provider.GetRequiredService<AppleMusicMetadataService>());
 builder.Services.AddSingleton<IAppleDownloadEndpointDiscovery, AppleDownloadEndpointDiscovery>();
 builder.Services.AddSingleton<IConcreteMetadataService>(sp =>
     new SquidWTFMetadataService(

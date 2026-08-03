@@ -18,11 +18,14 @@ public static class AppleDownloadCapabilityRegistration
         services.AddSingleton<AppleDownloadCapabilityAdapter>();
         services.AddSingleton<AppleDownloadLyricsCapabilityAdapter>();
         services.AddSingleton<AppleDownloadStreamingCapabilityAdapter>();
+        services.AddSingleton<AppleDownloadMetadataCapabilityAdapter>(provider => new(
+            provider.GetRequiredService<allstarr.Services.AppleMusic.AppleMusicMetadataService>()));
         services.AddSingleton<ProviderRegistration>(provider =>
             AppleDownloadCapabilityAdapter.CreateRegistration(
                 provider.GetRequiredService<AppleDownloadCapabilityAdapter>(),
                 provider.GetRequiredService<AppleDownloadLyricsCapabilityAdapter>(),
-                provider.GetRequiredService<AppleDownloadStreamingCapabilityAdapter>()));
+                provider.GetRequiredService<AppleDownloadStreamingCapabilityAdapter>(),
+                provider.GetRequiredService<AppleDownloadMetadataCapabilityAdapter>()));
         return services;
     }
 }
