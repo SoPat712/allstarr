@@ -14,6 +14,6 @@ public sealed class MigrationModelSnapshotTests
         using var context = new AllstarrDbContext(options);
 
         Assert.False(context.Database.HasPendingModelChanges());
-        Assert.Equal("20260803001000_AddListeningMusicBrainzEnrichment", context.Database.GetMigrations().Last());
+        Assert.Equal("20260803010000_AddListeningHistoryRevision", context.Database.GetMigrations().Last());
     }
 }

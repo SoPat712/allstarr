@@ -70,6 +70,7 @@ public sealed class ListeningEventRecord
     public Guid? ProviderAccountId { get; set; }
     public Guid? ProviderTrackIdentityId { get; set; }
     public string? ProviderTrackReference { get; set; }
+    public long Revision { get; set; }
 }
 
 public enum MusicBrainzEnrichmentState

@@ -44,6 +44,7 @@ public static class IntelligenceModelConfiguration
                 entity.Property(x => x.MusicBrainzSourceRevision).HasMaxLength(100);
                 entity.Property(x => x.ProviderId).HasMaxLength(100);
                 entity.Property(x => x.ProviderTrackReference).HasMaxLength(500);
+                entity.Property(x => x.Revision).IsConcurrencyToken();
                 entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.OccurrenceKey }).IsUnique().HasDatabaseName("IX_listening_event_occurrence");
                 entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.Protocol, x.BackendInstanceId, x.LibraryScopeId, x.ListenedAt }).HasDatabaseName("IX_listening_event_scope_history");
                 entity.HasOne<LibraryTrackRecord>().WithMany().HasForeignKey(x => new { x.TenantId, x.LibraryTrackId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).HasConstraintName("FK_listening_event_library_track").OnDelete(DeleteBehavior.Restrict);

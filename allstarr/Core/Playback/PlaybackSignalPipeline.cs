@@ -202,6 +202,7 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         record.ProviderAccountId ??= track?.ProviderAccountId;
         record.ProviderTrackIdentityId ??= track?.ProviderTrackIdentityId;
         record.ProviderTrackReference ??= Trim(track?.ProviderTrackReference, 500);
+        record.Revision++;
     }
 
     internal static ListeningEventState Classify(PlaybackSignalPayload payload, PlaybackTrackSnapshot? track) =>

@@ -87,6 +87,7 @@ public sealed class MusicBrainzListeningEnrichmentJobHandler(
                 occurrence.DurationMilliseconds,
                 cancellationToken);
             ApplyResult(occurrence, match, clock.UtcNow);
+            occurrence.Revision++;
             await db.SaveChangesAsync(cancellationToken);
             return DurableJobCompletion.Success();
         }
@@ -105,6 +106,7 @@ public sealed class MusicBrainzListeningEnrichmentJobHandler(
             occurrence.MusicBrainzEnrichmentConfidence = null;
             occurrence.MusicBrainzFactsJson = null;
             occurrence.MusicBrainzEnrichedAt = clock.UtcNow;
+            occurrence.Revision++;
             await db.SaveChangesAsync(CancellationToken.None);
             return DurableJobCompletion.Failure(exception.Code, exception.Message);
         }
@@ -115,6 +117,7 @@ public sealed class MusicBrainzListeningEnrichmentJobHandler(
             occurrence.MusicBrainzEnrichmentConfidence = null;
             occurrence.MusicBrainzFactsJson = null;
             occurrence.MusicBrainzEnrichedAt = clock.UtcNow;
+            occurrence.Revision++;
             await db.SaveChangesAsync(CancellationToken.None);
             return DurableJobCompletion.Failure(
                 "musicbrainz_enrichment_identity_invalid",

@@ -13,7 +13,7 @@ namespace allstarr.Controllers;
 [ApiController]
 [Route("api/admin/intelligence")]
 [ServiceFilter(typeof(AdminPortFilter))]
-public sealed class IntelligenceController(
+public sealed partial class IntelligenceController(
     IDbContextFactory<AllstarrDbContext> factory,
     IIntelligencePolicyService policies,
     IRecommendationRunService runs,
@@ -23,13 +23,15 @@ public sealed class IntelligenceController(
     IPlatformClock? clock = null) : ControllerBase
 {
     private static readonly string[] SignalCatalog = ["play", "skip", "complete", "favorite", "playlist"];
+    private readonly IDbContextFactory<AllstarrDbContext> _factory = factory;
+    private readonly IPlatformClock? _clock = clock;
     private readonly IReadOnlyDictionary<string, IRecommendationProvider> _providers = providers.ToDictionary(item => item.Id, StringComparer.Ordinal);
 
     [HttpGet]
     public async Task<IActionResult> Get([FromQuery] IntelligenceScopeRequest request, CancellationToken cancellationToken)
     {
         if (!TrySessionScope(request, out var scope, out var error)) return error!;
-        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         if (!await OwnsBackend(db, scope, cancellationToken)) return Ok(State("unauthorized", scope, "This backend or library is not linked to your user."));
         try
         {
@@ -190,7 +192,7 @@ public sealed class IntelligenceController(
     public async Task<IActionResult> SetPolicy([FromBody] IntelligencePolicyRequest request, CancellationToken cancellationToken)
     {
         if (!TrySessionScope(request, out var scope, out var error)) return error!;
-        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         if (!await OwnsBackend(db, scope, cancellationToken)) return NotFound();
         if (request.EnabledProviders.Any(id => !_providers.ContainsKey(id.Trim().ToLowerInvariant())))
             return BadRequest(new { error = "recommendation_provider_unavailable" });
@@ -241,7 +243,7 @@ public sealed class IntelligenceController(
     public async Task<IActionResult> GenerateSet([FromBody] IntelligenceGeneratedSetRequest request, CancellationToken cancellationToken)
     {
         if (!TrySessionScope(request, out var scope, out var error)) return error!;
-        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         var candidates = await db.RecommendationCandidates.AsNoTracking().Where(item => item.RunId == request.RunId &&
             item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId).OrderBy(item => item.Position)
             .Select(item => new
@@ -284,7 +286,7 @@ public sealed class IntelligenceController(
         if (kind is not ("like" or "dislike" or "dismiss") || reason?.Length > 100 ||
             reason?.Any(character => char.IsControl(character) || !(char.IsLetterOrDigit(character) || character is '-' or '_')) == true)
             return BadRequest(new { error = "recommendation_feedback_invalid" });
-        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         var candidate = await db.RecommendationCandidates.AsNoTracking()
             .Join(db.RecommendationRuns.AsNoTracking(), item => item.RunId, run => run.Id, (item, run) => new { item, run })
             .SingleOrDefaultAsync(value => value.item.Id == candidateId &&
@@ -308,7 +310,7 @@ public sealed class IntelligenceController(
                 BackendInstanceId = scope.BackendInstanceId,
                 LibraryScopeId = scope.LibraryScopeId,
                 TrackKey = candidate.item.TrackKey,
-                CreatedAt = clock?.UtcNow ?? DateTimeOffset.UtcNow,
+                CreatedAt = _clock?.UtcNow ?? DateTimeOffset.UtcNow,
                 Revision = 1
             };
             db.RecommendationFeedback.Add(feedback);
@@ -321,7 +323,7 @@ public sealed class IntelligenceController(
         }
         feedback.Kind = kind;
         feedback.ReasonCode = reason;
-        feedback.UpdatedAt = clock?.UtcNow ?? DateTimeOffset.UtcNow;
+        feedback.UpdatedAt = _clock?.UtcNow ?? DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
         return Ok(new { feedback.Kind, feedback.ReasonCode, feedback.UpdatedAt, feedback.Revision });
     }
@@ -333,12 +335,12 @@ public sealed class IntelligenceController(
         if (!TrySessionScope(request, out var scope, out var error)) return error!;
         if (!TryScheduleRequest(request, out var template, out var overlap, out var misfire, out var scheduleError))
             return BadRequest(new { error = scheduleError });
-        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         if (!await OwnsBackend(db, scope, cancellationToken)) return NotFound();
         var policy = await IntelligencePolicyService.Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken);
         if (policy?.Enabled != true) return Conflict(new { error = "intelligence_not_ready" });
         template = template with { IntelligencePolicyId = policy.Id };
-        var now = clock?.UtcNow ?? DateTimeOffset.UtcNow;
+        var now = _clock?.UtcNow ?? DateTimeOffset.UtcNow;
         var schedule = new JobScheduleRecord
         {
             Id = Guid.CreateVersion7(),
@@ -371,7 +373,7 @@ public sealed class IntelligenceController(
         if (!TrySessionScope(request, out var scope, out var error)) return error!;
         if (!TryScheduleRequest(request, out var template, out var overlap, out var misfire, out var scheduleError))
             return BadRequest(new { error = scheduleError });
-        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         if (!await OwnsBackend(db, scope, cancellationToken)) return NotFound();
         var policy = await IntelligencePolicyService.Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken);
         if (policy == null || request.Enabled && !policy.Enabled)
@@ -388,7 +390,7 @@ public sealed class IntelligenceController(
         if (existingTemplate.Version != 1 || existingTemplate.IntelligencePolicyId != policy.Id)
             return NotFound();
         if (schedule.Revision != request.ExpectedRevision) return Conflict(new { error = "intelligence_schedule_revision_conflict" });
-        var now = clock?.UtcNow ?? DateTimeOffset.UtcNow;
+        var now = _clock?.UtcNow ?? DateTimeOffset.UtcNow;
         schedule.CronExpression = request.CronExpression.Trim();
         schedule.TimeZoneId = request.TimeZoneId.Trim();
         schedule.OverlapPolicy = overlap;
@@ -408,7 +410,7 @@ public sealed class IntelligenceController(
         [FromBody] IntelligenceScheduleDeleteRequest request, CancellationToken cancellationToken)
     {
         if (!TrySessionScope(request, out var scope, out var error)) return error!;
-        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         if (!await OwnsBackend(db, scope, cancellationToken)) return NotFound();
         var schedule = await db.JobSchedules.SingleOrDefaultAsync(item => item.Id == scheduleId &&
             item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
@@ -425,7 +427,7 @@ public sealed class IntelligenceController(
             return Conflict(new { error = "intelligence_schedule_revision_conflict" });
         schedule.Enabled = false;
         schedule.NextRunAt = null;
-        schedule.UpdatedAt = clock?.UtcNow ?? DateTimeOffset.UtcNow;
+        schedule.UpdatedAt = _clock?.UtcNow ?? DateTimeOffset.UtcNow;
         schedule.Revision++;
         await db.SaveChangesAsync(cancellationToken);
         return NoContent();

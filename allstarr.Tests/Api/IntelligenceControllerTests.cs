@@ -100,6 +100,140 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task HistoryRoutesPageCorrectAndDeleteOnlyTheExactScope()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var first = HistoryEvent("First", now.AddMinutes(-1));
+        var second = HistoryEvent("Second", now.AddMinutes(-2));
+        var third = HistoryEvent("Third", now.AddMinutes(-3));
+        var otherLibrary = HistoryEvent("Other library", now.AddMinutes(-4), "other");
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.ListeningEvents.AddRange(first, second, third, otherLibrary);
+            db.Set<allstarr.Core.Playback.PlaybackDeliveryCheckpointEntity>().Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = _tenant,
+                OwnerUserId = _user,
+                OccurrenceKey = first.OccurrenceKey,
+                SignalKey = new string('a', 64),
+                TargetId = "lastfm",
+                Kind = allstarr.Core.Playback.PlaybackScrobbleDeliveryKind.Completed,
+                State = allstarr.Core.Playback.ScopedPlaybackScrobbleOutcome.Delivered,
+                UpdatedAt = now
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var page = Assert.IsType<OkObjectResult>(await Controller().GetHistory(new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            From = now.AddDays(-1),
+            To = now.AddDays(1),
+            Limit = 2
+        }, default));
+        var pageJson = JsonSerializer.Serialize(page.Value);
+        Assert.Contains("First", pageJson, StringComparison.Ordinal);
+        Assert.Contains("Second", pageJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("Third", pageJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("Other library", pageJson, StringComparison.Ordinal);
+        Assert.Contains("lastfm", pageJson, StringComparison.Ordinal);
+        using var pageDocument = JsonDocument.Parse(pageJson);
+        var cursor = pageDocument.RootElement.GetProperty("nextCursor").GetString();
+        var nextPage = Assert.IsType<OkObjectResult>(await Controller().GetHistory(new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            From = now.AddDays(-1),
+            To = now.AddDays(1),
+            Limit = 2,
+            Cursor = cursor
+        }, default));
+        var nextPageJson = JsonSerializer.Serialize(nextPage.Value);
+        Assert.Contains("Third", nextPageJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("First", nextPageJson, StringComparison.Ordinal);
+
+        Assert.IsType<OkObjectResult>(await Controller().GetHistoryOverview(new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            From = now.AddDays(-1),
+            To = now.AddDays(1),
+            TimeZoneId = "UTC"
+        }, default));
+        Assert.IsType<OkObjectResult>(await Controller().GetHistoryActivity(new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            From = now.AddDays(-1),
+            To = now.AddDays(1),
+            TimeZoneId = "UTC"
+        }, default));
+        Assert.IsType<OkObjectResult>(await Controller().GetHistoryTopItems("track", new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            From = now.AddDays(-1),
+            To = now.AddDays(1)
+        }, default));
+
+        var exportController = Controller();
+        await using var exportBody = new MemoryStream();
+        exportController.HttpContext.Response.Body = exportBody;
+        var export = await exportController.ExportHistory(Scope(), default);
+        await export.ExecuteResultAsync(exportController.ControllerContext);
+        var exportJson = System.Text.Encoding.UTF8.GetString(exportBody.ToArray());
+        Assert.Contains("allstarr-listening-history", exportJson, StringComparison.Ordinal);
+        Assert.Contains("First", exportJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("Other library", exportJson, StringComparison.Ordinal);
+
+        var corrected = Assert.IsType<OkObjectResult>(await Controller().CorrectHistory(first.Id, new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            Title = "Corrected",
+            Artist = "Artist",
+            Album = "Album",
+            ExpectedRevision = first.Revision
+        }, default));
+        Assert.Contains("Revision", JsonSerializer.Serialize(corrected.Value), StringComparison.Ordinal);
+
+        var staleDelete = await Controller().DeleteHistory(first.Id, new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            ExpectedRevision = first.Revision,
+            Confirmed = true
+        }, default);
+        Assert.IsType<ConflictObjectResult>(staleDelete);
+
+        Assert.IsType<NoContentResult>(await Controller().DeleteHistory(first.Id, new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            ExpectedRevision = first.Revision + 1,
+            Confirmed = true
+        }, default));
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(3, await verify.ListeningEvents.CountAsync());
+        Assert.Empty(await verify.Set<allstarr.Core.Playback.PlaybackDeliveryCheckpointEntity>().ToListAsync());
+        Assert.Contains(await verify.AuditEvents.ToListAsync(), item =>
+            item.Category == "listening-history" && item.Action == "corrected");
+        Assert.Contains(await verify.AuditEvents.ToListAsync(), item =>
+            item.Category == "listening-history" && item.Action == "deleted");
+    }
+
+    [Fact]
     public async Task Policy_UsesCallerIdentityAndRejectsUnavailableStaticPromise()
     {
         var controller = Controller();
@@ -493,6 +627,24 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
         RetentionDays = 30,
         AllowedSignalTypesJson = "[\"play\"]",
         EnabledProvidersJson = "[\"lastfm\"]",
+        Revision = 1
+    };
+    private ListeningEventRecord HistoryEvent(string title, DateTimeOffset listenedAt, string library = "music") => new()
+    {
+        Id = Guid.CreateVersion7(),
+        TenantId = _tenant,
+        OwnerUserId = _user,
+        Protocol = "jellyfin",
+        BackendInstanceId = "main",
+        LibraryScopeId = library,
+        OccurrenceKey = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Guid.NewGuid().ToByteArray())).ToLowerInvariant(),
+        State = ListeningEventState.Completed,
+        ListenedAt = listenedAt,
+        UpdatedAt = listenedAt,
+        SourceKind = "protocol",
+        TrackReference = title,
+        Title = title,
+        Artist = "Artist",
         Revision = 1
     };
     public async Task DisposeAsync() => await _database.DisposeAsync();
