@@ -118,15 +118,15 @@
       <footer><button class="button-secondary" type="button" onclick={() => formOpen = false}>Cancel</button><button class="button-primary" type="submit" disabled={Boolean(action)}>{action === "save" ? "Saving…" : editing ? "Save schedule" : "Create schedule"}</button></footer>
     </form>
   {:else if schedules.length}
-    <div class="schedule-list">
+    <ul class="schedule-list">
       {#each schedules as item}
-        <article>
+        <li><article>
           <div><strong>{item.name}</strong><small>{item.limit} tracks · {cadence(item.cronExpression)} · {item.timeZoneId}</small><small>{item.enabled ? item.nextRunAt ? `Next run ${new Date(item.nextRunAt).toLocaleString()}` : "Waiting for its next run" : "Paused"}</small></div>
           <span class={`status-pill ${item.enabled ? "healthy" : "suggested"}`}>{item.enabled ? "On" : "Paused"}</span>
           <div class="row-actions"><button type="button" onclick={() => begin(item)}>Edit</button><button type="button" onclick={() => { deleteTarget = item; deleteOpen = true; }}>Remove</button></div>
-        </article>
+        </article></li>
       {/each}
-    </div>
+    </ul>
   {:else}
     <div class="compact-empty"><strong>No automatic playlists</strong><p>Create one when you want fresh recommendations on a schedule.</p></div>
   {/if}
@@ -142,7 +142,7 @@
 />
 
 <style>
-  .intelligence-schedules{display:grid;gap:1rem;padding:1.15rem}.intelligence-schedules>header{display:flex;align-items:start;justify-content:space-between;gap:1rem}.intelligence-schedules h3{margin:.2rem 0}.intelligence-schedules header p:last-child{margin:0;color:var(--color-ink-muted)}.schedule-form{display:grid;grid-template-columns:2fr .7fr 1.4fr 1fr;align-items:end;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.schedule-form .toggle-line{align-self:center}.schedule-form footer{grid-column:1/-1;display:flex;justify-content:flex-end;gap:.75rem}.field small,.toggle-line small,.schedule-list small{display:block;color:var(--color-ink-muted)}.schedule-list{display:grid}.schedule-list article{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:1rem;border-top:1px solid var(--color-edge);padding:.9rem 0}.row-actions{display:flex;gap:.5rem}.row-actions button{color:var(--color-ink-muted)}
+  .intelligence-schedules{display:grid;gap:1rem;padding:1.15rem}.intelligence-schedules>header{display:flex;align-items:start;justify-content:space-between;gap:1rem}.intelligence-schedules h3{margin:.2rem 0}.intelligence-schedules header p:last-child{margin:0;color:var(--color-ink-muted)}.schedule-form{display:grid;grid-template-columns:2fr .7fr 1.4fr 1fr;align-items:end;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.schedule-form .toggle-line{align-self:center}.schedule-form footer{grid-column:1/-1;display:flex;justify-content:flex-end;gap:.75rem}.field small,.toggle-line small,.schedule-list small{display:block;color:var(--color-ink-muted)}.schedule-list{display:grid;margin:0;padding:0;list-style:none}.schedule-list article{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:1rem;border-top:1px solid var(--color-edge);padding:.9rem 0}.row-actions{display:flex;gap:.5rem}.row-actions button{color:var(--color-ink-muted)}
   @media(max-width:900px){.schedule-form{grid-template-columns:1fr 1fr}.schedule-list article{grid-template-columns:minmax(0,1fr) auto}.row-actions{grid-column:1/-1}}
   @media(max-width:620px){.intelligence-schedules>header{flex-direction:column}.intelligence-schedules>header button{width:100%}.schedule-form{grid-template-columns:1fr}.schedule-form footer{grid-column:auto}.schedule-form footer>*{flex:1}.schedule-list article{grid-template-columns:1fr}.schedule-list .status-pill{justify-self:start}.row-actions{grid-column:auto}.row-actions>*{flex:1}}
 </style>

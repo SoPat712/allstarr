@@ -87,17 +87,17 @@
     {#if !policyEnabled}<small>Turn on “Save my listening automatically” before creating a private key.</small>{/if}
   </form>
 
-  <div class="key-list">
+  <ul class="key-list">
     {#each items as item}
-      <article>
+      <li><article>
         <span><strong>Created {new Date(item.createdAt).toLocaleDateString()}</strong><small>{policyEnabled ? `Allstarr will save listens from this key to ${scope.libraryScopeId} on ${server}.` : "Allstarr is not accepting listens from this key while saving is off."} {item.relayExternally ? "Allstarr will also send completed listens to connected services." : "Allstarr will not send these listens to another service."}</small></span>
         <button type="button" disabled={busy} onclick={() => void revoke(item)}>Stop accepting</button>
-      </article>
-    {:else}<p class="muted">No apps can send listens to this library yet.</p>{/each}
-  </div>
+      </article></li>
+    {:else}<li class="muted">No apps can send listens to this library yet.</li>{/each}
+  </ul>
 </section>
 
 <style>
-  .listening-apps-card{display:grid;gap:1rem;padding:1.15rem}.listening-apps-card h3,.listening-apps-card p{margin:.2rem 0}.listening-apps-card>p{color:var(--color-ink-muted)}form{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.toggle-line{display:flex;gap:.75rem}.toggle-line span>*,article span>*{display:block}.toggle-line small,article small{color:var(--color-ink-muted)}.new-key{display:grid;gap:.5rem;border:1px solid var(--color-signal);border-radius:var(--radius-card);padding:1rem}.new-key>div{display:flex;gap:.5rem}.new-key input{min-width:0;flex:1;font-family:var(--font-mono)}.key-list{display:grid}.key-list article{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:1rem;border-top:1px solid var(--color-edge);padding:.8rem 0}.key-list button{color:var(--color-ink-muted)}
+  .listening-apps-card{display:grid;gap:1rem;padding:1.15rem}.listening-apps-card h3,.listening-apps-card p{margin:.2rem 0}.listening-apps-card>p{color:var(--color-ink-muted)}form{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.toggle-line{display:flex;gap:.75rem}.toggle-line span>*,article span>*{display:block}.toggle-line small,article small{color:var(--color-ink-muted)}.new-key{display:grid;gap:.5rem;border:1px solid var(--color-signal);border-radius:var(--radius-card);padding:1rem}.new-key>div{display:flex;gap:.5rem}.new-key input{min-width:0;flex:1;font-family:var(--font-mono)}.key-list{display:grid;margin:0;padding:0;list-style:none}.key-list article{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:1rem;border-top:1px solid var(--color-edge);padding:.8rem 0}.key-list button{color:var(--color-ink-muted)}
   @media(max-width:620px){form,.key-list article{grid-template-columns:1fr}.new-key>div{align-items:stretch;flex-direction:column}}
 </style>

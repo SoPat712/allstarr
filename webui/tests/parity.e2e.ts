@@ -768,12 +768,16 @@ for (const viewport of viewports) {
 
     test("Intelligence results remain usable", async ({ page, context }) => {
       const delayed = routeRelease();
+      await page.emulateMedia({ reducedMotion: "reduce" });
       await mockApi(page, { releasePath: "/api/admin/intelligence", release: delayed.promise });
       await page.goto("#/intelligence");
       await page.getByLabel("Server connection").fill("main");
       await page.getByLabel("Music library").fill("music");
       await page.getByRole("button", { name: "Open library" }).click();
-      await expect(page.getByLabel("Loading Intelligence")).toBeVisible();
+      const loadingStatus = page.getByRole("status", { name: "Loading Intelligence" });
+      await expect(loadingStatus).toBeVisible();
+      expect(await loadingStatus.locator(".skeleton-panel").first().evaluate((element) =>
+        getComputedStyle(element, "::after").animationName)).toBe("none");
       delayed.release();
       await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
       if (viewport.width <= 650) {
@@ -787,17 +791,27 @@ for (const viewport of viewports) {
       await expect(recap).toContainText("Your first recorded listen was");
       await expect(page.getByRole("heading", { name: "Recently played", level: 3 })).toBeVisible();
       await expect(page.locator(".history-list").getByText("Moon Song", { exact: true })).toBeVisible();
+      expect(await page.locator(".history-list").evaluate((element) => element.tagName)).toBe("UL");
       const activityCard = page.locator(".activity-card");
       await expect(activityCard.getByText(viewport.width <= 620
         ? "Showing 2025-12-02 through 2025-12-31"
         : "Showing 2025-12-01 through 2025-12-31", { exact: true })).toBeVisible();
       await expect(activityCard.locator(".activity-grid span:visible")).toHaveCount(viewport.width <= 620 ? 30 : 31);
+      const topTabs = page.getByRole("navigation", { name: "Top listening category" });
+      await topTabs.getByRole("tab", { name: "Artists" }).focus();
+      await page.keyboard.press("ArrowRight");
+      await expect(topTabs.getByRole("tab", { name: "Albums" })).toHaveAttribute("aria-selected", "true");
+      await page.keyboard.press("End");
+      await expect(topTabs.getByRole("tab", { name: "Songs" })).toHaveAttribute("aria-selected", "true");
+      if (viewport.width <= 650)
+        expect(Math.min(...await topTabs.getByRole("tab").evaluateAll((tabs) => tabs.map((tab) => tab.clientHeight)))).toBeGreaterThanOrEqual(44);
       await page.getByRole("tab", { name: "Recommendations" }).click();
       await expect(page).toHaveURL(/#\/intelligence\?section=recommendations$/);
       await expect(page.getByText("Future Song", { exact: true })).toBeVisible();
       await expect(page.getByText("Morning discovery")).toBeVisible();
       await expect(page.getByText("Created in Jellyfin", { exact: true })).toBeVisible();
       await expect(page.getByText("Searching Lumen Audio.")).toBeVisible();
+      await expect(page.getByRole("progressbar", { name: "Recommendation refresh progress" })).toHaveAttribute("value", "1");
       await expect(page.getByRole("button", { name: "Cancel refresh" })).toBeInViewport();
       await expect(page.getByRole("button", { name: "Refresh recommendations" })).toBeInViewport();
       const soundDiscovery = page.locator(".sound-discovery");
@@ -806,6 +820,7 @@ for (const viewport of viewports) {
       const firstScan = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/audiomuse/analysis"));
       await soundDiscovery.getByRole("button", { name: "Scan library sounds" }).click();
       expect((await firstScan).postDataJSON()).toMatchObject({ rebuild: false });
+      await expect(soundDiscovery.getByRole("progressbar", { name: "Library sound scan progress" })).toHaveAttribute("value", "200");
       const rebuildScan = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/audiomuse/analysis"));
       await soundDiscovery.getByRole("button", { name: "Scan library again" }).click();
       expect((await rebuildScan).postDataJSON()).toMatchObject({ rebuild: true });
@@ -906,9 +921,12 @@ for (const viewport of viewports) {
       await expect(page.getByText("Allstarr is checking 2 saved listens for more song details.", { exact: true })).toBeVisible();
       await expect(page.getByText("Private similarity source. · Ready")).toBeVisible();
       await expect(page.getByText("Where generated playlists are created", { exact: true })).toBeVisible();
+      expect(await page.locator(".status-list").evaluate((element) => element.tagName)).toBe("UL");
+      expect(await page.locator(".schedule-list").evaluate((element) => element.tagName)).toBe("UL");
       const listeningApps = page.locator(".listening-apps-card");
       await expect(listeningApps).toContainText("Allstarr will save listens from this key to music on Jellyfin.");
       await expect(listeningApps).toContainText("Allstarr will not send these listens to another service.");
+      expect(await listeningApps.locator(".key-list").evaluate((element) => element.tagName)).toBe("UL");
       await expect(listeningApps).not.toContainText(/native playlist|hybrid|materialized|write-back|projection|backend/i);
       const keyRequest = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/listening-apps") && request.method() === "POST");
       await listeningApps.getByRole("button", { name: "Create private key" }).click();
@@ -1042,6 +1060,7 @@ test("Intelligence history imports, corrections, and schedules use the selected 
   await preview;
   await expect(page.getByText("9", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("It will not send them to Last.fm or ListenBrainz.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Streaming_History.json" })).toContainText("previewed");
   const apply = page.waitForRequest((request) => request.method() === "POST" &&
     request.url().endsWith("/api/admin/intelligence/history/imports/55555555-5555-5555-5555-555555555555/apply"));
   await page.getByRole("button", { name: "Add to my history" }).click();
@@ -1072,6 +1091,7 @@ test("Intelligence history imports, corrections, and schedules use the selected 
 });
 
 test("Intelligence empty states explain how to get results", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
   await page.route("**/api/admin/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -1101,8 +1121,12 @@ test("Intelligence empty states explain how to get results", async ({ page }) =>
   await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("heading", { name: "Listening overview" })).toBeVisible();
   await page.getByRole("tab", { name: "Recommendations" }).click();
-  await expect(page.getByRole("link", { name: "Connect or configure a source" })).toBeVisible();
+  const sourceLink = page.getByRole("link", { name: "Connect or configure a source" });
+  await expect(sourceLink).toBeVisible();
+  expect((await sourceLink.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
   await expect(page.getByText("Turn on automatic history in Settings, then play music or import a history file.")).toBeVisible();
+  const settingsLink = page.getByRole("link", { name: "Settings", exact: true });
+  expect((await settingsLink.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
 
   await page.getByRole("tab", { name: "Overview" }).click();
   await expect(page.getByText("No completed listens were recorded for this period. Play music or import a history file to build this recap.")).toBeVisible();

@@ -210,7 +210,7 @@
   {#if analysis}
     <div class="scan-status" role="status">
       <span><strong>{analysisLabel(analysis)}</strong>{#if analysis.total}<small>{analysis.completed} of {analysis.total} songs</small>{/if}</span>
-      {#if analysis.total}<progress max={analysis.total} value={analysis.completed}>{analysis.completed} of {analysis.total}</progress>{/if}
+      {#if analysis.total}<progress aria-label="Library sound scan progress" max={analysis.total} value={analysis.completed}>{analysis.completed} of {analysis.total}</progress>{/if}
     </div>
   {/if}
   {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
