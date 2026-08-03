@@ -153,6 +153,45 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AudioMuseClustersAreReturnedAsBoundedCursorPages()
+    {
+        var audioMuse = new FakeAudioMuse
+        {
+            Clusters =
+            [
+                new("cluster-1", "First group", []),
+                new("cluster-2", "Second group", []),
+                new("cluster-3", "Third group", [])
+            ]
+        };
+        var first = Assert.IsType<OkObjectResult>(await Controller(audioMuse).GetAudioMuseClusters(new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            Limit = 1
+        }, default));
+        var firstJson = JsonSerializer.Serialize(first.Value);
+        Assert.Contains("First group", firstJson, StringComparison.Ordinal);
+        Assert.Contains("\"nextCursor\":\"1\"", firstJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("Second group", firstJson, StringComparison.Ordinal);
+        Assert.Equal(2, audioMuse.ClusterLimit);
+
+        var second = Assert.IsType<OkObjectResult>(await Controller(audioMuse).GetAudioMuseClusters(new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            Limit = 1,
+            Cursor = "1"
+        }, default));
+        var secondJson = JsonSerializer.Serialize(second.Value);
+        Assert.Contains("Second group", secondJson, StringComparison.Ordinal);
+        Assert.Contains("\"nextCursor\":\"2\"", secondJson, StringComparison.Ordinal);
+        Assert.Equal(3, audioMuse.ClusterLimit);
+    }
+
+    [Fact]
     public async Task AudioMusePreviewCreatesOnlyAnExactScopeGeneratedPlaylist()
     {
         _policy.Record = Policy();
@@ -816,6 +855,8 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
         public bool IsAvailable => true;
         public IntelligenceScope? Scope { get; private set; }
         public IReadOnlyList<string>? Seeds { get; private set; }
+        public IReadOnlyList<AudioMuseCluster> Clusters { get; init; } = [];
+        public int ClusterLimit { get; private set; }
         public Task<bool> CheckHealthAsync(IntelligenceScope scope, CancellationToken cancellationToken) => Task.FromResult(true);
         public Task<IReadOnlyList<RecommendationSourceItem>> RecommendAsync(ScopedRecommendationQuery query, CancellationToken cancellationToken)
         {
@@ -837,7 +878,11 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
             CancellationToken cancellationToken) =>
             Task.FromResult(new ProviderAnalysisProgress(jobId, ProviderAnalysisState.Completed, 1, 1));
         public Task<IReadOnlyList<AudioMuseCluster>> GetClustersAsync(IntelligenceScope scope, int limit,
-            CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AudioMuseCluster>>([]);
+            CancellationToken cancellationToken)
+        {
+            ClusterLimit = limit;
+            return Task.FromResult<IReadOnlyList<AudioMuseCluster>>(Clusters.Take(limit).ToArray());
+        }
         public Task<IReadOnlyList<RecommendationSourceItem>> SearchAsync(IntelligenceScope scope, string query,
             bool includeLyrics, int limit, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<RecommendationSourceItem>>([]);

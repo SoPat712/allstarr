@@ -1161,8 +1161,9 @@ export const intelligence = {
   audioMuseSearch: (scope: IntelligenceScope, query: string, mode: "text" | "lyrics", limit = 25) =>
     json<{ tracks: AudioMuseTrack[]; mode: string }>("/api/admin/intelligence/audiomuse/search",
       intelligenceBody({ ...scope, query, mode, limit })),
-  audioMuseClusters: (scope: IntelligenceScope, limit = 50) =>
-    json<{ clusters: AudioMuseCluster[] }>(`/api/admin/intelligence/audiomuse/clusters?${intelligenceQuery(scope, { limit })}`),
+  audioMuseClusters: (scope: IntelligenceScope, limit = 10, cursor?: string) =>
+    json<{ clusters: AudioMuseCluster[]; nextCursor?: string | null }>(
+      `/api/admin/intelligence/audiomuse/clusters?${intelligenceQuery(scope, { limit, cursor })}`),
   audioMuseMap: (scope: IntelligenceScope, limit = 50, cursor?: string) =>
     json<AudioMuseMapPage>(`/api/admin/intelligence/audiomuse/map?${intelligenceQuery(scope, { limit, cursor })}`),
   historyOverview: (scope: IntelligenceScope, from: string, to: string, timeZoneId: string) =>

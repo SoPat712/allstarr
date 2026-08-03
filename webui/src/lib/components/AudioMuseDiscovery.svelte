@@ -33,6 +33,7 @@
   let resultTitle = $state("");
   let results = $state<AudioMuseTrack[]>([]);
   let clusters = $state<AudioMuseCluster[]>([]);
+  let clustersNext = $state<string | null>(null);
   let map = $state<AudioMuseMapPage | null>(null);
   let analysis = $state<AudioMuseAnalysis | null>(null);
   let playlistName = $state("Sound discoveries");
@@ -81,6 +82,7 @@
     resultTitle = title;
     results = [];
     clusters = [];
+    clustersNext = null;
     map = null;
     createdMessage = "";
   }
@@ -99,12 +101,12 @@
     }
   }
 
-  async function startAnalysis() {
+  async function startAnalysis(rebuild = false) {
     if (action) return;
     action = "analysis";
     error = "";
     try {
-      analysis = await intelligence.startAudioMuseAnalysis(scope);
+      analysis = await intelligence.startAudioMuseAnalysis(scope, rebuild);
     } catch (cause) {
       error = message(cause);
     } finally {
@@ -121,13 +123,15 @@
     }
   }
 
-  async function loadClusters() {
+  async function loadClusters(cursor?: string) {
     if (action) return;
-    action = "clusters";
+    action = cursor ? "clusters-more" : "clusters";
     error = "";
-    clearResults("Songs grouped by sound");
+    if (!cursor) clearResults("Songs grouped by sound");
     try {
-      clusters = (await intelligence.audioMuseClusters(scope)).clusters;
+      const page = await intelligence.audioMuseClusters(scope, 10, cursor);
+      clusters = cursor ? [...clusters, ...page.clusters] : page.clusters;
+      clustersNext = page.nextCursor ?? null;
     } catch (cause) {
       error = message(cause);
     } finally {
@@ -135,13 +139,25 @@
     }
   }
 
-  async function loadMap() {
+  async function loadMap(cursor?: string) {
     if (action) return;
-    action = "map";
+    action = cursor ? "map-more" : "map";
     error = "";
-    clearResults("Songs across your sound map");
+    if (!cursor) clearResults("Songs across your sound map");
     try {
-      map = await intelligence.audioMuseMap(scope);
+      const page = await intelligence.audioMuseMap(scope, 50, cursor);
+      if (cursor && map) {
+        if (map.snapshotVersion && page.snapshotVersion && map.snapshotVersion !== page.snapshotVersion) {
+          error = "The sound map changed. Load it again to see the latest songs.";
+          return;
+        }
+        const seen = new Set(map.items.map((song) => song.trackId));
+        map = {
+          ...page,
+          items: [...map.items, ...page.items.filter((song) => !seen.has(song.trackId))],
+          isPartial: map.isPartial || page.isPartial,
+        };
+      } else map = page;
     } catch (cause) {
       error = message(cause);
     } finally {
@@ -186,8 +202,8 @@
       <h3>Explore by sound</h3>
       <p>Find songs already in this library. Allstarr will not create or change a {serverName} playlist unless you confirm below.</p>
     </div>
-    <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void startAnalysis()}>
-      {action === "analysis" ? "Starting…" : "Scan library sounds"}
+    <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void startAnalysis(analysis?.state === "completed")}>
+      {action === "analysis" ? "Starting…" : analysis?.state === "completed" ? "Scan library again" : "Scan library sounds"}
     </button>
   </header>
 
@@ -258,6 +274,8 @@
       {:else if results.length}
         <ol>{#each results as song, index}<li><span>{index + 1}</span><div><strong>{song.title || "Unknown song"}</strong><small>{song.artist || "Unknown artist"}{song.album ? ` · ${song.album}` : ""}</small>{#if song.explanation}<small>{song.explanation}</small>{/if}</div></li>{/each}</ol>
       {:else if !action}<div class="compact-empty"><strong>No matching songs</strong><p>Try a different song or description.</p></div>{/if}
+      {#if clustersNext}<button class="button-secondary more-results" type="button" disabled={Boolean(action)} onclick={() => void loadClusters(clustersNext!)}>{action === "clusters-more" ? "Loading…" : "Show more groups"}</button>{/if}
+      {#if map?.nextCursor}<button class="button-secondary more-results" type="button" disabled={Boolean(action)} onclick={() => void loadMap(map!.nextCursor!)}>{action === "map-more" ? "Loading…" : "Show more songs"}</button>{/if}
       {#if resultSongs.length}
         <form class="create-form" onsubmit={(event) => { event.preventDefault(); confirmCreation(); }}>
           <label class="field grow"><span>Playlist name</span><input bind:value={playlistName} maxlength="200" required /></label>
@@ -278,7 +296,7 @@
   onConfirm={createPlaylist} />
 
 <style>
-  .sound-discovery{display:grid;gap:1rem;padding:1.15rem}.sound-discovery>header,.sound-results>header{display:flex;align-items:start;justify-content:space-between;gap:1rem}.sound-discovery h3{margin:.2rem 0}.sound-discovery>header p:last-child{max-width:48rem;margin:0;color:var(--color-ink-muted)}.scan-status{display:grid;grid-template-columns:minmax(0,1fr) minmax(12rem,.5fr);align-items:center;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.scan-status small,.sound-results small{display:block;color:var(--color-ink-muted)}.scan-status progress{width:100%;accent-color:var(--color-signal)}.sound-controls{display:grid;grid-template-columns:minmax(13rem,.4fr) minmax(0,1.6fr);align-items:end;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.sound-form{display:flex;align-items:end;gap:.75rem}.sound-form .grow{flex:1}.library-actions{display:flex;gap:.75rem}.sound-results{display:grid;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}.sound-results h4,.sound-results h5{margin:0}.sound-results ol{display:grid;margin:0;padding:0;list-style:none}.sound-results li{display:grid;grid-template-columns:2rem minmax(0,1fr);gap:.5rem;border-top:1px solid var(--color-edge);padding:.65rem 0}.sound-results li>span{color:var(--color-ink-muted);font-variant-numeric:tabular-nums}.sound-group{display:grid;gap:.5rem}.sound-group+ .sound-group{margin-top:.5rem}.create-form{display:grid;grid-template-columns:minmax(12rem,.7fr) minmax(14rem,1fr) auto;align-items:end;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}.create-form p{margin:0;color:var(--color-ink-muted)}
+  .sound-discovery{display:grid;gap:1rem;padding:1.15rem}.sound-discovery>header,.sound-results>header{display:flex;align-items:start;justify-content:space-between;gap:1rem}.sound-discovery h3{margin:.2rem 0}.sound-discovery>header p:last-child{max-width:48rem;margin:0;color:var(--color-ink-muted)}.scan-status{display:grid;grid-template-columns:minmax(0,1fr) minmax(12rem,.5fr);align-items:center;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.scan-status small,.sound-results small{display:block;color:var(--color-ink-muted)}.scan-status progress{width:100%;accent-color:var(--color-signal)}.sound-controls{display:grid;grid-template-columns:minmax(13rem,.4fr) minmax(0,1.6fr);align-items:end;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.sound-form{display:flex;align-items:end;gap:.75rem}.sound-form .grow{flex:1}.library-actions{display:flex;gap:.75rem}.sound-results{display:grid;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}.sound-results h4,.sound-results h5{margin:0}.sound-results ol{display:grid;margin:0;padding:0;list-style:none}.sound-results li{display:grid;grid-template-columns:2rem minmax(0,1fr);gap:.5rem;border-top:1px solid var(--color-edge);padding:.65rem 0}.sound-results li>span{color:var(--color-ink-muted);font-variant-numeric:tabular-nums}.sound-group{display:grid;gap:.5rem}.sound-group+ .sound-group{margin-top:.5rem}.more-results{justify-self:start}.create-form{display:grid;grid-template-columns:minmax(12rem,.7fr) minmax(14rem,1fr) auto;align-items:end;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}.create-form p{margin:0;color:var(--color-ink-muted)}
   @media(max-width:900px){.sound-controls,.create-form{grid-template-columns:1fr}.sound-form{flex-wrap:wrap}.sound-form .grow{min-width:14rem}}
   @media(max-width:620px){.sound-discovery>header,.sound-form,.library-actions{align-items:stretch;flex-direction:column}.sound-discovery>header>button,.sound-form>button,.library-actions>button,.create-form>button{width:100%}.scan-status{grid-template-columns:1fr}.sound-form .grow{min-width:0}}
 </style>

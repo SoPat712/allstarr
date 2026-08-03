@@ -201,10 +201,21 @@ public sealed partial class IntelligenceController
     {
         if (!TrySessionScope(request, out var scope, out var error)) return error!;
         if (!await OwnsAudioMuseScope(scope, cancellationToken)) return NotFound();
-        return await AudioMuseResult(async () => new
+        var offset = 0;
+        if (request.Limit is < 1 or > 25 ||
+            request.Cursor != null && (!int.TryParse(request.Cursor, out offset) || offset is < 0 or > 99))
+            return BadRequest(new { error = "audiomuse_request_invalid" });
+        return await AudioMuseResult(async () =>
         {
-            clusters = (await _audioMuse.GetClustersAsync(scope, request.Limit, cancellationToken))
-                .Select(item => new { item.Id, item.Name, tracks = item.Tracks.Select(TrackDto) })
+            var fetched = await _audioMuse.GetClustersAsync(scope,
+                Math.Min(100, offset + request.Limit + 1), cancellationToken);
+            return new
+            {
+                clusters = fetched.Skip(offset).Take(request.Limit)
+                    .Select(item => new { item.Id, item.Name, tracks = item.Tracks.Select(TrackDto) }),
+                nextCursor = fetched.Count > offset + request.Limit
+                    ? (offset + request.Limit).ToString() : null
+            };
         });
     }
 
@@ -332,6 +343,6 @@ public sealed class AudioMuseSearchRequest : IntelligenceScopeRequest
 
 public sealed class AudioMusePageRequest : IntelligenceScopeRequest
 {
-    public int Limit { get; set; } = 50;
+    public int Limit { get; set; } = 25;
     public string? Cursor { get; set; }
 }

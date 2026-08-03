@@ -556,9 +556,13 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
     if (url.pathname === "/api/admin/intelligence/audiomuse/search")
       body = { mode: "text", tracks: [{ trackId: "track-4", title: "Quiet Light", artist: "Sound Artist", score: .88, explanation: "AudioMuse matched this song to your description." }] };
     if (url.pathname === "/api/admin/intelligence/audiomuse/clusters")
-      body = { clusters: [{ id: "soft", name: "Soft and warm", tracks: [{ trackId: "track-4", title: "Quiet Light", artist: "Sound Artist", score: .88 }] }] };
+      body = url.searchParams.get("cursor")
+        ? { clusters: [{ id: "bright", name: "Bright and quick", tracks: [{ trackId: "track-6", title: "Day Song", artist: "Sound Artist", score: .86 }] }], nextCursor: null }
+        : { clusters: [{ id: "soft", name: "Soft and warm", tracks: [{ trackId: "track-4", title: "Quiet Light", artist: "Sound Artist", score: .88 }] }], nextCursor: "1" };
     if (url.pathname === "/api/admin/intelligence/audiomuse/map")
-      body = { items: [{ trackId: "track-4", title: "Quiet Light", artist: "Sound Artist", score: .88, x: .2, y: .6, clusterId: "soft" }], projection: "fixture", nextCursor: null, isPartial: false };
+      body = url.searchParams.get("cursor")
+        ? { items: [{ trackId: "track-7", title: "Far Song", artist: "Sound Artist", score: .8, x: -.4, y: .1 }], projection: "fixture", nextCursor: null, isPartial: false, snapshotVersion: "map-1" }
+        : { items: [{ trackId: "track-4", title: "Quiet Light", artist: "Sound Artist", score: .88, x: .2, y: .6, clusterId: "soft" }], projection: "fixture", nextCursor: "next", isPartial: false, snapshotVersion: "map-1" };
     if (url.pathname === "/api/admin/intelligence/history/44444444-4444-4444-4444-444444444444" && route.request().method() === "PUT")
       body = { id: "44444444-4444-4444-4444-444444444444", revision: 3 };
     if (url.pathname === "/api/admin/intelligence/history/44444444-4444-4444-4444-444444444444" && route.request().method() === "DELETE")
@@ -751,6 +755,12 @@ for (const viewport of viewports) {
       const soundDiscovery = page.locator(".sound-discovery");
       await expect(soundDiscovery).toContainText("Allstarr will not create or change a Jellyfin playlist");
       await expect(soundDiscovery).not.toContainText(/native playlist|hybrid|materialized|write-back/i);
+      const firstScan = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/audiomuse/analysis"));
+      await soundDiscovery.getByRole("button", { name: "Scan library sounds" }).click();
+      expect((await firstScan).postDataJSON()).toMatchObject({ rebuild: false });
+      const rebuildScan = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/audiomuse/analysis"));
+      await soundDiscovery.getByRole("button", { name: "Scan library again" }).click();
+      expect((await rebuildScan).postDataJSON()).toMatchObject({ rebuild: true });
       const similarRequest = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/audiomuse/similar"));
       await soundDiscovery.getByRole("button", { name: "Find songs" }).click();
       expect((await similarRequest).postDataJSON()).toMatchObject({
@@ -779,6 +789,18 @@ for (const viewport of viewports) {
         name: "Evening sounds", trackIds: ["track-5"],
       });
       await expect(soundDiscovery.getByText("Allstarr is creating Evening sounds in Jellyfin.", { exact: true })).toBeVisible();
+      await soundDiscovery.getByLabel("How to explore").click();
+      await page.getByRole("option", { name: "Browse the whole library by sound" }).click();
+      await soundDiscovery.getByRole("button", { name: "Group similar songs" }).click();
+      await expect(soundDiscovery.getByText("Soft and warm", { exact: true })).toBeVisible();
+      await soundDiscovery.getByRole("button", { name: "Show more groups" }).click();
+      await expect(soundDiscovery.getByText("Bright and quick", { exact: true })).toBeVisible();
+      await soundDiscovery.getByRole("button", { name: "List the sound map" }).click();
+      await expect(soundDiscovery.getByText("Quiet Light", { exact: true })).toBeVisible();
+      const nextMap = page.waitForRequest((request) => request.url().includes("/api/admin/intelligence/audiomuse/map") && new URL(request.url()).searchParams.get("cursor") === "next");
+      await soundDiscovery.getByRole("button", { name: "Show more songs" }).click();
+      await nextMap;
+      await expect(soundDiscovery.getByText("Far Song", { exact: true })).toBeVisible();
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
         await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-discover.png`, fullPage: true });
       await expect.poll(() => page.evaluate(() =>
