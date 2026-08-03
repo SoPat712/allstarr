@@ -52,6 +52,7 @@ public sealed class BuiltInProviderRegistrationTests
             new HttpClient(new Mock<HttpMessageHandler>().Object),
             new AppleDownloadSettings(),
             new Mock<IAppleDownloadEndpointDiscovery>(MockBehavior.Strict).Object);
+        var appleDownloadLyrics = Lyrics("apple-download");
         var appleDownloadMetadata = new AppleDownloadMetadataCapabilityAdapter(
             new Mock<IConcreteMetadataService>(MockBehavior.Strict).Object);
         var registry = new ProviderRegistry(
@@ -64,7 +65,7 @@ public sealed class BuiltInProviderRegistrationTests
             AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(apple),
             SpotifyPlaylistCapabilityAdapter.CreateRegistration(spotify, spotifyLyrics),
             AppleDownloadCapabilityAdapter.CreateRegistration(
-                appleDownload, streaming: appleDownloadStreaming, metadata: appleDownloadMetadata),
+                appleDownload, appleDownloadLyrics, appleDownloadStreaming, appleDownloadMetadata),
             BuiltInLyricsCapabilityRegistration.CreateRegistration("lyricsplus", "LyricsPlus", lyricsPlus),
             BuiltInLyricsCapabilityRegistration.CreateRegistration("lrclib", "LRCLib", lrclib)
         ]);
@@ -126,7 +127,7 @@ public sealed class BuiltInProviderRegistrationTests
             registry.GetRequiredCapability<IProviderMetadataCapability>(
                 "apple-download", ProviderCapabilityKind.Metadata));
         Assert.Equal(
-            ["lrclib", "lyricsplus", "spotify"],
+            ["apple-download", "lrclib", "lyricsplus", "spotify"],
             registry.FindByCapability(ProviderCapabilityKind.Lyrics).Select(item => item.Id));
     }
 

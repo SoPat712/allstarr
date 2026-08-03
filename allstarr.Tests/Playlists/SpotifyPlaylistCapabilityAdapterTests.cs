@@ -6,6 +6,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Storage;
 using Microsoft.Extensions.DependencyInjection;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -348,17 +349,20 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
     }
 
     [Fact]
-    public void Registration_activates_only_the_operational_typed_playlist_capability()
+    public void Registration_activates_the_operational_typed_capabilities()
     {
         var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(new SpotifyFakeHandler()), new FakeSecretAccessor("cookie"));
-        var registration = SpotifyPlaylistCapabilityAdapter.CreateRegistration(adapter);
+        var lyrics = Mock.Of<IProviderLyricsCapability>(item =>
+            item.ProviderId == "spotify" && item.Capability == ProviderCapabilityKind.Lyrics);
+        var registration = SpotifyPlaylistCapabilityAdapter.CreateRegistration(adapter, lyrics);
         var validated = ProviderRegistrationValidator.Validate(registration);
         var playlist = validated.Descriptor.Capabilities.Single(capability => capability.Capability == ProviderCapabilityKind.Playlist);
 
         Assert.Equal(ProviderCapabilitySupportState.Supported, playlist.SupportState);
         Assert.Equal(ProviderAccountRequirement.Required, playlist.AccountRequirement);
         Assert.Contains("mutatePlaylist", playlist.Hooks);
-        Assert.Same(adapter, validated.Implementations.Single());
+        Assert.Same(adapter, validated.Implementations.Single(item => item.Capability == ProviderCapabilityKind.Playlist));
+        Assert.Same(lyrics, validated.Implementations.Single(item => item.Capability == ProviderCapabilityKind.Lyrics));
         Assert.DoesNotContain(validated.Descriptor.Capabilities,
             capability => capability.Capability is ProviderCapabilityKind.Streaming or ProviderCapabilityKind.Download);
 

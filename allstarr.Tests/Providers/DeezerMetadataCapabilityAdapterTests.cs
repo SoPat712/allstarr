@@ -172,7 +172,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
         var adapter = new DeezerMetadataCapabilityAdapter(
             new Mock<IConcreteMetadataService>(MockBehavior.Strict).Object);
         var registry = new ProviderRegistry(
-            [DeezerMetadataCapabilityAdapter.CreateRegistration(adapter)]);
+            [DeezerMetadataCapabilityAdapter.CreateRegistration(adapter, Download(), Streaming())]);
 
         var descriptor = registry.GetRequired("deezer");
         var resolved = registry.GetRequiredCapability<IProviderMetadataCapability>(
@@ -211,7 +211,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
             ]);
         var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
         var registry = new ProviderRegistry(
-            [DeezerMetadataCapabilityAdapter.CreateRegistration(adapter)]);
+            [DeezerMetadataCapabilityAdapter.CreateRegistration(adapter, Download(), Streaming())]);
         var router = new ProviderRouter(
             registry,
             new Mock<IProviderRouteAccountResolver>(MockBehavior.Strict).Object,
@@ -300,4 +300,12 @@ public sealed class DeezerMetadataCapabilityAdapterTests
             deadline: DateTimeOffset.UtcNow.AddMinutes(1),
             cancellationToken: cancellationToken);
     }
+
+    private static IProviderDownloadCapability Download() =>
+        Mock.Of<IProviderDownloadCapability>(item =>
+            item.ProviderId == "deezer" && item.Capability == ProviderCapabilityKind.Download);
+
+    private static IProviderStreamingCapability Streaming() =>
+        Mock.Of<IProviderStreamingCapability>(item =>
+            item.ProviderId == "deezer" && item.Capability == ProviderCapabilityKind.Streaming);
 }

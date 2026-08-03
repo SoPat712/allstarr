@@ -164,9 +164,9 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
 
     public static ProviderRegistration CreateRegistration(
         AppleDownloadCapabilityAdapter adapter,
-        AppleDownloadLyricsCapabilityAdapter? lyrics = null,
-        AppleDownloadStreamingCapabilityAdapter? streaming = null,
-        IProviderMetadataCapability? metadata = null) => new(
+        IProviderLyricsCapability lyrics,
+        AppleDownloadStreamingCapabilityAdapter streaming,
+        IProviderMetadataCapability metadata) => new(
         new ProviderDescriptor(
             StableProviderId,
             "Apple Music - Gamdl",
@@ -176,62 +176,37 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
             compatibilityVersion: "apple-download-gateway-v1",
             capabilities:
             [
-                metadata == null
-                    ? ConfiguredLane(ProviderCapabilityKind.Metadata)
-                    : new ProviderCapabilityDescriptor(
-                        ProviderCapabilityKind.Metadata,
-                        ProviderCapabilitySupportState.Supported,
-                        ProviderAccountRequirement.None,
-                        compatibilityVersion: "1",
-                        hooks:
-                        [
-                            "searchTracks", "getTrack", "lookupByIsrc", "searchAlbums", "getAlbum",
-                            "searchArtists", "getArtist", "getArtistAlbums", "getArtistTracks"
-                        ]),
-                streaming == null
-                    ? ConfiguredLane(ProviderCapabilityKind.Streaming)
-                    : new ProviderCapabilityDescriptor(
-                        ProviderCapabilityKind.Streaming,
-                        ProviderCapabilitySupportState.Supported,
-                        ProviderAccountRequirement.None,
-                        compatibilityVersion: "1",
-                        hooks: ["getStreamLease", "probeStream"]),
+                new ProviderCapabilityDescriptor(
+                    ProviderCapabilityKind.Metadata,
+                    ProviderCapabilitySupportState.Supported,
+                    ProviderAccountRequirement.None,
+                    compatibilityVersion: "1",
+                    hooks:
+                    [
+                        "searchTracks", "getTrack", "lookupByIsrc", "searchAlbums", "getAlbum",
+                        "searchArtists", "getArtist", "getArtistAlbums", "getArtistTracks"
+                    ]),
+                new ProviderCapabilityDescriptor(
+                    ProviderCapabilityKind.Streaming,
+                    ProviderCapabilitySupportState.Supported,
+                    ProviderAccountRequirement.None,
+                    compatibilityVersion: "1",
+                    hooks: ["getStreamLease", "probeStream"]),
                 new ProviderCapabilityDescriptor(
                     ProviderCapabilityKind.Download,
                     ProviderCapabilitySupportState.Supported,
                     ProviderAccountRequirement.None,
                     compatibilityVersion: "1",
                     hooks: ["checkAvailability", "download"]),
-                lyrics == null
-                    ? ConfiguredLane(ProviderCapabilityKind.Lyrics)
-                    : new ProviderCapabilityDescriptor(
-                        ProviderCapabilityKind.Lyrics,
-                        ProviderCapabilitySupportState.Supported,
-                        ProviderAccountRequirement.None,
-                        compatibilityVersion: "1",
-                        hooks: ["fetchLyrics"])
+                new ProviderCapabilityDescriptor(
+                    ProviderCapabilityKind.Lyrics,
+                    ProviderCapabilitySupportState.Supported,
+                    ProviderAccountRequirement.None,
+                    compatibilityVersion: "1",
+                    hooks: ["fetchLyrics"])
             ],
             permissions: new ProviderPermissionDescriptor()),
-        Implementations(adapter, lyrics, streaming, metadata));
-
-    private static IProviderCapability[] Implementations(
-        IProviderDownloadCapability download,
-        IProviderLyricsCapability? lyrics,
-        IProviderStreamingCapability? streaming,
-        IProviderMetadataCapability? metadata)
-    {
-        var values = new List<IProviderCapability> { download };
-        if (lyrics != null) values.Add(lyrics);
-        if (streaming != null) values.Add(streaming);
-        if (metadata != null) values.Add(metadata);
-        return values.ToArray();
-    }
-
-    private static ProviderCapabilityDescriptor ConfiguredLane(ProviderCapabilityKind capability) => new(
-        capability,
-        ProviderCapabilitySupportState.ConfiguredOnly,
-        ProviderAccountRequirement.None,
-        compatibilityVersion: "legacy-seam-v1");
+        [adapter, lyrics, streaming, metadata]);
 
     private static ProviderError? Validate(ProviderExecutionContext context, ProviderExternalResourceId trackId)
     {

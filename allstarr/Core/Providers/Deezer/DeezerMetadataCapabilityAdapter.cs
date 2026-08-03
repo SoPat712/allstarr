@@ -14,8 +14,8 @@ public sealed class DeezerMetadataCapabilityAdapter(IConcreteMetadataService leg
 
     public static ProviderRegistration CreateRegistration(
         DeezerMetadataCapabilityAdapter adapter,
-        IProviderDownloadCapability? download = null,
-        IProviderStreamingCapability? streaming = null) => new(
+        IProviderDownloadCapability download,
+        IProviderStreamingCapability streaming) => new(
         new ProviderDescriptor(
             StableProviderId,
             "Deezer",
@@ -42,35 +42,31 @@ public sealed class DeezerMetadataCapabilityAdapter(IConcreteMetadataService leg
                         "getArtistAlbums",
                         "getArtistTracks"
                     ]),
-                streaming == null
-                    ? LegacyLane(ProviderCapabilityKind.Streaming)
-                    : new ProviderCapabilityDescriptor(
-                        ProviderCapabilityKind.Streaming,
-                        ProviderCapabilitySupportState.Supported,
-                        ProviderAccountRequirement.Required,
-                        compatibilityVersion: "1",
-                        hooks: ["getStreamLease", "probeStream"],
-                        allowedAccountScopes:
-                        [
-                            ProviderAccountScope.Global,
-                            ProviderAccountScope.User,
-                            ProviderAccountScope.Library
-                        ]),
-                download == null
-                    ? LegacyLane(ProviderCapabilityKind.Download)
-                    : new ProviderCapabilityDescriptor(
-                        ProviderCapabilityKind.Download,
-                        ProviderCapabilitySupportState.Supported,
-                        ProviderAccountRequirement.Required,
-                        compatibilityVersion: "1",
-                        hooks: ["checkAvailability", "download"],
-                        allowedAccountScopes:
-                        [
-                            ProviderAccountScope.Global,
-                            ProviderAccountScope.User,
-                            ProviderAccountScope.Library
-                        ]),
-                LegacyLane(ProviderCapabilityKind.Playlist)
+                new ProviderCapabilityDescriptor(
+                    ProviderCapabilityKind.Streaming,
+                    ProviderCapabilitySupportState.Supported,
+                    ProviderAccountRequirement.Required,
+                    compatibilityVersion: "1",
+                    hooks: ["getStreamLease", "probeStream"],
+                    allowedAccountScopes:
+                    [
+                        ProviderAccountScope.Global,
+                        ProviderAccountScope.User,
+                        ProviderAccountScope.Library
+                    ]),
+                new ProviderCapabilityDescriptor(
+                    ProviderCapabilityKind.Download,
+                    ProviderCapabilitySupportState.Supported,
+                    ProviderAccountRequirement.Required,
+                    compatibilityVersion: "1",
+                    hooks: ["checkAvailability", "download"],
+                    allowedAccountScopes:
+                    [
+                        ProviderAccountScope.Global,
+                        ProviderAccountScope.User,
+                        ProviderAccountScope.Library
+                    ]),
+                PlaylistCompatibility()
             ],
             permissions: new ProviderPermissionDescriptor(
                 networkOrigins:
@@ -80,22 +76,10 @@ public sealed class DeezerMetadataCapabilityAdapter(IConcreteMetadataService leg
                     new Uri("https://www.deezer.com/")
                 ],
                 cache: true)),
-        Implementations(adapter, download, streaming));
+        [adapter, download, streaming]);
 
-    private static IProviderCapability[] Implementations(
-        IProviderMetadataCapability metadata,
-        IProviderDownloadCapability? download,
-        IProviderStreamingCapability? streaming)
-    {
-        var values = new List<IProviderCapability> { metadata };
-        if (download != null) values.Add(download);
-        if (streaming != null) values.Add(streaming);
-        return values.ToArray();
-    }
-
-    private static ProviderCapabilityDescriptor LegacyLane(
-        ProviderCapabilityKind capability) => new(
-        capability,
+    private static ProviderCapabilityDescriptor PlaylistCompatibility() => new(
+        ProviderCapabilityKind.Playlist,
         ProviderCapabilitySupportState.ConfiguredOnly,
         ProviderAccountRequirement.Required,
         compatibilityVersion: "legacy-seam-v1",

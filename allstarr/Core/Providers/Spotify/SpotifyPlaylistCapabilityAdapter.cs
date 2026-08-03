@@ -124,7 +124,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
 
     public static ProviderRegistration CreateRegistration(
         SpotifyPlaylistCapabilityAdapter adapter,
-        IProviderLyricsCapability? lyrics = null) => new(
+        IProviderLyricsCapability lyrics) => new(
         new ProviderDescriptor(
             StableProviderId,
             "Spotify",
@@ -141,14 +141,12 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
                     "1",
                     ["getUserPlaylists", "getPlaylistTracks", "searchPlaylists", "resolveArtwork", "mutatePlaylist"],
                     [Core.Storage.ProviderAccountScope.Global, Core.Storage.ProviderAccountScope.User, Core.Storage.ProviderAccountScope.Library]),
-                lyrics == null
-                    ? ConfiguredLane(ProviderCapabilityKind.Lyrics)
-                    : new ProviderCapabilityDescriptor(
-                        ProviderCapabilityKind.Lyrics,
-                        ProviderCapabilitySupportState.Supported,
-                        ProviderAccountRequirement.None,
-                        "1",
-                        ["fetchLyrics"])
+                new ProviderCapabilityDescriptor(
+                    ProviderCapabilityKind.Lyrics,
+                    ProviderCapabilitySupportState.Supported,
+                    ProviderAccountRequirement.None,
+                    "1",
+                    ["fetchLyrics"])
             ],
             new ProviderPermissionDescriptor(
                 [new Uri("https://open.spotify.com/"), new Uri("https://api.spotify.com/")],
@@ -163,7 +161,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
                     "Spotify session cookie",
                     required: true)
             ]),
-        lyrics == null ? [adapter] : [adapter, lyrics]);
+        [adapter, lyrics]);
 
     private async Task<ProviderOutcome<ProviderPlaylistMutationReceipt>> MutateAsync(
         string token,
@@ -465,7 +463,6 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
         host.EndsWith(".scdn.co", StringComparison.OrdinalIgnoreCase) ||
         host.EndsWith(".spotifycdn.com", StringComparison.OrdinalIgnoreCase);
 
-    private static ProviderCapabilityDescriptor ConfiguredLane(ProviderCapabilityKind kind) => new(kind, ProviderCapabilitySupportState.ConfiguredOnly, ProviderAccountRequirement.Required, "legacy-seam-v1", allowedAccountScopes: [Core.Storage.ProviderAccountScope.Global, Core.Storage.ProviderAccountScope.User, Core.Storage.ProviderAccountScope.Library]);
     private sealed record ExistingPlaylist(
         ProviderPlaylistSummary Summary,
         IReadOnlyList<ProviderExternalResourceId> TrackIds);
