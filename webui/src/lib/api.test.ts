@@ -21,17 +21,7 @@ describe("API response normalization", () => {
       ValidationDetails: { ProviderId: "deezer" },
     }), { status: 400, statusText: "Bad Request" })));
 
-    const error = await sources.deepStream({
-      id: "account",
-      providerId: "deezer",
-      displayName: "Deezer",
-      scope: "User",
-      enabled: true,
-      revision: 1,
-      secret: { configured: true, revoked: false },
-      createdAt: "",
-      updatedAt: "",
-    }).catch((cause) => cause);
+    const error = await sources.deepStream("deezer", "account").catch((cause) => cause);
 
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({

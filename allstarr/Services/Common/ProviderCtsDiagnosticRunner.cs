@@ -22,7 +22,7 @@ public sealed class ProviderCtsDiagnosticRunner(
     public async Task<ProviderCtsDiagnosticResult> MeasureAsync(
         ProviderActorContext actor,
         string providerId,
-        Guid providerAccountId,
+        Guid? providerAccountId,
         ProviderAudioQuality quality,
         string correlationId,
         string? trackId = null,
@@ -39,6 +39,20 @@ public sealed class ProviderCtsDiagnosticRunner(
                 "capability",
                 "The selected provider does not expose streaming diagnostics.");
         }
+        var capabilityDescriptor = providers.GetRequired(providerId).Capabilities.Single(item =>
+            item.Capability == ProviderCapabilityKind.Streaming);
+        if (providerAccountId == Guid.Empty)
+            providerAccountId = null;
+        if (capabilityDescriptor.AccountRequirement == ProviderAccountRequirement.None &&
+            providerAccountId.HasValue)
+        {
+            return ProviderCtsDiagnosticResult.Failure(
+                StatusCodes.Status400BadRequest,
+                providerId,
+                providerAccountId,
+                "account-resolution",
+                "The selected provider streaming capability does not use an account.");
+        }
 
         using var probeLease = await Concurrency.TryEnterAsync(cancellationToken);
         if (probeLease == null)
@@ -53,15 +67,18 @@ public sealed class ProviderCtsDiagnosticRunner(
         }
 
         var total = Stopwatch.StartNew();
-        ProviderRouteAccountResolution? resolved;
+        ProviderRouteAccountResolution? resolved = null;
         try
         {
-            resolved = await accounts.ResolveAsync(new ProviderRouteAccountRequest(
-                actor,
-                providerId,
-                ProviderCapabilityKind.Streaming,
-                providerAccountId,
-                null), cancellationToken);
+            if (capabilityDescriptor.AccountRequirement != ProviderAccountRequirement.None)
+            {
+                resolved = await accounts.ResolveAsync(new ProviderRouteAccountRequest(
+                    actor,
+                    providerId,
+                    ProviderCapabilityKind.Streaming,
+                    providerAccountId,
+                    null), cancellationToken);
+            }
         }
         catch (UnauthorizedAccessException exception)
         {
@@ -73,7 +90,8 @@ public sealed class ProviderCtsDiagnosticRunner(
                 exception.Message);
         }
 
-        if (resolved == null || resolved.Account.AccountId != providerAccountId)
+        if ((capabilityDescriptor.AccountRequirement == ProviderAccountRequirement.Required && resolved == null) ||
+            (providerAccountId.HasValue && resolved?.Account.AccountId != providerAccountId))
         {
             return ProviderCtsDiagnosticResult.Failure(
                 StatusCodes.Status404NotFound,
@@ -82,6 +100,7 @@ public sealed class ProviderCtsDiagnosticRunner(
                 "account-resolution",
                 "The selected provider account is unavailable.");
         }
+        providerAccountId = resolved?.Account.AccountId;
         var routeMilliseconds = total.Elapsed.TotalMilliseconds;
 
         var automaticTrack = string.IsNullOrWhiteSpace(trackId)
@@ -112,7 +131,7 @@ public sealed class ProviderCtsDiagnosticRunner(
         var execution = new ProviderExecutionContext(
             actor,
             providerId,
-            resolved.Account,
+            resolved?.Account,
             null,
             policy,
             "provider-click-to-stream-diagnostic",
@@ -234,13 +253,16 @@ public sealed class ProviderCtsDiagnosticRunner(
             var transferSeconds = Math.Max((total.Elapsed - transferStart).TotalSeconds, 0.001);
             var throughputKbps = bytesRead * 8d / 1000d / transferSeconds;
             var totalMilliseconds = total.Elapsed.TotalMilliseconds;
-            await healthStore.RecordAsync(
-                providerId,
-                providerAccountId.ToString("N"),
-                "click-to-stream",
-                allstarr.Core.Storage.ProviderHealthState.Healthy,
-                (long)Math.Round(firstByteMilliseconds.Value),
-                cancellationToken: cancellationToken);
+            if (providerAccountId.HasValue)
+            {
+                await healthStore.RecordAsync(
+                    providerId,
+                    providerAccountId.Value.ToString("N"),
+                    "click-to-stream",
+                    allstarr.Core.Storage.ProviderHealthState.Healthy,
+                    (long)Math.Round(firstByteMilliseconds.Value),
+                    cancellationToken: cancellationToken);
+            }
             return ProviderCtsDiagnosticResult.Success(
                 providerId,
                 providerAccountId,
@@ -296,14 +318,15 @@ public sealed class ProviderCtsDiagnosticRunner(
 
     private async Task RecordFailureAsync(
         string providerId,
-        Guid providerAccountId,
+        Guid? providerAccountId,
         string failureCode,
         double latencyMilliseconds,
         CancellationToken cancellationToken)
     {
+        if (!providerAccountId.HasValue) return;
         await healthStore.RecordAsync(
             providerId,
-            providerAccountId.ToString("N"),
+            providerAccountId.Value.ToString("N"),
             "click-to-stream",
             allstarr.Core.Storage.ProviderHealthState.Degraded,
             (long)Math.Round(latencyMilliseconds),
@@ -351,7 +374,7 @@ public sealed class ProviderCtsDiagnosticResult
 
     public bool Succeeded { get; init; }
     public string ProviderId { get; init; } = string.Empty;
-    public Guid ProviderAccountId { get; init; }
+    public Guid? ProviderAccountId { get; init; }
     public string? Stage { get; init; }
     public string? Error { get; init; }
     public string? SelectionMode { get; init; }
@@ -387,7 +410,7 @@ public sealed class ProviderCtsDiagnosticResult
     public static ProviderCtsDiagnosticResult Failure(
         int statusCode,
         string providerId,
-        Guid providerAccountId,
+        Guid? providerAccountId,
         string stage,
         string error,
         double? resolveMilliseconds = null,
@@ -407,7 +430,7 @@ public sealed class ProviderCtsDiagnosticResult
 
     public static ProviderCtsDiagnosticResult Success(
         string providerId,
-        Guid providerAccountId,
+        Guid? providerAccountId,
         string selectionMode,
         int? corpusSize,
         ProviderAudioQuality quality,

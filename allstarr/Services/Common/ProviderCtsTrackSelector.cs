@@ -21,7 +21,7 @@ public sealed class ProviderCtsTrackSelector(
     public async Task<ProviderCtsTrackSelection?> SelectAsync(
         Guid tenantId,
         string providerId,
-        Guid providerAccountId,
+        Guid? providerAccountId,
         CancellationToken cancellationToken)
     {
         providerId = ProviderContractValidation.ProviderId(providerId, nameof(providerId));
@@ -62,7 +62,7 @@ public sealed class ProviderCtsTrackSelector(
         }
         if (corpus.Length == 0) return null;
 
-        var key = $"{providerId}:{providerAccountId:N}";
+        var key = $"{providerId}:{(providerAccountId.HasValue ? providerAccountId.Value.ToString("N") : "account-free")}";
         int index;
         lock (_rotationLock)
         {

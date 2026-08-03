@@ -49,7 +49,7 @@ public sealed class ProviderDiagnosticsController(
             .Select(item => ParseMeasurement(item.DetailsJson, item.CreatedAt))
             .Where(item => item != null)
             .Cast<CtsMeasurement>()
-            .GroupBy(item => item.ProviderAccountId)
+            .GroupBy(item => new { item.ProviderAccountId, item.ProviderId })
             .Select(group => group.First())
             .ToArray();
         if (durableMeasurements.Length > 0)
@@ -148,7 +148,7 @@ public sealed class ProviderDiagnosticsController(
             {
                 PropertyNameCaseInsensitive = true
             });
-            return value == null || value.ProviderAccountId == Guid.Empty
+            return value == null
                 ? null
                 : new CtsMeasurement(
                     value.ProviderAccountId,
@@ -179,7 +179,7 @@ public sealed class ProviderDiagnosticsController(
     }
 
     private sealed record CtsMeasurement(
-        Guid ProviderAccountId,
+        Guid? ProviderAccountId,
         string ProviderId,
         string Health,
         double LatencyMs,
@@ -203,7 +203,7 @@ public sealed class ProviderDiagnosticsController(
     private sealed class CtsAuditPayload
     {
         public string? ProviderId { get; set; }
-        public Guid ProviderAccountId { get; set; }
+        public Guid? ProviderAccountId { get; set; }
         public string? ProbeMode { get; set; }
         public string? SelectionMode { get; set; }
         public int? CorpusSize { get; set; }
@@ -244,7 +244,7 @@ public sealed class ProviderDiagnosticsController(
 public sealed class DeepStreamDiagnosticRequest
 {
     public string ProviderId { get; set; } = string.Empty;
-    public Guid ProviderAccountId { get; set; }
+    public Guid? ProviderAccountId { get; set; }
     public string? TrackId { get; set; }
     public string? TrackLabel { get; set; }
     public ProviderAudioQuality Quality { get; set; } = ProviderAudioQuality.Any;

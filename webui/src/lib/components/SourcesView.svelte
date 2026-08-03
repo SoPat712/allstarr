@@ -221,12 +221,27 @@
     if (action) return;
     action = key;
     try {
-      const result = await sources.deepStream(account);
+      const result = await sources.deepStream(account.providerId, account.id);
       testResults = { ...testResults, [key]: {
         ...result,
         latencyMs: result.clickToStreamMilliseconds ?? result.latencyMs,
       } };
       feedback = `${provider(account.providerId)?.name ?? account.providerId} click-to-stream measured.`;
+      await refresh();
+    } catch (cause) {
+      feedback = cause instanceof Error ? cause.message : "The click-to-stream test failed.";
+    } finally {
+      action = "";
+    }
+  }
+
+  async function measureSource(item: ProviderDefinition) {
+    const key = `${item.id}:cts`;
+    if (action) return;
+    action = key;
+    try {
+      await sources.deepStream(item.id);
+      feedback = `${item.name} click-to-stream measured.`;
       await refresh();
     } catch (cause) {
       feedback = cause instanceof Error ? cause.message : "The click-to-stream test failed.";
@@ -304,7 +319,8 @@
               {@const metrics = sourceMetrics(item, summary(item.id), providerHealth(item.id))}
               {@const connected = providerAccounts(item.id)}
               {@const cts = measurements.find((measurement) =>
-                connected.some((account) => account.id === measurement.providerAccountId))}
+                measurement.providerId.toLowerCase() === item.id.toLowerCase() &&
+                (!measurement.providerAccountId || connected.some((account) => account.id === measurement.providerAccountId)))}
               <tr data-state={state}>
                 <td>
                   <button class="operational-row-identity" type="button" onclick={() => inspectSource(item)}>
@@ -432,6 +448,8 @@
             {#if detailTab === "data" && detailKind === "source" && selectedSource}
               {@const state = sourceStatus(selectedSource, accounts, health)}
               {@const metrics = sourceMetrics(selectedSource, summary(selectedSource.id), providerHealth(selectedSource.id))}
+              {@const cts = measurements.find((item) =>
+                item.providerId.toLowerCase() === selectedSource!.id.toLowerCase() && !item.providerAccountId)}
               <dl class="source-detail-data">
                 <div><dt>Status</dt><dd><span class={`status-pill ${state}`}>{state === "needs_config" ? "Needs setup" : humanize(state)}</span></dd></div>
                 <div><dt>Source ID</dt><dd>{selectedSource.id}</dd></div>
@@ -440,6 +458,7 @@
                 <div><dt>Readiness</dt><dd>{metrics.passing}/{metrics.total || 0} passing · {metrics.failed} failing</dd></div>
                 <div><dt>Last check</dt><dd>{relativeTime(metrics.checkedAt)}</dd></div>
                 <div><dt>p95 timing</dt><dd>{summary(selectedSource.id)?.p95LatencyMilliseconds != null ? `${summary(selectedSource.id)?.p95LatencyMilliseconds} ms` : "Not measured"}</dd></div>
+                <div><dt>Click to stream</dt><dd>{#if cts}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>{ctsMeasurementLabel(cts)}</span> · {relativeTime(cts.testedAt)}{:else}Not measured{/if}</dd></div>
               </dl>
               <div class="source-detail-capabilities">
                 {#each selectedSource.runtimeCapabilities ?? [] as capability}
@@ -460,6 +479,9 @@
               </dl>
             {:else if detailTab === "configuration" && detailKind === "source" && selectedSource}
               <div class="source-detail-actions">
+                {#if administrator && !sourceNeedsAccount(selectedSource) && selectedSource.categories?.some((item) => item.toLowerCase() === "streaming")}
+                  <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void measureSource(selectedSource!)}>Measure CTS</button>
+                {/if}
                 {#if selectedSource.id === "apple-download"}
                   <button class="button-primary" type="button" onclick={() => { detailOpen = false; appleDownloadOpen = true; }}>Manage Apple Music - Gamdl</button>
                 {:else if selectedSource.connectionKind === "operator_managed" && selectedSource.configSchema?.length}

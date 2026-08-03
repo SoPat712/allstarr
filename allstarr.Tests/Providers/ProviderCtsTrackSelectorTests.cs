@@ -39,7 +39,7 @@ public sealed class ProviderCtsTrackSelectorTests
 
         using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
         var result = await selector.SelectAsync(
-            tenant, "deezer", Guid.CreateVersion7(), CancellationToken.None);
+            tenant, "deezer", null, CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.Equal("selected", result.TrackId);

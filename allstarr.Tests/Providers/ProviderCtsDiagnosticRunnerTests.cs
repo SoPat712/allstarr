@@ -57,6 +57,8 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         providers.Setup(item => item.TryGetCapability<IProviderStreamingCapability>(
                 "qobuz", ProviderCapabilityKind.Streaming, out registered))
             .Returns(true);
+        providers.Setup(item => item.GetRequired("qobuz"))
+            .Returns(Descriptor("qobuz", ProviderAccountRequirement.Required));
         var account = new ProviderAccountContext(
             accountId,
             "qobuz",
@@ -129,4 +131,79 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         accounts.VerifyAll();
         health.VerifyAll();
     }
+
+    [Fact]
+    public async Task Measure_AllowsAccountFreeStreamingWithoutInventingAnAccount()
+    {
+        var media = new ProviderMediaFormat("audio/flac", "flac", "flac");
+        var lease = new ProviderStreamLease(
+            "lease",
+            new Uri("https://media.example.test/apple"),
+            DateTimeOffset.UtcNow.AddMinutes(1),
+            supportsByteRanges: false,
+            supportsSeeking: false,
+            media,
+            ProviderStreamRetryBehavior.DoNotRetry,
+            (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent([1, 2, 3, 4])
+            }));
+        var capability = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
+        capability.Setup(item => item.GetStreamLeaseAsync(
+                It.Is<ProviderExecutionContext>(context => context.Account == null),
+                It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value == "apple-track")))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(lease));
+        IProviderStreamingCapability? registered = capability.Object;
+        var providers = new Mock<IProviderRegistry>(MockBehavior.Strict);
+        providers.Setup(item => item.TryGetCapability<IProviderStreamingCapability>(
+                "apple-download", ProviderCapabilityKind.Streaming, out registered))
+            .Returns(true);
+        providers.Setup(item => item.GetRequired("apple-download"))
+            .Returns(Descriptor("apple-download", ProviderAccountRequirement.None));
+        using var selector = new ProviderCtsTrackSelector(
+            Mock.Of<IDbContextFactory<AllstarrDbContext>>(MockBehavior.Strict));
+        var runner = new ProviderCtsDiagnosticRunner(
+            providers.Object,
+            Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
+            selector,
+            Mock.Of<IDurableProviderHealthObservationStore>(MockBehavior.Strict));
+        var actor = new ProviderActorContext(
+            Guid.CreateVersion7(),
+            ProviderActorKind.User,
+            Guid.CreateVersion7(),
+            new ProviderBackendPrincipal("jellyfin", "fixture", "principal"));
+
+        var result = await runner.MeasureAsync(
+            actor,
+            "apple-download",
+            null,
+            ProviderAudioQuality.Lossless,
+            "account-free-correlation",
+            "apple-track");
+
+        Assert.True(result.Succeeded);
+        Assert.Null(result.ProviderAccountId);
+        Assert.Equal(4, result.SampleBytes);
+        Assert.Equal(media, result.Media);
+        capability.VerifyAll();
+        providers.VerifyAll();
+    }
+
+    private static ProviderDescriptor Descriptor(
+        string providerId,
+        ProviderAccountRequirement requirement) => new(
+        providerId,
+        providerId,
+        "Fixture streaming provider.",
+        ProviderOrigin.BuiltIn,
+        "1",
+        "1",
+        [new ProviderCapabilityDescriptor(
+            ProviderCapabilityKind.Streaming,
+            ProviderCapabilitySupportState.Supported,
+            requirement,
+            "1",
+            ["getStreamLease"],
+            requirement == ProviderAccountRequirement.None ? [] : [ProviderAccountScope.User])],
+        new ProviderPermissionDescriptor());
 }

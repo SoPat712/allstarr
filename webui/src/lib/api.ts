@@ -424,7 +424,7 @@ export type ConnectivityResult = {
 };
 
 export type CtsMeasurement = {
-  providerAccountId: string;
+  providerAccountId?: string | null;
   providerId: string;
   health: string;
   latencyMs: number;
@@ -1329,7 +1329,7 @@ export const sources = {
       `/api/admin/providers/test/${encodeURIComponent(account.providerId)}${capability ? `/${encodeURIComponent(capability)}` : ""}?accountId=${encodeURIComponent(account.id)}`,
       { method: "POST" },
     ),
-  deepStream: (account: ProviderAccount, quality = 0) =>
+  deepStream: (providerId: string, providerAccountId?: string | null, quality = 0) =>
     json<ConnectivityResult & {
       clickToStreamMilliseconds?: number;
       firstByteMilliseconds?: number;
@@ -1341,8 +1341,8 @@ export const sources = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        providerId: account.providerId,
-        providerAccountId: account.id,
+        providerId,
+        providerAccountId,
         quality,
       }),
     }),

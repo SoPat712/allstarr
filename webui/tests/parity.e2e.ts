@@ -24,7 +24,7 @@ const schema = {
     },
     { id: "listenbrainz", name: "ListenBrainz", categories: ["scrobbling"] },
     {
-      id: "apple-download", name: "Apple Music - Gamdl", categories: ["metadata", "download"],
+      id: "apple-download", name: "Apple Music - Gamdl", categories: ["metadata", "streaming", "download"],
       connectionKind: "operator_managed",
       configSchema: [
         { key: "APPLE_DOWNLOAD_URL", label: "External provider URL", type: "url", valuePath: "appleDownload.baseUrl" },
@@ -1919,6 +1919,14 @@ test("Sources keep primary actions visible and report scoped degradation", async
     appleState = { ...appleState, state: "ready", ready: true, logged_in: true, login_state: "authenticated" };
     return route.fulfill({ contentType: "application/json", body: JSON.stringify(appleState) });
   });
+  let appleCtsRequest: unknown;
+  await page.route("**/api/admin/provider-diagnostics/deep-stream", async (route) => {
+    appleCtsRequest = route.request().postDataJSON();
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ succeeded: true, providerId: "apple-download", clickToStreamMilliseconds: 42 }),
+    });
+  });
   await page.route("**/api/admin/ui/schema", (route) => route.fulfill({
     status: 200,
     contentType: "application/json",
@@ -1936,6 +1944,9 @@ test("Sources keep primary actions visible and report scoped degradation", async
   await expect(disabledSource.locator(".operational-mobile-state")).toHaveText("Disabled");
   await page.getByRole("button", { name: /Apple Music - Gamdl/ }).click();
   await page.getByRole("tab", { name: "Configuration" }).click();
+  await page.getByRole("button", { name: "Measure CTS" }).click();
+  await expect(page.getByText("Apple Music - Gamdl click-to-stream measured.")).toBeVisible();
+  expect(appleCtsRequest).toEqual({ providerId: "apple-download", quality: 0 });
   await page.getByRole("button", { name: "Manage Apple Music - Gamdl" }).click();
   const appleManager = page.getByRole("dialog", { name: "Apple Music - Gamdl" });
   await appleManager.getByLabel("Apple ID").fill("tester@example.test");
