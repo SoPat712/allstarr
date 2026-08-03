@@ -55,6 +55,9 @@ public interface ISmartPlaylistService
 {
     Task<Guid> CreateGeneratedSetAsync(IntelligenceScope scope, Guid runId, string name,
         IReadOnlyList<RecommendationCandidate> candidates, CancellationToken cancellationToken = default);
+    Task<Guid> CreateGeneratedSetAsync(IntelligenceScope scope, string name,
+        IReadOnlyList<RecommendationCandidate> candidates, string idempotencyKey,
+        CancellationToken cancellationToken = default);
 }
 public sealed record GeneratedSetMaterializationRequest(IntelligenceScope Scope, Guid GeneratedSetId,
     IReadOnlyList<RecommendationCandidate> OrderedCandidates, string IdempotencyKey);

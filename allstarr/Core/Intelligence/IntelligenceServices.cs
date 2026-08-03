@@ -112,7 +112,27 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
                 { job.State = DurableJobState.Cancelled; job.CompletedAt = clock.UtcNow; }
             }
         }
-        var sets = await db.GeneratedSets.Where(x => runIds.Contains(x.RunId)).ToListAsync(cancellationToken); var setIds = sets.Select(x => x.Id).ToArray();
+        var sets = await db.GeneratedSets.Where(x => x.TenantId == scope.TenantId &&
+            x.OwnerUserId == scope.OwnerUserId && x.Protocol == scope.Protocol &&
+            x.BackendInstanceId == scope.BackendInstanceId && x.LibraryScopeId == scope.LibraryScopeId)
+            .ToListAsync(cancellationToken); var setIds = sets.Select(x => x.Id).ToArray();
+        if (setIds.Length > 0)
+        {
+            var setJobs = await db.Jobs.Where(job => job.TenantId == scope.TenantId &&
+                job.OwnerUserId == scope.OwnerUserId && job.LibraryScopeId == scope.LibraryScopeId &&
+                job.Type == "smart-playlist.materialize" &&
+                (job.State == DurableJobState.Pending || job.State == DurableJobState.RetryScheduled ||
+                 job.State == DurableJobState.Running)).ToListAsync(cancellationToken);
+            // ponytail: purge is rare; add explicit job lineage only if scoped set volume makes this material.
+            foreach (var job in setJobs.Where(job => setIds.Any(setId =>
+                         job.IdempotencyKey == $"generated-set:{setId:N}" ||
+                         job.IdempotencyKey.EndsWith($":materialize:{setId:N}", StringComparison.Ordinal))))
+            {
+                job.CancellationRequestedAt ??= clock.UtcNow; job.UpdatedAt = clock.UtcNow; job.Revision++;
+                if (job.State is DurableJobState.Pending or DurableJobState.RetryScheduled)
+                { job.State = DurableJobState.Cancelled; job.CompletedAt = clock.UtcNow; }
+            }
+        }
         db.GeneratedSetEntries.RemoveRange(db.GeneratedSetEntries.Where(x => setIds.Contains(x.GeneratedSetId)));
         db.GeneratedSets.RemoveRange(sets); db.RecommendationCandidates.RemoveRange(db.RecommendationCandidates.Where(x => runIds.Contains(x.RunId)));
         db.RecommendationRuns.RemoveRange(runs.Where(x => !runningJobIds.Contains(x.JobId))); db.ListeningProfiles.RemoveRange(ScopedProfiles(db, scope)); db.ListeningSignals.RemoveRange(ScopedSignals(db, scope));

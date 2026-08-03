@@ -657,7 +657,7 @@ namespace allstarr.Core.Storage.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");
 
-                    b.Property<Guid>("RunId")
+                    b.Property<Guid?>("RunId")
                         .HasColumnType("uuid");
 
                     b.Property<Guid?>("ScheduleId")
@@ -4398,8 +4398,7 @@ namespace allstarr.Core.Storage.Migrations
                         .WithMany()
                         .HasForeignKey("RunId", "TenantId", "OwnerUserId")
                         .HasPrincipalKey("Id", "TenantId", "OwnerUserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Cascade);
                 });
 
             modelBuilder.Entity("allstarr.Core.Intelligence.IntelligencePolicyRecord", b =>

@@ -153,6 +153,50 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AudioMusePreviewCreatesOnlyAnExactScopeGeneratedPlaylist()
+    {
+        _policy.Record = Policy();
+        _policy.Record.EnabledProvidersJson = "[\"audiomuse-ai\"]";
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var backendIdentityId = await db.BackendIdentities.Select(item => item.Id).SingleAsync();
+            db.LibraryTracks.AddRange(
+                LocalTrack(backendIdentityId, "song-2", "Second"),
+                LocalTrack(backendIdentityId, "song-1", "First"),
+                LocalTrack(backendIdentityId, "other-song", "Other", "other"));
+            await db.SaveChangesAsync();
+        }
+
+        var result = Assert.IsType<AcceptedResult>(await Controller().CreateAudioMuseGeneratedSet(new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            Name = "Evening sounds",
+            TrackIds = ["song-1", "song-2"],
+            IdempotencyKey = "sound-preview-1"
+        }, default));
+
+        Assert.Contains("creating", JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
+        Assert.Equal("Evening sounds", _smart.PreviewName);
+        Assert.Equal("sound-preview-1", _smart.IdempotencyKey);
+        var candidates = Assert.IsAssignableFrom<IReadOnlyList<RecommendationCandidate>>(_smart.Candidates);
+        Assert.Equal(["song-1", "song-2"], candidates.Select(item => item.TrackKey));
+        Assert.All(candidates, item => Assert.Equal("audiomuse-ai", item.Source));
+
+        var crossed = await Controller().CreateAudioMuseGeneratedSet(new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            Name = "Wrong library",
+            TrackIds = ["other-song"],
+            IdempotencyKey = "sound-preview-2"
+        }, default);
+        Assert.IsType<ConflictObjectResult>(crossed);
+    }
+
+    [Fact]
     public async Task HistoryRoutesPageCorrectAndDeleteOnlyTheExactScope()
     {
         var now = DateTimeOffset.UtcNow;
@@ -701,6 +745,26 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
         Artist = "Artist",
         Revision = 1
     };
+    private LibraryTrackRecord LocalTrack(Guid backendIdentityId, string id, string title,
+        string library = "music") => new()
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = _tenant,
+            OwnerUserId = _user,
+            BackendIdentityId = backendIdentityId,
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = library,
+            BackendItemId = id,
+            FilePath = $"/music/{id}.flac",
+            Title = title,
+            Artist = "Artist",
+            ProviderIdsJson = "{}",
+            IndexedAt = DateTimeOffset.UtcNow,
+            SourceModifiedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow,
+            Revision = 1
+        };
     public async Task DisposeAsync() => await _database.DisposeAsync();
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
     { public AllstarrDbContext CreateDbContext() => new(options); public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(CreateDbContext()); }
@@ -730,10 +794,19 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
     private sealed class FakeSmart : ISmartPlaylistService
     {
         public IReadOnlyList<RecommendationCandidate>? Candidates { get; private set; }
+        public string? PreviewName { get; private set; }
+        public string? IdempotencyKey { get; private set; }
         public Task<Guid> CreateGeneratedSetAsync(IntelligenceScope scope, Guid runId, string name,
             IReadOnlyList<RecommendationCandidate> candidates, CancellationToken cancellationToken = default)
         {
             Candidates = candidates;
+            return Task.FromResult(Guid.CreateVersion7());
+        }
+        public Task<Guid> CreateGeneratedSetAsync(IntelligenceScope scope, string name,
+            IReadOnlyList<RecommendationCandidate> candidates, string idempotencyKey,
+            CancellationToken cancellationToken = default)
+        {
+            PreviewName = name; Candidates = candidates; IdempotencyKey = idempotencyKey;
             return Task.FromResult(Guid.CreateVersion7());
         }
     }

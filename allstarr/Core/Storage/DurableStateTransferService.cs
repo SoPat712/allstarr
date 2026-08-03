@@ -1332,12 +1332,14 @@ public sealed class DurableStateTransferService
                 run.State == RecommendationRunState.Cancelled && job.State != DurableJobState.Cancelled && job.CancellationRequestedAt == null)
                 RejectIntelligenceArchive("a recommendation run is malformed or crosses its immutable policy, owner, library, or job scope");
         }
-        ValidateRecommendationChildren(runById, setById, providerAccounts, canonicalRecordings,
-            candidates, feedback, sets, entries);
+        ValidateRecommendationChildren(runById, setById, policyByScope, secretReferences,
+            providerAccounts, canonicalRecordings, candidates, feedback, sets, entries);
     }
 
     private static void ValidateRecommendationChildren(IReadOnlyDictionary<Guid, RecommendationRunRecord> runById,
         IReadOnlyDictionary<Guid, GeneratedSetRecord> setById,
+        IReadOnlyDictionary<(Guid, Guid, string, string, string), IntelligencePolicyRecord> policyByScope,
+        IReadOnlyCollection<SecretReferenceRecord> secretReferences,
         IReadOnlyCollection<ProviderAccountRecord> providerAccounts,
         IReadOnlyCollection<CanonicalRecordingRecord> canonicalRecordings,
         IReadOnlyCollection<RecommendationCandidateRecord> candidates,
@@ -1379,15 +1381,25 @@ public sealed class DurableStateTransferService
                 RejectIntelligenceArchive("recommendation feedback is malformed, duplicated, or crosses its candidate scope");
         }
         var runSets = new HashSet<Guid>(); foreach (var set in sets)
-            if (!runById.TryGetValue(set.RunId, out var run) || run.State != RecommendationRunState.Succeeded || !runSets.Add(set.RunId) ||
-                set.TenantId != run.TenantId || set.OwnerUserId != run.OwnerUserId || set.Protocol != run.Protocol ||
-                set.BackendInstanceId != run.BackendInstanceId || set.LibraryScopeId != run.LibraryScopeId || !IsRequiredText(set.Name, 200) ||
-                set.TargetCredentialReferenceId != run.TargetCredentialReferenceId || !Enum.IsDefined(set.MaterializationState) ||
-                set.ScheduleId != run.ScheduleId ||
+        {
+            var scopeKey = (set.TenantId, set.OwnerUserId, set.Protocol, set.BackendInstanceId, set.LibraryScopeId);
+            var fromRun = set.RunId is { } runId && runById.TryGetValue(runId, out var run) &&
+                run.State == RecommendationRunState.Succeeded && runSets.Add(runId) &&
+                set.TenantId == run.TenantId && set.OwnerUserId == run.OwnerUserId && set.Protocol == run.Protocol &&
+                set.BackendInstanceId == run.BackendInstanceId && set.LibraryScopeId == run.LibraryScopeId &&
+                set.TargetCredentialReferenceId == run.TargetCredentialReferenceId && set.ScheduleId == run.ScheduleId;
+            var fromPreview = set.RunId == null && set.ScheduleId == null &&
+                policyByScope.ContainsKey(scopeKey) &&
+                (set.Protocol == "jellyfin" && set.TargetCredentialReferenceId == null ||
+                 set.Protocol == "subsonic" && set.TargetCredentialReferenceId is { } credentialId &&
+                 secretReferences.Any(item => item.Id == credentialId && item.TenantId == set.TenantId &&
+                     item.RevokedAt == null));
+            if ((!fromRun && !fromPreview) || !IsRequiredText(set.Name, 200) || !Enum.IsDefined(set.MaterializationState) ||
                 set.CreatedAt == default || set.UpdatedAt < set.CreatedAt || set.Revision <= 0 ||
                 !IsOptionalText(set.BackendPlaylistId, 500) || !IsOptionalText(set.TargetRevision, 300) || !IsOptionalText(set.LastErrorCode, 100) ||
                 !ValidMaterializationLifecycle(set))
-                RejectIntelligenceArchive("a generated set is malformed, duplicated, or crosses its successful run scope");
+                RejectIntelligenceArchive("a generated set is malformed, duplicated, or crosses its run or preview scope");
+        }
         foreach (var group in entries.GroupBy(x => x.GeneratedSetId))
         {
             if (!setById.TryGetValue(group.Key, out var set) || !Contiguous(group.Select(x => x.Position)) || group.Select(x => x.TrackKey).Distinct(StringComparer.Ordinal).Count() != group.Count()) RejectIntelligenceArchive("generated set entry order, uniqueness, or lineage is invalid");

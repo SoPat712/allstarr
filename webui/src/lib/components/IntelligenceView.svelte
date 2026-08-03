@@ -30,7 +30,7 @@
   const scope = $derived<IntelligenceScope>({ protocol, backendInstanceId, libraryScopeId });
   const activeScope = $derived(loadedScope ?? scope);
   const visibleCandidates = $derived(data?.candidates.filter((item) => !item.exclusions.length) ?? []);
-  const audioMuseReady = $derived(data?.providers.some((item) => item.id === "audiomuse-ai" && item.available && item.state === "ready") ?? false);
+  const audioMuseReady = $derived(data?.providers.some((item) => item.id === "audiomuse-ai" && item.enabled && item.available && item.state === "ready") ?? false);
   const runState = $derived(data?.actions.latestRunState?.replace("retryscheduled", "retry scheduled"));
   const runStatus = $derived(runState === "succeeded" ? "Ready" : ["pending", "running", "retry scheduled"].includes(runState ?? "") ? "Refreshing" : runState);
   const credentialOptions = $derived(mediaTargets
@@ -214,7 +214,7 @@
         <IntelligenceSchedules scope={activeScope} schedules={data.schedules ?? []} policyEnabled={enabled} onChanged={refresh} />
       </div>
     {:else}
-      {#if audioMuseReady}<AudioMuseDiscovery scope={activeScope} songs={visibleCandidates} />{/if}
+      {#if audioMuseReady}<AudioMuseDiscovery scope={activeScope} songs={visibleCandidates} onCreated={refresh} />{/if}
       <div class="intelligence-grid">
         <section class="panel recommendations">
           <header><div><p class="eyebrow">For you</p><h3>Recommendations</h3></div><span>{visibleCandidates.length} tracks</span></header>

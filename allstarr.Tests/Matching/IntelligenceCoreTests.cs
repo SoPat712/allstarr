@@ -123,6 +123,31 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DirectPreviewCreatesOneIdempotentGeneratedSetWithoutAFakeRun()
+    {
+        await _policies.SetAsync(_scope, new(true, 30, ["play"], ["audiomuse-ai"]));
+        var smart = new SmartPlaylistService(_factory, _clock, _jobs);
+        RecommendationCandidate[] songs =
+        [
+            new("track-secret", 1, "audiomuse-ai", [new("audiomuse-preview", 1, "Selected preview.")],
+                new(LibraryTrackId: Guid.Parse("11111111-1111-1111-1111-111111111111"), BackendItemId: "track-secret")),
+            new("track-two", 1, "audiomuse-ai", [new("audiomuse-preview", 1, "Selected preview.")],
+                new(LibraryTrackId: Guid.Parse("22222222-2222-2222-2222-222222222222"), BackendItemId: "track-two"))
+        ];
+
+        var first = await smart.CreateGeneratedSetAsync(_scope, "Sound preview", songs, "preview-request");
+        var repeated = await smart.CreateGeneratedSetAsync(_scope, "Sound preview", songs, "preview-request");
+
+        Assert.Equal(first, repeated);
+        await using var db = await _factory.CreateDbContextAsync();
+        var set = Assert.Single(await db.GeneratedSets.ToListAsync());
+        Assert.Null(set.RunId);
+        Assert.Equal(["track-secret", "track-two"], await db.GeneratedSetEntries
+            .OrderBy(item => item.Position).Select(item => item.TrackKey).ToArrayAsync());
+        Assert.Single(await db.Jobs.Where(item => item.Type == "smart-playlist.materialize").ToListAsync());
+    }
+
+    [Fact]
     public async Task ScheduledRunAutomaticallyCreatesOneRepairableGeneratedSetJob()
     {
         var policy = await _policies.SetAsync(_scope, new(true, 30, ["play"], ["fixture"]));
@@ -210,6 +235,11 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         await new RecommendationSignalWriter(_factory, _clock).WriteAsync(_scope, "play", "track", 1, _clock.UtcNow);
         await new ListeningProfileService(_factory, _clock).BuildAsync(_scope);
         var pending = await new RecommendationRunService(_factory, _jobs, _clock).EnqueueAsync(_scope, [], 10, "purged-run");
+        var directSetId = await new SmartPlaylistService(_factory, _clock, _jobs)
+            .CreateGeneratedSetAsync(_scope, "Temporary preview",
+                [new("track-secret", 1, "audiomuse-ai", [new("preview", 1, "Preview.")],
+                    new(LibraryTrackId: Guid.Parse("11111111-1111-1111-1111-111111111111"), BackendItemId: "track-secret"))],
+                "purged-preview");
         var schedule = Schedule(policy.Id, "music");
         var childJobId = Guid.CreateVersion7();
         await using (var setup = await _factory.CreateDbContextAsync())
@@ -242,6 +272,10 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         Assert.Empty(await db.RecommendationRuns.ToListAsync());
         Assert.Equal(DurableJobState.Cancelled, (await db.Jobs.SingleAsync(x => x.Id == pending.JobId)).State);
         Assert.Equal(DurableJobState.Cancelled, (await db.Jobs.SingleAsync(x => x.Id == childJobId)).State);
+        Assert.Equal(DurableJobState.Cancelled, (await db.Jobs.SingleAsync(x =>
+            x.IdempotencyKey == $"generated-set:{directSetId:N}")).State);
+        Assert.Empty(await db.GeneratedSets.ToListAsync());
+        Assert.Empty(await db.GeneratedSetEntries.ToListAsync());
         Assert.False((await db.JobSchedules.SingleAsync()).Enabled);
         Assert.Null(await _jobs.ClaimNextAsync("purge-restart", ["recommendation.generate"]));
         await Assert.ThrowsAsync<InvalidOperationException>(() => new RecommendationRunService(_factory, _jobs, _clock).EnqueueAsync(_scope, [], 10, "disabled"));

@@ -551,6 +551,8 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
       body = { tracks: [{ trackId: "track-3", title: "Nearby Song", artist: "Sound Artist", album: "Sound Album", score: .92, explanation: "AudioMuse found a song with a similar sound." }] };
     if (url.pathname === "/api/admin/intelligence/audiomuse/fingerprint")
       body = { tracks: [{ trackId: "track-5", title: "Taste Song", artist: "Sound Artist", score: .9, explanation: "AudioMuse matched what you played most." }], periodDays: 90, completedListens: 42, seedCount: 8 };
+    if (url.pathname === "/api/admin/intelligence/audiomuse/generated-sets")
+      body = { id: "sound-playlist-1", state: "creating" };
     if (url.pathname === "/api/admin/intelligence/audiomuse/search")
       body = { mode: "text", tracks: [{ trackId: "track-4", title: "Quiet Light", artist: "Sound Artist", score: .88, explanation: "AudioMuse matched this song to your description." }] };
     if (url.pathname === "/api/admin/intelligence/audiomuse/clusters")
@@ -763,6 +765,20 @@ for (const viewport of viewports) {
         protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music", periodDays: 90,
       });
       await expect(soundDiscovery.getByText("Taste Song", { exact: true })).toBeVisible();
+      await soundDiscovery.getByLabel("Playlist name").fill("Evening sounds");
+      await soundDiscovery.getByRole("button", { name: "Create Jellyfin playlist" }).click();
+      const createDialog = page.getByRole("alertdialog", { name: "Create Evening sounds in Jellyfin?" });
+      await expect(createDialog).toContainText("Allstarr will create Evening sounds in Jellyfin with 1 song.");
+      await createDialog.getByRole("button", { name: "Do not create playlist" }).click();
+      await expect(createDialog).toBeHidden();
+      await soundDiscovery.getByRole("button", { name: "Create Jellyfin playlist" }).click();
+      const createRequest = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/audiomuse/generated-sets"));
+      await createDialog.getByRole("button", { name: "Create Jellyfin playlist" }).click();
+      expect((await createRequest).postDataJSON()).toMatchObject({
+        protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music",
+        name: "Evening sounds", trackIds: ["track-5"],
+      });
+      await expect(soundDiscovery.getByText("Allstarr is creating Evening sounds in Jellyfin.", { exact: true })).toBeVisible();
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
         await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-discover.png`, fullPage: true });
       await expect.poll(() => page.evaluate(() =>

@@ -131,6 +131,53 @@ public sealed partial class IntelligenceController
         });
     }
 
+    [HttpPost("audiomuse/generated-sets")]
+    public async Task<IActionResult> CreateAudioMuseGeneratedSet(
+        [FromBody] AudioMuseGeneratedSetRequest request, CancellationToken cancellationToken)
+    {
+        if (!TrySessionScope(request, out var scope, out var error)) return error!;
+        if (!await OwnsAudioMuseScope(scope, cancellationToken)) return NotFound();
+        if (request.TrackIds.Count is < 1 or > 200 || request.TrackIds.Any(item =>
+                string.IsNullOrWhiteSpace(item) || item.Length > 500 || item != item.Trim() || item.Any(char.IsControl)) ||
+            request.TrackIds.Distinct(StringComparer.Ordinal).Count() != request.TrackIds.Count)
+            return BadRequest(new { error = "audiomuse_request_invalid" });
+        var policy = await policies.GetAsync(scope, cancellationToken);
+        if (policy?.Enabled != true || !ParseArray(policy.EnabledProvidersJson).Contains("audiomuse-ai"))
+            return Conflict(new { error = "audiomuse_not_selected" });
+
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        var local = await db.LibraryTracks.AsNoTracking().Where(item =>
+                item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+                item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
+                item.LibraryScopeId == scope.LibraryScopeId && request.TrackIds.Contains(item.BackendItemId))
+            .ToDictionaryAsync(item => item.BackendItemId, StringComparer.Ordinal, cancellationToken);
+        if (local.Count != request.TrackIds.Count)
+            return Conflict(new { error = "audiomuse_preview_stale" });
+        var candidates = request.TrackIds.Select(trackId =>
+        {
+            var track = local[trackId];
+            return new RecommendationCandidate(trackId, 1, "audiomuse-ai",
+                [new("audiomuse-preview", 1, "Selected from your sound discovery preview.")],
+                new("audiomuse-ai", Title: track.Title, Artist: track.Artist, Album: track.Album,
+                    LibraryTrackId: track.Id, BackendItemId: track.BackendItemId))
+            { CanonicalRecordingId = track.CanonicalRecordingId, SourceRevision = "audiomuse-preview-v1" };
+        }).ToArray();
+        try
+        {
+            var id = await smartPlaylists.CreateGeneratedSetAsync(scope, request.Name, candidates,
+                request.IdempotencyKey, cancellationToken);
+            return Accepted(new { id, state = "creating" });
+        }
+        catch (ArgumentException exception)
+        {
+            return BadRequest(new { error = "generated_playlist_invalid", message = exception.Message });
+        }
+        catch (InvalidOperationException)
+        {
+            return Conflict(new { error = "intelligence_not_ready" });
+        }
+    }
+
     [HttpPost("audiomuse/search")]
     public async Task<IActionResult> SearchAudioMuse(
         [FromBody] AudioMuseSearchRequest request, CancellationToken cancellationToken)
@@ -267,6 +314,13 @@ public sealed class AudioMuseFingerprintRequest : IntelligenceScopeRequest
 {
     public int PeriodDays { get; set; } = 90;
     public int Limit { get; set; } = 25;
+}
+
+public sealed class AudioMuseGeneratedSetRequest : IntelligenceScopeRequest
+{
+    public string Name { get; set; } = "";
+    public List<string> TrackIds { get; set; } = [];
+    public string IdempotencyKey { get; set; } = "";
 }
 
 public sealed class AudioMuseSearchRequest : IntelligenceScopeRequest

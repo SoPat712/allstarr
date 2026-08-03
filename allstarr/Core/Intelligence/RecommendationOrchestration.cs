@@ -1,4 +1,6 @@
 using System.Data;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
@@ -61,7 +63,7 @@ public sealed class SmartPlaylistService(IDbContextFactory<AllstarrDbContext> fa
     public async Task<Guid> CreateGeneratedSetAsync(IntelligenceScope scope, Guid runId, string name,
         IReadOnlyList<RecommendationCandidate> candidates, CancellationToken cancellationToken = default)
     {
-        IntelligencePolicyService.ValidateScope(scope); name = name?.Trim() ?? ""; if (name.Length is < 1 or > 200) throw new ArgumentException("Generated set name is invalid.");
+        IntelligencePolicyService.ValidateScope(scope); name = ValidName(name);
         candidates = candidates.Where(item => item.Exclusions.Count == 0).ToArray();
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var existing = await db.GeneratedSets.AsNoTracking().SingleOrDefaultAsync(x => x.RunId == runId && x.TenantId == scope.TenantId && x.OwnerUserId == scope.OwnerUserId, cancellationToken);
@@ -84,13 +86,76 @@ public sealed class SmartPlaylistService(IDbContextFactory<AllstarrDbContext> fa
             CreatedAt = clock.UtcNow,
             UpdatedAt = clock.UtcNow,
             Revision = 1
-        }; db.GeneratedSets.Add(set);
+        }; db.GeneratedSets.Add(set); AddEntries(db, set, candidates);
+        await db.SaveChangesAsync(cancellationToken); await EnqueueMaterialization(set, cancellationToken); return set.Id;
+    }
+    public async Task<Guid> CreateGeneratedSetAsync(IntelligenceScope scope, string name,
+        IReadOnlyList<RecommendationCandidate> candidates, string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        IntelligencePolicyService.ValidateScope(scope); name = ValidName(name);
+        if (candidates.Count is < 1 or > 200 ||
+            candidates.Select(item => item.TrackKey).Distinct(StringComparer.Ordinal).Count() != candidates.Count)
+            throw new ArgumentException("Generated playlist songs are invalid.");
+        idempotencyKey = idempotencyKey?.Trim() ?? "";
+        if (idempotencyKey.Length is < 1 or > 300 || idempotencyKey.Any(char.IsControl))
+            throw new ArgumentException("Generated playlist request key is invalid.");
+        var setId = StableSetId(scope, idempotencyKey);
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        var existing = await db.GeneratedSets.AsNoTracking().SingleOrDefaultAsync(item => item.Id == setId,
+            cancellationToken);
+        if (existing != null)
+        {
+            var existingKeys = await db.GeneratedSetEntries.AsNoTracking()
+                .Where(item => item.GeneratedSetId == setId).OrderBy(item => item.Position)
+                .Select(item => item.TrackKey).ToArrayAsync(cancellationToken);
+            if (existing.TenantId != scope.TenantId || existing.OwnerUserId != scope.OwnerUserId ||
+                existing.Protocol != scope.Protocol || existing.BackendInstanceId != scope.BackendInstanceId ||
+                existing.LibraryScopeId != scope.LibraryScopeId || existing.Name != name ||
+                !existingKeys.SequenceEqual(candidates.Select(item => item.TrackKey), StringComparer.Ordinal))
+                throw new ArgumentException("Generated playlist request key was already used.");
+            await EnqueueMaterialization(existing, cancellationToken); return existing.Id;
+        }
+        var policy = await IntelligencePolicyService.Query(db, scope).AsNoTracking()
+            .SingleOrDefaultAsync(cancellationToken);
+        if (policy?.Enabled != true) throw new InvalidOperationException("Intelligence is not enabled for this exact scope.");
+        var set = new GeneratedSetRecord
+        {
+            Id = setId,
+            TenantId = scope.TenantId,
+            OwnerUserId = scope.OwnerUserId,
+            Protocol = scope.Protocol,
+            BackendInstanceId = scope.BackendInstanceId,
+            LibraryScopeId = scope.LibraryScopeId,
+            Name = name,
+            TargetCredentialReferenceId = policy.TargetCredentialReferenceId,
+            MaterializationState = GeneratedSetMaterializationState.Pending,
+            CreatedAt = clock.UtcNow,
+            UpdatedAt = clock.UtcNow,
+            Revision = 1
+        };
+        db.GeneratedSets.Add(set); AddEntries(db, set, candidates);
+        await db.SaveChangesAsync(cancellationToken); await EnqueueMaterialization(set, cancellationToken); return set.Id;
+    }
+    private static string ValidName(string? value)
+    {
+        var name = value?.Trim() ?? "";
+        if (name.Length is < 1 or > 200 || name.Any(char.IsControl))
+            throw new ArgumentException("Generated set name is invalid.");
+        return name;
+    }
+    private static Guid StableSetId(IntelligenceScope scope, string idempotencyKey) => new(
+        SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"{scope.TenantId:N}\u001f{scope.OwnerUserId:N}\u001f{scope.Protocol}\u001f{scope.BackendInstanceId}\u001f{scope.LibraryScopeId}\u001f{idempotencyKey}"))[..16]);
+    private static void AddEntries(AllstarrDbContext db, GeneratedSetRecord set,
+        IReadOnlyList<RecommendationCandidate> candidates)
+    {
         for (var i = 0; i < candidates.Count; i++) db.GeneratedSetEntries.Add(new()
         {
             Id = Guid.CreateVersion7(),
             GeneratedSetId = set.Id,
-            TenantId = scope.TenantId,
-            OwnerUserId = scope.OwnerUserId,
+            TenantId = set.TenantId,
+            OwnerUserId = set.OwnerUserId,
             Position = i,
             TrackKey = candidates[i].TrackKey,
             Score = candidates[i].Score,
@@ -98,7 +163,6 @@ public sealed class SmartPlaylistService(IDbContextFactory<AllstarrDbContext> fa
             ExplanationJson = JsonSerializer.Serialize(candidates[i].Signals),
             IdentityJson = JsonSerializer.Serialize(candidates[i].Identity)
         });
-        await db.SaveChangesAsync(cancellationToken); await EnqueueMaterialization(set, cancellationToken); return set.Id;
     }
     private Task<DurableJobEnqueueResult> EnqueueMaterialization(GeneratedSetRecord set, CancellationToken token) =>
         jobs.EnqueueAsync(new DurableJobEnqueueRequest<GeneratedSetMaterializationPayload>(

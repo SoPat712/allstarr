@@ -148,7 +148,7 @@ public sealed class RecommendationFeedbackRecord
 public sealed class GeneratedSetRecord
 {
     public Guid Id { get; set; }
-    public Guid RunId { get; set; }
+    public Guid? RunId { get; set; }
     public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public string Protocol { get; set; } = "";

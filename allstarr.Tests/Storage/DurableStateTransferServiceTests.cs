@@ -68,6 +68,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         var playbackJobId = Guid.CreateVersion7();
         var recommendationRunId = Guid.CreateVersion7();
         var generatedSetId = Guid.CreateVersion7();
+        var directGeneratedSetId = Guid.CreateVersion7();
         var routeDecisionId = Guid.CreateVersion7();
         var now = DateTimeOffset.UtcNow;
         var stableHash = HashExternalId("phase4-transfer");
@@ -663,6 +664,34 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             ExplanationJson = signalsJson,
             IdentityJson = identityJson
         });
+        context.GeneratedSets.Add(new GeneratedSetRecord
+        {
+            Id = directGeneratedSetId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            Protocol = "jellyfin",
+            BackendInstanceId = "transfer-backend",
+            LibraryScopeId = "music",
+            Name = "Sound preview",
+            MaterializationState = GeneratedSetMaterializationState.Pending,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Revision = 1
+        });
+        context.GeneratedSetEntries.Add(new GeneratedSetEntryRecord
+        {
+            Id = Guid.CreateVersion7(),
+            GeneratedSetId = directGeneratedSetId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            Position = 0,
+            TrackKey = "local-42",
+            Score = .9,
+            Source = "audiomuse-ai",
+            ExplanationJson = JsonSerializer.Serialize(new[]
+                { new RecommendationSignal("audiomuse-preview", 1, "Selected preview.") }),
+            IdentityJson = identityJson
+        });
         context.ExternalMetadataSnapshots.Add(new ExternalMetadataSnapshotRecord
         {
             Id = externalSnapshotId,
@@ -973,8 +1002,10 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         Assert.Equal(RecommendationRunState.Succeeded, (await target.RecommendationRuns.SingleAsync()).State);
         Assert.Contains("shared-artist", (await target.RecommendationCandidates.SingleAsync()).SignalsJson, StringComparison.Ordinal);
         Assert.Equal("great-fit", (await target.RecommendationFeedback.SingleAsync()).ReasonCode);
-        Assert.Equal("Transfer mix", (await target.GeneratedSets.SingleAsync()).Name);
-        Assert.Equal("local-rules", (await target.GeneratedSetEntries.SingleAsync()).Source);
+        Assert.Equal(["Sound preview", "Transfer mix"], await target.GeneratedSets
+            .OrderBy(item => item.Name).Select(item => item.Name).ToArrayAsync());
+        Assert.Equal(["audiomuse-ai", "local-rules"], await target.GeneratedSetEntries
+            .OrderBy(item => item.Source).Select(item => item.Source).ToArrayAsync());
         var secret = await target.SecretVersions.SingleAsync();
         Assert.Equal("external-key-1", secret.KeyId);
         Assert.Equal([9, 8, 7, 6], secret.Ciphertext);

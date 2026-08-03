@@ -1,5 +1,6 @@
 <script lang="ts">
   import SelectField from "$lib/components/SelectField.svelte";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import {
     intelligence,
     type AudioMuseAnalysis,
@@ -13,9 +14,11 @@
   let {
     scope,
     songs,
+    onCreated = () => {},
   }: {
     scope: IntelligenceScope;
     songs: IntelligenceState["candidates"];
+    onCreated?: () => void | Promise<void>;
   } = $props();
 
   let mode = $state("similar");
@@ -32,6 +35,10 @@
   let clusters = $state<AudioMuseCluster[]>([]);
   let map = $state<AudioMuseMapPage | null>(null);
   let analysis = $state<AudioMuseAnalysis | null>(null);
+  let playlistName = $state("Sound discoveries");
+  let createOpen = $state(false);
+  let creationKey = $state("");
+  let createdMessage = $state("");
 
   const serverName = $derived(scope.protocol === "jellyfin" ? "Jellyfin" : scope.protocol === "subsonic" ? "Subsonic" : "your media server");
   const songOptions = $derived.by(() => {
@@ -39,9 +46,12 @@
     return songs.filter((song) => song.trackKey && !seen.has(song.trackKey) && seen.add(song.trackKey))
       .map((song) => ({ value: song.trackKey, label: `${song.title || "Unknown song"}${song.artist ? ` — ${song.artist}` : ""}` }));
   });
-  const resultCount = $derived(map?.items.length ?? (clusters.length
-    ? clusters.reduce((count, group) => count + group.tracks.length, 0)
-    : results.length));
+  const resultSongs = $derived.by(() => {
+    const source = map?.items ?? (clusters.length ? clusters.flatMap((group) => group.tracks) : results);
+    const seen = new Set<string>();
+    return source.filter((song) => song.trackId && !seen.has(song.trackId) && seen.add(song.trackId));
+  });
+  const resultCount = $derived(resultSongs.length);
 
   $effect(() => {
     if (!songOptions.length) return;
@@ -60,6 +70,9 @@
     const code = cause instanceof Error ? cause.message : "";
     if (code.includes("operation_unavailable")) return "AudioMuse does not support that choice yet.";
     if (code.includes("reconnect_or_scope_required")) return "Reconnect AudioMuse to this library and try again.";
+    if (code.includes("preview_stale")) return "These songs changed. Find songs again before creating the playlist.";
+    if (code.includes("not_selected")) return "Turn on AudioMuse for this library before creating the playlist.";
+    if (code.includes("generated_playlist_invalid")) return "Check the playlist name and songs, then try again.";
     if (code.includes("request_invalid")) return "Check your song choices and try again.";
     return "AudioMuse could not complete this search. Try again in a moment.";
   }
@@ -69,6 +82,7 @@
     results = [];
     clusters = [];
     map = null;
+    createdMessage = "";
   }
 
   async function discover(name: string, title: string, operation: () => Promise<AudioMuseTrack[]>) {
@@ -135,6 +149,28 @@
     }
   }
 
+  function confirmCreation() {
+    creationKey = crypto.randomUUID();
+    createOpen = true;
+  }
+
+  async function createPlaylist() {
+    if (action || !resultSongs.length) return;
+    action = "create";
+    error = "";
+    try {
+      await intelligence.createAudioMusePlaylist(scope, playlistName.trim(),
+        resultSongs.map((song) => song.trackId), creationKey);
+      createOpen = false;
+      createdMessage = `Allstarr is creating ${playlistName.trim()} in ${serverName}.`;
+      await onCreated();
+    } catch (cause) {
+      error = message(cause);
+    } finally {
+      action = "";
+    }
+  }
+
   function analysisLabel(value: AudioMuseAnalysis) {
     if (value.state === "completed") return "Sound scan complete";
     if (value.state === "failed") return "Sound scan needs attention";
@@ -148,7 +184,7 @@
     <div>
       <p class="eyebrow">AudioMuse</p>
       <h3>Explore by sound</h3>
-      <p>Find songs already in this library. These results are only a preview: Allstarr will not create or change a {serverName} playlist.</p>
+      <p>Find songs already in this library. Allstarr will not create or change a {serverName} playlist unless you confirm below.</p>
     </div>
     <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void startAnalysis()}>
       {action === "analysis" ? "Starting…" : "Scan library sounds"}
@@ -222,12 +258,27 @@
       {:else if results.length}
         <ol>{#each results as song, index}<li><span>{index + 1}</span><div><strong>{song.title || "Unknown song"}</strong><small>{song.artist || "Unknown artist"}{song.album ? ` · ${song.album}` : ""}</small>{#if song.explanation}<small>{song.explanation}</small>{/if}</div></li>{/each}</ol>
       {:else if !action}<div class="compact-empty"><strong>No matching songs</strong><p>Try a different song or description.</p></div>{/if}
+      {#if resultSongs.length}
+        <form class="create-form" onsubmit={(event) => { event.preventDefault(); confirmCreation(); }}>
+          <label class="field grow"><span>Playlist name</span><input bind:value={playlistName} maxlength="200" required /></label>
+          <p>Allstarr will create <strong>{playlistName.trim() || "this playlist"}</strong> in {serverName} with {resultCount} {resultCount === 1 ? "song" : "songs"}.</p>
+          <button class="button-primary" type="submit" disabled={Boolean(action)}>{`Create ${serverName} playlist`}</button>
+        </form>
+      {/if}
+      {#if createdMessage}<p class="notice-success" role="status">{createdMessage}</p>{/if}
     </section>
   {/if}
 </section>
 
+<ConfirmDialog bind:open={createOpen}
+  title={`Create ${playlistName.trim() || "this playlist"} in ${serverName}?`}
+  description={`Allstarr will create ${playlistName.trim() || "this playlist"} in ${serverName} with ${resultCount} ${resultCount === 1 ? "song" : "songs"}.`}
+  confirmLabel={action === "create" ? "Creating…" : `Create ${serverName} playlist`}
+  cancelLabel="Do not create playlist" confirmClass="button-primary" disabled={Boolean(action)}
+  onConfirm={createPlaylist} />
+
 <style>
-  .sound-discovery{display:grid;gap:1rem;padding:1.15rem}.sound-discovery>header,.sound-results>header{display:flex;align-items:start;justify-content:space-between;gap:1rem}.sound-discovery h3{margin:.2rem 0}.sound-discovery>header p:last-child{max-width:48rem;margin:0;color:var(--color-ink-muted)}.scan-status{display:grid;grid-template-columns:minmax(0,1fr) minmax(12rem,.5fr);align-items:center;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.scan-status small,.sound-results small{display:block;color:var(--color-ink-muted)}.scan-status progress{width:100%;accent-color:var(--color-signal)}.sound-controls{display:grid;grid-template-columns:minmax(13rem,.4fr) minmax(0,1.6fr);align-items:end;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.sound-form{display:flex;align-items:end;gap:.75rem}.sound-form .grow{flex:1}.library-actions{display:flex;gap:.75rem}.sound-results{display:grid;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}.sound-results h4,.sound-results h5{margin:0}.sound-results ol{display:grid;margin:0;padding:0;list-style:none}.sound-results li{display:grid;grid-template-columns:2rem minmax(0,1fr);gap:.5rem;border-top:1px solid var(--color-edge);padding:.65rem 0}.sound-results li>span{color:var(--color-ink-muted);font-variant-numeric:tabular-nums}.sound-group{display:grid;gap:.5rem}.sound-group+ .sound-group{margin-top:.5rem}
-  @media(max-width:900px){.sound-controls{grid-template-columns:1fr}.sound-form{flex-wrap:wrap}.sound-form .grow{min-width:14rem}}
-  @media(max-width:620px){.sound-discovery>header,.sound-form,.library-actions{align-items:stretch;flex-direction:column}.sound-discovery>header>button,.sound-form>button,.library-actions>button{width:100%}.scan-status{grid-template-columns:1fr}.sound-form .grow{min-width:0}}
+  .sound-discovery{display:grid;gap:1rem;padding:1.15rem}.sound-discovery>header,.sound-results>header{display:flex;align-items:start;justify-content:space-between;gap:1rem}.sound-discovery h3{margin:.2rem 0}.sound-discovery>header p:last-child{max-width:48rem;margin:0;color:var(--color-ink-muted)}.scan-status{display:grid;grid-template-columns:minmax(0,1fr) minmax(12rem,.5fr);align-items:center;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.scan-status small,.sound-results small{display:block;color:var(--color-ink-muted)}.scan-status progress{width:100%;accent-color:var(--color-signal)}.sound-controls{display:grid;grid-template-columns:minmax(13rem,.4fr) minmax(0,1.6fr);align-items:end;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.sound-form{display:flex;align-items:end;gap:.75rem}.sound-form .grow{flex:1}.library-actions{display:flex;gap:.75rem}.sound-results{display:grid;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}.sound-results h4,.sound-results h5{margin:0}.sound-results ol{display:grid;margin:0;padding:0;list-style:none}.sound-results li{display:grid;grid-template-columns:2rem minmax(0,1fr);gap:.5rem;border-top:1px solid var(--color-edge);padding:.65rem 0}.sound-results li>span{color:var(--color-ink-muted);font-variant-numeric:tabular-nums}.sound-group{display:grid;gap:.5rem}.sound-group+ .sound-group{margin-top:.5rem}.create-form{display:grid;grid-template-columns:minmax(12rem,.7fr) minmax(14rem,1fr) auto;align-items:end;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}.create-form p{margin:0;color:var(--color-ink-muted)}
+  @media(max-width:900px){.sound-controls,.create-form{grid-template-columns:1fr}.sound-form{flex-wrap:wrap}.sound-form .grow{min-width:14rem}}
+  @media(max-width:620px){.sound-discovery>header,.sound-form,.library-actions{align-items:stretch;flex-direction:column}.sound-discovery>header>button,.sound-form>button,.library-actions>button,.create-form>button{width:100%}.scan-status{grid-template-columns:1fr}.sound-form .grow{min-width:0}}
 </style>
