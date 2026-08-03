@@ -192,6 +192,27 @@ public sealed class ProviderCapabilityContractTests
     }
 
     [Fact]
+    public void PlaylistMutationReceipt_IsCompactSafeAndProviderOwned()
+    {
+        var receipt = new ProviderPlaylistMutationReceipt(
+            new ProviderExternalResourceId("spotify", ProviderResourceKind.Playlist, "playlist-1"),
+            "revision-2",
+            2,
+            applied: true,
+            ["Playlist artwork was not changed."]);
+
+        Assert.True(receipt.Applied);
+        Assert.Equal("revision-2", receipt.Revision);
+        Assert.Equal(2, receipt.TrackCount);
+        Assert.Equal("Playlist artwork was not changed.", Assert.Single(receipt.Warnings));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ProviderPlaylistMutationReceipt(
+            receipt.PlaylistId,
+            null,
+            -1,
+            applied: false));
+    }
+
+    [Fact]
     public void LyricsContract_SeparatesAvailabilityFromContentAndUsesCanonicalIdentity()
     {
         var recordingId = Guid.CreateVersion7();

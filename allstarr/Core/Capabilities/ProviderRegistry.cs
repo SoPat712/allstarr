@@ -277,7 +277,8 @@ public static class ProviderManifestValidator
             },
             [ProviderCapabilityKind.Playlist] = new HashSet<string>(StringComparer.Ordinal)
             {
-                "getUserPlaylists", "getPlaylistTracks", "searchPlaylists", "resolveArtwork"
+                "getUserPlaylists", "getPlaylistTracks", "searchPlaylists", "resolveArtwork",
+                "mutatePlaylist"
             },
             [ProviderCapabilityKind.Lyrics] = new HashSet<string>(StringComparer.Ordinal)
             {
@@ -364,7 +365,7 @@ public static class ProviderManifestValidator
 
         foreach (var capability in descriptor.Capabilities)
         {
-            ValidateCapability(descriptor.Id, capability);
+            ValidateCapability(descriptor.Id, descriptor.Origin, capability);
         }
 
         var hasHealthHooks = descriptor.Capabilities.Any(item =>
@@ -419,7 +420,10 @@ public static class ProviderManifestValidator
         }
     }
 
-    private static void ValidateCapability(string providerId, ProviderCapabilityDescriptor descriptor)
+    private static void ValidateCapability(
+        string providerId,
+        ProviderOrigin origin,
+        ProviderCapabilityDescriptor descriptor)
     {
         if (descriptor.Capability == ProviderCapabilityKind.Playlist &&
             descriptor.AccountRequirement != ProviderAccountRequirement.Required)
@@ -434,6 +438,13 @@ public static class ProviderManifestValidator
         {
             throw new InvalidOperationException(
                 $"Provider '{providerId}' declares hook '{unexpected}' for the wrong capability.");
+        }
+
+        if (origin != ProviderOrigin.BuiltIn &&
+            descriptor.Hooks.Contains("mutatePlaylist", StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Provider '{providerId}' cannot declare the host-only playlist mutation hook.");
         }
 
         if (descriptor.HasUsableImplementation && descriptor.Hooks.Count == 0)

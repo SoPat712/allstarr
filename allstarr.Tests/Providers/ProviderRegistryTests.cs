@@ -173,6 +173,29 @@ public sealed class ProviderRegistryTests
             ProviderManifestValidator.Validate(descriptor));
     }
 
+    [Fact]
+    public void ExtensionPlaylistManifest_CannotDeclareHostOnlyMutationHook()
+    {
+        var descriptor = BaseDescriptor(
+            "playlist-extension",
+            origin: ProviderOrigin.Extension,
+            entryPoint: "index.js",
+            capabilities:
+            [
+                new ProviderCapabilityDescriptor(
+                    ProviderCapabilityKind.Playlist,
+                    ProviderCapabilitySupportState.Supported,
+                    ProviderAccountRequirement.Required,
+                    compatibilityVersion: "1.0",
+                    hooks: ["getUserPlaylists", "getPlaylistTracks", "mutatePlaylist"],
+                    allowedAccountScopes: [ProviderAccountScope.User])
+            ]);
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            ProviderManifestValidator.Validate(descriptor));
+        Assert.Contains("host-only", exception.Message, StringComparison.Ordinal);
+    }
+
     private static ProviderRegistration Registration(
         string id,
         ProviderCapabilitySupportState state = ProviderCapabilitySupportState.Supported,

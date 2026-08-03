@@ -273,6 +273,79 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task Mutation_creates_and_writes_every_track_in_order_across_provider_batches()
+    {
+        var handler = new SpotifyFakeHandler();
+        var adapter = new SpotifyPlaylistCapabilityAdapter(
+            new HttpClient(handler),
+            new FakeSecretAccessor("cookie"));
+        var trackIds = Enumerable.Range(0, 102)
+            .Select(index => new ProviderExternalResourceId(
+                "spotify",
+                ProviderResourceKind.Track,
+                index == 101 ? "track-50" : $"track-{index}"))
+            .ToArray();
+
+        var outcome = await adapter.MutatePlaylistAsync(
+            Context(),
+            new ProviderPlaylistMutationRequest(
+                "spotify",
+                "Road trip",
+                trackIds,
+                ProviderPlaylistConflictBehavior.Reconcile,
+                description: "Drive"));
+
+        Assert.True(outcome.IsSuccess, outcome.Error?.ToString());
+        var receipt = outcome.RequireValue();
+        Assert.True(receipt.Applied);
+        Assert.Equal("created-playlist", receipt.PlaylistId.Value);
+        Assert.Equal("snapshot-3", receipt.Revision);
+        Assert.Equal(102, receipt.TrackCount);
+        Assert.Equal([
+            "POST /v1/me/playlists",
+            "PUT /v1/playlists/created-playlist/items",
+            "POST /v1/playlists/created-playlist/items"
+        ], handler.MutationRequests);
+        var written = handler.MutationBodies.Skip(1).SelectMany(body =>
+        {
+            using var document = JsonDocument.Parse(body);
+            return document.RootElement.GetProperty("uris").EnumerateArray()
+                .Select(item => item.GetString()).ToArray();
+        }).ToArray();
+        Assert.Equal(trackIds.Select(item => $"spotify:track:{item.Value}"), written);
+        Assert.All(handler.ApiAuthorizationHeaders, value =>
+            Assert.Equal("Bearer account-access-token", value));
+    }
+
+    [Fact]
+    public async Task Mutation_returns_no_op_when_revision_metadata_and_duplicate_order_match()
+    {
+        var handler = new SpotifyFakeHandler { PlaylistTotalCount = 2 };
+        var adapter = new SpotifyPlaylistCapabilityAdapter(
+            new HttpClient(handler),
+            new FakeSecretAccessor("cookie"));
+
+        var outcome = await adapter.MutatePlaylistAsync(
+            Context(),
+            new ProviderPlaylistMutationRequest(
+                "spotify",
+                "Road Mix",
+                [
+                    new("spotify", ProviderResourceKind.Track, "track-a"),
+                    new("spotify", ProviderResourceKind.Track, "track-a")
+                ],
+                ProviderPlaylistConflictBehavior.FailIfChanged,
+                new("spotify", ProviderResourceKind.Playlist, "playlist-opaque"),
+                "snapshot-9",
+                "Description"));
+
+        Assert.True(outcome.IsSuccess, outcome.Error?.ToString());
+        Assert.False(outcome.RequireValue().Applied);
+        Assert.Equal("snapshot-9", outcome.RequireValue().Revision);
+        Assert.Empty(handler.MutationRequests);
+    }
+
+    [Fact]
     public void Registration_activates_only_the_operational_typed_playlist_capability()
     {
         var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(new SpotifyFakeHandler()), new FakeSecretAccessor("cookie"));
@@ -282,6 +355,7 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
 
         Assert.Equal(ProviderCapabilitySupportState.Supported, playlist.SupportState);
         Assert.Equal(ProviderAccountRequirement.Required, playlist.AccountRequirement);
+        Assert.Contains("mutatePlaylist", playlist.Hooks);
         Assert.Same(adapter, validated.Implementations.Single());
         Assert.DoesNotContain(validated.Descriptor.Capabilities,
             capability => capability.Capability is ProviderCapabilityKind.Streaming or ProviderCapabilityKind.Download);
@@ -348,7 +422,10 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         public bool ReturnMalformedTrack { get; set; }
         public bool TokenIsAnonymous { get; set; }
         public long? TokenExpirationTimestampMs { get; set; }
+        public int PlaylistTotalCount { get; set; } = 8;
         public List<RequestProfile> WebPlayerProfiles { get; } = [];
+        public List<string> MutationRequests { get; } = [];
+        public List<string> MutationBodies { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -389,6 +466,20 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
 
             ApiAuthorizationHeaders.Add(request.Headers.Authorization!.ToString());
             ApiPaths.Add($"{request.RequestUri.Scheme}://{request.RequestUri.Host}{request.RequestUri.AbsolutePath}");
+            if (request.RequestUri.Host == "api.spotify.com")
+            {
+                MutationRequests.Add($"{request.Method} {request.RequestUri.AbsolutePath}");
+                MutationBodies.Add(request.Content!.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult());
+                var snapshot = $"snapshot-{MutationRequests.Count}";
+                object responseBody = request.RequestUri.AbsolutePath == "/v1/me/playlists"
+                    ? new { id = "created-playlist", snapshot_id = snapshot }
+                    : new { snapshot_id = snapshot };
+                return Task.FromResult(Json(
+                    request.RequestUri.AbsolutePath == "/v1/me/playlists"
+                        ? HttpStatusCode.Created
+                        : HttpStatusCode.OK,
+                    responseBody));
+            }
             if (ApiStatus != null)
             {
                 var failure = Json(ApiStatus.Value, new { error = "upstream-secret-body" });
@@ -541,7 +632,7 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
                     revisionId = "snapshot-9",
                     content = new
                     {
-                        totalCount = 8,
+                        totalCount = PlaylistTotalCount,
                         items = ReturnMalformedTrack
                             ? new object[] { new { itemV2 = new { } }, Track("track-a", "Duplicate") }
                             : new object[]

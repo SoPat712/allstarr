@@ -56,7 +56,7 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
         Assert.True(searched.IsSuccess, searched.Error?.ToString());
         var registration = ProviderRegistrationValidator.Validate(AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(adapter));
         var capability = Assert.Single(registration.Descriptor.Capabilities);
-        Assert.Equal(["getPlaylistTracks", "getUserPlaylists", "resolveArtwork", "searchPlaylists"], capability.Hooks);
+        Assert.Equal(["getPlaylistTracks", "getUserPlaylists", "mutatePlaylist", "resolveArtwork", "searchPlaylists"], capability.Hooks);
         Assert.Equal([ProviderAccountScope.User], capability.AllowedAccountScopes);
         Assert.Same(adapter, Assert.Single(registration.Implementations));
         Assert.DoesNotContain(handler.Paths, path => path.Contains("stream", StringComparison.OrdinalIgnoreCase) || path.Contains("download", StringComparison.OrdinalIgnoreCase));
@@ -105,6 +105,69 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
         handler.ArtworkFailure = HttpStatusCode.Forbidden;
         var forbidden = await adapter.ResolveArtworkAsync(Context(), new(reference, 16));
         Assert.Equal(ProviderErrorKind.PermanentFailure, forbidden.Error!.Kind);
+    }
+
+    [Fact]
+    public async Task Mutation_creates_an_ordered_playlist_and_refuses_unsupported_existing_reconcile()
+    {
+        var handler = new AppleHandler();
+        var adapter = new AppleMusicKitPlaylistCapabilityAdapter(
+            new HttpClient(handler),
+            new SecretAccessor(new("developer", "user")));
+        var tracks = new[]
+        {
+            new ProviderExternalResourceId("apple-musickit", ProviderResourceKind.Track, "i.song-1"),
+            new ProviderExternalResourceId("apple-musickit", ProviderResourceKind.Track, "i.song-1"),
+            new ProviderExternalResourceId("apple-musickit", ProviderResourceKind.Track, "catalog-song")
+        };
+
+        var created = await adapter.MutatePlaylistAsync(
+            Context(),
+            new ProviderPlaylistMutationRequest(
+                "apple-musickit",
+                "Road trip",
+                tracks,
+                ProviderPlaylistConflictBehavior.Reconcile,
+                description: "Drive"));
+
+        Assert.True(created.IsSuccess, created.Error?.ToString());
+        Assert.Equal("p.created", created.RequireValue().PlaylistId.Value);
+        Assert.Equal("2026-08-02T00:00:00Z", created.RequireValue().Revision);
+        Assert.Equal(3, created.RequireValue().TrackCount);
+        Assert.Equal("POST /v1/me/library/playlists", Assert.Single(handler.MutationRequests));
+        using var body = JsonDocument.Parse(Assert.Single(handler.MutationBodies));
+        var data = body.RootElement.GetProperty("relationships").GetProperty("tracks").GetProperty("data");
+        Assert.Equal(["i.song-1", "i.song-1", "catalog-song"],
+            data.EnumerateArray().Select(item => item.GetProperty("id").GetString()));
+        Assert.Equal(["library-songs", "library-songs", "songs"],
+            data.EnumerateArray().Select(item => item.GetProperty("type").GetString()));
+
+        var unsupported = await adapter.MutatePlaylistAsync(
+            Context(),
+            new ProviderPlaylistMutationRequest(
+                "apple-musickit",
+                "Road trip",
+                tracks,
+                ProviderPlaylistConflictBehavior.Reconcile,
+                new("apple-musickit", ProviderResourceKind.Playlist, "p.existing"),
+                "revision"));
+        Assert.Equal(ProviderErrorKind.NotSupported, unsupported.Error!.Kind);
+        Assert.Single(handler.MutationRequests);
+
+        var recreated = await adapter.MutatePlaylistAsync(
+            Context(),
+            new ProviderPlaylistMutationRequest(
+                "apple-musickit",
+                "Road trip copy",
+                tracks,
+                ProviderPlaylistConflictBehavior.Recreate,
+                new("apple-musickit", ProviderResourceKind.Playlist, "p.existing"),
+                "revision"));
+        Assert.True(recreated.IsSuccess, recreated.Error?.ToString());
+        Assert.True(recreated.RequireValue().Applied);
+        Assert.Contains("created a new playlist", Assert.Single(recreated.RequireValue().Warnings),
+            StringComparison.Ordinal);
+        Assert.Equal(2, handler.MutationRequests.Count);
     }
 
     [Theory]
@@ -165,6 +228,8 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
         public List<string> Paths { get; } = [];
         public List<string> Authorization { get; } = [];
         public List<string> UserTokens { get; } = [];
+        public List<string> MutationRequests { get; } = [];
+        public List<string> MutationBodies { get; } = [];
         public byte[] ArtworkBytes { get; set; } = [5, 6, 7];
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -184,6 +249,24 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
                 var response = Json(failure, new { errors = new[] { new { detail = "secret-body" } } });
                 if (failure == HttpStatusCode.TooManyRequests) response.Headers.RetryAfter = new(TimeSpan.FromSeconds(17));
                 return Task.FromResult(response);
+            }
+            if (request.Method == HttpMethod.Post &&
+                request.RequestUri.AbsolutePath == "/v1/me/library/playlists")
+            {
+                MutationRequests.Add($"{request.Method} {request.RequestUri.AbsolutePath}");
+                MutationBodies.Add(request.Content!.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult());
+                return Task.FromResult(Json(HttpStatusCode.Created, new
+                {
+                    data = new[]
+                    {
+                        new
+                        {
+                            id = "p.created",
+                            type = "library-playlists",
+                            attributes = new { lastModifiedDate = "2026-08-02T00:00:00Z" }
+                        }
+                    }
+                }));
             }
             if (request.RequestUri.AbsolutePath.EndsWith("/tracks", StringComparison.Ordinal))
                 return Task.FromResult(Json(HttpStatusCode.OK, new { data = new[] { Song("song.1", "First"), Song("song.1", "Duplicate") }, next = "/next" }));

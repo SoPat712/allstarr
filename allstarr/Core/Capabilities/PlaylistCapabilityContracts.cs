@@ -299,6 +299,38 @@ public sealed record ProviderPlaylistMutationRequest
     public ProviderArtworkReference? Artwork { get; }
 }
 
+public sealed record ProviderPlaylistMutationReceipt
+{
+    public ProviderPlaylistMutationReceipt(
+        ProviderExternalResourceId playlistId,
+        string? revision,
+        int trackCount,
+        bool applied,
+        IEnumerable<string>? warnings = null)
+    {
+        ArgumentNullException.ThrowIfNull(playlistId);
+        playlistId.RequireOwner(playlistId.ProviderId, ProviderResourceKind.Playlist);
+        if (trackCount < 0) throw new ArgumentOutOfRangeException(nameof(trackCount));
+        var safeWarnings = (warnings ?? [])
+            .Select(item => ProviderContractValidation.RequiredText(item, nameof(warnings), 200))
+            .ToArray();
+        if (safeWarnings.Length > 20)
+            throw new ArgumentException("Playlist mutation receipts support at most 20 warnings.", nameof(warnings));
+
+        PlaylistId = playlistId;
+        Revision = ProviderContractValidation.OptionalText(revision, nameof(revision), 300);
+        TrackCount = trackCount;
+        Applied = applied;
+        Warnings = Array.AsReadOnly(safeWarnings);
+    }
+
+    public ProviderExternalResourceId PlaylistId { get; }
+    public string? Revision { get; }
+    public int TrackCount { get; }
+    public bool Applied { get; }
+    public IReadOnlyList<string> Warnings { get; }
+}
+
 public interface IProviderPlaylistCapability : IProviderCapability
 {
     Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetUserPlaylistsAsync(
@@ -317,5 +349,11 @@ public interface IProviderPlaylistCapability : IProviderCapability
         ProviderExecutionContext context,
         ProviderPlaylistArtworkRequest request) => Task.FromResult(
             ProviderOutcome<ProviderPlaylistArtwork>.Failure(
+                new ProviderError(ProviderErrorKind.CapabilityUnavailable)));
+
+    Task<ProviderOutcome<ProviderPlaylistMutationReceipt>> MutatePlaylistAsync(
+        ProviderExecutionContext context,
+        ProviderPlaylistMutationRequest request) => Task.FromResult(
+            ProviderOutcome<ProviderPlaylistMutationReceipt>.Failure(
                 new ProviderError(ProviderErrorKind.CapabilityUnavailable)));
 }

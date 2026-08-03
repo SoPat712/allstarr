@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -157,12 +158,73 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
             : await DownloadArtworkAsync(imageUri, request.MaximumBytes, ct);
     });
 
+    public Task<ProviderOutcome<ProviderPlaylistMutationReceipt>> MutatePlaylistAsync(
+        ProviderExecutionContext context,
+        ProviderPlaylistMutationRequest request) => ExecuteAsync(context, async (credential, ct) =>
+    {
+        if (!request.ProviderId.Equals(StableProviderId, StringComparison.Ordinal))
+            return ProviderOutcome<ProviderPlaylistMutationReceipt>.Failure(new(ProviderErrorKind.Forbidden));
+        if (request.ExistingPlaylistId != null &&
+            request.ConflictBehavior != ProviderPlaylistConflictBehavior.Recreate)
+            return ProviderOutcome<ProviderPlaylistMutationReceipt>.Failure(new(ProviderErrorKind.NotSupported));
+
+        var payload = new
+        {
+            attributes = new
+            {
+                name = request.Name,
+                description = request.Description ?? string.Empty
+            },
+            relationships = new
+            {
+                tracks = new
+                {
+                    data = request.OrderedTrackIds.Select(item => new
+                    {
+                        id = item.Value,
+                        type = item.Value.StartsWith("i.", StringComparison.Ordinal)
+                            ? "library-songs"
+                            : "songs"
+                    })
+                }
+            }
+        };
+        var created = await SendMutationAsync(credential, "v1/me/library/playlists", payload, ct);
+        if (!created.Outcome.IsSuccess)
+            return ProviderOutcome<ProviderPlaylistMutationReceipt>.Failure(created.Outcome.Error!);
+        try
+        {
+            using var document = JsonDocument.Parse(created.Body!);
+            var item = Data(document.RootElement).FirstOrDefault();
+            var playlistId = new ProviderExternalResourceId(
+                StableProviderId,
+                ProviderResourceKind.Playlist,
+                Required(item, "id"));
+            var warnings = new List<string>();
+            if (request.ExistingPlaylistId != null)
+                warnings.Add("Apple Music created a new playlist because it cannot replace an existing playlist.");
+            if (request.Artwork != null)
+                warnings.Add("Playlist artwork was not changed.");
+            return ProviderOutcome<ProviderPlaylistMutationReceipt>.Success(new(
+                playlistId,
+                String(Object(item, "attributes"), "lastModifiedDate") ?? created.ETag,
+                request.OrderedTrackIds.Count,
+                applied: true,
+                warnings));
+        }
+        catch (JsonException)
+        {
+            return ProviderOutcome<ProviderPlaylistMutationReceipt>.Failure(
+                ProviderError.CompatibilityContractChanged());
+        }
+    });
+
     public static ProviderRegistration CreateRegistration(AppleMusicKitPlaylistCapabilityAdapter adapter) => new(
         new ProviderDescriptor(StableProviderId, "Apple Music",
             "Account-bound Apple Music playlist intake through a selected per-user Music User Token. Metadata, search, and lyrics are supplied by separate providers.",
             ProviderOrigin.BuiltIn, "1", "apple-musickit-library-playlist-v1",
             [new ProviderCapabilityDescriptor(ProviderCapabilityKind.Playlist, ProviderCapabilitySupportState.Supported,
-                ProviderAccountRequirement.Required, "1", ["getUserPlaylists", "searchPlaylists", "getPlaylistTracks", "resolveArtwork"], [ProviderAccountScope.User])],
+                ProviderAccountRequirement.Required, "1", ["getUserPlaylists", "searchPlaylists", "getPlaylistTracks", "resolveArtwork", "mutatePlaylist"], [ProviderAccountScope.User])],
             new ProviderPermissionDescriptor([ApiOrigin], false, ["musickitcredentials"]),
             [new ProviderSettingDescriptor("musickitcredentials", ProviderSettingValueKind.Secret,
                 ProviderSettingScope.ProviderAccount, "MusicKit developer token and Music User Token", true)]),
@@ -180,13 +242,40 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
                     ["searchTracks", "getTrack", "searchAlbums", "getAlbum", "searchArtists", "getArtist"],
                     [ProviderAccountScope.User]),
                 new ProviderCapabilityDescriptor(ProviderCapabilityKind.Playlist, ProviderCapabilitySupportState.Supported,
-                    ProviderAccountRequirement.Required, "1", ["getUserPlaylists", "searchPlaylists", "getPlaylistTracks", "resolveArtwork"],
+                    ProviderAccountRequirement.Required, "1", ["getUserPlaylists", "searchPlaylists", "getPlaylistTracks", "resolveArtwork", "mutatePlaylist"],
                     [ProviderAccountScope.User])
             ],
             new ProviderPermissionDescriptor([ApiOrigin], false, ["musickitcredentials"]),
             [new ProviderSettingDescriptor("musickitcredentials", ProviderSettingValueKind.Secret,
                 ProviderSettingScope.ProviderAccount, "MusicKit developer token and Music User Token", true)]),
         [metadata, playlist]);
+
+    private async Task<HttpResult> SendMutationAsync(
+        Credential credential,
+        string relative,
+        object body,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(ApiOrigin, relative));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential.DeveloperToken);
+        request.Headers.TryAddWithoutValidation("Music-User-Token", credential.MusicUserToken);
+        request.Content = JsonContent.Create(body);
+        try
+        {
+            using var response = await _http.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return new(ProviderOutcome<byte[]>.Failure(Error(response)), null, response.Headers.ETag?.Tag);
+            return new(
+                ProviderOutcome<byte[]>.Success([]),
+                await response.Content.ReadAsByteArrayAsync(cancellationToken),
+                response.Headers.ETag?.Tag);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (HttpRequestException)
+        {
+            return new(ProviderOutcome<byte[]>.Failure(new(ProviderErrorKind.TransientFailure)), null, null);
+        }
+    }
 
     private async Task<ProviderOutcome<T>> ExecuteAsync<T>(ProviderExecutionContext context,
         Func<Credential, CancellationToken, Task<ProviderOutcome<T>>> operation)

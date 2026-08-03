@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
@@ -42,6 +43,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
 {
     public const string StableProviderId = "spotify";
     public const string HttpClientName = "SpotifyAccountBound";
+    private static readonly Uri WebApiOrigin = new("https://api.spotify.com/");
     private readonly HttpClient _http;
     private readonly IProviderAccountSecretAccessor _secrets;
     private readonly SpotifyPathfinderPlaylistClient _pathfinder;
@@ -113,6 +115,12 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
                 : ProviderOutcome<ProviderPlaylistArtwork>.Failure(artwork.Error!);
         });
 
+    public Task<ProviderOutcome<ProviderPlaylistMutationReceipt>> MutatePlaylistAsync(
+        ProviderExecutionContext context,
+        ProviderPlaylistMutationRequest request) => ExecuteAsync(
+            context,
+            (token, cancellationToken) => MutateAsync(token, request, cancellationToken));
+
     public static ProviderRegistration CreateRegistration(SpotifyPlaylistCapabilityAdapter adapter) => new(
         new ProviderDescriptor(
             StableProviderId,
@@ -128,7 +136,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
                     ProviderCapabilitySupportState.Supported,
                     ProviderAccountRequirement.Required,
                     "1",
-                    ["getUserPlaylists", "getPlaylistTracks", "searchPlaylists", "resolveArtwork"],
+                    ["getUserPlaylists", "getPlaylistTracks", "searchPlaylists", "resolveArtwork", "mutatePlaylist"],
                     [Core.Storage.ProviderAccountScope.Global, Core.Storage.ProviderAccountScope.User, Core.Storage.ProviderAccountScope.Library]),
                 ConfiguredLane(ProviderCapabilityKind.Lyrics),
                 ConfiguredLane(ProviderCapabilityKind.Health)
@@ -147,6 +155,185 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
                     required: true)
             ]),
         [adapter]);
+
+    private async Task<ProviderOutcome<ProviderPlaylistMutationReceipt>> MutateAsync(
+        string token,
+        ProviderPlaylistMutationRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!request.ProviderId.Equals(StableProviderId, StringComparison.Ordinal))
+            return ProviderOutcome<ProviderPlaylistMutationReceipt>.Failure(new(ProviderErrorKind.Forbidden));
+
+        var warnings = request.Artwork == null
+            ? Array.Empty<string>()
+            : new[] { "Playlist artwork was not changed." };
+        var playlistId = request.ExistingPlaylistId;
+        ExistingPlaylist? existing = null;
+        if (playlistId != null)
+        {
+            if (request.ConflictBehavior == ProviderPlaylistConflictBehavior.FailIfChanged &&
+                request.ExpectedRevision == null)
+                return ProviderOutcome<ProviderPlaylistMutationReceipt>.Failure(new(ProviderErrorKind.PermanentFailure));
+            var read = await ReadPlaylistAsync(token, playlistId, request.ExpectedRevision, cancellationToken);
+            if (!read.IsSuccess)
+                return ProviderOutcome<ProviderPlaylistMutationReceipt>.Failure(read.Error!);
+            existing = read.RequireValue();
+            if (existing.TrackIds.SequenceEqual(request.OrderedTrackIds) &&
+                existing.Summary.Name.Equals(request.Name, StringComparison.Ordinal) &&
+                string.Equals(existing.Summary.Description, request.Description, StringComparison.Ordinal))
+                return ProviderOutcome<ProviderPlaylistMutationReceipt>.Success(new(
+                    playlistId,
+                    existing.Summary.SourceRevision,
+                    existing.TrackIds.Count,
+                    applied: false,
+                    warnings));
+        }
+        else
+        {
+            var created = await SendMutationAsync(
+                token,
+                HttpMethod.Post,
+                "v1/me/playlists",
+                new { name = request.Name, description = request.Description ?? string.Empty, @public = false },
+                cancellationToken);
+            if (!created.Outcome.IsSuccess)
+                return ProviderOutcome<ProviderPlaylistMutationReceipt>.Failure(created.Outcome.Error!);
+            if (!TryMutationResponse(created.Body, out var createdId, out var createdRevision) ||
+                string.IsNullOrWhiteSpace(createdId))
+                return ProviderOutcome<ProviderPlaylistMutationReceipt>.Failure(
+                    ProviderError.CompatibilityContractChanged());
+            playlistId = new(StableProviderId, ProviderResourceKind.Playlist, createdId);
+            existing = new(
+                new ProviderPlaylistSummary(
+                    playlistId,
+                    request.Name,
+                    new ProviderPlaylistOwner("selected-user"),
+                    createdRevision ?? "created",
+                    request.Description,
+                    trackCount: 0),
+                []);
+        }
+
+        var revision = existing.Summary.SourceRevision;
+        if (!existing.Summary.Name.Equals(request.Name, StringComparison.Ordinal) ||
+            !string.Equals(existing.Summary.Description, request.Description, StringComparison.Ordinal))
+        {
+            var metadata = await SendMutationAsync(
+                token,
+                HttpMethod.Put,
+                $"v1/playlists/{Uri.EscapeDataString(playlistId.Value)}",
+                new { name = request.Name, description = request.Description ?? string.Empty },
+                cancellationToken);
+            if (!metadata.Outcome.IsSuccess)
+                return ProviderOutcome<ProviderPlaylistMutationReceipt>.Failure(metadata.Outcome.Error!);
+        }
+
+        if (!existing.TrackIds.SequenceEqual(request.OrderedTrackIds))
+        {
+            var chunks = request.OrderedTrackIds
+                .Select(item => $"spotify:track:{item.Value}")
+                .Chunk(100)
+                .ToArray();
+            var first = await SendMutationAsync(
+                token,
+                HttpMethod.Put,
+                $"v1/playlists/{Uri.EscapeDataString(playlistId.Value)}/items",
+                new { uris = chunks.FirstOrDefault() ?? [] },
+                cancellationToken);
+            if (!first.Outcome.IsSuccess)
+                return ProviderOutcome<ProviderPlaylistMutationReceipt>.Failure(first.Outcome.Error!);
+            if (TryMutationResponse(first.Body, out _, out var firstRevision) && firstRevision != null)
+                revision = firstRevision;
+            foreach (var chunk in chunks.Skip(1))
+            {
+                var appended = await SendMutationAsync(
+                    token,
+                    HttpMethod.Post,
+                    $"v1/playlists/{Uri.EscapeDataString(playlistId.Value)}/items",
+                    new { uris = chunk },
+                    cancellationToken);
+                if (!appended.Outcome.IsSuccess)
+                    return ProviderOutcome<ProviderPlaylistMutationReceipt>.Failure(appended.Outcome.Error!);
+                if (TryMutationResponse(appended.Body, out _, out var appendedRevision) && appendedRevision != null)
+                    revision = appendedRevision;
+            }
+        }
+
+        return ProviderOutcome<ProviderPlaylistMutationReceipt>.Success(new(
+            playlistId,
+            revision,
+            request.OrderedTrackIds.Count,
+            applied: true,
+            warnings));
+    }
+
+    private async Task<ProviderOutcome<ExistingPlaylist>> ReadPlaylistAsync(
+        string token,
+        ProviderExternalResourceId playlistId,
+        string? expectedRevision,
+        CancellationToken cancellationToken)
+    {
+        var tracks = new List<ProviderExternalResourceId>();
+        string? cursor = null;
+        ProviderPlaylistSummary? summary = null;
+        do
+        {
+            var page = await _pathfinder.GetPlaylistTracksAsync(
+                token,
+                new ProviderPlaylistTracksRequest(playlistId, new ProviderPageRequest(200, cursor), expectedRevision),
+                cancellationToken,
+                accountFingerprint: null);
+            if (!page.IsSuccess) return ProviderOutcome<ExistingPlaylist>.Failure(page.Error!);
+            var value = page.RequireValue();
+            summary ??= value.Playlist;
+            expectedRevision ??= summary.SourceRevision;
+            tracks.AddRange(value.Tracks.Items.Select(item => item.TrackId));
+            cursor = value.Tracks.NextCursor;
+        } while (cursor != null);
+        return ProviderOutcome<ExistingPlaylist>.Success(new(summary!, tracks));
+    }
+
+    private async Task<MutationHttpResult> SendMutationAsync(
+        string token,
+        HttpMethod method,
+        string relativePath,
+        object body,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(method, new Uri(WebApiOrigin, relativePath));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        SpotifyWebRequestProfile.Apply(request);
+        request.Content = JsonContent.Create(body);
+        try
+        {
+            using var response = await _http.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return new(ProviderOutcome<byte[]>.Failure(Error(response)), null);
+            return new(
+                ProviderOutcome<byte[]>.Success([]),
+                await response.Content.ReadAsByteArrayAsync(cancellationToken));
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (HttpRequestException)
+        {
+            return new(ProviderOutcome<byte[]>.Failure(new(ProviderErrorKind.TransientFailure)), null);
+        }
+    }
+
+    private static bool TryMutationResponse(byte[]? body, out string? playlistId, out string? revision)
+    {
+        playlistId = null;
+        revision = null;
+        if (body is not { Length: > 0 }) return false;
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            playlistId = document.RootElement.TryGetProperty("id", out var id) ? id.GetString() : null;
+            revision = document.RootElement.TryGetProperty("snapshot_id", out var snapshot) ? snapshot.GetString() : null;
+            return playlistId != null || revision != null;
+        }
+        catch (JsonException) { return false; }
+    }
 
     private async Task<ProviderOutcome<T>> ExecuteAsync<T>(
         ProviderExecutionContext context,
@@ -270,5 +457,9 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
         host.EndsWith(".spotifycdn.com", StringComparison.OrdinalIgnoreCase);
 
     private static ProviderCapabilityDescriptor ConfiguredLane(ProviderCapabilityKind kind) => new(kind, ProviderCapabilitySupportState.ConfiguredOnly, ProviderAccountRequirement.Required, "legacy-seam-v1", allowedAccountScopes: [Core.Storage.ProviderAccountScope.Global, Core.Storage.ProviderAccountScope.User, Core.Storage.ProviderAccountScope.Library]);
+    private sealed record ExistingPlaylist(
+        ProviderPlaylistSummary Summary,
+        IReadOnlyList<ProviderExternalResourceId> TrackIds);
+    private sealed record MutationHttpResult(ProviderOutcome<byte[]> Outcome, byte[]? Body);
     private sealed record TokenResult(ProviderOutcome<byte[]> Outcome, string? Token);
 }
