@@ -139,7 +139,10 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                         index,
                         $"scale-{count}-entry-{index}",
                         $"scale-{count}-source-{index}",
-                        "One") with { CanonicalRecordingId = _canonical })
+                        "One") with
+                    {
+                        CanonicalRecordingId = _canonical
+                    })
                     .ToArray());
             commands.Reset();
             var allocatedBefore = GC.GetTotalAllocatedBytes();
