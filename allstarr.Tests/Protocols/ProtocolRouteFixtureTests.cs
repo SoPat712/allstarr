@@ -2463,6 +2463,86 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task JellyfinPlaylistMutation_ClassifiesWithTheLoggedInUserToken()
+    {
+        var observed = new List<ObservedRequest>();
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            observed.Add(Observe(request));
+            if (request.RequestUri!.AbsolutePath == "/Items")
+            {
+                var hasClientToken = request.Headers.TryGetValues(
+                        "X-Emby-Authorization", out var values) &&
+                    values.Any(value => value.Contains("caller-token", StringComparison.Ordinal));
+                return Json(StatusCodes.Status200OK, hasClientToken
+                    ? """{"Items":[{"Id":"user-playlist","Type":"Playlist"}],"TotalRecordCount":1}"""
+                    : """{"Items":[],"TotalRecordCount":0}""");
+            }
+            if (request.RequestUri.AbsolutePath == "/Users/Me")
+                return Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}""");
+            return new HttpResponseMessage(HttpStatusCode.NoContent);
+        });
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/Items/user-playlist")
+        {
+            Content = new StringContent(
+                """{"Id":"user-playlist","Name":"Renamed","Type":"Playlist"}""",
+                Encoding.UTF8,
+                "application/json")
+        };
+        request.Headers.TryAddWithoutValidation(
+            "X-Emby-Authorization",
+            "MediaBrowser Client=\"Fixture\", Device=\"Tests\", DeviceId=\"test-1\", Version=\"1\", UserId=\"user-1\", Token=\"caller-token\"");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(3, observed.Count);
+        Assert.Equal("/Items?ids=user-playlist&limit=1", observed[0].PathAndQuery);
+        Assert.Equal("/Users/Me", observed[1].PathAndQuery);
+        Assert.Equal("POST", observed[2].Method);
+        Assert.Equal("/Items/user-playlist", observed[2].PathAndQuery);
+    }
+
+    [Fact]
+    public async Task JellyfinMediaFolders_FallsBackToNonAdminUserViews()
+    {
+        var observed = new List<ObservedRequest>();
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            observed.Add(Observe(request));
+            return request.RequestUri!.AbsolutePath switch
+            {
+                "/Users/Me" => Json(
+                    StatusCodes.Status200OK,
+                    """{"Id":"user-1","Name":"Fixture User"}"""),
+                "/Library/MediaFolders" => Json(
+                    StatusCodes.Status403Forbidden,
+                    """{"error":"administrator access required"}"""),
+                "/UserViews" => Json(
+                    StatusCodes.Status200OK,
+                    """{"Items":[{"Id":"music","CollectionType":"music"},{"Id":"movies","CollectionType":"movies"}],"TotalRecordCount":2}"""),
+                _ => throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}")
+            };
+        });
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            "/Library/MediaFolders?UserId=user-1");
+        request.Headers.TryAddWithoutValidation("X-Emby-Token", "caller-token");
+
+        using var response = await client.SendAsync(request);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var item = Assert.Single(document.RootElement.GetProperty("Items").EnumerateArray());
+        Assert.Equal("music", item.GetProperty("CollectionType").GetString());
+        Assert.Equal(1, document.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Contains(observed, candidate => candidate.PathAndQuery == "/Library/MediaFolders?UserId=user-1");
+        Assert.Contains(observed, candidate => candidate.PathAndQuery == "/UserViews?UserId=user-1");
+    }
+
+    [Fact]
     public async Task SubsonicApiKey_ResolvesPrincipalBeforeRelaying()
     {
         var observedRequests = new List<ObservedRequest>();

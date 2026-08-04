@@ -31,6 +31,13 @@ public partial class JellyfinController
     {
         var endpoint = BuildCurrentEndpoint();
         var (body, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
+        if (statusCode == StatusCodes.Status403Forbidden &&
+            Request.Path.Value?.Equals("/Library/MediaFolders", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            body?.Dispose();
+            (body, statusCode) = await _proxyService.GetJsonAsync(
+                $"UserViews{Request.QueryString}", null, Request.Headers);
+        }
         if (body == null) return HandleProxyResponse(body, statusCode);
 
         using (body)

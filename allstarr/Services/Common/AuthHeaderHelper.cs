@@ -9,6 +9,11 @@ namespace allstarr.Services.Common;
 /// </summary>
 public static class AuthHeaderHelper
 {
+    public static bool HasAuthentication(IHeaderDictionary headers) =>
+        headers.ContainsKey("X-Emby-Authorization") ||
+        headers.ContainsKey("X-Emby-Token") ||
+        headers.ContainsKey("Authorization");
+
     /// <summary>
     /// Forwards authentication headers from HTTP request to HttpRequestMessage.
     /// Handles both X-Emby-Authorization and Authorization headers.

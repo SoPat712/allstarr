@@ -50,7 +50,12 @@ public sealed class JellyfinMusicEndpointPolicyMiddleware(
                         : (await GetItemTypeAsync(itemId, proxyService, cache)).IsMusic,
                 JellyfinEndpointAccess.RequiresPlaylistItem =>
                     !JellyfinMusicEndpointPolicy.IsSynthesizedMusicItemId(itemId) &&
-                    (await GetItemTypeAsync(itemId, proxyService, cache, requireType: true))
+                    (await GetItemTypeAsync(
+                        itemId,
+                        proxyService,
+                        cache,
+                        ClientAuthHeaders(context.Request),
+                        requireType: true))
                         .ItemType?.Equals("Playlist", StringComparison.OrdinalIgnoreCase) == true,
                 _ => false
             });
@@ -78,16 +83,18 @@ public sealed class JellyfinMusicEndpointPolicyMiddleware(
         string itemId,
         JellyfinProxyService proxyService,
         IApplicationCache cache,
+        IHeaderDictionary? clientHeaders = null,
         bool requireType = false)
     {
         var cacheKey = CacheKeyBuilder.BuildJellyfinItemTypeKey(itemId);
         var cached = await cache.GetAsync<ItemTypeCacheEntry>(cacheKey);
         if (cached != null && (!requireType || cached.ItemType != null)) return cached;
 
-        // Resolve the item type with Allstarr's internal Jellyfin credential. Public
-        // artwork requests intentionally have no client token, while authenticated
-        // requests are still checked by JellyfinAuthFilter after this policy gate.
-        var (item, statusCode) = await proxyService.GetItemAsync(Uri.EscapeDataString(itemId));
+        // Preserve client scope when present; public artwork has no client token and
+        // uses Allstarr's internal credential. JellyfinAuthFilter still verifies the
+        // client after this policy gate.
+        var (item, statusCode) = await proxyService.GetItemAsync(
+            Uri.EscapeDataString(itemId), clientHeaders);
         using (item)
         {
             var itemType = statusCode == StatusCodes.Status200OK && item != null &&
@@ -124,6 +131,11 @@ public sealed class JellyfinMusicEndpointPolicyMiddleware(
 
     private static bool IsInfrastructureRoute(PathString path) =>
         path.StartsWithSegments("/health") || path.StartsWithSegments("/metrics");
+
+    private static IHeaderDictionary? ClientAuthHeaders(HttpRequest request) =>
+        AuthHeaderHelper.HasAuthentication(request.Headers)
+            ? request.Headers
+            : null;
 
     private sealed record ItemTypeCacheEntry(bool IsMusic, string? ItemType = null);
 }

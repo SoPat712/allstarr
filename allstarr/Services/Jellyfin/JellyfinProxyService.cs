@@ -639,11 +639,7 @@ public class JellyfinProxyService
             ["recursive"] = recursive.ToString().ToLower(),
             ["fields"] = "PrimaryImageAspectRatio,MediaSources,Path,Genres,Studios,DateCreated,Overview,ProviderIds"
         };
-
-        if (!string.IsNullOrEmpty(_settings.UserId))
-        {
-            queryParams["userId"] = _settings.UserId;
-        }
+        AddConfiguredUserId(queryParams, clientHeaders);
 
         // Note: We don't force parentId here - let clients specify which library to search
         // The controller will detect music library searches and add external results
@@ -689,11 +685,7 @@ public class JellyfinProxyService
             ["recursive"] = "true",
             ["fields"] = "PrimaryImageAspectRatio,MediaSources,Path,Genres,Studios,DateCreated,Overview,ProviderIds,ParentId"
         };
-
-        if (!string.IsNullOrEmpty(_settings.UserId))
-        {
-            queryParams["userId"] = _settings.UserId;
-        }
+        AddConfiguredUserId(queryParams, clientHeaders);
 
         if (!string.IsNullOrEmpty(parentId))
         {
@@ -780,11 +772,7 @@ public class JellyfinProxyService
         {
             ["fields"] = "PrimaryImageAspectRatio,Genres,Overview"
         };
-
-        if (!string.IsNullOrEmpty(_settings.UserId))
-        {
-            queryParams["userId"] = _settings.UserId;
-        }
+        AddConfiguredUserId(queryParams, clientHeaders);
 
         if (!string.IsNullOrEmpty(searchTerm))
         {
@@ -810,11 +798,7 @@ public class JellyfinProxyService
     public async Task<(JsonDocument? Body, int StatusCode)> GetArtistAsync(string artistIdOrName, IHeaderDictionary? clientHeaders = null)
     {
         var queryParams = new Dictionary<string, string>();
-
-        if (!string.IsNullOrEmpty(_settings.UserId))
-        {
-            queryParams["userId"] = _settings.UserId;
-        }
+        AddConfiguredUserId(queryParams, clientHeaders);
 
         // Try to get by ID first
         if (Guid.TryParse(artistIdOrName, out _))
@@ -824,6 +808,17 @@ public class JellyfinProxyService
 
         // Otherwise search by name
         return await GetJsonAsync($"Artists/{Uri.EscapeDataString(artistIdOrName)}", queryParams, clientHeaders);
+    }
+
+    private void AddConfiguredUserId(
+        IDictionary<string, string> queryParams,
+        IHeaderDictionary? clientHeaders)
+    {
+        if (!string.IsNullOrEmpty(_settings.UserId) &&
+            (clientHeaders == null || !AuthHeaderHelper.HasAuthentication(clientHeaders)))
+        {
+            queryParams["userId"] = _settings.UserId;
+        }
     }
 
     /// <summary>

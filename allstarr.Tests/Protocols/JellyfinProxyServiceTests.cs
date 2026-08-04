@@ -324,6 +324,28 @@ public class JellyfinProxyServiceTests
     }
 
     [Fact]
+    public async Task GetArtistAsync_WithClientTokenDoesNotInjectConfiguredUser()
+    {
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((request, _) => captured = request)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"Id\":\"00112233445566778899aabbccddeeff\",\"Type\":\"MusicArtist\"}")
+            });
+        var headers = new HeaderDictionary { ["X-Emby-Token"] = "caller-token" };
+
+        await _service.GetArtistAsync("00112233445566778899aabbccddeeff", headers);
+
+        Assert.NotNull(captured);
+        Assert.DoesNotContain("userId=", captured!.RequestUri!.Query);
+        Assert.Equal("caller-token", captured.Headers.GetValues("X-Emby-Token").Single());
+    }
+
+    [Fact]
     public async Task GetJsonAsync_WithEndpointQuery_PreservesCallerParameters()
     {
         // Arrange
