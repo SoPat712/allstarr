@@ -96,12 +96,28 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
         var completion = await handler.ExecuteAsync(new(claim!, services), CancellationToken.None);
         await _jobs.CompleteAsync(claim!, completion, CancellationToken.None);
 
+        await using var reimportStream = new MemoryStream(source);
+        var reimportPreview = await service.PreviewAsync(
+            _scope, "history.json", reimportStream, source.Length, CancellationToken.None);
+        var reimportQueued = await service.ApplyAsync(
+            _scope, reimportPreview.ImportId, reimportPreview.Revision, CancellationToken.None);
+        var reimportClaim = await _jobs.ClaimNextAsync(
+            "history-reimport-test", [ListeningHistoryImportJobHandler.JobTypeName], CancellationToken.None);
+        Assert.NotNull(reimportClaim);
+        var reimportCompletion = await handler.ExecuteAsync(new(reimportClaim!, services), CancellationToken.None);
+        await _jobs.CompleteAsync(reimportClaim!, reimportCompletion, CancellationToken.None);
+
         await using var db = await _factory.CreateDbContextAsync();
-        var import = await db.ListeningHistoryImports.SingleAsync();
+        var import = await db.ListeningHistoryImports.SingleAsync(item => item.Id == preview.ImportId);
+        var reimport = await db.ListeningHistoryImports.SingleAsync(item => item.Id == reimportPreview.ImportId);
         var events = await db.ListeningEvents.OrderBy(item => item.StartedAt).ToListAsync();
         Assert.Equal(ListeningHistoryImportState.Completed, import.State);
         Assert.Equal(3, import.ImportedRows);
         Assert.Equal(3, import.NextSequence);
+        Assert.Equal(ListeningHistoryImportState.Completed, reimport.State);
+        Assert.Equal(0, reimport.ImportedRows);
+        Assert.Equal(3, reimport.DuplicateRows);
+        Assert.Equal(3, reimport.NextSequence);
         Assert.Collection(events,
             item =>
             {
@@ -124,10 +140,11 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
             .Where(item => item.Category == "listening-history-import")
             .OrderBy(item => item.CreatedAt)
             .ToListAsync();
-        var previewAudit = Assert.Single(audits, item => item.Action == "previewed");
-        var completedAudit = Assert.Single(audits, item => item.Action == "completed");
+        var firstAudits = audits.Where(item => item.CorrelationId == preview.ImportId.ToString("N")).ToList();
+        var previewAudit = Assert.Single(firstAudits, item => item.Action == "previewed");
+        var completedAudit = Assert.Single(firstAudits, item => item.Action == "completed");
         var spotifyFormat = new SpotifyListeningHistoryImporter().Format;
-        Assert.All(audits, item => Assert.Equal(preview.ImportId.ToString("N"), item.CorrelationId));
+        Assert.All(firstAudits, item => Assert.Equal(preview.ImportId.ToString("N"), item.CorrelationId));
         using (var details = JsonDocument.Parse(previewAudit.DetailsJson))
         {
             Assert.Equal(spotifyFormat, details.RootElement.GetProperty("sourceProvider").GetString());
@@ -147,6 +164,14 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
             Assert.Equal("history_import_completed", details.RootElement.GetProperty("reasonCode").GetString());
             Assert.True(details.RootElement.GetProperty("durationMilliseconds").GetInt64() >= 0);
         }
+        var reimportAudit = Assert.Single(audits,
+            item => item.Action == "completed" && item.CorrelationId == reimportPreview.ImportId.ToString("N"));
+        using (var details = JsonDocument.Parse(reimportAudit.DetailsJson))
+        {
+            Assert.Equal(reimportQueued!.JobId, details.RootElement.GetProperty("runId").GetGuid());
+            Assert.Equal(0, details.RootElement.GetProperty("ImportedRows").GetInt64());
+            Assert.Equal(3, details.RootElement.GetProperty("DuplicateRows").GetInt64());
+        }
         var operationalJson = string.Join('\n', audits.Select(item => item.DetailsJson));
         Assert.DoesNotContain("private-user", operationalJson, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("master_metadata", operationalJson, StringComparison.OrdinalIgnoreCase);
@@ -158,6 +183,7 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
         Assert.Null(await service.GetAsync(
             _scope with { OwnerUserId = Guid.NewGuid() }, preview.ImportId, CancellationToken.None));
         Assert.False(File.Exists(Path.Combine(_root, $"{preview.ImportId:N}.json")));
+        Assert.False(File.Exists(Path.Combine(_root, $"{reimportPreview.ImportId:N}.json")));
     }
 
     [Fact]
