@@ -323,6 +323,10 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         Assert.False(details.RootElement.TryGetProperty("Artist", out _));
         Assert.False(details.RootElement.TryGetProperty("Album", out _));
         Assert.False(details.RootElement.TryGetProperty("observedAt", out _));
+        Assert.DoesNotContain("track-1", audit.DetailsJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("session", audit.DetailsJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("credential", audit.DetailsJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("payload", audit.DetailsJson, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -332,9 +336,10 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         var healthy = new Target("listenbrainz", true);
         var checkpoints = new Checkpoints();
         var delivery = new ScopedPlaybackScrobbleDelivery(factory, [rejected, healthy], checkpoints);
+        var payload = Payload();
 
         var firstFailure = await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() =>
-            delivery.DeliverAsync(Payload(), default));
+            delivery.DeliverAsync(payload, default));
         Assert.Equal("playback_scrobble_unauthorized", firstFailure.Code);
         Assert.Equal(0, rejected.Successes);
         Assert.Equal(1, healthy.Successes);
@@ -346,12 +351,22 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
                 .ToListAsync());
             using var details = System.Text.Json.JsonDocument.Parse(audit.DetailsJson);
             Assert.Equal("partial-failure", audit.Outcome);
+            Assert.Equal(ScopedPlaybackScrobbleDelivery.CheckpointKey(payload), audit.CorrelationId);
             Assert.Equal("playback_scrobble_unauthorized", details.RootElement.GetProperty("reasonCode").GetString());
+            Assert.Equal(2, details.RootElement.GetProperty("providerCount").GetInt32());
+            Assert.Equal(["Last.fm", "ListenBrainz"], details.RootElement.GetProperty("providerNames")
+                .EnumerateArray().Select(item => item.GetString()));
+            Assert.Equal(2, details.RootElement.GetProperty("attemptedCount").GetInt32());
             Assert.Equal(1, details.RootElement.GetProperty("deliveredCount").GetInt32());
             Assert.Equal(1, details.RootElement.GetProperty("failedCount").GetInt32());
+            Assert.True(details.RootElement.GetProperty("durationMilliseconds").GetInt64() >= 0);
+            Assert.DoesNotContain("track-1", audit.DetailsJson, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("session", audit.DetailsJson, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("credential", audit.DetailsJson, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("payload", audit.DetailsJson, StringComparison.OrdinalIgnoreCase);
         }
 
-        await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => delivery.DeliverAsync(Payload(), default));
+        await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => delivery.DeliverAsync(payload, default));
         Assert.Equal(1, healthy.Successes);
     }
 

@@ -140,12 +140,68 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
         {
             Assert.Equal(spotifyFormat, details.RootElement.GetProperty("sourceProvider").GetString());
             Assert.Equal(queued!.JobId, details.RootElement.GetProperty("runId").GetGuid());
+            Assert.Equal(import.ImportedRows, details.RootElement.GetProperty("ImportedRows").GetInt64());
+            Assert.Equal(import.DuplicateRows, details.RootElement.GetProperty("DuplicateRows").GetInt64());
+            Assert.Equal(import.ResolvedRows, details.RootElement.GetProperty("ResolvedRows").GetInt64());
+            Assert.Equal(import.UnresolvedRows, details.RootElement.GetProperty("UnresolvedRows").GetInt64());
             Assert.Equal("history_import_completed", details.RootElement.GetProperty("reasonCode").GetString());
             Assert.True(details.RootElement.GetProperty("durationMilliseconds").GetInt64() >= 0);
         }
+        var operationalJson = string.Join('\n', audits.Select(item => item.DetailsJson));
+        Assert.DoesNotContain("private-user", operationalJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("master_metadata", operationalJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("spotify:track:", operationalJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("history.json", operationalJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("One again", operationalJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("credential", operationalJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("payload", operationalJson, StringComparison.OrdinalIgnoreCase);
         Assert.Null(await service.GetAsync(
             _scope with { OwnerUserId = Guid.NewGuid() }, preview.ImportId, CancellationToken.None));
         Assert.False(File.Exists(Path.Combine(_root, $"{preview.ImportId:N}.json")));
+    }
+
+    [Fact]
+    public async Task FailedApplyPersistsSafeOperationalMetadataWithoutImportContent()
+    {
+        var service = new ListeningHistoryImportService(
+            _factory, _importers, _artifacts, _importOptions, _clock, _jobs);
+        var preview = await PreviewAsync(service, "Private failure title", "5555555555555555555555");
+        var queued = await service.ApplyAsync(
+            _scope, preview.ImportId, preview.Revision, CancellationToken.None);
+        var claim = await _jobs.ClaimNextAsync(
+            "history-import-failure-test", [ListeningHistoryImportJobHandler.JobTypeName], CancellationToken.None);
+        Assert.NotNull(claim);
+        _artifacts.Delete(preview.ImportId);
+        var musicBrainz = new MusicBrainzListeningEnrichmentQueue(
+            _jobs,
+            Options.Create(new MusicBrainzSettings { Enabled = false }));
+        var handler = new ListeningHistoryImportJobHandler(
+            _factory, _importers, _artifacts, _importOptions, _clock, musicBrainz);
+        using var services = new ServiceCollection().BuildServiceProvider();
+
+        var completion = await handler.ExecuteAsync(new(claim!, services), CancellationToken.None);
+        await _jobs.CompleteAsync(claim!, completion, CancellationToken.None);
+
+        Assert.Equal(DurableJobCompletionKind.Failed, completion.Kind);
+        Assert.Equal("history_import_artifact_invalid", completion.ErrorCode);
+        await using var db = await _factory.CreateDbContextAsync();
+        var audit = Assert.Single(await db.AuditEvents.AsNoTracking()
+            .Where(item => item.Category == "listening-history-import" && item.Action == "failed")
+            .ToListAsync());
+        using var details = JsonDocument.Parse(audit.DetailsJson);
+        Assert.Equal("history_import_artifact_invalid", audit.Outcome);
+        Assert.Equal(preview.ImportId.ToString("N"), audit.CorrelationId);
+        Assert.Equal(queued!.JobId, details.RootElement.GetProperty("runId").GetGuid());
+        Assert.Equal(new SpotifyListeningHistoryImporter().Format,
+            details.RootElement.GetProperty("sourceProvider").GetString());
+        Assert.Equal("history_import_artifact_invalid", details.RootElement.GetProperty("reasonCode").GetString());
+        Assert.Equal(0, details.RootElement.GetProperty("ImportedRows").GetInt64());
+        Assert.True(details.RootElement.GetProperty("durationMilliseconds").GetInt64() >= 0);
+        Assert.DoesNotContain("Private failure title", audit.DetailsJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("5555555555555555555555", audit.DetailsJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("private-user", audit.DetailsJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("credential", audit.DetailsJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("payload", audit.DetailsJson, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
