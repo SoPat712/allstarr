@@ -63,7 +63,8 @@ public class AdminStaticFilesMiddleware
 
             if (File.Exists(candidatePath))
             {
-                if (path.StartsWith("/_app/immutable/", StringComparison.Ordinal))
+                if (path.StartsWith("/_app/immutable/", StringComparison.Ordinal) &&
+                    !string.Equals(Path.GetExtension(candidatePath), ".css", StringComparison.OrdinalIgnoreCase))
                 {
                     context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
                 }

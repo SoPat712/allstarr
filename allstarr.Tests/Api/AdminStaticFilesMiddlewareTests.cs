@@ -111,6 +111,33 @@ public class AdminStaticFilesMiddlewareTests
     }
 
     [Fact]
+    public async Task InvokeAsync_GeneratedCss_RevalidatesAcrossDeployments()
+    {
+        var webRoot = CreateTempWebRoot();
+        var assetDir = Path.Combine(webRoot, "_app", "immutable", "assets");
+        Directory.CreateDirectory(assetDir);
+        await File.WriteAllTextAsync(Path.Combine(assetDir, "app.abc123.css"), ".status-pill{}");
+
+        try
+        {
+            var middleware = CreateMiddleware(webRoot, out var nextInvoked);
+            var context = CreateContext(
+                localPort: 5275,
+                path: "/_app/immutable/assets/app.abc123.css");
+
+            await middleware.InvokeAsync(context);
+
+            Assert.False(nextInvoked());
+            Assert.Equal("text/css", context.Response.ContentType);
+            Assert.Equal("no-store", context.Response.Headers.CacheControl);
+        }
+        finally
+        {
+            DeleteTempWebRoot(webRoot);
+        }
+    }
+
+    [Fact]
     public async Task InvokeAsync_NonAdminPort_BypassesStaticMiddleware()
     {
         var webRoot = CreateTempWebRoot();
