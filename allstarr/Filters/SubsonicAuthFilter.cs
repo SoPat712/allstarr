@@ -45,14 +45,14 @@ public sealed class SubsonicAuthFilter : IAsyncResourceFilter
     public async Task OnResourceExecutionAsync(ResourceExecutingContext context, ResourceExecutionDelegate next)
     {
         var request = context.HttpContext.Request;
+        var parameters = await _requestParser.ExtractAllParametersAsync(request);
+        context.HttpContext.Items[RequestParametersItemKey] = parameters;
         if (IsBackendValidatedPing(request) || IsPublicExtensionDiscovery(request))
         {
             await next();
             return;
         }
 
-        var parameters = await _requestParser.ExtractAllParametersAsync(request);
-        context.HttpContext.Items[RequestParametersItemKey] = parameters;
         var format = parameters.GetValueOrDefault("f", "xml");
 
         if (!TryResolveMechanism(parameters, out var mechanism, out var principalName, out var errorCode, out var error))

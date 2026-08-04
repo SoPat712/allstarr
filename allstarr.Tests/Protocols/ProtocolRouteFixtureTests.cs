@@ -32,6 +32,37 @@ namespace allstarr.Tests;
 
 public sealed class ProtocolRouteFixtureTests
 {
+    [Theory]
+    [InlineData("u=fixture&t=hash&s=salt&v=1.16.1&c=fixture&f=json", "application/json")]
+    [InlineData("u=fixture&p=secret&v=1.16.1&c=fixture&f=xml", "application/xml")]
+    public async Task SubsonicPing_PostFormCredentialsReachBackend(
+        string body,
+        string responseContentType)
+    {
+        ObservedRequest? observed = null;
+        using var factory = new ProtocolFactory("Subsonic", request =>
+        {
+            observed = Observe(request);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("response", Encoding.UTF8, responseContentType)
+            };
+        });
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/rest/ping.view")
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/x-www-form-urlencoded")
+        };
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(observed);
+        Assert.Equal("POST", observed.Method);
+        Assert.Equal("/rest/ping.view", observed.PathAndQuery);
+        Assert.Equal(body, observed.Body);
+    }
+
     [Fact]
     public async Task JellyfinAuthentication_PreservesEveryFixtureStatusAndBody()
     {
