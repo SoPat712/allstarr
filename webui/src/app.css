@@ -2895,9 +2895,10 @@
     display: inline-flex;
     min-height: 1.75rem;
     align-items: center;
-    border: 1px solid color-mix(in srgb, currentColor 55%, var(--color-edge));
+    justify-self: start;
+    border: 1px solid color-mix(in srgb, currentColor 68%, var(--color-edge));
     border-radius: 999px;
-    background: rgb(135 155 171 / 14%);
+    background: rgb(135 155 171 / 22%);
     color: var(--color-ink-muted);
     padding: 0 0.625rem;
     font-size: var(--text-xs);
@@ -2918,8 +2919,8 @@
   .status-pill.succeeded,
   .status-pill.delivered,
   .status-pill.resolved {
-    border-color: color-mix(in srgb, var(--color-success) 55%, var(--color-edge));
-    background: color-mix(in srgb, var(--color-success) 16%, transparent);
+    border-color: color-mix(in srgb, var(--color-success) 68%, var(--color-edge));
+    background: color-mix(in srgb, var(--color-success) 24%, transparent);
     color: #63dda6;
   }
 
@@ -2933,8 +2934,8 @@
   .status-pill.cancelled,
   .status-pill.unavailable,
   .status-pill.unauthorized {
-    border-color: color-mix(in srgb, var(--color-danger) 55%, var(--color-edge));
-    background: rgb(255 107 122 / 16%);
+    border-color: color-mix(in srgb, var(--color-danger) 68%, var(--color-edge));
+    background: rgb(255 107 122 / 24%);
     color: var(--color-danger);
   }
 
@@ -2944,8 +2945,8 @@
   .status-pill.running,
   .status-pill.testing,
   .status-pill.refreshing {
-    border-color: color-mix(in srgb, var(--color-info) 55%, var(--color-edge));
-    background: color-mix(in srgb, var(--color-info) 16%, transparent);
+    border-color: color-mix(in srgb, var(--color-info) 68%, var(--color-edge));
+    background: color-mix(in srgb, var(--color-info) 24%, transparent);
     color: #8fc2ff;
   }
 
@@ -2955,8 +2956,8 @@
   .status-pill.deferred,
   .status-pill.queued,
   .status-pill.retrying {
-    border-color: color-mix(in srgb, var(--color-warning) 55%, var(--color-edge));
-    background: rgb(255 185 80 / 16%);
+    border-color: color-mix(in srgb, var(--color-warning) 68%, var(--color-edge));
+    background: rgb(255 185 80 / 24%);
     color: #ffd493;
   }
 
@@ -4910,7 +4911,7 @@
   .source-detail-capabilities > span {
     grid-template-columns: minmax(0, 1fr) auto auto;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-3);
   }
 
   .source-detail-actions {
