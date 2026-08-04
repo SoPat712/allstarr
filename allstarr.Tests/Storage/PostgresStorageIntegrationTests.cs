@@ -6,6 +6,7 @@ using allstarr.Core.Configuration;
 using allstarr.Core.Favorites;
 using allstarr.Core.Jobs;
 using allstarr.Core.Identity;
+using allstarr.Core.Intelligence;
 using allstarr.Core.Operations;
 using allstarr.Core.Playlists;
 using allstarr.Core.Secrets;
@@ -514,6 +515,190 @@ public sealed class PostgresStorageIntegrationTests
 
         Assert.Equal(identity, (await context.SecretReferences.AsNoTracking()
             .SingleAsync(item => item.Id == credential)).BackendIdentityId);
+    }
+
+    [Fact]
+    [Trait("Category", "Postgres")]
+    public async Task V3CompatibilityMigration_BackfillsLegacyStateAndReappliesIdempotently()
+    {
+        const string previous = "20260803210000_OptimizeListeningAnalyticsIndex";
+        const string current = "20260804080000_BackfillV3CompatibilityState";
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var context = new AllstarrDbContext(database.Options);
+        var migrator = context.GetService<IMigrator>();
+        await migrator.MigrateAsync(previous);
+
+        var now = DateTimeOffset.UtcNow;
+        var tenant = Guid.CreateVersion7();
+        var user = Guid.CreateVersion7();
+        var account = Guid.CreateVersion7();
+        var ambiguousAccounts = new[] { Guid.CreateVersion7(), Guid.CreateVersion7() };
+        var job = Guid.CreateVersion7();
+        var run = Guid.CreateVersion7();
+        var candidate = Guid.CreateVersion7();
+        var ambiguousCandidate = Guid.CreateVersion7();
+        var package = Guid.CreateVersion7();
+        context.Tenants.Add(new() { Id = tenant, Slug = "v3-backfill", Name = "V3 backfill", CreatedAt = now });
+        context.Users.Add(new()
+        {
+            Id = user,
+            TenantId = tenant,
+            DisplayName = "Listener",
+            Status = PlatformUserStatus.Active,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        context.ProviderAccounts.Add(new()
+        {
+            Id = account,
+            TenantId = tenant,
+            OwnerUserId = user,
+            ProviderId = "audiomuse",
+            DisplayName = "AudioMuse",
+            Scope = ProviderAccountScope.User,
+            Enabled = true,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Revision = 1
+        });
+        context.ProviderAccounts.AddRange(ambiguousAccounts.Select(id => new ProviderAccountRecord
+        {
+            Id = id,
+            TenantId = tenant,
+            OwnerUserId = user,
+            ProviderId = "qobuz",
+            DisplayName = $"Qobuz {id:N}",
+            Scope = ProviderAccountScope.User,
+            Enabled = true,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Revision = 1
+        }));
+        context.Jobs.Add(DatabaseLineageConstraintTests.Job(job, tenant, user, "v3-backfill", now));
+        context.RecommendationRuns.Add(new()
+        {
+            Id = run,
+            TenantId = tenant,
+            OwnerUserId = user,
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            JobId = job,
+            IdempotencyKey = "v3-backfill",
+            Limit = 10,
+            State = RecommendationRunState.Succeeded,
+            CreatedAt = now,
+            UpdatedAt = now,
+            CompletedAt = now,
+            Revision = 1
+        });
+        context.RecommendationCandidates.Add(new()
+        {
+            Id = candidate,
+            RunId = run,
+            TenantId = tenant,
+            OwnerUserId = user,
+            Position = 0,
+            TrackKey = "audiomuse:track:1",
+            Score = .9,
+            Source = "audiomuse",
+            SignalsJson = "[]",
+            IdentityJson = "{}",
+            SourceRevision = "legacy",
+            ExclusionsJson = "[]",
+            CreatedAt = now,
+            Revision = 0
+        });
+        context.RecommendationCandidates.Add(new()
+        {
+            Id = ambiguousCandidate,
+            RunId = run,
+            TenantId = tenant,
+            OwnerUserId = user,
+            Position = 1,
+            TrackKey = "qobuz:track:1",
+            Score = .8,
+            Source = "qobuz",
+            SignalsJson = "[]",
+            IdentityJson = "{}",
+            SourceRevision = "legacy",
+            ExclusionsJson = "[]",
+            CreatedAt = now,
+            Revision = 0
+        });
+        foreach (var (key, value) in new[]
+                 {
+                     ("AppleDownload:Quality", "alac-24-96"),
+                     ("Deezer:Quality", "FLAC"),
+                     ("Qobuz:Quality", "FLAC_24_HIGH")
+                 })
+        {
+            context.TenantRuntimeSettings.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = tenant,
+                Key = key,
+                ValueType = RuntimeSettingValueType.String,
+                ValueJson = JsonSerializer.Serialize(value),
+                Source = "legacy",
+                CreatedAt = now,
+                UpdatedAt = now,
+                Revision = 1
+            });
+        }
+        context.ExtensionPackages.Add(new()
+        {
+            Id = package,
+            ExtensionId = "demo",
+            DisplayName = "Demo",
+            Version = "1.0.0",
+            SdkVersion = "1",
+            Sha256 = new string('a', 64),
+            ContentSha256 = new string('b', 64),
+            PackagePath = "/extensions/demo",
+            ManifestJson = """{"id":"spotiflac-demo","compatibility":"spotiflac-v1"}""",
+            State = ExtensionPackageState.Active,
+            StagedAt = now,
+            ActivatedAt = now,
+            Revision = 0
+        });
+        context.ExtensionLogs.Add(new()
+        {
+            Id = Guid.CreateVersion7(),
+            ExtensionPackageId = package,
+            ExtensionId = "demo",
+            Level = "Info",
+            EventCode = "legacy",
+            Message = "Legacy",
+            CorrelationId = "v3-backfill",
+            CreatedAt = now
+        });
+        await context.SaveChangesAsync();
+
+        await migrator.MigrateAsync(current);
+        context.ChangeTracker.Clear();
+        var shared = await context.TenantRuntimeSettings.SingleAsync(item => item.Key == AudioQualityPolicy.SettingKey);
+        Assert.Equal("\"HiResLossless\"", shared.ValueJson);
+        Assert.Equal("v3-compatibility-migration", shared.Source);
+        var normalizedPackage = await context.ExtensionPackages.SingleAsync(item => item.Id == package);
+        Assert.Equal("spotiflac-demo", normalizedPackage.ExtensionId);
+        Assert.Equal(1, normalizedPackage.Revision);
+        Assert.Equal("spotiflac-demo", (await context.ExtensionLogs.SingleAsync()).ExtensionId);
+        var normalizedCandidate = await context.RecommendationCandidates.SingleAsync(item => item.Id == candidate);
+        Assert.Equal($"run:{run:N}", normalizedCandidate.SourceRevision);
+        Assert.Equal(account, normalizedCandidate.ProviderAccountId);
+        Assert.Equal(2, normalizedCandidate.Revision);
+        var unresolvedCandidate = await context.RecommendationCandidates.SingleAsync(item => item.Id == ambiguousCandidate);
+        Assert.Equal($"run:{run:N}", unresolvedCandidate.SourceRevision);
+        Assert.Null(unresolvedCandidate.ProviderAccountId);
+        Assert.Equal(1, unresolvedCandidate.Revision);
+
+        await migrator.MigrateAsync(previous);
+        await using var restarted = new AllstarrDbContext(database.Options);
+        await restarted.GetService<IMigrator>().MigrateAsync(current);
+        Assert.Single(await restarted.TenantRuntimeSettings.Where(item => item.Key == AudioQualityPolicy.SettingKey).ToListAsync());
+        Assert.Equal(1, (await restarted.ExtensionPackages.SingleAsync(item => item.Id == package)).Revision);
+        Assert.Equal(2, (await restarted.RecommendationCandidates.SingleAsync(item => item.Id == candidate)).Revision);
     }
 
     [Fact]

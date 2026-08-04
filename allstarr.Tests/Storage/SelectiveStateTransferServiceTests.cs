@@ -2,7 +2,9 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Intelligence;
+using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
@@ -130,12 +132,13 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
                 IncludeAccounts = true,
                 IncludePlaylists = false,
                 IncludeIntelligence = false,
-                IncludeExtensions = false
+                IncludeExtensions = true
             });
 
-        Assert.Equal(2, exportReport.IncludedCategories.Count);
+        Assert.Equal(3, exportReport.IncludedCategories.Count);
         Assert.Contains("Settings", exportReport.IncludedCategories);
         Assert.Contains("Accounts", exportReport.IncludedCategories);
+        Assert.Contains("Extensions", exportReport.IncludedCategories);
 
         var (targetFactory, targetOptions, targetState) = await CreateEmptyContextAsync();
         var targetService = new SelectiveStateTransferService(targetFactory, targetOptions, targetState);
@@ -147,10 +150,10 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
             ImportAccounts = true,
             ImportPlaylists = false,
             ImportIntelligence = false,
-            ImportExtensions = false
+            ImportExtensions = true
         }, Guid.Empty, "round-trip");
 
-        Assert.Equal(2, report.IncludedCategories.Count);
+        Assert.Equal(3, report.IncludedCategories.Count);
         Assert.Equal(1, report.RowsByEntry.GetValueOrDefault("tenants"));
         Assert.Equal(1, report.RowsByEntry.GetValueOrDefault("users"));
         Assert.Equal(1, report.RowsByEntry.GetValueOrDefault("provider-accounts"));
@@ -160,6 +163,9 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
         Assert.Equal(1, await verify.Tenants.CountAsync());
         Assert.Equal(1, await verify.Users.CountAsync());
         Assert.Equal(1, await verify.ProviderAccounts.CountAsync());
+        Assert.Equal("\"HiResLossless\"", (await verify.TenantRuntimeSettings.SingleAsync()).ValueJson);
+        Assert.Equal("spotiflac-selective", (await verify.ExtensionPackages.SingleAsync()).ExtensionId);
+        Assert.Equal("spotiflac-selective", (await verify.ExtensionLogs.SingleAsync()).ExtensionId);
         Assert.Contains(await verify.AuditEvents.ToListAsync(), item =>
             item.Action == "selective-import.apply" &&
             item.CorrelationId == "round-trip");
@@ -754,6 +760,46 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
             Enabled = true,
             CreatedAt = now,
             UpdatedAt = now
+        });
+        context.TenantRuntimeSettings.Add(new TenantRuntimeSettingRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            Key = AudioQualityPolicy.SettingKey,
+            ValueType = RuntimeSettingValueType.String,
+            ValueJson = "\"HiResLossless\"",
+            Source = "v3-compatibility-migration",
+            CreatedAt = now,
+            UpdatedAt = now,
+            Revision = 1
+        });
+        var packageId = Guid.CreateVersion7();
+        context.ExtensionPackages.Add(new ExtensionPackageRecord
+        {
+            Id = packageId,
+            ExtensionId = "spotiflac-selective",
+            DisplayName = "Selective extension",
+            Version = "1.0.0",
+            SdkVersion = "1",
+            Sha256 = new string('e', 64),
+            ContentSha256 = new string('f', 64),
+            PackagePath = "/extensions/spotiflac-selective",
+            ManifestJson = """{"id":"spotiflac-selective","compatibility":"spotiflac-v1"}""",
+            State = ExtensionPackageState.Active,
+            StagedAt = now,
+            ActivatedAt = now,
+            Revision = 1
+        });
+        context.ExtensionLogs.Add(new ExtensionLogRecord
+        {
+            Id = Guid.CreateVersion7(),
+            ExtensionPackageId = packageId,
+            ExtensionId = "spotiflac-selective",
+            Level = "Info",
+            EventCode = "selective",
+            Message = "Selective fixture",
+            CorrelationId = "selective-extension",
+            CreatedAt = now
         });
         await context.SaveChangesAsync();
 

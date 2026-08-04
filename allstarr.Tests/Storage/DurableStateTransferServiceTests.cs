@@ -71,6 +71,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         var generatedSetId = Guid.CreateVersion7();
         var directGeneratedSetId = Guid.CreateVersion7();
         var routeDecisionId = Guid.CreateVersion7();
+        var extensionPackageId = Guid.CreateVersion7();
         var now = DateTimeOffset.UtcNow;
         var stableHash = HashExternalId("phase4-transfer");
         context.Tenants.Add(new TenantRecord
@@ -890,14 +891,41 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         {
             Id = Guid.CreateVersion7(),
             TenantId = tenantId,
-            Key = "Cache:LyricsDays",
-            ValueType = RuntimeSettingValueType.Integer,
-            ValueJson = "21",
-            Source = "transfer-fixture",
+            Key = AudioQualityPolicy.SettingKey,
+            ValueType = RuntimeSettingValueType.String,
+            ValueJson = "\"HiResLossless\"",
+            Source = "v3-compatibility-migration",
             UpdatedByUserId = userId,
             CreatedAt = now,
             UpdatedAt = now,
             Revision = 2
+        });
+        context.ExtensionPackages.Add(new ExtensionPackageRecord
+        {
+            Id = extensionPackageId,
+            ExtensionId = "spotiflac-transfer",
+            DisplayName = "Transfer extension",
+            Version = "1.0.0",
+            SdkVersion = "1",
+            Sha256 = new string('c', 64),
+            ContentSha256 = new string('d', 64),
+            PackagePath = "/extensions/spotiflac-transfer",
+            ManifestJson = """{"id":"spotiflac-transfer","compatibility":"spotiflac-v1"}""",
+            State = ExtensionPackageState.Active,
+            StagedAt = now,
+            ActivatedAt = now,
+            Revision = 1
+        });
+        context.ExtensionLogs.Add(new ExtensionLogRecord
+        {
+            Id = Guid.CreateVersion7(),
+            ExtensionPackageId = extensionPackageId,
+            ExtensionId = "spotiflac-transfer",
+            Level = "Info",
+            EventCode = "transfer",
+            Message = "Transfer fixture",
+            CorrelationId = "transfer-extension",
+            CreatedAt = now
         });
         context.OnboardingStates.Add(new OnboardingStateRecord
         {
@@ -983,8 +1011,11 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         Assert.Single(await target.Users.ToListAsync());
         Assert.Single(await target.ProviderAccounts.ToListAsync());
         var runtimeSetting = await target.TenantRuntimeSettings.SingleAsync();
-        Assert.Equal("Cache:LyricsDays", runtimeSetting.Key);
+        Assert.Equal(AudioQualityPolicy.SettingKey, runtimeSetting.Key);
+        Assert.Equal("\"HiResLossless\"", runtimeSetting.ValueJson);
         Assert.Equal(2, runtimeSetting.Revision);
+        Assert.Equal("spotiflac-transfer", (await target.ExtensionPackages.SingleAsync()).ExtensionId);
+        Assert.Equal("spotiflac-transfer", (await target.ExtensionLogs.SingleAsync()).ExtensionId);
         var onboarding = await target.OnboardingStates.SingleAsync();
         Assert.Equal(OnboardingStateService.SchemaVersion, onboarding.SchemaVersion);
         Assert.NotNull(onboarding.CompletedAt);
