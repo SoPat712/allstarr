@@ -1169,6 +1169,90 @@ test("Intelligence empty states explain how to get results", async ({ page }) =>
   await expect(page.getByText("Turn on automatic history in Settings, then play music or import a history file.")).toBeVisible();
 });
 
+test("Intelligence partial and section error states stay announced", async ({ page }) => {
+  await page.setViewportSize({ width: 768, height: 1024 });
+  const historyRelease = routeRelease();
+  let failHistory = false;
+  await mockApi(page, {
+    releasePath: "/api/admin/intelligence/history/activity",
+    release: historyRelease.promise,
+  });
+  await page.route("**/api/admin/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/admin/intelligence") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ...(responses[url.pathname] as Record<string, unknown>),
+          state: "degraded",
+        }),
+      });
+      return;
+    }
+    if ((failHistory && url.pathname === "/api/admin/intelligence/history/activity") ||
+      (url.pathname === "/api/admin/intelligence/history/imports/preview" && route.request().method() === "POST") ||
+      (url.pathname === "/api/admin/intelligence/schedules" && route.request().method() === "POST")) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Fixture unavailable" }),
+      });
+      return;
+    }
+    await route.fallback();
+  });
+
+  await page.goto("#/intelligence?section=history");
+  await expect(page.getByRole("status", { name: "Loading listening history" })).toBeVisible();
+  historyRelease.release();
+  await expect(page.locator(".history-list").getByText("Moon Song", { exact: true })).toBeVisible();
+  await expect(page.locator(".degraded-banner")).toContainText("Existing results remain available.");
+
+  await page.getByRole("tab", { name: "Recommendations" }).click();
+  await expect(page.getByText("Future Song", { exact: true })).toBeVisible();
+  failHistory = true;
+  await page.getByRole("tab", { name: "History" }).click();
+  await expect(page.locator(".history-workspace").getByRole("alert")).toContainText("Fixture unavailable");
+
+  await page.getByRole("tab", { name: "Imports" }).click();
+  await page.getByLabel("History export files").setInputFiles({
+    name: "Streaming_History.json", mimeType: "application/json", buffer: Buffer.from("[]"),
+  });
+  const queue = page.getByRole("list", { name: "Selected history exports" });
+  await expect(queue).toHaveAttribute("aria-live", "polite");
+  await page.getByRole("button", { name: "Preview 1 file" }).click();
+  await expect(queue).toContainText("Fixture unavailable");
+
+  await page.getByRole("tab", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "New schedule" }).click();
+  await page.getByRole("button", { name: "Create schedule" }).click();
+  await expect(page.locator(".intelligence-schedules").getByRole("alert")).toContainText("Fixture unavailable");
+
+  const clear = page.getByRole("button", { name: "Turn off and clear" });
+  await clear.click();
+  const dialog = page.getByRole("alertdialog", { name: "Clear private listening data for this library?" });
+  await expect(dialog).toBeVisible();
+  await expect.poll(() => dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(clear).toBeFocused();
+
+  const scrollOwners = await page.locator(".intelligence-view").evaluate((element) => {
+    const nested = [];
+    for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+      const overflow = getComputedStyle(parent).overflowY;
+      if (/(auto|scroll)/.test(overflow) && parent.scrollHeight > parent.clientHeight) nested.push(parent.className);
+    }
+    return {
+      nested,
+      document: document.scrollingElement!.scrollHeight > document.scrollingElement!.clientHeight,
+    };
+  });
+  expect(scrollOwners).toEqual({ nested: [], document: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});
+
 test("Home stays inside runtime and request budgets", async ({ page }) => {
   const requests: string[] = [];
   page.on("request", (request) => requests.push(new URL(request.url()).pathname));
