@@ -2,7 +2,9 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Deezer;
 using allstarr.Core.Matching;
 using allstarr.Core.Routing;
+using allstarr.Core.Storage;
 using allstarr.Models.Domain;
+using allstarr.Models.Subsonic;
 using allstarr.Services;
 using Moq;
 
@@ -172,7 +174,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
         var adapter = new DeezerMetadataCapabilityAdapter(
             new Mock<IConcreteMetadataService>(MockBehavior.Strict).Object);
         var registry = new ProviderRegistry(
-            [DeezerMetadataCapabilityAdapter.CreateRegistration(adapter, Download(), Streaming())]);
+            [DeezerMetadataCapabilityAdapter.CreateRegistration(adapter, Playlist(), Download(), Streaming())]);
 
         var descriptor = registry.GetRequired("deezer");
         var resolved = registry.GetRequiredCapability<IProviderMetadataCapability>(
@@ -211,7 +213,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
             ]);
         var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
         var registry = new ProviderRegistry(
-            [DeezerMetadataCapabilityAdapter.CreateRegistration(adapter, Download(), Streaming())]);
+            [DeezerMetadataCapabilityAdapter.CreateRegistration(adapter, Playlist(), Download(), Streaming())]);
         var router = new ProviderRouter(
             registry,
             new Mock<IProviderRouteAccountResolver>(MockBehavior.Strict).Object,
@@ -273,6 +275,131 @@ public sealed class DeezerMetadataCapabilityAdapterTests
         legacy.VerifyAll();
     }
 
+    [Fact]
+    public async Task AlbumLookup_PreservesProtocolVisibleAlbumAndTrackFacts()
+    {
+        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        legacy.Setup(item => item.GetAlbumAsync("deezer", "album-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Album
+            {
+                ExternalId = "album-1",
+                Title = "Album",
+                Artist = "Artist",
+                ArtistId = "artist-1",
+                Year = 2024,
+                Genre = "Electronic",
+                SongCount = 1,
+                Songs =
+                [
+                    new Song
+                    {
+                        ExternalId = "track-1",
+                        Title = "Track",
+                        Artist = "Artist",
+                        Artists = ["Artist"],
+                        ArtistIds = ["artist-1"],
+                        Album = "Album",
+                        AlbumId = "album-1",
+                        Track = 2,
+                        DiscNumber = 1,
+                        TotalTracks = 10,
+                        Year = 2024,
+                        Genre = "Electronic",
+                        Bpm = 120,
+                        ReleaseDate = "2024-02-03",
+                        AlbumArtist = "Album Artist",
+                        Composer = "Composer",
+                        Label = "Label",
+                        Copyright = "Copyright",
+                        Contributors = ["Contributor"],
+                        ExplicitContentLyrics = 3
+                    }
+                ]
+            });
+        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+
+        var outcome = await adapter.GetAlbumAsync(
+            Context(),
+            new ProviderAlbumLookupRequest(new("deezer", ProviderResourceKind.Album, "album-1")));
+
+        var album = outcome.RequireValue();
+        Assert.Equal(2024, album.Year);
+        Assert.Equal("Electronic", album.Genre);
+        var track = Assert.Single(album.Tracks);
+        Assert.Equal(2, track.TrackNumber);
+        Assert.Equal(1, track.DiscNumber);
+        Assert.Equal(10, track.TotalTracks);
+        Assert.Equal(120, track.Bpm);
+        Assert.Equal("2024-02-03", track.ReleaseDate);
+        Assert.Equal("Album Artist", track.AlbumArtist);
+        Assert.Equal("Composer", track.Composer);
+        Assert.Equal("Label", track.Label);
+        Assert.Equal("Copyright", track.Copyright);
+        Assert.Equal(["Contributor"], track.Contributors);
+        Assert.Equal(3, track.ExplicitContentLyrics);
+        legacy.VerifyAll();
+    }
+
+    [Fact]
+    public async Task PlaylistAdapter_PreservesSummaryAndOrderedTrackFacts()
+    {
+        var created = new DateTime(2023, 4, 5, 0, 0, 0, DateTimeKind.Utc);
+        var playlist = new ExternalPlaylist
+        {
+            ExternalId = "playlist-1",
+            Name = "Road",
+            Description = "Drive",
+            CuratorName = "Curator",
+            Provider = "deezer",
+            TrackCount = 2,
+            Duration = 420,
+            CoverUrl = "https://images.example.test/playlist.webp",
+            CreatedDate = created
+        };
+        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        legacy.Setup(item => item.SearchPlaylistsAsync("road", 5, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([playlist]);
+        legacy.Setup(item => item.GetPlaylistAsync("deezer", "playlist-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(playlist);
+        legacy.Setup(item => item.GetPlaylistTracksAsync("deezer", "playlist-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(
+            [
+                new Song
+                {
+                    ExternalId = "track-1", Title = "First", Artist = "Artist", Artists = ["Artist"],
+                    Track = 1, DiscNumber = 1, Year = 2023
+                },
+                new Song
+                {
+                    ExternalId = "track-2", Title = "Second", Artist = "Artist", Artists = ["Artist"],
+                    Track = 2, DiscNumber = 1, Year = 2023
+                }
+            ]);
+        var metadata = new DeezerMetadataCapabilityAdapter(legacy.Object);
+        var adapter = new DeezerPlaylistCapabilityAdapter(legacy.Object, metadata);
+        var context = PlaylistContext();
+
+        var search = (await adapter.SearchPlaylistsAsync(
+            context, new("road", new ProviderPageRequest(5)))).RequireValue();
+        var summary = Assert.Single(search.Items);
+        var read = (await adapter.GetPlaylistTracksAsync(
+            context,
+            new(new("deezer", ProviderResourceKind.Playlist, "playlist-1"),
+                new ProviderPageRequest(1), summary.SourceRevision))).RequireValue();
+
+        Assert.Equal("Curator", summary.Owner.DisplayName);
+        Assert.Equal(420, summary.DurationSeconds);
+        Assert.Equal(created, summary.CreatedDate);
+        Assert.Equal("https://images.example.test/playlist.webp", summary.Artwork!.PublicUri!.AbsoluteUri);
+        Assert.Equal("1", read.Tracks.NextCursor);
+        var first = Assert.Single(read.Tracks.Items);
+        Assert.Equal(0, first.Position);
+        Assert.Equal("track-1", first.TrackId.Value);
+        Assert.Equal(1, first.Metadata!.TrackNumber);
+        Assert.Equal(2023, first.Metadata.Year);
+        legacy.VerifyAll();
+    }
+
     private static ProviderExecutionContext Context(CancellationToken cancellationToken = default)
     {
         var actor = new ProviderActorContext(
@@ -301,9 +428,34 @@ public sealed class DeezerMetadataCapabilityAdapterTests
             cancellationToken: cancellationToken);
     }
 
+    private static ProviderExecutionContext PlaylistContext()
+    {
+        var context = Context();
+        return new(
+            context.Actor,
+            context.ProviderId,
+            new ProviderAccountContext(
+                Guid.CreateVersion7(),
+                "deezer",
+                ProviderAccountScope.User,
+                1,
+                tenantId: context.Actor.TenantId,
+                ownerUserId: context.Actor.EffectiveUserId),
+            context.Library,
+            context.Policy,
+            context.OperationId,
+            context.CorrelationId,
+            context.Deadline,
+            context.CancellationToken);
+    }
+
     private static IProviderDownloadCapability Download() =>
         Mock.Of<IProviderDownloadCapability>(item =>
             item.ProviderId == "deezer" && item.Capability == ProviderCapabilityKind.Download);
+
+    private static IProviderPlaylistCapability Playlist() =>
+        Mock.Of<IProviderPlaylistCapability>(item =>
+            item.ProviderId == "deezer" && item.Capability == ProviderCapabilityKind.Playlist);
 
     private static IProviderStreamingCapability Streaming() =>
         Mock.Of<IProviderStreamingCapability>(item =>

@@ -30,7 +30,21 @@ public sealed record ProviderTrackMetadata
         string? isrc = null,
         bool? isExplicit = null,
         ProviderArtworkReference? artwork = null,
-        string? snapshotVersion = null)
+        string? snapshotVersion = null,
+        int? trackNumber = null,
+        int? discNumber = null,
+        int? totalTracks = null,
+        int? year = null,
+        string? genre = null,
+        int? bpm = null,
+        string? spotifyId = null,
+        string? releaseDate = null,
+        string? albumArtist = null,
+        string? composer = null,
+        string? label = null,
+        string? copyright = null,
+        IEnumerable<string>? contributors = null,
+        int? explicitContentLyrics = null)
     {
         ArgumentNullException.ThrowIfNull(id);
         id.RequireOwner(id.ProviderId, ProviderResourceKind.Track);
@@ -72,6 +86,24 @@ public sealed record ProviderTrackMetadata
             snapshotVersion,
             nameof(snapshotVersion),
             300);
+        TrackNumber = trackNumber;
+        DiscNumber = discNumber;
+        TotalTracks = totalTracks;
+        Year = year;
+        Genre = ProviderContractValidation.OptionalText(genre, nameof(genre), 300);
+        Bpm = bpm;
+        SpotifyId = ProviderContractValidation.OptionalText(spotifyId, nameof(spotifyId), 300);
+        ReleaseDate = ProviderContractValidation.OptionalText(releaseDate, nameof(releaseDate), 40);
+        AlbumArtist = ProviderContractValidation.OptionalText(albumArtist, nameof(albumArtist), 500);
+        Composer = ProviderContractValidation.OptionalText(composer, nameof(composer), 1000);
+        Label = ProviderContractValidation.OptionalText(label, nameof(label), 500);
+        Copyright = ProviderContractValidation.OptionalContent(copyright, nameof(copyright), 2000);
+        Contributors = contributors == null
+            ? []
+            : ProviderContractValidation.Copy(contributors
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value.Trim()));
+        ExplicitContentLyrics = explicitContentLyrics;
     }
 
     public ProviderExternalResourceId Id { get; }
@@ -93,6 +125,34 @@ public sealed record ProviderTrackMetadata
     public ProviderArtworkReference? Artwork { get; }
 
     public string? SnapshotVersion { get; }
+
+    public int? TrackNumber { get; }
+
+    public int? DiscNumber { get; }
+
+    public int? TotalTracks { get; }
+
+    public int? Year { get; }
+
+    public string? Genre { get; }
+
+    public int? Bpm { get; }
+
+    public string? SpotifyId { get; }
+
+    public string? ReleaseDate { get; }
+
+    public string? AlbumArtist { get; }
+
+    public string? Composer { get; }
+
+    public string? Label { get; }
+
+    public string? Copyright { get; }
+
+    public IReadOnlyList<string> Contributors { get; }
+
+    public int? ExplicitContentLyrics { get; }
 }
 
 public sealed record ProviderAlbumMetadata
@@ -103,7 +163,10 @@ public sealed record ProviderAlbumMetadata
         IEnumerable<ProviderArtistCredit> artists,
         int? trackCount = null,
         ProviderArtworkReference? artwork = null,
-        string? snapshotVersion = null)
+        string? snapshotVersion = null,
+        int? year = null,
+        string? genre = null,
+        IEnumerable<ProviderTrackMetadata>? tracks = null)
     {
         ArgumentNullException.ThrowIfNull(id);
         id.RequireOwner(id.ProviderId, ProviderResourceKind.Album);
@@ -134,6 +197,13 @@ public sealed record ProviderAlbumMetadata
             snapshotVersion,
             nameof(snapshotVersion),
             300);
+        Year = year;
+        Genre = ProviderContractValidation.OptionalText(genre, nameof(genre), 300);
+        Tracks = tracks == null ? [] : ProviderContractValidation.Copy(tracks);
+        if (Tracks.Any(track => !track.Id.ProviderId.Equals(id.ProviderId, StringComparison.Ordinal)))
+        {
+            throw new ArgumentException("Album tracks must belong to the album provider.", nameof(tracks));
+        }
     }
 
     public ProviderExternalResourceId Id { get; }
@@ -147,6 +217,12 @@ public sealed record ProviderAlbumMetadata
     public ProviderArtworkReference? Artwork { get; }
 
     public string? SnapshotVersion { get; }
+
+    public int? Year { get; }
+
+    public string? Genre { get; }
+
+    public IReadOnlyList<ProviderTrackMetadata> Tracks { get; }
 }
 
 public sealed record ProviderArtistMetadata

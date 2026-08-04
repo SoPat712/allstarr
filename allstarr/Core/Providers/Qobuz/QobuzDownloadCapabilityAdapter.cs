@@ -182,7 +182,8 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
     public static ProviderRegistration CreateRegistration(
         IProviderDownloadCapability adapter,
         IProviderStreamingCapability streaming,
-        IProviderMetadataCapability metadata) => new(
+        IProviderMetadataCapability metadata,
+        IProviderPlaylistCapability playlists) => new(
         new ProviderDescriptor(
             StableProviderId,
             "Qobuz",
@@ -232,7 +233,18 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
                         ProviderAccountScope.User,
                         ProviderAccountScope.Library
                     ]),
-                PlaylistCompatibility()
+                new ProviderCapabilityDescriptor(
+                    ProviderCapabilityKind.Playlist,
+                    ProviderCapabilitySupportState.Supported,
+                    ProviderAccountRequirement.Required,
+                    compatibilityVersion: "1",
+                    hooks: ["getUserPlaylists", "searchPlaylists", "getPlaylistTracks"],
+                    allowedAccountScopes:
+                    [
+                        ProviderAccountScope.Global,
+                        ProviderAccountScope.User,
+                        ProviderAccountScope.Library
+                    ])
             ],
             permissions: new ProviderPermissionDescriptor(
                 networkOrigins:
@@ -241,19 +253,7 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
                     new Uri("https://play.qobuz.com/")
                 ],
                 cache: true)),
-        [adapter, streaming, metadata]);
-
-    private static ProviderCapabilityDescriptor PlaylistCompatibility() => new(
-        ProviderCapabilityKind.Playlist,
-        ProviderCapabilitySupportState.ConfiguredOnly,
-        ProviderAccountRequirement.Required,
-        compatibilityVersion: "legacy-seam-v1",
-        allowedAccountScopes:
-        [
-            ProviderAccountScope.Global,
-            ProviderAccountScope.User,
-            ProviderAccountScope.Library
-        ]);
+        [adapter, streaming, metadata, playlists]);
 
     internal static string Quality(ProviderAudioQuality requested, string? configured)
     {

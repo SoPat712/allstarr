@@ -23,11 +23,15 @@ public static class DeezerCapabilityRegistration
         services.AddSingleton<DeezerMetadataCapabilityAdapter>(provider =>
             new DeezerMetadataCapabilityAdapter(
                 provider.GetRequiredService<DeezerMetadataService>()));
+        services.AddSingleton<DeezerPlaylistCapabilityAdapter>(provider => new(
+            provider.GetRequiredService<DeezerMetadataService>(),
+            provider.GetRequiredService<DeezerMetadataCapabilityAdapter>()));
         services.AddSingleton<DeezerDownloadCapabilityAdapter>();
         services.AddSingleton<DeezerStreamingCapabilityAdapter>();
         services.AddSingleton<ProviderRegistration>(provider =>
             DeezerMetadataCapabilityAdapter.CreateRegistration(
                 provider.GetRequiredService<DeezerMetadataCapabilityAdapter>(),
+                provider.GetRequiredService<DeezerPlaylistCapabilityAdapter>(),
                 provider.GetRequiredService<DeezerDownloadCapabilityAdapter>(),
                 provider.GetRequiredService<DeezerStreamingCapabilityAdapter>()));
         return services;

@@ -26,7 +26,9 @@ public sealed record ProviderPlaylistSummary
         string? description = null,
         ProviderArtworkReference? artwork = null,
         int? trackCount = null,
-        string? sourceETag = null)
+        string? sourceETag = null,
+        int? durationSeconds = null,
+        DateTime? createdDate = null)
     {
         ArgumentNullException.ThrowIfNull(id);
         ArgumentNullException.ThrowIfNull(owner);
@@ -34,6 +36,10 @@ public sealed record ProviderPlaylistSummary
         if (trackCount is < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(trackCount));
+        }
+        if (durationSeconds is < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(durationSeconds));
         }
 
         Id = id;
@@ -47,6 +53,8 @@ public sealed record ProviderPlaylistSummary
         Artwork = artwork;
         TrackCount = trackCount;
         SourceETag = ProviderContractValidation.OptionalText(sourceETag, nameof(sourceETag), 500);
+        DurationSeconds = durationSeconds;
+        CreatedDate = createdDate;
     }
 
     public ProviderExternalResourceId Id { get; }
@@ -64,6 +72,10 @@ public sealed record ProviderPlaylistSummary
     public int? TrackCount { get; }
 
     public string? SourceETag { get; }
+
+    public int? DurationSeconds { get; }
+
+    public DateTime? CreatedDate { get; }
 }
 
 public sealed record ProviderPlaylistTrack

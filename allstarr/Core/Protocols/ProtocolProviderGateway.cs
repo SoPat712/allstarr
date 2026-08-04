@@ -325,26 +325,18 @@ public sealed class ProtocolProviderGateway(
         var routedProviderId = NormalizeProvider(providerId);
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
             protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-album");
-        Album? typed = null;
         if (routed.Candidate != null)
         {
             var id = new ProviderExternalResourceId(routedProviderId, ProviderResourceKind.Album, externalId);
             var outcome = await routed.Candidate.Implementation.GetAlbumAsync(
                 routed.Candidate.Context,
                 new ProviderAlbumLookupRequest(id));
-            if (outcome.IsSuccess) typed = Map(outcome.RequireValue());
-            else if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
-            else ThrowRouteFailure(outcome.Error);
-        }
-
-        // The v1 metadata contract intentionally does not embed album tracks. Preserve the
-        // compatibility implementation's richer album when it is available.
-        if (typed != null)
-        {
-            return await legacyMetadata.GetAlbumAsync(providerId, externalId, protocol.CancellationToken) ?? typed;
+            if (outcome.IsSuccess) return Map(outcome.RequireValue());
+            if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
+            ThrowRouteFailure(outcome.Error);
         }
         await RequireCompatibilityProviderAsync(protocol, routedProviderId);
-        return await legacyMetadata.GetAlbumAsync(providerId, externalId, protocol.CancellationToken);
+        return null;
     }
 
     public async Task<Artist?> GetArtistAsync(
@@ -498,19 +490,7 @@ public sealed class ProtocolProviderGateway(
             }
         }
 
-        var allowedCompatibilityProviders = await ResolveAllowedCompatibilityProvidersAsync(
-            protocol, actor, ProviderCapabilityKind.Playlist);
-        if (allowedCompatibilityProviders.Count == 0)
-        {
-            return routed.Take(limit).ToList();
-        }
-        var legacy = await legacyMetadata.SearchPlaylistsAsync(query, limit, protocol.CancellationToken);
-        return Merge(
-            routed,
-            legacy.Where(item => Allowed(item.Provider, allowedCompatibilityProviders)),
-            limit,
-            item => Key(item.Provider, item.ExternalId, item.Id),
-            item => item.Provider);
+        return routed.Take(limit).ToList();
     }
 
     public async Task<ExternalPlaylist?> GetPlaylistAsync(
@@ -536,7 +516,7 @@ public sealed class ProtocolProviderGateway(
         }
 
         await RequireCompatibilityProviderAsync(protocol, providerId, ProviderCapabilityKind.Playlist);
-        return await legacyMetadata.GetPlaylistAsync(providerId, externalId, protocol.CancellationToken);
+        return null;
     }
 
     public async Task<List<Song>> GetPlaylistTracksAsync(
@@ -573,7 +553,7 @@ public sealed class ProtocolProviderGateway(
         }
 
         await RequireCompatibilityProviderAsync(protocol, providerId, ProviderCapabilityKind.Playlist);
-        return await legacyMetadata.GetPlaylistTracksAsync(providerId, externalId, protocol.CancellationToken);
+        return [];
     }
 
     public async Task<ProtocolProviderStream?> OpenStreamAsync(
@@ -913,6 +893,25 @@ public sealed class ProtocolProviderGateway(
             Isrc = item.Isrc,
             CoverArtUrl = item.Artwork?.PublicUri?.ToString(),
             CoverArtUrlLarge = item.Artwork?.PublicUri?.ToString(),
+            Track = item.TrackNumber,
+            DiscNumber = item.DiscNumber,
+            TotalTracks = item.TotalTracks,
+            Year = item.Year,
+            Genre = item.Genre,
+            Bpm = item.Bpm,
+            SpotifyId = item.SpotifyId,
+            ReleaseDate = item.ReleaseDate,
+            AlbumArtist = item.AlbumArtist,
+            Composer = item.Composer,
+            Label = item.Label,
+            Copyright = item.Copyright,
+            Contributors = item.Contributors.ToList(),
+            ExplicitContentLyrics = item.ExplicitContentLyrics ?? (item.IsExplicit switch
+            {
+                true => 1,
+                false => 0,
+                null => null
+            }),
             IsLocal = false
         };
     }
@@ -929,6 +928,9 @@ public sealed class ProtocolProviderGateway(
             : null,
         SongCount = item.TrackCount,
         CoverArtUrl = item.Artwork?.PublicUri?.ToString(),
+        Year = item.Year,
+        Genre = item.Genre,
+        Songs = item.Tracks.Select(Map).ToList(),
         IsLocal = false
     };
 
@@ -961,7 +963,9 @@ public sealed class ProtocolProviderGateway(
         Description = item.Description,
         CuratorName = item.Owner.DisplayName,
         TrackCount = item.TrackCount ?? 0,
-        CoverUrl = item.Artwork?.PublicUri?.ToString()
+        Duration = item.DurationSeconds ?? 0,
+        CoverUrl = item.Artwork?.PublicUri?.ToString(),
+        CreatedDate = item.CreatedDate
     };
 
     private List<T> Merge<T>(
@@ -1021,12 +1025,4 @@ public sealed class ProtocolProviderGateway(
             ? $"{providerId}:{externalId}"
             : fallback;
 
-    private static bool Allowed(string? providerId, IReadOnlySet<string> allowed)
-    {
-        if (string.IsNullOrWhiteSpace(providerId)) return false;
-
-        var normalized = NormalizeProvider(providerId);
-        return allowed.Any(item =>
-            NormalizeProvider(item).Equals(normalized, StringComparison.Ordinal));
-    }
 }

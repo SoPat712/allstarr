@@ -47,7 +47,10 @@ public sealed class ProtocolPlaylistGatewayTests
 
         var result = await gateway.SearchPlaylistsAsync(context, "road", 10);
 
-        Assert.Equal("Playlist", Assert.Single(result).Name);
+        var playlist = Assert.Single(result);
+        Assert.Equal("Playlist", playlist.Name);
+        Assert.Equal(420, playlist.Duration);
+        Assert.Equal(new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc), playlist.CreatedDate);
         legacy.VerifyNoOtherCalls();
         capability.VerifyAll();
     }
@@ -132,6 +135,9 @@ public sealed class ProtocolPlaylistGatewayTests
         Assert.Equal("ext-spotify-artist-artist-1", track.ArtistId);
         Assert.Equal(["ext-spotify-artist-artist-1"], track.ArtistIds);
         Assert.Equal("https://images.example.test/album-1.webp", track.CoverArtUrl);
+        Assert.Equal(7, track.Track);
+        Assert.Equal(2024, track.Year);
+        Assert.Equal("Electronic", track.Genre);
         legacy.VerifyNoOtherCalls();
         capability.VerifyAll();
     }
@@ -239,7 +245,10 @@ public sealed class ProtocolPlaylistGatewayTests
             new ProviderExternalResourceId("spotify", ProviderResourceKind.Album, "album-1"),
             "Album",
             artwork: new ProviderArtworkReference(
-                publicUri: new Uri("https://images.example.test/album-1.webp")));
+                publicUri: new Uri("https://images.example.test/album-1.webp")),
+            trackNumber: 7,
+            year: 2024,
+            genre: "Electronic");
         return ProviderOutcome<ProviderPlaylistTrackPage>.Success(new(
             summary,
             new ProviderPage<ProviderPlaylistTrack>(
@@ -250,7 +259,9 @@ public sealed class ProtocolPlaylistGatewayTests
         new ProviderExternalResourceId("spotify", ProviderResourceKind.Playlist, "playlist-1"),
         "Playlist",
         new ProviderPlaylistOwner("owner"),
-        "revision");
+        "revision",
+        durationSeconds: 420,
+        createdDate: new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc));
 
     private static ProviderRoutePlan<IProviderPlaylistCapability> Plan(
         ProviderRouteRequest request,

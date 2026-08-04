@@ -1,6 +1,9 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Models.Domain;
+using allstarr.Models.Subsonic;
 using allstarr.Services;
 
 namespace allstarr.Core.Providers;
@@ -186,7 +189,7 @@ public abstract class ConcreteMetadataCapabilityAdapter(
         }
     }
 
-    private ProviderError? ValidateContext(ProviderExecutionContext context)
+    internal ProviderError? ValidateContext(ProviderExecutionContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
         if (!context.ProviderId.Equals(ProviderId, StringComparison.Ordinal) ||
@@ -199,7 +202,7 @@ public abstract class ConcreteMetadataCapabilityAdapter(
             : null;
     }
 
-    private ProviderTrackMetadata MapTrack(Song song)
+    internal ProviderTrackMetadata MapTrack(Song song)
     {
         var trackId = ExternalId(ProviderResourceKind.Track, song.ExternalId, song.Id, "track");
         var names = song.Artists.Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
@@ -215,12 +218,30 @@ public abstract class ConcreteMetadataCapabilityAdapter(
         var albumId = string.IsNullOrWhiteSpace(song.AlbumId)
             ? null
             : ExternalId(ProviderResourceKind.Album, song.AlbumId, null, "album");
-        return new(trackId, song.Title, credits, albumId,
+        return new(
+            trackId,
+            song.Title,
+            credits,
+            albumId,
             string.IsNullOrWhiteSpace(song.Album) ? null : song.Album,
             song.Duration is > 0 ? TimeSpan.FromSeconds(song.Duration.Value) : null,
             string.IsNullOrWhiteSpace(song.Isrc) ? null : song.Isrc,
             ExplicitState(song.ExplicitContentLyrics),
-            PublicArtwork(song.CoverArtUrlLarge ?? song.CoverArtUrl));
+            PublicArtwork(song.CoverArtUrlLarge ?? song.CoverArtUrl),
+            trackNumber: song.Track,
+            discNumber: song.DiscNumber,
+            totalTracks: song.TotalTracks,
+            year: song.Year,
+            genre: song.Genre,
+            bpm: song.Bpm,
+            spotifyId: song.SpotifyId,
+            releaseDate: song.ReleaseDate,
+            albumArtist: song.AlbumArtist,
+            composer: song.Composer,
+            label: song.Label,
+            copyright: song.Copyright,
+            contributors: song.Contributors,
+            explicitContentLyrics: song.ExplicitContentLyrics);
     }
 
     private ProviderAlbumMetadata MapAlbum(Album album)
@@ -235,7 +256,10 @@ public abstract class ConcreteMetadataCapabilityAdapter(
             album.Title,
             [new ProviderArtistCredit(album.Artist, artistId)],
             album.SongCount,
-            PublicArtwork(album.CoverArtUrl));
+            PublicArtwork(album.CoverArtUrl),
+            year: album.Year,
+            genre: album.Genre,
+            tracks: album.Songs.Select(MapTrack));
     }
 
     private ProviderArtistMetadata MapArtist(Artist artist) => new(
@@ -243,7 +267,7 @@ public abstract class ConcreteMetadataCapabilityAdapter(
         artist.Name,
         PublicArtwork(artist.ImageUrl));
 
-    private ProviderExternalResourceId ExternalId(
+    internal ProviderExternalResourceId ExternalId(
         ProviderResourceKind kind,
         string? preferred,
         string? fallback,
@@ -270,7 +294,7 @@ public abstract class ConcreteMetadataCapabilityAdapter(
         return new(ProviderId, kind, value);
     }
 
-    private static ProviderArtworkReference? PublicArtwork(string? value) =>
+    internal static ProviderArtworkReference? PublicArtwork(string? value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
         uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
             ? new(publicUri: uri)
@@ -282,4 +306,145 @@ public abstract class ConcreteMetadataCapabilityAdapter(
         0 or 3 => false,
         _ => null
     };
+}
+
+public class ConcretePlaylistCapabilityAdapter(
+    string providerId,
+    IConcreteMetadataService legacy,
+    ConcreteMetadataCapabilityAdapter metadata) : IProviderPlaylistCapability
+{
+    public string ProviderId { get; } = ProviderContractValidation.ProviderId(providerId, nameof(providerId));
+    public ProviderCapabilityKind Capability => ProviderCapabilityKind.Playlist;
+
+    public Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetUserPlaylistsAsync(
+        ProviderExecutionContext context,
+        ProviderUserPlaylistsRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var failure = Validate(context);
+        return Task.FromResult(failure == null
+            ? ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(new(ProviderErrorKind.NotSupported))
+            : ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(failure));
+    }
+
+    public async Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> SearchPlaylistsAsync(
+        ProviderExecutionContext context,
+        ProviderPlaylistSearchRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var failure = Validate(context);
+        if (failure != null) return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(failure);
+        if (request.Page.Cursor != null)
+            return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(new(ProviderErrorKind.NotSupported));
+
+        try
+        {
+            var playlists = await legacy.SearchPlaylistsAsync(
+                request.Query, request.Page.Limit, context.CancellationToken);
+            context.CancellationToken.ThrowIfCancellationRequested();
+            return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Success(new(
+                ProviderId,
+                playlists.Select(playlist => MapPlaylist(playlist, Revision(playlist))),
+                isPartial: playlists.Count >= request.Page.Limit));
+        }
+        catch (OperationCanceledException)
+        {
+            return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(new(ProviderErrorKind.Canceled));
+        }
+        catch
+        {
+            return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(new(ProviderErrorKind.TransientFailure));
+        }
+    }
+
+    public async Task<ProviderOutcome<ProviderPlaylistTrackPage>> GetPlaylistTracksAsync(
+        ProviderExecutionContext context,
+        ProviderPlaylistTracksRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var failure = Validate(context);
+        if (failure != null) return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(failure);
+        if (!request.PlaylistId.ProviderId.Equals(ProviderId, StringComparison.Ordinal))
+            return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(new(ProviderErrorKind.Forbidden));
+        if (!int.TryParse(request.Page.Cursor ?? "0", NumberStyles.None, CultureInfo.InvariantCulture,
+                out var offset))
+            return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(new(ProviderErrorKind.NotSupported));
+
+        try
+        {
+            var playlistTask = legacy.GetPlaylistAsync(
+                ProviderId, request.PlaylistId.Value, context.CancellationToken);
+            var tracksTask = legacy.GetPlaylistTracksAsync(
+                ProviderId, request.PlaylistId.Value, context.CancellationToken);
+            await Task.WhenAll(playlistTask, tracksTask);
+            context.CancellationToken.ThrowIfCancellationRequested();
+            var playlist = await playlistTask;
+            if (playlist == null)
+                return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(new(ProviderErrorKind.NotFound));
+            var tracks = await tracksTask;
+            var mapped = tracks.Select(metadata.MapTrack).ToArray();
+            var revision = Revision(playlist);
+            if (request.ExpectedRevision != null && request.ExpectedRevision != revision)
+                return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(new(ProviderErrorKind.PermanentFailure));
+
+            var items = mapped.Skip(offset).Take(request.Page.Limit)
+                .Select((track, index) => new ProviderPlaylistTrack(offset + index, track.Id, metadata: track))
+                .ToArray();
+            var nextOffset = offset + items.Length;
+            var nextCursor = nextOffset < mapped.Length
+                ? nextOffset.ToString(CultureInfo.InvariantCulture)
+                : null;
+            return ProviderOutcome<ProviderPlaylistTrackPage>.Success(new(
+                MapPlaylist(playlist, revision),
+                new ProviderPage<ProviderPlaylistTrack>(
+                    ProviderId, items, nextCursor, nextCursor != null, revision)));
+        }
+        catch (OperationCanceledException)
+        {
+            return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(new(ProviderErrorKind.Canceled));
+        }
+        catch
+        {
+            return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(new(ProviderErrorKind.TransientFailure));
+        }
+    }
+
+    private ProviderError? Validate(ProviderExecutionContext context)
+    {
+        var failure = metadata.ValidateContext(context);
+        return failure ?? (context.Account == null
+            ? new ProviderError(ProviderErrorKind.AccountNeedsConfiguration)
+            : null);
+    }
+
+    private ProviderPlaylistSummary MapPlaylist(ExternalPlaylist playlist, string revision)
+    {
+        var owner = string.IsNullOrWhiteSpace(playlist.CuratorName)
+            ? $"{ProviderId}:unknown"
+            : playlist.CuratorName.Trim();
+        return new(
+            metadata.ExternalId(ProviderResourceKind.Playlist, playlist.ExternalId, playlist.Id, "playlist"),
+            playlist.Name,
+            new ProviderPlaylistOwner(owner, playlist.CuratorName),
+            revision,
+            playlist.Description,
+            ConcreteMetadataCapabilityAdapter.PublicArtwork(playlist.CoverUrl),
+            playlist.TrackCount,
+            durationSeconds: playlist.Duration,
+            createdDate: playlist.CreatedDate);
+    }
+
+    // ponytail: concrete readers expose no checksum/ETag; use the full playlist summary until they do.
+    private static string Revision(ExternalPlaylist playlist) => Convert.ToHexString(
+        SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            playlist.ExternalId,
+            playlist.Name,
+            playlist.Description,
+            playlist.CuratorName,
+            playlist.TrackCount,
+            playlist.Duration,
+            playlist.CoverUrl,
+            playlist.CreatedDate
+        })));
 }

@@ -24,11 +24,15 @@ public static class QobuzDownloadCapabilityRegistration
         services.AddSingleton<QobuzStreamingCapabilityAdapter>();
         services.AddSingleton<QobuzMetadataCapabilityAdapter>(provider => new(
             provider.GetRequiredService<QobuzMetadataService>()));
+        services.AddSingleton<QobuzPlaylistCapabilityAdapter>(provider => new(
+            provider.GetRequiredService<QobuzMetadataService>(),
+            provider.GetRequiredService<QobuzMetadataCapabilityAdapter>()));
         services.AddSingleton<ProviderRegistration>(provider =>
             QobuzDownloadCapabilityAdapter.CreateRegistration(
                 provider.GetRequiredService<QobuzDownloadCapabilityAdapter>(),
                 provider.GetRequiredService<QobuzStreamingCapabilityAdapter>(),
-                provider.GetRequiredService<QobuzMetadataCapabilityAdapter>()));
+                provider.GetRequiredService<QobuzMetadataCapabilityAdapter>(),
+                provider.GetRequiredService<QobuzPlaylistCapabilityAdapter>()));
         return services;
     }
 }

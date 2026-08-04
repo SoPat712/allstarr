@@ -104,20 +104,30 @@ public sealed class ProtocolProviderGatewayContractTests
     }
 
     [Fact]
-    public void PlaylistCompatibilityIsFilteredByExactAccountResolution()
+    public void RichAlbumAndPlaylistReadsHaveNoAuthenticatedLegacyFallbackOrLegacySeam()
     {
+        var root = RepositoryRoot();
         var source = File.ReadAllText(Path.Combine(
-            RepositoryRoot(), "allstarr", "Core", "Protocols", "ProtocolProviderGateway.cs"));
+            root, "allstarr", "Core", "Protocols", "ProtocolProviderGateway.cs"));
+        foreach (var signature in new[]
+                 {
+                     "public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(",
+                     "public async Task<ExternalPlaylist?> GetPlaylistAsync(",
+                     "public async Task<List<Song>> GetPlaylistTracksAsync("
+                 })
+        {
+            var start = source.IndexOf(signature, StringComparison.Ordinal);
+            var end = source.IndexOf("\n    public async Task", start + signature.Length, StringComparison.Ordinal);
+            Assert.True(start >= 0 && end > start, signature);
+            Assert.DoesNotContain("legacyMetadata", source[start..end], StringComparison.Ordinal);
+        }
 
-        Assert.Contains("ResolveAllowedCompatibilityProvidersAsync", source, StringComparison.Ordinal);
-        Assert.Contains("accounts.ResolveAsync", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("legacy.Songs.Where(item => Allowed", source, StringComparison.Ordinal);
-        Assert.Contains("var routedProviderId = NormalizeProvider(providerId)", source, StringComparison.Ordinal);
-        Assert.Contains("RequireCompatibilityProviderAsync(protocol, routedProviderId)", source, StringComparison.Ordinal);
-        Assert.Contains("NormalizeProvider(item).Equals(normalized", source, StringComparison.Ordinal);
-        Assert.Contains("ProviderCapabilityKind.Playlist", source, StringComparison.Ordinal);
-        Assert.Contains("ResolveAllowedCompatibilityProvidersAsync(\n            protocol, actor, ProviderCapabilityKind.Playlist)", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("SourceUri = {", source, StringComparison.Ordinal);
+        var registrations = File.ReadAllText(Path.Combine(
+                root, "allstarr", "Core", "Providers", "Deezer", "DeezerMetadataCapabilityAdapter.cs")) +
+            File.ReadAllText(Path.Combine(
+                root, "allstarr", "Core", "Providers", "Qobuz", "QobuzDownloadCapabilityAdapter.cs"));
+        Assert.DoesNotContain("legacy-seam-v1", registrations, StringComparison.Ordinal);
+        Assert.Contains("ProviderCapabilitySupportState.Supported", registrations, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -128,6 +138,7 @@ public sealed class ProtocolProviderGatewayContractTests
         var methods = new[]
         {
             "public async Task<Song?> GetSongAsync(",
+            "public async Task<Album?> GetAlbumAsync(",
             "public async Task<Artist?> GetArtistAsync(",
             "public async Task<List<Album>> GetArtistAlbumsAsync(",
             "public async Task<List<Song>> GetArtistTracksAsync("

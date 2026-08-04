@@ -164,7 +164,7 @@ public sealed class ProviderCapabilityContractTests
     }
 
     [Fact]
-    public void AlbumMetadata_RejectsCrossProviderArtistIds()
+    public void AlbumMetadata_RejectsCrossProviderArtistAndTrackIds()
     {
         var albumId = new ProviderExternalResourceId(
             "deezer",
@@ -181,6 +181,17 @@ public sealed class ProviderCapabilityContractTests
             albumId,
             "Album",
             [foreignArtist]));
+        Assert.Throws<ArgumentException>(() => new ProviderAlbumMetadata(
+            albumId,
+            "Album",
+            [new ProviderArtistCredit("Artist")],
+            tracks:
+            [
+                new ProviderTrackMetadata(
+                    TrackId("qobuz", "track-1"),
+                    "Track",
+                    [new ProviderArtistCredit("Artist")])
+            ]));
     }
 
     [Fact]

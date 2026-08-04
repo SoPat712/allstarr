@@ -14,6 +14,7 @@ public sealed class DeezerMetadataCapabilityAdapter(IConcreteMetadataService leg
 
     public static ProviderRegistration CreateRegistration(
         DeezerMetadataCapabilityAdapter adapter,
+        IProviderPlaylistCapability playlists,
         IProviderDownloadCapability download,
         IProviderStreamingCapability streaming) => new(
         new ProviderDescriptor(
@@ -66,7 +67,18 @@ public sealed class DeezerMetadataCapabilityAdapter(IConcreteMetadataService leg
                         ProviderAccountScope.User,
                         ProviderAccountScope.Library
                     ]),
-                PlaylistCompatibility()
+                new ProviderCapabilityDescriptor(
+                    ProviderCapabilityKind.Playlist,
+                    ProviderCapabilitySupportState.Supported,
+                    ProviderAccountRequirement.Required,
+                    compatibilityVersion: "1",
+                    hooks: ["getUserPlaylists", "searchPlaylists", "getPlaylistTracks"],
+                    allowedAccountScopes:
+                    [
+                        ProviderAccountScope.Global,
+                        ProviderAccountScope.User,
+                        ProviderAccountScope.Library
+                    ])
             ],
             permissions: new ProviderPermissionDescriptor(
                 networkOrigins:
@@ -76,17 +88,10 @@ public sealed class DeezerMetadataCapabilityAdapter(IConcreteMetadataService leg
                     new Uri("https://www.deezer.com/")
                 ],
                 cache: true)),
-        [adapter, download, streaming]);
-
-    private static ProviderCapabilityDescriptor PlaylistCompatibility() => new(
-        ProviderCapabilityKind.Playlist,
-        ProviderCapabilitySupportState.ConfiguredOnly,
-        ProviderAccountRequirement.Required,
-        compatibilityVersion: "legacy-seam-v1",
-        allowedAccountScopes:
-        [
-            ProviderAccountScope.Global,
-            ProviderAccountScope.User,
-            ProviderAccountScope.Library
-        ]);
+        [adapter, playlists, download, streaming]);
 }
+
+public sealed class DeezerPlaylistCapabilityAdapter(
+    IConcreteMetadataService legacy,
+    DeezerMetadataCapabilityAdapter metadata)
+    : ConcretePlaylistCapabilityAdapter(DeezerMetadataCapabilityAdapter.StableProviderId, legacy, metadata);

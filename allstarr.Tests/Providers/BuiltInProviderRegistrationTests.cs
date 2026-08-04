@@ -23,12 +23,14 @@ public sealed class BuiltInProviderRegistrationTests
     {
         var deezer = new DeezerMetadataCapabilityAdapter(
             new Mock<IConcreteMetadataService>(MockBehavior.Strict).Object);
+        var deezerPlaylists = Playlist("deezer");
         var deezerDownload = Download("deezer");
         var deezerStreaming = Streaming("deezer");
         var qobuzDownload = Download("qobuz");
         var qobuzStreaming = Streaming("qobuz");
         var qobuzMetadata = new QobuzMetadataCapabilityAdapter(
             new Mock<IConcreteMetadataService>(MockBehavior.Strict).Object);
+        var qobuzPlaylists = Playlist("qobuz");
         var squidWtfMetadata = new SquidWTFMetadataCapabilityAdapter(
             new Mock<IConcreteMetadataService>(MockBehavior.Strict).Object);
         var apple = new AppleMusicKitPlaylistCapabilityAdapter(
@@ -58,9 +60,9 @@ public sealed class BuiltInProviderRegistrationTests
         var registry = new ProviderRegistry(
         [
             DeezerMetadataCapabilityAdapter.CreateRegistration(
-                deezer, deezerDownload, deezerStreaming),
+                deezer, deezerPlaylists, deezerDownload, deezerStreaming),
             QobuzDownloadCapabilityAdapter.CreateRegistration(
-                qobuzDownload, qobuzStreaming, qobuzMetadata),
+                qobuzDownload, qobuzStreaming, qobuzMetadata, qobuzPlaylists),
             SquidWTFMetadataCapabilityAdapter.CreateRegistration(squidWtfMetadata),
             AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(apple),
             SpotifyPlaylistCapabilityAdapter.CreateRegistration(spotify, spotifyLyrics),
@@ -106,9 +108,13 @@ public sealed class BuiltInProviderRegistrationTests
                 ProviderCapabilityKind.Download),
             capability => Assert.True(capability.HasUsableImplementation));
         Assert.Equal(
-            ProviderCapabilitySupportState.ConfiguredOnly,
+            ProviderCapabilitySupportState.Supported,
             deezerDescriptor.Capabilities.Single(item =>
                 item.Capability == ProviderCapabilityKind.Playlist).SupportState);
+        Assert.Same(deezerPlaylists, registry.GetRequiredCapability<IProviderPlaylistCapability>(
+            "deezer", ProviderCapabilityKind.Playlist));
+        Assert.Same(qobuzPlaylists, registry.GetRequiredCapability<IProviderPlaylistCapability>(
+            "qobuz", ProviderCapabilityKind.Playlist));
         Assert.Contains(
             registry.FindByCapability(ProviderCapabilityKind.Playlist),
             item => item.Id == "apple-musickit");
@@ -144,6 +150,14 @@ public sealed class BuiltInProviderRegistrationTests
         var mock = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
         mock.SetupGet(item => item.ProviderId).Returns(providerId);
         mock.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+        return mock.Object;
+    }
+
+    private static IProviderPlaylistCapability Playlist(string providerId)
+    {
+        var mock = new Mock<IProviderPlaylistCapability>(MockBehavior.Strict);
+        mock.SetupGet(item => item.ProviderId).Returns(providerId);
+        mock.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Playlist);
         return mock.Object;
     }
 
