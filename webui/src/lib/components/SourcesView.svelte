@@ -509,7 +509,7 @@
                     <strong>{humanize(capability.capability)}</strong>
                     <span class={`status-pill ${readinessClass(capability.ready, capability.health)}`}>{capability.ready ? "Ready" : humanize(capability.reasonCode || capability.configuration)}</span>
                     {#if result?.bars != null}<ConnectivityBars bars={result.healthy ?? result.success ? result.bars : 0} latency={result.latencyMs} />{/if}
-                    {#if capability.canTest}<button type="button" disabled={!selectedAccount.enabled || Boolean(action)} onclick={() => void test(selectedAccount!, capability.capability)}>Test</button>{/if}
+                    {#if capability.canTest}<button class="button-secondary" type="button" disabled={!selectedAccount.enabled || Boolean(action)} onclick={() => void test(selectedAccount!, capability.capability)}>Test</button>{/if}
                   </span>
                 {/each}
               </div>

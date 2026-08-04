@@ -2893,13 +2893,13 @@
 
   .status-pill {
     display: inline-flex;
-    min-height: 1.65rem;
+    min-height: 1.75rem;
     align-items: center;
-    border: 1px solid color-mix(in srgb, currentColor 35%, var(--color-edge));
+    border: 1px solid color-mix(in srgb, currentColor 55%, var(--color-edge));
     border-radius: 999px;
-    background: rgb(255 255 255 / 7%);
+    background: rgb(135 155 171 / 14%);
     color: var(--color-ink-muted);
-    padding: 0 0.5rem;
+    padding: 0 0.625rem;
     font-size: var(--text-xs);
     font-weight: 800;
     line-height: 1;
@@ -2911,23 +2911,52 @@
   .status-pill.accepted,
   .status-pill.pinned,
   .status-pill.healthy,
-  .status-pill.configured {
-    background: color-mix(in srgb, var(--color-signal) 10%, transparent);
-    color: var(--color-signal-text);
+  .status-pill.configured,
+  .status-pill.ready,
+  .status-pill.enabled,
+  .status-pill.completed,
+  .status-pill.succeeded,
+  .status-pill.delivered,
+  .status-pill.resolved {
+    border-color: color-mix(in srgb, var(--color-success) 55%, var(--color-edge));
+    background: color-mix(in srgb, var(--color-success) 16%, transparent);
+    color: #63dda6;
   }
 
   .status-pill.unresolved,
   .status-pill.ambiguous,
   .status-pill.rejected,
-  .status-pill.degraded {
-    background: rgb(255 107 122 / 10%);
+  .status-pill.degraded,
+  .status-pill.failed,
+  .status-pill.error,
+  .status-pill.blocked,
+  .status-pill.cancelled,
+  .status-pill.unavailable,
+  .status-pill.unauthorized {
+    border-color: color-mix(in srgb, var(--color-danger) 55%, var(--color-edge));
+    background: rgb(255 107 122 / 16%);
     color: var(--color-danger);
+  }
+
+  .status-pill.available,
+  .status-pill.active,
+  .status-pill.pending,
+  .status-pill.running,
+  .status-pill.testing,
+  .status-pill.refreshing {
+    border-color: color-mix(in srgb, var(--color-info) 55%, var(--color-edge));
+    background: color-mix(in srgb, var(--color-info) 16%, transparent);
+    color: #8fc2ff;
   }
 
   .status-pill.suggested,
   .status-pill.needs_config,
-  .status-pill.partial_config {
-    background: rgb(255 185 80 / 10%);
+  .status-pill.partial_config,
+  .status-pill.deferred,
+  .status-pill.queued,
+  .status-pill.retrying {
+    border-color: color-mix(in srgb, var(--color-warning) 55%, var(--color-edge));
+    background: rgb(255 185 80 / 16%);
     color: #ffd493;
   }
 
@@ -4881,6 +4910,7 @@
   .source-detail-capabilities > span {
     grid-template-columns: minmax(0, 1fr) auto auto;
     align-items: center;
+    gap: var(--space-2);
   }
 
   .source-detail-actions {

@@ -172,7 +172,19 @@ const responses: Record<string, unknown> = {
       secret: { configured: true, revoked: false }, createdAt: "2026-01-01", updatedAt: "2026-01-01",
     }],
   },
-  "/api/admin/providers/status": [],
+  "/api/admin/providers/status": [
+    {
+      provider: "lumen-audio", providerAccountId: "account", providerAccountName: "Lumen account",
+      capability: "metadata", accountScope: "user", supported: true, enabled: true,
+      configuration: "configured", health: "healthy", ready: true, canAttempt: true, canTest: true,
+    },
+    {
+      provider: "lumen-audio", providerAccountId: "account", providerAccountName: "Lumen account",
+      capability: "streaming", accountScope: "user", supported: true, enabled: true,
+      configuration: "configured", health: "degraded", ready: false, canAttempt: true, canTest: true,
+      reasonCode: "probe_failed",
+    },
+  ],
   "/api/admin/provider-diagnostics/deep-stream/latest": { measurements: [] },
   "/api/admin/apple-download/status": {
     state: "ready", ready: true, staged: true, daemon_running: true,
@@ -1968,6 +1980,10 @@ test("Sources keep primary actions visible and report scoped degradation", async
   await expect(accountDetails.getByRole("button", { name: "Disable account" })).toBeVisible();
   await expect(accountDetails.getByRole("button", { name: "Test connection" })).toBeVisible();
   await expect(accountDetails.getByRole("button", { name: "Edit configuration" })).toBeVisible();
+  const metadataCapability = accountDetails.locator(".source-detail-capabilities > span").filter({ hasText: "Metadata" });
+  await expect(metadataCapability.locator(".status-pill")).toHaveText("Ready");
+  await expect(metadataCapability.locator(".status-pill")).toHaveCSS("color", "rgb(99, 221, 166)");
+  await expect(metadataCapability.getByRole("button", { name: "Test" })).toHaveClass(/button-secondary/);
   await accountDetails.getByRole("button", { name: "Close Source details" }).click();
 
   const listener = await context.newPage();
