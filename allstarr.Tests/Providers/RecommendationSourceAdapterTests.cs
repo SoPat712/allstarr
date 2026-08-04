@@ -2,6 +2,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Storage;
 using allstarr.Services.Recommendations;
+using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -222,8 +223,8 @@ public sealed class RecommendationSourceAdapterTests
                     "getClusters", "recommend", "search", "findPath", "blend", "getMap"],
                 [ProviderAccountScope.User])],
             new ProviderPermissionDescriptor(), entryPoint: "index.js");
-        var configured = new AudioMuseRecommendationClient(
-            new ProviderRegistry([new ProviderRegistration(descriptor, [capability])]), accounts, catalog);
+        var registry = new ProviderRegistry([new ProviderRegistration(descriptor, [capability])]);
+        var configured = new AudioMuseRecommendationClient(registry, accounts, catalog);
         var item = Assert.Single(await configured.RecommendAsync(Query(), default));
         Assert.Equal("audio-333", item.Identity!.BackendItemId);
         Assert.NotNull(item.ProviderAccountId);
@@ -236,15 +237,23 @@ public sealed class RecommendationSourceAdapterTests
             .Tracks.Select(value => value.TrackKey));
         Assert.Equal("audio-333", Assert.Single(await configured.BlendAsync(
             Query().Scope, ["audio-start"], ["audio-end"], 10, default)).TrackKey);
-        var map = await configured.GetMapAsync(Query().Scope, new ProviderPageRequest(10), default);
+        var map = await configured.GetMapAsync(Query().Scope, new ProviderPageRequest(10, "map-cursor"), default);
         Assert.True(map.IsPartial);
         Assert.Equal("audio-333", Assert.Single(map.Items).Identity.BackendItemId);
         Assert.Equal("next", map.NextCursor);
+        Assert.Equal(10, capability.LastMapPage!.Limit);
+        Assert.Equal("map-cursor", capability.LastMapPage.Cursor);
         Assert.Equal(Query().Scope, catalog.LastResolvedScope);
-        Assert.Equal("job-1", (await configured.StartAnalysisAsync(
-            Query().Scope, false, "analysis-1", default)).JobId);
-        Assert.Equal(5, (await configured.GetAnalysisProgressAsync(
-            Query().Scope, "job-1", default)).Completed);
+        var analysis = await configured.StartAnalysisAsync(
+            Query().Scope, false, "analysis-1", default);
+        Assert.Equal("job-1", analysis.JobId);
+        Assert.Equal(ProviderAnalysisState.Queued, analysis.State);
+        Assert.Equal("analysis-1", capability.AnalysisIdempotencyKey);
+        var restarted = new AudioMuseRecommendationClient(registry, accounts, catalog);
+        var progress = await restarted.GetAnalysisProgressAsync(Query().Scope, analysis.JobId, default);
+        Assert.Equal(ProviderAnalysisState.Running, progress.State);
+        Assert.Equal(5, progress.Completed);
+        Assert.Equal("job-1", capability.ProgressJobId);
         Assert.Equal("cluster-1", Assert.Single(await configured.GetClustersAsync(
             Query().Scope, 10, default)).Id);
         Assert.Equal("audio-333", Assert.Single(await configured.SearchAsync(
@@ -253,6 +262,18 @@ public sealed class RecommendationSourceAdapterTests
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => configured.BlendAsync(
             Query().Scope, ["other-user-track"], [], 10, default));
         Assert.Equal(callsBeforeRejectedSeed, capability.CallCount);
+
+        _ = await restarted.RecommendAsync(Query(), default);
+        var samples = new double[100];
+        for (var index = 0; index < samples.Length; index++)
+        {
+            var started = Stopwatch.GetTimestamp();
+            _ = await restarted.RecommendAsync(Query(), default);
+            samples[index] = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        }
+        Array.Sort(samples);
+        var p95 = samples[94];
+        Assert.InRange(p95, 0, 100);
     }
 
     [Fact]
@@ -351,6 +372,9 @@ public sealed class RecommendationSourceAdapterTests
         public ProviderCapabilityKind Capability => ProviderCapabilityKind.Intelligence;
         public IReadOnlyList<string> Seeds { get; private set; } = [];
         public int CallCount { get; private set; }
+        public string? AnalysisIdempotencyKey { get; private set; }
+        public string? ProgressJobId { get; private set; }
+        public ProviderPageRequest? LastMapPage { get; private set; }
         public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> RecommendAsync(
             ProviderExecutionContext context, IReadOnlyList<string> seedTrackIds, int limit)
         {
@@ -364,12 +388,14 @@ public sealed class RecommendationSourceAdapterTests
         public Task<ProviderOutcome<ProviderAnalysisProgress>> StartAnalysisAsync(ProviderExecutionContext context, bool rebuild = false)
         {
             CallCount++;
+            AnalysisIdempotencyKey = context.IdempotencyKey;
             return Task.FromResult(ProviderOutcome<ProviderAnalysisProgress>.Success(
                 new("job-1", ProviderAnalysisState.Queued, 0, 10)));
         }
         public Task<ProviderOutcome<ProviderAnalysisProgress>> GetAnalysisProgressAsync(ProviderExecutionContext context, string jobId)
         {
             CallCount++;
+            ProgressJobId = jobId;
             return Task.FromResult(ProviderOutcome<ProviderAnalysisProgress>.Success(
                 new(jobId, ProviderAnalysisState.Running, 5, 10)));
         }
@@ -402,6 +428,7 @@ public sealed class RecommendationSourceAdapterTests
         public Task<ProviderOutcome<ProviderIntelligenceMapPage>> GetMapAsync(ProviderExecutionContext context, ProviderPageRequest page)
         {
             CallCount++;
+            LastMapPage = page;
             return Task.FromResult(ProviderOutcome<ProviderIntelligenceMapPage>.Success(new(
                 [new("audio-333", "Future Song", "Future Artist", .2, -.3),
                  new("other-user-track", "Private Song", "Private Artist", .4, .5)], "umap", "next")));

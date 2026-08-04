@@ -460,6 +460,11 @@ public sealed class ProtocolSupportMatrixTests
         Assert.DoesNotContain("Task.Run", search, StringComparison.Ordinal);
         Assert.DoesNotContain("new Random()", controller, StringComparison.Ordinal);
         Assert.Contains("StableInstantMixOrder", controller, StringComparison.Ordinal);
+        Assert.Equal(
+            ["IntelligenceController.AudioMuse.cs"],
+            Directory.EnumerateFiles(Path.Combine(root, "allstarr", "Controllers"), "*.cs")
+                .Where(file => File.ReadAllText(file).Contains("_audioMuse.StartAnalysisAsync(", StringComparison.Ordinal))
+                .Select(Path.GetFileName).Order(StringComparer.Ordinal));
     }
 
     [Fact]

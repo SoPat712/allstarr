@@ -224,7 +224,7 @@ public sealed class AudioMuseRecommendationClient(
                 ProviderExplicitContentPolicy.Allow, false, false, false, [ProviderId]),
             operation, idempotencyKey ?? Guid.CreateVersion7().ToString("N"),
             DateTimeOffset.UtcNow.AddSeconds(10),
-            cancellationToken);
+            cancellationToken, idempotencyKey);
     }
 }
 
