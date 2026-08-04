@@ -4,8 +4,10 @@ using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
+using allstarr.Core.Protocols.Subsonic;
 using allstarr.Core.Storage;
 using allstarr.Models.Settings;
+using allstarr.Services.Subsonic;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
@@ -72,6 +74,111 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         Assert.False(await new PlaybackSignalPipeline(jobs).RecordAsync(request));
         await using var db = await factory.CreateDbContextAsync(); var job = Assert.Single(await db.Jobs.Where(x => x.Type == PlaybackSignalPipeline.JobType).ToListAsync());
         Assert.Equal(tenant, job.TenantId); Assert.Equal(user, job.OwnerUserId); Assert.Equal("music", job.LibraryScopeId);
+    }
+
+    [Fact]
+    public async Task AuthorizedSyntheticProtocolSmoke_RecordsLocalExternalSignalsAndTargetCheckpoints()
+    {
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            var jellyfinPolicy = await db.IntelligencePolicies.SingleAsync();
+            jellyfinPolicy.AllowedSignalTypesJson = "[\"complete\",\"play\"]";
+            db.BackendIdentities.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = tenant,
+                UserId = user,
+                BackendType = "subsonic",
+                BackendInstanceId = "backend",
+                PrincipalId = "subsonic-principal",
+                CreatedAt = clock.UtcNow,
+                LastSeenAt = clock.UtcNow
+            });
+            db.IntelligencePolicies.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = tenant,
+                OwnerUserId = user,
+                Protocol = "subsonic",
+                BackendInstanceId = "backend",
+                LibraryScopeId = "music",
+                Enabled = true,
+                RetentionDays = 30,
+                AllowedSignalTypesJson = "[\"complete\",\"play\"]",
+                CreatedAt = clock.UtcNow,
+                UpdatedAt = clock.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var pipeline = new PlaybackSignalPipeline(jobs);
+        var jellyfin = Signal(PlaybackTransition.Start, "track-1", 0).ExecutionContext;
+        var requests = new List<PlaybackSignalRequest>
+        {
+            new(jellyfin, PlaybackTransition.Start, "track-1", "smoke-device", "jellyfin-local", 0, clock.UtcNow),
+            new(jellyfin, PlaybackTransition.Stop, "track-1", "smoke-device", "jellyfin-local",
+                TimeSpan.FromSeconds(60).Ticks, clock.UtcNow.AddSeconds(60)),
+            new(jellyfin, PlaybackTransition.Start, "ext-deezer-song-synthetic", "smoke-device", "jellyfin-external", 0,
+                clock.UtcNow.AddSeconds(10)),
+            new(jellyfin, PlaybackTransition.Stop, "ext-deezer-song-synthetic", "smoke-device", "jellyfin-external",
+                TimeSpan.FromSeconds(60).Ticks, clock.UtcNow.AddSeconds(70))
+        };
+        var subsonic = new ProtocolExecutionContext(ProtocolKind.Subsonic, "backend", "subsonic-principal",
+            new AllstarrPrincipal(tenant, user, "subsonic", "backend", "subsonic-principal", "User", false),
+            "smoke-subsonic", clock.UtcNow.AddMinutes(1), default, libraryScopeId: "music");
+        var parameters = new SubsonicRequestParameters("GET", null, null,
+        [
+            new("id", "track-1", SubsonicParameterSource.Query),
+            new("id", "ext-deezer-song-synthetic", SubsonicParameterSource.Query),
+            new("time", clock.UtcNow.ToUnixTimeMilliseconds().ToString(), SubsonicParameterSource.Query),
+            new("time", clock.UtcNow.AddMinutes(2).ToUnixTimeMilliseconds().ToString(), SubsonicParameterSource.Query),
+            new("submission", "false", SubsonicParameterSource.Query),
+            new("submission", "true", SubsonicParameterSource.Query)
+        ]);
+        var subsonicSignals = new SubsonicScrobbleProtocolAdapter().Parse(parameters, clock.UtcNow);
+        Assert.Equal([PlaybackTransition.Start, PlaybackTransition.Submission], subsonicSignals.Select(item => item.Transition));
+        requests.AddRange(subsonicSignals.Select(item => new PlaybackSignalRequest(subsonic, item.Transition,
+            item.ItemId, "smoke-subsonic", $"subsonic:{item.EventKey}:{item.Index}", null, item.ObservedAt)));
+
+        foreach (var request in requests) Assert.True(await pipeline.RecordAsync(request));
+        var lastFm = new Target("lastfm", true);
+        var listenBrainz = new Target("listenbrainz", true);
+        var trackResolver = new PlaybackTrackResolver(factory,
+        [
+            new BackendMetadataResolver(new("Synthetic external", "Allstarr qualification", "Smoke", null, 120))
+        ]);
+        var handler = new PlaybackSignalJobHandler(new RecommendationSignalWriter(factory, clock),
+            new ScopedPlaybackScrobbleDelivery(factory, [lastFm, listenBrainz],
+                new EfPlaybackDeliveryCheckpointStore(factory), trackResolver),
+            new Lyrics(), factory, trackResolver);
+        var completed = 0;
+        while (await jobs.ClaimNextAsync("smoke", [PlaybackSignalPipeline.JobType]) is { } claim)
+        {
+            var completion = await handler.ExecuteAsync(new(claim, EmptyServices.Instance), default);
+            Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
+            await jobs.CompleteAsync(claim, completion);
+            completed++;
+        }
+        Assert.Equal(requests.Count, completed);
+
+        await using var verify = await factory.CreateDbContextAsync();
+        var occurrences = await verify.ListeningEvents.AsNoTracking().ToListAsync();
+        Assert.Contains(occurrences, item => item.Protocol == "jellyfin" && item.TrackReference == "track-1" &&
+                                             item.State == ListeningEventState.Completed);
+        Assert.Contains(occurrences, item => item.Protocol == "jellyfin" && item.TrackReference == "ext-deezer-song-synthetic" &&
+                                             item.State == ListeningEventState.Completed);
+        Assert.Contains(await verify.ListeningSignals.AsNoTracking().ToListAsync(), item =>
+            item.Protocol == "jellyfin" && item.SignalType == "complete");
+        var checkpoints = await verify.PlaybackDeliveryCheckpoints.AsNoTracking().ToListAsync();
+        Assert.Equal(["lastfm", "listenbrainz"], checkpoints.Select(item => item.TargetId).Distinct().Order());
+        Assert.All(["lastfm", "listenbrainz"], target =>
+        {
+            Assert.Contains(checkpoints, item => item.TargetId == target && item.Kind == PlaybackScrobbleDeliveryKind.NowPlaying);
+            Assert.Contains(checkpoints, item => item.TargetId == target && item.Kind == PlaybackScrobbleDeliveryKind.Completed);
+        });
+        var correlations = await verify.AuditEvents.AsNoTracking().Where(item => item.Category == "scrobble")
+            .Select(item => item.CorrelationId).Distinct().Order().ToListAsync();
+        Assert.Equal(checkpoints.Select(item => item.SignalKey).Distinct().Order(), correlations);
     }
 
     [Fact]
