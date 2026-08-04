@@ -66,6 +66,42 @@ public sealed class ProtocolProviderGatewayContractTests
     }
 
     [Fact]
+    public void CachedPlaybackIsQualitySafeAndPlaylistReadsDoNotPrepareAudio()
+    {
+        var root = RepositoryRoot();
+        var audio = File.ReadAllText(Path.Combine(
+            root, "allstarr", "Controllers", "JellyfinController.Audio.cs"));
+        var externalStart = audio.IndexOf(
+            "private async Task<IActionResult> StreamExternalContent", StringComparison.Ordinal);
+        var externalEnd = audio.IndexOf(
+            "private static string MediaFileExtension", externalStart, StringComparison.Ordinal);
+        var external = audio[externalStart..externalEnd];
+        Assert.True(
+            external.IndexOf("quality == StreamQuality.Original", StringComparison.Ordinal) <
+            external.IndexOf("_providerGateway.OpenStreamAsync", StringComparison.Ordinal));
+        Assert.True(
+            external.IndexOf("_localLibraryService.GetLocalPathForExternalSongAsync", StringComparison.Ordinal) <
+            external.IndexOf("_providerGateway.OpenStreamAsync", StringComparison.Ordinal));
+
+        var subsonic = File.ReadAllText(Path.Combine(
+            root, "allstarr", "Controllers", "SubSonicController.cs"));
+        var streamStart = subsonic.IndexOf("public async Task<IActionResult> Stream()", StringComparison.Ordinal);
+        var streamEnd = subsonic.IndexOf("Returns external song info", streamStart, StringComparison.Ordinal);
+        var stream = subsonic[streamStart..streamEnd];
+        Assert.True(
+            stream.IndexOf("requestedQuality == ProviderAudioQuality.Any", StringComparison.Ordinal) <
+            stream.IndexOf("_providerGateway.OpenStreamAsync", StringComparison.Ordinal));
+        Assert.True(
+            stream.IndexOf("_localLibraryService.GetLocalPathForExternalSongAsync", StringComparison.Ordinal) <
+            stream.IndexOf("_providerGateway.OpenStreamAsync", StringComparison.Ordinal));
+
+        var playlists = File.ReadAllText(Path.Combine(
+            root, "allstarr", "Controllers", "JellyfinController.PlaylistHandler.cs"));
+        Assert.DoesNotContain("OpenStreamAsync", playlists, StringComparison.Ordinal);
+        Assert.DoesNotContain("DownloadAndStreamAsync", playlists, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PlaylistCompatibilityIsFilteredByExactAccountResolution()
     {
         var source = File.ReadAllText(Path.Combine(

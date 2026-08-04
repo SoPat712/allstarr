@@ -62,16 +62,24 @@ public class AppleMusicDownloadService : BaseDownloadService
             throw new NotSupportedException($"Provider '{externalProvider}' is not supported");
         }
 
-        var existing = await LocalLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
-        if (!string.IsNullOrWhiteSpace(existing) && IOFile.Exists(existing)) return IOFile.OpenRead(existing);
+        var publishCache = qualityOverride is null or StreamQuality.Original;
+        if (publishCache)
+        {
+            var existing = await LocalLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
+            if (!string.IsNullOrWhiteSpace(existing) && IOFile.Exists(existing)) return IOFile.OpenRead(existing);
+        }
 
         var songId = BuildTrackedSongId(externalProvider, externalId);
-        var completion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var activeCompletion = _streamingDownloads.GetOrAdd(songId, completion);
-        if (!ReferenceEquals(activeCompletion, completion))
+        TaskCompletionSource<string>? completion = null;
+        if (publishCache)
         {
-            var completedPath = await activeCompletion.Task.WaitAsync(cancellationToken);
-            return IOFile.OpenRead(completedPath);
+            completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var activeCompletion = _streamingDownloads.GetOrAdd(songId, completion);
+            if (!ReferenceEquals(activeCompletion, completion))
+            {
+                var completedPath = await activeCompletion.Task.WaitAsync(cancellationToken);
+                return IOFile.OpenRead(completedPath);
+            }
         }
 
         string? temporaryPath = null;
@@ -80,12 +88,17 @@ public class AppleMusicDownloadService : BaseDownloadService
             // Metadata is useful when the completed cache artifact is published, but
             // it must not sit on the cold playback path. Start it alongside the media
             // request and begin relaying the sidecar's FLAC bytes immediately.
-            var metadataTask = MetadataService.GetSongAsync(MetadataProviderName, externalId, cancellationToken);
-            _ = metadataTask.ContinueWith(
-                task => _ = task.Exception,
-                CancellationToken.None,
-                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
+            var metadataTask = publishCache
+                ? MetadataService.GetSongAsync(MetadataProviderName, externalId, cancellationToken)
+                : null;
+            if (metadataTask != null)
+            {
+                _ = metadataTask.ContinueWith(
+                    task => _ = task.Exception,
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+            }
             var quality = qualityOverride switch
             {
                 StreamQuality.High => AppleDownloadCapabilityAdapter.Quality(
@@ -144,7 +157,12 @@ public class AppleMusicDownloadService : BaseDownloadService
                     try
                     {
                         response.Dispose();
-                        var song = await ResolveStreamingMetadataAsync(metadataTask, externalId);
+                        if (!publishCache)
+                        {
+                            TryDeletePartial(partialPath);
+                            return;
+                        }
+                        var song = await ResolveStreamingMetadataAsync(metadataTask!, externalId);
                         var finalPath = PathHelper.BuildTrackPath(
                             basePath,
                             song.AlbumArtist ?? song.Artist,
@@ -160,7 +178,7 @@ public class AppleMusicDownloadService : BaseDownloadService
                         song.LocalPath = finalPath;
                         await LocalLibraryService.RegisterDownloadedSongAsync(song, finalPath);
                         SetDownloadProgress(songId, 1.0);
-                        completion.TrySetResult(finalPath);
+                        completion!.TrySetResult(finalPath);
                         Logger.LogInformation(
                             "Apple Music progressive cache completed: {TrackId} -> {Path}",
                             externalId,
@@ -169,7 +187,7 @@ public class AppleMusicDownloadService : BaseDownloadService
                     catch (Exception exception)
                     {
                         TryDeletePartial(partialPath);
-                        completion.TrySetException(exception);
+                        completion?.TrySetException(exception);
                         Logger.LogWarning(
                             exception,
                             "Apple Music played successfully but its cache artifact could not be published for {TrackId}",
@@ -177,22 +195,22 @@ public class AppleMusicDownloadService : BaseDownloadService
                     }
                     finally
                     {
-                        _streamingDownloads.TryRemove(songId, out _);
+                        if (publishCache) _streamingDownloads.TryRemove(songId, out _);
                     }
                 },
                 () =>
                 {
                     response.Dispose();
                     TryDeletePartial(partialPath);
-                    completion.TrySetException(new IOException("Apple Music playback ended before the cache completed."));
-                    _streamingDownloads.TryRemove(songId, out _);
+                    completion?.TrySetException(new IOException("Apple Music playback ended before the cache completed."));
+                    if (publishCache) _streamingDownloads.TryRemove(songId, out _);
                 });
         }
         catch (Exception exception)
         {
             if (temporaryPath != null) TryDeletePartial(temporaryPath);
-            completion.TrySetException(exception);
-            _streamingDownloads.TryRemove(songId, out _);
+            completion?.TrySetException(exception);
+            if (publishCache) _streamingDownloads.TryRemove(songId, out _);
             throw;
         }
     }

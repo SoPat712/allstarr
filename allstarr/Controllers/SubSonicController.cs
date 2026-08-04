@@ -238,7 +238,11 @@ public partial class SubsonicController : ControllerBase
             return await _proxyService.RelayStreamAsync(parameters, HttpContext.RequestAborted);
         }
 
-        var localPath = await _localLibraryService.GetLocalPathForExternalSongAsync(provider!, externalId!);
+        var requestedQuality = StreamQualityHelper.FromSubsonicMaxBitRate(
+            parameters.GetValueOrDefault("maxBitRate"));
+        var localPath = requestedQuality == ProviderAudioQuality.Any
+            ? await _localLibraryService.GetLocalPathForExternalSongAsync(provider!, externalId!)
+            : null;
 
         if (localPath != null && System.IO.File.Exists(localPath))
         {
@@ -266,7 +270,7 @@ public partial class SubsonicController : ControllerBase
                     CurrentProtocolContext,
                     provider!,
                     externalId!,
-                    StreamQualityHelper.FromSubsonicMaxBitRate(parameters.GetValueOrDefault("maxBitRate")),
+                    requestedQuality,
                     Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null);
                 if (routed != null)
                 {
@@ -298,7 +302,16 @@ public partial class SubsonicController : ControllerBase
 
         try
         {
-            var downloadStream = await _downloadService.DownloadAndStreamAsync(provider!, externalId!, cancellationToken: HttpContext.RequestAborted);
+            var downloadStream = await _downloadService.DownloadAndStreamAsync(
+                provider!,
+                externalId!,
+                requestedQuality switch
+                {
+                    ProviderAudioQuality.DataSaver => StreamQuality.Low,
+                    ProviderAudioQuality.Lossy => StreamQuality.High,
+                    _ => null
+                },
+                HttpContext.RequestAborted);
 
             var contentType = "audio/mpeg";
             if (downloadStream is FileStream fs)

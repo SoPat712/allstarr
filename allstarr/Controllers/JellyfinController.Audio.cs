@@ -140,8 +140,10 @@ public partial class JellyfinController
         StreamQuality quality = StreamQuality.Original,
         bool asDownload = false)
     {
-        // Check for locally cached file
-        var localPath = await _localLibraryService.GetLocalPathForExternalSongAsync(provider, externalId);
+        // The canonical artifact is valid only when the client did not request a lower tier.
+        var localPath = quality == StreamQuality.Original
+            ? await _localLibraryService.GetLocalPathForExternalSongAsync(provider, externalId)
+            : null;
 
         if (localPath != null && System.IO.File.Exists(localPath))
         {
