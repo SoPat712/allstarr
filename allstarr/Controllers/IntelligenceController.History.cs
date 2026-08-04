@@ -521,10 +521,12 @@ public sealed partial class IntelligenceController
         CancellationToken cancellationToken)
     {
         var timeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
-        var from = period.From.ToUnixTimeMilliseconds();
-        var to = period.To.ToUnixTimeMilliseconds();
+        var from = period.From.UtcTicks;
+        var to = period.To.UtcTicks;
         var buckets = await db.Database.SqlQuery<ListeningHistoryActivityBucket>($$"""
-            SELECT to_char(timezone({{timeZoneId}}, to_timestamp("ListenedAt" / 1000.0)), 'YYYY-MM-DD') AS "Date",
+            SELECT to_char(timezone({{timeZoneId}},
+                          to_timestamp(("ListenedAt" - 621355968000000000) / 10000000.0)),
+                          'YYYY-MM-DD') AS "Date",
                    count(*)::integer AS "Count",
                    coalesce(sum("DurationMilliseconds"), 0)::bigint AS "DurationMilliseconds"
             FROM listening_events

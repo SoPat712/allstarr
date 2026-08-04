@@ -16,7 +16,7 @@ public sealed class ListeningHistoryAnalyticsPostgresTests
         var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var now = DateTimeOffset.Parse("2026-08-03T12:00:00Z");
-        var nowMilliseconds = now.ToUnixTimeMilliseconds();
+        var nowTicks = now.UtcTicks;
 
         db.Tenants.Add(new TenantRecord
         {
@@ -43,8 +43,8 @@ public sealed class ListeningHistoryAnalyticsPostgresTests
             SELECT md5(series::text)::uuid, {{tenant}}, {{user}}, 'jellyfin',
                    CASE WHEN series % 10 = 0 THEN 'main' ELSE 'decoy' END, 'music',
                    md5('occurrence-' || series::text), 'Completed',
-                   {{nowMilliseconds}} - (series % 365) * 86400000::bigint,
-                   {{nowMilliseconds}}, 180000, 'protocol', 'track-' || series::text,
+                   {{nowTicks}} - (series % 365) * {{TimeSpan.TicksPerDay}}::bigint,
+                   {{nowTicks}}, 180000, 'protocol', 'track-' || series::text,
                    'Track ' || (series % 100)::text, 'Artist ' || (series % 25)::text,
                    'Album ' || (series % 10)::text
             FROM generate_series(1, 10000) AS series;
@@ -53,9 +53,9 @@ public sealed class ListeningHistoryAnalyticsPostgresTests
 
         await using var connection = new NpgsqlConnection(database.ConnectionString);
         await connection.OpenAsync();
-        var from = now.AddDays(-30).ToUnixTimeMilliseconds();
-        var to = now.AddMilliseconds(1).ToUnixTimeMilliseconds();
-        var cursor = now.AddDays(-15).ToUnixTimeMilliseconds();
+        var from = now.AddDays(-30).UtcTicks;
+        var to = now.AddMilliseconds(1).UtcTicks;
+        var cursor = now.AddDays(-15).UtcTicks;
         var cursorId = Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff");
         var pagePlan = await ExplainAsync(connection, """
             SELECT "Id", "ListenedAt"

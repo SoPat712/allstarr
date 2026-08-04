@@ -360,6 +360,155 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task HistoryAggregatesRespectBoundariesTimezoneUnknownDurationTiesFiltersAndMutations()
+    {
+        var from = DateTimeOffset.Parse("2026-03-08T04:00:00Z");
+        var to = DateTimeOffset.Parse("2026-03-10T04:00:00Z");
+        var firstA = HistoryEvent("Track A", from);
+        var secondA = HistoryEvent("Track A", DateTimeOffset.Parse("2026-03-08T05:30:00Z"));
+        var trackB = HistoryEvent("Track B", DateTimeOffset.Parse("2026-03-09T04:30:00Z"));
+        var trackC = HistoryEvent("Track C", trackB.ListenedAt!.Value);
+        foreach (var item in new[] { firstA, secondA })
+        {
+            item.Artist = "Artist A";
+            item.Album = "Album A";
+            item.SourceKind = "import";
+            item.ClientClass = "Koito";
+        }
+        firstA.DurationMilliseconds = 1_000;
+        secondA.DurationMilliseconds = null;
+        trackB.Artist = "Artist B";
+        trackB.Album = "Album B";
+        trackB.DurationMilliseconds = 2_000;
+        trackC.Artist = "Artist C";
+        trackC.Album = "Album C";
+        trackC.DurationMilliseconds = 3_000;
+        var before = HistoryEvent("Before", from.AddMilliseconds(-1));
+        var upperBound = HistoryEvent("Upper bound", to);
+        var otherLibrary = HistoryEvent("Other library", from.AddHours(2), "other");
+        var skipped = HistoryEvent("Skipped", from.AddHours(2));
+        skipped.State = ListeningEventState.Skipped;
+        skipped.ListenedAt = null;
+        skipped.StartedAt = from.AddHours(2);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.ListeningEvents.AddRange(
+                firstA, secondA, trackB, trackC, before, upperBound, otherLibrary, skipped);
+            await db.SaveChangesAsync();
+        }
+
+        _commands.Reset();
+        var elapsed = Stopwatch.StartNew();
+        var overviewResult = Assert.IsType<OkObjectResult>(await Controller().GetHistoryOverview(new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            From = from,
+            To = to,
+            TimeZoneId = "America/New_York"
+        }, default));
+        elapsed.Stop();
+        Assert.InRange(_commands.Count, 6, 8);
+        Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(2),
+            $"History overview took {elapsed.Elapsed.TotalMilliseconds:F0} ms in {_commands.Count} queries.");
+        var overview = JsonSerializer.SerializeToElement(overviewResult.Value);
+        var allTime = overview.GetProperty("allTime");
+        var selected = overview.GetProperty("selected");
+        Assert.Equal(6, allTime.GetProperty("CompletedListens").GetInt32());
+        Assert.Equal(4, selected.GetProperty("CompletedListens").GetInt32());
+        Assert.Equal(3, selected.GetProperty("DistinctTracks").GetInt32());
+        Assert.Equal(3, selected.GetProperty("DistinctArtists").GetInt32());
+        Assert.Equal(6_000, selected.GetProperty("ListeningTimeMilliseconds").GetInt64());
+        Assert.Equal(from, selected.GetProperty("FirstListen").GetDateTimeOffset());
+        Assert.True(overview.GetProperty("currentStreakDays").GetInt32() == 3, overview.GetRawText());
+        Assert.True(overview.GetProperty("longestStreakDays").GetInt32() == 3, overview.GetRawText());
+
+        var activityResult = Assert.IsType<OkObjectResult>(await Controller().GetHistoryActivity(new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            From = from,
+            To = to,
+            TimeZoneId = "America/New_York"
+        }, default));
+        var activity = JsonSerializer.SerializeToElement(activityResult.Value);
+        var buckets = activity.GetProperty("buckets").EnumerateArray().ToArray();
+        Assert.Equal(["2026-03-07", "2026-03-08", "2026-03-09"],
+            buckets.Select(item => item.GetProperty("Date").GetString()));
+        Assert.Equal([1, 1, 2], buckets.Select(item => item.GetProperty("Count").GetInt32()));
+        Assert.Equal([1_000L, 0L, 5_000L],
+            buckets.Select(item => item.GetProperty("DurationMilliseconds").GetInt64()));
+
+        var topResult = Assert.IsType<OkObjectResult>(await Controller().GetHistoryTopItems("track", new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            From = from,
+            To = to
+        }, default));
+        var top = JsonSerializer.SerializeToElement(topResult.Value).GetProperty("items").EnumerateArray().ToArray();
+        Assert.Equal(["Track A", "Track B", "Track C"],
+            top.Select(item => item.GetProperty("Title").GetString()));
+        Assert.Equal([2, 1, 1], top.Select(item => item.GetProperty("ListenCount").GetInt32()));
+
+        var filteredResult = Assert.IsType<OkObjectResult>(await Controller().GetHistory(new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            From = from,
+            To = to,
+            Source = "import",
+            Client = "Koito",
+            Artist = "Artist A",
+            Album = "Album A",
+            Track = "Track A",
+            Search = "Track A"
+        }, default));
+        var filtered = JsonSerializer.SerializeToElement(filteredResult.Value).GetProperty("items")
+            .EnumerateArray().ToArray();
+        Assert.Equal(2, filtered.Length);
+        Assert.All(filtered, item => Assert.Equal("Track A", item.GetProperty("Title").GetString()));
+
+        Assert.IsType<OkObjectResult>(await Controller().CorrectHistory(trackC.Id, new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            Title = "Track B",
+            Artist = "Artist B",
+            Album = "Album B",
+            ExpectedRevision = trackC.Revision
+        }, default));
+        Assert.IsType<NoContentResult>(await Controller().DeleteHistory(trackB.Id, new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            ExpectedRevision = trackB.Revision,
+            Confirmed = true
+        }, default));
+
+        var mutatedResult = Assert.IsType<OkObjectResult>(await Controller().GetHistoryOverview(new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            From = from,
+            To = to,
+            TimeZoneId = "America/New_York"
+        }, default));
+        var mutated = JsonSerializer.SerializeToElement(mutatedResult.Value).GetProperty("selected");
+        Assert.Equal(3, mutated.GetProperty("CompletedListens").GetInt32());
+        Assert.Equal(2, mutated.GetProperty("DistinctTracks").GetInt32());
+        Assert.Equal(2, mutated.GetProperty("DistinctArtists").GetInt32());
+        Assert.Equal(4_000, mutated.GetProperty("ListeningTimeMilliseconds").GetInt64());
+    }
+
+    [Fact]
     public async Task HistoryRoutesPageCorrectAndDeleteOnlyTheExactScope()
     {
         var now = DateTimeOffset.UtcNow;
