@@ -440,7 +440,7 @@ public sealed class ProtocolRouteFixtureTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(
-            ["/Users/Me?api_key=fixture-key", "/Items?ids=music-1&limit=1"],
+            ["/Users/Me?api_key=fixture-key", "/Items?ids=music-1&limit=1&userId=user-1"],
             observedRequests);
     }
 
@@ -2498,7 +2498,7 @@ public sealed class ProtocolRouteFixtureTests
 
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
         Assert.Equal(3, observed.Count);
-        Assert.Equal("/Items?ids=user-playlist&limit=1", observed[0].PathAndQuery);
+        Assert.Equal("/Items?ids=user-playlist&limit=1&userId=user-1", observed[0].PathAndQuery);
         Assert.Equal("/Users/Me", observed[1].PathAndQuery);
         Assert.Equal("POST", observed[2].Method);
         Assert.Equal("/Items/user-playlist", observed[2].PathAndQuery);
