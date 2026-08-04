@@ -358,11 +358,18 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             ProviderCapabilities.Metadata,
             _providerAccountId));
 
-        var administrator = CreateController(CreateHttpContextWithSession(isAdmin: true));
+        var administrator = CreateController(
+            CreateHttpContextWithSession(isAdmin: true),
+            healthStore: CreateHealthStore());
         var publicProbe = Assert.IsType<OkObjectResult>(await administrator.TestProvider(
             "deezer",
             ProviderCapabilities.Metadata));
         Assert.Equal(StatusCodes.Status200OK, publicProbe.StatusCode);
+        Assert.IsType<BadRequestObjectResult>(await administrator.TestProvider(
+            "deezer",
+            ProviderCapabilities.Download));
+        await using var context = await _factory.CreateDbContextAsync();
+        Assert.Empty(await context.ProviderHealthSamples.ToListAsync());
     }
 
     [Fact]

@@ -2,8 +2,6 @@ using allstarr.Core.Health;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
-using System.Security.Cryptography;
-using System.Text;
 
 namespace allstarr.Tests;
 
@@ -41,36 +39,36 @@ public sealed class DurableProviderHealthStoreTests : IAsyncLifetime
     [Fact]
     public async Task Samples_AreDurableAndIsolatedByAccountAndCapability()
     {
-        await SeedAccount("deezer", "account-a");
-        await SeedAccount("deezer", "account-b");
+        var accountA = await SeedAccount("deezer", "account-a");
+        var accountB = await SeedAccount("deezer", "account-b");
         var store = Store();
 
         await store.RecordAsync(
             "deezer",
-            "account-a",
+            accountA,
             "metadata",
             ProviderHealthState.Healthy,
             25);
         await store.RecordAsync(
             "deezer",
-            "account-b",
+            accountB,
             "metadata",
             ProviderHealthState.Degraded,
             50,
             "probe_failed token=fixture");
         await store.RecordAsync(
             "deezer",
-            "account-a",
+            accountA,
             "download",
             ProviderHealthState.Unavailable,
             failureCode: "sidecar_unreachable");
 
-        Assert.True(store.TryGetLatest("deezer", "account-a", "metadata", out var healthy));
+        Assert.True(store.TryGetLatest("deezer", accountA, "metadata", out var healthy));
         Assert.Equal(ProviderHealthState.Healthy, healthy.State);
-        Assert.True(store.TryGetLatest("deezer", "account-b", "metadata", out var degraded));
+        Assert.True(store.TryGetLatest("deezer", accountB, "metadata", out var degraded));
         Assert.Equal(ProviderHealthState.Degraded, degraded.State);
         Assert.DoesNotContain("fixture", degraded.FailureCode ?? string.Empty, StringComparison.Ordinal);
-        Assert.True(store.TryGetLatest("deezer", "account-a", "download", out var download));
+        Assert.True(store.TryGetLatest("deezer", accountA, "download", out var download));
         Assert.Equal(ProviderHealthState.Unavailable, download.State);
         await using var context = await _factory.CreateDbContextAsync();
         Assert.Equal(2, await context.ProviderAccounts.CountAsync());
@@ -84,7 +82,7 @@ public sealed class DurableProviderHealthStoreTests : IAsyncLifetime
 
         var result = await store.RecordAsync(
             "deezer",
-            "unresolved-account",
+            Guid.CreateVersion7(),
             "metadata",
             ProviderHealthState.Healthy);
 
@@ -97,30 +95,30 @@ public sealed class DurableProviderHealthStoreTests : IAsyncLifetime
     [Fact]
     public async Task FailureThreshold_OpensCircuitAndHealthyProbeClosesIt()
     {
-        await SeedAccount("qobuz", "legacy-global");
+        var accountId = await SeedAccount("qobuz", "circuit-account");
         var store = Store();
         for (var index = 0; index < 3; index++)
         {
             await store.RecordAsync(
                 "qobuz",
-                "legacy-global",
+                accountId,
                 "download",
                 ProviderHealthState.Unavailable,
                 failureCode: "provider_unreachable");
         }
 
-        Assert.True(store.IsCircuitOpen("qobuz", "legacy-global", "download"));
+        Assert.True(store.IsCircuitOpen(accountId, "download"));
         _clock.Advance(TimeSpan.FromSeconds(31));
-        Assert.False(store.IsCircuitOpen("qobuz", "legacy-global", "download"));
+        Assert.False(store.IsCircuitOpen(accountId, "download"));
 
         await store.RecordAsync(
             "qobuz",
-            "legacy-global",
+            accountId,
             "download",
             ProviderHealthState.Healthy,
             12);
 
-        Assert.False(store.IsCircuitOpen("qobuz", "legacy-global", "download"));
+        Assert.False(store.IsCircuitOpen(accountId, "download"));
         await using var context = await _factory.CreateDbContextAsync();
         var circuit = await context.ProviderCircuits.SingleAsync();
         Assert.Equal(ProviderCircuitState.Closed, circuit.State);
@@ -130,27 +128,27 @@ public sealed class DurableProviderHealthStoreTests : IAsyncLifetime
     [Fact]
     public async Task UnauthorizedObservation_OpensCircuitImmediately()
     {
-        await SeedAccount("applemusic", "account-a");
+        var accountId = await SeedAccount("applemusic", "account-a");
         var store = Store();
 
         await store.RecordAsync(
             "applemusic",
-            "account-a",
+            accountId,
             "personal-library",
             ProviderHealthState.Unauthorized,
             failureCode: "account_unauthorized");
 
-        Assert.True(store.IsCircuitOpen("applemusic", "account-a", "personal-library"));
+        Assert.True(store.IsCircuitOpen(accountId, "personal-library"));
     }
 
     [Fact]
     public async Task RestartHydration_RestoresLatestSampleAndCircuitState()
     {
-        await SeedAccount("deezer", "legacy-global");
+        var accountId = await SeedAccount("deezer", "restart-account");
         var first = Store();
         await first.RecordAsync(
             "deezer",
-            "legacy-global",
+            accountId,
             "metadata",
             ProviderHealthState.Degraded,
             failureCode: "fixture_failure");
@@ -158,12 +156,12 @@ public sealed class DurableProviderHealthStoreTests : IAsyncLifetime
         var restarted = Store();
         await restarted.InitializeAsync();
 
-        Assert.True(restarted.TryGetLatest("deezer", "legacy-global", "metadata", out var latest));
+        Assert.True(restarted.TryGetLatest("deezer", accountId, "metadata", out var latest));
         Assert.Equal(ProviderHealthState.Degraded, latest.State);
         Assert.Equal("fixture_failure", latest.FailureCode);
-        Assert.True(restarted.TryGetLatestByAccountId(
+        Assert.True(restarted.TryGetLatest(
             "deezer",
-            AccountId("deezer", "legacy-global"),
+            accountId,
             "metadata",
             out var routeLatest));
         Assert.Equal(ProviderHealthState.Degraded, routeLatest.State);
@@ -172,35 +170,35 @@ public sealed class DurableProviderHealthStoreTests : IAsyncLifetime
     [Fact]
     public async Task ExpiredSample_IsNoLongerReportedAsCurrent()
     {
-        await SeedAccount("deezer", "legacy-global");
+        var accountId = await SeedAccount("deezer", "expiring-account");
         var store = Store();
         await store.RecordAsync(
             "deezer",
-            "legacy-global",
+            accountId,
             "metadata",
             ProviderHealthState.Healthy);
 
         _clock.Advance(TimeSpan.FromSeconds(61));
 
-        Assert.False(store.TryGetLatest("deezer", "legacy-global", "metadata", out _));
+        Assert.False(store.TryGetLatest("deezer", accountId, "metadata", out _));
     }
 
     [Fact]
     public async Task Samples_UpdateDurableLatencyAndSuccessRollup()
     {
-        await SeedAccount("qobuz", "account-rollup");
+        var accountId = await SeedAccount("qobuz", "account-rollup");
         var store = Store();
         var first = await store.RecordAsync(
-            "qobuz", "account-rollup", "download", ProviderHealthState.Healthy, 10);
+            "qobuz", accountId, "download", ProviderHealthState.Healthy, 10);
         _clock.Advance(TimeSpan.FromMinutes(1));
         await store.RecordAsync(
-            "qobuz", "account-rollup", "download", ProviderHealthState.Healthy, 20);
+            "qobuz", accountId, "download", ProviderHealthState.Healthy, 20);
         _clock.Advance(TimeSpan.FromMinutes(1));
         await store.RecordAsync(
-            "qobuz", "account-rollup", "download", ProviderHealthState.Degraded, 100, "slow_provider");
+            "qobuz", accountId, "download", ProviderHealthState.Degraded, 100, "slow_provider");
         _clock.Advance(TimeSpan.FromMinutes(1));
         await store.RecordAsync(
-            "qobuz", "account-rollup", "download", ProviderHealthState.Unauthorized,
+            "qobuz", accountId, "download", ProviderHealthState.Unauthorized,
             failureCode: "account_unauthorized");
 
         var rollup = await store.GetLatestRollupAsync(first!.ProviderAccountId, "download");
@@ -222,14 +220,14 @@ public sealed class DurableProviderHealthStoreTests : IAsyncLifetime
     public async Task Retention_PrunesExpiredSamplesAndRollupWindows()
     {
         _options.SampleRetentionDays = 1;
-        await SeedAccount("deezer", "retention-account");
+        var accountId = await SeedAccount("deezer", "retention-account");
         var store = Store();
         await store.RecordAsync(
-            "deezer", "retention-account", "metadata", ProviderHealthState.Healthy, 12);
+            "deezer", accountId, "metadata", ProviderHealthState.Healthy, 12);
         _clock.Advance(TimeSpan.FromDays(2));
 
         await store.RecordAsync(
-            "deezer", "retention-account", "metadata", ProviderHealthState.Healthy, 18);
+            "deezer", accountId, "metadata", ProviderHealthState.Healthy, 18);
 
         await using var context = await _factory.CreateDbContextAsync();
         Assert.Single(await context.ProviderHealthSamples.ToListAsync());
@@ -239,39 +237,23 @@ public sealed class DurableProviderHealthStoreTests : IAsyncLifetime
     private DurableProviderHealthStore Store() =>
         new(_factory, _state, _options, _clock);
 
-    private async Task SeedAccount(string providerId, string accountKey)
+    private async Task<Guid> SeedAccount(string providerId, string displayName)
     {
         await using var context = await _factory.CreateDbContextAsync();
-        var accountId = AccountId(providerId, accountKey);
-        if (await context.ProviderAccounts.AnyAsync(item => item.Id == accountId))
-        {
-            return;
-        }
+        var accountId = Guid.CreateVersion7();
 
         context.ProviderAccounts.Add(new ProviderAccountRecord
         {
             Id = accountId,
             ProviderId = providerId,
-            DisplayName = accountKey == "legacy-global"
-                ? $"Legacy global {providerId}"
-                : $"Fixture {accountKey}",
+            DisplayName = $"Fixture {displayName}",
             Scope = ProviderAccountScope.Global,
             Enabled = true,
             CreatedAt = _clock.UtcNow,
             UpdatedAt = _clock.UtcNow
         });
         await context.SaveChangesAsync();
-    }
-
-    private static Guid AccountId(string providerId, string accountKey)
-    {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(
-            $"allstarr-provider-account|{providerId}|{accountKey}"));
-        Span<byte> guidBytes = stackalloc byte[16];
-        bytes.AsSpan(0, 16).CopyTo(guidBytes);
-        guidBytes[6] = (byte)((guidBytes[6] & 0x0f) | 0x50);
-        guidBytes[8] = (byte)((guidBytes[8] & 0x3f) | 0x80);
-        return new Guid(guidBytes);
+        return accountId;
     }
 
     public async Task DisposeAsync() => await _database.DisposeAsync();

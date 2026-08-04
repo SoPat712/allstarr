@@ -890,7 +890,7 @@ public class AdminUiController : ControllerBase
             });
         }
 
-        var runtimeStatuses = _providerStatusManager.GetAllStatuses();
+        var runtimeStatuses = _providerStatusManager.GetAllAccountFreeStatuses();
         if (_providerRegistry != null)
         {
             foreach (var item in _providerRegistry.Providers)

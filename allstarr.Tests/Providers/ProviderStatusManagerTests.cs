@@ -27,7 +27,7 @@ public sealed class ProviderStatusManagerTests
                 LyricsApiUrl = "http://lyrics-sidecar:8080"
             });
 
-        var status = manager.GetStatus("spotify", ProviderCapabilities.Lyrics);
+        var status = manager.GetAccountFreeStatus("spotify", ProviderCapabilities.Lyrics);
 
         Assert.Equal(ProviderConfigurationState.Configured, status.Configuration);
         Assert.Contains("spotify", manager.GetEnabledLyricsProviders());
@@ -83,22 +83,25 @@ public sealed class ProviderStatusManagerTests
             appleMusicSettings: new AppleDownloadSettings { BaseUrl = "http://apple-gateway" },
             deezerSettings: new DeezerSettings { Arl = "configured-arl" });
 
-        Assert.Equal(["deezer", "apple-download"], manager.GetEnabledPlaybackProviders());
+        Assert.Equal(["apple-download"], manager.GetEnabledPlaybackProviders());
     }
 
     [Fact]
-    public void StatusRead_IsPureAndDoesNotInventHealthOrTestTime()
+    public void ManagedStatusRead_IsPureAndDoesNotInventHealthOrTestTime()
     {
         var factory = new CountingHttpClientFactory();
         var manager = CreateManager(
             new Dictionary<string, string?>(),
             httpClientFactory: factory);
 
-        var status = manager.GetStatus("DeEzEr", "MeTaDaTa", "Account-A");
+        var status = manager.GetManagedStatus(
+            "DeEzEr",
+            "MeTaDaTa",
+            Guid.CreateVersion7(),
+            new Dictionary<string, string>());
 
         Assert.Equal("deezer", status.Provider);
         Assert.Equal(ProviderCapabilities.Metadata, status.Capability);
-        Assert.Equal("account-a", status.AccountKey);
         Assert.Equal(ProviderConfigurationState.NotRequired, status.Configuration);
         Assert.Equal(ProviderHealthState.Unknown, status.Health);
         Assert.Null(status.TestedAt);
@@ -108,7 +111,7 @@ public sealed class ProviderStatusManagerTests
     }
 
     [Fact]
-    public void MissingDeezerArl_DoesNotBlockPublicMetadata()
+    public void MissingManagedDeezerSecret_DoesNotBlockPublicMetadata()
     {
         var manager = CreateManager(new Dictionary<string, string?>
         {
@@ -122,13 +125,31 @@ public sealed class ProviderStatusManagerTests
         Assert.Empty(manager.GetEnabledDownloadProviders());
         Assert.Empty(manager.GetEnabledStreamingProviders());
 
-        var metadata = manager.GetStatus("deezer", ProviderCapabilities.Metadata);
-        var download = manager.GetStatus("deezer", ProviderCapabilities.Download);
+        var metadata = manager.GetAccountFreeStatus("deezer", ProviderCapabilities.Metadata);
+        var download = manager.GetManagedStatus(
+            "deezer",
+            ProviderCapabilities.Download,
+            Guid.CreateVersion7(),
+            new Dictionary<string, string>());
         Assert.Equal(ProviderConfigurationState.NotRequired, metadata.Configuration);
         Assert.True(metadata.CanAttempt);
         Assert.Equal(ProviderConfigurationState.NeedsConfiguration, download.Configuration);
-        Assert.Equal("missing_deezer_arl", download.ReasonCode);
+        Assert.Equal("missing_provider_account_secret", download.ReasonCode);
         Assert.False(download.CanAttempt);
+    }
+
+    [Fact]
+    public void AccountFreeProjection_ExcludesAccountRequiredCapabilities()
+    {
+        var statuses = CreateManager(new Dictionary<string, string?>()).GetAllAccountFreeStatuses();
+
+        Assert.Contains(statuses, item => item.Provider == "deezer" && item.Capability == ProviderCapabilities.Metadata);
+        Assert.Contains(statuses, item => item.Provider == "qobuz" && item.Capability == ProviderCapabilities.Metadata);
+        Assert.Contains(statuses, item => item.Provider == "apple-download" && item.Capability == ProviderCapabilities.Download);
+        Assert.DoesNotContain(statuses, item => item.Capability is ProviderCapabilities.Playlist or ProviderCapabilities.Scrobbling);
+        Assert.DoesNotContain(statuses, item =>
+            (item.Provider is "deezer" or "qobuz") &&
+            (item.Capability is ProviderCapabilities.Streaming or ProviderCapabilities.Download));
     }
 
     [Fact]
@@ -139,13 +160,16 @@ public sealed class ProviderStatusManagerTests
             new Dictionary<string, string?>(),
             httpClientFactory: new HandlerHttpClientFactory(handler));
 
-        var probe = manager.TestProviderCapabilityAsync(
+        var accountId = Guid.CreateVersion7();
+        var probe = manager.TestManagedProviderCapabilityAsync(
             "deezer",
             ProviderCapabilities.Metadata,
-            "account-a");
+            accountId,
+            new Dictionary<string, string>());
         await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
-        var testing = manager.GetStatus("deezer", ProviderCapabilities.Metadata, "account-a");
+        var testing = manager.GetManagedStatus(
+            "deezer", ProviderCapabilities.Metadata, accountId, new Dictionary<string, string>());
         Assert.Equal(ProviderHealthState.Testing, testing.Health);
         Assert.Null(testing.TestedAt);
         Assert.False(testing.IsReady);
@@ -159,7 +183,7 @@ public sealed class ProviderStatusManagerTests
     }
 
     [Fact]
-    public async Task ProbeObservations_AreIsolatedByAccountKey()
+    public async Task ProbeObservations_AreIsolatedByProviderAccount()
     {
         var handler = new QueuedResponseHandler(
             Json(HttpStatusCode.OK, "{\"id\":3135556}"),
@@ -168,23 +192,27 @@ public sealed class ProviderStatusManagerTests
             new Dictionary<string, string?>(),
             httpClientFactory: new HandlerHttpClientFactory(handler));
 
-        var first = await manager.TestProviderCapabilityAsync(
+        var accountA = Guid.CreateVersion7();
+        var accountB = Guid.CreateVersion7();
+        var first = await manager.TestManagedProviderCapabilityAsync(
             "deezer",
             ProviderCapabilities.Metadata,
-            "account-a");
-        var second = await manager.TestProviderCapabilityAsync(
+            accountA,
+            new Dictionary<string, string>());
+        var second = await manager.TestManagedProviderCapabilityAsync(
             "deezer",
             ProviderCapabilities.Metadata,
-            "account-b");
+            accountB,
+            new Dictionary<string, string>());
 
         Assert.Equal(ProviderHealthState.Healthy, first.Health);
         Assert.Equal(ProviderHealthState.Degraded, second.Health);
         Assert.Equal(
             ProviderHealthState.Healthy,
-            manager.GetStatus("deezer", ProviderCapabilities.Metadata, "account-a").Health);
+            manager.GetManagedStatus("deezer", ProviderCapabilities.Metadata, accountA, new Dictionary<string, string>()).Health);
         Assert.Equal(
             ProviderHealthState.Degraded,
-            manager.GetStatus("deezer", ProviderCapabilities.Metadata, "account-b").Health);
+            manager.GetManagedStatus("deezer", ProviderCapabilities.Metadata, accountB, new Dictionary<string, string>()).Health);
     }
 
     [Fact]
@@ -201,37 +229,37 @@ public sealed class ProviderStatusManagerTests
                 new QueuedResponseHandler(Json(HttpStatusCode.Unauthorized, "{}"))),
             deezerSettings: new DeezerSettings { Arl = "configured-arl" });
 
-        var download = await manager.TestProviderCapabilityAsync(
+        var download = await manager.TestManagedProviderCapabilityAsync(
             "deezer",
-            ProviderCapabilities.Download);
+            ProviderCapabilities.Download,
+            Guid.CreateVersion7(),
+            new Dictionary<string, string> { ["arl"] = "configured-arl" });
 
         Assert.Equal(ProviderHealthState.Degraded, download.Health);
         Assert.Empty(manager.GetEnabledDownloadProviders());
         Assert.Equal(["deezer"], manager.GetEnabledSearchProviders());
 
-        var metadata = manager.GetStatus("deezer", ProviderCapabilities.Metadata);
+        var metadata = manager.GetAccountFreeStatus("deezer", ProviderCapabilities.Metadata);
         Assert.Equal(ProviderHealthState.Unknown, metadata.Health);
         Assert.True(metadata.CanAttempt);
     }
 
     [Fact]
-    public void PlaceholderCredentials_AreNotTreatedAsConfiguration()
+    public void DeploymentCredentials_DoNotEnableAccountRequiredCapabilities()
     {
         var manager = CreateManager(
             new Dictionary<string, string?>(),
-            deezerSettings: new DeezerSettings { Arl = "your-deezer-arl-token" },
+            deezerSettings: new DeezerSettings { Arl = "deployment-arl" },
             qobuzSettings: new QobuzSettings
             {
-                UserAuthToken = "your-qobuz-token",
-                UserId = "your-qobuz-user-id"
+                UserAuthToken = "deployment-token",
+                UserId = "deployment-user"
             });
 
-        Assert.Equal(
-            ProviderConfigurationState.NeedsConfiguration,
-            manager.GetStatus("deezer", ProviderCapabilities.Download).Configuration);
-        Assert.Equal(
-            ProviderConfigurationState.NeedsConfiguration,
-            manager.GetStatus("qobuz", ProviderCapabilities.Download).Configuration);
+        Assert.Empty(manager.GetEnabledDownloadProviders());
+        Assert.False(manager.CanTestAccountFreeCapability("deezer", ProviderCapabilities.Download));
+        Assert.Throws<InvalidOperationException>(() =>
+            manager.GetAccountFreeStatus("deezer", ProviderCapabilities.Download));
     }
 
     [Fact]
@@ -348,7 +376,11 @@ public sealed class ProviderStatusManagerTests
                 new QueuedResponseHandler(SpotifyTotpSecrets(), SpotifyTime(), Json(HttpStatusCode.Unauthorized, "{}"))),
             spotifySettings: new SpotifyApiSettings { Enabled = true, SessionCookie = "expired-cookie" });
 
-        var result = await manager.TestProviderCapabilityAsync("spotify", ProviderCapabilities.Playlist);
+        var result = await manager.TestManagedProviderCapabilityAsync(
+            "spotify",
+            ProviderCapabilities.Playlist,
+            Guid.CreateVersion7(),
+            new Dictionary<string, string> { ["sessioncookie"] = "expired-cookie" });
 
         Assert.Equal(ProviderHealthState.Degraded, result.Health);
         Assert.Equal("provider_unauthorized", result.ReasonCode);
@@ -367,7 +399,11 @@ public sealed class ProviderStatusManagerTests
             httpClientFactory: new HandlerHttpClientFactory(new QueuedResponseHandler(SpotifyTotpSecrets(), SpotifyTime(), blocked)),
             spotifySettings: new SpotifyApiSettings { Enabled = true, SessionCookie = "valid-looking-cookie" });
 
-        var result = await manager.TestProviderCapabilityAsync("spotify", ProviderCapabilities.Playlist);
+        var result = await manager.TestManagedProviderCapabilityAsync(
+            "spotify",
+            ProviderCapabilities.Playlist,
+            Guid.CreateVersion7(),
+            new Dictionary<string, string> { ["sessioncookie"] = "valid-looking-cookie" });
 
         Assert.Equal(ProviderHealthState.Degraded, result.Health);
         Assert.Equal("provider_forbidden", result.ReasonCode);

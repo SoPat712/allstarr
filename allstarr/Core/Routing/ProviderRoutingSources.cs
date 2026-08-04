@@ -70,11 +70,8 @@ public sealed class DurableProviderRouteHealthSource(
         ProviderCapabilityKind capability)
     {
         var capabilityName = capability.ToString().ToLowerInvariant();
-        var circuitOpen = healthStore.IsCircuitOpen(
-            providerId,
-            providerAccountId.ToString("N"),
-            capabilityName);
-        if (!healthStore.TryGetLatestByAccountId(
+        var circuitOpen = healthStore.IsCircuitOpen(providerAccountId, capabilityName);
+        if (!healthStore.TryGetLatest(
                 providerId,
                 providerAccountId,
                 capabilityName,

@@ -1,8 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
-using allstarr.Core.Health;
-using allstarr.Core.Storage;
 
 namespace allstarr.Core.Operations;
 
@@ -23,14 +21,12 @@ public sealed class SidecarProbeTarget
 {
     public string Id { get; set; } = string.Empty;
     public string ProviderId { get; set; } = string.Empty;
-    public string AccountKey { get; set; } = "legacy-global";
     public string? BaseUrl { get; set; }
     public string HealthPath { get; set; } = "/health";
     public bool Required { get; set; }
     public bool ProbeEnabled { get; set; } = true;
     public string? ExpectedApiVersion { get; set; }
     public bool RequireAuthenticated { get; set; }
-    public List<string> Capabilities { get; set; } = [];
 }
 
 public sealed class SidecarHealthOptions
@@ -55,8 +51,7 @@ public sealed class SidecarHealthOptions
 
         if (Targets.Count > 256 || Targets.Any(target =>
                 string.IsNullOrWhiteSpace(target.Id) ||
-                string.IsNullOrWhiteSpace(target.ProviderId) ||
-                target.Capabilities.Count > 16))
+                string.IsNullOrWhiteSpace(target.ProviderId)))
         {
             throw new InvalidOperationException("Sidecar probe targets are invalid or exceed safe limits.");
         }
@@ -127,31 +122,22 @@ public sealed class SidecarHealthMonitor : BackgroundService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly SidecarHealthOptions _options;
     private readonly SidecarStatusCatalog _catalog;
-    private readonly IDurableProviderHealthObservationStore _healthStore;
     private readonly ILogger<SidecarHealthMonitor> _logger;
     private readonly IPlatformClock _clock;
-    private readonly DurableStorageState? _storageState;
-    private readonly IDurableStorageRuntimeProbe? _storageProbe;
     private int _nextTargetIndex;
 
     public SidecarHealthMonitor(
         IHttpClientFactory httpClientFactory,
         SidecarHealthOptions options,
         SidecarStatusCatalog catalog,
-        IDurableProviderHealthObservationStore healthStore,
         ILogger<SidecarHealthMonitor> logger,
-        IPlatformClock? clock = null,
-        DurableStorageState? storageState = null,
-        IDurableStorageRuntimeProbe? storageProbe = null)
+        IPlatformClock? clock = null)
     {
         _httpClientFactory = httpClientFactory;
         _options = options;
         _catalog = catalog;
-        _healthStore = healthStore;
         _logger = logger;
         _clock = clock ?? new SystemPlatformClock();
-        _storageState = storageState;
-        _storageProbe = storageProbe;
         _options.Validate();
     }
 
@@ -217,7 +203,6 @@ public sealed class SidecarHealthMonitor : BackgroundService
         IEnumerable<SidecarProbeTarget> targets,
         CancellationToken cancellationToken)
     {
-        var durableHealthReady = await RefreshDurableStorageReadinessAsync(cancellationToken);
         foreach (var target in targets)
         {
             if (!target.ProbeEnabled)
@@ -226,35 +211,6 @@ public sealed class SidecarHealthMonitor : BackgroundService
                     target,
                     SidecarRuntimeState.ProbeDisabled,
                     "sidecar_probe_disabled",
-                    _clock.UtcNow));
-                continue;
-            }
-
-            var circuitOpen = false;
-            if (durableHealthReady)
-            {
-                try
-                {
-                    circuitOpen = target.Capabilities.Any(capability => _healthStore.IsCircuitOpen(
-                        target.ProviderId,
-                        target.AccountKey,
-                        capability));
-                }
-                catch (Exception ex)
-                {
-                    durableHealthReady = false;
-                    _logger.LogWarning(
-                        "Sidecar circuit state could not be read ({ExceptionType}); durable health will retry",
-                        ex.GetType().Name);
-                }
-            }
-
-            if (circuitOpen)
-            {
-                _catalog.Set(Status(
-                    target,
-                    SidecarRuntimeState.Degraded,
-                    "sidecar_circuit_open",
                     _clock.UtcNow));
                 continue;
             }
@@ -268,42 +224,6 @@ public sealed class SidecarHealthMonitor : BackgroundService
             _catalog.Set(status);
             activity?.SetTag("sidecar.state", status.State.ToString().ToLowerInvariant());
             activity?.SetTag("error.code", status.ErrorCode);
-            var durableState = status.State switch
-            {
-                SidecarRuntimeState.Ready => ProviderHealthState.Healthy,
-                SidecarRuntimeState.Unauthorized => ProviderHealthState.Unauthorized,
-                SidecarRuntimeState.Unknown => ProviderHealthState.Unknown,
-                _ => ProviderHealthState.Unavailable
-            };
-            if (durableHealthReady)
-            {
-                try
-                {
-                    foreach (var capability in target.Capabilities)
-                    {
-                        await _healthStore.RecordAsync(
-                            target.ProviderId,
-                            target.AccountKey,
-                            capability,
-                            durableState,
-                            latencyMilliseconds: (long)elapsed.TotalMilliseconds,
-                            failureCode: status.ErrorCode,
-                            cancellationToken: cancellationToken);
-                    }
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    durableHealthReady = false;
-                    _logger.LogWarning(
-                        "Sidecar health observation could not be persisted ({ExceptionType}); durable health will retry",
-                        ex.GetType().Name);
-                }
-            }
-
             PlatformDiagnostics.SidecarProbes.Add(
                 1,
                 new("provider.id", target.ProviderId),
@@ -311,36 +231,6 @@ public sealed class SidecarHealthMonitor : BackgroundService
             PlatformDiagnostics.SidecarProbeLatency.Record(
                 elapsed.TotalMilliseconds,
                 new KeyValuePair<string, object?>("provider.id", target.ProviderId));
-        }
-    }
-
-    private async Task<bool> RefreshDurableStorageReadinessAsync(
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            if (_storageProbe != null)
-            {
-                var probed = await _storageProbe.CheckAsync(cancellationToken);
-                if (probed.Readiness != DurableStorageReadiness.Ready)
-                {
-                    return false;
-                }
-            }
-
-            return _storageState == null ||
-                   _storageState.GetSnapshot().Readiness == DurableStorageReadiness.Ready;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(
-                "Sidecar durable-storage readiness refresh failed ({ExceptionType})",
-                ex.GetType().Name);
-            return false;
         }
     }
 

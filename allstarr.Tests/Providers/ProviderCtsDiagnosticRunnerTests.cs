@@ -75,7 +75,7 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         var health = new Mock<IDurableProviderHealthObservationStore>(MockBehavior.Strict);
         health.Setup(item => item.RecordAsync(
                 "qobuz",
-                accountId.ToString("N"),
+                accountId,
                 "click-to-stream",
                 allstarr.Core.Storage.ProviderHealthState.Healthy,
                 It.IsAny<long?>(),

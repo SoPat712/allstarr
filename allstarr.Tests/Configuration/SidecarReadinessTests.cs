@@ -2,12 +2,10 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using allstarr.Core.Health;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Secrets;
 using allstarr.Core.Storage;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace allstarr.Tests;
@@ -19,10 +17,8 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
         "allstarr-sidecar-readiness",
         Guid.NewGuid().ToString("N"));
     private PostgresTestDatabase _database = null!;
-    private TestDbContextFactory _factory = null!;
     private DurableStorageState _storageState = null!;
     private FakeClock _clock = null!;
-    private DurableProviderHealthStore _health = null!;
 
     public async Task InitializeAsync()
     {
@@ -33,27 +29,9 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
             Provider = "Postgres",
             ConnectionString = _database.ConnectionString
         };
-        _factory = new TestDbContextFactory(_database.Options);
-        await using var context = await _factory.CreateDbContextAsync();
-        context.ProviderAccounts.Add(new ProviderAccountRecord
-        {
-            Id = AccountId("applemusic", "legacy-global"),
-            ProviderId = "applemusic",
-            DisplayName = "Legacy global applemusic",
-            Scope = ProviderAccountScope.Global,
-            Enabled = true,
-            CreatedAt = DateTimeOffset.UtcNow,
-            UpdatedAt = DateTimeOffset.UtcNow
-        });
-        await context.SaveChangesAsync();
         _storageState = new DurableStorageState(storage);
         _storageState.Set(DurableStorageReadiness.Ready, "fixture");
         _clock = new FakeClock(DateTimeOffset.UtcNow);
-        _health = new DurableProviderHealthStore(
-            _factory,
-            _storageState,
-            new ProviderHealthOptions(),
-            _clock);
     }
 
     [Fact]
@@ -68,8 +46,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
                     Id = "apple-download",
                     ProviderId = "applemusic",
                     Required = false,
-                    BaseUrl = null,
-                    Capabilities = ["download"]
+                    BaseUrl = null
                 }
             ]
         };
@@ -131,7 +108,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task IncompatibleThenHealthySidecar_UpdatesCatalogAndDurableCapabilityHealth()
+    public async Task IncompatibleThenHealthySidecar_UpdatesCatalog()
     {
         var options = new SidecarHealthOptions
         {
@@ -145,8 +122,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
                     BaseUrl = "http://sidecar.test/",
                     HealthPath = "/health",
                     ExpectedApiVersion = "0.0.2",
-                    RequireAuthenticated = true,
-                    Capabilities = ["download", "streaming"]
+                    RequireAuthenticated = true
                 }
             ]
         };
@@ -158,100 +134,15 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
             new HandlerFactory(handler),
             options,
             catalog,
-            _health,
             NullLogger<SidecarHealthMonitor>.Instance,
             _clock);
 
         await monitor.ProbeAllOnceAsync();
         Assert.Equal(SidecarRuntimeState.Incompatible, Assert.Single(catalog.GetAll()).State);
-        Assert.True(_health.TryGetLatest("applemusic", "legacy-global", "download", out var incompatible));
-        Assert.Equal(ProviderHealthState.Unavailable, incompatible.State);
-
         _clock.Advance(TimeSpan.FromSeconds(1));
         await monitor.ProbeAllOnceAsync();
         Assert.Equal(SidecarRuntimeState.Ready, Assert.Single(catalog.GetAll()).State);
-        Assert.True(_health.TryGetLatest("applemusic", "legacy-global", "download", out var ready));
-        Assert.Equal(ProviderHealthState.Healthy, ready.State);
         Assert.Null(new SidecarJobGate(catalog).Check("apple-download"));
-    }
-
-    [Fact]
-    public async Task TransientHealthWriteFailure_DoesNotStopLaterProbeAndRecovery()
-    {
-        var options = new SidecarHealthOptions
-        {
-            ProbeJitterSeconds = 0,
-            Targets =
-            [
-                new SidecarProbeTarget
-                {
-                    Id = "apple-download",
-                    ProviderId = "applemusic",
-                    BaseUrl = "http://sidecar.test/",
-                    Capabilities = ["download"]
-                }
-            ]
-        };
-        var handler = new QueueHandler(Json("{}"), Json("{}"));
-        var catalog = new SidecarStatusCatalog(options);
-        var health = new FlakyHealthObservationStore(failuresBeforeSuccess: 1);
-        var monitor = new SidecarHealthMonitor(
-            new HandlerFactory(handler),
-            options,
-            catalog,
-            health,
-            NullLogger<SidecarHealthMonitor>.Instance,
-            _clock,
-            _storageState,
-            new ReadyStorageProbe(_storageState));
-
-        await monitor.ProbeAllOnceAsync();
-
-        Assert.Equal(1, handler.RequestCount);
-        Assert.Equal(1, health.WriteAttempts);
-        Assert.Equal(0, health.SuccessfulWrites);
-        Assert.Equal(SidecarRuntimeState.Ready, Assert.Single(catalog.GetAll()).State);
-
-        await monitor.ProbeAllOnceAsync();
-
-        Assert.Equal(2, handler.RequestCount);
-        Assert.Equal(2, health.WriteAttempts);
-        Assert.Equal(1, health.SuccessfulWrites);
-        Assert.Equal(SidecarRuntimeState.Ready, Assert.Single(catalog.GetAll()).State);
-    }
-
-    [Fact]
-    public async Task RefreshedUnavailableStorage_SkipsHealthWriteWithoutSkippingProbe()
-    {
-        var options = new SidecarHealthOptions
-        {
-            Targets =
-            [
-                new SidecarProbeTarget
-                {
-                    Id = "apple-download",
-                    ProviderId = "applemusic",
-                    BaseUrl = "http://sidecar.test/",
-                    Capabilities = ["download"]
-                }
-            ]
-        };
-        var handler = new QueueHandler(Json("{}"));
-        var health = new FlakyHealthObservationStore(failuresBeforeSuccess: 0);
-        var monitor = new SidecarHealthMonitor(
-            new HandlerFactory(handler),
-            options,
-            new SidecarStatusCatalog(options),
-            health,
-            NullLogger<SidecarHealthMonitor>.Instance,
-            _clock,
-            _storageState,
-            new UnavailableStorageProbe(_storageState));
-
-        await monitor.ProbeAllOnceAsync();
-
-        Assert.Equal(1, handler.RequestCount);
-        Assert.Equal(0, health.WriteAttempts);
     }
 
     [Fact]
@@ -266,8 +157,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
                     Id = "apple-download",
                     ProviderId = "applemusic",
                     BaseUrl = "http://sidecar.test/",
-                    ProbeEnabled = false,
-                    Capabilities = ["download"]
+                    ProbeEnabled = false
                 }
             ]
         };
@@ -277,7 +167,6 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
             new HandlerFactory(handler),
             options,
             catalog,
-            _health,
             NullLogger<SidecarHealthMonitor>.Instance,
             _clock);
 
@@ -285,12 +174,10 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
 
         Assert.Equal(0, handler.RequestCount);
         Assert.Equal(SidecarRuntimeState.ProbeDisabled, Assert.Single(catalog.GetAll()).State);
-        await using var context = await _factory.CreateDbContextAsync();
-        Assert.Empty(await context.ProviderHealthSamples.ToListAsync());
     }
 
     [Fact]
-    public async Task UnauthorizedProbe_OpensCircuitAndRateLimitsRecheckUntilRetryWindow()
+    public async Task UnauthorizedProbe_CanRecoverOnNextScheduledCheck()
     {
         var options = new SidecarHealthOptions
         {
@@ -300,8 +187,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
                 {
                     Id = "apple-download",
                     ProviderId = "applemusic",
-                    BaseUrl = "http://sidecar.test/",
-                    Capabilities = ["download"]
+                    BaseUrl = "http://sidecar.test/"
                 }
             ]
         };
@@ -313,17 +199,10 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
             new HandlerFactory(handler),
             options,
             catalog,
-            _health,
             NullLogger<SidecarHealthMonitor>.Instance,
             _clock);
 
         await monitor.ProbeAllOnceAsync();
-        await monitor.ProbeAllOnceAsync();
-
-        Assert.Equal(1, handler.RequestCount);
-        Assert.Equal("sidecar_circuit_open", Assert.Single(catalog.GetAll()).ErrorCode);
-
-        _clock.Advance(TimeSpan.FromSeconds(61));
         await monitor.ProbeAllOnceAsync();
 
         Assert.Equal(2, handler.RequestCount);
@@ -414,7 +293,6 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
             new HandlerFactory(new BlockingHandler()),
             options,
             new SidecarStatusCatalog(options),
-            _health,
             NullLogger<SidecarHealthMonitor>.Instance,
             _clock);
         using var cancellation = new CancellationTokenSource();
@@ -477,17 +355,6 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
         Content = new StringContent(body, Encoding.UTF8, "application/json")
     };
 
-    private static Guid AccountId(string providerId, string accountKey)
-    {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(
-            $"allstarr-provider-account|{providerId}|{accountKey}"));
-        Span<byte> guidBytes = stackalloc byte[16];
-        bytes.AsSpan(0, 16).CopyTo(guidBytes);
-        guidBytes[6] = (byte)((guidBytes[6] & 0x0f) | 0x50);
-        guidBytes[8] = (byte)((guidBytes[8] & 0x3f) | 0x80);
-        return new Guid(guidBytes);
-    }
-
     public async Task DisposeAsync() => await _database.DisposeAsync();
 
     private sealed class QueueHandler(params HttpResponseMessage[] responses) : HttpMessageHandler
@@ -526,39 +393,6 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
         public void Advance(TimeSpan duration) => UtcNow = UtcNow.Add(duration);
     }
 
-    private sealed class FlakyHealthObservationStore(int failuresBeforeSuccess)
-        : IDurableProviderHealthObservationStore
-    {
-        private int _failuresRemaining = failuresBeforeSuccess;
-
-        public int WriteAttempts { get; private set; }
-        public int SuccessfulWrites { get; private set; }
-
-        public bool IsCircuitOpen(
-            string providerId,
-            string accountKey,
-            string capability) => false;
-
-        public Task<DurableProviderHealthSnapshot?> RecordAsync(
-            string providerId,
-            string accountKey,
-            string capability,
-            ProviderHealthState state,
-            long? latencyMilliseconds = null,
-            string? failureCode = null,
-            CancellationToken cancellationToken = default)
-        {
-            WriteAttempts++;
-            if (_failuresRemaining-- > 0)
-            {
-                throw new InvalidOperationException("fixture persistence failure");
-            }
-
-            SuccessfulWrites++;
-            return Task.FromResult<DurableProviderHealthSnapshot?>(null);
-        }
-    }
-
     private sealed class ReadyStorageProbe(DurableStorageState state)
         : IDurableStorageRuntimeProbe
     {
@@ -580,12 +414,4 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
         }
     }
 
-    private sealed class TestDbContextFactory(DbContextOptions<AllstarrDbContext> options)
-        : IDbContextFactory<AllstarrDbContext>
-    {
-        public AllstarrDbContext CreateDbContext() => new(options);
-
-        public Task<AllstarrDbContext> CreateDbContextAsync(
-            CancellationToken cancellationToken = default) => Task.FromResult(new AllstarrDbContext(options));
-    }
 }

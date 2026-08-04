@@ -1,6 +1,4 @@
 using System.Collections.Concurrent;
-using System.Security.Cryptography;
-using System.Text;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -39,7 +37,6 @@ public sealed class ProviderHealthOptions
 
 public sealed record DurableProviderHealthSnapshot(
     string ProviderId,
-    string AccountKey,
     Guid ProviderAccountId,
     string Capability,
     ProviderHealthState State,
@@ -73,14 +70,13 @@ public interface IDurableProviderHealthObservationStore
 {
     Task<DurableProviderHealthSnapshot?> RecordAsync(
         string providerId,
-        string accountKey,
+        Guid providerAccountId,
         string capability,
         ProviderHealthState state,
         long? latencyMilliseconds = null,
         string? failureCode = null,
         CancellationToken cancellationToken = default);
 
-    bool IsCircuitOpen(string providerId, string accountKey, string capability);
 }
 
 public sealed class DurableProviderHealthStore : IDurableProviderHealthObservationStore
@@ -125,10 +121,8 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
                 continue;
             }
 
-            var accountKey = AccountKey(account);
-            _latest[new HealthKey(account.ProviderId, accountKey, sample.Capability)] = new(
+            _latest[new HealthKey(account.ProviderId, account.Id, sample.Capability)] = new(
                 account.ProviderId,
-                accountKey,
                 account.Id,
                 sample.Capability,
                 sample.State,
@@ -158,7 +152,7 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
 
     public async Task<DurableProviderHealthSnapshot?> RecordAsync(
         string providerId,
-        string accountKey,
+        Guid providerAccountId,
         string capability,
         ProviderHealthState state,
         long? latencyMilliseconds = null,
@@ -172,17 +166,15 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
 
         PruneExpiredMemoryState();
         providerId = Normalize(providerId);
-        accountKey = Normalize(accountKey);
         capability = Normalize(capability);
         var now = _clock.UtcNow;
         using var activity = PlatformDiagnostics.ActivitySource.StartActivity("provider-health.record");
         activity?.SetTag("provider.id", providerId);
         activity?.SetTag("provider.capability", capability);
-        var accountId = ResolveAccountId(providerId, accountKey);
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
         var account = await context.ProviderAccounts.SingleOrDefaultAsync(
-            item => item.Id == accountId,
+            item => item.Id == providerAccountId,
             cancellationToken);
         if (account == null)
         {
@@ -240,7 +232,6 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
         await transaction.CommitAsync(cancellationToken);
         var snapshot = new DurableProviderHealthSnapshot(
             providerId,
-            accountKey,
             account.Id,
             capability,
             state,
@@ -248,7 +239,7 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
             sample.ExpiresAt,
             sample.LatencyMilliseconds,
             sample.FailureCode);
-        _latest[new HealthKey(providerId, accountKey, capability)] = snapshot;
+        _latest[new HealthKey(providerId, account.Id, capability)] = snapshot;
         var circuitKey = new CircuitKey(account.Id, capability);
         var circuitSnapshot = ToSnapshot(circuit);
         if (circuitSnapshot.State == ProviderCircuitState.Open &&
@@ -291,12 +282,12 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
 
     public bool TryGetLatest(
         string providerId,
-        string accountKey,
+        Guid providerAccountId,
         string capability,
         out DurableProviderHealthSnapshot snapshot)
     {
         if (!_latest.TryGetValue(
-            new HealthKey(Normalize(providerId), Normalize(accountKey), Normalize(capability)),
+            new HealthKey(Normalize(providerId), providerAccountId, Normalize(capability)),
             out snapshot!) || snapshot.ExpiresAt <= _clock.UtcNow)
         {
             if (snapshot != null)
@@ -304,7 +295,7 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
                 _latest.TryRemove(
                     new HealthKey(
                         Normalize(providerId),
-                        Normalize(accountKey),
+                        providerAccountId,
                         Normalize(capability)),
                     out _);
             }
@@ -315,27 +306,9 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
         return true;
     }
 
-    public bool TryGetLatestByAccountId(
-        string providerId,
-        Guid providerAccountId,
-        string capability,
-        out DurableProviderHealthSnapshot snapshot)
+    public bool IsCircuitOpen(Guid providerAccountId, string capability)
     {
-        PruneExpiredMemoryState();
-        var normalizedProvider = Normalize(providerId);
-        var normalizedCapability = Normalize(capability);
-        snapshot = _latest.Values.FirstOrDefault(item =>
-            item.ProviderAccountId == providerAccountId &&
-            item.ProviderId.Equals(normalizedProvider, StringComparison.Ordinal) &&
-            item.Capability.Equals(normalizedCapability, StringComparison.Ordinal) &&
-            item.ExpiresAt > _clock.UtcNow)!;
-        return snapshot != null;
-    }
-
-    public bool IsCircuitOpen(string providerId, string accountKey, string capability)
-    {
-        var accountId = ResolveAccountId(Normalize(providerId), Normalize(accountKey));
-        var key = new CircuitKey(accountId, Normalize(capability));
+        var key = new CircuitKey(providerAccountId, Normalize(capability));
         if (!_circuits.TryGetValue(
                 key,
                 out var circuit))
@@ -498,32 +471,12 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
         rollup.LastState,
         rollup.LastFailureCode);
 
-    private static string AccountKey(ProviderAccountRecord account) =>
-        account.DisplayName.StartsWith("Legacy global ", StringComparison.Ordinal)
-            ? "legacy-global"
-            : account.Id.ToString("N");
-
-    private static Guid ResolveAccountId(string providerId, string accountKey)
-    {
-        if (Guid.TryParse(accountKey, out var parsed))
-        {
-            return parsed;
-        }
-
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"allstarr-provider-account|{providerId}|{accountKey}"));
-        Span<byte> guidBytes = stackalloc byte[16];
-        bytes.AsSpan(0, 16).CopyTo(guidBytes);
-        guidBytes[6] = (byte)((guidBytes[6] & 0x0f) | 0x50);
-        guidBytes[8] = (byte)((guidBytes[8] & 0x3f) | 0x80);
-        return new Guid(guidBytes);
-    }
-
     private static string Normalize(string value) =>
         string.IsNullOrWhiteSpace(value)
             ? throw new ArgumentException("Provider health keys cannot be empty.")
             : value.Trim().ToLowerInvariant();
 
-    private readonly record struct HealthKey(string ProviderId, string AccountKey, string Capability);
+    private readonly record struct HealthKey(string ProviderId, Guid ProviderAccountId, string Capability);
     private readonly record struct CircuitKey(Guid ProviderAccountId, string Capability);
 }
 

@@ -34,29 +34,27 @@ public static class ProviderCapabilities
     public const string Scrobbling = "scrobbling";
 }
 
-public static class ProviderRuntimeAccounts
-{
-    /// <summary>
-    /// Compatibility key for the remaining deployment-global call paths. Managed
-    /// provider account probes use the provider account ID instead.
-    /// </summary>
-    public const string LegacyGlobal = "legacy-global";
-}
-
 public readonly record struct ProviderRuntimeStatusKey(
     string Provider,
     string Capability,
-    string AccountKey)
+    Guid? ProviderAccountId)
 {
-    public static ProviderRuntimeStatusKey Create(
+    public static ProviderRuntimeStatusKey CreateAccountFree(
         string provider,
-        string capability,
-        string? accountKey = null) => new(
+        string capability) => new(
             Normalize(provider),
             Normalize(capability),
-            string.IsNullOrWhiteSpace(accountKey)
-                ? ProviderRuntimeAccounts.LegacyGlobal
-                : accountKey.Trim().ToLowerInvariant());
+            null);
+
+    public static ProviderRuntimeStatusKey CreateManaged(
+        string provider,
+        string capability,
+        Guid providerAccountId) => new(
+            Normalize(provider),
+            Normalize(capability),
+            providerAccountId == Guid.Empty
+                ? throw new ArgumentException("Provider account ID cannot be empty.", nameof(providerAccountId))
+                : providerAccountId);
 
     private static string Normalize(string value)
     {
@@ -72,8 +70,6 @@ public sealed record ProviderRuntimeStatus
     public required string Provider { get; init; }
 
     public required string Capability { get; init; }
-
-    public required string AccountKey { get; init; }
 
     public required bool IsSupported { get; init; }
 

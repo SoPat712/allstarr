@@ -1048,30 +1048,34 @@ public class ConfigController : ControllerBase
                 });
             }
 
-            var currentGlobal = statusManager.GetStatus(normalizedProvider, capability);
-            if (!currentGlobal.IsSupported || !statusManager.CanTestCapability(normalizedProvider, capability))
+            if (!statusManager.CanTestCapability(normalizedProvider, capability))
             {
                 return BadRequest(new { success = false, error = "This provider capability has no endpoint probe" });
             }
 
-            var globalTimer = System.Diagnostics.Stopwatch.StartNew();
-            var testedGlobal = await statusManager.TestProviderCapabilityAsync(
+            if (!statusManager.CanTestAccountFreeCapability(normalizedProvider, capability))
+            {
+                return BadRequest(new { success = false, error = "Select a provider account for this capability" });
+            }
+
+            var accountFreeTimer = System.Diagnostics.Stopwatch.StartNew();
+            var testedAccountFree = await statusManager.TestAccountFreeProviderCapabilityAsync(
                 normalizedProvider,
                 capability,
-                cancellationToken: HttpContext.RequestAborted);
-            globalTimer.Stop();
-            var globalLatencyMs = globalTimer.ElapsedMilliseconds;
+                HttpContext.RequestAborted);
+            accountFreeTimer.Stop();
+            var accountFreeLatencyMs = accountFreeTimer.ElapsedMilliseconds;
             return Ok(new
             {
-                success = testedGlobal.Health == allstarr.Services.Common.ProviderHealthState.Healthy,
-                provider = testedGlobal.Provider,
-                capability = testedGlobal.Capability,
-                health = testedGlobal.Health.ToString().ToLowerInvariant(),
-                latencyMs = globalLatencyMs,
-                bars = ConnectivityQuality.Bars(globalLatencyMs, testedGlobal.Health == allstarr.Services.Common.ProviderHealthState.Healthy, ConnectivityMetric.ApiLatency),
+                success = testedAccountFree.Health == allstarr.Services.Common.ProviderHealthState.Healthy,
+                provider = testedAccountFree.Provider,
+                capability = testedAccountFree.Capability,
+                health = testedAccountFree.Health.ToString().ToLowerInvariant(),
+                latencyMs = accountFreeLatencyMs,
+                bars = ConnectivityQuality.Bars(accountFreeLatencyMs, testedAccountFree.Health == allstarr.Services.Common.ProviderHealthState.Healthy, ConnectivityMetric.ApiLatency),
                 metric = "api-latency",
-                testedAt = testedGlobal.TestedAt,
-                reasonCode = testedGlobal.ReasonCode
+                testedAt = testedAccountFree.TestedAt,
+                reasonCode = testedAccountFree.ReasonCode
             });
         }
 

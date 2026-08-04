@@ -185,7 +185,6 @@ public sealed class HostCompositionTests
         {
             Provider = "qobuz",
             Capability = "metadata",
-            AccountKey = "legacy-global",
             IsSupported = true,
             IsEnabled = true,
             Configuration = configuration,

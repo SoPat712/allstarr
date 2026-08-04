@@ -13,13 +13,13 @@ namespace allstarr.Tests;
 public sealed class MultiProviderDownloadServiceTests
 {
     [Fact]
-    public async Task StreamingPrefersMatchingDownloadProviderWithoutTranslation()
+    public async Task StreamingUsesAccountFreeAffinityAndDeniesAccountRequiredFallback()
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["MULTI_PROVIDER_STREAMING_ORDER"] = "apple-download",
-                ["MULTI_PROVIDER_DOWNLOAD_ORDER"] = "apple-download"
+                ["MULTI_PROVIDER_STREAMING_ORDER"] = "apple-download,deezer",
+                ["MULTI_PROVIDER_DOWNLOAD_ORDER"] = "apple-download,deezer"
             })
             .Build();
         var clients = new HttpFactory();
@@ -33,10 +33,11 @@ public sealed class MultiProviderDownloadServiceTests
             Options.Create(new QobuzSettings()),
             Options.Create(new SquidWTFSettings()),
             new SquidWtfEndpointCatalog([], []));
+        var apple = new AppleMusicRecordingService();
         var deezer = new DeezerRecordingService();
         var metadata = new Mock<IMusicMetadataService>();
         var service = new MultiProviderDownloadService(
-            [new AppleMusicCancelingService(), deezer],
+            [apple, deezer],
             [],
             metadata.Object,
             status,
@@ -46,15 +47,18 @@ public sealed class MultiProviderDownloadServiceTests
                 Mock.Of<IApplicationCache>()),
             NullLogger<MultiProviderDownloadService>.Instance);
 
-        await using var stream = await service.DownloadAndStreamAsync("deezer", "track-1");
+        await using var stream = await service.DownloadAndStreamAsync("apple-download", "track-1");
 
-        Assert.Equal(("deezer", "track-1"), deezer.Call);
+        Assert.Equal(("apple-download", "track-1"), apple.Call);
         metadata.Verify(
             item => item.GetSongAsync(
                 It.IsAny<string>(),
                 It.IsAny<string>(),
                 It.IsAny<CancellationToken>()),
             Times.Never);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.DownloadAndStreamAsync("deezer", "track-2"));
+        Assert.Null(deezer.Call);
     }
 
     [Fact]
@@ -134,7 +138,7 @@ public sealed class MultiProviderDownloadServiceTests
         public Task<bool> IsAvailableAsync() => Task.FromResult(true);
     }
 
-    private sealed class DeezerRecordingService : IConcreteDownloadService
+    private abstract class RecordingService : IConcreteDownloadService
     {
         public (string Provider, string Id)? Call { get; private set; }
 
@@ -169,5 +173,13 @@ public sealed class MultiProviderDownloadServiceTests
             Task.FromResult<string?>(null);
 
         public Task<bool> IsAvailableAsync() => Task.FromResult(true);
+    }
+
+    private sealed class AppleMusicRecordingService : RecordingService
+    {
+    }
+
+    private sealed class DeezerRecordingService : RecordingService
+    {
     }
 }

@@ -395,9 +395,7 @@ public class DiagnosticsController : ControllerBase
             .Where(playlist => !string.IsNullOrWhiteSpace(playlist.Name))
             .ToList();
 
-        var providerStatus = HttpContext.RequestServices.GetService<ProviderStatusManager>()?
-            .GetStatus("spotify", ProviderCapabilities.Playlist);
-        var sourceReady = providerStatus?.IsReady == true;
+        const bool sourceReady = false;
         var success = configured.Count == 0 || sourceReady;
         var code = configured.Count == 0
             ? "no_playlists_configured"
@@ -427,8 +425,8 @@ public class DiagnosticsController : ControllerBase
             {
                 provider = "spotify",
                 ready = sourceReady,
-                health = providerStatus?.Health.ToString().ToLowerInvariant() ?? "unknown",
-                reasonCode = providerStatus?.ReasonCode
+                health = "unknown",
+                reasonCode = configured.Count == 0 ? null : "provider_account_required"
             }
         });
     }

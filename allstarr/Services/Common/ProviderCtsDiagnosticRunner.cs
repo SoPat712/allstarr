@@ -257,7 +257,7 @@ public sealed class ProviderCtsDiagnosticRunner(
             {
                 await healthStore.RecordAsync(
                     providerId,
-                    providerAccountId.Value.ToString("N"),
+                    providerAccountId.Value,
                     "click-to-stream",
                     allstarr.Core.Storage.ProviderHealthState.Healthy,
                     (long)Math.Round(firstByteMilliseconds.Value),
@@ -327,7 +327,7 @@ public sealed class ProviderCtsDiagnosticRunner(
         if (!providerAccountId.HasValue) return;
         await healthStore.RecordAsync(
             providerId,
-            providerAccountId.Value.ToString("N"),
+            providerAccountId.Value,
             "click-to-stream",
             allstarr.Core.Storage.ProviderHealthState.Degraded,
             (long)Math.Round(latencyMilliseconds),

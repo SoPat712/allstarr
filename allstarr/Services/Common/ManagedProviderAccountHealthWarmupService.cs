@@ -29,7 +29,7 @@ public sealed class ManagedProviderAccountHealthWarmupService(
 
     private async Task ProbeAllAsync(CancellationToken stoppingToken)
     {
-        await ProbeDeploymentProvidersAsync(stoppingToken);
+        await ProbeAccountFreeProvidersAsync(stoppingToken);
 
         await using var context = await contextFactory.CreateDbContextAsync(stoppingToken);
         var accounts = await context.ProviderAccounts.AsNoTracking()
@@ -77,9 +77,9 @@ public sealed class ManagedProviderAccountHealthWarmupService(
         }
     }
 
-    private async Task ProbeDeploymentProvidersAsync(CancellationToken stoppingToken)
+    private async Task ProbeAccountFreeProvidersAsync(CancellationToken stoppingToken)
     {
-        var capabilities = statusManager.GetAllStatuses()
+        var capabilities = statusManager.GetAllAccountFreeStatuses()
             .Where(item => item.IsSupported &&
                            item.IsEnabled &&
                            item.Configuration != ProviderConfigurationState.NeedsConfiguration &&
@@ -95,10 +95,10 @@ public sealed class ManagedProviderAccountHealthWarmupService(
 
             try
             {
-                await statusManager.TestProviderCapabilityAsync(
+                await statusManager.TestAccountFreeProviderCapabilityAsync(
                     capability.Provider,
                     capability.Capability,
-                    cancellationToken: stoppingToken);
+                    stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

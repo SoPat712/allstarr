@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Models.Settings;
+using allstarr.Core.Capabilities;
 using allstarr.Services.SquidWTF;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -23,27 +24,27 @@ public class ProviderStatusManager
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan ObservationLifetime = TimeSpan.FromMinutes(5);
     private const string SpotifyLyricsTestTrackId = "3yII7UwgLF6K5zW3xad3MP";
-    private static readonly (string Provider, string Capability)[] KnownCapabilities =
+    private static readonly (string Provider, string Capability, ProviderAccountRequirement AccountRequirement)[] KnownCapabilities =
     [
-        ("spotify", ProviderCapabilities.Playlist),
-        ("spotify", ProviderCapabilities.Lyrics),
-        ("apple-download", ProviderCapabilities.Metadata),
-        ("apple-download", ProviderCapabilities.Streaming),
-        ("apple-download", ProviderCapabilities.Download),
-        ("apple-download", ProviderCapabilities.Lyrics),
-        ("deezer", ProviderCapabilities.Metadata),
-        ("deezer", ProviderCapabilities.Streaming),
-        ("deezer", ProviderCapabilities.Download),
-        ("deezer", ProviderCapabilities.Playlist),
-        ("qobuz", ProviderCapabilities.Metadata),
-        ("qobuz", ProviderCapabilities.Streaming),
-        ("qobuz", ProviderCapabilities.Download),
-        ("qobuz", ProviderCapabilities.Playlist),
-        ("squidwtf", ProviderCapabilities.Metadata),
-        ("lyricsplus", ProviderCapabilities.Lyrics),
-        ("lrclib", ProviderCapabilities.Lyrics),
-        ("lastfm", ProviderCapabilities.Scrobbling),
-        ("listenbrainz", ProviderCapabilities.Scrobbling)
+        ("spotify", ProviderCapabilities.Playlist, ProviderAccountRequirement.Required),
+        ("spotify", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
+        ("apple-download", ProviderCapabilities.Metadata, ProviderAccountRequirement.None),
+        ("apple-download", ProviderCapabilities.Streaming, ProviderAccountRequirement.None),
+        ("apple-download", ProviderCapabilities.Download, ProviderAccountRequirement.None),
+        ("apple-download", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
+        ("deezer", ProviderCapabilities.Metadata, ProviderAccountRequirement.None),
+        ("deezer", ProviderCapabilities.Streaming, ProviderAccountRequirement.Required),
+        ("deezer", ProviderCapabilities.Download, ProviderAccountRequirement.Required),
+        ("deezer", ProviderCapabilities.Playlist, ProviderAccountRequirement.Required),
+        ("qobuz", ProviderCapabilities.Metadata, ProviderAccountRequirement.Optional),
+        ("qobuz", ProviderCapabilities.Streaming, ProviderAccountRequirement.Required),
+        ("qobuz", ProviderCapabilities.Download, ProviderAccountRequirement.Required),
+        ("qobuz", ProviderCapabilities.Playlist, ProviderAccountRequirement.Required),
+        ("squidwtf", ProviderCapabilities.Metadata, ProviderAccountRequirement.None),
+        ("lyricsplus", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
+        ("lrclib", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
+        ("lastfm", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
+        ("listenbrainz", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required)
     ];
 
     private readonly IConfiguration _configuration;
@@ -96,7 +97,8 @@ public class ProviderStatusManager
         return order
             .Where(provider =>
                 enabled.Contains(provider) &&
-                GetStatus(provider, ProviderCapabilities.Metadata).CanAttempt)
+                CanRunWithoutAccount(provider, ProviderCapabilities.Metadata) &&
+                GetAccountFreeStatus(provider, ProviderCapabilities.Metadata).CanAttempt)
             .ToList();
     }
 
@@ -108,7 +110,8 @@ public class ProviderStatusManager
         return order
             .Where(provider =>
                 enabled.Contains(provider) &&
-                GetStatus(provider, ProviderCapabilities.Playlist).CanAttempt)
+                CanRunWithoutAccount(provider, ProviderCapabilities.Playlist) &&
+                GetAccountFreeStatus(provider, ProviderCapabilities.Playlist).CanAttempt)
             .ToList();
     }
 
@@ -118,7 +121,8 @@ public class ProviderStatusManager
         var extensionProviders = ActiveExtensionProviders(IsDownloadCapability);
         return configured
             .Where(provider => IsKnownBuiltInProvider(provider)
-                ? GetStatus(provider, ProviderCapabilities.Download).CanAttempt
+                ? CanRunWithoutAccount(provider, ProviderCapabilities.Download) &&
+                  GetAccountFreeStatus(provider, ProviderCapabilities.Download).CanAttempt
                 : extensionProviders.Contains(provider, StringComparer.OrdinalIgnoreCase))
             .Concat(extensionProviders.Except(configured, StringComparer.OrdinalIgnoreCase))
             .ToList();
@@ -130,7 +134,8 @@ public class ProviderStatusManager
         var extensionProviders = ActiveExtensionProviders(IsStreamingCapability);
         return configured
             .Where(provider => IsKnownBuiltInProvider(provider)
-                ? GetStatus(provider, ProviderCapabilities.Streaming).CanAttempt
+                ? CanRunWithoutAccount(provider, ProviderCapabilities.Streaming) &&
+                  GetAccountFreeStatus(provider, ProviderCapabilities.Streaming).CanAttempt
                 : extensionProviders.Contains(provider, StringComparer.OrdinalIgnoreCase))
             .Concat(extensionProviders.Except(configured, StringComparer.OrdinalIgnoreCase))
             .ToList();
@@ -176,17 +181,19 @@ public class ProviderStatusManager
     public IReadOnlyList<string> GetEnabledLyricsProviders()
     {
         return GetLyricsOrder()
-            .Where(provider => GetStatus(provider, ProviderCapabilities.Lyrics).CanAttempt)
+            .Where(provider => CanRunWithoutAccount(provider, ProviderCapabilities.Lyrics) &&
+                               GetAccountFreeStatus(provider, ProviderCapabilities.Lyrics).CanAttempt)
             .ToList();
     }
 
     /// <summary>
-    /// Returns the complete current built-in status projection without probing.
+    /// Returns only capabilities whose typed contract permits execution without
+    /// a provider account. Account-bound status is available through the managed APIs.
     /// </summary>
-    public IReadOnlyList<ProviderRuntimeStatus> GetAllStatuses(
-        string accountKey = ProviderRuntimeAccounts.LegacyGlobal) =>
+    public IReadOnlyList<ProviderRuntimeStatus> GetAllAccountFreeStatuses() =>
         KnownCapabilities
-            .Select(item => GetStatus(item.Provider, item.Capability, accountKey))
+            .Where(item => item.AccountRequirement != ProviderAccountRequirement.Required)
+            .Select(item => GetAccountFreeStatus(item.Provider, item.Capability))
             .ToList();
 
     /// <summary>
@@ -216,10 +223,10 @@ public class ProviderStatusManager
         Guid providerAccountId,
         IReadOnlyDictionary<string, string> accountSecrets)
     {
-        var key = ProviderRuntimeStatusKey.Create(
+        var key = ProviderRuntimeStatusKey.CreateManaged(
             provider,
             capability,
-            providerAccountId.ToString("N"));
+            providerAccountId);
         var baseline = ApplyManagedAccountConfiguration(
             BuildBaselineStatus(key),
             accountSecrets);
@@ -229,17 +236,20 @@ public class ProviderStatusManager
     /// <summary>
     /// Returns a truthful snapshot without starting a probe or inventing a timestamp.
     /// </summary>
-    public ProviderRuntimeStatus GetStatus(
+    public ProviderRuntimeStatus GetAccountFreeStatus(
         string provider,
-        string capability,
-        string accountKey = ProviderRuntimeAccounts.LegacyGlobal)
+        string capability)
     {
-        var key = ProviderRuntimeStatusKey.Create(provider, capability, accountKey);
+        RequireAccountFreeCapability(provider, capability);
+        var key = ProviderRuntimeStatusKey.CreateAccountFree(provider, capability);
         return GetStatusCore(key, BuildBaselineStatus(key));
     }
 
     public bool CanTestCapability(string provider, string capability) =>
         HasProbe(Normalize(provider), Normalize(capability));
+
+    public bool CanTestAccountFreeCapability(string provider, string capability) =>
+        CanRunWithoutAccount(provider, capability) && CanTestCapability(provider, capability);
 
     private ProviderRuntimeStatus GetStatusCore(
         ProviderRuntimeStatusKey key,
@@ -248,10 +258,11 @@ public class ProviderStatusManager
         PruneExpiredObservations();
         if (!_observations.TryGetValue(key, out var observation))
         {
-            if (_durableHealth != null &&
+            if (key.ProviderAccountId.HasValue &&
+                _durableHealth != null &&
                 _durableHealth.TryGetLatest(
                     key.Provider,
-                    key.AccountKey,
+                    key.ProviderAccountId.Value,
                     key.Capability,
                     out var durable))
             {
@@ -288,17 +299,19 @@ public class ProviderStatusManager
     /// Explicitly probes one capability/account key. Status is observable as Testing
     /// while the request is in flight.
     /// </summary>
-    public async Task<ProviderRuntimeStatus> TestProviderCapabilityAsync(
+    public async Task<ProviderRuntimeStatus> TestAccountFreeProviderCapabilityAsync(
         string provider,
         string capability,
-        string accountKey = ProviderRuntimeAccounts.LegacyGlobal,
-        CancellationToken cancellationToken = default) =>
-        await TestProviderCapabilityCoreAsync(
+        CancellationToken cancellationToken = default)
+    {
+        RequireAccountFreeCapability(provider, capability);
+        return await TestProviderCapabilityCoreAsync(
             provider,
             capability,
-            accountKey,
+            providerAccountId: null,
             accountSecrets: null,
             cancellationToken);
+    }
 
     public async Task<ProviderRuntimeStatus> TestManagedProviderCapabilityAsync(
         string provider,
@@ -309,19 +322,21 @@ public class ProviderStatusManager
         await TestProviderCapabilityCoreAsync(
             provider,
             capability,
-            providerAccountId.ToString("N"),
+            providerAccountId,
             accountSecrets,
             cancellationToken);
 
     private async Task<ProviderRuntimeStatus> TestProviderCapabilityCoreAsync(
         string provider,
         string capability,
-        string accountKey,
+        Guid? providerAccountId,
         IReadOnlyDictionary<string, string>? accountSecrets,
         CancellationToken cancellationToken)
     {
         PruneExpiredObservations();
-        var key = ProviderRuntimeStatusKey.Create(provider, capability, accountKey);
+        var key = providerAccountId.HasValue
+            ? ProviderRuntimeStatusKey.CreateManaged(provider, capability, providerAccountId.Value)
+            : ProviderRuntimeStatusKey.CreateAccountFree(provider, capability);
         var baseline = BuildBaselineStatus(key);
         if (accountSecrets != null)
         {
@@ -349,10 +364,10 @@ public class ProviderStatusManager
         };
 
         _logger.LogDebug(
-            "Testing provider capability {Provider}/{Capability} for account key {AccountKey}",
+            "Testing provider capability {Provider}/{Capability} for provider account {ProviderAccountId}",
             key.Provider,
             key.Capability,
-            key.AccountKey);
+            key.ProviderAccountId?.ToString("N") ?? "account-free");
 
         try
         {
@@ -428,7 +443,8 @@ public class ProviderStatusManager
         ProviderRuntimeStatus status,
         ProviderRuntimeStatusKey key)
     {
-        if (_durableHealth?.IsCircuitOpen(key.Provider, key.AccountKey, key.Capability) != true)
+        if (!key.ProviderAccountId.HasValue ||
+            _durableHealth?.IsCircuitOpen(key.ProviderAccountId.Value, key.Capability) != true)
         {
             return status;
         }
@@ -460,7 +476,7 @@ public class ProviderStatusManager
         string? failureCode,
         CancellationToken cancellationToken)
     {
-        if (_durableHealth == null)
+        if (_durableHealth == null || !key.ProviderAccountId.HasValue)
         {
             return;
         }
@@ -469,7 +485,7 @@ public class ProviderStatusManager
         {
             await _durableHealth.RecordAsync(
                 key.Provider,
-                key.AccountKey,
+                key.ProviderAccountId.Value,
                 key.Capability,
                 state,
                 latencyMilliseconds,
@@ -551,7 +567,6 @@ public class ProviderStatusManager
         {
             Provider = key.Provider,
             Capability = key.Capability,
-            AccountKey = key.AccountKey,
             IsSupported = isSupported,
             IsEnabled = isEnabled,
             Configuration = configuration,
@@ -606,6 +621,25 @@ public class ProviderStatusManager
 
             _ => (ProviderConfigurationState.NeedsConfiguration, "unsupported_capability")
         };
+    }
+
+    private static bool CanRunWithoutAccount(string provider, string capability)
+    {
+        var normalizedProvider = Normalize(provider);
+        var normalizedCapability = Normalize(capability);
+        return KnownCapabilities.Any(item =>
+            item.Provider == normalizedProvider &&
+            item.Capability == normalizedCapability &&
+            item.AccountRequirement != ProviderAccountRequirement.Required);
+    }
+
+    private static void RequireAccountFreeCapability(string provider, string capability)
+    {
+        if (!CanRunWithoutAccount(provider, capability))
+        {
+            throw new InvalidOperationException(
+                $"Provider capability '{Normalize(provider)}/{Normalize(capability)}' requires an explicit provider account.");
+        }
     }
 
     private ProviderRuntimeStatus ApplyManagedAccountConfiguration(
