@@ -947,9 +947,29 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
     [Fact]
     public async Task ExportImport_PreservesTenantScopedStateTrackIdentitiesAndEncryptedSecretBytes()
     {
+        const string temporaryUploadCanary = "private-history-upload-must-not-transfer";
+        const string remoteTokenCanary = "remote-history-token-must-not-transfer";
+        await File.WriteAllTextAsync(
+            Path.Combine(_root, "history-import.upload"),
+            $"{temporaryUploadCanary}|{remoteTokenCanary}");
         var artifact = await _service.ExportAsync(
             Path.Combine(_root, "transfers"),
             writesQuiesced: true);
+        Assert.Equal(_currentSchema, artifact.SchemaVersion);
+        using (var archive = ZipFile.OpenRead(artifact.Path))
+        {
+            Assert.Contains(archive.Entries, item => item.FullName == "listening-events.json");
+            Assert.Contains(archive.Entries, item => item.FullName == "listening-history-imports.json");
+            var contents = new List<string>();
+            foreach (var entry in archive.Entries)
+            {
+                using var reader = new StreamReader(entry.Open());
+                contents.Add(await reader.ReadToEndAsync());
+            }
+            var archiveText = string.Join('\n', contents);
+            Assert.DoesNotContain(temporaryUploadCanary, archiveText, StringComparison.Ordinal);
+            Assert.DoesNotContain(remoteTokenCanary, archiveText, StringComparison.Ordinal);
+        }
         var targetPath = Path.Combine(_root, "target.db");
         var targetFactory = Factory($"postgres-fixture:{targetPath}");
 
@@ -1029,6 +1049,13 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         Assert.Equal(.98, listeningEvent.MusicBrainzEnrichmentConfidence);
         Assert.Contains("11111111-1111-1111-1111-111111111111", listeningEvent.MusicBrainzFactsJson);
         var listeningImport = await target.ListeningHistoryImports.SingleAsync();
+        Assert.Equal(listeningEvent.TenantId, listeningImport.TenantId);
+        Assert.Equal(listeningEvent.OwnerUserId, listeningImport.OwnerUserId);
+        Assert.Equal(listeningEvent.Protocol, listeningImport.Protocol);
+        Assert.Equal(listeningEvent.BackendInstanceId, listeningImport.BackendInstanceId);
+        Assert.Equal(listeningEvent.LibraryScopeId, listeningImport.LibraryScopeId);
+        Assert.Equal("spotify-extended-streaming-history", listeningImport.Format);
+        Assert.Equal(new string('a', 64), listeningImport.ContentSha256);
         Assert.Equal(ListeningHistoryImportState.Expired, listeningImport.State);
         Assert.Null(listeningImport.JobId);
         Assert.StartsWith("library:", (await target.ListeningSignals.SingleAsync()).TrackReference, StringComparison.Ordinal);

@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using allstarr.Core.Intelligence;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
@@ -385,6 +386,140 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
         Assert.True(await verify.Tenants.AnyAsync(item => item.Id == sourceTenantId));
         Assert.Contains(await verify.AuditEvents.ToListAsync(), item =>
             item.CorrelationId == "replace");
+    }
+
+    [Fact]
+    public async Task IntelligenceRoundTripPreservesScopeExpiresUploadsAndRejectsConflict()
+    {
+        const string temporaryUploadCanary = "private-history-upload-must-not-transfer";
+        const string remoteTokenCanary = "remote-history-token-must-not-transfer";
+        var (sourceFactory, sourceOptions, sourceState) = await CreateSeededContextAsync();
+        Guid tenantId;
+        Guid userId;
+        await using (var source = await sourceFactory.CreateDbContextAsync())
+        {
+            tenantId = await source.Tenants.Select(item => item.Id).SingleAsync();
+            userId = await source.Users.Select(item => item.Id).SingleAsync();
+            var now = DateTimeOffset.UtcNow;
+            source.ListeningEvents.Add(new ListeningEventRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = tenantId,
+                OwnerUserId = userId,
+                Protocol = "jellyfin",
+                BackendInstanceId = "inst",
+                LibraryScopeId = "music",
+                OccurrenceKey = new string('e', 64),
+                State = ListeningEventState.Completed,
+                StartedAt = now,
+                ListenedAt = now,
+                UpdatedAt = now,
+                SourceKind = "history-import",
+                TrackReference = "spotify:track:fixture"
+            });
+            source.ListeningHistoryImports.Add(new ListeningHistoryImportRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = tenantId,
+                OwnerUserId = userId,
+                Protocol = "jellyfin",
+                BackendInstanceId = "inst",
+                LibraryScopeId = "music",
+                DisplayFileName = "StreamingHistory_music_0.json",
+                Format = "spotify-extended-streaming-history",
+                ContentSha256 = new string('a', 64),
+                SizeBytes = 1234,
+                PreviewJson = "{}",
+                PreviewRevision = new string('b', 64),
+                State = ListeningHistoryImportState.Running,
+                CreatedAt = now,
+                UpdatedAt = now,
+                ExpiresAt = now.AddHours(24),
+                Revision = 1
+            });
+            await source.SaveChangesAsync();
+        }
+        await File.WriteAllTextAsync(
+            Path.Combine(_root, "history-import.upload"),
+            $"{temporaryUploadCanary}|{remoteTokenCanary}");
+
+        var sourceService = new SelectiveStateTransferService(sourceFactory, sourceOptions, sourceState);
+        var exportRequest = new SelectiveExportRequest
+        {
+            IncludeSettings = true,
+            IncludeAccounts = true,
+            IncludePlaylists = false,
+            IncludeIntelligence = true,
+            IncludeExtensions = false
+        };
+        var importRequest = new SelectiveImportRequest
+        {
+            Mode = SelectiveImportMode.Conflict,
+            ImportSettings = true,
+            ImportAccounts = true,
+            ImportPlaylists = false,
+            ImportIntelligence = true,
+            ImportExtensions = false
+        };
+        var (artifact, report) = await sourceService.ExportAsync(
+            Path.Combine(_root, "intelligence-round-trip"),
+            exportRequest);
+        Assert.Equal(1, report.RowsByEntry["listening-events"]);
+        Assert.Equal(1, report.RowsByEntry["listening-history-imports"]);
+        using (var archive = ZipFile.OpenRead(artifact.Path))
+        {
+            var manifest = await ReadManifestAsync(archive);
+            Assert.Equal(SelectiveStateTransferService.CurrentFormatVersion.ToString(), manifest["formatVersion"]);
+            Assert.Equal(artifact.SchemaVersion, manifest["schemaVersion"]);
+            var contents = new List<string>();
+            foreach (var entry in archive.Entries)
+            {
+                using var reader = new StreamReader(entry.Open());
+                contents.Add(await reader.ReadToEndAsync());
+            }
+            var archiveText = string.Join('\n', contents);
+            Assert.DoesNotContain(temporaryUploadCanary, archiveText, StringComparison.Ordinal);
+            Assert.DoesNotContain(remoteTokenCanary, archiveText, StringComparison.Ordinal);
+        }
+
+        var invalidPath = Path.Combine(_root, "invalid-history-scope.zip");
+        File.Copy(artifact.Path, invalidPath);
+        await RewriteEntryAsync(invalidPath, "listening-events.json", rows =>
+            rows[0]!["ownerUserId"] = Guid.CreateVersion7().ToString());
+        var (targetFactory, targetOptions, targetState) = await CreateEmptyContextAsync();
+        var targetService = new SelectiveStateTransferService(targetFactory, targetOptions, targetState);
+        await using (var invalidArchive = File.OpenRead(invalidPath))
+        {
+            var invalidPreview = await targetService.PreviewAsync(invalidArchive, importRequest);
+            Assert.False(invalidPreview.CanImport);
+            Assert.Contains(invalidPreview.Conflicts, item =>
+                item.Contains("database key or dependency", StringComparison.OrdinalIgnoreCase));
+        }
+
+        await using (var archive = File.OpenRead(artifact.Path))
+        {
+            await targetService.ImportAsync(archive, importRequest, userId, "history-round-trip");
+        }
+        var restarted = new SelectiveStateTransferService(targetFactory, targetOptions, targetState);
+        await using (var restored = await targetFactory.CreateDbContextAsync())
+        {
+            var occurrence = await restored.ListeningEvents.SingleAsync();
+            var historyImport = await restored.ListeningHistoryImports.SingleAsync();
+            Assert.Equal((tenantId, userId, "jellyfin", "inst", "music"),
+                (occurrence.TenantId, occurrence.OwnerUserId, occurrence.Protocol,
+                    occurrence.BackendInstanceId, occurrence.LibraryScopeId));
+            Assert.Equal((tenantId, userId, "jellyfin", "inst", "music"),
+                (historyImport.TenantId, historyImport.OwnerUserId, historyImport.Protocol,
+                    historyImport.BackendInstanceId, historyImport.LibraryScopeId));
+            Assert.Equal(ListeningHistoryImportState.Expired, historyImport.State);
+            Assert.Null(historyImport.JobId);
+        }
+        await using (var archive = File.OpenRead(artifact.Path))
+        {
+            var conflict = await restarted.PreviewAsync(archive, importRequest);
+            Assert.False(conflict.CanImport);
+            Assert.Contains(conflict.Conflicts, item => item.Contains("empty target", StringComparison.Ordinal));
+        }
     }
 
     [Fact]
