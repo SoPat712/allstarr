@@ -55,7 +55,8 @@ public sealed class ProviderStreamLease
         bool supportsSeeking,
         ProviderMediaFormat media,
         ProviderStreamRetryBehavior retryBehavior,
-        ProviderStreamResponseFactory? responseFactory = null)
+        ProviderStreamResponseFactory? responseFactory = null,
+        string? qualityDowngradeReason = null)
     {
         ArgumentNullException.ThrowIfNull(sourceUri);
         ArgumentNullException.ThrowIfNull(media);
@@ -84,6 +85,11 @@ public sealed class ProviderStreamLease
         Media = media;
         RetryBehavior = retryBehavior;
         ProtectedResponseFactory = responseFactory;
+        QualityDowngradeReason = qualityDowngradeReason == null
+            ? null
+            : ProviderContractValidation.SafeMessage(
+                qualityDowngradeReason,
+                nameof(qualityDowngradeReason));
     }
 
     public string LeaseId { get; }
@@ -99,6 +105,8 @@ public sealed class ProviderStreamLease
     public ProviderMediaFormat Media { get; }
 
     public ProviderStreamRetryBehavior RetryBehavior { get; }
+
+    public string? QualityDowngradeReason { get; }
 
     internal ProviderStreamResponseFactory? ProtectedResponseFactory { get; }
 

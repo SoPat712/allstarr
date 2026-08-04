@@ -823,6 +823,8 @@ public class ExtensionSandbox
     public bool HasCallableHook(string hook) =>
         !string.IsNullOrWhiteSpace(hook) && IsCallable(hook);
 
+    internal bool IsNetworkAllowed(Uri uri) => _hostBridge.IsNetworkAllowed(uri);
+
     public bool HasSignedSession => _hostBridge.HasSignedSession;
     internal Task<ExtensionBoundedHttpPayload> FetchBytesAsync(
         Uri uri,
@@ -1762,7 +1764,7 @@ public class ExtensionHostBridge
             throw new UnauthorizedAccessException("Extension cache permission is not approved.");
     }
 
-    private bool IsNetworkAllowed(Uri uri)
+    internal bool IsNetworkAllowed(Uri uri)
     {
         var origin = uri.GetLeftPart(UriPartial.Authority) + "/";
         if (_permissions.NetworkOrigins.Contains(origin)) return true;

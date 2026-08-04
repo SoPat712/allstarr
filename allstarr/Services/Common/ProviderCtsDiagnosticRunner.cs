@@ -288,6 +288,7 @@ public sealed class ProviderCtsDiagnosticRunner(
                 lease.SupportsByteRanges,
                 lease.SupportsSeeking,
                 lease.Media,
+                lease.QualityDowngradeReason,
                 DateTimeOffset.UtcNow);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -400,6 +401,7 @@ public sealed class ProviderCtsDiagnosticResult
     public bool LeaseSupportsByteRanges { get; init; }
     public bool LeaseSupportsSeeking { get; init; }
     public ProviderMediaFormat? Media { get; init; }
+    public string? QualityDowngradeReason { get; init; }
     public string ProbeMode { get; init; } = "cold-connect";
     public int Bars { get; init; }
     public string? Quality { get; init; }
@@ -453,6 +455,7 @@ public sealed class ProviderCtsDiagnosticResult
         bool leaseSupportsByteRanges,
         bool leaseSupportsSeeking,
         ProviderMediaFormat media,
+        string? qualityDowngradeReason,
         DateTimeOffset measuredAt)
     {
         var bars = ConnectivityQuality.Bars(firstByteMilliseconds, true, ConnectivityMetric.ClickToStream);
@@ -485,6 +488,7 @@ public sealed class ProviderCtsDiagnosticResult
             LeaseSupportsByteRanges = leaseSupportsByteRanges,
             LeaseSupportsSeeking = leaseSupportsSeeking,
             Media = media,
+            QualityDowngradeReason = qualityDowngradeReason,
             ProbeMode = "cold-connect",
             Bars = bars,
             Quality = ConnectivityQuality.Label(bars),

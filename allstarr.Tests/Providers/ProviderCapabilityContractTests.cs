@@ -57,19 +57,30 @@ public sealed class ProviderCapabilityContractTests
             supportsByteRanges: true,
             supportsSeeking: true,
             media,
-            ProviderStreamRetryBehavior.RefreshLease);
+            ProviderStreamRetryBehavior.RefreshLease,
+            qualityDowngradeReason: "The account tier limits this track to lossy audio.");
 
         Assert.Equal(expiresAt, lease.ExpiresAt);
         Assert.True(lease.SupportsByteRanges);
         Assert.True(lease.SupportsSeeking);
         Assert.Equal("flac", lease.Media.Codec);
         Assert.Equal(ProviderStreamRetryBehavior.RefreshLease, lease.RetryBehavior);
+        Assert.Equal("The account tier limits this track to lossy audio.", lease.QualityDowngradeReason);
         Assert.DoesNotContain("signed-source", lease.ToString(), StringComparison.Ordinal);
         Assert.Null(typeof(ProviderStreamLease).GetProperty("SourceUri"));
         Assert.DoesNotContain(
             "signed-source",
             System.Text.Json.JsonSerializer.Serialize(lease),
             StringComparison.Ordinal);
+        Assert.Throws<ArgumentException>(() => new ProviderStreamLease(
+            "unsafe",
+            new Uri("https://media.example.invalid/source"),
+            expiresAt,
+            true,
+            true,
+            media,
+            ProviderStreamRetryBehavior.DoNotRetry,
+            qualityDowngradeReason: "token=must-not-be-reported"));
     }
 
     [Fact]

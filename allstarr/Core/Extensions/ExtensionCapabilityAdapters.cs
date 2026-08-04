@@ -107,6 +107,13 @@ public abstract class ExtensionCapabilityAdapterBase
             ? result : throw new JsonException();
     protected static TEnum EnumValue<TEnum>(JsonElement value, string name) where TEnum : struct, Enum =>
         Enum.TryParse<TEnum>(Text(value, name), true, out var parsed) && Enum.IsDefined(parsed) ? parsed : throw new JsonException();
+    protected Uri NetworkUri(JsonElement value, string name)
+    {
+        var uri = new Uri(Text(value, name), UriKind.Absolute);
+        return _sandbox.IsNetworkAllowed(uri)
+            ? uri
+            : throw new UnauthorizedAccessException("Extension stream origin is not approved.");
+    }
     protected static ProviderMediaFormat Media(JsonElement value)
     {
         var media = value.GetProperty("media");
@@ -117,23 +124,31 @@ public abstract class ExtensionCapabilityAdapterBase
 
 public sealed class ExtensionStreamingCapabilityAdapter : ExtensionCapabilityAdapterBase, IProviderStreamingCapability
 {
+    private readonly bool accountRequired;
+
     public ExtensionStreamingCapabilityAdapter(ExtensionSandbox sandbox, ExtensionSdkManifest manifest,
-        IProviderAccountSecretAccessor? secrets = null) : base(sandbox, manifest, ProviderCapabilityKind.Streaming, secrets) { }
+        IProviderAccountSecretAccessor? secrets = null) : base(sandbox, manifest, ProviderCapabilityKind.Streaming, secrets)
+    {
+        accountRequired = manifest.Capabilities.Single(item => item.Kind == ProviderCapabilityKind.Streaming).AccountRequired;
+    }
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Streaming;
     public Task<ProviderOutcome<ProviderStreamLease>> GetStreamLeaseAsync(ProviderExecutionContext context, ProviderStreamLeaseRequest request)
     {
         context.RequireResourceOwner(request.TrackId, ProviderResourceKind.Track);
         return InvokeAsync(context, "getStreamLease", new { trackId = request.TrackId.Value, requestedQuality = request.RequestedQuality.ToString(), request.RangeStart }, value =>
-            new ProviderStreamLease(Text(value, "leaseId"), new Uri(Text(value, "sourceUri"), UriKind.Absolute),
+            new ProviderStreamLease(Text(value, "leaseId"), NetworkUri(value, "sourceUri"),
                 value.GetProperty("expiresAt").GetDateTimeOffset(), Bool(value, "supportsByteRanges"), Bool(value, "supportsSeeking"),
-                Media(value), EnumValue<ProviderStreamRetryBehavior>(value, "retryBehavior")));
+                Media(value), EnumValue<ProviderStreamRetryBehavior>(value, "retryBehavior"),
+                qualityDowngradeReason: OptionalText(value, "qualityDowngradeReason")),
+            requireAccount: accountRequired);
     }
     public Task<ProviderOutcome<ProviderStreamProbeResult>> ProbeStreamAsync(ProviderExecutionContext context, ProviderStreamLeaseRequest request)
     {
         context.RequireResourceOwner(request.TrackId, ProviderResourceKind.Track);
         return InvokeAsync(context, "probeStream", new { trackId = request.TrackId.Value, requestedQuality = request.RequestedQuality.ToString() }, value =>
             new ProviderStreamProbeResult(Bool(value, "available"), value.GetProperty("observedAt").GetDateTimeOffset(),
-                value.TryGetProperty("media", out _) ? Media(value) : null));
+                value.TryGetProperty("media", out _) ? Media(value) : null),
+            requireAccount: accountRequired);
     }
 }
 

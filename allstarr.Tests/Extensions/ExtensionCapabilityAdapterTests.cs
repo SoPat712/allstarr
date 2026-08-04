@@ -369,24 +369,79 @@ public sealed class ExtensionCapabilityAdapterTests
         Assert.All(await Task.WhenAll(calls), Assert.True);
     }
 
-    [Fact]
-    public async Task Streaming_MapsOnlyTypedLeaseAndRejectsFilesystemSource()
+    [Theory]
+    [InlineData("file:///etc/passwd")]
+    [InlineData("https://unapproved.example.test/audio")]
+    public async Task Streaming_RejectsFilesystemAndUnapprovedNetworkSources(string sourceUri)
     {
         var manifest = Manifest(ProviderCapabilityKind.Streaming, "getStreamLease");
         var sandbox = Sandbox(manifest, """
             registerExtension({ getStreamLease: function(request) { return {
-              leaseId: 'lease-1', sourceUri: 'file:///etc/passwd', expiresAt: '2030-01-01T00:00:00Z',
+              leaseId: 'lease-1', sourceUri: 'SOURCE_URI', expiresAt: '2030-01-01T00:00:00Z',
               supportsByteRanges: true, supportsSeeking: true,
               media: { mimeType: 'audio/flac', container: 'flac', codec: 'flac' }, retryBehavior: 'RefreshLease'
             }; }});
-            """);
+            """.Replace("SOURCE_URI", sourceUri, StringComparison.Ordinal));
         var adapter = new ExtensionStreamingCapabilityAdapter(sandbox, manifest);
 
-        var outcome = await adapter.GetStreamLeaseAsync(Context(),
+        var outcome = await adapter.GetStreamLeaseAsync(Context(includeAccount: true),
             new ProviderStreamLeaseRequest(Id(ProviderResourceKind.Track, "track-1")));
 
         Assert.False(outcome.IsSuccess);
         Assert.Equal(ProviderErrorKind.TransientFailure, outcome.Error!.Kind);
+    }
+
+    [Fact]
+    public async Task Streaming_EnforcesAccountOriginCancellationAndTypedMediaFacts()
+    {
+        var manifest = Manifest(ProviderCapabilityKind.Streaming, "getStreamLease", "probeStream");
+        var permissions = new ExtensionRuntimePermissionSet(
+            new HashSet<string>(["https://media.example.test/"], StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal));
+        var sandbox = Sandbox(manifest, """
+            registerExtension({
+              getStreamLease: function(request) {
+                if (request.trackId !== 'track-1' || request.requestedQuality !== 'Lossless' || request.rangeStart !== 4096)
+                  throw new Error('request mismatch');
+                return {
+                  leaseId: 'lease-1', sourceUri: 'https://media.example.test/audio', expiresAt: '2030-01-01T00:00:00Z',
+                  supportsByteRanges: true, supportsSeeking: true,
+                  media: { mimeType: 'audio/flac', container: 'flac', codec: 'flac', bitrate: 1411000,
+                    sampleRate: 44100, bitDepth: 16, channels: 2 }, retryBehavior: 'RefreshLease',
+                  qualityDowngradeReason: 'The source catalog has no lossless copy.'
+                };
+              },
+              probeStream: function(request) { return {
+                available: request.requestedQuality === 'Lossless', observedAt: '2030-01-01T00:00:00Z',
+                media: { mimeType: 'audio/flac', container: 'flac', codec: 'flac', sampleRate: 44100 }
+              }; }
+            });
+            """, permissions);
+        var adapter = new ExtensionStreamingCapabilityAdapter(sandbox, manifest);
+        var request = new ProviderStreamLeaseRequest(
+            Id(ProviderResourceKind.Track, "track-1"), ProviderAudioQuality.Lossless, 4096);
+
+        var missingAccount = await adapter.GetStreamLeaseAsync(Context(), request);
+        var leaseOutcome = await adapter.GetStreamLeaseAsync(Context(includeAccount: true), request);
+        var probe = await adapter.ProbeStreamAsync(Context(includeAccount: true), request);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var canceled = await adapter.GetStreamLeaseAsync(
+            Context(includeAccount: true, cancellationToken: cancellation.Token), request);
+
+        Assert.Equal(ProviderErrorKind.AccountNeedsConfiguration, missingAccount.Error!.Kind);
+        var lease = leaseOutcome.RequireValue();
+        Assert.True(lease.SupportsByteRanges);
+        Assert.True(lease.SupportsSeeking);
+        Assert.Equal(1_411_000, lease.Media.Bitrate);
+        Assert.Equal(44_100, lease.Media.SampleRate);
+        Assert.Equal(16, lease.Media.BitDepth);
+        Assert.Equal(2, lease.Media.Channels);
+        Assert.Equal("The source catalog has no lossless copy.", lease.QualityDowngradeReason);
+        Assert.True(probe.RequireValue().Available);
+        Assert.Equal(44_100, probe.RequireValue().Media!.SampleRate);
+        Assert.Equal(ProviderErrorKind.Canceled, canceled.Error!.Kind);
     }
 
     [Fact]
@@ -717,9 +772,12 @@ public sealed class ExtensionCapabilityAdapterTests
         "fixture-extension", "Fixture", "1.0.0", "1", "index.js",
         [new ExtensionSdkCapability(kind, hooks, [ProviderAccountScope.User])], []);
 
-    private static ExtensionSandbox Sandbox(ExtensionSdkManifest manifest, string script) => new(
+    private static ExtensionSandbox Sandbox(
+        ExtensionSdkManifest manifest,
+        string script,
+        ExtensionRuntimePermissionSet? permissions = null) => new(
         Path.GetTempPath(), """{"id":"fixture-extension","displayName":"Fixture","version":"1.0.0"}""", script,
-        new HttpClientFactory(), NullLogger.Instance);
+        new HttpClientFactory(), NullLogger.Instance, permissions);
 
     private static ExtensionSdkManifest DownloadManifest() => new(
         "fixture-extension", "Fixture", "1.0.0", "1", "index.js",
@@ -761,7 +819,10 @@ public sealed class ExtensionCapabilityAdapterTests
     private static ProviderExternalResourceId Id(ProviderResourceKind kind, string value) =>
         new("fixture-extension", kind, value);
 
-    private static ProviderExecutionContext Context(string providerId = "fixture-extension", bool includeAccount = false)
+    private static ProviderExecutionContext Context(
+        string providerId = "fixture-extension",
+        bool includeAccount = false,
+        CancellationToken cancellationToken = default)
     {
         var actor = new ProviderActorContext(Guid.CreateVersion7(), ProviderActorKind.User, Guid.CreateVersion7(),
             new ProviderBackendPrincipal("jellyfin", "fixture", "user"));
@@ -772,7 +833,7 @@ public sealed class ExtensionCapabilityAdapterTests
         return new ProviderExecutionContext(actor, providerId, account, null,
             new ProviderExecutionPolicy(new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
                 ProviderExplicitContentPolicy.Allow, true, false, true, [providerId]),
-            "extension-test", "extension-test-correlation", DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None,
+            "extension-test", "extension-test-correlation", DateTimeOffset.UtcNow.AddMinutes(1), cancellationToken,
             "extension-test-idempotency");
     }
 

@@ -44,7 +44,8 @@ public sealed class ProviderCtsDiagnosticRunnerTests
                 response.Headers.AcceptRanges.Add("bytes");
                 response.Headers.TryAddWithoutValidation("X-Cache", "HIT private-cache-node");
                 return Task.FromResult(response);
-            });
+            },
+            qualityDowngradeReason: "The account tier limits this track to lossless audio.");
         var capability = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
         capability.Setup(item => item.GetStreamLeaseAsync(
                 It.IsAny<ProviderExecutionContext>(),
@@ -113,6 +114,9 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         Assert.True(result.LeaseSupportsByteRanges);
         Assert.True(result.LeaseSupportsSeeking);
         Assert.Equal(media, result.Media);
+        Assert.Equal(
+            "The account tier limits this track to lossless audio.",
+            result.QualityDowngradeReason);
         Assert.Equal("hit", result.CacheState);
         Assert.Equal(
             Convert.ToHexString(SHA256.HashData(body.AsSpan(0, sampleLimit))).ToLowerInvariant(),
