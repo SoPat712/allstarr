@@ -110,9 +110,9 @@ the client `Limit` once to the final native-plus-external result.
 
 The safe live comparison is `tools/tests/live_jellyfin_smoke.sh`; usage and
 output semantics are in `tools/tests/README.md`. The recorded live runtime is
-Jellyfin 10.11.11. Jellyfin 12 is covered by the pinned OpenAPI and deterministic
-contracts, but real 12.x runtime parity remains explicitly blocked until such a
-runtime is available.
+Jellyfin 10.11.11. Jellyfin 12 remains covered by the pinned OpenAPI and
+deterministic contracts; live 12.x runtime parity is deferred until a public
+release is available.
 
 ## Apple Music cold playback
 

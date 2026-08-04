@@ -141,6 +141,50 @@ def public_shape(value: object) -> object:
     return type(value).__name__
 
 
+def response_item_ids(
+    root: Mapping[str, object], container: str, field: str
+) -> set[str]:
+    parent = root.get(container)
+    if not isinstance(parent, dict):
+        return set()
+    return {
+        str(item["id"])
+        for item in nested_lists(parent, field)
+        if isinstance(item.get("id"), str)
+    }
+
+
+def compatible_variable_response(
+    name: str, direct: Mapping[str, object], other: Mapping[str, object]
+) -> bool:
+    if name in {"artist", "album"}:
+        field = "album" if name == "artist" else "song"
+        direct_parent = direct.get(name)
+        other_parent = other.get(name)
+        direct_ids = response_item_ids(direct, name, field)
+        return (
+            isinstance(direct_parent, dict)
+            and isinstance(other_parent, dict)
+            and direct_parent.get("id") == other_parent.get("id")
+            and bool(direct_ids)
+            and direct_ids <= response_item_ids(other, name, field)
+        )
+    if name == "search3":
+        direct_ids = {
+            kind: response_item_ids(direct, "searchResult3", kind)
+            for kind in ("artist", "album", "song")
+        }
+        return any(direct_ids.values()) and all(
+            ids <= response_item_ids(other, "searchResult3", kind)
+            for kind, ids in direct_ids.items()
+        )
+    if name == "similar":
+        return bool(response_item_ids(direct, "similarSongs2", "song")) and bool(
+            response_item_ids(other, "similarSongs2", "song")
+        )
+    raise ValueError(f"unsupported variable response: {name}")
+
+
 def playlist_matches(
     root: Mapping[str, object], playlist_id: str, allowed_names: set[str]
 ) -> bool:
@@ -153,7 +197,16 @@ def playlist_matches(
 
 
 def stateful_steps() -> tuple[str, ...]:
-    return ("create", "add", "reread", "rename", "reorder", "empty", "delete-exact-id")
+    return (
+        "create",
+        "add",
+        "reread",
+        "rename",
+        "reorder",
+        "empty",
+        "delete-exact-id",
+        "verify-delete",
+    )
 
 
 class SubsonicClient:
@@ -344,38 +397,47 @@ def media_ids(
     client: SubsonicClient,
     results: Results,
 ) -> tuple[str, str, list[str], dict[str, Mapping[str, object]]]:
-    indexes = require_root(results, "direct getIndexes", client.call("getIndexes"))
-    artists = require_root(results, "direct getArtists", client.call("getArtists"))
-    artist_id = first_id(nested_lists(indexes, "indexes", "index", "artist"))
-    artist_id = artist_id or first_id(
-        nested_lists(artists, "artists", "index", "artist")
+    catalog = require_root(
+        results,
+        "direct bounded getAlbumList2",
+        client.call("getAlbumList2", [("type", "newest"), ("size", 10)]),
     )
-    if not artist_id:
-        raise SmokeError("no artist was available for dynamic qualification")
-
-    artist = require_root(
-        results, "direct getArtist", client.call("getArtist", [("id", artist_id)])
-    )
-    album_id = first_id(nested_lists(artist, "artist", "album"))
-    if not album_id:
-        raise SmokeError("the selected artist had no album for dynamic qualification")
-
-    album = require_root(
-        results, "direct getAlbum", client.call("getAlbum", [("id", album_id)])
-    )
-    songs = list(nested_lists(album, "album", "song"))
-    song_ids = [value for value in (first_id([song]) for song in songs) if value]
-    if not song_ids:
-        raise SmokeError("the selected album had no song for dynamic qualification")
-    song = require_root(
-        results, "direct getSong", client.call("getSong", [("id", song_ids[0])])
-    )
-    return (
-        artist_id,
-        album_id,
-        song_ids[:2],
-        {"artist": artist, "album": album, "song": song},
-    )
+    for candidate in nested_lists(catalog, "albumList2", "album"):
+        album_id = candidate.get("id")
+        artist_id = candidate.get("artistId")
+        if not isinstance(album_id, str) or not isinstance(artist_id, str):
+            continue
+        album = require_root(
+            results,
+            "direct candidate getAlbum",
+            client.call("getAlbum", [("id", album_id)]),
+        )
+        song_ids = [
+            value
+            for value in (
+                first_id([item]) for item in nested_lists(album, "album", "song")
+            )
+            if value
+        ]
+        if len(song_ids) < 2:
+            continue
+        artist = require_root(
+            results,
+            "direct getArtist",
+            client.call("getArtist", [("id", artist_id)]),
+        )
+        song = require_root(
+            results,
+            "direct getSong",
+            client.call("getSong", [("id", song_ids[0])]),
+        )
+        return (
+            artist_id,
+            album_id,
+            song_ids[:2],
+            {"artist": artist, "album": album, "song": song},
+        )
+    raise SmokeError("no bounded album candidate had two songs for qualification")
 
 
 def inventory(client: SubsonicClient, results: Results) -> None:
@@ -543,9 +605,14 @@ def compare_read_only(
     results: Results,
 ) -> None:
     for name in sorted(direct.keys() & other.keys()):
+        compatible = (
+            compatible_variable_response(name, direct[name], other[name])
+            if name in {"album", "artist", "search3", "similar"}
+            else public_shape(direct[name]) == public_shape(other[name])
+        )
         results.check_value(
             f"Allstarr {name} response shape",
-            public_shape(direct[name]) == public_shape(other[name]),
+            compatible,
         )
 
 
@@ -658,6 +725,13 @@ def run_stateful(client: SubsonicClient, results: Results, song_ids: list[str]) 
             "delete exact throwaway playlist",
             client.call("deletePlaylist", [("id", playlist_id)], http_method="POST"),
         )
+        deleted = client.call("getPlaylist", [("id", playlist_id)])
+        absent = not envelope(deleted.body, deleted.content_type).succeeded
+        results.check_value("verify exact throwaway playlist deleted", absent)
+        if not absent:
+            raise SmokeError(
+                "deletePlaylist returned success but the exact playlist still exists"
+            )
         playlist_id = None
     finally:
         if playlist_id:
@@ -670,7 +744,14 @@ def run_stateful(client: SubsonicClient, results: Results, song_ids: list[str]) 
                         "deletePlaylist", [("id", playlist_id)], http_method="POST"
                     )
                     if envelope(cleanup.body, cleanup.content_type).succeeded:
-                        print("PASS cleanup exact throwaway playlist")
+                        deleted = client.call("getPlaylist", [("id", playlist_id)])
+                        if envelope(deleted.body, deleted.content_type).succeeded:
+                            print(
+                                "CLEANUP-BLOCKED exact playlist still exists after delete",
+                                file=sys.stderr,
+                            )
+                        else:
+                            print("PASS cleanup exact throwaway playlist")
                     else:
                         print(
                             "CLEANUP-BLOCKED exact playlist delete returned a failed envelope",
@@ -770,6 +851,22 @@ def main() -> int:
         if allstarr_url:
             allstarr = SubsonicClient(
                 allstarr_url, username, password, client_name, timeout
+            )
+            results.check_envelope(
+                "Allstarr password authentication", allstarr.call("ping")
+            )
+            results.check_envelope(
+                "Allstarr token authentication", allstarr.call("ping", auth="token")
+            )
+            direct_playlists = require_root(
+                results, "direct playlist comparison", direct.call("getPlaylists")
+            )
+            allstarr_playlists = require_root(
+                results, "Allstarr playlist comparison", allstarr.call("getPlaylists")
+            )
+            results.check_value(
+                "Allstarr playlist response shape",
+                public_shape(direct_playlists) == public_shape(allstarr_playlists),
             )
             allstarr_details = exact_details(
                 allstarr, results, artist_id, album_id, song_ids[0], "Allstarr"

@@ -98,13 +98,23 @@ playlist_identity_matches() {
             '.Id == $id and .Name == $name and .Type == "Playlist"' >/dev/null
 }
 cleanup() {
+    local cleanup_delete_code cleanup_probe_code
     if [[ -n "$stateful_playlist_id" ]]; then
         if playlist_identity_matches "$stateful_playlist_id" "$stateful_playlist_name"; then
-            curl -sS -X DELETE --max-time "$TIMEOUT_SECONDS" \
+            cleanup_delete_code="$(curl -sS -X DELETE --max-time "$TIMEOUT_SECONDS" \
                 -H "X-Emby-Token: $JELLYFIN_TOKEN" \
-                "$DIRECT_BASE/Items/$stateful_playlist_id" -o /dev/null >/dev/null 2>&1 || true
+                "$DIRECT_BASE/Items/$stateful_playlist_id" -o /dev/null -w '%{http_code}' 2>/dev/null || true)"
+            cleanup_probe_code="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
+                "$DIRECT_BASE/Items/$stateful_playlist_id?UserId=$best_user_id" \
+                -o /dev/null -w '%{http_code}' 2>/dev/null || true)"
+            if [[ "$cleanup_delete_code" == 204 && "$cleanup_probe_code" == 404 ]]; then
+                echo 'PASS cleanup exact throwaway playlist'
+            else
+                printf 'CLEANUP-BLOCKED exact playlist delete=%s verify=%s\n' \
+                    "${cleanup_delete_code:-000}" "${cleanup_probe_code:-000}" >&2
+            fi
         else
-            echo 'WARN refusing cleanup for unverified run-owned playlist' >&2
+            echo 'CLEANUP-BLOCKED exact playlist ID/name/type verification failed' >&2
         fi
     fi
     rm -f "$users_file" "$items_file" "$response_file" "$timings_file" \
@@ -1646,9 +1656,6 @@ if command -v ping >/dev/null; then
     done
 fi
 
-if [[ "$direct_version" != 12.* ]]; then
-    block "jellyfin-12-live=no 12.x runtime (current=$direct_version); deterministic pinned OpenAPI coverage remains required"
-fi
 echo "log-correlation since=$started_at user-agent=AllstarrLiveSmoke/$run_id"
 echo "live-smoke-end=$(date -u +%Y-%m-%dT%H:%M:%SZ) log-window-start=$started_at checks=$checks failures=$failures blocked=$blocked"
 (( failures == 0 ))

@@ -7,6 +7,7 @@ import unittest
 from live_subsonic_smoke import (
     MAX_BODY_BYTES,
     SmokeError,
+    compatible_variable_response,
     envelope,
     first_id,
     json_root,
@@ -54,6 +55,18 @@ class LiveSubsonicSmokeTests(unittest.TestCase):
         shape = public_shape({"song": {"id": "private-id", "title": "private title"}})
         self.assertNotIn("private", json.dumps(shape))
 
+        direct = {
+            "album": {"id": "local-album", "song": [{"id": "local-song"}]}
+        }
+        enriched = {
+            "album": {
+                "id": "local-album",
+                "song": [{"id": "local-song"}, {"id": "external-song"}],
+            }
+        }
+        self.assertTrue(compatible_variable_response("album", direct, enriched))
+        self.assertFalse(compatible_variable_response("album", direct, {"album": {}}))
+
     def test_cleanup_requires_exact_returned_id_and_name(self):
         root = {"playlist": {"id": "playlist-1", "name": "allstarr-smoke-run"}}
         self.assertTrue(playlist_matches(root, "playlist-1", {"allstarr-smoke-run"}))
@@ -70,6 +83,7 @@ class LiveSubsonicSmokeTests(unittest.TestCase):
                 "reorder",
                 "empty",
                 "delete-exact-id",
+                "verify-delete",
             ),
             stateful_steps(),
         )
