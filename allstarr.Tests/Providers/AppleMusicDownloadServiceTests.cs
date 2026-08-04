@@ -84,6 +84,51 @@ public sealed class AppleMusicDownloadServiceTests
         }
     }
 
+    [Fact]
+    public async Task AbandonedProgressivePlaybackDeletesPartialWithoutPublishingCache()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"allstarr-apple-abort-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var local = new Mock<ILocalLibraryService>(MockBehavior.Strict);
+            local.Setup(item => item.GetLocalPathForExternalSongAsync("apple-download", "track-1"))
+                .ReturnsAsync((string?)null);
+            var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+            metadata.Setup(item => item.GetSongAsync(
+                    "applemusic", "track-1", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new allstarr.Models.Domain.Song
+                {
+                    ExternalProvider = "apple-download",
+                    ExternalId = "track-1",
+                    Title = "Track",
+                    Artist = "Artist",
+                    Album = "Album"
+                });
+            var discovery = new Mock<IAppleDownloadEndpointDiscovery>(MockBehavior.Strict);
+            var handler = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent([0x66, 0x4c, 0x61, 0x43])
+            });
+            var service = CreateService(directory, local.Object, metadata.Object, discovery.Object, handler);
+
+            await using (var stream = await service.DownloadAndStreamAsync("apple-download", "track-1"))
+            {
+                Assert.Equal(0x66, stream.ReadByte());
+            }
+
+            Assert.Empty(Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories));
+            local.VerifyAll();
+            local.Verify(item => item.RegisterDownloadedSongAsync(
+                It.IsAny<allstarr.Models.Domain.Song>(), It.IsAny<string>()), Times.Never);
+            discovery.VerifyNoOtherCalls();
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
     [Theory]
     [InlineData(AppleDownloadEndpointState.Available, AppleDownloadCapabilityState.Available, true)]
     [InlineData(AppleDownloadEndpointState.Available, AppleDownloadCapabilityState.Unsupported, false)]

@@ -177,7 +177,8 @@ public partial class JellyfinController
                         StreamQuality.High => ProviderAudioQuality.Lossy,
                         _ => ProviderAudioQuality.Any
                     },
-                    Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null);
+                    Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null,
+                    headOnly: HttpMethods.IsHead(Request.Method));
                 if (routed != null)
                 {
                     if (!routed.Response.IsSuccessStatusCode)

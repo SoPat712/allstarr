@@ -82,6 +82,7 @@ public sealed class ProtocolProviderGatewayContractTests
         Assert.True(
             external.IndexOf("_localLibraryService.GetLocalPathForExternalSongAsync", StringComparison.Ordinal) <
             external.IndexOf("_providerGateway.OpenStreamAsync", StringComparison.Ordinal));
+        Assert.Contains("headOnly: HttpMethods.IsHead(Request.Method)", external, StringComparison.Ordinal);
 
         var subsonic = File.ReadAllText(Path.Combine(
             root, "allstarr", "Controllers", "SubSonicController.cs"));
@@ -94,6 +95,7 @@ public sealed class ProtocolProviderGatewayContractTests
         Assert.True(
             stream.IndexOf("_localLibraryService.GetLocalPathForExternalSongAsync", StringComparison.Ordinal) <
             stream.IndexOf("_providerGateway.OpenStreamAsync", StringComparison.Ordinal));
+        Assert.Contains("headOnly: HttpMethods.IsHead(Request.Method)", stream, StringComparison.Ordinal);
 
         var playlists = File.ReadAllText(Path.Combine(
             root, "allstarr", "Controllers", "JellyfinController.PlaylistHandler.cs"));

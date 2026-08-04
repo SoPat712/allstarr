@@ -253,6 +253,44 @@ public sealed class ProtocolProviderStreamingGatewayTests
         stream.Response.Dispose();
     }
 
+    [Fact]
+    public async Task OpenStream_UsesHeadWithoutReadingProviderMedia()
+    {
+        HttpMethod? observedMethod = null;
+        var lease = new ProviderStreamLease(
+            "lease",
+            new Uri("https://media.example.test/track"),
+            DateTimeOffset.UtcNow.AddMinutes(1),
+            supportsByteRanges: false,
+            supportsSeeking: false,
+            new ProviderMediaFormat("audio/flac", "flac", "flac"),
+            ProviderStreamRetryBehavior.DoNotRetry,
+            (request, _) =>
+            {
+                observedMethod = request.Method;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            });
+        var capability = Capability("apple-download", ProviderOutcome<ProviderStreamLease>.Success(lease));
+        var registry = Registry(capability.Object);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(
+                It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry, capability.Object));
+        var gateway = new ProtocolProviderGateway(
+            router.Object,
+            registry,
+            Mock.Of<IProviderRouteAccountResolver>(),
+            Mock.Of<IMusicMetadataService>(),
+            new HttpClientFactory());
+
+        var stream = await gateway.OpenStreamAsync(
+            Context(), "apple-download", "source-track", ProviderAudioQuality.DataSaver, null, headOnly: true);
+
+        Assert.NotNull(stream);
+        Assert.Equal(HttpMethod.Head, observedMethod);
+        stream.Response.Dispose();
+    }
+
     [Theory]
     [InlineData(ProviderStreamRetryBehavior.RetrySameLeaseOnce, 1)]
     [InlineData(ProviderStreamRetryBehavior.RefreshLease, 2)]

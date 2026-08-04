@@ -234,6 +234,19 @@ def test_song_download_uses_safe_id_quality_mapping_and_flac_contract(client):
     assert client[0].get("/api/download/not-an-id").status_code == 400
 
 
+def test_song_stream_head_reports_only_known_facts_without_preparing_media(client):
+    response = client[0].head("/api/stream/102", params={"quality": "aac-96"})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("audio/flac")
+    assert "content-length" not in response.headers
+    assert "accept-ranges" not in response.headers
+    assert client[2].calls == []
+    assert client[2].transcodes == []
+    assert client[0].head("/api/stream/not-an-id").status_code == 400
+    assert client[0].head("/api/stream/102", params={"quality": "made-up"}).status_code == 400
+
+
 def test_song_stream_falls_back_to_web_aac_when_lossless_is_unavailable(settings):
     class FallbackRunner(FakeRunner):
         async def download(self, url: str, quality: str, output: Path, temporary: Path) -> list[Path]:

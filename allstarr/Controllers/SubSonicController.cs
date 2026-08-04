@@ -271,7 +271,8 @@ public partial class SubsonicController : ControllerBase
                     provider!,
                     externalId!,
                     requestedQuality,
-                    Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null);
+                    Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null,
+                    headOnly: HttpMethods.IsHead(Request.Method));
                 if (routed != null)
                 {
                     if (!routed.Response.IsSuccessStatusCode)

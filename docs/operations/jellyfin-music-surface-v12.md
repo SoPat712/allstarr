@@ -124,6 +124,9 @@ relays those exact bytes immediately while teeing the
 same bytes to a temporary file. Metadata resolution happens concurrently and is
 used only when the completed cache file is published. A partial artifact is never
 registered. Completed cache files support normal byte ranges and seeks.
+Cold progressive responses do not advertise ranges. A `HEAD` request returns
+only the known FLAC media type and disposition through the sidecar's dedicated
+metadata-only route; it does not fetch, decrypt, transcode, or stream Apple media.
 
 `applemusic` and `apple-download` are canonical aliases on this path. An Apple ID
 therefore never incurs an Apple-to-Apple Odesli translation.

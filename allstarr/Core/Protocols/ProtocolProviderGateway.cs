@@ -67,7 +67,8 @@ public interface IProtocolProviderGateway
         string providerId,
         string externalId,
         ProviderAudioQuality quality,
-        string? rangeHeader);
+        string? rangeHeader,
+        bool headOnly = false);
 
     Task<ProviderLyricsResult?> GetLyricsAsync(
         ProtocolExecutionContext protocol,
@@ -580,7 +581,8 @@ public sealed class ProtocolProviderGateway(
         string providerId,
         string externalId,
         ProviderAudioQuality quality,
-        string? rangeHeader)
+        string? rangeHeader,
+        bool headOnly = false)
     {
         ArgumentNullException.ThrowIfNull(protocol);
         if (protocol.Actor is null) return null;
@@ -614,7 +616,9 @@ public sealed class ProtocolProviderGateway(
 
         async Task<HttpResponseMessage> OpenLeaseAsync(ProviderStreamLease lease)
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+            using var request = new HttpRequestMessage(
+                headOnly ? HttpMethod.Head : HttpMethod.Get,
+                lease.ProtectedSourceUri);
             if (parsedRange != null && lease.SupportsByteRanges)
                 request.Headers.Range = parsedRange;
             return lease.ProtectedResponseFactory != null

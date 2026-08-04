@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 
 from .catalog import CatalogClient
@@ -281,6 +281,20 @@ def create_app(
             headers={"Content-Disposition": f'inline; filename="{song_id}.flac"'},
             background=BackgroundTask(shutil.rmtree, root, ignore_errors=True),
         )
+
+    @application.head("/api/stream/{song_id}")
+    async def head_stream(song_id: str, quality: str = "alac-16-44") -> Response:
+        try:
+            song_url(config.storefront, song_id)
+            _codec(quality)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid_song_id") from None
+        response = Response(
+            media_type="audio/flac",
+            headers={"Content-Disposition": f'inline; filename="{song_id}.flac"'},
+        )
+        del response.headers["content-length"]
+        return response
 
     @application.get("/api/lyrics/{song_id}")
     async def lyrics_song(song_id: str) -> dict[str, str]:
