@@ -5,6 +5,16 @@ public sealed class FreshInstallContractTests
     private readonly string _repositoryRoot = FindRepositoryRoot();
 
     [Fact]
+    public void V3CompatibilitySunsets_RequireAnExplicitLaterReleaseDecision()
+    {
+        Assert.Equal("3.0", CompatibilitySunsets.RetainedThroughVersion);
+        Assert.Equal("3.1", CompatibilitySunsets.EarliestRemovalVersion);
+        Assert.True(CompatibilitySunsets.LegacyEnvV2ImporterEnabled);
+        Assert.True(CompatibilitySunsets.LegacyAdminCookieEnabled);
+        Assert.True(CompatibilitySunsets.SpotiFlacTranslatorEnabled);
+    }
+
+    [Fact]
     public void Startup_DoesNotRegisterOrRunLegacyStateMigrations()
     {
         var program = File.ReadAllText(Path.Combine(_repositoryRoot, "allstarr", "Program.cs"));

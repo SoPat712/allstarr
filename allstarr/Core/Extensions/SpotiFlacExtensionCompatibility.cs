@@ -9,6 +9,8 @@ public static class SpotiFlacExtensionCompatibility
 
     public static bool IsManifest(string json)
     {
+        if (!CompatibilitySunsets.SpotiFlacTranslatorEnabled) return false;
+
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
         return root.ValueKind == JsonValueKind.Object &&

@@ -197,7 +197,8 @@ public sealed class AdminAuthSessionService(
                 var pair = part.Split('=', 2);
                 if (pair.Length != 2 ||
                     (!pair[0].Trim().Equals(SessionCookieName, StringComparison.Ordinal) &&
-                     !pair[0].Trim().Equals(LegacySessionCookieName, StringComparison.Ordinal)))
+                     (!CompatibilitySunsets.LegacyAdminCookieEnabled ||
+                      !pair[0].Trim().Equals(LegacySessionCookieName, StringComparison.Ordinal))))
                 {
                     continue;
                 }
