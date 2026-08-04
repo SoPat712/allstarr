@@ -1941,7 +1941,10 @@ test("Sources keep primary actions visible and report scoped degradation", async
   await page.goto("#/sources");
   await expect(page.getByRole("button", { name: /Lumen Audio Account details stored/ })).toBeVisible();
   const disabledSource = page.locator(".sources-table tr").filter({ hasText: "Disabled Source" });
-  await expect(disabledSource.locator(".operational-mobile-state")).toHaveText("Disabled");
+  const disabledStatus = disabledSource.locator(".operational-mobile-state");
+  await expect(disabledStatus).toHaveText("Disabled");
+  await expect(disabledStatus).toHaveCSS("border-top-width", "1px");
+  await expect(disabledStatus).toHaveCSS("border-top-style", "solid");
   await page.getByRole("button", { name: /Apple Music - Gamdl/ }).click();
   await page.getByRole("tab", { name: "Configuration" }).click();
   await page.getByRole("button", { name: "Measure CTS" }).click();

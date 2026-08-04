@@ -2892,16 +2892,20 @@
   }
 
   .status-pill {
-    display: inline-grid;
-    min-height: 1.4rem;
-    place-items: center;
+    display: inline-flex;
+    min-height: 1.65rem;
+    align-items: center;
+    border: 1px solid color-mix(in srgb, currentColor 35%, var(--color-edge));
     border-radius: 999px;
     background: rgb(255 255 255 / 7%);
     color: var(--color-ink-muted);
     padding: 0 0.5rem;
     font-size: var(--text-xs);
     font-weight: 800;
+    line-height: 1;
     text-transform: capitalize;
+    vertical-align: middle;
+    white-space: nowrap;
   }
 
   .status-pill.accepted,
