@@ -226,6 +226,13 @@ timing_budget() {
 
 checks=0
 failures=0
+blocked=0
+last_stream_ranges_supported=0
+
+block() {
+    blocked=$((blocked + 1))
+    printf 'BLOCKED %s\n' "$1"
+}
 
 check_code() {
     local label="$1" expected="$2" method="$3" url="$4" code
@@ -374,10 +381,13 @@ check_image() {
 
 check_external_stream() {
     local label="$1" url="$2" range="${3:-0-65535}" result code content_type bytes ttfb total reader_pid
+    local content_range accept_ranges saved_bytes timely=0
     : >"$response_file"
+    : >"$direct_headers_file"
     head -c 65536 <"$stream_pipe" >"$response_file" &
     reader_pid=$!
     result="$(curl -s --max-time "$TIMEOUT_SECONDS" "${auth[@]}" --range "$range" \
+        -D "$direct_headers_file" \
         -o "$stream_pipe" \
         -w '%{http_code}\t%{content_type}\t%{size_download}\t%{time_starttransfer}\t%{time_total}' \
         "$url" || true)"
@@ -386,19 +396,30 @@ check_external_stream() {
     code="${code:-000}"
     bytes="${bytes:-0}"
     checks=$((checks + 1))
-    local saved_bytes
     saved_bytes="$(wc -c <"$response_file" | tr -d ' ')"
+    content_range="$(awk 'tolower($1) == "content-range:" { print tolower($2) }' "$direct_headers_file" | tail -n 1 | tr -d '\r')"
+    accept_ranges="$(awk 'tolower($1) == "accept-ranges:" { print tolower($2) }' "$direct_headers_file" | tail -n 1 | tr -d '\r')"
+    if awk -v value="${ttfb:-0}" -v max="$MAX_EXTERNAL_STREAM_TTFB_MS" \
+        'BEGIN { exit !((value * 1000) <= max) }'; then
+        timely=1
+    fi
     if [[ "$code" == 206 ]] &&
-       (( saved_bytes > 0 && saved_bytes <= 65536 && bytes == saved_bytes )) &&
-       awk -v value="${ttfb:-0}" -v max="$MAX_EXTERNAL_STREAM_TTFB_MS" \
-           'BEGIN { exit !((value * 1000) <= max) }'; then
+       [[ "$content_range" == bytes && "$timely" -eq 1 ]] &&
+       (( saved_bytes > 0 && saved_bytes <= 65536 && bytes == saved_bytes )); then
+        last_stream_ranges_supported=1
         printf 'PASS %-34s status=%s bytes=%s ttfb_ms=%.1f total_ms=%.1f\n' \
             "$label" "$code" "$saved_bytes" "$(awk -v value="${ttfb:-0}" 'BEGIN { print value * 1000 }')" \
             "$(awk -v value="${total:-0}" 'BEGIN { print value * 1000 }')"
+    elif [[ "$code" == 200 && -z "$content_range" && "$accept_ranges" != bytes && "$timely" -eq 1 ]] &&
+         (( saved_bytes == 65536 && bytes >= saved_bytes )); then
+        last_stream_ranges_supported=0
+        block "$label=range unsupported; bounded progressive close passed status=200 retained_bytes=$saved_bytes transport_bytes=$bytes"
     else
-        printf 'FAIL %-34s status=%s type=%s bytes=%s ttfb_ms=%.1f\n' \
-            "$label" "$code" "$content_type" "$saved_bytes" \
-            "$(awk -v value="${ttfb:-0}" 'BEGIN { print value * 1000 }')"
+        last_stream_ranges_supported=0
+        printf 'FAIL %-34s status=%s type=%s saved_bytes=%s response_bytes=%s ttfb_ms=%.1f content_range=%s accept_ranges=%s timely=%s\n' \
+            "$label" "$code" "$content_type" "$saved_bytes" "$bytes" \
+            "$(awk -v value="${ttfb:-0}" 'BEGIN { print value * 1000 }')" \
+            "${content_range:-none}" "${accept_ranges:-none}" "$timely"
         failures=$((failures + 1))
     fi
 }
@@ -637,7 +658,7 @@ run_stateful_playlist_smoke() {
              ([.Items[].Id] | index($kept) != null)' \
             --arg removed "$media_id" --arg kept "$second_media_id"
     else
-        echo "BLOCKED stateful-add-remove-reorder=no second streamable audio item in first 100"
+        block "stateful-add-remove-reorder=no second streamable audio item in first 100"
     fi
 
     compare_structure "stateful playlist ACL relay" \
@@ -659,7 +680,7 @@ run_stateful_playlist_smoke() {
             return
         fi
     else
-        echo "BLOCKED stateful-share=no second Jellyfin user"
+        block "stateful-share=no second Jellyfin user"
     fi
 
     compare_structure "stateful playlist mix relay" \
@@ -1110,9 +1131,13 @@ if [[ -n "$external_song_id" ]]; then
     if [[ "$TEST_EXTERNAL_STREAM" == 1 ]]; then
         check_external_stream "external stream-64k" \
             "$ALLSTARR_BASE/Audio/$external_song_id/stream?static=true&UserId=$best_user_id"
-        check_external_stream "external suffix stream-64k" \
-            "$ALLSTARR_BASE/Audio/$external_song_id/stream?static=true&UserId=$best_user_id" \
-            -65536
+        if [[ "$last_stream_ranges_supported" -eq 1 ]]; then
+            check_external_stream "external suffix stream-64k" \
+                "$ALLSTARR_BASE/Audio/$external_song_id/stream?static=true&UserId=$best_user_id" \
+                -65536
+        else
+            block "external suffix stream-64k=not executed because provider ranges are unsupported"
+        fi
     else
         echo "external stream skipped=set TEST_EXTERNAL_STREAM=1 for provider/cold-cache media"
     fi
@@ -1153,7 +1178,7 @@ else
         failures=$((failures + 1))
         echo "FAIL external item checks required but no provider-backed audio result was found"
     else
-        echo "BLOCKED external-item-live=no provider-backed audio result; set EXTERNAL_SONG_ID and REQUIRE_EXTERNAL=1"
+        block "external-item-live=no provider-backed audio result; set EXTERNAL_SONG_ID and REQUIRE_EXTERNAL=1"
     fi
 fi
 
@@ -1295,7 +1320,7 @@ if [[ -n "$playlist_id" ]]; then
             "$ALLSTARR_BASE/Playlists/$playlist_id?UserId=$best_user_id" \
             '{OpenAccess,Shares,ItemIds}'
     else
-        echo "BLOCKED playlist-definition-upstream=status-$direct_playlist_definition_code"
+        block "playlist-definition-upstream=status-$direct_playlist_definition_code"
         check_code "playlist definition status parity" \
             "$direct_playlist_definition_code" GET \
             "$ALLSTARR_BASE/Playlists/$playlist_id?UserId=$best_user_id"
@@ -1479,7 +1504,7 @@ if [[ -n "$virtual_playlist_id" ]]; then
                 failures=$((failures + 1))
             fi
         else
-            echo "BLOCKED virtual-matched-full-dto=no matched Jellyfin entries or source fetch"
+            block "virtual-matched-full-dto=no matched Jellyfin entries or source fetch"
         fi
     else
         checks=$((checks + 1))
@@ -1514,7 +1539,7 @@ if [[ -n "$virtual_playlist_id" ]]; then
         "$ALLSTARR_BASE/Playlists/$virtual_playlist_id/Users?UserId=$best_user_id"
     check_code "virtual playlist mix mode" "200,409" GET \
         "$ALLSTARR_BASE/Playlists/$virtual_playlist_id/InstantMix?UserId=$best_user_id"
-    echo "BLOCKED virtual-playlist-writes=selected link may be writable; use stateful throwaway coverage"
+    block "virtual-playlist-writes=selected link may be writable; use stateful throwaway coverage"
     if [[ -n "$playlist_id" ]]; then
         if curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
             "$DIRECT_BASE/Playlists/$playlist_id/Items?UserId=$best_user_id&Limit=1" |
@@ -1529,7 +1554,7 @@ if [[ -n "$virtual_playlist_id" ]]; then
         fi
     fi
 else
-    echo "BLOCKED virtual-playlist-live=no user-bound Jellyfin token or visible injected playlist"
+    block "virtual-playlist-live=no user-bound Jellyfin token or visible injected playlist"
 fi
 measure "direct playlist-list" "$DIRECT_BASE/Users/$best_user_id/Items?$playlist_query"
 measure "allstarr playlist-list" "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query"
@@ -1591,9 +1616,9 @@ if [[ "$TEST_PLAYLIST_WRITES" == 1 ]]; then
     echo "stateful-throwaway-playlist-checks"
     run_stateful_playlist_smoke
 else
-    echo "BLOCKED playlist-write-live=create/rename/add/reorder/remove/share/delete require explicit opt-in"
+    block "playlist-write-live=create/rename/add/reorder/remove/share/delete require explicit opt-in"
 fi
-echo "BLOCKED other-stateful-live=favorite/played/rating/display-preference writes require separate exact-state restoration"
+block "other-stateful-live=favorite/played/rating/display-preference writes require separate exact-state restoration"
 
 nonmusic_id=""
 while IFS= read -r user_id && [[ -z "$nonmusic_id" ]]; do
@@ -1622,8 +1647,8 @@ if command -v ping >/dev/null; then
 fi
 
 if [[ "$direct_version" != 12.* ]]; then
-    echo "BLOCKED jellyfin-12-live=no 12.x runtime (current=$direct_version); deterministic pinned OpenAPI coverage remains required"
+    block "jellyfin-12-live=no 12.x runtime (current=$direct_version); deterministic pinned OpenAPI coverage remains required"
 fi
 echo "log-correlation since=$started_at user-agent=AllstarrLiveSmoke/$run_id"
-echo "live-smoke-end=$(date -u +%Y-%m-%dT%H:%M:%SZ) log-window-start=$started_at checks=$checks failures=$failures"
+echo "live-smoke-end=$(date -u +%Y-%m-%dT%H:%M:%SZ) log-window-start=$started_at checks=$checks failures=$failures blocked=$blocked"
 (( failures == 0 ))

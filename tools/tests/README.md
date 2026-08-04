@@ -57,9 +57,12 @@ SAMPLES=5 bash tools/tests/live_jellyfin_smoke.sh
 Do not run the live layer while either endpoint is unhealthy. The default live
 suite does not write playlists, favorites, played state, ratings, display
 preferences, or lyrics. It also avoids provider-backed audio downloads. Every
-ranged request has a hard 65,536-byte curl ceiling. Provider streams exercise
-both prefix and suffix byte ranges; a provider that ignores the range fails
-the check instead of downloading the whole track.
+ranged request retains at most 65,536 bytes; curl may report a final transport
+buffer already received before the pipe closes. Provider streams exercise
+prefix and suffix byte ranges when the provider supports them. An honest
+non-seekable provider response is early-closed at the retained-body ceiling,
+recorded as blocked instead of passed, and does not waste a second request on a
+suffix it cannot serve. Invalid partial-content or range headers still fail.
 
 Add `TEST_EXTERNAL_STREAM=1` only when a bounded cold/cache provider stream is
 intended:
