@@ -104,8 +104,7 @@ cleanup() {
                 -H "X-Emby-Token: $JELLYFIN_TOKEN" \
                 "$DIRECT_BASE/Items/$stateful_playlist_id" -o /dev/null >/dev/null 2>&1 || true
         else
-            printf 'WARN refusing cleanup for unverified playlist Id=%s Name=%s\n' \
-                "$stateful_playlist_id" "$stateful_playlist_name" >&2
+            echo 'WARN refusing cleanup for unverified run-owned playlist' >&2
         fi
     fi
     rm -f "$users_file" "$items_file" "$response_file" "$timings_file" \
@@ -157,7 +156,7 @@ if curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
    jq -e --arg id "$best_user_id" '.Id == $id' "$response_file" >/dev/null; then
     actor_bound=1
 fi
-echo "jellyfin-user=$best_user_id actor_bound=$actor_bound"
+echo "jellyfin-user=selected actor_bound=$actor_bound"
 
 full_item_fields="AirTime,CanDelete,CanDownload,ChannelInfo,Chapters,Trickplay,ChildCount,CumulativeRunTimeTicks,CustomRating,DateCreated,DateLastMediaAdded,DisplayPreferencesId,Etag,ExternalUrls,Genres,ItemCounts,MediaSourceCount,MediaSources,OriginalTitle,Overview,ParentId,Path,People,PlayAccess,ProductionLocations,ProviderIds,PrimaryImageAspectRatio,RecursiveItemCount,Settings,SeriesStudio,SortName,SpecialEpisodeNumbers,Studios,Taglines,Tags,RemoteTrailers,MediaStreams,SeasonUserData,DateLastRefreshed,DateLastSaved,RefreshState,ChannelImage,EnableMediaSourceDisplay,Width,Height,ExtraIds,LocalTrailerCount,IsHD,SpecialFeatureCount"
 items_query="Recursive=true&IncludeItemTypes=Audio&Limit=100&Fields=PrimaryImageAspectRatio%2CProviderIds%2CMediaSources%2CAlbumId%2CArtistItems%2CGenres"
@@ -411,7 +410,7 @@ check_stateful_playlist_identity() {
         printf 'PASS %-34s exact-id-name-type\n' "$label"
         return 0
     fi
-    printf 'FAIL %-34s unverified Id=%s Name=%s\n' "$label" "$playlist_id" "$playlist_name"
+    printf 'FAIL %-34s run-owned playlist identity mismatch\n' "$label"
     failures=$((failures + 1))
     return 1
 }
