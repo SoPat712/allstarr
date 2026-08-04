@@ -46,7 +46,7 @@ public sealed class MusicBrainzServiceTests
             request =>
             {
                 Assert.EndsWith($"/recording/{selectedId}", request.RequestUri!.AbsolutePath, StringComparison.Ordinal);
-                return Json($$"""{"id":"{{selectedId}}","title":"AC/DC: Live?","length":181000,"artist-credit":[{"name":"Artist (US)"}],"genres":[{"name":"Rock","count":4}]}""");
+                return Json($$$"""{"id":"{{{selectedId}}}","title":"AC/DC: Live?","length":181000,"artist-credit":[{"name":"Artist","joinphrase":" & ","artist":{"name":"Artist","aliases":[{"name":"Artist alias","primary":true}]}},{"name":"Guest"}],"aliases":[{"name":"Alternate title","locale":"en"}],"releases":[{"id":"51e68c1d-31f9-432c-a3a4-13aef4a53833","title":"Live release","artist-credit":[{"name":"Artist & Guest"}]}],"genres":[{"name":"Rock","count":4}]}""");
             });
         var service = Create(new RecordingFactory(handler));
 
@@ -56,9 +56,71 @@ public sealed class MusicBrainzServiceTests
         Assert.NotNull(match);
         Assert.Equal(selectedId, match.Recording.Id);
         Assert.InRange(match.Confidence, .9, 1);
+        Assert.Equal("Alternate title", Assert.Single(match.Recording.Aliases!).Name);
+        Assert.Equal(" & ", match.Recording.ArtistCredit![0].JoinPhrase);
+        Assert.Equal("Artist alias", Assert.Single(match.Recording.ArtistCredit[0].Artist!.Aliases!).Name);
+        Assert.Equal("Live release", Assert.Single(match.Recording.Releases!).Title);
+        Assert.True(handler.RequestTimes[1] - handler.RequestTimes[0] >= TimeSpan.FromMilliseconds(900));
         var query = Uri.UnescapeDataString(handler.RequestUris[0].Query);
         Assert.Contains("recording:\"AC\\/DC\\: Live\\?\"", query, StringComparison.Ordinal);
         Assert.Contains("artist:\"Artist \\(US\\)\"", query, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ResolveRecording_PrefersMbidThenIsrcBeforeTextSearch()
+    {
+        const string mbid = "31e68c1d-31f9-432c-a3a4-13aef4a53833";
+        var mbidHandler = new QueueHandler(_ => Json($$"""{"id":"{{mbid}}","title":"MBID hit"}"""));
+        var mbidMatch = await Create(new RecordingFactory(mbidHandler)).ResolveRecordingAsync(
+            mbid, "USABC1234567", "Text title", "Text artist", 180_000);
+
+        Assert.Equal(1, mbidMatch!.Confidence);
+        Assert.Single(mbidHandler.RequestUris);
+        Assert.Contains($"/recording/{mbid}", mbidHandler.RequestUris[0].AbsolutePath, StringComparison.Ordinal);
+
+        var isrcHandler = new QueueHandler(
+            _ => new HttpResponseMessage(HttpStatusCode.NotFound),
+            _ => Json("""{"recordings":[{"id":"41e68c1d-31f9-432c-a3a4-13aef4a53833","isrcs":["USABC1234567"]}]}"""));
+        var isrcMatch = await Create(new RecordingFactory(isrcHandler)).ResolveRecordingAsync(
+            mbid, "USABC1234567", "Text title", "Text artist", 180_000);
+
+        Assert.Equal(.98, isrcMatch!.Confidence);
+        Assert.Equal(2, isrcHandler.Calls);
+        Assert.Contains($"/recording/{mbid}", isrcHandler.RequestUris[0].AbsolutePath, StringComparison.Ordinal);
+        Assert.Equal("/ws/2/isrc/USABC1234567", isrcHandler.RequestUris[1].AbsolutePath);
+        Assert.DoesNotContain(isrcHandler.RequestUris, uri => uri.Query.Contains("recording", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AmbiguousTextCandidatesRemainUnresolvedWithoutDetailLookup()
+    {
+        var handler = new QueueHandler(_ => Json("""
+            {"recordings":[
+              {"id":"31e68c1d-31f9-432c-a3a4-13aef4a53833","score":95,"title":"Same","length":180000,"artist-credit":[{"name":"Artist"}]},
+              {"id":"41e68c1d-31f9-432c-a3a4-13aef4a53833","score":95,"title":"Same","length":180000,"artist-credit":[{"name":"Artist"}]}
+            ]}
+            """));
+
+        var match = await Create(new RecordingFactory(handler)).ResolveRecordingAsync(
+            null, null, "Same", "Artist", 180_000);
+
+        Assert.Null(match);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task SearchBoundsAreRejectedBeforeNetworkUse()
+    {
+        var handler = new QueueHandler(_ => throw new InvalidOperationException("must not request"));
+        var service = Create(new RecordingFactory(handler));
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.SearchRecordingsAsync(new string('x', 501), "Artist"));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            service.SearchRecordingsAsync("Title", "Artist", 0));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            service.SearchRecordingsAsync("Title", "Artist", 26));
+        Assert.Equal(0, handler.Calls);
     }
 
     [Fact]
@@ -187,6 +249,7 @@ public sealed class MusicBrainzServiceTests
         public List<Uri> RequestUris { get; } = [];
         public List<AuthenticationHeaderValue?> Authorizations { get; } = [];
         public List<string> UserAgents { get; } = [];
+        public List<DateTimeOffset> RequestTimes { get; } = [];
 
         public QueueHandler(params Func<HttpRequestMessage, HttpResponseMessage>[] responses) : this(
             responses.Select<Func<HttpRequestMessage, HttpResponseMessage>, Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>>(
@@ -204,6 +267,7 @@ public sealed class MusicBrainzServiceTests
             RequestUris.Add(request.RequestUri!);
             Authorizations.Add(request.Headers.Authorization);
             UserAgents.Add(request.Headers.UserAgent.ToString());
+            RequestTimes.Add(DateTimeOffset.UtcNow);
             return await _responses.Dequeue()(request, cancellationToken);
         }
     }
