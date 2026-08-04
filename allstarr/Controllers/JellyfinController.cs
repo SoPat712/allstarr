@@ -699,6 +699,7 @@ public partial class JellyfinController : ControllerBase
             parentId: null,
             includeItemTypes: new[] { "MusicAlbum" },
             sortBy: "SortName",
+            artistIds: localArtistId,
             clientHeaders: Request.Headers);
 
         var (_, localAlbums, _) = _modelMapper.ParseItemsResponse(localAlbumsResult);

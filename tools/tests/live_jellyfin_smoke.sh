@@ -609,16 +609,9 @@ run_stateful_playlist_smoke() {
     stateful_playlist_id="$candidate_playlist_id"
     stateful_playlist_name="$playlist_name"
 
-    if ! curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
-        "$DIRECT_BASE/Items/$stateful_playlist_id?UserId=$best_user_id" |
-        jq --arg name "$renamed_name" '.Name = $name' >"$direct_shape_file"; then
-        checks=$((checks + 1))
-        failures=$((failures + 1))
-        printf 'FAIL %-34s direct-fetch-or-json\n' "stateful playlist rename"
-        return
-    fi
+    jq -cn --arg name "$renamed_name" '{Name:$name}' >"$direct_shape_file"
     if ! stateful_call "stateful playlist rename" "204" POST \
-        "$ALLSTARR_BASE/Items/$stateful_playlist_id" \
+        "$ALLSTARR_BASE/Playlists/$stateful_playlist_id" \
         -H "Content-Type: application/json" --data-binary "@$direct_shape_file"; then
         return
     fi
