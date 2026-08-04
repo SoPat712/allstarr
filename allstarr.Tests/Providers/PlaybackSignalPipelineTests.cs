@@ -280,16 +280,54 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ScopedDeliveryCheckpointResumesAfterLaterTargetFailureWithoutRepeatingFirst()
+    public async Task DurableCheckpointResumesAfterLaterTargetFailureWithoutRepeatingFirst()
     {
         var first = new Target("lastfm", true); var second = new Target("listenbrainz", true) { FailFirst = true };
-        var checkpoints = new Checkpoints(); var delivery = new ScopedPlaybackScrobbleDelivery(factory, [first, second], checkpoints);
+        var checkpoints = new EfPlaybackDeliveryCheckpointStore(factory);
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [first, second], checkpoints);
         var failure = await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() =>
             delivery.DeliverAsync(Payload(), default));
         Assert.Equal("playback_scrobble_retrying", failure.Code);
         Assert.True(failure.Retryable);
+
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            var rows = await db.PlaybackDeliveryCheckpoints.AsNoTracking()
+                .OrderBy(row => row.TargetId)
+                .ToListAsync();
+            Assert.Collection(rows,
+                row => Assert.Equal(ScopedPlaybackScrobbleOutcome.Delivered, row.State),
+                row => Assert.Equal(ScopedPlaybackScrobbleOutcome.Retrying, row.State));
+        }
+
         await delivery.DeliverAsync(Payload(), default);
-        Assert.Equal(1, first.Successes); Assert.Equal(1, second.Successes);
+        await delivery.DeliverAsync(Payload(), default);
+
+        Assert.Equal(1, first.Calls);
+        Assert.Equal(2, second.Calls);
+        Assert.Equal(1, first.Successes);
+        Assert.Equal(1, second.Successes);
+        await using var verify = await factory.CreateDbContextAsync();
+        Assert.All(await verify.PlaybackDeliveryCheckpoints.AsNoTracking().ToListAsync(),
+            row => Assert.Equal(ScopedPlaybackScrobbleOutcome.Delivered, row.State));
+    }
+
+    [Fact]
+    public async Task CancellationStopsTargetFanoutWithoutWritingARetryCheckpoint()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var cancelled = new Target("lastfm", true) { CancelSource = cancellation };
+        var later = new Target("listenbrainz", true);
+        var delivery = new ScopedPlaybackScrobbleDelivery(
+            factory, [cancelled, later], new EfPlaybackDeliveryCheckpointStore(factory));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            delivery.DeliverAsync(Payload(), cancellation.Token));
+
+        Assert.Equal(1, cancelled.Calls);
+        Assert.Equal(0, later.Calls);
+        await using var db = await factory.CreateDbContextAsync();
+        Assert.Empty(await db.PlaybackDeliveryCheckpoints.AsNoTracking().ToListAsync());
     }
 
     [Fact]
@@ -674,8 +712,10 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     {
         public string ProviderId => id;
         public int Successes;
+        public int Calls;
         public bool FailFirst;
         public bool Reject;
+        public CancellationTokenSource? CancelSource;
         public ScopedPlaybackScrobbleResult Result = ScopedPlaybackScrobbleResult.Delivered();
         public DateTimeOffset? LastObservedAt;
         public ScopedPlaybackTrack? LastTrack;
@@ -683,6 +723,8 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         public Task<ScopedPlaybackScrobbleResult> DeliverAsync(IntelligenceScope s, PlaybackTransition t, ScopedPlaybackTrack track, long? p,
             DateTimeOffset o, string key, CancellationToken c)
         {
+            Calls++;
+            if (CancelSource != null) { CancelSource.Cancel(); throw new OperationCanceledException(c); }
             if (Reject) throw new UnauthorizedAccessException();
             if (FailFirst) { FailFirst = false; throw new IOException(); }
             LastObservedAt = o;
@@ -780,5 +822,30 @@ public sealed class PlaybackOccurrenceKeyTests
             ScopedPlaybackScrobbleDelivery.CheckpointKey(completed));
         Assert.Equal(PlaybackSignalPipeline.Hash($"{occurrence}|completed"),
             ScopedPlaybackScrobbleDelivery.CheckpointKey(completed));
+    }
+
+    [Theory]
+    [InlineData(PlaybackTransition.Start, true, 0, ListeningEventState.Playing)]
+    [InlineData(PlaybackTransition.InferredStart, true, 0, ListeningEventState.Playing)]
+    [InlineData(PlaybackTransition.Progress, true, 60, ListeningEventState.Completed)]
+    [InlineData(PlaybackTransition.Stop, true, 60, ListeningEventState.Completed)]
+    [InlineData(PlaybackTransition.Stop, true, 10, ListeningEventState.Skipped)]
+    [InlineData(PlaybackTransition.InferredStop, false, 10, ListeningEventState.Abandoned)]
+    [InlineData(PlaybackTransition.Submission, false, 0, ListeningEventState.Completed)]
+    public void JellyfinAndSubsonicTransitionMatrixClassifiesEveryVariant(
+        PlaybackTransition transition,
+        bool knownTrack,
+        int playedSeconds,
+        ListeningEventState expected)
+    {
+        var payload = new PlaybackSignalPayload(
+            scope, transition, "track", "device", "session",
+            TimeSpan.FromSeconds(playedSeconds).Ticks, DateTimeOffset.Parse("2026-01-01T00:02:00Z"),
+            new string('a', 64));
+        var track = knownTrack
+            ? new PlaybackTrackSnapshot(null, null, "track", "Track", "Artist", null, 120_000)
+            : null;
+
+        Assert.Equal(expected, PlaybackSignalJobHandler.Classify(payload, track));
     }
 }

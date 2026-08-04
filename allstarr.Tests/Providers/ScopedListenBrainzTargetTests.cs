@@ -266,6 +266,20 @@ public sealed class ScopedLastFmTargetTests
     }
 
     [Fact]
+    public async Task RequestTimeout_IsRetryable()
+    {
+        var handler = new CaptureHandler(HttpStatusCode.RequestTimeout, "");
+        var target = new LastFmScopedPlaybackScrobbleTarget(new HttpClient(handler), new AccountAccessor());
+
+        var result = await target.DeliverAsync(Scope(), PlaybackTransition.Stop,
+            new ScopedPlaybackTrack("Track", "Artist", null, 180_000), null,
+            DateTimeOffset.UtcNow, "signal", CancellationToken.None);
+
+        Assert.Equal(ScopedPlaybackScrobbleOutcome.Retrying, result.Outcome);
+        Assert.Equal("http-408", result.ProviderCode);
+    }
+
+    [Fact]
     public async Task MalformedServicePayload_IsRetryableWithoutLeakingBody()
     {
         var handler = new CaptureHandler(responseBody: "[\"token=do-not-copy\"]");
