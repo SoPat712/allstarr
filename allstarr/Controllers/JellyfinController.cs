@@ -722,10 +722,23 @@ public partial class JellyfinController : ControllerBase
                 if (!string.IsNullOrWhiteSpace(extArtist.ExternalProvider) &&
                     !string.IsNullOrWhiteSpace(extArtist.ExternalId))
                 {
-                    externalAlbums = await GetProviderArtistAlbumsAsync(
-                        extArtist.ExternalProvider,
-                        extArtist.ExternalId,
-                        HttpContext.RequestAborted);
+                    try
+                    {
+                        externalAlbums = await GetProviderArtistAlbumsAsync(
+                            extArtist.ExternalProvider,
+                            extArtist.ExternalId,
+                            HttpContext.RequestAborted);
+                    }
+                    catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex,
+                            "External album enrichment failed for local artist {ArtistId}",
+                            localArtistId);
+                    }
                 }
 
                 // Set artist info to local artist so albums link back correctly

@@ -89,6 +89,7 @@ rm -f "$stream_pipe"
 mkfifo "$stream_pipe"
 stateful_playlist_id=""
 stateful_playlist_name=""
+stateful_playlist_original_name=""
 playlist_identity_matches() {
     local playlist_id="$1" playlist_name="$2"
     [[ "$playlist_id" =~ ^[[:alnum:]_-]{1,128}$ ]] || return 1
@@ -100,7 +101,8 @@ playlist_identity_matches() {
 cleanup() {
     local cleanup_delete_code cleanup_probe_code
     if [[ -n "$stateful_playlist_id" ]]; then
-        if playlist_identity_matches "$stateful_playlist_id" "$stateful_playlist_name"; then
+        if playlist_identity_matches "$stateful_playlist_id" "$stateful_playlist_name" ||
+           playlist_identity_matches "$stateful_playlist_id" "$stateful_playlist_original_name"; then
             cleanup_delete_code="$(curl -sS -X DELETE --max-time "$TIMEOUT_SECONDS" \
                 -H "X-Emby-Token: $JELLYFIN_TOKEN" \
                 "$DIRECT_BASE/Items/$stateful_playlist_id" -o /dev/null -w '%{http_code}' 2>/dev/null || true)"
@@ -608,6 +610,7 @@ run_stateful_playlist_smoke() {
     fi
     stateful_playlist_id="$candidate_playlist_id"
     stateful_playlist_name="$playlist_name"
+    stateful_playlist_original_name="$playlist_name"
 
     jq -cn --arg name "$renamed_name" '{Name:$name}' >"$direct_shape_file"
     if ! stateful_call "stateful playlist rename" "204" POST \
@@ -670,9 +673,11 @@ run_stateful_playlist_smoke() {
     other_user_id="$(jq -r --arg owner "$best_user_id" \
         'first(.[] | select(.Id != $owner)) | .Id // empty' "$users_file")"
     if [[ -n "$other_user_id" ]]; then
+        jq -cn --arg user "$other_user_id" \
+            '{Users:[{UserId:$user,CanEdit:true}]}' >"$direct_shape_file"
         if ! stateful_call "stateful playlist share" "204" POST \
-            "$ALLSTARR_BASE/Playlists/$stateful_playlist_id/Users/$other_user_id" \
-            -H "Content-Type: application/json" --data-binary '{"CanEdit":true}'; then
+            "$ALLSTARR_BASE/Playlists/$stateful_playlist_id" \
+            -H "Content-Type: application/json" --data-binary "@$direct_shape_file"; then
             return
         fi
         compare_structure "stateful playlist user relay" \
@@ -699,6 +704,7 @@ run_stateful_playlist_smoke() {
         "$DIRECT_BASE/Items/$deleted_playlist_id"; then
         stateful_playlist_id=""
         stateful_playlist_name=""
+        stateful_playlist_original_name=""
     fi
 }
 
