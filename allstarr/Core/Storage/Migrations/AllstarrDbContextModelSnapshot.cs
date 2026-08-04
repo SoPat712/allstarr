@@ -918,7 +918,7 @@ namespace allstarr.Core.Storage.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_listening_event_occurrence");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "Protocol", "BackendInstanceId", "LibraryScopeId", "ListenedAt")
+                    b.HasIndex("TenantId", "OwnerUserId", "Protocol", "BackendInstanceId", "LibraryScopeId", "State", "ListenedAt", "Id")
                         .HasDatabaseName("IX_listening_event_scope_history");
 
                     b.ToTable("listening_events", t =>

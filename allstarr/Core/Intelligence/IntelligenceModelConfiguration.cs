@@ -55,7 +55,7 @@ public static class IntelligenceModelConfiguration
                 entity.Property(x => x.ProviderTrackReference).HasMaxLength(500);
                 entity.Property(x => x.Revision).IsConcurrencyToken();
                 entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.OccurrenceKey }).IsUnique().HasDatabaseName("IX_listening_event_occurrence");
-                entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.Protocol, x.BackendInstanceId, x.LibraryScopeId, x.ListenedAt }).HasDatabaseName("IX_listening_event_scope_history");
+                entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.Protocol, x.BackendInstanceId, x.LibraryScopeId, x.State, x.ListenedAt, x.Id }).HasDatabaseName("IX_listening_event_scope_history");
                 entity.HasOne<LibraryTrackRecord>().WithMany().HasForeignKey(x => new { x.TenantId, x.LibraryTrackId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).HasConstraintName("FK_listening_event_library_track").OnDelete(DeleteBehavior.Restrict);
                 entity.HasOne<CanonicalRecordingRecord>().WithMany().HasForeignKey(x => new { x.TenantId, x.CanonicalRecordingId }).HasPrincipalKey(x => new { x.TenantId, x.Id }).HasConstraintName("FK_listening_event_canonical_recording").OnDelete(DeleteBehavior.Restrict);
                 entity.HasOne<ProviderAccountRecord>().WithMany().HasForeignKey(x => x.ProviderAccountId).HasConstraintName("FK_listening_event_provider_account").OnDelete(DeleteBehavior.Restrict);
