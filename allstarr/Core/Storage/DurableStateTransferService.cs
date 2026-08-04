@@ -9,6 +9,7 @@ using allstarr.Core.Favorites;
 using allstarr.Core.ManagedFiles;
 using allstarr.Core.Downloads;
 using allstarr.Core.Intelligence;
+using allstarr.Core.Identity;
 using allstarr.Core.Jobs;
 using allstarr.Core.Playback;
 using allstarr.Core.Routing;
@@ -1139,8 +1140,12 @@ public sealed class DurableStateTransferService
             (tenant, user, protocol, backend, library);
         bool Backend(Guid tenant, Guid user, string protocol, string backend) => backendIdentities.Any(x =>
             x.TenantId == tenant && x.UserId == user && x.BackendType == protocol && x.BackendInstanceId == backend);
-        bool Credential(Guid tenant, Guid? id) => id is { } value && secretById.TryGetValue(value, out var secret) &&
-            secret.TenantId == tenant && secret.Purpose == IntelligencePolicyService.SubsonicCredentialPurpose &&
+        bool Credential(Guid tenant, Guid user, string protocol, string backend, Guid? id) =>
+            id is { } value && secretById.TryGetValue(value, out var secret) &&
+            secret.BackendIdentityId is { } identityId && backendIdentities.Any(identity =>
+                identity.Id == identityId && identity.TenantId == tenant && identity.UserId == user &&
+                identity.BackendType == protocol && identity.BackendInstanceId == backend) &&
+            secret.TenantId == tenant && secret.Purpose == BackendCredentialScope.SubsonicPurpose &&
             secret.RevokedAt == null;
         var policyByScope = new Dictionary<(Guid, Guid, string, string, string), IntelligencePolicyRecord>();
         var recommendationSchedulePolicies = new Dictionary<Guid, IntelligencePolicyRecord>();
@@ -1154,8 +1159,10 @@ public sealed class DurableStateTransferService
                 signalCatalog.Any(x => x is not ("play" or "skip" or "complete" or "favorite" or "playlist")) ||
                 !TryCatalog(policy.EnabledProvidersJson, 100, out var providers) || policy.Enabled && providers.Length == 0 ||
                 policy.Protocol == "jellyfin" && policy.TargetCredentialReferenceId.HasValue ||
-                policy.Protocol == "subsonic" && policy.Enabled && !Credential(policy.TenantId, policy.TargetCredentialReferenceId) ||
-                policy.TargetCredentialReferenceId.HasValue && !Credential(policy.TenantId, policy.TargetCredentialReferenceId) ||
+                policy.Protocol == "subsonic" && policy.Enabled && !Credential(policy.TenantId, policy.OwnerUserId,
+                    policy.Protocol, policy.BackendInstanceId, policy.TargetCredentialReferenceId) ||
+                policy.TargetCredentialReferenceId.HasValue && !Credential(policy.TenantId, policy.OwnerUserId,
+                    policy.Protocol, policy.BackendInstanceId, policy.TargetCredentialReferenceId) ||
                 !policyByScope.TryAdd(Scope(policy.TenantId, policy.OwnerUserId, policy.Protocol, policy.BackendInstanceId, policy.LibraryScopeId), policy))
                 RejectIntelligenceArchive("an intelligence policy is malformed, duplicated, or crosses its exact scope");
         }
@@ -1346,7 +1353,8 @@ public sealed class DurableStateTransferService
                 snapshot.TargetCredentialReferenceId != run.TargetCredentialReferenceId ||
                 !validScheduleLineage || scheduled && !scheduledOccurrences.Add((run.ScheduleId!.Value, run.ScheduledFor!.Value)) ||
                 run.Protocol == "jellyfin" && run.TargetCredentialReferenceId.HasValue ||
-                run.Protocol == "subsonic" && !Credential(run.TenantId, run.TargetCredentialReferenceId) ||
+                run.Protocol == "subsonic" && !Credential(run.TenantId, run.OwnerUserId, run.Protocol,
+                    run.BackendInstanceId, run.TargetCredentialReferenceId) ||
                 snapshot.EnabledProviders.Any(x => !IsIntelligenceCatalog(x, 100)) || !TryBoundedStrings(run.SeedTrackKeysJson, 100, 500) ||
                 run.Limit is < 1 or > 500 || !Enum.IsDefined(run.State) || run.CreatedAt == default || run.UpdatedAt < run.CreatedAt ||
                 run.State is RecommendationRunState.Succeeded or RecommendationRunState.Failed or RecommendationRunState.Cancelled && run.CompletedAt == null ||
@@ -1355,13 +1363,14 @@ public sealed class DurableStateTransferService
                 run.State == RecommendationRunState.Cancelled && job.State != DurableJobState.Cancelled && job.CancellationRequestedAt == null)
                 RejectIntelligenceArchive("a recommendation run is malformed or crosses its immutable policy, owner, library, or job scope");
         }
-        ValidateRecommendationChildren(runById, setById, policyByScope, secretReferences,
+        ValidateRecommendationChildren(runById, setById, policyByScope, backendIdentities, secretReferences,
             providerAccounts, canonicalRecordings, candidates, feedback, sets, entries);
     }
 
     private static void ValidateRecommendationChildren(IReadOnlyDictionary<Guid, RecommendationRunRecord> runById,
         IReadOnlyDictionary<Guid, GeneratedSetRecord> setById,
         IReadOnlyDictionary<(Guid, Guid, string, string, string), IntelligencePolicyRecord> policyByScope,
+        IReadOnlyCollection<BackendIdentityRecord> backendIdentities,
         IReadOnlyCollection<SecretReferenceRecord> secretReferences,
         IReadOnlyCollection<ProviderAccountRecord> providerAccounts,
         IReadOnlyCollection<CanonicalRecordingRecord> canonicalRecordings,
@@ -1415,8 +1424,13 @@ public sealed class DurableStateTransferService
                 policyByScope.ContainsKey(scopeKey) &&
                 (set.Protocol == "jellyfin" && set.TargetCredentialReferenceId == null ||
                  set.Protocol == "subsonic" && set.TargetCredentialReferenceId is { } credentialId &&
-                 secretReferences.Any(item => item.Id == credentialId && item.TenantId == set.TenantId &&
-                     item.Purpose == IntelligencePolicyService.SubsonicCredentialPurpose && item.RevokedAt == null));
+                 secretReferences.SingleOrDefault(item => item.Id == credentialId) is { } credential &&
+                 credential.BackendIdentityId is { } identityId && backendIdentities.Any(identity =>
+                     identity.Id == identityId && identity.TenantId == set.TenantId &&
+                     identity.UserId == set.OwnerUserId && identity.BackendType == set.Protocol &&
+                     identity.BackendInstanceId == set.BackendInstanceId) &&
+                 credential.TenantId == set.TenantId &&
+                 credential.Purpose == BackendCredentialScope.SubsonicPurpose && credential.RevokedAt == null);
             if ((!fromRun && !fromPreview) || !IsRequiredText(set.Name, 200) || !Enum.IsDefined(set.MaterializationState) ||
                 set.CreatedAt == default || set.UpdatedAt < set.CreatedAt || set.Revision <= 0 ||
                 !IsOptionalText(set.BackendPlaylistId, 500) || !IsOptionalText(set.TargetRevision, 300) || !IsOptionalText(set.LastErrorCode, 100) ||

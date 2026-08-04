@@ -478,6 +478,46 @@ public sealed class PostgresStorageIntegrationTests
 
     [Fact]
     [Trait("Category", "Postgres")]
+    public async Task BackendCredentialMigration_BindsExistingExactIntelligenceScope()
+    {
+        await using var database = await PostgresTestDatabase.CreateAsync(useTemplate: false);
+        await using var context = new AllstarrDbContext(database.Options);
+        var migrator = context.GetService<IMigrator>();
+        await migrator.MigrateAsync("20260803040000_AddListeningIntakeTokens");
+        var tenant = Guid.CreateVersion7();
+        var user = Guid.CreateVersion7();
+        var identity = Guid.CreateVersion7();
+        var credential = Guid.CreateVersion7();
+        var policy = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow.UtcTicks;
+
+        await context.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO tenants ("Id", "Slug", "Name", "CreatedAt")
+            VALUES ({tenant}, 'credential-migration', 'Credential migration', {now});
+            INSERT INTO users ("Id", "TenantId", "DisplayName", "Status", "CreatedAt", "UpdatedAt")
+            VALUES ({user}, {tenant}, 'Listener', 'Active', {now}, {now});
+            INSERT INTO backend_identities
+                ("Id", "TenantId", "UserId", "BackendType", "BackendInstanceId", "PrincipalId", "CreatedAt", "LastSeenAt")
+            VALUES ({identity}, {tenant}, {user}, 'subsonic', 'main', 'listener', {now}, {now});
+            INSERT INTO secret_references
+                ("Id", "TenantId", "Purpose", "ActiveVersion", "CreatedAt", "UpdatedAt")
+            VALUES ({credential}, {tenant}, 'playlist-backend:subsonic', 0, {now}, {now});
+            INSERT INTO intelligence_policies
+                ("Id", "TenantId", "OwnerUserId", "Protocol", "BackendInstanceId", "LibraryScopeId",
+                 "Enabled", "TargetCredentialReferenceId", "RetentionDays", "AllowedSignalTypesJson",
+                 "EnabledProvidersJson", "CreatedAt", "UpdatedAt", "Revision")
+            VALUES ({policy}, {tenant}, {user}, 'subsonic', 'main', 'music', true, {credential}, 30,
+                    '["play"]', '["local"]', {now}, {now}, 1);
+            """);
+
+        await migrator.MigrateAsync();
+
+        Assert.Equal(identity, (await context.SecretReferences.AsNoTracking()
+            .SingleAsync(item => item.Id == credential)).BackendIdentityId);
+    }
+
+    [Fact]
+    [Trait("Category", "Postgres")]
     public async Task NativePostgresMigrationLockAndDurableQueue_WorkAgainstSelectedDatabase()
     {
         await using var database = await PostgresTestDatabase.CreateAsync(useTemplate: false);

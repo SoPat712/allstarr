@@ -1,4 +1,5 @@
 using System.Text.Json;
+using allstarr.Core.Identity;
 using allstarr.Core.Playlists;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Storage;
@@ -37,7 +38,8 @@ public abstract class BackendGeneratedSetMaterializer(
         {
             if (set.TargetCredentialReferenceId is not { } credentialId || !await db.SecretReferences.AsNoTracking().AnyAsync(item =>
                     item.Id == credentialId && item.TenantId == set.TenantId &&
-                    item.Purpose == IntelligencePolicyService.SubsonicCredentialPurpose && item.RevokedAt == null,
+                    item.BackendIdentityId == identity.Id && item.Purpose == BackendCredentialScope.SubsonicPurpose &&
+                    item.RevokedAt == null,
                     cancellationToken))
                 return new(false, false, "generated_set_subsonic_credential_unavailable");
             credentialReference = credentialId.ToString();

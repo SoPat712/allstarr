@@ -1,4 +1,5 @@
 using System.Text.Json;
+using allstarr.Core.Identity;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Playlists;
@@ -268,7 +269,8 @@ public sealed class GeneratedSetMaterializerTests : IAsyncLifetime
             {
                 Id = credential,
                 TenantId = _tenant,
-                Purpose = IntelligencePolicyService.SubsonicCredentialPurpose,
+                BackendIdentityId = _backendIdentity,
+                Purpose = BackendCredentialScope.SubsonicPurpose,
                 ActiveVersion = 1,
                 CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = DateTimeOffset.UtcNow

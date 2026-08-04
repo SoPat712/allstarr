@@ -225,8 +225,11 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.Property(item => item.Id).ValueGeneratedNever();
             entity.Property(item => item.Purpose).HasMaxLength(200).IsRequired();
             entity.HasIndex(item => new { item.TenantId, item.Purpose });
+            entity.HasIndex(item => item.BackendIdentityId);
             entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)
                 .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<BackendIdentityRecord>().WithMany().HasForeignKey(item => item.BackendIdentityId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<SecretVersionRecord>(entity =>

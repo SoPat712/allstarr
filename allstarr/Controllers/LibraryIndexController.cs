@@ -1,4 +1,5 @@
 using allstarr.Core.Jobs;
+using allstarr.Core.Identity;
 using allstarr.Core.Matching;
 using allstarr.Core.Storage;
 using allstarr.Filters;
@@ -32,7 +33,8 @@ public sealed class LibraryIndexController(
         {
             if (!request.CredentialReferenceId.HasValue) return BadRequest(new { error = "Subsonic indexing requires CredentialReferenceId" });
             var valid = await db.SecretReferences.AsNoTracking().AnyAsync(item => item.Id == request.CredentialReferenceId &&
-                item.TenantId == session.TenantId && item.RevokedAt == null && item.Purpose == "playlist-backend:subsonic", cancellationToken);
+                item.TenantId == session.TenantId && item.BackendIdentityId == identity.Id &&
+                item.RevokedAt == null && item.Purpose == BackendCredentialScope.SubsonicPurpose, cancellationToken);
             if (!valid) return BadRequest(new { error = "CredentialReferenceId is unavailable in this tenant" });
         }
         var generation = request.Generation ?? DateTimeOffset.UtcNow.UtcTicks;

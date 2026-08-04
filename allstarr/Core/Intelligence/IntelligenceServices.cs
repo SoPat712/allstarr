@@ -2,6 +2,7 @@ using System.Data;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using allstarr.Core.Identity;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
@@ -30,7 +31,6 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
     ListeningHistoryImportArtifactStore? historyArtifacts = null)
     : IIntelligencePolicyService
 {
-    internal const string SubsonicCredentialPurpose = "playlist-backend:subsonic";
     private static readonly HashSet<string> Signals = new(["play", "skip", "complete", "favorite", "playlist"], StringComparer.Ordinal);
     public async Task<IntelligencePolicyRecord?> GetAsync(IntelligenceScope scope, CancellationToken cancellationToken = default)
     { ValidateScope(scope); await using var db = await factory.CreateDbContextAsync(cancellationToken); return await Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken); }
@@ -48,7 +48,10 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
             throw new ArgumentException("Subsonic intelligence requires an exact-scope target credential reference; Jellyfin does not accept one.", nameof(input));
         if (input.TargetCredentialReferenceId.HasValue && !await db.SecretReferences.AsNoTracking().AnyAsync(item =>
                 item.Id == input.TargetCredentialReferenceId && item.TenantId == scope.TenantId &&
-                item.Purpose == SubsonicCredentialPurpose && item.RevokedAt == null,
+                item.Purpose == BackendCredentialScope.SubsonicPurpose && item.RevokedAt == null &&
+                db.BackendIdentities.Any(identity => identity.Id == item.BackendIdentityId &&
+                    identity.TenantId == scope.TenantId && identity.UserId == scope.OwnerUserId &&
+                    identity.BackendType == scope.Protocol && identity.BackendInstanceId == scope.BackendInstanceId),
                 cancellationToken))
             throw new UnauthorizedAccessException("The intelligence target credential is outside this tenant or revoked.");
         var record = await Query(db, scope).SingleOrDefaultAsync(cancellationToken);

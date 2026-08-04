@@ -138,6 +138,7 @@ public sealed class SecretReferenceRecord
 {
     public Guid Id { get; set; }
     public Guid? TenantId { get; set; }
+    public Guid? BackendIdentityId { get; set; }
     public string Purpose { get; set; } = string.Empty;
     public int ActiveVersion { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

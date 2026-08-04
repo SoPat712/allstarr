@@ -227,6 +227,7 @@ public sealed class PlaylistLinksControllerContractTests
         var request = new BackendCredentialRequest
         {
             TargetProtocol = "subsonic",
+            BackendInstanceId = "main",
             Username = "listener",
             Password = "do-not-echo"
         };

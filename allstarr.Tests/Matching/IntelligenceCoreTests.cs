@@ -1,5 +1,6 @@
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Identity;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
@@ -40,22 +41,52 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         var scope = _scope with { Protocol = "subsonic" };
         var unrelated = Guid.CreateVersion7();
         var credential = Guid.CreateVersion7();
+        var identity = Guid.CreateVersion7();
+        var otherIdentity = Guid.CreateVersion7();
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            db.BackendIdentities.Add(new()
-            {
-                Id = Guid.CreateVersion7(),
-                TenantId = _tenant,
-                UserId = _user,
-                BackendType = "subsonic",
-                BackendInstanceId = "main",
-                PrincipalId = "listener",
-                CreatedAt = _clock.UtcNow,
-                LastSeenAt = _clock.UtcNow
-            });
+            db.BackendIdentities.AddRange(
+                new()
+                {
+                    Id = identity,
+                    TenantId = _tenant,
+                    UserId = _user,
+                    BackendType = "subsonic",
+                    BackendInstanceId = "main",
+                    PrincipalId = "listener",
+                    CreatedAt = _clock.UtcNow,
+                    LastSeenAt = _clock.UtcNow
+                },
+                new()
+                {
+                    Id = otherIdentity,
+                    TenantId = _tenant,
+                    UserId = _user,
+                    BackendType = "subsonic",
+                    BackendInstanceId = "other",
+                    PrincipalId = "listener-other",
+                    CreatedAt = _clock.UtcNow,
+                    LastSeenAt = _clock.UtcNow
+                });
             db.SecretReferences.AddRange(
-                new() { Id = unrelated, TenantId = _tenant, Purpose = "unrelated", CreatedAt = _clock.UtcNow, UpdatedAt = _clock.UtcNow },
-                new() { Id = credential, TenantId = _tenant, Purpose = "playlist-backend:subsonic", CreatedAt = _clock.UtcNow, UpdatedAt = _clock.UtcNow });
+                new()
+                {
+                    Id = unrelated,
+                    TenantId = _tenant,
+                    BackendIdentityId = otherIdentity,
+                    Purpose = BackendCredentialScope.SubsonicPurpose,
+                    CreatedAt = _clock.UtcNow,
+                    UpdatedAt = _clock.UtcNow
+                },
+                new()
+                {
+                    Id = credential,
+                    TenantId = _tenant,
+                    BackendIdentityId = identity,
+                    Purpose = BackendCredentialScope.SubsonicPurpose,
+                    CreatedAt = _clock.UtcNow,
+                    UpdatedAt = _clock.UtcNow
+                });
             await db.SaveChangesAsync();
         }
 

@@ -4101,6 +4101,9 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<int>("ActiveVersion")
                         .HasColumnType("integer");
 
+                    b.Property<Guid?>("BackendIdentityId")
+                        .HasColumnType("uuid");
+
                     b.Property<long>("CreatedAt")
                         .HasColumnType("bigint");
 
@@ -4119,6 +4122,8 @@ namespace allstarr.Core.Storage.Migrations
                         .HasColumnType("bigint");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("BackendIdentityId");
 
                     b.HasIndex("TenantId", "Purpose");
 
@@ -5337,6 +5342,11 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.SecretReferenceRecord", b =>
                 {
+                    b.HasOne("allstarr.Core.Storage.BackendIdentityRecord", null)
+                        .WithMany()
+                        .HasForeignKey("BackendIdentityId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("allstarr.Core.Storage.TenantRecord", null)
                         .WithMany()
                         .HasForeignKey("TenantId")

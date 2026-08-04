@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using allstarr.Controllers;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Identity;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Playback;
@@ -66,6 +67,95 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
             LibraryScopeId = "music"
         }, default));
         Assert.Contains("unauthorized", JsonSerializer.Serialize(unauthorized.Value), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task AdministratorSessionPreservesSelectedOwnerScope()
+    {
+        var controller = Controller(administrator: true);
+
+        Assert.IsType<OkObjectResult>(await controller.Get(Scope(), default));
+
+        Assert.Equal(_tenant, _policy.LastScope!.TenantId);
+        Assert.Equal(_user, _policy.LastScope.OwnerUserId);
+    }
+
+    [Fact]
+    public async Task AdministratorMediaTargetsPreserveOwnerAndBackendCredentialScope()
+    {
+        var otherUser = Guid.CreateVersion7();
+        var selectedIdentity = Guid.CreateVersion7();
+        var otherIdentity = Guid.CreateVersion7();
+        var selectedCredential = Guid.CreateVersion7();
+        var otherCredential = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.Users.Add(new()
+            {
+                Id = otherUser,
+                TenantId = _tenant,
+                DisplayName = "Other",
+                Status = PlatformUserStatus.Active,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            db.BackendIdentities.AddRange(
+                new()
+                {
+                    Id = selectedIdentity,
+                    TenantId = _tenant,
+                    UserId = _user,
+                    BackendType = "subsonic",
+                    BackendInstanceId = "selected",
+                    PrincipalId = "selected",
+                    CreatedAt = now,
+                    LastSeenAt = now
+                },
+                new()
+                {
+                    Id = otherIdentity,
+                    TenantId = _tenant,
+                    UserId = otherUser,
+                    BackendType = "subsonic",
+                    BackendInstanceId = "other",
+                    PrincipalId = "other",
+                    CreatedAt = now,
+                    LastSeenAt = now
+                });
+            db.SecretReferences.AddRange(
+                new()
+                {
+                    Id = selectedCredential,
+                    TenantId = _tenant,
+                    BackendIdentityId = selectedIdentity,
+                    Purpose = BackendCredentialScope.SubsonicPurpose,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                },
+                new()
+                {
+                    Id = otherCredential,
+                    TenantId = _tenant,
+                    BackendIdentityId = otherIdentity,
+                    Purpose = BackendCredentialScope.SubsonicPurpose,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+            await db.SaveChangesAsync();
+        }
+        var controller = new PlaylistLinksController(_factory, null!, null!, null!, null!, null!, null!, null!,
+            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
+        controller.ControllerContext = new() { HttpContext = new DefaultHttpContext() };
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = Session(administrator: true);
+
+        var result = Assert.IsType<OkObjectResult>(await controller.ListMediaTargets(default));
+        var json = JsonSerializer.Serialize(result.Value);
+
+        Assert.Contains(selectedIdentity.ToString(), json, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(selectedCredential.ToString(), json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(otherIdentity.ToString(), json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(otherCredential.ToString(), json, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -780,26 +870,28 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
     }
 
     private IntelligenceController Controller(FakeAudioMuse? audioMuse = null,
-        IReadOnlyList<IExactScopePlaybackScrobbleTarget>? scrobbleTargets = null)
+        IReadOnlyList<IExactScopePlaybackScrobbleTarget>? scrobbleTargets = null,
+        bool administrator = false)
     {
         var value = new IntelligenceController(_factory, _policy, _runs, _smart, _readiness,
             [new FakeProvider("lastfm"), new FakeProvider("musicbrainz-local"), new FakeProvider("audiomuse-ai")],
             audioMuse ?? new FakeAudioMuse(), scrobbleTargets: scrobbleTargets);
         value.ControllerContext = new() { HttpContext = new DefaultHttpContext() };
-        value.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
-        {
-            SessionId = "session",
-            UserId = "backend",
-            UserName = "Owner",
-            IsAdministrator = false,
-            JellyfinAccessToken = "token",
-            TenantId = _tenant,
-            AllstarrUserId = _user,
-            ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
-            LastSeenUtc = DateTime.UtcNow
-        };
+        value.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = Session(administrator);
         return value;
     }
+    private AdminAuthSession Session(bool administrator) => new()
+    {
+        SessionId = "session",
+        UserId = "backend",
+        UserName = "Owner",
+        IsAdministrator = administrator,
+        JellyfinAccessToken = "token",
+        TenantId = _tenant,
+        AllstarrUserId = _user,
+        ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
+        LastSeenUtc = DateTime.UtcNow
+    };
     private IntelligenceScopeRequest Scope() => new() { Protocol = "jellyfin", BackendInstanceId = "main", LibraryScopeId = "music" };
     private IntelligencePolicyRecord Policy() => new()
     {

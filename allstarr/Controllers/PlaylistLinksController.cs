@@ -43,8 +43,6 @@ public sealed class PlaylistLinksController(
     IConfiguration configuration,
     ApplicationCacheRequestCoalescer requestCoalescer) : ControllerBase
 {
-    private const string SubsonicCredentialPurpose = "playlist-backend:subsonic";
-
     [HttpGet("/api/admin/playlist-sources")]
     public async Task<IActionResult> ListPlaylistSources(CancellationToken cancellationToken)
     {
@@ -364,11 +362,13 @@ public sealed class PlaylistLinksController(
                         .First()
                 })
                 .ToListAsync(cancellationToken);
-            var subsonicCredentialReferenceId = await db.SecretReferences.AsNoTracking()
-                .Where(item => item.TenantId == session.TenantId && item.Purpose == SubsonicCredentialPurpose && item.RevokedAt == null)
-                .OrderByDescending(item => item.UpdatedAt)
-                .Select(item => (Guid?)item.Id)
-                .FirstOrDefaultAsync(cancellationToken);
+            var subsonicCredentialRows = await db.SecretReferences.AsNoTracking()
+                .Where(item => item.TenantId == session.TenantId &&
+                    item.Purpose == BackendCredentialScope.SubsonicPurpose && item.RevokedAt == null &&
+                    item.BackendIdentityId != null)
+                .OrderByDescending(item => item.UpdatedAt).ToListAsync(cancellationToken);
+            var subsonicCredentials = subsonicCredentialRows.GroupBy(item => item.BackendIdentityId!.Value)
+                .ToDictionary(group => group.Key, group => (Guid?)group.First().Id);
             return Ok(new
             {
                 targets = identities.Select(item => new
@@ -382,7 +382,7 @@ public sealed class PlaylistLinksController(
                     displayName = item.DisplayName ?? session.UserName,
                     principalId = item.PrincipalId,
                     credentialReferenceId = NormalizeTargetProtocol(item.BackendType) == "subsonic"
-                        ? subsonicCredentialReferenceId
+                        ? subsonicCredentials.GetValueOrDefault(item.Id)
                         : null,
                     lastSeenAt = item.LastSeenAt
                 })
@@ -411,7 +411,8 @@ public sealed class PlaylistLinksController(
             if (protocol == "subsonic")
             {
                 credentialReference = await db.SecretReferences.AsNoTracking()
-                    .Where(item => item.TenantId == session.TenantId && item.Purpose == SubsonicCredentialPurpose && item.RevokedAt == null)
+                    .Where(item => item.TenantId == session.TenantId && item.BackendIdentityId == identity.Id &&
+                        item.Purpose == BackendCredentialScope.SubsonicPurpose && item.RevokedAt == null)
                     .OrderByDescending(item => item.UpdatedAt)
                     .Select(item => item.Id.ToString())
                     .FirstOrDefaultAsync(cancellationToken);
@@ -467,7 +468,8 @@ public sealed class PlaylistLinksController(
             if (protocol == "subsonic")
             {
                 credentialReference = await db.SecretReferences.AsNoTracking()
-                    .Where(item => item.TenantId == session.TenantId && item.Purpose == SubsonicCredentialPurpose && item.RevokedAt == null)
+                    .Where(item => item.TenantId == session.TenantId && item.BackendIdentityId == identity.Id &&
+                        item.Purpose == BackendCredentialScope.SubsonicPurpose && item.RevokedAt == null)
                     .OrderByDescending(item => item.UpdatedAt)
                     .Select(item => item.Id.ToString())
                     .FirstOrDefaultAsync(cancellationToken);
@@ -577,7 +579,9 @@ public sealed class PlaylistLinksController(
                 return BadRequest(new { error = "ProjectionMode target requires TargetPlaylistId" });
             if (!ValidTargetProtocol(request.TargetProtocol)) return BadRequest(new { error = "TargetProtocol must be jellyfin or subsonic" });
             var context = await CreateExecutionAsync(session, request.LibraryScopeId, cancellationToken);
-            if (!await CredentialReferenceAllowed(context, request.TargetCredentialReferenceId, cancellationToken)) return BadRequest(new { error = "TargetCredentialReferenceId is unavailable in this tenant" });
+            if (!await CredentialReferenceAllowed(context, request.TargetProtocol, request.TargetBackendInstanceId,
+                    request.TargetCredentialReferenceId, cancellationToken))
+                return BadRequest(new { error = "TargetCredentialReferenceId is unavailable for this backend identity" });
             if (!await TargetIdentityAllowed(context, request.TargetProtocol, request.TargetBackendInstanceId, cancellationToken)) return BadRequest(new { error = "The target backend identity is not linked to this user" });
             if (!await ScheduleAllowed(context, request.ScheduleId, request.LibraryScopeId, cancellationToken)) return BadRequest(new { error = "ScheduleId is unavailable in this owner and library scope" });
             var source = Required(request.SourcePlaylistId, nameof(request.SourcePlaylistId));
@@ -603,7 +607,9 @@ public sealed class PlaylistLinksController(
             if (projectionMode == PlaylistProjectionMode.Target && string.IsNullOrWhiteSpace(request.TargetPlaylistId))
                 return BadRequest(new { error = "ProjectionMode target requires TargetPlaylistId" });
             var context = await CreateExecutionAsync(session, existing.LibraryScopeId, cancellationToken);
-            if (!await CredentialReferenceAllowed(context, request.TargetCredentialReferenceId, cancellationToken)) return BadRequest(new { error = "TargetCredentialReferenceId is unavailable in this tenant" });
+            if (!await CredentialReferenceAllowed(context, existing.TargetProtocol, existing.TargetBackendInstanceId,
+                    request.TargetCredentialReferenceId, cancellationToken))
+                return BadRequest(new { error = "TargetCredentialReferenceId is unavailable for this backend identity" });
             if (!await ScheduleAllowed(context, request.ScheduleId, existing.LibraryScopeId, cancellationToken)) return BadRequest(new { error = "ScheduleId is unavailable in this owner and library scope" });
             var updated = await playlists.UpdateLinkAsync(context, id, new PlaylistLinkUpdate(
                 request.ExpectedRevision, mode, materialization, request.RuleVersion ?? existing.RuleVersion,
@@ -919,10 +925,11 @@ public sealed class PlaylistLinksController(
         return await Execute(async session =>
         {
             if (!ValidCredentialRequest(request, out var error)) return BadRequest(new { error });
+            var identity = await CredentialIdentity(session, request.BackendInstanceId, cancellationToken);
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
             var existing = await db.SecretReferences.AsNoTracking().SingleOrDefaultAsync(item => item.Id == referenceId, cancellationToken)
                 ?? throw new KeyNotFoundException("Credential reference not found.");
-            if (existing.TenantId != session.TenantId || existing.Purpose != SubsonicCredentialPurpose)
+            if (!BackendCredentialScope.Matches(existing, identity))
                 throw new UnauthorizedAccessException();
             return Ok(ToCredentialDto(await StoreCredential(session, request, referenceId, cancellationToken)));
         });
@@ -1038,26 +1045,56 @@ public sealed class PlaylistLinksController(
             reasonCode
         };
 
-    private async Task<bool> CredentialReferenceAllowed(ProtocolExecutionContext context, Guid? id, CancellationToken cancellationToken)
+    private async Task<bool> CredentialReferenceAllowed(ProtocolExecutionContext context, string protocol,
+        string backendInstanceId, Guid? id, CancellationToken cancellationToken)
     {
         if (!id.HasValue) return true;
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        return await db.SecretReferences.AsNoTracking().AnyAsync(item => item.Id == id && item.RevokedAt == null &&
-            item.TenantId == context.Actor!.TenantId && item.Purpose == SubsonicCredentialPurpose, cancellationToken);
+        var actor = context.RequireActor();
+        var identityId = await db.BackendIdentities.AsNoTracking().Where(item => item.TenantId == actor.TenantId &&
+                item.UserId == actor.UserId && item.BackendType == protocol.Trim().ToLowerInvariant() &&
+                item.BackendInstanceId == backendInstanceId.Trim())
+            .Select(item => (Guid?)item.Id).SingleOrDefaultAsync(cancellationToken);
+        return identityId.HasValue && await db.SecretReferences.AsNoTracking().AnyAsync(item => item.Id == id &&
+            item.RevokedAt == null && item.TenantId == actor.TenantId && item.BackendIdentityId == identityId &&
+            item.Purpose == BackendCredentialScope.SubsonicPurpose, cancellationToken);
     }
 
     private async Task<SecretReferenceInfo> StoreCredential(AdminAuthSession session, BackendCredentialRequest request,
         Guid? existingReferenceId, CancellationToken cancellationToken)
     {
         var bytes = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new { username = request.Username.Trim(), password = request.Password });
-        try { return await secretStore.StoreAsync(session.TenantId, SubsonicCredentialPurpose, bytes, existingReferenceId, cancellationToken); }
+        try
+        {
+            var identity = await CredentialIdentity(session, request.BackendInstanceId, cancellationToken);
+            await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+            var info = await secretStore.StoreWithinTransactionAsync(db, session.TenantId,
+                BackendCredentialScope.SubsonicPurpose, bytes, existingReferenceId, cancellationToken);
+            db.SecretReferences.Local.Single(item => item.Id == info.Id).BackendIdentityId = identity.Id;
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return info;
+        }
         finally { CryptographicOperations.ZeroMemory(bytes); }
+    }
+
+    private async Task<BackendIdentityRecord> CredentialIdentity(AdminAuthSession session, string backendInstanceId,
+        CancellationToken cancellationToken)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        return await db.BackendIdentities.AsNoTracking().Where(item => item.TenantId == session.TenantId &&
+                item.UserId == session.AllstarrUserId && item.BackendType == "subsonic" &&
+                item.BackendInstanceId == backendInstanceId.Trim())
+            .OrderByDescending(item => item.LastSeenAt).FirstOrDefaultAsync(cancellationToken)
+            ?? throw new UnauthorizedAccessException();
     }
 
     private static bool ValidCredentialRequest(BackendCredentialRequest request, out string? error)
     {
         error = null;
         if (string.IsNullOrWhiteSpace(request.TargetProtocol) || !request.TargetProtocol.Trim().Equals("subsonic", StringComparison.OrdinalIgnoreCase)) { error = "TargetProtocol must be subsonic"; return false; }
+        if (string.IsNullOrWhiteSpace(request.BackendInstanceId) || request.BackendInstanceId.Length > 200) { error = "BackendInstanceId is required and must be at most 200 characters"; return false; }
         if (string.IsNullOrWhiteSpace(request.Username) || request.Username.Length > 300) { error = "Username is required and must be at most 300 characters"; return false; }
         if (string.IsNullOrEmpty(request.Password) || request.Password.Length > 2000) { error = "Password is required and must be at most 2000 characters"; return false; }
         return true;
@@ -1444,6 +1481,7 @@ public sealed record ScheduleRequest(string CronExpression, string TimeZoneId, s
 public sealed class BackendCredentialRequest
 {
     public string TargetProtocol { get; init; } = string.Empty;
+    public string BackendInstanceId { get; init; } = string.Empty;
     public string Username { get; init; } = string.Empty;
     public string Password { get; init; } = string.Empty;
 }
