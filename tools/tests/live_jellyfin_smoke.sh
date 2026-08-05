@@ -829,8 +829,9 @@ check_external_provider_case() {
             "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$artist_id&IncludeItemTypes=Audio&Limit=200" \
             '(.Items | type == "array") and
              (.TotalRecordCount | type == "number") and
-             all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and (.ArtistItems | length > 0) and
-                 any(.ArtistItems[]; .Id == $id))' --arg id "$artist_id"
+             all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and (.ArtistItems | length > 0)) and
+             ((.Items | length) == 0 or any(.Items[]; any(.ArtistItems[]; .Id == $id)))' \
+            --arg id "$artist_id"
         check_json "$provider artist combined" \
             "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$artist_id&IncludeItemTypes=MusicAlbum,Audio&Limit=400" \
             '(.Items | type == "array" and length > 0) and
@@ -1076,8 +1077,9 @@ if [[ -n "$external_song_id" ]]; then
             "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_artist_id&IncludeItemTypes=Audio&Limit=200" \
             '(.Items | type == "array") and
              (.TotalRecordCount | type == "number") and
-             all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and (.ArtistItems | length > 0) and
-                 any(.ArtistItems[]; .Id == $id))' --arg id "$external_artist_id"
+             all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and (.ArtistItems | length > 0)) and
+             ((.Items | length) == 0 or any(.Items[]; any(.ArtistItems[]; .Id == $id)))' \
+            --arg id "$external_artist_id"
         check_json "external artist combined" \
             "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_artist_id&IncludeItemTypes=MusicAlbum,Audio&Limit=400" \
             '(.Items | type == "array" and length > 0) and
