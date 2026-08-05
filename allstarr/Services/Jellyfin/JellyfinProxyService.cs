@@ -210,6 +210,10 @@ public class JellyfinProxyService
                 request.Content.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
             }
         }
+        else if (MethodCanHaveBody(method) && incoming.ContentLength == 0)
+        {
+            request.Content = new ByteArrayContent([]);
+        }
 
         LogOutboundRequest(method, url);
         var response = await _httpClient.SendAsync(

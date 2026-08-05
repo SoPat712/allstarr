@@ -718,6 +718,33 @@ public class JellyfinProxyServiceTests
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
     }
 
+    [Fact]
+    public async Task SendPassthroughResponseAsync_PreservesExplicitZeroLengthBody()
+    {
+        var observedContent = false;
+        long? observedContentLength = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((request, _) =>
+            {
+                observedContent = request.Content != null;
+                observedContentLength = request.Content?.Headers.ContentLength;
+            })
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.NoContent));
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Post;
+        context.Request.ContentLength = 0;
+
+        using var response = await _service.SendPassthroughResponseAsync(
+            context.Request, "Playlists/playlist-1/Items/item-1/Move/0");
+
+        Assert.True(observedContent);
+        Assert.Equal(0, observedContentLength);
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+    }
+
     private void SetupMockResponse(HttpStatusCode statusCode, string content, string contentType)
     {
         var response = new HttpResponseMessage(statusCode)
