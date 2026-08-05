@@ -719,7 +719,7 @@ public class JellyfinProxyServiceTests
     }
 
     [Fact]
-    public async Task SendPassthroughResponseAsync_PreservesExplicitZeroLengthBody()
+    public async Task SendPassthroughResponseAsync_PreservesEmptyBodyWithoutLength()
     {
         var observedContent = false;
         long? observedContentLength = null;
@@ -735,7 +735,6 @@ public class JellyfinProxyServiceTests
             .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.NoContent));
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Post;
-        context.Request.ContentLength = 0;
 
         using var response = await _service.SendPassthroughResponseAsync(
             context.Request, "Playlists/playlist-1/Items/item-1/Move/0");

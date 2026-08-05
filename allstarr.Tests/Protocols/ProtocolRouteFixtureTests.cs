@@ -2372,7 +2372,7 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal(2, observed.Count);
         Assert.Equal(method, observed[1].Method);
         Assert.Equal(expectedPath, observed[1].PathAndQuery);
-        Assert.Equal(body, observed[1].Body);
+        Assert.Equal(body ?? (method is "GET" or "HEAD" ? null : string.Empty), observed[1].Body);
     }
 
     [Theory]
@@ -3245,10 +3245,12 @@ public sealed class ProtocolRouteFixtureTests
                 fixture.GetProperty("request").GetProperty("method").GetString(),
                 observed[1].Method);
             Assert.Equal(fixture.GetProperty("upstreamPath").GetString(), observed[1].PathAndQuery);
+            var requestFixture = fixture.GetProperty("request");
+            var requestMethod = requestFixture.GetProperty("method").GetString();
             Assert.Equal(
-                fixture.GetProperty("request").TryGetProperty("body", out var expectedRequestBody)
+                requestFixture.TryGetProperty("body", out var expectedRequestBody)
                     ? expectedRequestBody.GetString()
-                    : null,
+                    : requestMethod is "GET" or "HEAD" ? null : string.Empty,
                 observed[1].Body);
             if (upstreamFixture.TryGetProperty("etag", out var expectedEtag))
             {

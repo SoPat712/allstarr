@@ -210,7 +210,7 @@ public class JellyfinProxyService
                 request.Content.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
             }
         }
-        else if (MethodCanHaveBody(method) && incoming.ContentLength == 0)
+        else if (MethodCanHaveBody(method))
         {
             request.Content = new ByteArrayContent([]);
         }
