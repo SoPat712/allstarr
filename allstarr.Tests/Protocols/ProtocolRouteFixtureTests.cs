@@ -160,6 +160,41 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task JellyfinLocalArtistDetail_PreservesTheEntireUpstreamObject()
+    {
+        const string artistId = "00112233445566778899aabbccddeeff";
+        const string artist = """
+            {
+              "Id":"00112233445566778899aabbccddeeff",
+              "Name":"Fixture Artist",
+              "Type":"MusicArtist",
+              "ProviderIds":{"MusicBrainzArtist":"artist-1"},
+              "UserData":{"IsFavorite":true,"PlayCount":7},
+              "ImageBlurHashes":{"Primary":{"tag":"hash"}},
+              "UnknownFutureField":{"Keep":[1,2,3]}
+            }
+            """;
+        var observedRequests = new List<string>();
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            observedRequests.Add(request.RequestUri!.PathAndQuery);
+            return request.RequestUri.AbsolutePath == "/Users/Me"
+                ? Json(StatusCodes.Status200OK, """{"Id":"user-1"}""")
+                : Json(StatusCodes.Status200OK, artist);
+        });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync($"/Artists/{artistId}?api_key=fixture-key");
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(artist), JsonNode.Parse(body)));
+        Assert.Equal(2, observedRequests.Count);
+        Assert.Equal("/Users/Me?api_key=fixture-key", observedRequests[0]);
+        Assert.Equal($"/Items/{artistId}", observedRequests[1]);
+    }
+
+    [Fact]
     public async Task JellyfinAuthenticatedSystemInfo_FallsBackForUnboundApiKeyOnPreTwelveServers()
     {
         var observedRequests = new List<string>();

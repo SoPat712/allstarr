@@ -569,6 +569,43 @@ compare_projection() {
     fi
 }
 
+compare_native_collection_items() {
+    local label="$1" allstarr_url="$2" filter="${3:-.Items}"
+    local item item_id item_count=0 invalid_count=0
+    if ! curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" "$allstarr_url" |
+        jq -c "$filter | .[]" >"$allstarr_shape_file"; then
+        checks=$((checks + 1))
+        failures=$((failures + 1))
+        printf 'FAIL %-34s allstarr-fetch-or-json\n' "$label"
+        return
+    fi
+    while IFS= read -r item; do
+        item_count=$((item_count + 1))
+        item_id="$(jq -r '.Id // empty' <<<"$item")"
+        if [[ -z "$item_id" || "$item_id" == ext-* || "$item_id" == allstarr-unresolved-* ]] ||
+           ! curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
+                "$DIRECT_BASE/Users/$best_user_id/Items?Ids=$item_id&Limit=1" |
+                jq -S '.Items[0]' >"$direct_shape_file"; then
+            invalid_count=$((invalid_count + 1))
+            continue
+        fi
+        jq -S . <<<"$item" >"$response_file"
+        if ! jq -ne --slurpfile actual "$response_file" --slurpfile direct "$direct_shape_file" '
+            ($actual[0] | keys_unsorted) as $keys |
+            ($direct[0] | with_entries(select(.key as $key | $keys | index($key)))) == $actual[0]
+            ' >/dev/null; then
+            invalid_count=$((invalid_count + 1))
+        fi
+    done <"$allstarr_shape_file"
+    checks=$((checks + 1))
+    if (( item_count > 0 && invalid_count == 0 )); then
+        printf 'PASS %-34s items=%s exact-native-projection\n' "$label" "$item_count"
+    else
+        printf 'FAIL %-34s items=%s invalid=%s\n' "$label" "$item_count" "$invalid_count"
+        failures=$((failures + 1))
+    fi
+}
+
 check_public_parity() {
     local label="$1" method="$2" path="$3" direct_code allstarr_code
     if [[ "$method" == HEAD ]]; then
@@ -1050,7 +1087,7 @@ check_json "album artists browse" "$ALLSTARR_BASE/Artists/AlbumArtists?UserId=$b
 if [[ -n "$artist_id" ]]; then
     check_json "artist detail" "$ALLSTARR_BASE/Artists/$artist_id?UserId=$best_user_id" '.Type == "MusicArtist"'
     compare_projection "artist detail full object" \
-        "$DIRECT_BASE/Artists/$artist_id?UserId=$best_user_id" \
+        "$DIRECT_BASE/Items/$artist_id?UserId=$best_user_id" \
         "$ALLSTARR_BASE/Artists/$artist_id?UserId=$best_user_id" \
         '.'
 fi
@@ -1089,20 +1126,16 @@ check_json "similar music" "$ALLSTARR_BASE/Items/$media_id/Similar?UserId=$best_
      (.TotalRecordCount | type == "number") and
      .StartIndex == 0 and
      all(.Items[]; (.Type == "Audio" or .Type == "MusicAlbum" or .Type == "MusicArtist"))'
-compare_projection "similar full native objects" \
-    "$DIRECT_BASE/Items/$media_id/Similar?UserId=$best_user_id&Limit=10" \
+compare_native_collection_items "similar full native objects" \
     "$ALLSTARR_BASE/Items/$media_id/Similar?UserId=$best_user_id&Limit=10" \
-    '[.Items[] | select(.Type == "Audio" or .Type == "MusicAlbum" or .Type == "MusicArtist")]' \
-    '.Items'
+    '[.Items[] | select(.Type == "Audio" or .Type == "MusicAlbum" or .Type == "MusicArtist")]'
 check_json "instant mix" "$ALLSTARR_BASE/Songs/$media_id/InstantMix?UserId=$best_user_id&Limit=10" \
     '(.Items | type == "array") and
      (.TotalRecordCount | type == "number") and
      .StartIndex == 0 and
      all(.Items[]; .Type == "Audio")'
-compare_projection "instant mix full objects" \
-    "$DIRECT_BASE/Songs/$media_id/InstantMix?UserId=$best_user_id&Limit=10" \
-    "$ALLSTARR_BASE/Songs/$media_id/InstantMix?UserId=$best_user_id&Limit=10" \
-    '.Items'
+compare_native_collection_items "instant mix full objects" \
+    "$ALLSTARR_BASE/Songs/$media_id/InstantMix?UserId=$best_user_id&Limit=10"
 if [[ -n "$album_id" ]]; then
     check_json "album detail" "$ALLSTARR_BASE/Items/$album_id?UserId=$best_user_id" '.Type == "MusicAlbum"'
     compare_projection "album detail full object" \
@@ -1114,10 +1147,8 @@ if [[ -n "$album_id" ]]; then
          (.TotalRecordCount | type == "number") and
          .StartIndex == 0 and
          all(.Items[]; .Type == "Audio")'
-    compare_projection "album mix full objects" \
-        "$DIRECT_BASE/Albums/$album_id/InstantMix?UserId=$best_user_id&Limit=10" \
-        "$ALLSTARR_BASE/Albums/$album_id/InstantMix?UserId=$best_user_id&Limit=10" \
-        '.Items'
+    compare_native_collection_items "album mix full objects" \
+        "$ALLSTARR_BASE/Albums/$album_id/InstantMix?UserId=$best_user_id&Limit=10"
 fi
 
 for denied_path in \

@@ -689,73 +689,7 @@ public partial class JellyfinController : ControllerBase
         {
             return HandleProxyResponse(null, statusCode);
         }
-
-        var artistData = _modelMapper.ParseArtist(jellyfinArtist.RootElement);
-        var artistName = artistData.Name;
-        var localArtistId = artistData.Id;
-
-        // Get local albums
-        var (localAlbumsResult, _) = await _proxyService.GetItemsAsync(
-            parentId: null,
-            includeItemTypes: new[] { "MusicAlbum" },
-            sortBy: "SortName",
-            artistIds: localArtistId,
-            clientHeaders: Request.Headers);
-
-        var (_, localAlbums, _) = _modelMapper.ParseItemsResponse(localAlbumsResult);
-
-        // Filter to just this artist's albums
-        var artistAlbums = localAlbums
-            .Where(a => a.ArtistId == localArtistId ||
-                       (a.Artist?.Equals(artistName, StringComparison.OrdinalIgnoreCase) ?? false))
-            .ToList();
-
-        // Search for external albums by this artist
-        var externalArtists = await _metadataService.SearchArtistsAsync(artistName, 1, HttpContext.RequestAborted);
-        var externalAlbums = new List<Album>();
-
-        if (externalArtists.Count > 0)
-        {
-            var extArtist = externalArtists[0];
-            if (extArtist.Name.Equals(artistName, StringComparison.OrdinalIgnoreCase))
-            {
-                if (!string.IsNullOrWhiteSpace(extArtist.ExternalProvider) &&
-                    !string.IsNullOrWhiteSpace(extArtist.ExternalId))
-                {
-                    try
-                    {
-                        externalAlbums = await GetProviderArtistAlbumsAsync(
-                            extArtist.ExternalProvider,
-                            extArtist.ExternalId,
-                            HttpContext.RequestAborted);
-                    }
-                    catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
-                    {
-                        throw;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex,
-                            "External album enrichment failed for local artist {ArtistId}",
-                            localArtistId);
-                    }
-                }
-
-                // Set artist info to local artist so albums link back correctly
-                foreach (var a in externalAlbums)
-                {
-                    if (string.IsNullOrEmpty(a.Artist)) a.Artist = artistName;
-                    if (string.IsNullOrEmpty(a.ArtistId)) a.ArtistId = localArtistId;
-                }
-            }
-        }
-
-        // Deduplicate albums by title
-        var localAlbumTitles = new HashSet<string>(artistAlbums.Select(a => a.Title), StringComparer.OrdinalIgnoreCase);
-        var mergedAlbums = artistAlbums.ToList();
-        mergedAlbums.AddRange(externalAlbums.Where(a => !localAlbumTitles.Contains(a.Title)));
-
-        return _responseBuilder.CreateArtistResponse(artistData, mergedAlbums);
+        return HandleProxyResponse(jellyfinArtist, statusCode);
     }
 
     #endregion
