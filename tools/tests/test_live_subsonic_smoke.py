@@ -7,6 +7,7 @@ import unittest
 from live_subsonic_smoke import (
     MAX_BODY_BYTES,
     SmokeError,
+    compare_read_only,
     compatible_variable_response,
     envelope,
     first_id,
@@ -15,6 +16,7 @@ from live_subsonic_smoke import (
     playlist_matches,
     public_shape,
     read_bounded,
+    read_early_close,
     stateful_steps,
 )
 
@@ -37,6 +39,7 @@ class LiveSubsonicSmokeTests(unittest.TestCase):
         )
         with self.assertRaises(SmokeError):
             read_bounded(io.BytesIO(b"x" * (MAX_BODY_BYTES + 1)))
+        self.assertEqual(b"x", read_early_close(io.BytesIO(b"xyz")))
 
     def test_base_url_rejects_embedded_credentials_and_queries(self):
         self.assertEqual(
@@ -66,6 +69,15 @@ class LiveSubsonicSmokeTests(unittest.TestCase):
         }
         self.assertTrue(compatible_variable_response("album", direct, enriched))
         self.assertFalse(compatible_variable_response("album", direct, {"album": {}}))
+
+        observed = []
+        results = type("Results", (), {"check_value": lambda _, label, passed: observed.append((label, passed))})()
+        compare_read_only(
+            {"stream": {"bytes": 65_536, "sha256": "direct"}},
+            {"stream": {"bytes": 65_536, "sha256": "different"}},
+            results,
+        )
+        self.assertEqual([("Allstarr stream response parity", False)], observed)
 
     def test_cleanup_requires_exact_returned_id_and_name(self):
         root = {"playlist": {"id": "playlist-1", "name": "allstarr-smoke-run"}}

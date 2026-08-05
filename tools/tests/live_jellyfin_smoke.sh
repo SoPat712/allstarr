@@ -25,6 +25,14 @@ MAX_EXTERNAL_STREAM_TTFB_MS="${MAX_EXTERNAL_STREAM_TTFB_MS:-8000}"
 for command in curl jq awk diff cmp head mkfifo od tr wc; do
     command -v "$command" >/dev/null || { echo "Missing required command: $command" >&2; exit 1; }
 done
+if command -v sha256sum >/dev/null; then
+    sha256_command=(sha256sum)
+elif command -v shasum >/dev/null; then
+    sha256_command=(shasum -a 256)
+else
+    echo "Missing required command: sha256sum or shasum" >&2
+    exit 1
+fi
 [[ "$SAMPLES" =~ ^[1-9][0-9]*$ ]] || { echo "SAMPLES must be a positive integer" >&2; exit 1; }
 [[ "$TEST_EXTERNAL_STREAM" == 0 || "$TEST_EXTERNAL_STREAM" == 1 ]] ||
     { echo "TEST_EXTERNAL_STREAM must be 0 or 1" >&2; exit 1; }
@@ -196,13 +204,20 @@ measure() {
             "$url" >>"$timings_file" || true
     done
     awk -v label="$label" -v metrics="$metrics_file" '
-        { ok += ($1 >= 200 && $1 < 400); bytes += $2; dns += $3; connect += $4; tls += $5; ttfb += $6; total += $7; codes[$1]++ }
+        {
+            ok += ($1 >= 200 && $1 < 400); bytes += $2; dns += $3; connect += $4;
+            tls += $5; ttfb += $6; total += $7; codes[$1]++;
+            if (NR == 1) { cold_ttfb = $6; cold_total = $7 }
+            else { warm_ttfb += $6; warm_total += $7; warm_count++ }
+        }
         END {
             code_summary = ""
             for (code in codes) code_summary = code_summary (code_summary ? "," : "") code ":" codes[code]
-            printf "%-24s ok=%d/%d codes=%s avg_bytes=%.0f dns_ms=%.1f connect_ms=%.1f tls_ms=%.1f ttfb_ms=%.1f total_ms=%.1f\n",
+            if (!warm_count) { warm_ttfb = cold_ttfb; warm_total = cold_total; warm_count = 1 }
+            printf "%-24s ok=%d/%d codes=%s avg_bytes=%.0f dns_ms=%.1f connect_ms=%.1f tls_ms=%.1f cold_ttfb_ms=%.1f warm_ttfb_ms=%.1f ttfb_ms=%.1f total_ms=%.1f\n",
                 label, ok, NR, code_summary, bytes / NR, dns * 1000 / NR, connect * 1000 / NR,
-                tls * 1000 / NR, ttfb * 1000 / NR, total * 1000 / NR
+                tls * 1000 / NR, cold_ttfb * 1000, warm_ttfb * 1000 / warm_count,
+                ttfb * 1000 / NR, total * 1000 / NR
             printf "%s\t%.3f\t%.3f\t%d\t%d\n",
                 label, ttfb * 1000 / NR, total * 1000 / NR, ok, NR >> metrics
         }' "$timings_file"
@@ -593,7 +608,7 @@ check_public_image() {
 
 check_range_parity() {
     local label="$1" direct_url="$2" allstarr_url="$3" credential_mode="${4:-header}"
-    local direct_code allstarr_code direct_bytes allstarr_bytes direct_range allstarr_range direct_type allstarr_type
+    local direct_code allstarr_code direct_bytes allstarr_bytes direct_range allstarr_range direct_type allstarr_type signature
     local -a request_auth=("${auth[@]}")
     if [[ "$credential_mode" == query-api-key ]]; then
         request_auth=(-H "User-Agent: AllstarrLiveSmoke/$run_id")
@@ -623,11 +638,83 @@ check_range_parity() {
           "$direct_range" == "$allstarr_range" &&
           "$direct_type" == "$allstarr_type" ]] &&
        cmp -s "$direct_media_file" "$allstarr_media_file"; then
-        printf 'PASS %-34s bytes=65536 type=%s exact-body\n' "$label" "$allstarr_type"
+        signature="$("${sha256_command[@]}" "$allstarr_media_file" | awk '{print substr($1, 1, 12)}')"
+        printf 'PASS %-34s bytes=65536 type=%s sha256=%s exact-body\n' \
+            "$label" "$allstarr_type" "$signature"
     else
         printf 'FAIL %-34s direct=%s/%s/%s allstarr=%s/%s/%s\n' \
             "$label" "$direct_code" "$direct_bytes" "$direct_range" \
             "$allstarr_code" "$allstarr_bytes" "$allstarr_range"
+        failures=$((failures + 1))
+    fi
+}
+
+check_playback_quality_parity() {
+    local label="$1" direct_url="$2" allstarr_url="$3" direct_bitrate allstarr_bitrate
+    curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" "$direct_url" -o "$direct_shape_file"
+    curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" "$allstarr_url" -o "$allstarr_shape_file"
+    direct_bitrate="$(jq -r 'first(.MediaSources[]? | .Bitrate // empty) // empty' "$direct_shape_file")"
+    allstarr_bitrate="$(jq -r 'first(.MediaSources[]? | .Bitrate // empty) // empty' "$allstarr_shape_file")"
+    checks=$((checks + 1))
+    if [[ "$direct_bitrate" =~ ^[1-9][0-9]*$ && "$direct_bitrate" == "$allstarr_bitrate" ]]; then
+        printf 'PASS %-34s bitrate_bps=%s exact-native\n' "$label" "$allstarr_bitrate"
+    else
+        printf 'FAIL %-34s direct_bitrate=%s allstarr_bitrate=%s\n' \
+            "$label" "${direct_bitrate:-missing}" "${allstarr_bitrate:-missing}"
+        failures=$((failures + 1))
+    fi
+}
+
+check_concurrent_range_parity() {
+    local label="$1" url="$2" sample body status code bytes failures_seen=0
+    local -a bodies=() statuses=() pids=()
+    for sample in 1 2 3; do
+        body="$(mktemp)"
+        status="$(mktemp)"
+        bodies+=("$body")
+        statuses+=("$status")
+        (curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" --range 0-65535 \
+            --max-filesize 65536 -o "$body" -w '%{http_code}' "$url" >"$status" || true) &
+        pids+=("$!")
+    done
+    for sample in 0 1 2; do
+        wait "${pids[$sample]}" || true
+        code="$(<"${statuses[$sample]}")"
+        bytes="$(wc -c <"${bodies[$sample]}" | tr -d ' ')"
+        if [[ "$code" != 206 || "$bytes" != 65536 ]] ||
+           ! cmp -s "$direct_media_file" "${bodies[$sample]}"; then
+            failures_seen=1
+        fi
+    done
+    checks=$((checks + 1))
+    if [[ "$failures_seen" -eq 0 ]]; then
+        printf 'PASS %-34s requests=3 bytes_each=65536 exact-body\n' "$label"
+    else
+        printf 'FAIL %-34s concurrent range/body mismatch\n' "$label"
+        failures=$((failures + 1))
+    fi
+    rm -f "${bodies[@]}" "${statuses[@]}"
+}
+
+check_stream_cancellation() {
+    local label="$1" url="$2" health_url="$3" retained curl_status health_code
+    : >"$response_file"
+    set +e
+    curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" --range 0-65535 "$url" 2>/dev/null |
+        head -c 1 >"$response_file"
+    curl_status="${PIPESTATUS[0]}"
+    set -e
+    retained="$(wc -c <"$response_file" | tr -d ' ')"
+    health_code="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
+        -o /dev/null -w '%{http_code}' "$health_url" || true)"
+    checks=$((checks + 1))
+    if [[ "$retained" == 1 && "$health_code" == 200 &&
+          ( "$curl_status" == 0 || "$curl_status" == 23 || "$curl_status" == 56 ) ]]; then
+        printf 'PASS %-34s retained_bytes=1 curl=%s post_close=%s\n' \
+            "$label" "$curl_status" "$health_code"
+    else
+        printf 'FAIL %-34s retained_bytes=%s curl=%s post_close=%s\n' \
+            "$label" "$retained" "$curl_status" "$health_code"
         failures=$((failures + 1))
     fi
 }
@@ -947,6 +1034,9 @@ check_json "music-only counts" "$ALLSTARR_BASE/Items/Counts?UserId=$best_user_id
 check_json "playback info" "$ALLSTARR_BASE/Items/$media_id/PlaybackInfo?UserId=$best_user_id" \
     '(.MediaSources | type == "array") and (.MediaSources | length > 0)'
 compare_structure "playback info structure parity" \
+    "$DIRECT_BASE/Items/$media_id/PlaybackInfo?UserId=$best_user_id" \
+    "$ALLSTARR_BASE/Items/$media_id/PlaybackInfo?UserId=$best_user_id"
+check_playback_quality_parity "playback quality parity" \
     "$DIRECT_BASE/Items/$media_id/PlaybackInfo?UserId=$best_user_id" \
     "$ALLSTARR_BASE/Items/$media_id/PlaybackInfo?UserId=$best_user_id"
 check_json "similar music" "$ALLSTARR_BASE/Items/$media_id/Similar?UserId=$best_user_id&Limit=10" \
@@ -1692,6 +1782,14 @@ check_code "stream bounded range" "206" GET \
 check_range_parity "stream exact range parity" \
     "$DIRECT_BASE/Audio/$media_id/stream?static=true&UserId=$best_user_id" \
     "$ALLSTARR_BASE/Audio/$media_id/stream?static=true&UserId=$best_user_id"
+check_concurrent_range_parity "stream concurrent range parity" \
+    "$ALLSTARR_BASE/Audio/$media_id/stream?static=true&UserId=$best_user_id"
+check_stream_cancellation "direct stream cancellation" \
+    "$DIRECT_BASE/Audio/$media_id/stream?static=true&UserId=$best_user_id" \
+    "$DIRECT_BASE/System/Info/Public"
+check_stream_cancellation "allstarr stream cancellation" \
+    "$ALLSTARR_BASE/Audio/$media_id/stream?static=true&UserId=$best_user_id" \
+    "$ALLSTARR_BASE/health/live"
 check_range_parity "Finer file ApiKey range parity" \
     "$DIRECT_BASE/Items/$media_id/File" \
     "$ALLSTARR_BASE/Items/$media_id/File" \

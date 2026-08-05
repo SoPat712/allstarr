@@ -17,12 +17,15 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO
 
 MAX_BODY_BYTES = 65_536
+STREAM_SAMPLES = 5
+CONCURRENT_STREAM_SAMPLES = 3
 API_VERSION = "1.16.1"
 STATEFUL_CONFIRMATION = "create-and-delete-throwaway-playlist"
 
@@ -60,6 +63,10 @@ def read_bounded(stream: BinaryIO) -> bytes:
             f"response exceeded the {MAX_BODY_BYTES}-byte qualification limit"
         )
     return body
+
+
+def read_early_close(stream: BinaryIO) -> bytes:
+    return stream.read(1)
 
 
 @dataclass(frozen=True)
@@ -249,6 +256,7 @@ class SubsonicClient:
         view_suffix: bool = False,
         auth: str = "token",
         headers: Mapping[str, str] | None = None,
+        early_close: bool = False,
     ) -> Response:
         suffix = ".view" if view_suffix else ""
         url = f"{self.base_url}/rest/{method}{suffix}"
@@ -278,7 +286,7 @@ class SubsonicClient:
         except urllib.error.HTTPError as error:
             response = error
         try:
-            body = read_bounded(response)
+            body = read_early_close(response) if early_close else read_bounded(response)
             return Response(
                 response.status,
                 response.headers.get_content_type(),
@@ -329,9 +337,18 @@ class Results:
             response.status in expected_statuses
             and 0 < len(response.body) <= MAX_BODY_BYTES
         )
-        detail = f"range={'yes' if response.content_range else 'no'} etag={'yes' if response.etag else 'no'}"
+        detail = (
+            f"range={'yes' if response.content_range else 'no'} "
+            f"etag={'yes' if response.etag else 'no'} "
+            f"sha256={hashlib.sha256(response.body).hexdigest()[:12]}"
+        )
         self._record(label, response, passed, detail)
         return passed
+
+    def check_early_close(self, label: str, response: Response) -> None:
+        self.checks += 1
+        passed = response.status in {200, 206} and len(response.body) == 1
+        self._record(label, response, passed, "early-close=yes retained-bytes=1")
 
     def check_value(self, label: str, passed: bool) -> None:
         self.checks += 1
@@ -566,14 +583,62 @@ def details(
         "getCoverArt", [("id", cover_id), ("size", 256)], response_format=None
     )
     results.check_http(f"{prefix} bounded getCoverArt", cover, {200})
-    stream = client.call(
-        "stream",
-        [("id", song_ids[0])],
+    stream_request = dict(
+        method="stream",
+        params=[("id", song_ids[0])],
         response_format=None,
         headers={"Range": "bytes=0-65535"},
     )
-    results.check_http(f"{prefix} bounded stream range", stream, {200, 206})
-    return {"search3": search, "similar": similar, "top": top, "lyrics": lyrics}
+    stream_samples = []
+    for sample in range(STREAM_SAMPLES):
+        response = client.call(**stream_request)
+        stream_samples.append(response)
+        results.check_http(
+            f"{prefix} bounded stream {'cold' if sample == 0 else f'warm {sample}'}",
+            response,
+            {200, 206},
+        )
+    with ThreadPoolExecutor(max_workers=CONCURRENT_STREAM_SAMPLES) as pool:
+        concurrent = [
+            pool.submit(client.call, **stream_request)
+            for _ in range(CONCURRENT_STREAM_SAMPLES)
+        ]
+        concurrent_samples = [future.result() for future in concurrent]
+        for sample, response in enumerate(concurrent_samples, start=1):
+            results.check_http(
+                f"{prefix} bounded stream concurrent {sample}",
+                response,
+                {200, 206},
+            )
+    baseline = stream_samples[0].body
+    results.check_value(
+        f"{prefix} sequential stream body parity",
+        all(response.body == baseline for response in stream_samples),
+    )
+    results.check_value(
+        f"{prefix} concurrent stream body parity",
+        all(response.body == baseline for response in concurrent_samples),
+    )
+    results.check_early_close(
+        f"{prefix} bounded stream cancellation",
+        client.call(**stream_request, early_close=True),
+    )
+    results.check_envelope(
+        f"{prefix} post-cancellation ping",
+        client.call("ping"),
+    )
+    return {
+        "search3": search,
+        "similar": similar,
+        "top": top,
+        "lyrics": lyrics,
+        "stream": {
+            "status": stream_samples[0].status,
+            "content_range": stream_samples[0].content_range,
+            "bytes": len(baseline),
+            "sha256": hashlib.sha256(baseline).hexdigest(),
+        },
+    }
 
 
 def exact_details(
@@ -608,10 +673,12 @@ def compare_read_only(
         compatible = (
             compatible_variable_response(name, direct[name], other[name])
             if name in {"album", "artist", "search3", "similar"}
+            else direct[name] == other[name]
+            if name == "stream"
             else public_shape(direct[name]) == public_shape(other[name])
         )
         results.check_value(
-            f"Allstarr {name} response shape",
+            f"Allstarr {name} response {'parity' if name == 'stream' else 'shape'}",
             compatible,
         )
 
