@@ -96,6 +96,89 @@ public sealed class ProtocolProviderStreamingGatewayTests
     }
 
     [Fact]
+    public async Task MetadataRelationships_UseOnlyUniqueExactIdsFromTheSameProvider()
+    {
+        const string providerId = "spotiflac-ytmusic-spotiflac";
+        var artistId = new ProviderExternalResourceId(providerId, ProviderResourceKind.Artist, "artist-1");
+        var albumId = new ProviderExternalResourceId(providerId, ProviderResourceKind.Album, "album-1");
+        var track = new ProviderTrackMetadata(
+            new(providerId, ProviderResourceKind.Track, "track-1"),
+            "Track",
+            [new("Artist"), new("Featured")],
+            albumTitle: "Album");
+        var album = new ProviderAlbumMetadata(
+            albumId,
+            "Album",
+            [new("Artist", artistId)]);
+        var artists = new[]
+        {
+            new ProviderArtistMetadata(artistId, "Artist"),
+            new ProviderArtistMetadata(
+                new(providerId, ProviderResourceKind.Artist, "featured-1"), "Featured"),
+            new ProviderArtistMetadata(
+                new(providerId, ProviderResourceKind.Artist, "featured-2"), "Featured")
+        };
+        var capability = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        capability.SetupGet(item => item.ProviderId).Returns(providerId);
+        capability.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        capability.Setup(item => item.SearchTracksAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderMetadataSearchRequest>(request => request.Query == "Track")))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(
+                new(providerId, [track])));
+        capability.Setup(item => item.SearchAlbumsAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderMetadataSearchRequest>(request =>
+                    request.Query == "Track" || request.Query == "Album")))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Success(
+                new(providerId, [album])));
+        capability.Setup(item => item.SearchArtistsAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderMetadataSearchRequest>(request => request.Query == "Track")))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderArtistMetadata>>.Success(
+                new(providerId, artists)));
+        capability.Setup(item => item.SearchArtistsAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderMetadataSearchRequest>(request => request.Query == "Artist")))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderArtistMetadata>>.Success(
+                new(providerId, [artists[0]])));
+        capability.Setup(item => item.SearchArtistsAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderMetadataSearchRequest>(request => request.Query == "Featured")))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderArtistMetadata>>.Success(
+                new(providerId, artists[1..])));
+        capability.Setup(item => item.GetTrackAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderTrackLookupRequest>(request => request.Id.Value == "track-1")))
+            .ReturnsAsync(ProviderOutcome<ProviderTrackMetadata>.Success(track));
+        var registry = MetadataRegistry(capability.Object);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(
+                It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) =>
+                MetadataPlan(request, registry, capability.Object));
+        var gateway = new ProtocolProviderGateway(
+            router.Object,
+            registry,
+            Mock.Of<IProviderRouteAccountResolver>(),
+            Mock.Of<IMusicMetadataService>(),
+            new HttpClientFactory());
+
+        var searchSong = Assert.Single((await gateway.SearchAsync(Context(), "Track", 10, 10, 10)).Songs);
+        var detailSong = await gateway.GetSongAsync(Context(), providerId, "track-1");
+        Assert.NotNull(detailSong);
+
+        foreach (var song in new[] { searchSong, detailSong! })
+        {
+            Assert.Equal($"ext-{providerId}-artist-artist-1", song.ArtistId);
+            Assert.Equal([$"ext-{providerId}-artist-artist-1", string.Empty], song.ArtistIds);
+            Assert.Equal($"ext-{providerId}-album-album-1", song.AlbumId);
+        }
+        capability.VerifyAll();
+        router.VerifyAll();
+    }
+
+    [Fact]
     public async Task PlayableSearch_ExcludesProviderWithoutAUsablePlaybackAccount()
     {
         var metadata = new Mock<IProviderMetadataCapability>();

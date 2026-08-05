@@ -100,6 +100,7 @@ public sealed class ProtocolProviderGateway(
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
     private const int ProviderSearchConcurrency = 4;
+    private const int RelationshipSearchLimit = 10;
     private static readonly TimeSpan ExactRouteMissTtl = TimeSpan.FromMinutes(2);
 
     public IReadOnlyList<string> GetProviderOrder(ProviderCapabilityKind capability) =>
@@ -164,9 +165,16 @@ public sealed class ProtocolProviderGateway(
 
         foreach (var outcome in searchOutcomes)
         {
+            var albums = outcome.AlbumsResult.IsSuccess
+                ? outcome.AlbumsResult.RequireValue().Items
+                : [];
+            var artists = outcome.ArtistsResult.IsSuccess
+                ? outcome.ArtistsResult.RequireValue().Items
+                : [];
             if (outcome.SongsResult.IsSuccess)
             {
-                routed.Songs.AddRange(outcome.SongsResult.RequireValue().Items.Select(Map));
+                routed.Songs.AddRange(outcome.SongsResult.RequireValue().Items
+                    .Select(item => EnrichRelationships(Map(item), albums, artists)));
             }
             if (outcome.AlbumsResult.IsSuccess)
             {
@@ -315,7 +323,8 @@ public sealed class ProtocolProviderGateway(
             var outcome = await routed.Candidate.Implementation.GetTrackAsync(
                 routed.Candidate.Context,
                 new ProviderTrackLookupRequest(id));
-            if (outcome.IsSuccess) return Map(outcome.RequireValue());
+            if (outcome.IsSuccess)
+                return await EnrichRelationshipsAsync(routed.Candidate, outcome.RequireValue());
             if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
             ThrowRouteFailure(outcome.Error);
         }
@@ -974,8 +983,9 @@ public sealed class ProtocolProviderGateway(
             ArtistId = item.Artists.FirstOrDefault()?.ArtistId is { } primaryArtist
                 ? ProtocolItemId(primaryArtist)
                 : null,
-            ArtistIds = item.Artists.Where(artist => artist.ArtistId != null)
-                .Select(artist => ProtocolItemId(artist.ArtistId!)).ToList(),
+            ArtistIds = item.Artists
+                .Select(artist => artist.ArtistId is { } artistId ? ProtocolItemId(artistId) : string.Empty)
+                .ToList(),
             Album = item.AlbumTitle ?? string.Empty,
             AlbumId = item.AlbumId is { } albumId ? ProtocolItemId(albumId) : null,
             Duration = item.Duration.HasValue ? (int)item.Duration.Value.TotalSeconds : null,
@@ -1003,6 +1013,106 @@ public sealed class ProtocolProviderGateway(
             }),
             IsLocal = false
         };
+    }
+
+    private async Task<Song> EnrichRelationshipsAsync(
+        ProviderRouteCandidate<IProviderMetadataCapability> candidate,
+        ProviderTrackMetadata item)
+    {
+        var song = Map(item);
+        if (!string.IsNullOrWhiteSpace(song.AlbumId) &&
+            song.ArtistIds.All(id => !string.IsNullOrWhiteSpace(id)))
+            return song;
+
+        async Task<IReadOnlyList<T>> Search<T>(Func<Task<ProviderOutcome<ProviderPage<T>>>> action)
+        {
+            try
+            {
+                var outcome = await action();
+                return outcome.IsSuccess ? outcome.RequireValue().Items : [];
+            }
+            catch (OperationCanceledException) when (candidate.Context.CancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                logger?.LogDebug(
+                    "Optional metadata relationship enrichment failed for provider {ProviderId}",
+                    candidate.Provider.Id);
+                return [];
+            }
+        }
+
+        var missingArtists = item.Artists
+            .Where(artist => artist.ArtistId == null)
+            .Select(artist => artist.Name)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(RelationshipSearchLimit)
+            .Select(name => Search(() => candidate.Implementation.SearchArtistsAsync(
+                candidate.Context,
+                new ProviderMetadataSearchRequest(name, new ProviderPageRequest(RelationshipSearchLimit)))))
+            .ToArray();
+        var albumTask = item.AlbumId == null && !string.IsNullOrWhiteSpace(item.AlbumTitle)
+            ? Search(() => candidate.Implementation.SearchAlbumsAsync(
+                candidate.Context,
+                new ProviderMetadataSearchRequest(
+                    item.AlbumTitle,
+                    new ProviderPageRequest(RelationshipSearchLimit))))
+            : Task.FromResult<IReadOnlyList<ProviderAlbumMetadata>>([]);
+
+        var artistTask = Task.WhenAll(missingArtists);
+        await Task.WhenAll(artistTask, albumTask);
+        return EnrichRelationships(
+            song,
+            await albumTask,
+            (await artistTask).SelectMany(artists => artists));
+    }
+
+    private static Song EnrichRelationships(
+        Song song,
+        IEnumerable<ProviderAlbumMetadata> albums,
+        IEnumerable<ProviderArtistMetadata> artists)
+    {
+        ProviderAlbumMetadata? album = null;
+        if (string.IsNullOrWhiteSpace(song.AlbumId) && !string.IsNullOrWhiteSpace(song.Album))
+        {
+            var artistNames = song.Artists
+                .Append(song.AlbumArtist)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var matches = albums.Where(candidate =>
+                    candidate.Title.Equals(song.Album, StringComparison.OrdinalIgnoreCase) &&
+                    candidate.Artists.Any(credit => artistNames.Contains(credit.Name)))
+                .Take(2)
+                .ToArray();
+            if (matches.Length == 1)
+            {
+                album = matches[0];
+                song.AlbumId = ProtocolItemId(album.Id);
+            }
+        }
+
+        for (var index = 0; index < song.Artists.Count && index < song.ArtistIds.Count; index++)
+        {
+            if (!string.IsNullOrWhiteSpace(song.ArtistIds[index])) continue;
+            var name = song.Artists[index];
+            var ids = artists
+                .Where(candidate => candidate.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                .Select(candidate => candidate.Id)
+                .Concat((album?.Artists ?? [])
+                    .Where(credit => credit.ArtistId != null &&
+                                     credit.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    .Select(credit => credit.ArtistId!))
+                .Distinct()
+                .Take(2)
+                .ToArray();
+            if (ids.Length == 1) song.ArtistIds[index] = ProtocolItemId(ids[0]);
+        }
+
+        if (song.ArtistIds.Count > 0 && !string.IsNullOrWhiteSpace(song.ArtistIds[0]))
+            song.ArtistId = song.ArtistIds[0];
+        return song;
     }
 
     private static Album Map(ProviderAlbumMetadata item) => new()
