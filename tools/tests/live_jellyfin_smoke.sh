@@ -310,6 +310,31 @@ check_json() {
     fi
 }
 
+wait_json() {
+    local label="$1" url="$2" filter="$3" code attempt streak=0
+    shift 3
+    for ((attempt = 1; attempt <= 20; attempt++)); do
+        : >"$response_file"
+        code="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
+            -o "$response_file" -w '%{http_code}' "$url" || true)"
+        if [[ "$code" == 200 ]] && jq -e "$@" "$filter" "$response_file" >/dev/null; then
+            streak=$((streak + 1))
+            if (( streak == 5 )); then
+                checks=$((checks + 1))
+                printf 'PASS %-34s stable-json\n' "$label"
+                return 0
+            fi
+        else
+            streak=0
+        fi
+        sleep 0.25
+    done
+    checks=$((checks + 1))
+    failures=$((failures + 1))
+    printf 'FAIL %-34s status=%s stable-json-filter=%s\n' "$label" "${code:-000}" "$filter"
+    return 1
+}
+
 check_query_json() {
     local label="$1" url="$2" credential_name="$3" filter="$4" separator="?" code
     shift 4
@@ -445,6 +470,27 @@ check_stateful_playlist_identity() {
     fi
     printf 'FAIL %-34s run-owned playlist identity mismatch\n' "$label"
     failures=$((failures + 1))
+    return 1
+}
+
+wait_stateful_playlist_identity() {
+    local label="$1" playlist_id="$2" playlist_name="$3" attempt streak=0
+    for ((attempt = 1; attempt <= 20; attempt++)); do
+        if playlist_identity_matches "$playlist_id" "$playlist_name"; then
+            streak=$((streak + 1))
+            if (( streak == 5 )); then
+                checks=$((checks + 1))
+                printf 'PASS %-34s stable-id-name-type\n' "$label"
+                return 0
+            fi
+        else
+            streak=0
+        fi
+        sleep 0.25
+    done
+    checks=$((checks + 1))
+    failures=$((failures + 1))
+    printf 'FAIL %-34s stable run-owned playlist identity mismatch\n' "$label"
     return 1
 }
 
@@ -604,7 +650,7 @@ run_stateful_playlist_smoke() {
     fi
 
     candidate_playlist_id="$(jq -r '.Id // empty' "$response_file" 2>/dev/null || true)"
-    if ! check_stateful_playlist_identity \
+    if ! wait_stateful_playlist_identity \
         "stateful create direct-visible" "$candidate_playlist_id" "$playlist_name"; then
         return
     fi
@@ -619,7 +665,7 @@ run_stateful_playlist_smoke() {
         return
     fi
     stateful_playlist_name="$renamed_name"
-    if ! check_stateful_playlist_identity \
+    if ! wait_stateful_playlist_identity \
         "stateful rename direct-visible" "$stateful_playlist_id" "$renamed_name"; then
         return
     fi
@@ -629,13 +675,13 @@ run_stateful_playlist_smoke() {
             "$ALLSTARR_BASE/Playlists/$stateful_playlist_id/Items?ids=$second_media_id&UserId=$best_user_id"; then
             return
         fi
-        check_json "stateful add direct-visible" \
+        wait_json "stateful add direct-visible" \
             "$DIRECT_BASE/Playlists/$stateful_playlist_id/Items?UserId=$best_user_id" \
             '([.Items[].Id] | index($first) != null) and
              ([.Items[].Id] | index($second) != null) and
              all(.Items[]; (.PlaylistItemId | type == "string" and length > 0))' \
             --arg first "$media_id" --arg second "$second_media_id"
-        if ! check_stateful_playlist_identity \
+        if ! wait_stateful_playlist_identity \
             "stateful add definition visible" "$stateful_playlist_id" "$renamed_name"; then
             return
         fi
@@ -654,8 +700,7 @@ run_stateful_playlist_smoke() {
             "$ALLSTARR_BASE/Playlists/$stateful_playlist_id/Items/$second_entry_id/Move/0"; then
             return
         fi
-        sleep 1
-        check_json "stateful reorder direct-visible" \
+        wait_json "stateful reorder direct-visible" \
             "$DIRECT_BASE/Playlists/$stateful_playlist_id/Items?UserId=$best_user_id" \
             '.Items[0].Id == $id' --arg id "$second_media_id"
 
@@ -663,7 +708,7 @@ run_stateful_playlist_smoke() {
             "$ALLSTARR_BASE/Playlists/$stateful_playlist_id/Items?entryIds=$first_entry_id"; then
             return
         fi
-        check_json "stateful remove direct-visible" \
+        wait_json "stateful remove direct-visible" \
             "$DIRECT_BASE/Playlists/$stateful_playlist_id/Items?UserId=$best_user_id" \
             '([.Items[].Id] | index($removed) == null) and
              ([.Items[].Id] | index($kept) != null)' \
@@ -1571,7 +1616,7 @@ if [[ -n "$virtual_playlist_id" ]]; then
         fi
     fi
 else
-    block "virtual-playlist-live=no user-bound Jellyfin token or visible injected playlist"
+    block "virtual-playlist-live=no visible injected playlist"
 fi
 measure "direct playlist-list" "$DIRECT_BASE/Users/$best_user_id/Items?$playlist_query"
 measure "allstarr playlist-list" "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query"
