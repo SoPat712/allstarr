@@ -106,9 +106,48 @@ public class AdminAuthenticationMiddlewareTests
     }
 
     [Theory]
+    [InlineData("/api/admin/playlist-sources", "GET")]
+    [InlineData("/api/admin/playlist-sources/019f48f2-5f28-7b11-b42d-0d9b76b73b40/playlists", "GET")]
+    [InlineData("/api/admin/media-targets", "GET")]
+    [InlineData("/api/admin/media-targets/019f48f2-5f28-7b11-b42d-0d9b76b73b40/playlists", "GET")]
+    [InlineData("/api/admin/playlist-links", "GET")]
+    [InlineData("/api/admin/playlist-links", "POST")]
+    [InlineData("/api/admin/playlist-links/019f48f2-5f28-7b11-b42d-0d9b76b73b40", "PUT")]
+    [InlineData("/api/admin/playlist-links/019f48f2-5f28-7b11-b42d-0d9b76b73b40", "DELETE")]
+    [InlineData("/api/admin/playlist-links/rematch/preview", "GET")]
+    [InlineData("/api/admin/playlist-links/019f48f2-5f28-7b11-b42d-0d9b76b73b40/source-update/apply", "POST")]
+    public async Task InvokeAsync_NonAdminUser_PlaylistSelfServiceRoutesPassToScopedControllers(
+        string path,
+        string method)
+    {
+        var sessionService = AdminAuthSessionTestSupport.Create();
+        var session = await sessionService.CreateSessionAsync(
+            userId: "user-1",
+            userName: "josh",
+            isAdministrator: false,
+            jellyfinAccessToken: "token",
+            jellyfinServerId: "server");
+        var invoked = false;
+        var middleware = new AdminAuthenticationMiddleware(
+            _ =>
+            {
+                invoked = true;
+                return Task.CompletedTask;
+            },
+            sessionService,
+            NullLogger<AdminAuthenticationMiddleware>.Instance);
+        var context = CreateContext(path, method, 5275, session.SessionId);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.True(invoked);
+    }
+
+    [Theory]
     [InlineData("/api/admin/ui/schema", "POST")]
     [InlineData("/api/admin/config", "GET")]
     [InlineData("/api/admin/status", "GET")]
+    [InlineData("/api/admin/playlist-linkspoof", "GET")]
     [InlineData("/api/admin/provider-accounts", "PUT")]
     [InlineData("/api/admin/provider-accounts/not-a-guid", "DELETE")]
     [InlineData("/api/admin/provider-accounts/019f48f2-5f28-7b11-b42d-0d9b76b73b40/secret", "GET")]

@@ -105,6 +105,11 @@ public class AdminAuthenticationMiddleware
             return true;
         }
 
+        if (IsPlaylistSelfServiceRoute(path))
+        {
+            return true;
+        }
+
         if ((path.Equals("/api/admin/favorite-action-policies", StringComparison.OrdinalIgnoreCase) && HttpMethods.IsGet(method)) ||
             (path.Equals("/api/admin/favorite-action-policies/me", StringComparison.OrdinalIgnoreCase) && HttpMethods.IsPut(method)))
         {
@@ -124,6 +129,18 @@ public class AdminAuthenticationMiddleware
         }
 
         return false;
+    }
+
+    private static bool IsPlaylistSelfServiceRoute(string path)
+    {
+        var normalizedPath = path.Length > 1 ? path.TrimEnd('/') : path;
+        return new[]
+        {
+            "/api/admin/playlist-links",
+            "/api/admin/playlist-sources",
+            "/api/admin/media-targets"
+        }.Any(root => normalizedPath.Equals(root, StringComparison.OrdinalIgnoreCase) ||
+                      normalizedPath.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsProviderAccountSelfServiceRoute(string path, string method)
