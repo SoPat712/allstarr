@@ -4,6 +4,7 @@ using System.Text.Json;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
 using allstarr.Models.Subsonic;
+using allstarr.Services.Common;
 
 namespace allstarr.Services.Jellyfin;
 
@@ -12,6 +13,7 @@ namespace allstarr.Services.Jellyfin;
 /// </summary>
 public class JellyfinResponseBuilder
 {
+    private const int DefaultExternalBitrate = 1_337_000;
     private readonly string _serverId;
 
     public JellyfinResponseBuilder(IOptions<JellyfinSettings>? settings = null)
@@ -237,61 +239,52 @@ public class JellyfinResponseBuilder
         // Add artists first
         foreach (var artist in artists)
         {
+            var item = ConvertArtistToJellyfinItem(artist);
             searchHints.Add(new Dictionary<string, object?>
             {
-                ["Id"] = artist.Id,
-                ["ItemId"] = artist.Id,
-                ["Name"] = AppendExternalSourceLabel(artist.Name, artist.ExternalProvider),
+                ["Id"] = item["Id"],
+                ["ItemId"] = item["Id"],
+                ["Name"] = item["Name"],
                 ["Type"] = "MusicArtist",
                 ["RunTimeTicks"] = 0,
-                ["PrimaryImageAspectRatio"] = 1.0,
-                ["ImageTags"] = new Dictionary<string, string>
-                {
-                    ["Primary"] = artist.Id
-                }
+                ["PrimaryImageAspectRatio"] = item["PrimaryImageAspectRatio"],
+                ["ImageTags"] = item["ImageTags"]
             });
         }
 
         // Add albums
         foreach (var album in albums)
         {
-            var albumName = AppendExternalSourceLabel(album.Title, album.ExternalProvider);
+            var item = ConvertAlbumToJellyfinItem(album);
             searchHints.Add(new Dictionary<string, object?>
             {
-                ["Id"] = album.Id,
-                ["ItemId"] = album.Id,
-                ["Name"] = albumName,
+                ["Id"] = item["Id"],
+                ["ItemId"] = item["Id"],
+                ["Name"] = item["Name"],
                 ["Type"] = "MusicAlbum",
-                ["Album"] = albumName,
-                ["AlbumArtist"] = AppendExternalSourceLabel(album.Artist, album.ExternalProvider),
-                ["ProductionYear"] = album.Year,
+                ["Album"] = item["Name"],
+                ["AlbumArtist"] = item["AlbumArtist"],
+                ["ProductionYear"] = item["ProductionYear"],
                 ["RunTimeTicks"] = 0,
-                ["ImageTags"] = new Dictionary<string, string>
-                {
-                    ["Primary"] = album.Id
-                }
+                ["ImageTags"] = item["ImageTags"]
             });
         }
 
         // Add songs
         foreach (var song in songs)
         {
+            var item = ConvertSongToJellyfinItem(song);
             searchHints.Add(new Dictionary<string, object?>
             {
-                ["Id"] = song.Id,
-                ["ItemId"] = song.Id,
-                ["Name"] = BuildExternalSongTitle(song),
+                ["Id"] = item["Id"],
+                ["ItemId"] = item["Id"],
+                ["Name"] = item["Name"],
                 ["Type"] = "Audio",
-                ["Album"] = AppendExternalSourceLabel(song.Album, song.ExternalProvider),
-                ["AlbumArtist"] = AppendExternalSourceLabel(song.Artist, song.ExternalProvider),
-                ["Artists"] = (song.Artists.Count > 0 ? song.Artists : [song.Artist])
-                    .Select(name => AppendExternalSourceLabel(name, song.ExternalProvider))
-                    .ToArray(),
-                ["RunTimeTicks"] = (song.Duration ?? 0) * TimeSpan.TicksPerSecond,
-                ["ImageTags"] = new Dictionary<string, string>
-                {
-                    ["Primary"] = song.Id
-                }
+                ["Album"] = item["Album"],
+                ["AlbumArtist"] = item["AlbumArtist"],
+                ["Artists"] = item["Artists"],
+                ["RunTimeTicks"] = item["RunTimeTicks"],
+                ["ImageTags"] = item["ImageTags"]
             });
         }
 
@@ -335,14 +328,31 @@ public class JellyfinResponseBuilder
     /// </summary>
     public Dictionary<string, object?> ConvertSongToJellyfinItem(Song song)
     {
+        if (song.IsLocal && JellyfinItemSnapshotHelper.TryGetClonedRawItemSnapshot(song, out var original))
+        {
+            return original;
+        }
+
         // Add external/explicit labels to song titles for external tracks.
         var songTitle = song.Title;
-        var artistName = song.Artist;
+        var artistNames = song.Artists
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => name.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var artistName = !string.IsNullOrWhiteSpace(song.Artist)
+            ? song.Artist.Trim()
+            : artistNames.FirstOrDefault() ?? (!string.IsNullOrWhiteSpace(song.AlbumArtist)
+                ? song.AlbumArtist.Trim()
+                : "Unknown artist");
+        if (artistNames.Count == 0) artistNames.Add(artistName);
+        var albumArtistName = !string.IsNullOrWhiteSpace(song.AlbumArtist)
+            ? song.AlbumArtist.Trim()
+            : artistName;
         var albumName = song.Album;
-        var artistNames = song.Artists.ToList();
         var runTimeTicks = Math.Max(0, song.Duration ?? 0) * TimeSpan.TicksPerSecond;
         var estimatedSize = song.Duration is > 0
-            ? song.Duration.Value * 1337L * 128L
+            ? song.Duration.Value * (DefaultExternalBitrate / 8L)
             : (long?)null;
 
         if (!song.IsLocal)
@@ -354,6 +364,7 @@ public class JellyfinResponseBuilder
             artistNames = artistNames
                 .Select(a => AppendExternalSourceLabel(a, song.ExternalProvider))
                 .ToList();
+            albumArtistName = AppendExternalSourceLabel(albumArtistName, song.ExternalProvider);
         }
 
         var primaryImageTag = song.IsLocal ? song.Id : $"{song.Id}-art-v2";
@@ -379,7 +390,6 @@ public class JellyfinResponseBuilder
                     }
                 ]
                 : [];
-        var albumArtistName = song.AlbumArtist ?? artistName;
         Dictionary<string, object?>[] albumArtists =
             !string.IsNullOrWhiteSpace(albumArtistName) &&
             !string.IsNullOrWhiteSpace(song.ArtistId)
@@ -460,7 +470,7 @@ public class JellyfinResponseBuilder
             ["LocationType"] = "FileSystem",
             ["MediaType"] = "Audio",
             ["NormalizationGain"] = 0.0,
-            ["Path"] = $"/music/{song.Artist}/{song.Album}/{song.Title}.flac",
+            ["Path"] = $"/music/{artistName}/{albumName}/{songTitle}.flac",
             ["CanDelete"] = false,
             ["CanDownload"] = true,
             ["SupportsSync"] = true
@@ -489,7 +499,7 @@ public class JellyfinResponseBuilder
                 {
                     ["Protocol"] = "File",
                     ["Id"] = song.Id,
-                    ["Path"] = $"/music/{song.Artist}/{song.Album}/{song.Title}.flac",
+                    ["Path"] = $"/music/{artistName}/{albumName}/{songTitle}.flac",
                     ["DirectStreamUrl"] = $"/Audio/{Uri.EscapeDataString(song.Id)}/stream?static=true",
                     ["TranscodingUrl"] = $"/Audio/{Uri.EscapeDataString(song.Id)}/universal?container=flac&audioCodec=flac",
                     ["Type"] = "Default",
@@ -527,7 +537,7 @@ public class JellyfinResponseBuilder
                             ["IsInterlaced"] = false,
                             ["IsAVC"] = false,
                             ["ChannelLayout"] = "stereo",
-                            ["BitRate"] = 1337000,
+                            ["BitRate"] = DefaultExternalBitrate,
                             ["BitDepth"] = 16,
                             ["Channels"] = 2,
                             ["SampleRate"] = 44100,
@@ -544,7 +554,7 @@ public class JellyfinResponseBuilder
                     },
                     ["MediaAttachments"] = new List<object>(),
                     ["Formats"] = new List<string>(),
-                    ["Bitrate"] = 1337000,
+                    ["Bitrate"] = DefaultExternalBitrate,
                     ["RequiredHttpHeaders"] = new Dictionary<string, string>(),
                     ["TranscodingSubProtocol"] = "http",
                     ["DefaultAudioStreamIndex"] = 0,
@@ -640,19 +650,23 @@ public class JellyfinResponseBuilder
     public Dictionary<string, object?> ConvertAlbumToJellyfinItem(Album album)
     {
         var albumName = album.Title;
+        var artistName = string.IsNullOrWhiteSpace(album.Artist)
+            ? "Unknown artist"
+            : album.Artist.Trim();
         if (!album.IsLocal)
         {
             albumName = AppendExternalSourceLabel(album.Title, album.ExternalProvider);
+            artistName = AppendExternalSourceLabel(artistName, album.ExternalProvider);
         }
 
         Dictionary<string, object?>[] albumArtistItems =
-            !string.IsNullOrWhiteSpace(album.Artist) &&
+            !string.IsNullOrWhiteSpace(artistName) &&
             !string.IsNullOrWhiteSpace(album.ArtistId)
             ?
             [
                 new Dictionary<string, object?>
                 {
-                    ["Name"] = album.Artist,
+                    ["Name"] = artistName,
                     ["Id"] = album.ArtistId
                 }
             ]
@@ -696,9 +710,9 @@ public class JellyfinResponseBuilder
                 ["Key"] = $"{album.Artist}-{album.Title}",
                 ["ItemId"] = album.Id
             },
-            ["Artists"] = new[] { album.Artist },
+            ["Artists"] = new[] { artistName },
             ["ArtistItems"] = albumArtistItems,
-            ["AlbumArtist"] = album.Artist,
+            ["AlbumArtist"] = artistName,
             ["AlbumArtists"] = albumArtistItems,
             ["ImageTags"] = new Dictionary<string, string>
             {
@@ -729,10 +743,12 @@ public class JellyfinResponseBuilder
     /// </summary>
     public Dictionary<string, object?> ConvertArtistToJellyfinItem(Artist artist)
     {
-        var artistName = artist.Name;
+        var artistName = string.IsNullOrWhiteSpace(artist.Name)
+            ? "Unknown artist"
+            : artist.Name.Trim();
         if (!artist.IsLocal)
         {
-            artistName = AppendExternalSourceLabel(artist.Name, artist.ExternalProvider);
+            artistName = AppendExternalSourceLabel(artistName, artist.ExternalProvider);
         }
 
         var item = new Dictionary<string, object?>

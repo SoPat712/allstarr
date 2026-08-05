@@ -1680,50 +1680,50 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task JellyfinExternalArtist_ReturnsProviderAlbumsAndTracksTogether()
+    public async Task JellyfinExternalArtist_NasAmazonLabelRoutesToProviderAlbumsAndTracks()
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(service => service.GetArtistAlbumsAsync(
-                It.IsAny<ProtocolExecutionContext>(), "fixture", "artist-1"))
+                It.IsAny<ProtocolExecutionContext>(), "spotiflac-amazon", "artist-1"))
             .ReturnsAsync([
                 new Album
                 {
-                    Id = "ext-fixture-album-album-1",
-                    ExternalProvider = "fixture",
+                    Id = "ext-spotiflac-amazon-album-album-1",
+                    ExternalProvider = "spotiflac-amazon",
                     ExternalId = "album-1",
-                    Title = "Fixture Album",
-                    Artist = "Fixture Artist",
-                    ArtistId = "ext-fixture-artist-artist-1",
+                    Title = "Illmatic",
+                    Artist = "NAS",
+                    ArtistId = "ext-spotiflac-amazon-artist-artist-1",
                     IsLocal = false
                 }
             ]);
         gateway.Setup(service => service.GetArtistTracksAsync(
-                It.IsAny<ProtocolExecutionContext>(), "fixture", "artist-1"))
+                It.IsAny<ProtocolExecutionContext>(), "spotiflac-amazon", "artist-1"))
             .ReturnsAsync([
                 new Song
                 {
-                    Id = "ext-fixture-song-track-1",
-                    ExternalProvider = "fixture",
+                    Id = "ext-spotiflac-amazon-song-track-1",
+                    ExternalProvider = "spotiflac-amazon",
                     ExternalId = "track-1",
-                    Title = "Fixture Track",
-                    Artist = "Fixture Artist",
-                    Artists = ["Fixture Artist"],
-                    ArtistId = "ext-fixture-artist-artist-1",
-                    ArtistIds = ["ext-fixture-artist-artist-1"],
-                    Album = "Fixture Album",
-                    AlbumId = "ext-fixture-album-album-1",
+                    Title = "N.Y. State of Mind",
+                    Artist = "NAS",
+                    Artists = ["NAS"],
+                    ArtistId = "ext-spotiflac-amazon-artist-artist-1",
+                    ArtistIds = ["ext-spotiflac-amazon-artist-artist-1"],
+                    Album = "Illmatic",
+                    AlbumId = "ext-spotiflac-amazon-album-album-1",
                     Duration = 210,
                     IsLocal = false
                 }
             ]);
         gateway.Setup(service => service.GetArtistAsync(
-                It.IsAny<ProtocolExecutionContext>(), "fixture", "artist-1"))
+                It.IsAny<ProtocolExecutionContext>(), "spotiflac-amazon", "artist-1"))
             .ReturnsAsync(new Artist
             {
-                Id = "ext-fixture-artist-artist-1",
-                ExternalProvider = "fixture",
+                Id = "ext-spotiflac-amazon-artist-artist-1",
+                ExternalProvider = "spotiflac-amazon",
                 ExternalId = "artist-1",
-                Name = "Fixture Artist",
+                Name = "NAS",
                 IsLocal = false
             });
         using var factory = new ProtocolFactory(
@@ -1739,16 +1739,18 @@ public sealed class ProtocolRouteFixtureTests
         using var client = factory.CreateClient();
 
         using var response = await client.GetAsync(
-            "/Items?ParentId=ext-fixture-artist-artist-1&IncludeItemTypes=MusicAlbum,Audio&Limit=10&api_key=fixture-key");
+            "/Items?ParentId=ext-spotiflac-amazon-artist-artist-1&IncludeItemTypes=MusicAlbum,Audio&Limit=10&api_key=fixture-key");
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var items = body.RootElement.GetProperty("Items").EnumerateArray().ToArray();
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(2, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
-        Assert.Contains(items, item => item.GetProperty("Type").GetString() == "MusicAlbum");
+        var album = Assert.Single(items, item => item.GetProperty("Type").GetString() == "MusicAlbum");
+        Assert.Equal("NAS [AmM]", album.GetProperty("AlbumArtist").GetString());
         var track = Assert.Single(items, item => item.GetProperty("Type").GetString() == "Audio");
         Assert.Equal(210 * TimeSpan.TicksPerSecond, track.GetProperty("RunTimeTicks").GetInt64());
-        Assert.Equal("ext-fixture-artist-artist-1", track.GetProperty("ArtistItems")[0].GetProperty("Id").GetString());
+        Assert.Equal("NAS [AmM]", track.GetProperty("Artists")[0].GetString());
+        Assert.Equal("ext-spotiflac-amazon-artist-artist-1", track.GetProperty("ArtistItems")[0].GetProperty("Id").GetString());
         gateway.VerifyAll();
     }
 
