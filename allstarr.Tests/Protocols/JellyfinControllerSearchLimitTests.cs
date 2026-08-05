@@ -60,15 +60,17 @@ public class JellyfinControllerSearchLimitTests
     }
 
     [Theory]
-    [InlineData(22, 20, 0, 20, 0, 0)]
-    [InlineData(22, 2, 20, 20, 0, 18)]
-    [InlineData(22, 0, 40, 20, 18, 20)]
-    [InlineData(0, 0, 0, 20, 0, 20)]
+    [InlineData(22, 20, 0, 20, 22, 0, 0)]
+    [InlineData(22, 2, 20, 20, 22, 0, 18)]
+    [InlineData(22, 0, 40, 20, 22, 18, 20)]
+    [InlineData(0, 0, 0, 20, 0, 0, 20)]
+    [InlineData(24, 2, 0, 200, 2, 0, 198)]
     public void VirtualPlaylistPage_FollowsBackendRowsWithoutBreakingPaging(
         int backendTotal,
         int backendReturned,
         int startIndex,
         int limit,
+        int expectedBackendTotal,
         int expectedStart,
         int expectedTake)
     {
@@ -76,9 +78,10 @@ public class JellyfinControllerSearchLimitTests
             "GetVirtualPlaylistPage",
             BindingFlags.Static | BindingFlags.NonPublic);
 
-        var result = ((int Start, int Take))method!.Invoke(
+        var result = ((int BackendTotal, int Start, int Take))method!.Invoke(
             null, [backendTotal, backendReturned, startIndex, limit])!;
 
+        Assert.Equal(expectedBackendTotal, result.BackendTotal);
         Assert.Equal(expectedStart, result.Start);
         Assert.Equal(expectedTake, result.Take);
     }

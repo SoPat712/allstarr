@@ -2235,7 +2235,7 @@ public sealed class ProtocolRouteFixtureTests
         Assert.All(playlist.RootElement.GetProperty("Items").EnumerateArray(),
             item => Assert.False(string.IsNullOrWhiteSpace(item.GetProperty("Id").GetString())));
         var first = playlist.RootElement.GetProperty("Items")[0];
-        Assert.False(first.TryGetProperty("ParentId", out _));
+        Assert.Equal(nativeId, first.GetProperty("ParentId").GetString());
         Assert.Equal("source-a", first.GetProperty("MediaSources")[0].GetProperty("Id").GetString());
         Assert.Equal(
             "every-field",
@@ -2381,13 +2381,14 @@ public sealed class ProtocolRouteFixtureTests
         var actual = JsonNode.Parse(
             tracks.RootElement.GetProperty("Items")[0].GetRawText())!.AsObject();
         var expected = JsonNode.Parse(originalItem)!.AsObject();
+        expected["ParentId"] = virtualId;
         expected["PlaylistItemId"] = "local-song-a";
 
         Assert.True(
             JsonNode.DeepEquals(expected, actual),
             $"Expected full source DTO with playlist overlays.\nExpected: {expected}\nActual: {actual}");
         Assert.Equal("Original Track", actual["Name"]!.GetValue<string>());
-        Assert.Equal("original-parent", actual["ParentId"]!.GetValue<string>());
+        Assert.Equal(virtualId, actual["ParentId"]!.GetValue<string>());
         Assert.False(actual["ProviderIds"]!.AsObject().ContainsKey("AllstarrSource"));
         Assert.Equal("local-song-a", actual["Id"]!.GetValue<string>());
         Assert.Equal("local-song-a", actual["PlaylistItemId"]!.GetValue<string>());

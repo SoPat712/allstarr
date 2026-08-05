@@ -314,6 +314,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                 }
             }
 
+            item["ParentId"] = responsePlaylistId;
             item["PlaylistItemId"] = track.NativePlaylistEntryId ?? track.BackendItemId;
             return item;
         }).ToArray();

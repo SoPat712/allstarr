@@ -1090,12 +1090,12 @@ public partial class JellyfinController
         foreach (var playlist in appendable.Skip(virtualPage.Start).Take(virtualPage.Take))
             items.Add(JsonSerializer.SerializeToNode(
                 _virtualPlaylistProtocolAdapter.ToItem(playlist)));
-        root["TotalRecordCount"] = backendTotal + appendable.Length;
+        root["TotalRecordCount"] = virtualPage.BackendTotal + appendable.Length;
         root["StartIndex"] = startIndex;
         return Content(root.ToJsonString(), "application/json");
     }
 
-    private static (int Start, int Take) GetVirtualPlaylistPage(
+    private static (int BackendTotal, int Start, int Take) GetVirtualPlaylistPage(
         int backendTotal,
         int backendReturned,
         int startIndex,
@@ -1103,9 +1103,13 @@ public partial class JellyfinController
     {
         var requestedLimit = Math.Max(0, limit);
         var backendEnd = startIndex + backendReturned;
-        return backendEnd < backendTotal || backendReturned >= requestedLimit
-            ? (0, 0)
-            : (Math.Max(0, backendEnd - backendTotal), requestedLimit - backendReturned);
+        var effectiveBackendTotal = backendReturned < requestedLimit
+            ? Math.Min(backendTotal, backendEnd)
+            : backendTotal;
+        return backendEnd < effectiveBackendTotal || backendReturned >= requestedLimit
+            ? (effectiveBackendTotal, 0, 0)
+            : (effectiveBackendTotal, Math.Max(0, backendEnd - effectiveBackendTotal),
+                requestedLimit - backendReturned);
     }
 
     #endregion
