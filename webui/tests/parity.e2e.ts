@@ -2470,6 +2470,15 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await expect(dialog.getByText("No automatic updates", { exact: true })).toBeVisible();
   await dialog.getByRole("button", { name: "Show 1 track needing review" }).click();
   await expect(dialog.getByRole("button", { name: "Track route" })).toContainText("To review (1)");
+  const mobileReview = dialog.getByRole("button", { name: "Open mapping details for Test song" });
+  await expect.poll(async () => (await mobileReview.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(44);
+  await mobileReview.click();
+  const mobileMatch = page.getByRole("dialog", { name: "Test song" });
+  await expect(mobileMatch).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(mobileMatch).toBeHidden();
+  await expect(dialog).toBeVisible();
+  await expect(mobileReview).toBeFocused();
   await dialog.getByRole("button", { name: "Close playlist details" }).click();
   await openPlaylist.click();
   await expect(dialog.getByRole("button", { name: "Track route" })).toContainText("All routes");

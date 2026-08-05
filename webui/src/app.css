@@ -2036,7 +2036,8 @@
 
   .track-title-button {
     overflow: hidden;
-    min-width: 0;
+    min-width: var(--control-md);
+    flex: 1 1 6rem;
     border: 0;
     background: transparent;
     color: var(--color-ink);
@@ -2070,6 +2071,7 @@
   .track-title-static {
     overflow: hidden;
     min-width: 0;
+    flex: 1 1 6rem;
     color: var(--color-ink);
     font-size: 0.86rem;
     text-overflow: ellipsis;
@@ -2088,7 +2090,8 @@
 
   .track-eligibility {
     overflow: hidden;
-    flex: none;
+    min-width: 0;
+    flex: 1 1 8rem;
     max-width: 12rem;
     border-radius: 999px;
     background: color-mix(in srgb, var(--color-warning) 12%, transparent);
