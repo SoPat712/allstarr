@@ -126,13 +126,26 @@ public class CacheKeyBuilderTests
     [Fact]
     public void PlaybackMissKeys_UseTheNegativeResultPolicy()
     {
-        var key = CacheKeyBuilder.BuildPlaybackMetadataNegativeKey("jellyfin", "track-1");
+        var metadataKey = CacheKeyBuilder.BuildPlaybackMetadataNegativeKey("jellyfin", "track-1");
+        var routeKey = CacheKeyBuilder.BuildPlaybackRouteNegativeKey(
+            Guid.CreateVersion7(),
+            Guid.CreateVersion7(),
+            "music",
+            "spotiflac-ytmusic-spotiflac",
+            "private-track-id",
+            "Lossless");
 
-        Assert.StartsWith("negative:playback:metadata:v1:jellyfin:", key);
-        Assert.DoesNotContain("track-1", key, StringComparison.Ordinal);
+        Assert.StartsWith("negative:playback:metadata:v1:jellyfin:", metadataKey);
+        Assert.DoesNotContain("track-1", metadataKey, StringComparison.Ordinal);
         Assert.Equal(
             ApplicationCacheCategory.NegativeResult,
-            ApplicationCachePolicyRegistry.Classify(key));
+            ApplicationCachePolicyRegistry.Classify(metadataKey));
+        Assert.StartsWith("negative:playback:route:v1:", routeKey);
+        Assert.DoesNotContain("private-track-id", routeKey, StringComparison.Ordinal);
+        Assert.DoesNotContain("spotiflac", routeKey, StringComparison.Ordinal);
+        Assert.Equal(
+            ApplicationCacheCategory.NegativeResult,
+            ApplicationCachePolicyRegistry.Classify(routeKey));
     }
 
     [Fact]

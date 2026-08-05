@@ -67,58 +67,32 @@ public class MultiProviderDownloadService : IDownloadService
 
     public async Task<Stream> DownloadAndStreamAsync(string externalProvider, string externalId, Common.StreamQuality? qualityOverride = null, CancellationToken cancellationToken = default)
     {
-        var streamingProviders = GetPrioritizedStreamingProviders(externalProvider);
-        if (streamingProviders.Count == 0)
+        cancellationToken.ThrowIfCancellationRequested();
+        var savedProvider = CanonicalProviderId(externalProvider);
+        if (!_statusManager.GetEnabledPlaybackProviders().Contains(
+                savedProvider,
+                StringComparer.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException("No streaming providers are currently enabled and healthy.");
+            throw new NotSupportedException(
+                "The saved provider cannot stream this track and no exact fallback route is available.");
         }
 
-        Exception? lastException = null;
-
-        foreach (var targetProvider in streamingProviders)
+        var service = GetDownloadServiceByName(savedProvider);
+        if (service == null)
         {
-            try
-            {
-                _logger.LogInformation("Attempting streaming using target provider: {TargetProvider}", targetProvider);
-
-                string targetId = externalId;
-                if (!ProviderIdsEquivalent(externalProvider, targetProvider))
-                {
-                    var translatedId = await TranslateIdAsync(externalProvider, externalId, targetProvider, cancellationToken);
-                    if (string.IsNullOrEmpty(translatedId))
-                    {
-                        _logger.LogWarning("Could not translate track ID from {SourceProvider}:{SourceId} to {TargetProvider} for streaming", externalProvider, externalId, targetProvider);
-                        continue;
-                    }
-                    targetId = translatedId;
-                }
-
-                var service = GetDownloadServiceByName(targetProvider);
-                if (service == null)
-                {
-                    _logger.LogWarning("Download service for {Provider} is not registered", targetProvider);
-                    continue;
-                }
-
-                var stream = await service.DownloadAndStreamAsync(targetProvider, targetId, qualityOverride, cancellationToken);
-                if (stream != null)
-                {
-                    _logger.LogInformation("Successfully opened stream using provider {Provider}", targetProvider);
-                    return stream;
-                }
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Streaming failed using provider {Provider}", targetProvider);
-                lastException = ex;
-            }
+            throw new NotSupportedException(
+                "The saved provider cannot stream this track and no exact fallback route is available.");
         }
 
-        throw new InvalidOperationException("All configured download services failed to stream the song.", lastException);
+        _logger.LogInformation(
+            "Opening stream with chosen provider {ChosenProvider} and serving provider {ServingProvider}",
+            savedProvider,
+            savedProvider);
+        return await service.DownloadAndStreamAsync(
+            savedProvider,
+            externalId,
+            qualityOverride,
+            cancellationToken);
     }
 
     private static bool ProviderIdsEquivalent(string left, string right) =>
@@ -183,18 +157,6 @@ public class MultiProviderDownloadService : IDownloadService
     private IReadOnlyList<string> GetPrioritizedDownloadProviders()
     {
         return _statusManager.GetEnabledDownloadProviders();
-    }
-
-    private IReadOnlyList<string> GetPrioritizedStreamingProviders(string sourceProvider)
-    {
-        var source = CanonicalProviderId(sourceProvider);
-        var enabled = _statusManager.GetEnabledPlaybackProviders();
-        var sourceAvailable = enabled.Contains(source, StringComparer.OrdinalIgnoreCase);
-
-        return (sourceAvailable ? new[] { source } : [])
-            .Concat(enabled)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
     }
 
     private IDownloadService? GetDownloadServiceByName(string name)

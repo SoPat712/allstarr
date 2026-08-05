@@ -8,6 +8,8 @@ using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
 using allstarr.Services;
+using allstarr.Services.Common;
+using Microsoft.Extensions.Logging;
 
 namespace allstarr.Core.Protocols;
 
@@ -81,7 +83,10 @@ public interface IProtocolProviderGateway
         int? durationSeconds = null);
 }
 
-public sealed record ProtocolProviderStream(HttpResponseMessage Response, ProviderStreamLease Lease);
+public sealed record ProtocolProviderStream(
+    HttpResponseMessage Response,
+    ProviderStreamLease Lease,
+    string ServingProviderId);
 
 public sealed class ProtocolProviderGateway(
     IProviderRouter router,
@@ -89,10 +94,13 @@ public sealed class ProtocolProviderGateway(
     IProviderRouteAccountResolver accounts,
     IMusicMetadataService legacyMetadata,
     IHttpClientFactory httpClientFactory,
-    IConfiguration? configuration = null) : IProtocolProviderGateway
+    IConfiguration? configuration = null,
+    IApplicationCache? applicationCache = null,
+    ILogger<ProtocolProviderGateway>? logger = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
     private const int ProviderSearchConcurrency = 4;
+    private static readonly TimeSpan ExactRouteMissTtl = TimeSpan.FromMinutes(2);
 
     public IReadOnlyList<string> GetProviderOrder(ProviderCapabilityKind capability) =>
         ResolveProviderOrder(capability);
@@ -568,67 +576,148 @@ public sealed class ProtocolProviderGateway(
         if (protocol.Actor is null) return null;
 
         providerId = NormalizeProvider(providerId);
+        var actor = protocol.RequireActor();
+        var exactRouteMissKey = CacheKeyBuilder.BuildPlaybackRouteNegativeKey(
+            actor.TenantId,
+            actor.EffectiveUserId,
+            protocol.LibraryScopeId,
+            providerId,
+            externalId,
+            quality.ToString());
+        if (applicationCache?.IsEnabled == true &&
+            await applicationCache.ExistsAsync(exactRouteMissKey))
+        {
+            logger?.LogDebug(
+                "Skipping repeated playback translation miss for chosen provider {ChosenProvider}",
+                providerId);
+            return null;
+        }
+
         var parsedRange = ParseRange(rangeHeader);
         var rangeStart = parsedRange?.Ranges.Single().From;
         var trackId = new ProviderExternalResourceId(
             providerId, ProviderResourceKind.Track, externalId);
-        var routed = await PlanExactAsync<IProviderStreamingCapability>(
+        var providerOrder = new[] { providerId }
+            .Concat(ResolveProviderOrder(ProviderCapabilityKind.Streaming))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var plan = await router.PlanAsync<IProviderStreamingCapability>(Request(
             protocol,
-            providerId,
+            actor,
             ProviderCapabilityKind.Streaming,
             "protocol-stream-open",
+            providerOrder,
             trackId,
-            quality);
-        if (routed.Candidate == null) return null;
-        var candidate = routed.Candidate;
-        var leaseRequest = new ProviderStreamLeaseRequest(
-            trackId, quality, rangeStart);
-
-        async Task<ProviderStreamLease> ResolveLeaseAsync()
+            quality,
+            allowFallback: true));
+        if (plan.Candidates.Count == 0)
         {
-            var outcome = await candidate.Implementation.GetStreamLeaseAsync(
-                candidate.Context,
-                leaseRequest);
-            if (!outcome.IsSuccess)
-                ThrowRouteFailure(outcome.Error!);
-            return outcome.RequireValue();
-        }
+            if (plan.Decision.Candidates.Any(item =>
+                    item.ProviderId.Equals(providerId, StringComparison.Ordinal) &&
+                    item.ReasonCode != "capability-unavailable"))
+            {
+                throw new UnauthorizedAccessException(
+                    "The provider route is not available to this user.");
+            }
 
-        async Task<HttpResponseMessage> OpenLeaseAsync(ProviderStreamLease lease)
-        {
-            using var request = new HttpRequestMessage(
-                headOnly ? HttpMethod.Head : HttpMethod.Get,
-                lease.ProtectedSourceUri);
-            if (parsedRange != null && lease.SupportsByteRanges)
-                request.Headers.Range = parsedRange;
-            return lease.ProtectedResponseFactory != null
-                ? await lease.ProtectedResponseFactory(request, protocol.CancellationToken)
-                : await httpClientFactory.CreateClient(StreamingClientName).SendAsync(
-                    request,
-                    HttpCompletionOption.ResponseHeadersRead,
-                    protocol.CancellationToken);
+            var isTranslationMiss = plan.Decision.Candidates.Any(item =>
+                    item.ReasonCode == "verified-identity-required") &&
+                plan.Decision.Candidates.All(item =>
+                    item.ReasonCode is "capability-unavailable" or "verified-identity-required");
+            if (isTranslationMiss && applicationCache?.IsEnabled == true)
+            {
+                await applicationCache.SetStringAsync(
+                    exactRouteMissKey,
+                    "1",
+                    ExactRouteMissTtl);
+            }
+            return null;
         }
 
-        var lease = await ResolveLeaseAsync();
-        HttpResponseMessage response;
-        try
+        for (var candidateIndex = 0; candidateIndex < plan.Candidates.Count; candidateIndex++)
         {
-            response = await OpenLeaseAsync(lease);
+            var candidate = plan.Candidates[candidateIndex];
+            var leaseRequest = new ProviderStreamLeaseRequest(
+                candidate.TrackId ?? trackId,
+                quality,
+                rangeStart);
+
+            async Task<ProviderOutcome<ProviderStreamLease>> ResolveLeaseAsync() =>
+                await candidate.Implementation.GetStreamLeaseAsync(
+                    candidate.Context,
+                    leaseRequest);
+
+            async Task<HttpResponseMessage> OpenLeaseAsync(ProviderStreamLease lease)
+            {
+                using var request = new HttpRequestMessage(
+                    headOnly ? HttpMethod.Head : HttpMethod.Get,
+                    lease.ProtectedSourceUri);
+                if (parsedRange != null && lease.SupportsByteRanges)
+                    request.Headers.Range = parsedRange;
+                return lease.ProtectedResponseFactory != null
+                    ? await lease.ProtectedResponseFactory(request, protocol.CancellationToken)
+                    : await httpClientFactory.CreateClient(StreamingClientName).SendAsync(
+                        request,
+                        HttpCompletionOption.ResponseHeadersRead,
+                        protocol.CancellationToken);
+            }
+
+            var leaseOutcome = await ResolveLeaseAsync();
+            if (!leaseOutcome.IsSuccess)
+            {
+                var fallback = router.EvaluateFallback(
+                    plan,
+                    candidateIndex,
+                    leaseOutcome.Error!);
+                if (fallback.Disposition == ProviderFallbackDisposition.Advance)
+                {
+                    logger?.LogInformation(
+                        "Exact playback fallback advanced from chosen provider {ChosenProvider} after {FailureCode}",
+                        providerId,
+                        leaseOutcome.Error!.Code);
+                    continue;
+                }
+                ThrowRouteFailure(leaseOutcome.Error!);
+                return null;
+            }
+
+            var lease = leaseOutcome.RequireValue();
+            HttpResponseMessage response;
+            try
+            {
+                response = await OpenLeaseAsync(lease);
+            }
+            catch (HttpRequestException) when (
+                lease.RetryBehavior != ProviderStreamRetryBehavior.DoNotRetry)
+            {
+                if (lease.RetryBehavior == ProviderStreamRetryBehavior.RefreshLease)
+                {
+                    var refreshed = await ResolveLeaseAsync();
+                    if (!refreshed.IsSuccess) ThrowRouteFailure(refreshed.Error!);
+                    lease = refreshed.RequireValue();
+                }
+                response = await OpenLeaseAsync(lease);
+            }
+            if (ShouldRetry(lease, response.StatusCode))
+            {
+                response.Dispose();
+                if (lease.RetryBehavior == ProviderStreamRetryBehavior.RefreshLease)
+                {
+                    var refreshed = await ResolveLeaseAsync();
+                    if (!refreshed.IsSuccess) ThrowRouteFailure(refreshed.Error!);
+                    lease = refreshed.RequireValue();
+                }
+                response = await OpenLeaseAsync(lease);
+            }
+
+            logger?.LogInformation(
+                "Opened stream with chosen provider {ChosenProvider} and serving provider {ServingProvider}",
+                providerId,
+                candidate.Provider.Id);
+            return new ProtocolProviderStream(response, lease, candidate.Provider.Id);
         }
-        catch (HttpRequestException) when (lease.RetryBehavior != ProviderStreamRetryBehavior.DoNotRetry)
-        {
-            if (lease.RetryBehavior == ProviderStreamRetryBehavior.RefreshLease)
-                lease = await ResolveLeaseAsync();
-            response = await OpenLeaseAsync(lease);
-        }
-        if (ShouldRetry(lease, response.StatusCode))
-        {
-            response.Dispose();
-            if (lease.RetryBehavior == ProviderStreamRetryBehavior.RefreshLease)
-                lease = await ResolveLeaseAsync();
-            response = await OpenLeaseAsync(lease);
-        }
-        return new ProtocolProviderStream(response, lease);
+
+        return null;
     }
 
     private static bool ShouldRetry(ProviderStreamLease lease, HttpStatusCode statusCode) =>

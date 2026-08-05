@@ -169,21 +169,38 @@ public sealed class ProtocolProviderStreamingGatewayTests
     }
 
     [Fact]
-    public async Task OpenStream_UsesOnlyTheStoredProviderAndTrack()
+    public async Task OpenStream_UsesOnlyAnExactVerifiedFallbackTrack()
     {
         var first = Capability("deezer", ProviderOutcome<ProviderStreamLease>.Failure(
             new ProviderError(ProviderErrorKind.TransientFailure)));
-        var second = Capability("qobuz", ProviderOutcome<ProviderStreamLease>.Failure(
-            new ProviderError(ProviderErrorKind.TransientFailure)));
+        var second = Capability("qobuz", ProviderOutcome<ProviderStreamLease>.Success(new(
+            "qobuz-lease",
+            new Uri("https://media.example.test/track"),
+            DateTimeOffset.UtcNow.AddMinutes(1),
+            true,
+            true,
+            new ProviderMediaFormat("audio/flac", "flac", "flac"),
+            ProviderStreamRetryBehavior.DoNotRetry,
+            (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)))));
         var registry = Registry(first.Object, second.Object);
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
         router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(
                 It.Is<ProviderRouteRequest>(request =>
-                    !request.Policy.AllowFallback &&
+                    request.Policy.AllowFallback &&
                     request.SourceTrackId!.ProviderId == "deezer" &&
                     request.SourceTrackId.Value == "source-track" &&
-                    request.ProviderPriority.SequenceEqual(new[] { "deezer" }))))
-            .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry, first.Object));
+                    request.ProviderPriority.SequenceEqual(new[] { "deezer", "qobuz" }))))
+            .ReturnsAsync((ProviderRouteRequest request) =>
+                Plan(request, registry, first.Object, second.Object));
+        router.Setup(item => item.EvaluateFallback(
+                It.IsAny<ProviderRoutePlan<IProviderStreamingCapability>>(),
+                0,
+                It.Is<ProviderError>(error => error.Kind == ProviderErrorKind.TransientFailure)))
+            .Returns((ProviderRoutePlan<IProviderStreamingCapability> plan, int _, ProviderError _) =>
+                new ProviderFallbackDecision<IProviderStreamingCapability>(
+                    ProviderFallbackDisposition.Advance,
+                    "fallback-transient-failure",
+                    plan.Candidates[1]));
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
@@ -191,9 +208,11 @@ public sealed class ProtocolProviderStreamingGatewayTests
             Mock.Of<IMusicMetadataService>(),
             new HttpClientFactory());
 
-        await Assert.ThrowsAsync<HttpRequestException>(() => gateway.OpenStreamAsync(
-            Context(), "deezer", "source-track", ProviderAudioQuality.Lossless, null));
+        var stream = await gateway.OpenStreamAsync(
+            Context(), "deezer", "source-track", ProviderAudioQuality.Lossless, null);
 
+        Assert.NotNull(stream);
+        Assert.Equal("qobuz", stream.ServingProviderId);
         first.Verify(item => item.GetStreamLeaseAsync(
             It.IsAny<ProviderExecutionContext>(),
             It.Is<ProviderStreamLeaseRequest>(request =>
@@ -201,8 +220,86 @@ public sealed class ProtocolProviderStreamingGatewayTests
                 request.TrackId.Value == "source-track")), Times.Once);
         second.Verify(item => item.GetStreamLeaseAsync(
             It.IsAny<ProviderExecutionContext>(),
-            It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
+            It.Is<ProviderStreamLeaseRequest>(request =>
+                request.TrackId.ProviderId == "qobuz" &&
+                request.TrackId.Value == "qobuz-track")), Times.Once);
+        stream.Response.Dispose();
         first.VerifyAll();
+        second.VerifyAll();
+        router.VerifyAll();
+    }
+
+    [Fact]
+    public async Task OpenStream_CachesABoundedExactTranslationMiss()
+    {
+        var capability = Capability("qobuz", ProviderOutcome<ProviderStreamLease>.Failure(
+            new ProviderError(ProviderErrorKind.TransientFailure)));
+        var registry = Registry(capability.Object);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(
+                It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => TranslationMissPlan(request));
+        var gateway = new ProtocolProviderGateway(
+            router.Object,
+            registry,
+            Mock.Of<IProviderRouteAccountResolver>(),
+            Mock.Of<IMusicMetadataService>(),
+            new HttpClientFactory(),
+            applicationCache: new TestMemoryApplicationCache());
+        var context = Context();
+
+        Assert.Null(await gateway.OpenStreamAsync(
+            context, "spotiflac-ytmusic-spotiflac", "private-track-id",
+            ProviderAudioQuality.Lossless, null));
+        Assert.Null(await gateway.OpenStreamAsync(
+            context, "spotiflac-ytmusic-spotiflac", "private-track-id",
+            ProviderAudioQuality.Lossless, null));
+
+        router.Verify(item => item.PlanAsync<IProviderStreamingCapability>(
+            It.IsAny<ProviderRouteRequest>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task OpenStream_ConcurrentTranslationMissesFailSafelyAndReuseTheCache()
+    {
+        var capability = Capability("qobuz", ProviderOutcome<ProviderStreamLease>.Failure(
+            new ProviderError(ProviderErrorKind.TransientFailure)));
+        var registry = Registry(capability.Object);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bothStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(
+                It.IsAny<ProviderRouteRequest>()))
+            .Returns(async (ProviderRouteRequest request) =>
+            {
+                if (Interlocked.Increment(ref calls) == 2) bothStarted.SetResult();
+                await release.Task;
+                return TranslationMissPlan(request);
+            });
+        var gateway = new ProtocolProviderGateway(
+            router.Object,
+            registry,
+            Mock.Of<IProviderRouteAccountResolver>(),
+            Mock.Of<IMusicMetadataService>(),
+            new HttpClientFactory(),
+            applicationCache: new TestMemoryApplicationCache());
+        var context = Context();
+
+        var first = gateway.OpenStreamAsync(
+            context, "spotiflac-ytmusic-spotiflac", "private-track-id",
+            ProviderAudioQuality.DataSaver, null);
+        var second = gateway.OpenStreamAsync(
+            context, "spotiflac-ytmusic-spotiflac", "private-track-id",
+            ProviderAudioQuality.DataSaver, null);
+        await bothStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        release.SetResult();
+
+        Assert.All(await Task.WhenAll(first, second), Assert.Null);
+        Assert.Null(await gateway.OpenStreamAsync(
+            context, "spotiflac-ytmusic-spotiflac", "private-track-id",
+            ProviderAudioQuality.DataSaver, null));
+        Assert.Equal(2, calls);
     }
 
     [Theory]
@@ -436,7 +533,10 @@ public sealed class ProtocolProviderStreamingGatewayTests
                 new ProviderExternalResourceId(
                     capability.ProviderId,
                     ProviderResourceKind.Track,
-                    $"{capability.ProviderId}-track"));
+                    request.SourceTrackId is { } source &&
+                    source.ProviderId == capability.ProviderId
+                        ? source.Value
+                        : $"{capability.ProviderId}-track"));
         }).ToArray();
         return new ProviderRoutePlan<IProviderStreamingCapability>(
             request,
@@ -505,6 +605,30 @@ public sealed class ProtocolProviderStreamingGatewayTests
                 null,
                 null,
                 []));
+
+    private static ProviderRoutePlan<IProviderStreamingCapability> TranslationMissPlan(
+        ProviderRouteRequest request) => new(
+        request,
+        [],
+        new ProviderRouteDecisionRecord(
+            request.CorrelationId,
+            request.Capability,
+            null,
+            null,
+            [
+                new ProviderRouteCandidateDecision(
+                    request.SourceTrackId!.ProviderId,
+                    null,
+                    ProviderRouteDecisionStatus.Rejected,
+                    "capability-unavailable",
+                    0),
+                new ProviderRouteCandidateDecision(
+                    "qobuz",
+                    null,
+                    ProviderRouteDecisionStatus.Rejected,
+                    "verified-identity-required",
+                    1)
+            ]));
 
     private static ProtocolExecutionContext Context()
     {

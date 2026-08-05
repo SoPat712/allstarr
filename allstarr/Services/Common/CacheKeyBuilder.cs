@@ -16,6 +16,16 @@ public static class CacheKeyBuilder
     public static string BuildPlaybackMetadataNegativeKey(string provider, string itemId) =>
         $"negative:playback:metadata:v1:{Normalize(provider)}:{Digest(itemId.Trim())}";
 
+    public static string BuildPlaybackRouteNegativeKey(
+        Guid tenantId,
+        Guid? userId,
+        string? libraryScopeId,
+        string provider,
+        string itemId,
+        string quality) =>
+        $"negative:playback:route:v1:{DigestIdentity(
+            tenantId, userId, libraryScopeId, provider, itemId, quality)}";
+
     public static string BuildJellyfinItemTypeKey(string itemId) =>
         $"jellyfin:item-type:v2:{Digest(itemId.Trim())}";
 

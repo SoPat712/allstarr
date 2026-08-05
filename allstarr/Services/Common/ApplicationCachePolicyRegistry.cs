@@ -64,7 +64,11 @@ public static class ApplicationCachePolicyRegistry
             category = ApplicationCacheCategory.Artwork;
         if (StartsWithAny(key, "lyrics:v2:", "lyrics:id:v2:", "lyricsplus:v2:"))
             category = ApplicationCacheCategory.Lyrics;
-        if (StartsWithAny(key, "negative:playback:metadata:v1:", "negative:musicbrainz:"))
+        if (StartsWithAny(
+                key,
+                "negative:playback:metadata:v1:",
+                "negative:playback:route:v1:",
+                "negative:musicbrainz:"))
             category = ApplicationCacheCategory.NegativeResult;
         if (key.StartsWith("playback:signal:dedupe:v1:", StringComparison.Ordinal))
             category = ApplicationCacheCategory.Coordination;

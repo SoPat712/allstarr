@@ -56,9 +56,15 @@ public sealed class MultiProviderDownloadServiceTests
                 It.IsAny<string>(),
                 It.IsAny<CancellationToken>()),
             Times.Never);
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<NotSupportedException>(() =>
             service.DownloadAndStreamAsync("deezer", "track-2"));
         Assert.Null(deezer.Call);
+        metadata.Verify(
+            item => item.GetSongAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
