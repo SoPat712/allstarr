@@ -889,6 +889,14 @@ item_contract='
                 (.Id | nonempty) and
                 (.DirectStreamUrl | nonempty) and
                 (.RunTimeTicks == $runtime) and
+                (.Bitrate | type == "number" and . > 0) and
+                (.Bitrate as $bitrate |
+                    (.MediaStreams | type == "array" and length > 0 and
+                        all(.[]; .Type == "Audio" and .BitRate == $bitrate)) and
+                    (if $runtime > 0
+                     then .Size == (($runtime / 10000000 | floor) * ($bitrate / 8 | floor))
+                     else .Size == null
+                     end)) and
                 (.SupportsDirectPlay | type == "boolean") and
                 (.SupportsDirectStream | type == "boolean") and
                 (.MediaStreams | type == "array" and length > 0)));
@@ -901,6 +909,9 @@ check_external_provider_case() {
         "$item_contract external_audio and .Id == \$id" --arg id "$song_id"
     artist_id="$(jq -r '.ArtistItems[0].Id // empty' "$response_file")"
     album_id="$(jq -r '.AlbumId // empty' "$response_file")"
+    check_json "$provider user item detail" \
+        "$ALLSTARR_BASE/Users/$best_user_id/Items/$song_id" \
+        "$item_contract external_audio and .Id == \$id" --arg id "$song_id"
 
     if [[ -n "$artist_id" ]]; then
         check_json "$provider artist detail" \
@@ -926,6 +937,11 @@ check_external_provider_case() {
              (.TotalRecordCount | type == "number") and
              all(.Items[]; .Type == "MusicAlbum" or .Type == "Audio")' \
             --arg id "$artist_id"
+        check_json "$provider artist instant mix" \
+            "$ALLSTARR_BASE/Artists/$artist_id/InstantMix?UserId=$best_user_id&Limit=10" \
+            '(.Items | type == "array") and
+             (.TotalRecordCount | type == "number") and
+             all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0)'
     else
         block "$provider artist routes=provider omitted artist relationship ID"
     fi
@@ -939,6 +955,11 @@ check_external_provider_case() {
              (.TotalRecordCount | type == "number") and
              all(.Items[]; .Type == "Audio" and .AlbumId == $id and .RunTimeTicks > 0)' \
             --arg id "$album_id"
+        check_json "$provider album instant mix" \
+            "$ALLSTARR_BASE/Albums/$album_id/InstantMix?UserId=$best_user_id&Limit=10" \
+            '(.Items | type == "array") and
+             (.TotalRecordCount | type == "number") and
+             all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0)'
     else
         block "$provider album routes=provider omitted album relationship ID"
     fi
@@ -949,9 +970,24 @@ check_external_provider_case() {
         --arg id "$song_id"
     check_json "$provider similar songs" \
         "$ALLSTARR_BASE/Items/$song_id/Similar?UserId=$best_user_id&Limit=10" \
-        '(.Items | type == "array" and length > 0) and
+        '(.Items | type == "array") and
+         (.TotalRecordCount | type == "number") and
          all(.Items[]; .Type == "Audio" and .Id != $id and .RunTimeTicks > 0)' \
         --arg id "$song_id"
+    check_json "$provider song instant mix" \
+        "$ALLSTARR_BASE/Songs/$song_id/InstantMix?UserId=$best_user_id&Limit=10" \
+        '(.Items | type == "array") and
+         (.TotalRecordCount | type == "number") and
+         all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0)'
+    check_image "$provider advertised artwork" \
+        "$ALLSTARR_BASE/Items/$song_id/Images/Primary?maxWidth=300&maxHeight=300&UserId=$best_user_id"
+    check_code "$provider artwork HEAD" "200,304" HEAD \
+        "$ALLSTARR_BASE/Items/$song_id/Images/Primary?maxWidth=300&maxHeight=300&UserId=$best_user_id"
+    check_optional_json "$provider lyrics" \
+        "$ALLSTARR_BASE/Audio/$song_id/Lyrics?UserId=$best_user_id" \
+        '(.Lyrics | type == "array") and
+         all(.Lyrics[]; (.Text | type == "string") and
+             ((has("Start") | not) or (.Start | type == "number")))'
     if [[ "$TEST_EXTERNAL_STREAM" == 1 ]]; then
         check_external_stream "$provider external stream" \
             "$ALLSTARR_BASE/Audio/$song_id/stream?static=true&UserId=$best_user_id"
@@ -1011,7 +1047,13 @@ check_json "artists browse" "$ALLSTARR_BASE/Artists?UserId=$best_user_id&Limit=1
     '(.Items | type == "array") and all(.Items[]; .Type == "MusicArtist")'
 check_json "album artists browse" "$ALLSTARR_BASE/Artists/AlbumArtists?UserId=$best_user_id&Limit=10" \
     '(.Items | type == "array") and all(.Items[]; .Type == "MusicArtist")'
-[[ -z "$artist_id" ]] || check_json "artist detail" "$ALLSTARR_BASE/Artists/$artist_id?UserId=$best_user_id" '.Type == "MusicArtist"'
+if [[ -n "$artist_id" ]]; then
+    check_json "artist detail" "$ALLSTARR_BASE/Artists/$artist_id?UserId=$best_user_id" '.Type == "MusicArtist"'
+    compare_projection "artist detail full object" \
+        "$DIRECT_BASE/Artists/$artist_id?UserId=$best_user_id" \
+        "$ALLSTARR_BASE/Artists/$artist_id?UserId=$best_user_id" \
+        '.'
+fi
 check_json "item filters" "$ALLSTARR_BASE/Items/Filters?UserId=$best_user_id" 'type == "object"'
 check_json "item filters2" "$ALLSTARR_BASE/Items/Filters2?UserId=$best_user_id" 'type == "object"'
 check_json "genres browse" "$ALLSTARR_BASE/Genres?UserId=$best_user_id&Limit=10" \
@@ -1047,16 +1089,36 @@ check_json "similar music" "$ALLSTARR_BASE/Items/$media_id/Similar?UserId=$best_
      (.TotalRecordCount | type == "number") and
      .StartIndex == 0 and
      all(.Items[]; (.Type == "Audio" or .Type == "MusicAlbum" or .Type == "MusicArtist"))'
+compare_projection "similar full native objects" \
+    "$DIRECT_BASE/Items/$media_id/Similar?UserId=$best_user_id&Limit=10" \
+    "$ALLSTARR_BASE/Items/$media_id/Similar?UserId=$best_user_id&Limit=10" \
+    '[.Items[] | select(.Type == "Audio" or .Type == "MusicAlbum" or .Type == "MusicArtist")]' \
+    '.Items'
 check_json "instant mix" "$ALLSTARR_BASE/Songs/$media_id/InstantMix?UserId=$best_user_id&Limit=10" \
     '(.Items | type == "array") and
      (.TotalRecordCount | type == "number") and
      .StartIndex == 0 and
      all(.Items[]; .Type == "Audio")'
-[[ -z "$album_id" ]] || check_json "album instant mix" "$ALLSTARR_BASE/Albums/$album_id/InstantMix?UserId=$best_user_id&Limit=10" \
-    '(.Items | type == "array") and
-     (.TotalRecordCount | type == "number") and
-     .StartIndex == 0 and
-     all(.Items[]; .Type == "Audio")'
+compare_projection "instant mix full objects" \
+    "$DIRECT_BASE/Songs/$media_id/InstantMix?UserId=$best_user_id&Limit=10" \
+    "$ALLSTARR_BASE/Songs/$media_id/InstantMix?UserId=$best_user_id&Limit=10" \
+    '.Items'
+if [[ -n "$album_id" ]]; then
+    check_json "album detail" "$ALLSTARR_BASE/Items/$album_id?UserId=$best_user_id" '.Type == "MusicAlbum"'
+    compare_projection "album detail full object" \
+        "$DIRECT_BASE/Items/$album_id?UserId=$best_user_id" \
+        "$ALLSTARR_BASE/Items/$album_id?UserId=$best_user_id" \
+        '.'
+    check_json "album instant mix" "$ALLSTARR_BASE/Albums/$album_id/InstantMix?UserId=$best_user_id&Limit=10" \
+        '(.Items | type == "array") and
+         (.TotalRecordCount | type == "number") and
+         .StartIndex == 0 and
+         all(.Items[]; .Type == "Audio")'
+    compare_projection "album mix full objects" \
+        "$DIRECT_BASE/Albums/$album_id/InstantMix?UserId=$best_user_id&Limit=10" \
+        "$ALLSTARR_BASE/Albums/$album_id/InstantMix?UserId=$best_user_id&Limit=10" \
+        '.Items'
+fi
 
 for denied_path in \
     "/Videos/security-probe/stream" \
@@ -1101,6 +1163,10 @@ compare_projection "audio browse stable data" \
     "$DIRECT_BASE/Users/$best_user_id/Items?$items_query" \
     "$ALLSTARR_BASE/Users/$best_user_id/Items?$items_query" \
     '[.Items[] | {Id,Name,Type,AlbumId,Artists,ArtistItems,RunTimeTicks,ImageTags}] | sort_by(.Id)'
+compare_projection "audio browse full objects" \
+    "$DIRECT_BASE/Users/$best_user_id/Items?$items_query" \
+    "$ALLSTARR_BASE/Users/$best_user_id/Items?$items_query" \
+    '[.Items[]] | sort_by(.Id)'
 compare_structure "audio detail structure parity" \
     "$DIRECT_BASE/Users/$best_user_id/Items/$media_id" \
     "$ALLSTARR_BASE/Users/$best_user_id/Items/$media_id"
@@ -1108,6 +1174,10 @@ compare_projection "audio detail stable data" \
     "$DIRECT_BASE/Users/$best_user_id/Items/$media_id" \
     "$ALLSTARR_BASE/Users/$best_user_id/Items/$media_id" \
     '{Id,Name,Type,AlbumId,Artists,ArtistItems,RunTimeTicks,ImageTags,ProviderIds}'
+compare_projection "audio detail full object" \
+    "$DIRECT_BASE/Users/$best_user_id/Items/$media_id" \
+    "$ALLSTARR_BASE/Users/$best_user_id/Items/$media_id" \
+    '.'
 search_hint_path="/Search/Hints?UserId=$best_user_id&SearchTerm=$search_term_encoded&IncludeItemTypes=Audio&Limit=10"
 compare_structure "native search hint structure" \
     "$DIRECT_BASE$search_hint_path" \
@@ -1120,6 +1190,12 @@ compare_projection "native search hint stable data" \
     '[.SearchHints[] | {Id,ItemId,Name,Type}]' \
     '[.SearchHints[] | select((((.Id // .ItemId) // "") | startswith("ext-")) | not) |
         {Id,ItemId,Name,Type}]'
+compare_projection "native search hint full objects" \
+    "$DIRECT_BASE$search_hint_path" \
+    "$ALLSTARR_BASE$search_hint_path" \
+    '[.SearchHints[] | .Id = (.Id // .ItemId)] | sort_by(.Id)' \
+    '[.SearchHints[] | select((((.Id // .ItemId) // "") | startswith("ext-")) | not) |
+        .Id = (.Id // .ItemId)] | sort_by(.Id)'
 
 external_song_id="$EXTERNAL_SONG_ID"
 if [[ -z "$external_song_id" ]]; then

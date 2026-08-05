@@ -28,6 +28,7 @@ public class Song
     public string Album { get; set; } = string.Empty;
     public string? AlbumId { get; set; }
     public int? Duration { get; set; } // In seconds
+    public int? Bitrate { get; set; } // In bits per second
     public int? Track { get; set; }
     public int? DiscNumber { get; set; }
     public int? TotalTracks { get; set; }

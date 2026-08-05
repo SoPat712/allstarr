@@ -544,7 +544,8 @@ public sealed class ExtensionPlaylistCapabilityAdapter : ExtensionCapabilityAdap
                 value.TryGetProperty("isExplicit", out var explicitValue) &&
                 explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False
                     ? explicitValue.GetBoolean()
-                    : null));
+                    : null,
+                bitrate: Int(value, "bitrate")));
     }
     private ProviderPage<ProviderPlaylistSummary> MapPlaylistPage(JsonElement value) => new(ProviderId,
         value.GetProperty("items").EnumerateArray().Select(MapPlaylist), OptionalText(value, "nextCursor"), Bool(value, "isPartial"), OptionalText(value, "snapshotVersion"));

@@ -104,7 +104,7 @@ public sealed class ExtensionMetadataCapabilityAdapter : ExtensionCapabilityAdap
             Long(value, "durationMs") is { } duration ? TimeSpan.FromMilliseconds(duration) : null,
             OptionalText(value, "isrc"), value.TryGetProperty("isExplicit", out var explicitValue) &&
                                         explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False ? explicitValue.GetBoolean() : null,
-            Artwork(value), OptionalText(value, "snapshotVersion"));
+            Artwork(value), OptionalText(value, "snapshotVersion"), bitrate: Int(value, "bitrate"));
     }
 
     private ProviderAlbumMetadata MapAlbum(JsonElement value) => new(Id(ProviderResourceKind.Album, Text(value, "id")),

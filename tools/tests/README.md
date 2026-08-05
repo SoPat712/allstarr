@@ -91,6 +91,8 @@ each unperformed stateful class.
 `stable-data-parity` compares identity and non-volatile values.
 `structural-parity` compares recursive JSON field types. `declared-diff`
 prints native-versus-synthesized differences that are expected and reviewed.
+The `full objects` checks compare every native field and nested/unknown value after only the
+documented identity normalization required by that route.
 `BLOCKED` lines name qualification that was not performed rather than silently
 counting it as passed.
 

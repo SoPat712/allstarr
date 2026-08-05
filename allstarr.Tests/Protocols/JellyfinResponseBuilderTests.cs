@@ -132,6 +132,30 @@ public class JellyfinResponseBuilderTests
     }
 
     [Fact]
+    public void ConvertSongToJellyfinItem_ExternalSong_PreservesRealBitrate()
+    {
+        var result = _builder.ConvertSongToJellyfinItem(new Song
+        {
+            Id = "ext-deezer-song-12345",
+            Title = "External Track",
+            Artist = "External Artist",
+            Duration = 180,
+            Bitrate = 320_000,
+            IsLocal = false,
+            ExternalProvider = "deezer",
+            ExternalId = "12345"
+        });
+
+        var mediaSource = Assert.IsType<Dictionary<string, object?>>(
+            Assert.IsAssignableFrom<object[]>(result["MediaSources"])[0]);
+        var mediaStream = Assert.IsType<Dictionary<string, object?>>(
+            Assert.IsAssignableFrom<object[]>(mediaSource["MediaStreams"])[0]);
+        Assert.Equal(320_000, mediaSource["Bitrate"]);
+        Assert.Equal(320_000, mediaStream["BitRate"]);
+        Assert.Equal(7_200_000L, mediaSource["Size"]);
+    }
+
+    [Fact]
     public void ConvertSongToJellyfinItem_UsesTheAdvertisedProxyServerIdentity()
     {
         var builder = new JellyfinResponseBuilder(Options.Create(new JellyfinSettings

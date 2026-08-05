@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
@@ -783,6 +784,7 @@ public class ExtensionSandbox
                 ExternalProvider = Id,
                 ExternalId = item.Get("id").ToString(),
                 Duration = ParseJsDuration(item.Get("duration_ms")),
+                Bitrate = ParseJsPositiveInt(item.Get("bitrate")),
                 Isrc = item.Get("isrc")?.ToString() ?? "",
                 Genre = item.Get("genre")?.ToString() ?? "",
                 IsLocal = false
@@ -892,6 +894,7 @@ public class ExtensionSandbox
                             ExternalProvider = Id,
                             ExternalId = track.Get("id").ToString(),
                             Duration = ParseJsDuration(track.Get("duration_ms")),
+                            Bitrate = ParseJsPositiveInt(track.Get("bitrate")),
                             Track = track.Get("track_number")?.IsNumber() == true ? (int)track.Get("track_number").AsNumber() : 1,
                             IsLocal = false
                         };
@@ -964,6 +967,7 @@ public class ExtensionSandbox
                         ExternalProvider = Id,
                         ExternalId = item.Get("id").ToString(),
                         Duration = ParseJsDuration(item.Get("duration_ms")),
+                        Bitrate = ParseJsPositiveInt(item.Get("bitrate")),
                         Isrc = item.Get("isrc")?.ToString() ?? "",
                         Genre = item.Get("genre")?.ToString() ?? "",
                         IsLocal = false
@@ -1024,6 +1028,20 @@ public class ExtensionSandbox
         if (val.IsNumber()) return (int)(val.AsNumber() / 1000);
         if (double.TryParse(val.ToString(), out var ms)) return (int)(ms / 1000);
         return null;
+    }
+
+    private static int? ParseJsPositiveInt(JsValue value)
+    {
+        if (value.IsNumber())
+        {
+            var number = value.AsNumber();
+            return number is > 0 and <= int.MaxValue ? (int)number : null;
+        }
+
+        return int.TryParse(value.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) &&
+               parsed > 0
+            ? parsed
+            : null;
     }
 
     private int? ParseJsYear(JsValue val)

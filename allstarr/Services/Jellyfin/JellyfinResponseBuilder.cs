@@ -351,8 +351,9 @@ public class JellyfinResponseBuilder
             : artistName;
         var albumName = song.Album;
         var runTimeTicks = Math.Max(0, song.Duration ?? 0) * TimeSpan.TicksPerSecond;
+        var externalBitrate = song.Bitrate is > 0 ? song.Bitrate.Value : DefaultExternalBitrate;
         var estimatedSize = song.Duration is > 0
-            ? song.Duration.Value * (DefaultExternalBitrate / 8L)
+            ? song.Duration.Value * (externalBitrate / 8L)
             : (long?)null;
 
         if (!song.IsLocal)
@@ -537,7 +538,7 @@ public class JellyfinResponseBuilder
                             ["IsInterlaced"] = false,
                             ["IsAVC"] = false,
                             ["ChannelLayout"] = "stereo",
-                            ["BitRate"] = DefaultExternalBitrate,
+                            ["BitRate"] = externalBitrate,
                             ["BitDepth"] = 16,
                             ["Channels"] = 2,
                             ["SampleRate"] = 44100,
@@ -554,7 +555,7 @@ public class JellyfinResponseBuilder
                     },
                     ["MediaAttachments"] = new List<object>(),
                     ["Formats"] = new List<string>(),
-                    ["Bitrate"] = DefaultExternalBitrate,
+                    ["Bitrate"] = externalBitrate,
                     ["RequiredHttpHeaders"] = new Dictionary<string, string>(),
                     ["TranscodingSubProtocol"] = "http",
                     ["DefaultAudioStreamIndex"] = 0,

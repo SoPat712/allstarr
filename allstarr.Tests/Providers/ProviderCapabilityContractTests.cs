@@ -195,6 +195,23 @@ public sealed class ProviderCapabilityContractTests
     }
 
     [Fact]
+    public void TrackMetadata_PreservesPositiveBitrateAndRejectsInvalidValues()
+    {
+        var track = new ProviderTrackMetadata(
+            TrackId("deezer", "track-1"),
+            "Track",
+            [new ProviderArtistCredit("Artist")],
+            bitrate: 320_000);
+
+        Assert.Equal(320_000, track.Bitrate);
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ProviderTrackMetadata(
+            TrackId("deezer", "track-1"),
+            "Track",
+            [new ProviderArtistCredit("Artist")],
+            bitrate: 0));
+    }
+
+    [Fact]
     public void PlaylistMutationIntent_PreservesRecreateChoiceAndRejectsCrossProviderIds()
     {
         var request = new ProviderPlaylistMutationRequest(

@@ -55,7 +55,8 @@ public sealed class ProtocolProviderStreamingGatewayTests
                     new ProviderTrackMetadata(
                         new("deezer", ProviderResourceKind.Track, "track-1"),
                         "Track",
-                        [new("Artist")]),
+                        [new("Artist")],
+                        bitrate: 320_000),
                     new ProviderTrackMetadata(
                         new("musicbrainz", ProviderResourceKind.Track, "metadata-only"),
                         "Metadata only",
@@ -90,7 +91,9 @@ public sealed class ProtocolProviderStreamingGatewayTests
 
         var songs = await gateway.SearchPlayableSongsAsync(Context(), "Track Artist", 10);
 
-        Assert.Equal("track-1", Assert.Single(songs).ExternalId);
+        var song = Assert.Single(songs);
+        Assert.Equal("track-1", song.ExternalId);
+        Assert.Equal(320_000, song.Bitrate);
         failing.VerifyAll();
         healthy.VerifyAll();
     }

@@ -321,7 +321,7 @@ public sealed class ExtensionCapabilityAdapterTests
         var sandbox = Sandbox(manifest, """
             const artist = { id: 'artist-1', name: 'Artist', artworkUrl: 'https://img.example/artist.jpg', snapshotVersion: 'a1' };
             const album = { id: 'album-1', title: 'Album', artists: [{ id: 'artist-1', name: 'Artist' }], trackCount: 8, snapshotVersion: 'b1' };
-            const track = { id: 'track-1', title: 'Track', artists: [{ id: 'artist-1', name: 'Artist' }], albumId: 'album-1', albumTitle: 'Album', durationMs: 1234, isrc: 'USABC1234567' };
+            const track = { id: 'track-1', title: 'Track', artists: [{ id: 'artist-1', name: 'Artist' }], albumId: 'album-1', albumTitle: 'Album', durationMs: 1234, bitrate: 320000, isrc: 'USABC1234567' };
             registerExtension({
               searchTracks: function() { return { items: [track] }; }, getTrack: function() { return track; }, lookupByIsrc: function() { return track; },
               searchAlbums: function() { return { items: [album], nextCursor: 'next' }; }, getAlbum: function() { return album; },
@@ -340,7 +340,22 @@ public sealed class ExtensionCapabilityAdapterTests
         var artistItems = new ProviderArtistItemsRequest(Id(ProviderResourceKind.Artist, "artist-1"), new ProviderPageRequest(10));
         Assert.Equal("album-1", Assert.Single((await adapter.GetArtistAlbumsAsync(Context(), artistItems)).RequireValue().Items).Id.Value);
         Assert.Equal("track-1", Assert.Single((await adapter.GetArtistTracksAsync(Context(), artistItems)).RequireValue().Items).Id.Value);
-        Assert.Equal("USABC1234567", (await adapter.LookupByIsrcAsync(Context(), new ProviderIsrcLookupRequest("USABC1234567"))).RequireValue().Isrc);
+        var track = (await adapter.LookupByIsrcAsync(Context(), new ProviderIsrcLookupRequest("USABC1234567"))).RequireValue();
+        Assert.Equal("USABC1234567", track.Isrc);
+        Assert.Equal(320_000, track.Bitrate);
+    }
+
+    [Fact]
+    public void LegacyMetadataMapping_PreservesPositiveBitrate()
+    {
+        var sandbox = Sandbox(Manifest(ProviderCapabilityKind.Metadata, "getTrack"), """
+            registerExtension({ getTrack: function() { return {
+              id: 'track-1', name: 'Track', artists: ['Artist'], album: 'Album',
+              duration_ms: 1234, bitrate: 320000
+            }; }});
+            """);
+
+        Assert.Equal(320_000, sandbox.GetSong("track-1")!.Bitrate);
     }
 
     [Fact]

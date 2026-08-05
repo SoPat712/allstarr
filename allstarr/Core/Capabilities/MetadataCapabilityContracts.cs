@@ -44,7 +44,8 @@ public sealed record ProviderTrackMetadata
         string? label = null,
         string? copyright = null,
         IEnumerable<string>? contributors = null,
-        int? explicitContentLyrics = null)
+        int? explicitContentLyrics = null,
+        int? bitrate = null)
     {
         ArgumentNullException.ThrowIfNull(id);
         id.RequireOwner(id.ProviderId, ProviderResourceKind.Track);
@@ -71,6 +72,10 @@ public sealed record ProviderTrackMetadata
         if (duration < TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(nameof(duration));
+        }
+        if (bitrate is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(bitrate));
         }
 
         Id = id;
@@ -104,6 +109,7 @@ public sealed record ProviderTrackMetadata
                 .Where(value => !string.IsNullOrWhiteSpace(value))
                 .Select(value => value.Trim()));
         ExplicitContentLyrics = explicitContentLyrics;
+        Bitrate = bitrate;
     }
 
     public ProviderExternalResourceId Id { get; }
@@ -153,6 +159,8 @@ public sealed record ProviderTrackMetadata
     public IReadOnlyList<string> Contributors { get; }
 
     public int? ExplicitContentLyrics { get; }
+
+    public int? Bitrate { get; }
 }
 
 public sealed record ProviderAlbumMetadata

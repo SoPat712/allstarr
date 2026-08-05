@@ -241,7 +241,8 @@ public abstract class ConcreteMetadataCapabilityAdapter(
             label: song.Label,
             copyright: song.Copyright,
             contributors: song.Contributors,
-            explicitContentLyrics: song.ExplicitContentLyrics);
+            explicitContentLyrics: song.ExplicitContentLyrics,
+            bitrate: song.Bitrate);
     }
 
     private ProviderAlbumMetadata MapAlbum(Album album)
