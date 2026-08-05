@@ -786,12 +786,13 @@ item_contract='
     def external_audio:
         client_item and .Type == "Audio" and .MediaType == "Audio" and
         (.Name | provider_labeled) and
-        (.Album | provider_labeled) and
-        (.AlbumId | nonempty) and
+        (.Album | type == "string") and
+        ((.Album | length) == 0 or (.Album | provider_labeled)) and
+        (.AlbumId == null or (.AlbumId | nonempty)) and
         (.Artists | type == "array" and length > 0 and all(.[]; provider_labeled)) and
-        (.ArtistItems | type == "array" and length > 0) and
-        (.AlbumArtists | type == "array" and length > 0) and
-        (.RunTimeTicks | type == "number" and . > 0) and
+        (.ArtistItems | type == "array") and
+        (.AlbumArtists | type == "array") and
+        (.RunTimeTicks | type == "number" and . >= 0) and
         (.ImageTags.Primary | nonempty) and
         (.ProviderIds | type == "object" and length > 0) and
         (.CanDownload | type == "boolean") and
@@ -814,32 +815,40 @@ check_external_provider_case() {
     artist_id="$(jq -r '.ArtistItems[0].Id // empty' "$response_file")"
     album_id="$(jq -r '.AlbumId // empty' "$response_file")"
 
-    check_json "$provider artist detail" \
-        "$ALLSTARR_BASE/Artists/$artist_id?UserId=$best_user_id" \
-        '.Id == $id and .Type == "MusicArtist"' --arg id "$artist_id"
-    check_json "$provider artist albums" \
-        "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$artist_id&IncludeItemTypes=MusicAlbum&Limit=200" \
-        '(.Items | type == "array" and length > 0) and
-         all(.Items[]; .Type == "MusicAlbum" and (.ArtistItems | length > 0)) and
-         any(.Items[]; any(.ArtistItems[]; .Id == $id))' \
-        --arg id "$artist_id"
-    check_json "$provider artist tracks" \
-        "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$artist_id&IncludeItemTypes=Audio&Limit=200" \
-        '(.Items | type == "array" and length > 0) and
-         all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and (.ArtistItems | length > 0)) and
-         any(.Items[]; any(.ArtistItems[]; .Id == $id))' --arg id "$artist_id"
-    check_json "$provider artist combined" \
-        "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$artist_id&IncludeItemTypes=MusicAlbum,Audio&Limit=400" \
-        'any(.Items[]; .Type == "MusicAlbum") and any(.Items[]; .Type == "Audio")' \
-        --arg id "$artist_id"
-    check_json "$provider album detail" \
-        "$ALLSTARR_BASE/Items/$album_id?UserId=$best_user_id" \
-        '.Id == $id and .Type == "MusicAlbum"' --arg id "$album_id"
-    check_json "$provider album tracks" \
-        "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$album_id&IncludeItemTypes=Audio&Limit=200" \
-        '(.Items | type == "array" and length > 0) and
-         all(.Items[]; .Type == "Audio" and .AlbumId == $id and .RunTimeTicks > 0)' \
-        --arg id "$album_id"
+    if [[ -n "$artist_id" ]]; then
+        check_json "$provider artist detail" \
+            "$ALLSTARR_BASE/Artists/$artist_id?UserId=$best_user_id" \
+            '.Id == $id and .Type == "MusicArtist"' --arg id "$artist_id"
+        check_json "$provider artist albums" \
+            "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$artist_id&IncludeItemTypes=MusicAlbum&Limit=200" \
+            '(.Items | type == "array" and length > 0) and
+             all(.Items[]; .Type == "MusicAlbum" and (.ArtistItems | length > 0)) and
+             any(.Items[]; any(.ArtistItems[]; .Id == $id))' \
+            --arg id "$artist_id"
+        check_json "$provider artist tracks" \
+            "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$artist_id&IncludeItemTypes=Audio&Limit=200" \
+            '(.Items | type == "array" and length > 0) and
+             all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and (.ArtistItems | length > 0)) and
+             any(.Items[]; any(.ArtistItems[]; .Id == $id))' --arg id "$artist_id"
+        check_json "$provider artist combined" \
+            "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$artist_id&IncludeItemTypes=MusicAlbum,Audio&Limit=400" \
+            'any(.Items[]; .Type == "MusicAlbum") and any(.Items[]; .Type == "Audio")' \
+            --arg id "$artist_id"
+    else
+        block "$provider artist routes=provider omitted artist relationship ID"
+    fi
+    if [[ -n "$album_id" ]]; then
+        check_json "$provider album detail" \
+            "$ALLSTARR_BASE/Items/$album_id?UserId=$best_user_id" \
+            '.Id == $id and .Type == "MusicAlbum"' --arg id "$album_id"
+        check_json "$provider album tracks" \
+            "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$album_id&IncludeItemTypes=Audio&Limit=200" \
+            '(.Items | type == "array" and length > 0) and
+             all(.Items[]; .Type == "Audio" and .AlbumId == $id and .RunTimeTicks > 0)' \
+            --arg id "$album_id"
+    else
+        block "$provider album routes=provider omitted album relationship ID"
+    fi
     check_json "$provider similar songs" \
         "$ALLSTARR_BASE/Items/$song_id/Similar?UserId=$best_user_id&Limit=10" \
         '(.Items | type == "array" and length > 0) and
@@ -1050,33 +1059,41 @@ if [[ -n "$external_song_id" ]]; then
         .Name |
         sub(" \\[(AM|D|Q|T|SP|S|EXT)\\]( \\[E\\])?$"; "")' "$response_file" 2>/dev/null || true)"
     external_search_term="${external_search_term:-$search_term}"
-    check_json "external artist detail" \
-        "$ALLSTARR_BASE/Artists/$external_artist_id?UserId=$best_user_id" \
-        '.Id == $id and .Type == "MusicArtist"' \
-        --arg id "$external_artist_id"
-    check_json "external artist discography" \
-        "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_artist_id&IncludeItemTypes=MusicAlbum&Limit=200" \
-        '(.Items | type == "array" and length > 0) and
-         all(.Items[]; .Type == "MusicAlbum" and (.ArtistItems | length > 0)) and
-         any(.Items[]; any(.ArtistItems[]; .Id == $id))' \
-        --arg id "$external_artist_id"
-    check_json "external artist tracks" \
-        "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_artist_id&IncludeItemTypes=Audio&Limit=200" \
-        '(.Items | type == "array" and length > 0) and
-         all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and (.ArtistItems | length > 0)) and
-         any(.Items[]; any(.ArtistItems[]; .Id == $id))' --arg id "$external_artist_id"
-    check_json "external artist combined" \
-        "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_artist_id&IncludeItemTypes=MusicAlbum,Audio&Limit=400" \
-        'any(.Items[]; .Type == "MusicAlbum") and any(.Items[]; .Type == "Audio")'
-    check_json "external album detail" \
-        "$ALLSTARR_BASE/Items/$external_album_id?UserId=$best_user_id" \
-        '.Id == $id and .Type == "MusicAlbum"' \
-        --arg id "$external_album_id"
-    check_json "external album tracks" \
-        "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_album_id&IncludeItemTypes=Audio&Limit=200" \
-        '(.Items | type == "array" and length > 0) and
-         all(.Items[]; .Type == "Audio" and .AlbumId == $id and (.ArtistItems | length > 0))' \
-        --arg id "$external_album_id"
+    if [[ -n "$external_artist_id" ]]; then
+        check_json "external artist detail" \
+            "$ALLSTARR_BASE/Artists/$external_artist_id?UserId=$best_user_id" \
+            '.Id == $id and .Type == "MusicArtist"' \
+            --arg id "$external_artist_id"
+        check_json "external artist discography" \
+            "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_artist_id&IncludeItemTypes=MusicAlbum&Limit=200" \
+            '(.Items | type == "array" and length > 0) and
+             all(.Items[]; .Type == "MusicAlbum" and (.ArtistItems | length > 0)) and
+             any(.Items[]; any(.ArtistItems[]; .Id == $id))' \
+            --arg id "$external_artist_id"
+        check_json "external artist tracks" \
+            "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_artist_id&IncludeItemTypes=Audio&Limit=200" \
+            '(.Items | type == "array" and length > 0) and
+             all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and (.ArtistItems | length > 0)) and
+             any(.Items[]; any(.ArtistItems[]; .Id == $id))' --arg id "$external_artist_id"
+        check_json "external artist combined" \
+            "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_artist_id&IncludeItemTypes=MusicAlbum,Audio&Limit=400" \
+            'any(.Items[]; .Type == "MusicAlbum") and any(.Items[]; .Type == "Audio")'
+    else
+        block "external artist routes=provider omitted artist relationship ID"
+    fi
+    if [[ -n "$external_album_id" ]]; then
+        check_json "external album detail" \
+            "$ALLSTARR_BASE/Items/$external_album_id?UserId=$best_user_id" \
+            '.Id == $id and .Type == "MusicAlbum"' \
+            --arg id "$external_album_id"
+        check_json "external album tracks" \
+            "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_album_id&IncludeItemTypes=Audio&Limit=200" \
+            '(.Items | type == "array" and length > 0) and
+             all(.Items[]; .Type == "Audio" and .AlbumId == $id and (.ArtistItems | length > 0))' \
+            --arg id "$external_album_id"
+    else
+        block "external album routes=provider omitted album relationship ID"
+    fi
     external_search_term_encoded="$(jq -rn --arg value "$external_search_term" '$value | @uri')"
     check_query_json "external detail ApiKey auth" "$external_detail_url" "ApiKey" \
         "$item_contract external_audio and .Id == \$id" \

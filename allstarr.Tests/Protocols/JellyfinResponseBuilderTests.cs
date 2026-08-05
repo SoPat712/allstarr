@@ -270,6 +270,9 @@ public class JellyfinResponseBuilderTests
         });
 
         Assert.Equal(["Primary [D]", "Feature [D]"], Assert.IsType<string[]>(song["Artists"]));
+        Assert.Null(song["AlbumId"]);
+        Assert.Null(song["AlbumPrimaryImageTag"]);
+        Assert.Null(song["ParentLogoImageTag"]);
         Assert.Empty(Assert.IsType<Dictionary<string, object?>[]>(song["ArtistItems"]));
         Assert.Empty(Assert.IsType<Dictionary<string, object?>[]>(song["AlbumArtists"]));
         Assert.Equal(["Primary"], Assert.IsType<string[]>(album["Artists"]));

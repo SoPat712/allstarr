@@ -209,7 +209,7 @@ public sealed class ExtensionCapabilityAdapterTests
              "type":["metadata_provider"],"permissions":{"storage":true}}
             """;
         const string script = """
-            registerExtension({customSearch:function(){return [{id:'track-1',name:'Song',artists:['Artist'],album_name:'Album',cover_url:'https://images.example.test/cover.jpg',item_type:'track'}];},getPlaylist:function(){return {tracks:[]};}});
+            registerExtension({customSearch:function(){return [{id:'track-1',name:'Song',artists:'Artist',artist_id:'artist-1',album_id:'album-1',album_name:'Album',cover_url:'https://images.example.test/cover.jpg',item_type:'track'}];},getPlaylist:function(){return {tracks:[]};}});
             """;
         var manifest = SpotiFlacExtensionCompatibility.NormalizeManifest(sourceManifest, script);
         Assert.DoesNotContain(ExtensionSdkV1.ParseManifest(manifest).Capabilities,
@@ -222,6 +222,8 @@ public sealed class ExtensionCapabilityAdapterTests
 
         Assert.NotNull(json);
         Assert.Contains("\"title\":\"Song\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"id\":\"artist-1\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"albumId\":\"album-1\"", json, StringComparison.Ordinal);
         Assert.Contains("https://images.example.test/cover.jpg", json, StringComparison.Ordinal);
     }
 

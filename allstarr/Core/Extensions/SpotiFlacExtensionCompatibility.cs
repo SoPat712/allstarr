@@ -186,22 +186,25 @@ public static class SpotiFlacExtensionCompatibility
           return image ? String(image) : null;
         }
         function _sfArtists(value) {
-          value = value && (value.artists || value.artist) || [];
+          var source = value || {};
+          var fallbackId = source.artist_id || source.artistId || null;
+          value = source.artists || source.artist || [];
           if (!Array.isArray(value)) value = String(value || '').split(',');
-          return value.map(function(item) {
+          return value.map(function(item, index) {
             return typeof item === 'object'
-              ? { name: String(item.name || item.title || ''), id: item.id == null ? null : String(item.id) }
-              : { name: String(item).trim(), id: null };
+              ? { name: String(item.name || item.title || ''), id: item.id || item.artist_id || item.artistId || item.browse_id || item.browseId || null }
+              : { name: String(item).trim(), id: index === 0 && fallbackId != null ? String(fallbackId) : null };
           }).filter(function(item) { return item.name; });
         }
         function _sfTrack(value) {
           value = value && (value.track || value) || {};
+          var album = value.album && typeof value.album === 'object' ? value.album : {};
           return {
             id: String(value.id || value.track_id || ''),
             title: String(value.name || value.title || ''),
             artists: _sfArtists(value),
-            albumId: value.album_id == null ? null : String(value.album_id),
-            albumTitle: String(value.album_name || (value.album && (value.album.name || value.album.title)) || ''),
+            albumId: value.album_id || value.albumId || album.id || album.browse_id || album.browseId || null,
+            albumTitle: String(value.album_name || value.albumTitle || album.name || album.title || ''),
             durationMs: Number(value.duration_ms || value.durationMs || 0),
             isrc: value.isrc ? String(value.isrc) : null,
             isExplicit: value.explicit == null ? null : Boolean(value.explicit),
