@@ -2710,13 +2710,13 @@ test("Playlist operations show durable progress and confirm cancellation", async
   await page.goto("#/library/playlists");
   await page.getByRole("button", { name: /Test playlist/ }).click();
   const dialog = page.getByRole("dialog", { name: "Test playlist" });
-  const rematch = page.waitForRequest((item) =>
+  const update = page.waitForRequest((item) =>
     item.method() === "POST" && item.url().endsWith("/api/admin/playlist-links/playlist-link/run") &&
-    Object.keys(item.postDataJSON()).length === 0);
+    item.postDataJSON().snapshotId === "playlist-snapshot");
   await dialog.getByRole("button", { name: "Actions" }).click();
-  await page.getByRole("menuitem", { name: "Rematch" }).click();
-  await rematch;
-  await expect(dialog.getByText("Rematch queued.")).toBeVisible();
+  await page.getByRole("menuitem", { name: "Update playlist now" }).click();
+  await update;
+  await expect(dialog.getByText("Playlist update queued.")).toBeVisible();
   await dialog.getByRole("button", { name: /Operation details:/ }).click();
   const operation = page.locator(".operation-popover");
   await expect(operation.getByText("Matching Test song", { exact: true }).first()).toBeVisible();
