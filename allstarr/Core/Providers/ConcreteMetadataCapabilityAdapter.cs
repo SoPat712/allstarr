@@ -210,11 +210,17 @@ public abstract class ConcreteMetadataCapabilityAdapter(
         if (names.Length == 0)
             throw new InvalidOperationException($"The {ProviderId} track has no artist credit.");
 
-        var credits = names.Select((name, index) => new ProviderArtistCredit(
-            name.Trim(),
-            index < song.ArtistIds.Count && !string.IsNullOrWhiteSpace(song.ArtistIds[index])
-                ? ExternalId(ProviderResourceKind.Artist, song.ArtistIds[index], null, "artist")
-                : null));
+        var credits = names.Select((name, index) =>
+        {
+            var artistId = index < song.ArtistIds.Count && !string.IsNullOrWhiteSpace(song.ArtistIds[index])
+                ? song.ArtistIds[index]
+                : index == 0 ? song.ArtistId : null;
+            return new ProviderArtistCredit(
+                name.Trim(),
+                string.IsNullOrWhiteSpace(artistId)
+                    ? null
+                    : ExternalId(ProviderResourceKind.Artist, artistId, null, "artist"));
+        });
         var albumId = string.IsNullOrWhiteSpace(song.AlbumId)
             ? null
             : ExternalId(ProviderResourceKind.Album, song.AlbumId, null, "album");

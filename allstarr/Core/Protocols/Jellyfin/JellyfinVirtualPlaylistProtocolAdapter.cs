@@ -314,6 +314,13 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                 }
             }
 
+            if (track.RouteKind == TrackRouteKind.Local &&
+                !string.IsNullOrWhiteSpace(track.SourceProviderId))
+            {
+                var providerIds = item["ProviderIds"] as JsonObject ?? [];
+                item["ProviderIds"] = providerIds;
+                providerIds["AllstarrSource"] = track.SourceProviderId;
+            }
             item["ParentId"] = responsePlaylistId;
             item["PlaylistItemId"] = track.NativePlaylistEntryId ?? track.BackendItemId;
             return item;

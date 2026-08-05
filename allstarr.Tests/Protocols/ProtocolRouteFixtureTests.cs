@@ -2381,6 +2381,7 @@ public sealed class ProtocolRouteFixtureTests
         var actual = JsonNode.Parse(
             tracks.RootElement.GetProperty("Items")[0].GetRawText())!.AsObject();
         var expected = JsonNode.Parse(originalItem)!.AsObject();
+        expected["ProviderIds"]!["AllstarrSource"] = "spotify";
         expected["ParentId"] = virtualId;
         expected["PlaylistItemId"] = "local-song-a";
 
@@ -2389,7 +2390,7 @@ public sealed class ProtocolRouteFixtureTests
             $"Expected full source DTO with playlist overlays.\nExpected: {expected}\nActual: {actual}");
         Assert.Equal("Original Track", actual["Name"]!.GetValue<string>());
         Assert.Equal(virtualId, actual["ParentId"]!.GetValue<string>());
-        Assert.False(actual["ProviderIds"]!.AsObject().ContainsKey("AllstarrSource"));
+        Assert.Equal("spotify", actual["ProviderIds"]!["AllstarrSource"]!.GetValue<string>());
         Assert.Equal("local-song-a", actual["Id"]!.GetValue<string>());
         Assert.Equal("local-song-a", actual["PlaylistItemId"]!.GetValue<string>());
         Assert.Equal("album-original", actual["AlbumId"]!.GetValue<string>());

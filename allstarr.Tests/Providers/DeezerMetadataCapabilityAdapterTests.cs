@@ -253,7 +253,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
             ]);
         legacy.Setup(item => item.GetArtistTracksAsync("deezer", "artist-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync([
-                new Song { ExternalId = "track-1", Title = "First", Artist = "Artist", Artists = ["Artist"] },
+                new Song { ExternalId = "track-1", Title = "First", Artist = "Artist", Artists = ["Artist"], ArtistId = "artist-1" },
                 new Song { ExternalId = "track-2", Title = "Second", Artist = "Artist", Artists = ["Artist"] }
             ]);
         var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
@@ -272,6 +272,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
         Assert.Equal("album-3", Assert.Single(remaining.Items).Id.Value);
         Assert.Null(remaining.NextCursor);
         Assert.Equal(["track-1", "track-2"], tracks.Items.Select(item => item.Id.Value));
+        Assert.Equal("artist-1", tracks.Items[0].Artists[0].ArtistId!.Value);
         legacy.VerifyAll();
     }
 
