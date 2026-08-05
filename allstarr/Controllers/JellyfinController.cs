@@ -177,12 +177,17 @@ public partial class JellyfinController : ControllerBase
         : _metadataService.GetArtistTracksAsync(provider, externalId, cancellationToken);
 
     private async Task<IReadOnlyList<Song>> SearchProviderSongsAsync(
+        string provider,
         string query,
         int limit,
         CancellationToken cancellationToken = default) => _providerGateway != null
-        ? await _providerGateway.SearchPlayableSongsAsync(
-            HttpContext.RequireProtocolExecutionContext(), query, limit)
-        : await _metadataService.SearchSongsAsync(query, limit, cancellationToken);
+        ? (await _providerGateway.SearchAsync(
+            HttpContext.RequireProtocolExecutionContext(), query, limit, 0, 0, provider)).Songs
+        : (await _metadataService.SearchSongsAsync(query, limit, cancellationToken))
+            .Where(song => string.Equals(
+                song.ExternalProvider, provider, StringComparison.OrdinalIgnoreCase))
+            .Take(limit)
+            .ToArray();
 
     private Task<Song?> GetProviderSongForImageAsync(
         string provider,
@@ -1239,7 +1244,7 @@ public partial class JellyfinController : ControllerBase
                 // Search for similar songs using artist and genre
                 var searchQuery = $"{song.Artist}";
                 var searchResult = await SearchProviderSongsAsync(
-                    searchQuery, limit, HttpContext.RequestAborted);
+                    provider!, searchQuery, limit, HttpContext.RequestAborted);
 
                 // Filter out the original song and convert to Jellyfin format
                 var similarSongs = searchResult
@@ -1388,7 +1393,7 @@ public partial class JellyfinController : ControllerBase
                 if (mixSongs.Count < limit && !string.IsNullOrWhiteSpace(artistName))
                 {
                     var searchResult = await SearchProviderSongsAsync(
-                        artistName, limit, HttpContext.RequestAborted);
+                        provider!, artistName, limit, HttpContext.RequestAborted);
                     mixSongs.AddRange(searchResult.Where(song =>
                         mixSongs.All(existing => existing.Id != song.Id)));
                 }

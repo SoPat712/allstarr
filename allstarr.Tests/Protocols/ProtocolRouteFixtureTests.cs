@@ -1280,11 +1280,11 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task JellyfinExternalSimilar_UsesCompleteQueryResultEnvelope()
+    public async Task JellyfinExternalSimilarAndInstantMix_StayOnTheTypedProvider()
     {
-        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
-        metadata.Setup(service => service.GetSongAsync(
-                "deezer", "42", It.IsAny<CancellationToken>()))
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.GetSongAsync(
+                It.IsAny<ProtocolExecutionContext>(), "deezer", "42"))
             .ReturnsAsync(new Song
             {
                 Id = "ext-deezer-song-42",
@@ -1293,26 +1293,39 @@ public sealed class ProtocolRouteFixtureTests
                 Title = "Seed",
                 Artist = "Fixture Artist"
             });
-        metadata.Setup(service => service.SearchSongsAsync(
-                "Fixture Artist", 2, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([
-                new Song
-                {
-                    Id = "ext-deezer-song-42",
-                    ExternalProvider = "deezer",
-                    ExternalId = "42",
-                    Title = "Seed",
-                    Artist = "Fixture Artist"
-                },
-                new Song
-                {
-                    Id = "ext-deezer-song-43",
-                    ExternalProvider = "deezer",
-                    ExternalId = "43",
-                    Title = "Related",
-                    Artist = "Fixture Artist"
-                }
-            ]);
+        gateway.Setup(service => service.SearchAsync(
+                It.IsAny<ProtocolExecutionContext>(), "Fixture Artist", 2, 0, 0, "deezer"))
+            .ReturnsAsync(new SearchResult
+            {
+                Songs =
+                [
+                    new Song
+                    {
+                        Id = "ext-deezer-song-42",
+                        ExternalProvider = "deezer",
+                        ExternalId = "42",
+                        Title = "Seed",
+                        Artist = "Fixture Artist"
+                    },
+                    new Song
+                    {
+                        Id = "ext-deezer-song-43",
+                        ExternalProvider = "deezer",
+                        ExternalId = "43",
+                        Title = "Related",
+                        Artist = "Fixture Artist"
+                    }
+                ]
+            });
+        var interaction = new Mock<IJellyfinInteractionProtocolAdapter>(MockBehavior.Strict);
+        var shaper = new JellyfinInteractionProtocolAdapter();
+        interaction.Setup(adapter => adapter.CanRunOptionalUserWork(
+                It.IsAny<ProtocolExecutionContext?>()))
+            .Returns(true);
+        interaction.Setup(adapter => adapter.ShapeInstantMix(
+                It.IsAny<IReadOnlyList<Dictionary<string, object?>>>()))
+            .Returns((IReadOnlyList<Dictionary<string, object?>> items) =>
+                shaper.ShapeInstantMix(items));
         using var factory = new ProtocolFactory(
             "Jellyfin",
             request => request.RequestUri!.AbsolutePath == "/Users/Me"
@@ -1320,23 +1333,36 @@ public sealed class ProtocolRouteFixtureTests
                 : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
             services =>
             {
-                services.RemoveAll<IMusicMetadataService>();
-                services.AddSingleton(metadata.Object);
                 services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
+                services.RemoveAll<IJellyfinInteractionProtocolAdapter>();
+                services.AddSingleton(interaction.Object);
             });
         using var client = factory.CreateClient();
 
         using var response = await client.GetAsync(
             "/Items/ext-deezer-song-42/Similar?Limit=2&api_key=fixture-key");
+        using var mixResponse = await client.GetAsync(
+            "/Items/ext-deezer-song-42/InstantMix?Limit=2&api_key=fixture-key");
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        using var mixBody = JsonDocument.Parse(await mixResponse.Content.ReadAsStringAsync());
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, mixResponse.StatusCode);
         Assert.Equal(0, body.RootElement.GetProperty("StartIndex").GetInt32());
         Assert.Equal(1, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
         Assert.Equal(
             "ext-deezer-song-43",
             body.RootElement.GetProperty("Items")[0].GetProperty("Id").GetString());
-        metadata.VerifyAll();
+        Assert.Equal(1, mixBody.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Equal(
+            "ext-deezer-song-43",
+            mixBody.RootElement.GetProperty("Items")[0].GetProperty("Id").GetString());
+        gateway.Verify(service => service.SearchAsync(
+            It.IsAny<ProtocolExecutionContext>(), "Fixture Artist", 2, 0, 0, "deezer"),
+            Times.Exactly(2));
+        gateway.VerifyAll();
+        interaction.VerifyAll();
     }
 
     [Theory]

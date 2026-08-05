@@ -99,6 +99,36 @@ public sealed class ProtocolProviderStreamingGatewayTests
     }
 
     [Fact]
+    public async Task MetadataSearch_RestrictsTheRouteToTheRequestedProvider()
+    {
+        var deezer = new Mock<IProviderMetadataCapability>();
+        deezer.SetupGet(item => item.ProviderId).Returns("deezer");
+        deezer.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        var qobuz = new Mock<IProviderMetadataCapability>();
+        qobuz.SetupGet(item => item.ProviderId).Returns("qobuz");
+        qobuz.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        var registry = MetadataRegistry(deezer.Object, qobuz.Object);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(
+                It.Is<ProviderRouteRequest>(request =>
+                    request.ProviderPriority.SequenceEqual(new[] { "deezer" }))))
+            .ReturnsAsync((ProviderRouteRequest request) =>
+                EmptyPlan<IProviderMetadataCapability>(request));
+        var gateway = new ProtocolProviderGateway(
+            router.Object,
+            registry,
+            Mock.Of<IProviderRouteAccountResolver>(),
+            Mock.Of<IMusicMetadataService>(),
+            new HttpClientFactory());
+
+        var result = await gateway.SearchAsync(
+            Context(), "Track Artist", 10, 0, 0, "deezer");
+
+        Assert.Empty(result.Songs);
+        router.VerifyAll();
+    }
+
+    [Fact]
     public async Task MetadataRelationships_UseOnlyUniqueExactIdsFromTheSameProvider()
     {
         const string providerId = "spotiflac-ytmusic-spotiflac";

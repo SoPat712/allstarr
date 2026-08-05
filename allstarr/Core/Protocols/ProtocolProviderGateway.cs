@@ -26,7 +26,8 @@ public interface IProtocolProviderGateway
         string query,
         int songLimit,
         int albumLimit,
-        int artistLimit);
+        int artistLimit,
+        string? providerId = null);
 
     Task<IReadOnlyList<Song>> SearchPlayableSongsAsync(
         ProtocolExecutionContext protocol,
@@ -111,23 +112,35 @@ public sealed class ProtocolProviderGateway(
         string query,
         int songLimit,
         int albumLimit,
-        int artistLimit)
+        int artistLimit,
+        string? providerId = null)
     {
         ArgumentNullException.ThrowIfNull(protocol);
+        var requestedProviderId = string.IsNullOrWhiteSpace(providerId)
+            ? null
+            : NormalizeProvider(providerId);
         if (protocol.Actor is null)
         {
             var publicLegacy = await legacyMetadata.SearchAllAsync(
                 query, songLimit, albumLimit, artistLimit, protocol.CancellationToken);
             return new SearchResult
             {
-                Songs = publicLegacy.Songs.Where(item => IsPublicMetadataProvider(item.ExternalProvider)).Take(songLimit).ToList(),
-                Albums = publicLegacy.Albums.Where(item => IsPublicMetadataProvider(item.ExternalProvider)).Take(albumLimit).ToList(),
-                Artists = publicLegacy.Artists.Where(item => IsPublicMetadataProvider(item.ExternalProvider)).Take(artistLimit).ToList()
+                Songs = publicLegacy.Songs.Where(item => IsRequestedPublicProvider(item.ExternalProvider)).Take(songLimit).ToList(),
+                Albums = publicLegacy.Albums.Where(item => IsRequestedPublicProvider(item.ExternalProvider)).Take(albumLimit).ToList(),
+                Artists = publicLegacy.Artists.Where(item => IsRequestedPublicProvider(item.ExternalProvider)).Take(artistLimit).ToList()
             };
+
+            bool IsRequestedPublicProvider(string? itemProvider) =>
+                IsPublicMetadataProvider(itemProvider) &&
+                (requestedProviderId == null ||
+                 NormalizeProvider(itemProvider) == requestedProviderId);
         }
         var actor = protocol.RequireActor();
         var fetchLimit = Math.Clamp(Math.Max(songLimit, Math.Max(albumLimit, artistLimit)), 1, 200);
-        var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Metadata);
+        var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Metadata)
+            .Where(item => requestedProviderId == null || item == requestedProviderId)
+            .ToArray();
+        if (providerOrder.Length == 0) return new SearchResult();
         var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(
             protocol,
             actor,
