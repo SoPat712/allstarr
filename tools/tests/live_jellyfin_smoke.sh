@@ -779,7 +779,7 @@ item_contract='
         (.UserData.ItemId == .Id);
     def provider_labeled:
         type == "string" and
-        test(" \\[(AM|D|Q|T|SP|S|EXT)\\]( \\[E\\])?$");
+        test(" \\[[A-Z][A-Za-z0-9]{0,15}\\]( \\[E\\])?$");
     def client_item:
         (.Id | nonempty) and (.Name | nonempty) and (.Type | nonempty) and
         named_ids and album_ids and genre_ids and media_ids and user_data;
@@ -852,6 +852,11 @@ check_external_provider_case() {
     else
         block "$provider album routes=provider omitted album relationship ID"
     fi
+    check_json "$provider external playback identity" \
+        "$ALLSTARR_BASE/Items/$song_id/PlaybackInfo?UserId=$best_user_id" \
+        '(.MediaSources | type == "array" and length > 0) and
+         all(.MediaSources[]; .Id == $id and (.DirectStreamUrl | contains($id)))' \
+        --arg id "$song_id"
     check_json "$provider similar songs" \
         "$ALLSTARR_BASE/Items/$song_id/Similar?UserId=$best_user_id&Limit=10" \
         '(.Items | type == "array" and length > 0) and
@@ -1060,7 +1065,7 @@ if [[ -n "$external_song_id" ]]; then
     external_album_id="$(jq -r '.AlbumId // empty' "$response_file")"
     external_search_term="$(jq -r '
         .Name |
-        sub(" \\[(AM|D|Q|T|SP|S|EXT)\\]( \\[E\\])?$"; "")' "$response_file" 2>/dev/null || true)"
+        sub(" \\[[A-Z][A-Za-z0-9]{0,15}\\]( \\[E\\])?$"; "")' "$response_file" 2>/dev/null || true)"
     external_search_term="${external_search_term:-$search_term}"
     if [[ -n "$external_artist_id" ]]; then
         check_json "external artist detail" \
@@ -1152,7 +1157,7 @@ if [[ -n "$external_song_id" ]]; then
              .Type == "Audio" and
              ((.Id // .ItemId) | type == "string" and length > 0) and
              (.Name | type == "string" and
-                 test(" \\[(AM|D|Q|T|SP|S|EXT)\\]( \\[E\\])?$")))' \
+                 test(" \\[[A-Z][A-Za-z0-9]{0,15}\\]( \\[E\\])?$")))' \
         --arg id "$external_song_id"
     check_json "external playback identity" \
         "$ALLSTARR_BASE/Items/$external_song_id/PlaybackInfo?UserId=$best_user_id" \
@@ -1557,7 +1562,7 @@ if [[ -n "$virtual_playlist_id" ]]; then
             checks=$((checks + 1))
             if jq -e --slurpfile source "$direct_virtual_items_file" '
                 def unlabel:
-                    if type == "string" then sub(" \\[[A-Z]+\\]$"; "") else . end;
+                    if type == "string" then sub(" \\[[A-Z][A-Za-z0-9]{0,15}\\]$"; "") else . end;
                 def source_item:
                     del(.ParentId, .PlaylistItemId, .ProviderIds.AllstarrSource);
                 def injected_item:
