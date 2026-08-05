@@ -2101,6 +2101,11 @@ public sealed class TrackMatchCommandService(
     {
         for (var current = exception; current != null; current = current.InnerException)
         {
+            if (current is Npgsql.PostgresException
+                {
+                    SqlState: Npgsql.PostgresErrorCodes.DeadlockDetected
+                })
+                return true;
             if (current is not Npgsql.PostgresException
                 {
                     SqlState: Npgsql.PostgresErrorCodes.UniqueViolation
