@@ -518,6 +518,23 @@ export type PlaylistSourceUpdatePreview = {
   unshownSkippedCount: number;
 };
 
+export type PlaylistRematchPreview = {
+  confirmationId: string;
+  playlistCount: number;
+  libraryCount: number;
+  totalRows: number;
+  localRows: number;
+  exactProviderRows: number;
+  genericExternalRows: number;
+  unresolvedRows: number;
+  confirmedManualRows: number;
+  staleRevisionRows: number;
+  conflictingRows: number;
+  rowsToRematch: number;
+  uniqueTracksToRematch: number;
+  canApply: boolean;
+};
+
 export type PlaylistTrack = {
   sourcePosition: number;
   position: number;
@@ -1601,6 +1618,14 @@ export const playlistLinks = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(snapshotId ? { snapshotId } : {}),
+    }),
+  previewRematch: () =>
+    json<PlaylistRematchPreview>("/api/admin/playlist-links/rematch/preview"),
+  applyRematch: (confirmationId: string) =>
+    json<{ jobId: string; created: boolean }>("/api/admin/playlist-links/rematch/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmationId }),
     }),
   previewSourceUpdate: (id: string) =>
     json<PlaylistSourceUpdatePreview>(

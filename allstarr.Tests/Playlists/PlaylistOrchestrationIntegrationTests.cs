@@ -2,6 +2,7 @@ using System.Data.Common;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using allstarr.Core.Identity;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Jobs;
@@ -568,6 +569,92 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 item.ExternalSnapshotId == externalId && item.RevokedAt == null).ToListAsync();
             Assert.Equal(decision, Assert.Single(active).Decision);
         }
+    }
+
+    [Fact]
+    public async Task Controlled_rematch_is_confirmed_resumable_and_preserves_manual_choices()
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot(
+            "revision-controlled-rematch",
+            Entry(0, "entry-rematch", "source-1", "One"),
+            Entry(1, "entry-protected", "source-alias", "One"));
+        var refresh = await _service.RefreshAsync(Context(), _link);
+        await _service.RunAsync(Context(), new(_link, 1, refresh.SnapshotId));
+        await using (var setup = await _factory.CreateDbContextAsync())
+        {
+            var snapshots = await setup.PlaylistSourceEntries
+                .Where(item => item.PlaylistSourceSnapshotId == refresh.SnapshotId)
+                .OrderBy(item => item.SourcePosition)
+                .Select(item => item.ExternalMetadataSnapshotId)
+                .ToArrayAsync();
+            setup.ManualTrackOverrides.Add(Override(snapshots[1], ManualOverrideDecision.Pin, _trackOne));
+            var decisions = await setup.TrackMatches.Where(item => snapshots.Contains(item.ExternalSnapshotId)).ToListAsync();
+            Assert.Equal(2, decisions.Count);
+            foreach (var decision in decisions) decision.MatcherVersion = "retired";
+            await setup.SaveChangesAsync();
+        }
+
+        var rematches = new PlaylistRematchService(
+            _factory,
+            new DurablePlaylistProjectionReader(_factory),
+            new TrackMatchDecisionEngine());
+        var preview = await rematches.PreviewAsync(_tenant, _user);
+        Assert.Equal(2, preview.TotalRows);
+        Assert.Equal(2, preview.StaleRevisionRows);
+        Assert.Equal(1, preview.ConfirmedManualRows);
+        Assert.Equal(1, preview.UniqueTracksToRematch);
+
+        var claim = new DurableJobClaim(
+            Guid.CreateVersion7(),
+            Guid.CreateVersion7(),
+            1,
+            PlaylistRematchJobHandler.Type,
+            JsonSerializer.SerializeToElement(new PlaylistRematchJobPayload(
+                preview.ConfirmationId, preview.ScopeFingerprint)),
+            _tenant,
+            _user,
+            null,
+            null,
+            null,
+            JsonSerializer.SerializeToElement(new { }),
+            "controlled-rematch",
+            "worker",
+            _now.AddMinutes(1));
+        var handler = new PlaylistRematchJobHandler(_factory, rematches, _trackMatches, new Clock(_now));
+        var completion = await handler.ExecuteAsync(
+            new DurableJobExecutionContext(claim, EmptyServices.Instance), default);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
+
+        var after = await rematches.PreviewAsync(_tenant, _user);
+        Assert.False(after.CanApply);
+        await using (var verify = await _factory.CreateDbContextAsync())
+        {
+            Assert.Single(await verify.ManualTrackOverrides.Where(item => item.RevokedAt == null).ToListAsync());
+            Assert.Single(await verify.AuditEvents.Where(item => item.Category == "playlist-rematch").ToListAsync());
+        }
+
+        var resumed = await handler.ExecuteAsync(
+            new DurableJobExecutionContext(claim with { AttemptNumber = 2 }, EmptyServices.Instance), default);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, resumed.Kind);
+        await using var final = await _factory.CreateDbContextAsync();
+        Assert.Single(await final.AuditEvents.Where(item => item.Category == "playlist-rematch").ToListAsync());
+    }
+
+    [Fact]
+    public async Task Repeat_materialization_does_not_rewrite_a_fresh_unresolved_decision()
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot(
+            "revision-unresolved-noop",
+            Entry(0, "entry-unresolved-noop", "missing-unresolved-noop", "No match"));
+        var refresh = await _service.RefreshAsync(Context(), _link);
+        await _service.RunAsync(Context(), new(_link, 1, refresh.SnapshotId));
+        var firstCount = await DecisionCount();
+
+        await _service.RunAsync(Context(), new(_link, 2, refresh.SnapshotId));
+
+        Assert.Equal(firstCount, await DecisionCount());
     }
 
     [Fact]

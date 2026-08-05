@@ -37,6 +37,7 @@ public sealed class PlaylistLinksController(
     IMediaAssetResolver mediaAssets,
     IApplicationCache applicationCache,
     IPlatformClock clock,
+    PlaylistRematchService rematches,
     ProviderPolicyOptions providerPolicy,
     AdminProtocolExecutionContextFactory protocolContexts,
     IPlaylistVirtualizationService virtualization,
@@ -703,6 +704,48 @@ public sealed class PlaylistLinksController(
                 LibraryScopeId: link.LibraryScopeId, Capability: "playlist",
                 CorrelationId: HttpContext.TraceIdentifier), cancellationToken);
             return Accepted(new { jobId = result.JobId, created = result.Created, generation });
+        });
+    }
+
+    [HttpGet("rematch/preview")]
+    public async Task<IActionResult> PreviewRematch(CancellationToken cancellationToken)
+    {
+        return await Execute(async session =>
+        {
+            var preview = await rematches.PreviewAsync(
+                session.TenantId!.Value,
+                session.AllstarrUserId!.Value,
+                cancellationToken);
+            return Ok(ToRematchPreviewDto(preview));
+        });
+    }
+
+    [HttpPost("rematch/apply")]
+    public async Task<IActionResult> ApplyRematch(
+        [FromBody] ApplyPlaylistRematchRequest? request,
+        CancellationToken cancellationToken)
+    {
+        return await Execute(async session =>
+        {
+            if (request?.ConfirmationId is not { Length: 64 } ||
+                request.ConfirmationId.Any(character => character is not (>= '0' and <= '9' or >= 'a' and <= 'f')))
+                return BadRequest(new { error = "Review the rematch preview again before applying it." });
+            var preview = await rematches.PreviewAsync(
+                session.TenantId!.Value,
+                session.AllstarrUserId!.Value,
+                cancellationToken);
+            if (!preview.ConfirmationId.Equals(request.ConfirmationId, StringComparison.Ordinal))
+                return Conflict(new { error = "The playlist or match state changed. Review the rematch preview again." });
+            if (!preview.CanApply)
+                return Conflict(new { error = "No missing or stale track decisions need rematching." });
+            var queued = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistRematchJobPayload>(
+                PlaylistRematchJobHandler.Type,
+                $"playlist-rematch:{session.AllstarrUserId:N}:{preview.ConfirmationId}",
+                new(preview.ConfirmationId, preview.ScopeFingerprint),
+                session.TenantId,
+                session.AllstarrUserId,
+                CorrelationId: HttpContext.TraceIdentifier), cancellationToken);
+            return Accepted(new { jobId = queued.JobId, created = queued.Created });
         });
     }
 
@@ -1457,6 +1500,23 @@ public sealed class PlaylistLinksController(
             duplicateOfSourceEntryId = item.DuplicateOfSourceEntryId
         })
     };
+    private static object ToRematchPreviewDto(PlaylistRematchPreview value) => new
+    {
+        value.ConfirmationId,
+        value.PlaylistCount,
+        value.LibraryCount,
+        value.TotalRows,
+        value.LocalRows,
+        value.ExactProviderRows,
+        value.GenericExternalRows,
+        value.UnresolvedRows,
+        value.ConfirmedManualRows,
+        value.StaleRevisionRows,
+        value.ConflictingRows,
+        value.RowsToRematch,
+        value.UniqueTracksToRematch,
+        value.CanApply
+    };
     private static object ToCredentialDto(SecretReferenceInfo value) => new { referenceId = value.Id, targetProtocol = "subsonic", purpose = value.Purpose, activeVersion = value.ActiveVersion, updatedAt = value.UpdatedAt };
     private static string LowerCamel(string value) => char.ToLowerInvariant(value[0]) + value[1..];
 }
@@ -1474,6 +1534,7 @@ public sealed record DeletePlaylistLinkRequest(long ExpectedRevision);
 public sealed record SetPlaylistLinkStateRequest(long ExpectedRevision, bool Enabled);
 public sealed record RunPlaylistLinkRequest(long? Generation = null, Guid? SnapshotId = null);
 public sealed record ApplyProviderPlaylistUpdateRequest(long ExpectedRevision, string ConfirmationId);
+public sealed record ApplyPlaylistRematchRequest(string ConfirmationId);
 public sealed record SetMatchOverrideRequest(string Decision, Guid? LibraryTrackId, string Reason);
 public sealed record ClearMatchOverrideRequest(long ExpectedRevision);
 public sealed record ScheduleRequest(string CronExpression, string TimeZoneId, string OverlapPolicy,

@@ -10,6 +10,7 @@
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import OperationConsole from "$lib/components/OperationConsole.svelte";
   import PlaylistSettingsDialog from "$lib/components/PlaylistSettingsDialog.svelte";
+  import PlaylistRematchDialog from "$lib/components/PlaylistRematchDialog.svelte";
   import PlaylistSourceUpdateDialog from "$lib/components/PlaylistSourceUpdateDialog.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
@@ -104,6 +105,7 @@
   let viewMode = $state<"resolved" | "source" | "target">("resolved");
   let settingsOpen = $state(false);
   let sourceUpdateOpen = $state(false);
+  let rematchOpen = $state(false);
 
   const visiblePlaylists = $derived(filterPlaylists(playlists, query, stateFilter, sort));
   const pageCount = $derived(Math.max(1, Math.ceil(visiblePlaylists.length / 20)));
@@ -341,7 +343,7 @@
     }, 250);
   }
 
-  async function run(name: "sync" | "rematch" | "toggle") {
+  async function run(name: "sync" | "toggle") {
     if (!selected || action) return;
     action = name;
     feedback = "";
@@ -351,10 +353,6 @@
         const result = await playlistLinks.run(selected.id, details.snapshotId);
         operationJobId = result.jobId;
         feedback = result.created ? "Playlist update queued." : "A playlist update is already queued.";
-      } else if (name === "rematch") {
-        const result = await playlistLinks.run(selected.id);
-        operationJobId = result.jobId;
-        feedback = result.created ? "Rematch queued." : "Rematch is already queued.";
       } else {
         await playlistLinks.setEnabled(selected.id, selected.revision, !selected.enabled);
         feedback = selected.enabled ? "Playlist paused." : "Playlist resumed.";
@@ -383,28 +381,6 @@
     feedback = failed
       ? `${ids.length - failed} playlists refreshed; ${failed} failed in ${elapsed}s.`
       : `${ids.length} playlists refreshed in ${elapsed}s.`;
-    bulkProgress = "";
-    action = "";
-    await refresh();
-  }
-
-  async function rematchAll() {
-    if (action || refreshing || !playlists.length) return;
-    action = "rematch-all";
-    feedback = "";
-    const started = performance.now();
-    let queued = 0;
-    const results = await runBounded(
-      playlists,
-      3,
-      async (playlist) => {
-        if ((await playlistLinks.run(playlist.id)).created) queued++;
-      },
-      (completed, total) => bulkProgress = `${completed}/${total}`,
-    );
-    const failed = results.filter((result) => result.status === "rejected").length;
-    const elapsed = ((performance.now() - started) / 1_000).toFixed(1);
-    feedback = `${queued} rematches queued${failed ? `; ${failed} failed` : ""} in ${elapsed}s.`;
     bulkProgress = "";
     action = "";
     await refresh();
@@ -514,9 +490,9 @@
             class="button-secondary"
             disabled={Boolean(action) || refreshing}
             type="button"
-            onclick={() => void rematchAll()}
+            onclick={() => rematchOpen = true}
           >
-            {action === "rematch-all" ? `Queueing ${bulkProgress}` : "Rematch all"}
+            Review rematch
           </button>
           <button
             class="button-secondary"
@@ -656,7 +632,7 @@
             <DropdownMenu.Portal>
               <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
                 <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("sync")}>Update playlist now</DropdownMenu.Item>
-                <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("rematch")}>Rematch</DropdownMenu.Item>
+                <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => { detailOpen = false; rematchOpen = true; }}>Review account rematch</DropdownMenu.Item>
                 <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void refreshSources([selected.id])}>Refresh source</DropdownMenu.Item>
                 {#if selected.sourceUpdateAvailable}
                   <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => sourceUpdateOpen = true}>
@@ -968,6 +944,7 @@
   targetName={providerName(selected?.targetProtocol)}
   onQueued={sourceUpdateQueued}
 />
+<PlaylistRematchDialog bind:open={rematchOpen} onQueued={sourceUpdateQueued} />
 
 <AddPlaylistDialog bind:open={addOpen} {providers} onSaved={playlistAdded} />
 <MatchDialog

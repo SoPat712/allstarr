@@ -28,6 +28,8 @@ public sealed class PlaylistLinksControllerContractTests
             [nameof(PlaylistLinksController.Refresh)] = "{id:guid}/refresh",
             [nameof(PlaylistLinksController.Preview)] = "{id:guid}/preview",
             [nameof(PlaylistLinksController.Run)] = "{id:guid}/run",
+            [nameof(PlaylistLinksController.PreviewRematch)] = "rematch/preview",
+            [nameof(PlaylistLinksController.ApplyRematch)] = "rematch/apply",
             [nameof(PlaylistLinksController.PreviewSourceUpdate)] = "{id:guid}/source-update/preview",
             [nameof(PlaylistLinksController.ApplySourceUpdate)] = "{id:guid}/source-update/apply",
             [nameof(PlaylistLinksController.SetOverride)] = "matches/{externalSnapshotId:guid}/override",
@@ -239,7 +241,7 @@ public sealed class PlaylistLinksControllerContractTests
     private static PlaylistLinksController Controller()
     {
         var controller = new PlaylistLinksController(
-            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
+            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
     }

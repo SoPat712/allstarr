@@ -499,6 +499,15 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
       };
     if (url.pathname.endsWith("/refresh") && route.request().method() === "POST")
       body = { snapshot: { snapshotId: "playlist-snapshot" }, preview: {} };
+    if (url.pathname === "/api/admin/playlist-links/rematch/preview" && route.request().method() === "GET")
+      body = {
+        confirmationId: "a".repeat(64), playlistCount: 1, libraryCount: 1, totalRows: 2,
+        localRows: 0, exactProviderRows: 1, genericExternalRows: 0, unresolvedRows: 1,
+        confirmedManualRows: 0, staleRevisionRows: 1, conflictingRows: 0,
+        rowsToRematch: 1, uniqueTracksToRematch: 1, canApply: true,
+      };
+    if (url.pathname === "/api/admin/playlist-links/rematch/apply" && route.request().method() === "POST")
+      body = { jobId: "11111111-1111-1111-1111-111111111111", created: true };
     if (url.pathname.endsWith("/run") && route.request().method() === "POST")
       body = { jobId: "11111111-1111-1111-1111-111111111111", created: true };
     if (url.pathname.endsWith("/source-update/preview") && route.request().method() === "GET")
@@ -2433,11 +2442,19 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   expect(Math.abs((playlistRow!.y + playlistRow!.height) - (playlistBar!.y + playlistBar!.height)))
     .toBeLessThanOrEqual(1);
   expect(playlistBar!.height).toBeGreaterThanOrEqual(6);
-  const rematchAll = page.waitForRequest((item) =>
-    item.method() === "POST" && item.url().endsWith("/api/admin/playlist-links/playlist-link/run"));
-  await page.getByRole("button", { name: "Rematch all" }).click();
-  await rematchAll;
-  await expect(page.getByText(/1 rematches queued in/)).toBeVisible();
+  const rematchPreview = page.waitForRequest((item) =>
+    item.method() === "GET" && item.url().endsWith("/api/admin/playlist-links/rematch/preview"));
+  await page.getByRole("button", { name: "Review rematch" }).click();
+  await rematchPreview;
+  const rematchDialog = page.getByRole("dialog", { name: "Review full rematch" });
+  await expect(rematchDialog.getByText("1 track needs review")).toBeVisible();
+  await expect(rematchDialog.getByText("Generic external").locator("..")).toContainText("0");
+  await rematchDialog.getByRole("checkbox", { name: /I reviewed these counts/ }).check();
+  const rematchApply = page.waitForRequest((item) =>
+    item.method() === "POST" && item.url().endsWith("/api/admin/playlist-links/rematch/apply"));
+  await rematchDialog.getByRole("button", { name: "Rematch 1 track" }).click();
+  await rematchApply;
+  await expect(page.getByText("Controlled rematch queued.")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator(".playlist-row .coverage-bar")).toContainText("Lumen Audio: 1, Unresolved: 1");
   await expect(page.locator(".playlist-row .playlist-art > span")).toBeVisible();

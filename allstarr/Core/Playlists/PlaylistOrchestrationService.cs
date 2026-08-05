@@ -890,9 +890,10 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         if (_trackMatches.SupportsExternalMatching)
         {
             var pendingExternal = storedByExternalId.Values.Where(item =>
-                    item.State is TrackMatchState.Unresolved or
+                    pendingDecisions.ContainsKey(item.ExternalSnapshotId) &&
+                    (item.State is TrackMatchState.Unresolved or
                         TrackMatchState.Suggested or
-                        TrackMatchState.Ambiguous)
+                        TrackMatchState.Ambiguous))
                 .ToArray();
             foreach (var stored in pendingExternal)
             {

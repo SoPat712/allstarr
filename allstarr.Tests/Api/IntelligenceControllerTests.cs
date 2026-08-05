@@ -145,7 +145,7 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
         var controller = new PlaylistLinksController(_factory, null!, null!, null!, null!, null!, null!, null!,
-            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
+            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
         controller.ControllerContext = new() { HttpContext = new DefaultHttpContext() };
         controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = Session(administrator: true);
 
