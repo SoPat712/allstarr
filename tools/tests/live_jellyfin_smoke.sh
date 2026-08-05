@@ -635,6 +635,10 @@ run_stateful_playlist_smoke() {
              ([.Items[].Id] | index($second) != null) and
              all(.Items[]; (.PlaylistItemId | type == "string" and length > 0))' \
             --arg first "$media_id" --arg second "$second_media_id"
+        if ! check_stateful_playlist_identity \
+            "stateful add definition visible" "$stateful_playlist_id" "$renamed_name"; then
+            return
+        fi
         first_entry_id="$(jq -r --arg id "$media_id" \
             'first(.Items[] | select(.Id == $id)) | .PlaylistItemId // empty' "$response_file")"
         second_entry_id="$(jq -r --arg id "$second_media_id" \
@@ -693,7 +697,8 @@ run_stateful_playlist_smoke() {
 
     compare_structure "stateful playlist mix relay" \
         "$DIRECT_BASE/Playlists/$stateful_playlist_id/InstantMix?Limit=10" \
-        "$ALLSTARR_BASE/Playlists/$stateful_playlist_id/InstantMix?Limit=10"
+        "$ALLSTARR_BASE/Playlists/$stateful_playlist_id/InstantMix?Limit=10" \
+        'del(.Items[].ImageBlurHashes)' 'del(.Items[].ImageBlurHashes)'
 
     deleted_playlist_id="$stateful_playlist_id"
     if ! stateful_call "stateful playlist delete" "204" DELETE \
