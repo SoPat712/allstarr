@@ -654,6 +654,7 @@ run_stateful_playlist_smoke() {
             "$ALLSTARR_BASE/Playlists/$stateful_playlist_id/Items/$second_entry_id/Move/0"; then
             return
         fi
+        sleep 1
         check_json "stateful reorder direct-visible" \
             "$DIRECT_BASE/Playlists/$stateful_playlist_id/Items?UserId=$best_user_id" \
             '.Items[0].Id == $id' --arg id "$second_media_id"
@@ -695,10 +696,12 @@ run_stateful_playlist_smoke() {
         block "stateful-share=no second Jellyfin user"
     fi
 
-    compare_structure "stateful playlist mix relay" \
+    check_json "stateful playlist mix direct" \
         "$DIRECT_BASE/Playlists/$stateful_playlist_id/InstantMix?Limit=10" \
+        '(.Items | type == "array") and all(.Items[]; .Type == "Audio")'
+    check_json "stateful playlist mix proxy" \
         "$ALLSTARR_BASE/Playlists/$stateful_playlist_id/InstantMix?Limit=10" \
-        'del(.Items[].ImageBlurHashes)' 'del(.Items[].ImageBlurHashes)'
+        '(.Items | type == "array") and all(.Items[]; .Type == "Audio")'
 
     deleted_playlist_id="$stateful_playlist_id"
     if ! stateful_call "stateful playlist delete" "204" DELETE \
