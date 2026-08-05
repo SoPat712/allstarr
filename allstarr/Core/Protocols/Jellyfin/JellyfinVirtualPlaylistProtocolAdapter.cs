@@ -67,7 +67,8 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     IOptions<JellyfinSettings>? settings = null,
     JellyfinProxyService? proxyService = null,
     JellyfinResponseBuilder? responseBuilder = null,
-    ILogger<JellyfinVirtualPlaylistProtocolAdapter>? logger = null)
+    ILogger<JellyfinVirtualPlaylistProtocolAdapter>? logger = null,
+    IProtocolProviderGateway? providerGateway = null)
 {
     private const string FullItemFields =
         "AirTime,CanDelete,CanDownload,ChannelInfo,Chapters,Trickplay,ChildCount," +
@@ -250,6 +251,9 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         var originals = playlist.ProjectionMode is not (PlaylistProjectionMode.Resolved or PlaylistProjectionMode.Target) || proxyService == null
             ? null
             : await ReadOriginalItemsAsync(context, tracks, clientHeaders, clientQuery);
+        IReadOnlyDictionary<string, Song> externalSongs = responseBuilder == null
+            ? new Dictionary<string, Song>()
+            : await ReadExternalSongsAsync(context, tracks);
         var items = tracks.Select(track =>
         {
             JsonObject item;
@@ -264,7 +268,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             else if (playlist.ProjectionMode == PlaylistProjectionMode.Resolved &&
                      track.RouteKind == TrackRouteKind.External && responseBuilder != null)
             {
-                item = JsonSerializer.SerializeToNode(responseBuilder.ConvertSongToJellyfinItem(new Song
+                var song = externalSongs.GetValueOrDefault(track.BackendItemId) ?? new Song
                 {
                     Id = track.BackendItemId,
                     Title = track.Title,
@@ -278,7 +282,8 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                     IsLocal = false,
                     ExternalProvider = track.RouteProviderId ?? track.SourceProviderId,
                     ExternalId = track.RouteExternalId ?? track.SourceExternalId
-                }))!.AsObject();
+                };
+                item = JsonSerializer.SerializeToNode(responseBuilder.ConvertSongToJellyfinItem(song))!.AsObject();
             }
             else
             {
@@ -325,6 +330,45 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             TotalRecordCount = playlist.Tracks.Count,
             StartIndex = startIndex
         });
+    }
+
+    private async Task<IReadOnlyDictionary<string, Song>> ReadExternalSongsAsync(
+        ProtocolExecutionContext context,
+        IReadOnlyCollection<VirtualPlaylistTrack> tracks)
+    {
+        var result = new Dictionary<string, Song>(StringComparer.Ordinal);
+        if (providerGateway == null) return result;
+
+        var external = tracks
+            .Where(track => track.RouteKind == TrackRouteKind.External &&
+                            !string.IsNullOrWhiteSpace(track.RouteProviderId) &&
+                            !string.IsNullOrWhiteSpace(track.RouteExternalId))
+            .DistinctBy(track => track.BackendItemId)
+            .ToArray();
+        foreach (var batch in external.Chunk(4))
+        {
+            var songs = await Task.WhenAll(batch.Select(async track =>
+            {
+                try
+                {
+                    return (track.BackendItemId, Song: await providerGateway.GetSongAsync(
+                        context, track.RouteProviderId!, track.RouteExternalId!));
+                }
+                catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    logger?.LogWarning(exception,
+                        "Could not hydrate a {ProviderId} virtual playlist track", track.RouteProviderId);
+                    return (track.BackendItemId, Song: (Song?)null);
+                }
+            }));
+            foreach (var (id, song) in songs)
+                if (song != null) result[id] = song;
+        }
+        return result;
     }
 
     private async Task<IReadOnlyDictionary<string, JsonObject>> ReadOriginalItemsAsync(

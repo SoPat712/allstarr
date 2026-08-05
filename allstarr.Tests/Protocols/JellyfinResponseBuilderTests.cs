@@ -168,7 +168,7 @@ public class JellyfinResponseBuilderTests
 
         var result = _builder.ConvertSongToJellyfinItem(song);
 
-        Assert.Equal("Sunflower [S] [E]", result["Name"]);
+        Assert.Equal("Sunflower [Sq] [E]", result["Name"]);
     }
 
     [Fact]
@@ -187,7 +187,7 @@ public class JellyfinResponseBuilderTests
 
         var result = _builder.ConvertSongToJellyfinItem(song);
 
-        Assert.Equal("Sunflower [S]", result["Name"]);
+        Assert.Equal("Sunflower [Sq]", result["Name"]);
     }
 
     [Theory]
@@ -197,9 +197,20 @@ public class JellyfinResponseBuilderTests
     [InlineData("applemusic", "[AM]")]
     [InlineData("apple-music", "[AM]")]
     [InlineData("apple-musickit", "[AM]")]
-    [InlineData("spotify", "[SP]")]
+    [InlineData("spotify", "[S]")]
     [InlineData("tidal", "[T]")]
-    [InlineData("squidwtf", "[S]")]
+    [InlineData("squidwtf", "[Sq]")]
+    [InlineData("spotiflac-qobuz", "[Q]")]
+    [InlineData("spotiflac-qobuz-web", "[Q]")]
+    [InlineData("spotiflac-amazon", "[AmM]")]
+    [InlineData("spotiflac-amazon-music", "[AmM]")]
+    [InlineData("spotiflac-spotify-web", "[SW]")]
+    [InlineData("spotiflac-tidal-web", "[T]")]
+    [InlineData("spotiflac-soundcloud", "[So]")]
+    [InlineData("spotiflac-ytmusic", "[YM]")]
+    [InlineData("spotiflac-ytmusic-spotiflac", "[YM]")]
+    [InlineData("typed-provider", "[TP]")]
+    [InlineData("unknown", "[EXT]")]
     public void ConvertSongToJellyfinItem_ExternalSong_UsesProviderSourceLabel(string provider, string label)
     {
         var song = new Song
@@ -367,7 +378,7 @@ public class JellyfinResponseBuilderTests
     [Theory]
     [InlineData("deezer", "[D]")]
     [InlineData("qobuz", "[Q]")]
-    [InlineData("squidwtf", "[S]")]
+    [InlineData("squidwtf", "[Sq]")]
     public void ConvertAlbumToJellyfinItem_ExternalAlbum_UsesProviderSourceLabel(string provider, string label)
     {
         var album = new Album
@@ -415,7 +426,7 @@ public class JellyfinResponseBuilderTests
     [Theory]
     [InlineData("deezer", "[D]")]
     [InlineData("qobuz", "[Q]")]
-    [InlineData("squidwtf", "[S]")]
+    [InlineData("squidwtf", "[Sq]")]
     public void ConvertArtistToJellyfinItem_ExternalArtist_UsesProviderSourceLabel(string provider, string label)
     {
         var artist = new Artist

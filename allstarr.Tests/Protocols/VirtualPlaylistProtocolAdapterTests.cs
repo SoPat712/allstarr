@@ -8,8 +8,11 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Protocols.Jellyfin;
 using allstarr.Core.Protocols.Subsonic;
 using allstarr.Core.Storage;
+using allstarr.Models.Domain;
+using allstarr.Services.Jellyfin;
 using allstarr.Services.Subsonic;
 using Microsoft.AspNetCore.Mvc;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -138,6 +141,57 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         Assert.Equal("source-hash", item.GetProperty("ProviderIds").GetProperty("AllstarrSourceHash").GetString());
         Assert.Equal("revision-7", item.GetProperty("ProviderIds").GetProperty("AllstarrSourceRevision").GetString());
         Assert.Equal("USRC17607839", item.GetProperty("ProviderIds").GetProperty("ISRC").GetString());
+    }
+
+    [Fact]
+    public async Task JellyfinResolvedRead_HydratesExternalArtistRelationships()
+    {
+        var model = Model() with
+        {
+            ProjectionMode = PlaylistProjectionMode.Resolved,
+            Tracks =
+            [
+                new(0, "ext-apple-download-song-101", "Source title", "Source artist", null,
+                    null, 1_000, null, TrackMatchState.Accepted,
+                    RouteKind: TrackRouteKind.External, RouteProviderId: "apple-download",
+                    RouteExternalId: "101")
+            ]
+        };
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetSongAsync(
+                It.IsAny<ProtocolExecutionContext>(), "apple-download", "101"))
+            .ReturnsAsync(new Song
+            {
+                Id = "ext-apple-download-song-101",
+                Title = "Provider title",
+                Artist = "Provider artist",
+                Artists = ["Provider artist"],
+                ArtistId = "ext-apple-download-artist-201",
+                ArtistIds = ["ext-apple-download-artist-201"],
+                Album = "Provider album",
+                AlbumId = "ext-apple-download-album-301",
+                ExternalProvider = "apple-download",
+                ExternalId = "101",
+                IsLocal = false
+            });
+        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(
+            new StubVirtualizationService(model),
+            new StubJellyfinMutationResolver(null),
+            responseBuilder: new JellyfinResponseBuilder(),
+            providerGateway: gateway.Object);
+
+        var result = Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(
+            Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+        var item = json.RootElement.GetProperty("Items")[0];
+
+        Assert.Equal("Provider artist [AM]", item.GetProperty("Artists")[0].GetString());
+        Assert.Equal("ext-apple-download-artist-201",
+            item.GetProperty("ArtistItems")[0].GetProperty("Id").GetString());
+        Assert.Equal("ext-apple-download-artist-201",
+            item.GetProperty("AlbumArtists")[0].GetProperty("Id").GetString());
+        Assert.Equal("ext-apple-download-album-301", item.GetProperty("AlbumId").GetString());
+        gateway.VerifyAll();
     }
 
     [Fact]

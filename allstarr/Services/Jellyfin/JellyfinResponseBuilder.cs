@@ -605,17 +605,33 @@ public class JellyfinResponseBuilder
 
     private static string GetExternalSourceCode(string? provider)
     {
-        return provider?.ToLowerInvariant() switch
+        if (string.IsNullOrWhiteSpace(provider)) return "EXT";
+
+        var normalized = provider.Trim().ToLowerInvariant();
+        if (normalized.StartsWith("spotiflac-", StringComparison.Ordinal))
+            normalized = normalized["spotiflac-".Length..];
+
+        var known = normalized switch
         {
             "deezer" => "D",
-            "qobuz" => "Q",
+            "qobuz" or "qobuz-web" => "Q",
             "applemusic" or "apple-download" => "AM",
             "apple-music" or "apple-musickit" => "AM",
-            "spotify" => "SP",
-            "tidal" => "T",
-            "squidwtf" => "S",
-            _ => "EXT"
+            "amazon" or "amazonmusic" or "amazon-music" => "AmM",
+            "spotify" => "S",
+            "tidal" or "tidal-web" => "T",
+            "squidwtf" => "Sq",
+            "soundcloud" => "So",
+            "ytmusic" or "ytmusic-spotiflac" or "youtube-music" => "YM",
+            "ext" or "external" or "unknown" => "EXT",
+            _ => null
         };
+        if (known != null) return known;
+
+        var words = normalized.Split(['-', '_', ' ', '.'], StringSplitOptions.RemoveEmptyEntries);
+        return words.Length == 0
+            ? "EXT"
+            : string.Concat(words.Select(word => char.ToUpperInvariant(word[0])));
     }
 
     /// <summary>
