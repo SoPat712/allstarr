@@ -978,7 +978,9 @@ check_external_provider_case() {
             "$ALLSTARR_BASE/Artists/$artist_id/InstantMix?UserId=$best_user_id&Limit=10" \
             '(.Items | type == "array") and
              (.TotalRecordCount | type == "number") and
-             all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0)'
+             all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and
+                 (.Id | startswith($prefix)))' \
+            --arg prefix "ext-$provider-song-"
     else
         block "$provider artist routes=provider omitted artist relationship ID"
     fi
@@ -996,7 +998,9 @@ check_external_provider_case() {
             "$ALLSTARR_BASE/Albums/$album_id/InstantMix?UserId=$best_user_id&Limit=10" \
             '(.Items | type == "array") and
              (.TotalRecordCount | type == "number") and
-             all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0)'
+             all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and
+                 (.Id | startswith($prefix)))' \
+            --arg prefix "ext-$provider-song-"
     else
         block "$provider album routes=provider omitted album relationship ID"
     fi
@@ -1009,13 +1013,16 @@ check_external_provider_case() {
         "$ALLSTARR_BASE/Items/$song_id/Similar?UserId=$best_user_id&Limit=10" \
         '(.Items | type == "array") and
          (.TotalRecordCount | type == "number") and
-         all(.Items[]; .Type == "Audio" and .Id != $id and .RunTimeTicks > 0)' \
-        --arg id "$song_id"
+         all(.Items[]; .Type == "Audio" and .Id != $id and .RunTimeTicks > 0 and
+             (.Id | startswith($prefix)))' \
+        --arg id "$song_id" --arg prefix "ext-$provider-song-"
     check_json "$provider song instant mix" \
         "$ALLSTARR_BASE/Songs/$song_id/InstantMix?UserId=$best_user_id&Limit=10" \
         '(.Items | type == "array") and
          (.TotalRecordCount | type == "number") and
-         all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0)'
+         all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and
+             (.Id | startswith($prefix)))' \
+        --arg prefix "ext-$provider-song-"
     check_image "$provider advertised artwork" \
         "$ALLSTARR_BASE/Items/$song_id/Images/Primary?maxWidth=300&maxHeight=300&UserId=$best_user_id"
     check_code "$provider artwork HEAD" "200,304" HEAD \
@@ -1371,13 +1378,15 @@ if [[ -n "$external_song_id" ]]; then
         "$ALLSTARR_BASE/Items/$external_song_id/Similar?UserId=$best_user_id&Limit=10" \
         '(.Items | type == "array" and length > 0) and (.TotalRecordCount | type == "number") and
          .StartIndex == 0 and
-         all(.Items[]; .Type == "Audio" and .Id != $id and .RunTimeTicks > 0)' \
-        --arg id "$external_song_id"
+         all(.Items[]; .Type == "Audio" and .Id != $id and .RunTimeTicks > 0 and
+             (.Id | startswith($prefix)))' \
+        --arg id "$external_song_id" --arg prefix "ext-$external_provider-song-"
     check_json "external instant mix envelope" \
         "$ALLSTARR_BASE/Songs/$external_song_id/InstantMix?UserId=$best_user_id&Limit=10" \
         '(.Items | type == "array") and (.TotalRecordCount | type == "number") and
          .StartIndex == 0 and
-         all(.Items[]; .Type == "Audio" and (.Id | type == "string" and length > 0))'
+         all(.Items[]; .Type == "Audio" and (.Id | startswith($prefix)))' \
+        --arg prefix "ext-$external_provider-song-"
     external_art_url="$ALLSTARR_BASE/Items/$external_song_id/Images/Primary?maxWidth=300&maxHeight=300&UserId=$best_user_id"
     measure "external artwork" "$external_art_url"
     timing_budget "external artwork latency" "external artwork" "$MAX_EXTERNAL_ARTWORK_TTFB_MS"
