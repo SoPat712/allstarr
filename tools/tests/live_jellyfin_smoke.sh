@@ -827,12 +827,14 @@ check_external_provider_case() {
             --arg id "$artist_id"
         check_json "$provider artist tracks" \
             "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$artist_id&IncludeItemTypes=Audio&Limit=200" \
-            '(.Items | type == "array" and length > 0) and
-             all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and (.ArtistItems | length > 0)) and
-             any(.Items[]; any(.ArtistItems[]; .Id == $id))' --arg id "$artist_id"
+            '(.Items | type == "array") and
+             (.TotalRecordCount | type == "number") and
+             all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and (.ArtistItems | length > 0) and
+                 any(.ArtistItems[]; .Id == $id))' --arg id "$artist_id"
         check_json "$provider artist combined" \
             "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$artist_id&IncludeItemTypes=MusicAlbum,Audio&Limit=400" \
-            'any(.Items[]; .Type == "MusicAlbum") and any(.Items[]; .Type == "Audio")' \
+            '(.Items | type == "array" and length > 0) and
+             all(.Items[]; .Type == "MusicAlbum" or .Type == "Audio")' \
             --arg id "$artist_id"
     else
         block "$provider artist routes=provider omitted artist relationship ID"
@@ -1072,12 +1074,14 @@ if [[ -n "$external_song_id" ]]; then
             --arg id "$external_artist_id"
         check_json "external artist tracks" \
             "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_artist_id&IncludeItemTypes=Audio&Limit=200" \
-            '(.Items | type == "array" and length > 0) and
-             all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and (.ArtistItems | length > 0)) and
-             any(.Items[]; any(.ArtistItems[]; .Id == $id))' --arg id "$external_artist_id"
+            '(.Items | type == "array") and
+             (.TotalRecordCount | type == "number") and
+             all(.Items[]; .Type == "Audio" and .RunTimeTicks > 0 and (.ArtistItems | length > 0) and
+                 any(.ArtistItems[]; .Id == $id))' --arg id "$external_artist_id"
         check_json "external artist combined" \
             "$ALLSTARR_BASE/Items?UserId=$best_user_id&ParentId=$external_artist_id&IncludeItemTypes=MusicAlbum,Audio&Limit=400" \
-            'any(.Items[]; .Type == "MusicAlbum") and any(.Items[]; .Type == "Audio")'
+            '(.Items | type == "array" and length > 0) and
+             all(.Items[]; .Type == "MusicAlbum" or .Type == "Audio")'
     else
         block "external artist routes=provider omitted artist relationship ID"
     fi

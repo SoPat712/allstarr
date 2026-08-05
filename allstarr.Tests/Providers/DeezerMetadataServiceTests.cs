@@ -455,6 +455,16 @@ public class DeezerMetadataServiceTests
             var pathAndQuery = request.RequestUri!.PathAndQuery;
             requests.Add(pathAndQuery);
 
+            if (pathAndQuery == "/artist/27")
+            {
+                return CreateJsonResponse(JsonSerializer.Serialize(new
+                {
+                    id = 27,
+                    name = "Artist",
+                    nb_album = 2
+                }));
+            }
+
             if (pathAndQuery.Contains("index=1", StringComparison.Ordinal))
             {
                 return CreateJsonResponse(JsonSerializer.Serialize(new
@@ -465,8 +475,7 @@ public class DeezerMetadataServiceTests
                         {
                             id = 2002,
                             title = "Second Album",
-                            nb_tracks = 8,
-                            artist = new { id = 27, name = "Artist" }
+                            nb_tracks = 8
                         }
                     }
                 }));
@@ -480,8 +489,7 @@ public class DeezerMetadataServiceTests
                     {
                         id = 2001,
                         title = "First Album",
-                        nb_tracks = 10,
-                        artist = new { id = 27, name = "Artist" }
+                        nb_tracks = 10
                     }
                 },
                 total = 2
@@ -491,8 +499,14 @@ public class DeezerMetadataServiceTests
         var result = await _service.GetArtistAlbumsAsync("deezer", "27");
 
         Assert.Equal(["First Album", "Second Album"], result.Select(album => album.Title));
+        Assert.All(result, album =>
+        {
+            Assert.Equal("Artist", album.Artist);
+            Assert.Equal("ext-deezer-artist-27", album.ArtistId);
+        });
         Assert.Contains("/artist/27/albums?index=0&limit=100", requests);
         Assert.Contains("/artist/27/albums?index=1&limit=100", requests);
+        Assert.Contains("/artist/27", requests);
     }
 
     private void SetupHttpResponse(string content, HttpStatusCode statusCode = HttpStatusCode.OK)

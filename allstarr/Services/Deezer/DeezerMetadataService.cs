@@ -516,7 +516,20 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
             album => albums.Add(ParseDeezerAlbum(album)),
             cancellationToken);
 
-        return albums;
+        if (albums.Any(album => string.IsNullOrWhiteSpace(album.Artist)))
+        {
+            var artist = await GetArtistAsync(externalProvider, externalId, cancellationToken);
+            if (artist != null)
+            {
+                foreach (var album in albums.Where(album => string.IsNullOrWhiteSpace(album.Artist)))
+                {
+                    album.Artist = artist.Name;
+                    album.ArtistId = artist.Id;
+                }
+            }
+        }
+
+        return albums.Where(album => !string.IsNullOrWhiteSpace(album.Artist)).ToList();
     }
 
     public async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
