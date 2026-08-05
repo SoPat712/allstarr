@@ -195,6 +195,35 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task JellyfinArtistSearch_PreservesTheEntireLocalArtistObject()
+    {
+        const string artist = """
+            {
+              "Id":"00112233445566778899aabbccddeeff",
+              "Name":"Fixture Artist",
+              "Type":"MusicArtist",
+              "ProviderIds":{"MusicBrainzArtist":"artist-1"},
+              "UserData":{"IsFavorite":true,"PlayCount":7},
+              "UnknownFutureField":{"Keep":[1,2,3]}
+            }
+            """;
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+            request.RequestUri!.AbsolutePath == "/Users/Me"
+                ? Json(StatusCodes.Status200OK, """{"Id":"user-1"}""")
+                : Json(StatusCodes.Status200OK, $$"""{"Items":[{{artist}}],"TotalRecordCount":1,"StartIndex":0}"""));
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/Artists?SearchTerm=Fixture%20Artist&Limit=10&api_key=fixture-key");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(JsonNode.DeepEquals(
+            JsonNode.Parse(artist),
+            JsonNode.Parse(body.RootElement.GetProperty("Items")[0].GetRawText())));
+    }
+
+    [Fact]
     public async Task JellyfinAuthenticatedSystemInfo_FallsBackForUnboundApiKeyOnPreTwelveServers()
     {
         var observedRequests = new List<string>();

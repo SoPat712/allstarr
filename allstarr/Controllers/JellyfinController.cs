@@ -596,24 +596,17 @@ public partial class JellyfinController : ControllerBase
             _logger.LogDebug("Artist search results: Jellyfin={JellyfinCount}, External={ExternalCount}",
                 jellyfinResult != null ? "found" : "null", externalArtists.Count);
 
-            // Parse Jellyfin artists
-            var localArtists = new List<Artist>();
+            var artistItems = new List<Dictionary<string, object?>>();
             if (jellyfinResult != null && jellyfinResult.RootElement.TryGetProperty("Items", out var items))
             {
                 foreach (var item in items.EnumerateArray())
                 {
-                    localArtists.Add(_modelMapper.ParseArtist(item));
+                    artistItems.Add(JsonElementToDictionary(item));
                 }
             }
 
-            // NO deduplication - merge all artists and sort by relevance
-            // Show ALL matches (local + external) sorted by best match first
-            var mergedArtists = localArtists.Concat(externalArtists).ToList();
-
-            _logger.LogDebug("Returning {Count} total artists (local + external, no deduplication)", mergedArtists.Count);
-
-            // Convert to Jellyfin format
-            var artistItems = mergedArtists.Select(a => _responseBuilder.ConvertArtistToJellyfinItem(a)).ToList();
+            artistItems.AddRange(externalArtists.Select(_responseBuilder.ConvertArtistToJellyfinItem));
+            _logger.LogDebug("Returning {Count} total artists (local + external, no deduplication)", artistItems.Count);
 
             return _responseBuilder.CreateJsonResponse(new
             {
