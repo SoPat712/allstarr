@@ -171,7 +171,7 @@ public sealed class PlaylistRematchService(
                 string.Join(',', publishedByLink
                     .Where(item => item.Key.ExternalMetadataSnapshotId == id)
                     .OrderBy(item => item.Key.LinkId)
-                    .SelectMany(item => item.Value.OrderBy(value => value))))) ));
+                    .SelectMany(item => item.Value.OrderBy(value => value)))))));
         var conflictingIds = contextConflicts
             .Concat(latest.Where(item => item.Value.State == TrackMatchState.Ambiguous).Select(item => item.Key))
             .ToHashSet();
