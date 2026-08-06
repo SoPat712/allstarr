@@ -261,9 +261,25 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                 track.RouteKind == TrackRouteKind.Local && originals != null)
             {
                 if (!originals.TryGetValue(track.BackendItemId, out var original))
-                    throw new InvalidOperationException(
-                        $"Jellyfin did not return matched playlist item '{track.BackendItemId}'.");
-                item = (JsonObject)original.DeepClone();
+                {
+                    logger?.LogWarning(
+                        "Jellyfin no longer returns matched playlist item {BackendItemId}; serving it as unresolved",
+                        track.BackendItemId);
+                    item = JsonSerializer.SerializeToNode(FallbackItem(track))!.AsObject();
+                    item["Id"] = $"{PlaylistVirtualizationService.UnresolvedItemPrefix}{track.BackendItemId}";
+                    AddSourceLabels(item, track.SourceProviderId);
+                    item["LocationType"] = "Virtual";
+                    item["PlayAccess"] = "None";
+                    item["CanDownload"] = false;
+                    item["CanDelete"] = false;
+                    item["SupportsSync"] = false;
+                    item["HasLyrics"] = false;
+                    item["MediaSources"] = new JsonArray();
+                }
+                else
+                {
+                    item = (JsonObject)original.DeepClone();
+                }
             }
             else if (playlist.ProjectionMode == PlaylistProjectionMode.Resolved &&
                      track.RouteKind == TrackRouteKind.External && responseBuilder != null)

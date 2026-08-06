@@ -265,8 +265,13 @@ public partial class JellyfinController
         return StatusCode(statusCode, new { error = errorMessage });
     }
 
-    private static (int statusCode, string errorMessage) MapExternalStreamException(Exception ex)
+    internal static (int statusCode, string errorMessage) MapExternalStreamException(Exception ex)
     {
+        if (ex is UnauthorizedAccessException)
+        {
+            return (StatusCodes.Status403Forbidden, "External provider account is unavailable");
+        }
+
         if (ex is TimeoutException || ex is TaskCanceledException)
         {
             return (StatusCodes.Status504GatewayTimeout, "External provider timed out");

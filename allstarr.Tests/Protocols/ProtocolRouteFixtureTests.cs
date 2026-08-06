@@ -32,6 +32,16 @@ namespace allstarr.Tests;
 
 public sealed class ProtocolRouteFixtureTests
 {
+    [Fact]
+    public void JellyfinExternalStream_ReportsUnavailableAccountAsForbidden()
+    {
+        var (status, message) = allstarr.Controllers.JellyfinController.MapExternalStreamException(
+            new UnauthorizedAccessException("do not expose provider details"));
+
+        Assert.Equal(StatusCodes.Status403Forbidden, status);
+        Assert.Equal("External provider account is unavailable", message);
+    }
+
     [Theory]
     [InlineData("u=fixture&t=hash&s=salt&v=1.16.1&c=fixture&f=json", "application/json")]
     [InlineData("u=fixture&p=secret&v=1.16.1&c=fixture&f=xml", "application/xml")]
@@ -2317,7 +2327,18 @@ public sealed class ProtocolRouteFixtureTests
                     null,
                     allstarr.Core.Storage.TrackMatchState.Unresolved,
                     SourceProviderId: "spotify",
-                    RouteKind: TrackRouteKind.Unresolved)
+                    RouteKind: TrackRouteKind.Unresolved),
+                new VirtualPlaylistTrack(
+                    2,
+                    "stale-local-song",
+                    "Stale Track",
+                    "Stale Artist",
+                    "Stale Album",
+                    null,
+                    210_000,
+                    null,
+                    allstarr.Core.Storage.TrackMatchState.Accepted,
+                    SourceProviderId: "spotify")
             ]);
         var virtualization = new Mock<IPlaylistVirtualizationService>(MockBehavior.Strict);
         virtualization.Setup(service => service.ReadAsync(
@@ -2403,10 +2424,17 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal("None", unresolved.GetProperty("PlayAccess").GetString());
         Assert.False(unresolved.GetProperty("CanDownload").GetBoolean());
         Assert.Empty(unresolved.GetProperty("MediaSources").EnumerateArray());
+        var stale = tracks.RootElement.GetProperty("Items")[2];
+        Assert.Equal("allstarr-unresolved-stale-local-song", stale.GetProperty("Id").GetString());
+        Assert.Equal("Stale Track [S]", stale.GetProperty("Name").GetString());
+        Assert.Equal("None", stale.GetProperty("PlayAccess").GetString());
+        Assert.False(stale.GetProperty("CanDownload").GetBoolean());
+        Assert.Empty(stale.GetProperty("MediaSources").EnumerateArray());
         Assert.Equal(3, observed.Count(path => path == "/Users/Me?api_key=fixture-key"));
         var hydration = Assert.Single(observed, path =>
             path.StartsWith("/Items?", StringComparison.Ordinal));
         Assert.Contains("Ids=local-song-a", hydration, StringComparison.Ordinal);
+        Assert.Contains("stale-local-song", hydration, StringComparison.Ordinal);
         Assert.Contains("UserId=user-1", hydration, StringComparison.Ordinal);
         Assert.Contains("api_key=fixture-key", hydration, StringComparison.Ordinal);
         Assert.Contains("MediaSources", Uri.UnescapeDataString(hydration), StringComparison.Ordinal);
