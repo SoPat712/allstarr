@@ -290,6 +290,12 @@ public sealed class TrackMatchesController(
                 .OrderBy(item => item.BackendItemId, StringComparer.Ordinal)
                 .First());
         var sourceIdentities = review.ProviderIdentities.ToDictionary(item => item.Id);
+        var sourceIdentitiesByHash = review.ProviderIdentities
+            .GroupBy(item => item.ExternalIdHash, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group
+                .OrderByDescending(item => item.Verification == ProviderIdentityVerification.Pinned)
+                .ThenByDescending(item => item.VerifiedAt)
+                .ToArray(), StringComparer.Ordinal);
         var identities = review.ProviderIdentities
             .GroupBy(item => item.CanonicalRecordingId).ToDictionary(group => group.Key, group => group.ToArray());
         var playableProviders = providerGateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
@@ -324,6 +330,8 @@ public sealed class TrackMatchesController(
                 var sourceIdentity = snapshot.ProviderTrackIdentityId.HasValue
                     ? sourceIdentities.GetValueOrDefault(snapshot.ProviderTrackIdentityId.Value)
                     : null;
+                sourceIdentity ??= sourceIdentitiesByHash.GetValueOrDefault(snapshot.ExternalIdHash)?
+                    .FirstOrDefault(item => MatchesSourceIdentity(snapshot, item));
                 return Row(
                     snapshot,
                     decision,
@@ -595,6 +603,18 @@ public sealed class TrackMatchesController(
             TrackMatchState.Suggested or TrackMatchState.Ambiguous or TrackMatchState.Rejected) ||
         (filter.Equals("matched", StringComparison.OrdinalIgnoreCase) && state is TrackMatchState.Accepted or TrackMatchState.Pinned) ||
         state.ToString().Equals(filter, StringComparison.OrdinalIgnoreCase);
+
+    private static bool MatchesSourceIdentity(
+        ExternalMetadataSnapshotRecord snapshot,
+        ProviderTrackIdentityRecord identity) =>
+        identity.TenantId == snapshot.TenantId &&
+        identity.ProviderId.Equals(snapshot.ProviderId, StringComparison.OrdinalIgnoreCase) &&
+        (identity.ProviderAccountId == snapshot.ProviderAccountId ||
+         identity.Scope == ProviderIdentityScope.Catalog && !identity.ProviderAccountId.HasValue) &&
+        identity.ResourceKind == ProviderResourceKind.Track &&
+        identity.Scope is ProviderIdentityScope.Catalog or ProviderIdentityScope.Account &&
+        identity.ExternalIdHash == snapshot.ExternalIdHash &&
+        identity.Verification is ProviderIdentityVerification.Verified or ProviderIdentityVerification.Pinned;
 
     private static string CleanReason(string? reason, string fallback) =>
         string.IsNullOrWhiteSpace(reason) ? fallback : reason.Trim()[..Math.Min(reason.Trim().Length, 500)];

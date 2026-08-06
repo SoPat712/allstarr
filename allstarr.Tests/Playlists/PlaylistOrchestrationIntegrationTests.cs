@@ -747,6 +747,10 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.Equal(source.CanonicalRecordingId, selected.CanonicalRecordingId);
         Assert.Equal(ProviderIdentityVerification.Verified, source.Verification);
         Assert.Equal(ProviderIdentityVerification.Pinned, selected.Verification);
+        var review = await _trackMatches.GetReviewDataAsync(
+            new TrackMatchActor(_tenant, _user, false),
+            externalSnapshotId: externalSnapshotId);
+        Assert.Contains(review.ProviderIdentities, item => item.Id == source.Id);
         var projection = await new DurablePlaylistProjectionReader(_factory)
             .ReadByLinkIdAsync(_tenant, _user, _link);
         Assert.Equal("external", Assert.Single(projection!.Entries).RouteKind);

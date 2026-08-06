@@ -713,9 +713,15 @@ public sealed class TrackMatchCommandService(
             .Select(item => item.ProviderTrackIdentityId!.Value)
             .Distinct()
             .ToArray();
+        var sourceExternalIdHashes = snapshots
+            .Select(item => item.ExternalIdHash)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
         var sourceIdentities = await db.ProviderTrackIdentities.AsNoTracking()
             .Where(item => item.TenantId == actor.TenantId &&
-                           sourceIdentityIds.Contains(item.Id))
+                           item.ResourceKind == ProviderResourceKind.Track &&
+                           (sourceIdentityIds.Contains(item.Id) ||
+                            sourceExternalIdHashes.Contains(item.ExternalIdHash)))
             .ToListAsync(cancellationToken);
         var canonicalIds = decisions.Where(item => item.CanonicalRecordingId.HasValue)
             .Select(item => item.CanonicalRecordingId!.Value)
