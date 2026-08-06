@@ -581,6 +581,9 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             Entry(1, "entry-protected", "source-alias", "One"));
         var refresh = await _service.RefreshAsync(Context(), _link);
         await _service.RunAsync(Context(), new(_link, 1, refresh.SnapshotId));
+        Guid rematchedExternalId;
+        Guid originalPublishedMatchId;
+        Guid rematchedDecisionId;
         await using (var setup = await _factory.CreateDbContextAsync())
         {
             var snapshots = await setup.PlaylistSourceEntries
@@ -588,6 +591,10 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 .OrderBy(item => item.SourcePosition)
                 .Select(item => item.ExternalMetadataSnapshotId)
                 .ToArrayAsync();
+            rematchedExternalId = snapshots[0];
+            originalPublishedMatchId = (await setup.PlaylistSourceEntries.SingleAsync(item =>
+                item.PlaylistSourceSnapshotId == refresh.SnapshotId && item.SourcePosition == 0))
+                .PublishedTrackMatchId!.Value;
             setup.ManualTrackOverrides.Add(Override(snapshots[1], ManualOverrideDecision.Pin, _trackOne));
             var decisions = await setup.TrackMatches.Where(item => snapshots.Contains(item.ExternalSnapshotId)).ToListAsync();
             Assert.Equal(2, decisions.Count);
@@ -611,7 +618,9 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             1,
             PlaylistRematchJobHandler.Type,
             JsonSerializer.SerializeToElement(new PlaylistRematchJobPayload(
-                preview.ConfirmationId, preview.ScopeFingerprint)),
+                preview.ConfirmationId,
+                preview.ScopeFingerprint,
+                preview.Targets)),
             _tenant,
             _user,
             null,
@@ -621,24 +630,57 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             "controlled-rematch",
             "worker",
             _now.AddMinutes(1));
-        var handler = new PlaylistRematchJobHandler(_factory, rematches, _trackMatches, new Clock(_now));
+        var handler = new PlaylistRematchJobHandler(
+            _factory, rematches, _trackMatches, _service, new Clock(_now));
         var completion = await handler.ExecuteAsync(
             new DurableJobExecutionContext(claim, EmptyServices.Instance), default);
         Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
 
-        var after = await rematches.PreviewAsync(_tenant, _user);
-        Assert.False(after.CanApply);
         await using (var verify = await _factory.CreateDbContextAsync())
         {
+            var latest = await verify.TrackMatches
+                .Where(item => item.ExternalSnapshotId == rematchedExternalId)
+                .OrderByDescending(item => item.DecisionVersion)
+                .FirstAsync();
+            rematchedDecisionId = latest.Id;
+            var entry = await verify.PlaylistSourceEntries.SingleAsync(item =>
+                item.PlaylistSourceSnapshotId == refresh.SnapshotId && item.SourcePosition == 0);
+            Assert.Equal(latest.Id, entry.PublishedTrackMatchId);
             Assert.Single(await verify.ManualTrackOverrides.Where(item => item.RevokedAt == null).ToListAsync());
             Assert.Single(await verify.AuditEvents.Where(item => item.Category == "playlist-rematch").ToListAsync());
+            foreach (var identity in await verify.ProviderTrackIdentities.ToListAsync())
+                identity.ProviderId = "detached";
+            await verify.SaveChangesAsync();
+        }
+
+        var after = await rematches.PreviewAsync(_tenant, _user);
+        Assert.False(after.CanApply);
+        await using (var interrupted = await _factory.CreateDbContextAsync())
+        {
+            var entry = await interrupted.PlaylistSourceEntries.SingleAsync(item =>
+                item.PlaylistSourceSnapshotId == refresh.SnapshotId && item.SourcePosition == 0);
+            entry.PublishedTrackMatchId = originalPublishedMatchId;
+            await interrupted.SaveChangesAsync();
         }
 
         var resumed = await handler.ExecuteAsync(
             new DurableJobExecutionContext(claim with { AttemptNumber = 2 }, EmptyServices.Instance), default);
         Assert.Equal(DurableJobCompletionKind.Succeeded, resumed.Kind);
         await using var final = await _factory.CreateDbContextAsync();
-        Assert.Single(await final.AuditEvents.Where(item => item.Category == "playlist-rematch").ToListAsync());
+        Assert.Equal(
+            ["rematched", "republished"],
+            await final.AuditEvents.Where(item => item.Category == "playlist-rematch")
+                .OrderBy(item => item.CreatedAt)
+                .Select(item => item.Outcome)
+                .ToArrayAsync());
+        var finalLatest = await final.TrackMatches
+            .Where(item => item.ExternalSnapshotId == rematchedExternalId)
+            .OrderByDescending(item => item.DecisionVersion)
+            .FirstAsync();
+        Assert.Equal(rematchedDecisionId, finalLatest.Id);
+        Assert.Equal(finalLatest.Id, (await final.PlaylistSourceEntries.SingleAsync(item =>
+            item.PlaylistSourceSnapshotId == refresh.SnapshotId && item.SourcePosition == 0))
+            .PublishedTrackMatchId);
     }
 
     [Fact]

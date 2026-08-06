@@ -741,7 +741,7 @@ public sealed class PlaylistLinksController(
             var queued = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistRematchJobPayload>(
                 PlaylistRematchJobHandler.Type,
                 $"playlist-rematch:{session.AllstarrUserId:N}:{preview.ConfirmationId}",
-                new(preview.ConfirmationId, preview.ScopeFingerprint),
+                new(preview.ConfirmationId, preview.ScopeFingerprint, preview.Targets),
                 session.TenantId,
                 session.AllstarrUserId,
                 CorrelationId: HttpContext.TraceIdentifier), cancellationToken);

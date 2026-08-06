@@ -363,6 +363,67 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         return new PlaylistRefreshResult(snapshot.Id, snapshot.SnapshotVersion, snapshot.ProviderRevision);
     }
 
+    public async Task PublishExistingDecisionsAsync(
+        ProtocolExecutionContext execution,
+        Guid playlistLinkId,
+        long expectedLinkRevision,
+        Guid sourceSnapshotId,
+        IReadOnlyCollection<Guid> externalSnapshotIds,
+        CancellationToken cancellationToken = default)
+    {
+        var actor = execution.RequireActor();
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var link = await db.PlaylistLinks.SingleOrDefaultAsync(item =>
+            item.Id == playlistLinkId && item.TenantId == actor.TenantId,
+            cancellationToken) ?? throw new KeyNotFoundException("Playlist link not found.");
+        PersistenceGuard.RequireOwner(actor, link.OwnerUserId);
+        PersistenceGuard.RequireLibrary(execution, link.LibraryScopeId);
+        if (link.Revision != expectedLinkRevision)
+            throw new DbUpdateConcurrencyException("The playlist changed before rematch publication.");
+        var snapshot = await LoadSnapshotAsync(db, link, sourceSnapshotId, cancellationToken);
+        var currentId = await db.PlaylistSourceSnapshots.AsNoTracking()
+            .Where(item => item.TenantId == link.TenantId &&
+                           item.PlaylistLinkId == link.Id &&
+                           item.PublishedAt.HasValue)
+            .OrderByDescending(item => item.SnapshotVersion)
+            .ThenByDescending(item => item.RetrievedAt)
+            .Select(item => (Guid?)item.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (currentId != snapshot.Id)
+            throw new DbUpdateConcurrencyException("The published playlist changed before rematch publication.");
+        var externalIds = externalSnapshotIds.Distinct().ToArray();
+        var entries = await db.PlaylistSourceEntries
+            .Where(item => item.TenantId == link.TenantId &&
+                           item.PlaylistSourceSnapshotId == snapshot.Id &&
+                           externalIds.Contains(item.ExternalMetadataSnapshotId))
+            .ToListAsync(cancellationToken);
+        if (entries.Select(item => item.ExternalMetadataSnapshotId).Distinct().Count() != externalIds.Length)
+            throw new DbUpdateConcurrencyException("The rematched playlist rows changed before publication.");
+        var decisions = db.TrackMatches.AsNoTracking()
+            .Where(item => item.TenantId == link.TenantId &&
+                           item.OwnerUserId == link.OwnerUserId &&
+                           item.LibraryScopeId == link.LibraryScopeId &&
+                           externalIds.Contains(item.ExternalSnapshotId));
+        var versions = decisions.GroupBy(item => item.ExternalSnapshotId).Select(group => new
+        {
+            ExternalSnapshotId = group.Key,
+            DecisionVersion = group.Max(item => item.DecisionVersion)
+        });
+        var latest = await (from decision in decisions
+                            join version in versions
+                                on new { decision.ExternalSnapshotId, decision.DecisionVersion }
+                                equals new { version.ExternalSnapshotId, version.DecisionVersion }
+                            select decision)
+            .ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
+        if (latest.Count != externalIds.Length)
+            throw new InvalidOperationException("A rematched playlist cannot publish without one decision per source entry.");
+        foreach (var entry in entries)
+            entry.PublishedTrackMatchId = latest[entry.ExternalMetadataSnapshotId].Id;
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     private async Task LogReconciliationAsync(
         PlaylistLinkRecord link,
         CancellationToken cancellationToken)

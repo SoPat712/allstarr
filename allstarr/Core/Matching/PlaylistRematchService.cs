@@ -16,8 +16,10 @@ public sealed record PlaylistRematchTarget(
     Guid ExternalSnapshotId,
     int SnapshotVersion,
     int DecisionVersion,
+    bool RequiresDecision,
     Guid PlaylistLinkId,
     long PlaylistLinkRevision,
+    Guid PlaylistSourceSnapshotId,
     string PolicyVersion,
     string LibraryScopeId,
     string BackendInstanceId,
@@ -81,6 +83,22 @@ public sealed class PlaylistRematchService(
                            externalIds.Contains(item.ExternalSnapshotId) &&
                            item.RevokedAt == null)
             .ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
+        var snapshotLinks = byLink.ToDictionary(item => item.Value.SnapshotId, item => item.Key);
+        var publishedRows = await db.PlaylistSourceEntries.AsNoTracking()
+            .Where(item => snapshotLinks.Keys.Contains(item.PlaylistSourceSnapshotId))
+            .Select(item => new
+            {
+                item.PlaylistSourceSnapshotId,
+                item.ExternalMetadataSnapshotId,
+                item.PublishedTrackMatchId
+            })
+            .ToListAsync(cancellationToken);
+        var publishedByLink = publishedRows.GroupBy(item => (
+                LinkId: snapshotLinks[item.PlaylistSourceSnapshotId],
+                item.ExternalMetadataSnapshotId))
+            .ToDictionary(group => group.Key, group => group
+                .Select(item => item.PublishedTrackMatchId)
+                .ToHashSet());
         var libraryTracks = await db.LibraryTracks.AsNoTracking()
             .Where(item => item.TenantId == tenantId && item.OwnerUserId == ownerUserId)
             .ToListAsync(cancellationToken);
@@ -119,17 +137,23 @@ public sealed class PlaylistRematchService(
                  decision.MatcherVersion != TrackMatchDecisionEngine.AlgorithmVersion ||
                  decision.PolicyVersion != row.Link.PolicyVersion);
             if (stale) staleIds.Add(group.Key);
-            var missingProviderIdentity = group.All(item => item.Entry.ProviderRoutes.Count == 0);
+            var genericProviderIdentity = group.Any(item =>
+                item.Entry.RouteKind == "external" && !IsExactProvider(item.Entry.RouteProviderId));
+            var publicationOutdated = decision != null && group.Any(item =>
+                !publishedByLink.TryGetValue((item.Link.Id, group.Key), out var published) ||
+                published.Any(id => id != decision.Id));
             if (overrides.ContainsKey(group.Key) || contextConflicts.Contains(group.Key) ||
-                decision != null && !stale && !missingProviderIdentity)
+                decision != null && !stale && !genericProviderIdentity && !publicationOutdated)
                 continue;
             targetIds.Add(group.Key);
             targets.Add(new(
                 group.Key,
                 snapshot.SnapshotVersion,
                 decision?.DecisionVersion ?? 0,
+                decision == null || stale || genericProviderIdentity,
                 row.Link.Id,
                 row.Link.Revision,
+                byLink[row.Link.Id].SnapshotId,
                 row.Link.PolicyVersion,
                 row.Link.LibraryScopeId,
                 row.Link.TargetBackendInstanceId,
@@ -143,7 +167,11 @@ public sealed class PlaylistRematchService(
             .Concat(externalIds.Order().Select(id =>
                 $"row:{id:N}:{latest.GetValueOrDefault(id)?.DecisionVersion ?? 0}:" +
                 $"{latest.GetValueOrDefault(id)?.Revision ?? 0}:" +
-                $"{overrides.GetValueOrDefault(id)?.Revision ?? 0}:{targetIds.Contains(id)}"))));
+                $"{overrides.GetValueOrDefault(id)?.Revision ?? 0}:{targetIds.Contains(id)}:" +
+                string.Join(',', publishedByLink
+                    .Where(item => item.Key.ExternalMetadataSnapshotId == id)
+                    .OrderBy(item => item.Key.LinkId)
+                    .SelectMany(item => item.Value.OrderBy(value => value))))) ));
         var conflictingIds = contextConflicts
             .Concat(latest.Where(item => item.Value.State == TrackMatchState.Ambiguous).Select(item => item.Key))
             .ToHashSet();
@@ -210,12 +238,16 @@ public sealed class PlaylistRematchService(
         DurablePlaylistEntryProjection Entry);
 }
 
-public sealed record PlaylistRematchJobPayload(string ConfirmationId, string ScopeFingerprint);
+public sealed record PlaylistRematchJobPayload(
+    string ConfirmationId,
+    string ScopeFingerprint,
+    IReadOnlyList<PlaylistRematchTarget>? ApprovedTargets = null);
 
 public sealed class PlaylistRematchJobHandler(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     PlaylistRematchService rematches,
     ITrackMatchRepository trackMatches,
+    PlaylistOrchestrationService orchestration,
     IPlatformClock clock) : IDurableJobHandler
 {
     public const string Type = "playlist.rematch";
@@ -243,7 +275,7 @@ public sealed class PlaylistRematchJobHandler(
             !preview.ConfirmationId.Equals(payload.ConfirmationId, StringComparison.Ordinal))
             return DurableJobCompletion.Failure(
                 "playlist_rematch_preview_changed", "The match state changed. Review the rematch preview again.");
-        if (!preview.CanApply) return DurableJobCompletion.Success();
+        var approvedTargets = payload.ApprovedTargets ?? preview.Targets;
 
         var runtime = await LoadRuntimeAsync(context, cancellationToken);
         var started = Stopwatch.GetTimestamp();
@@ -264,7 +296,15 @@ public sealed class PlaylistRematchJobHandler(
                     continue;
                 }
 
-                var execution = CreateExecution(context, runtime, target, cancellationToken);
+                if (!target.RequiresDecision)
+                {
+                    audits.Add(Audit(context, target.ExternalSnapshotId, "republished", target.DecisionVersion));
+                    completed++;
+                    continue;
+                }
+                var execution = CreateExecution(
+                    context, runtime, target.TargetProtocol, target.BackendInstanceId,
+                    target.LibraryScopeId, cancellationToken);
                 var result = await trackMatches.RematchSnapshotAsync(
                     execution,
                     target.ExternalSnapshotId,
@@ -286,6 +326,32 @@ public sealed class PlaylistRematchJobHandler(
                 completed,
                 preview.Targets.Count,
                 ThroughputPerSecond: completed / Math.Max(Stopwatch.GetElapsedTime(started).TotalSeconds, .001)),
+                cancellationToken);
+        }
+        var current = await rematches.PreviewAsync(
+            context.Claim.TenantId.Value, context.Claim.OwnerUserId.Value, cancellationToken);
+        if (!current.ScopeFingerprint.Equals(payload.ScopeFingerprint, StringComparison.Ordinal))
+            return DurableJobCompletion.Failure(
+                "playlist_rematch_scope_changed", "A playlist or library changed. Review the rematch preview again.");
+        foreach (var publication in approvedTargets.GroupBy(item => new
+        {
+            item.PlaylistLinkId,
+            item.PlaylistLinkRevision,
+            item.PlaylistSourceSnapshotId,
+            item.LibraryScopeId,
+            item.BackendInstanceId,
+            item.TargetProtocol
+        }))
+        {
+            var execution = CreateExecution(
+                context, runtime, publication.Key.TargetProtocol, publication.Key.BackendInstanceId,
+                publication.Key.LibraryScopeId, cancellationToken);
+            await orchestration.PublishExistingDecisionsAsync(
+                execution,
+                publication.Key.PlaylistLinkId,
+                publication.Key.PlaylistLinkRevision,
+                publication.Key.PlaylistSourceSnapshotId,
+                publication.Select(item => item.ExternalSnapshotId).Distinct().ToArray(),
                 cancellationToken);
         }
         return failures == 0
@@ -349,25 +415,27 @@ public sealed class PlaylistRematchJobHandler(
     private ProtocolExecutionContext CreateExecution(
         DurableJobExecutionContext context,
         RuntimeIdentity runtime,
-        PlaylistRematchTarget target,
+        string targetProtocol,
+        string backendInstanceId,
+        string libraryScopeId,
         CancellationToken cancellationToken)
     {
         var tenantId = context.Claim.TenantId!.Value;
         var ownerUserId = context.Claim.OwnerUserId!.Value;
-        var protocol = target.TargetProtocol == "jellyfin" ? ProtocolKind.Jellyfin : ProtocolKind.Subsonic;
+        var protocol = targetProtocol == "jellyfin" ? ProtocolKind.Jellyfin : ProtocolKind.Subsonic;
         var backendType = protocol.ToString().ToLowerInvariant();
-        if (!runtime.PrincipalIds.TryGetValue($"{backendType}\n{target.BackendInstanceId}", out var principalId))
+        if (!runtime.PrincipalIds.TryGetValue($"{backendType}\n{backendInstanceId}", out var principalId))
             throw new UnauthorizedAccessException("The target backend identity is unavailable.");
         return new(
             protocol,
-            target.BackendInstanceId,
+            backendInstanceId,
             principalId,
-            new AllstarrPrincipal(tenantId, ownerUserId, backendType, target.BackendInstanceId,
+            new AllstarrPrincipal(tenantId, ownerUserId, backendType, backendInstanceId,
                 principalId, runtime.DisplayName, false),
             context.Claim.CorrelationId,
             clock.UtcNow.AddMinutes(2),
             cancellationToken,
-            libraryScopeId: target.LibraryScopeId);
+            libraryScopeId: libraryScopeId);
     }
 
     private AuditEventRecord Audit(
