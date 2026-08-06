@@ -23,7 +23,9 @@ public sealed record TrackClassification(
     public DurableProviderRoute? PrimaryProviderRoute => ProviderRoutes.FirstOrDefault();
 
     public TrackMatchState ReviewState =>
-        State == TrackMatchState.Unresolved && RouteKind != TrackRouteKind.Unresolved
+        State != TrackMatchState.Rejected && PrimaryProviderRoute?.IsManual == true
+            ? TrackMatchState.Pinned
+            : State == TrackMatchState.Unresolved && RouteKind != TrackRouteKind.Unresolved
             ? TrackMatchState.Accepted
             : State;
 }

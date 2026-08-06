@@ -83,6 +83,28 @@ public sealed class TrackClassifierTests
         Assert.Null(unavailable.LibraryTrackId);
     }
 
+    [Fact]
+    public void Classify_RemovesManuallyPinnedProviderRoutesFromReview()
+    {
+        var tenant = Guid.CreateVersion7();
+        var canonical = Guid.CreateVersion7();
+        var source = Identity(tenant, canonical, "spotify", "source");
+        var pinned = Identity(tenant, canonical, "apple-download", "target");
+        pinned.Verification = ProviderIdentityVerification.Pinned;
+        var ambiguous = Decision(Guid.Empty, TrackMatchState.Ambiguous, .958, .88);
+        ambiguous.LibraryTrackId = null;
+
+        var accepted = TrackClassifier.Classify(
+            null, ambiguous, source, [source, pinned], ["apple-download"]);
+        var rejected = TrackClassifier.Classify(
+            new ManualTrackOverrideRecord { Decision = ManualOverrideDecision.Reject },
+            ambiguous, source, [source, pinned], ["apple-download"]);
+
+        Assert.Equal(TrackRouteKind.External, accepted.RouteKind);
+        Assert.Equal(TrackMatchState.Pinned, accepted.ReviewState);
+        Assert.Equal(TrackMatchState.Rejected, rejected.ReviewState);
+    }
+
     private static TrackMatchRecord Decision(
         Guid local,
         TrackMatchState state,
