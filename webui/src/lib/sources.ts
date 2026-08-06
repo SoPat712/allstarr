@@ -8,7 +8,7 @@ import type {
 } from "./api";
 
 export const humanize = (value: string) =>
-  value.replaceAll("_", " ").replaceAll("-", " ")
+  value.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replaceAll("_", " ").replaceAll("-", " ")
     .replace(/\b\w/g, (character) => character.toUpperCase());
 
 export function audienceLabel(account: ProviderAccount) {
@@ -69,6 +69,18 @@ export const supportsStreamingDiagnostic = (health: ProviderHealth[]) =>
 export const ctsMeasurementLabel = (measurement: CtsMeasurement) =>
   measurement.health === "healthy" ? `${measurement.latencyMs} ms` : "Failed";
 
+export function sourceTimingLabel(provider: ProviderDefinition, summary?: ProviderSummary) {
+  if (summary?.p95LatencyMilliseconds != null)
+    return `Managed p95 ${summary.p95LatencyMilliseconds} ms`;
+  const latest = (provider.runtimeCapabilities ?? [])
+    .filter((item) => item.latencyMilliseconds != null)
+    .toSorted((left, right) => String(right.testedAt ?? "").localeCompare(String(left.testedAt ?? "")))[0];
+  if (latest?.latencyMilliseconds != null) return `Latest API ${latest.latencyMilliseconds} ms`;
+  if ((provider.runtimeCapabilities ?? []).some((item) => item.canTest)) return "Awaiting first sample";
+  if ((provider.categories ?? []).some((item) => item.toLowerCase() === "streaming")) return "Manual only";
+  return "Not applicable";
+}
+
 const builtInSettings: Record<string, ProviderSetting[]> = {
   spotify: [{
     key: "sessionCookie",
@@ -117,6 +129,16 @@ export function accountSettings(provider: ProviderDefinition) {
   return provider.accountSettings?.length
     ? provider.accountSettings
     : provider.implementationOrigin === "extension" ? [] : builtInSettings[provider.id] ?? [];
+}
+
+export function settingDefault(field: ProviderSetting) {
+  if (field.sensitive || field.defaultValueJson == null) return field.type === "toggle" ? false : "";
+  try {
+    const value: unknown = JSON.parse(field.defaultValueJson);
+    return field.type === "toggle" ? value === true : value == null ? "" : String(value);
+  } catch {
+    return field.type === "toggle" ? false : "";
+  }
 }
 
 export const sourceNeedsAccount = (provider: ProviderDefinition) =>

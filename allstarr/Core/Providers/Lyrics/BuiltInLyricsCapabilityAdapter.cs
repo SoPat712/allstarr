@@ -79,10 +79,6 @@ public static class BuiltInLyricsCapabilityRegistration
     public static IServiceCollection AddBuiltInLyricsCapabilities(this IServiceCollection services)
     {
         services.AddSingleton<ProviderRegistration>(provider => CreateRegistration(
-            "lyricsplus",
-            "LyricsPlus",
-            CreateLyricsPlus(provider.GetRequiredService<LyricsPlusService>())));
-        services.AddSingleton<ProviderRegistration>(provider => CreateRegistration(
             "lrclib",
             "LRCLib",
             CreateLrclib(provider.GetRequiredService<LrclibService>())));
@@ -105,14 +101,6 @@ public static class BuiltInLyricsCapabilityRegistration
             if (lyrics != null) lyrics.Source ??= "spotify";
             return lyrics;
         });
-
-    public static BuiltInLyricsCapabilityAdapter CreateLyricsPlus(LyricsPlusService service) => new(
-        "lyricsplus",
-        (request, cancellationToken) => service.GetLyricsAsync(
-            request.TrackTitle ?? string.Empty,
-            request.ArtistNames.ToArray(),
-            request.AlbumTitle,
-            request.DurationSeconds ?? 0).WaitAsync(cancellationToken));
 
     public static BuiltInLyricsCapabilityAdapter CreateLrclib(LrclibService service) => new(
         "lrclib",

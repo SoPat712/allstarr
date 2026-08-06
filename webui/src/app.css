@@ -1832,7 +1832,8 @@
 
   .action-feedback {
     margin: 0;
-    border-bottom: 1px solid var(--color-edge);
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-md);
     background: color-mix(in srgb, var(--color-signal) 7%, transparent);
     color: var(--color-signal-text);
     padding: 0.55rem 1rem;
@@ -4949,6 +4950,19 @@
     margin-top: var(--space-4);
   }
 
+  .source-configuration-copy {
+    margin: 0;
+    color: var(--color-ink-muted);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+  }
+
+  .source-configuration-form {
+    margin-top: var(--space-4);
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-md);
+  }
+
   .source-detail-capabilities > span {
     grid-template-columns: minmax(0, 1fr) auto auto;
     align-items: center;
@@ -6571,6 +6585,17 @@
 
   .extension-install-dialog .settings-fields {
     grid-template-columns: 1fr;
+  }
+
+  .extension-review-body {
+    display: grid;
+    min-height: 0;
+    gap: var(--space-3);
+    padding: var(--space-4);
+  }
+
+  .extension-review-body > :is(p, footer) {
+    margin: 0;
   }
 
   .extension-permissions {

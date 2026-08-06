@@ -6,6 +6,7 @@
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import {
     home,
+    settings,
     sources,
     type ConnectivityResult,
     type CtsMeasurement,
@@ -22,6 +23,8 @@
   import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
+  import SelectField from "$lib/components/SelectField.svelte";
+  import { fieldValue } from "$lib/settings";
   import {
     accountSettings,
     audienceLabel,
@@ -30,11 +33,16 @@
     sourceMetrics,
     sourceNeedsAccount,
     sourceStatus,
+    sourceTimingLabel,
     supportsStreamingDiagnostic,
   } from "$lib/sources";
   import { liveUpdates } from "$lib/live-updates.svelte";
 
-  let { administrator }: { administrator: boolean } = $props();
+  let {
+    administrator,
+    initialSource = "",
+    initialSection = "data",
+  }: { administrator: boolean; initialSource?: string; initialSection?: string } = $props();
 
   let schema = $state<UiSchema | null>(null);
   let accounts = $state<ProviderAccount[]>([]);
@@ -42,6 +50,7 @@
   let health = $state<ProviderHealth[]>([]);
   let summaries = $state<ProviderSummary[]>([]);
   let measurements = $state<CtsMeasurement[]>([]);
+  let config = $state<Record<string, unknown>>({});
   let managementMode = $state("");
   let loading = $state(true);
   let refreshing = $state(false);
@@ -112,17 +121,12 @@
     return formatter.format(Math.round(hours / 24), "day");
   }
 
-  function sourceTiming(providerId: string, checkedAt: string | null, cts?: CtsMeasurement) {
-    const p95 = summary(providerId)?.p95LatencyMilliseconds;
-    return p95 != null ? `${p95} ms p95` : cts ? "" : checkedAt ? "No latency data" : "Not measured";
-  }
-
   async function refresh() {
     if (refreshing) return;
     refreshing = true;
     error = "";
     const requests: Promise<unknown>[] = [home.schema(), sources.accounts()];
-    if (administrator) requests.push(home.providers(), sources.health(), sources.cts());
+    if (administrator) requests.push(home.providers(), sources.health(), sources.cts(), settings.config());
     const results = await Promise.allSettled(requests);
     if (results[0].status === "fulfilled") schema = results[0].value as UiSchema;
     if (results[1].status === "fulfilled") {
@@ -143,6 +147,7 @@
       if (results[3]?.status === "fulfilled") health = results[3].value as ProviderHealth[];
       if (results[4]?.status === "fulfilled")
         measurements = (results[4].value as { measurements: CtsMeasurement[] }).measurements;
+      if (results[5]?.status === "fulfilled") config = results[5].value as Record<string, unknown>;
     }
     const failed = results.filter((result) => result.status === "rejected");
     if (failed.length)
@@ -184,6 +189,51 @@
     detailKind = "account";
     detailTab = "data";
     detailOpen = true;
+  }
+
+  $effect(() => {
+    if (!initialSource || !schema) return;
+    const item = schema.providers.find((provider) =>
+      provider.id.toLowerCase() === initialSource.toLowerCase());
+    if (!item) return;
+    selectedSource = item;
+    selectedAccount = null;
+    detailKind = "source";
+    detailTab = initialSection === "configuration" ? "configuration" : "data";
+    detailOpen = true;
+  });
+
+  function sourcePurpose(item: ProviderDefinition) {
+    if (item.id === "apple-download")
+      return "GAMDL downloads, streaming, and cached synced-lyrics artifacts.";
+    if (item.id === "apple-musickit")
+      return "MusicKit playlist access for the connected Apple Music user.";
+    if (item.id === "spotiflac-apple-music")
+      return "Apple Music extension metadata and Media User Token lyrics, including configured translation or pronunciation.";
+    return item.description || "Configure this Source and its accounts here.";
+  }
+
+  async function saveSourceConfiguration(event: SubmitEvent) {
+    event.preventDefault();
+    if (!selectedSource || action) return;
+    action = `configure:${selectedSource.id}`;
+    const fields = selectedSource.configSchema ?? [];
+    const data = new FormData(event.currentTarget as HTMLFormElement);
+    const updates = Object.fromEntries(fields
+      .filter((field) => !field.readOnly && field.ownership !== "deployment")
+      .map((field) => [
+        field.key,
+        field.type === "toggle" ? String(data.get(field.key) === "on") : String(data.get(field.key) ?? ""),
+      ]));
+    try {
+      await settings.save(updates);
+      feedback = `${selectedSource.name} configuration saved.`;
+      await refresh();
+    } catch (cause) {
+      feedback = cause instanceof Error ? cause.message : "Source configuration could not be saved.";
+    } finally {
+      action = "";
+    }
   }
 
   function manageAccess(account: ProviderAccount) {
@@ -326,7 +376,7 @@
               {@const cts = measurements.find((measurement) =>
                 measurement.providerId.toLowerCase() === item.id.toLowerCase() &&
                 (!measurement.providerAccountId || connected.some((account) => account.id === measurement.providerAccountId)))}
-              {@const timing = sourceTiming(item.id, metrics.checkedAt, cts)}
+              {@const timing = sourceTimingLabel(item, summary(item.id))}
               <tr data-state={state}>
                 <td>
                   <button class="operational-row-identity" type="button" onclick={() => inspectSource(item)}>
@@ -463,8 +513,8 @@
                 <div><dt>Capabilities</dt><dd>{(selectedSource.categories ?? []).map(humanize).join(", ") || "Pending"}</dd></div>
                 <div><dt>Readiness</dt><dd>{metrics.passing}/{metrics.total || 0} passing · {metrics.failed} failing</dd></div>
                 <div><dt>Last check</dt><dd>{relativeTime(metrics.checkedAt)}</dd></div>
-                <div><dt>p95 timing</dt><dd>{summary(selectedSource.id)?.p95LatencyMilliseconds != null ? `${summary(selectedSource.id)?.p95LatencyMilliseconds} ms` : "Not measured"}</dd></div>
-                <div><dt>Click to stream</dt><dd>{#if cts}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>{ctsMeasurementLabel(cts)}</span> · {relativeTime(cts.testedAt)}{:else}Not measured{/if}</dd></div>
+                <div><dt>API timing</dt><dd>{sourceTimingLabel(selectedSource, summary(selectedSource.id))}</dd></div>
+                <div><dt>Click to stream</dt><dd>{#if cts}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>{ctsMeasurementLabel(cts)}</span> · {relativeTime(cts.testedAt)}{:else if selectedSource.categories?.some((item) => item.toLowerCase() === "streaming")}Awaiting first sample{:else}Not applicable{/if}</dd></div>
               </dl>
               <div class="source-detail-capabilities">
                 {#each selectedSource.runtimeCapabilities ?? [] as capability}
@@ -481,23 +531,55 @@
                 <div><dt>State</dt><dd><span class={`status-pill ${selectedAccount.enabled ? "healthy" : "suggested"}`}>{selectedAccount.enabled ? "Enabled" : "Disabled"}</span></dd></div>
                 <div><dt>Account details</dt><dd><span class={`status-pill ${selectedAccount.secret.configured && !selectedAccount.secret.revoked ? "healthy" : "needs_config"}`}>{selectedAccount.secret.configured && !selectedAccount.secret.revoked ? "Stored" : "Setup needed"}</span></dd></div>
                 <div><dt>Health</dt><dd><span class={`status-pill ${readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}`}>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready</span></dd></div>
-                <div><dt>Click to stream</dt><dd>{#if cts}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>{ctsMeasurementLabel(cts)}</span> · {relativeTime(cts.testedAt)}{:else}Not measured{/if}</dd></div>
+                <div><dt>Click to stream</dt><dd>{#if cts}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>{ctsMeasurementLabel(cts)}</span> · {relativeTime(cts.testedAt)}{:else if capabilities.some((item) => item.capability.toLowerCase() === "streaming")}Awaiting first sample{:else}Not applicable{/if}</dd></div>
               </dl>
             {:else if detailTab === "configuration" && detailKind === "source" && selectedSource}
+              <p class="source-configuration-copy">{sourcePurpose(selectedSource)}</p>
               <div class="source-detail-actions">
                 {#if administrator && !sourceNeedsAccount(selectedSource) && selectedSource.categories?.some((item) => item.toLowerCase() === "streaming")}
                   <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void measureSource(selectedSource!)}>Measure CTS</button>
                 {/if}
                 {#if selectedSource.id === "apple-download"}
                   <button class="button-primary" type="button" onclick={() => { detailOpen = false; appleDownloadOpen = true; }}>Manage Apple Music - Gamdl</button>
-                {:else if selectedSource.connectionKind === "operator_managed" && selectedSource.configSchema?.length}
-                  <a class="button-primary" href={`#/settings/general?provider=provider-${selectedSource.id}`}>Open configuration</a>
-                {:else if accountSettings(selectedSource).length}
+                {/if}
+                {#if accountSettings(selectedSource).length}
                   <button class="button-primary" type="button" onclick={() => { detailOpen = false; connectOpen = true; }}>Connect account</button>
-                {:else}
+                {:else if selectedSource.connectionKind !== "operator_managed"}
                   <p>No account configuration is required for this extension capability.</p>
                 {/if}
               </div>
+              {#if selectedSource.connectionKind === "operator_managed" && selectedSource.configSchema?.length}
+                {#if administrator}
+                  <form class="settings-fields source-configuration-form" onsubmit={(event) => void saveSourceConfiguration(event)}>
+                    {#each selectedSource.configSchema as field}
+                      <label class="setting-field" class:read-only={field.readOnly || field.ownership === "deployment"}>
+                        <span><strong>{field.label}</strong>{#if field.ownership === "deployment"}<small>Deployment-owned</small>{/if}</span>
+                        {#if field.readOnly || field.ownership === "deployment"}
+                          <output>{field.sensitive ? "Stored" : String(fieldValue(config, field))}</output>
+                        {:else if field.type === "select"}
+                          <SelectField name={field.key} label={field.label} value={field.sensitive ? "" : String(fieldValue(config, field))} options={field.options ?? []} />
+                        {:else if field.type === "toggle"}
+                          <input name={field.key} type="checkbox" checked={Boolean(fieldValue(config, field))} />
+                        {:else}
+                          <input
+                            name={field.key}
+                            type={field.sensitive ? "password" : field.type === "number" ? "number" : field.type === "url" ? "url" : "text"}
+                            value={field.sensitive ? "" : String(fieldValue(config, field))}
+                            min={field.min ?? undefined}
+                            max={field.max ?? undefined}
+                            required={field.required}
+                            autocomplete="off"
+                          />
+                        {/if}
+                        {#if field.helpText}<small>{field.helpText}</small>{/if}
+                      </label>
+                    {/each}
+                    <footer><button class="button-primary" type="submit" disabled={Boolean(action)}>{action === `configure:${selectedSource.id}` ? "Saving…" : "Save configuration"}</button></footer>
+                  </form>
+                {:else}
+                  <p class="credential-safety">Only an administrator can change deployment-managed Source settings.</p>
+                {/if}
+              {/if}
             {:else if detailTab === "configuration" && selectedAccount}
               {@const capabilities = health.filter((item) => item.providerAccountId === selectedAccount?.id)}
               <div class="source-detail-actions">

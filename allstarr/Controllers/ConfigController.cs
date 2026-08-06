@@ -163,7 +163,7 @@ public class ConfigController : ControllerBase
                 downloadOrder = RuntimeString("Providers:DownloadOrder", "apple-download,deezer,qobuz"),
                 streamingOrder = RuntimeString("Providers:StreamingOrder", "apple-download,deezer,qobuz"),
                 playlistOrder = RuntimeString("Providers:PlaylistOrder", "spotify,deezer,qobuz"),
-                lyricsOrder = RuntimeString("Providers:LyricsOrder", "spotify,apple-download,lyricsplus,lrclib"),
+                lyricsOrder = RuntimeString("Providers:LyricsOrder", "spotify,apple-download,lrclib"),
                 enabledSearch = RuntimeString("Providers:EnabledSearch", "deezer,qobuz"),
                 enabledPlaylist = RuntimeString("Providers:EnabledPlaylist", "spotify"),
                 disabledProviders = RuntimeString("Providers:Disabled", string.Empty),

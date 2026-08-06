@@ -196,6 +196,9 @@ public sealed class AdminUiProviderRuntimeCapability
     [JsonPropertyName("testedAt")]
     public DateTimeOffset? TestedAt { get; set; }
 
+    [JsonPropertyName("latencyMilliseconds")]
+    public long? LatencyMilliseconds { get; set; }
+
     [JsonPropertyName("reasonCode")]
     public string? ReasonCode { get; set; }
 }

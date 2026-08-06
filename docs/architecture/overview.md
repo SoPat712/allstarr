@@ -93,7 +93,7 @@ The complete application-cache key inventory is:
 | `search:*` | Provider search response | Short TTL and provider/account revision |
 | `{provider}:album:*`, `{provider}:artist:*`, `musicbrainz:*`, `genre:*`, `odesli:*` | Provider metadata or translation response | Bounded TTL and provider/account revision |
 | `playback:metadata:*`, `jellyfin:item-type:*` | Backend metadata projection | Bounded TTL and backend/library revision |
-| `lyrics:*`, `lyricsplus:*` | Provider lyrics response | Bounded TTL and provider/track revision |
+| `lyrics:*` | Provider lyrics response | Bounded TTL and provider/track revision |
 | `image:*`, `playlist:image:*`, `artwork:*` | Artwork bytes or descriptor | Bounded media size/TTL and resource revision |
 | `playback:signal:dedupe:*` | Short-lived duplicate-signal marker | Five-minute maximum TTL |
 

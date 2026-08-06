@@ -156,6 +156,7 @@ export type ProviderRuntimeCapability = {
   canAttempt: boolean;
   canTest?: boolean;
   testedAt?: string | null;
+  latencyMilliseconds?: number | null;
   reasonCode?: string | null;
 };
 
@@ -1476,6 +1477,7 @@ export type ExtensionPackage = {
   active: boolean;
   installed: boolean;
   permissionReviewRequired: boolean;
+  hasPermissions: boolean;
   description?: string | null;
   author?: string | null;
   iconUrl?: string | null;

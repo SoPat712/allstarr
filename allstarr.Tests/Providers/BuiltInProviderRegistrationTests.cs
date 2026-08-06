@@ -40,7 +40,6 @@ public sealed class BuiltInProviderRegistrationTests
             new HttpClient(new Mock<HttpMessageHandler>().Object),
             new Mock<IProviderAccountSecretAccessor>(MockBehavior.Strict).Object);
         var spotifyLyrics = Lyrics("spotify");
-        var lyricsPlus = Lyrics("lyricsplus");
         var lrclib = Lyrics("lrclib");
         var appleDownload = new AppleDownloadCapabilityAdapter(
             new HttpClient(new Mock<HttpMessageHandler>().Object),
@@ -68,7 +67,6 @@ public sealed class BuiltInProviderRegistrationTests
             SpotifyPlaylistCapabilityAdapter.CreateRegistration(spotify, spotifyLyrics),
             AppleDownloadCapabilityAdapter.CreateRegistration(
                 appleDownload, appleDownloadLyrics, appleDownloadStreaming, appleDownloadMetadata),
-            BuiltInLyricsCapabilityRegistration.CreateRegistration("lyricsplus", "LyricsPlus", lyricsPlus),
             BuiltInLyricsCapabilityRegistration.CreateRegistration("lrclib", "LRCLib", lrclib)
         ]);
 
@@ -78,7 +76,6 @@ public sealed class BuiltInProviderRegistrationTests
             "apple-musickit",
             "deezer",
             "lrclib",
-            "lyricsplus",
             "qobuz",
             "spotify",
             "squidwtf"
@@ -133,7 +130,7 @@ public sealed class BuiltInProviderRegistrationTests
             registry.GetRequiredCapability<IProviderMetadataCapability>(
                 "apple-download", ProviderCapabilityKind.Metadata));
         Assert.Equal(
-            ["apple-download", "lrclib", "lyricsplus", "spotify"],
+            ["apple-download", "lrclib", "spotify"],
             registry.FindByCapability(ProviderCapabilityKind.Lyrics).Select(item => item.Id));
     }
 

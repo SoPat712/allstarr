@@ -13,6 +13,7 @@ public sealed class ProviderCtsWarmupContractTests
         Assert.Contains("InitialDelay", service, StringComparison.Ordinal);
         Assert.Contains("PeriodicTimer", service, StringComparison.Ordinal);
         Assert.Contains("ProviderCapabilityKind.Streaming", service, StringComparison.Ordinal);
+        Assert.Contains("ProviderAccountRequirement.None", service, StringComparison.Ordinal);
         Assert.Contains("runner.MeasureAsync(", service, StringComparison.Ordinal);
         Assert.Contains("ProviderAudioQuality.Any", service, StringComparison.Ordinal);
         Assert.Contains("AddHostedService<ProviderCtsWarmupService>()", program, StringComparison.Ordinal);
@@ -30,6 +31,7 @@ public sealed class ProviderCtsWarmupContractTests
         Assert.Contains("ProviderHealthState.Degraded", runner, StringComparison.Ordinal);
         Assert.Contains("SampleLimitBytes", runner, StringComparison.Ordinal);
         Assert.Contains("trackSelector.SelectAsync", runner, StringComparison.Ordinal);
+        Assert.Contains("db.AuditEvents.Add", runner, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()

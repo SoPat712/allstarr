@@ -42,7 +42,7 @@ public sealed class ProviderCtsWarmupService(
                 .OrderByDescending(identity => identity.LastSeenAt)
                 .ToArrayAsync(cancellationToken);
 
-            accounts = enabledAccounts
+            var managed = enabledAccounts
                 .Select(account =>
                 {
                     var identity = identities.FirstOrDefault(candidate =>
@@ -63,10 +63,29 @@ public sealed class ProviderCtsWarmupService(
                 .Where(account => account != null)
                 .Cast<ProviderCtsAccount>()
                 .ToArray();
+            var accountFreeProviders = providers.FindByCapability(ProviderCapabilityKind.Streaming)
+                .Where(provider => provider.Capabilities.Single(capability =>
+                    capability.Capability == ProviderCapabilityKind.Streaming).AccountRequirement ==
+                    ProviderAccountRequirement.None)
+                .ToArray();
+            var accountFree = identities
+                .GroupBy(identity => new { identity.TenantId, identity.UserId })
+                .Select(group => group.First())
+                .SelectMany(identity => accountFreeProviders.Select(provider => new ProviderCtsAccount(
+                    null,
+                    provider.Id,
+                    identity.TenantId,
+                    identity.UserId,
+                    identity.BackendType,
+                    identity.BackendInstanceId,
+                    identity.PrincipalId,
+                    identity.LastSeenAt)))
+                .ToArray();
+            accounts = [.. managed, .. accountFree];
         }
 
         foreach (var account in accounts
-                     .GroupBy(item => item.AccountId)
+                     .GroupBy(item => new { item.ProviderId, item.AccountId, item.TenantId, item.OwnerUserId })
                      .Select(group => group.First()))
         {
             if (cancellationToken.IsCancellationRequested) return;
@@ -90,7 +109,7 @@ public sealed class ProviderCtsWarmupService(
                     account.ProviderId,
                     account.AccountId,
                     ProviderAudioQuality.Any,
-                    $"cts-warmup-{account.AccountId:N}-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}",
+                    $"cts-warmup-{account.AccountId?.ToString("N") ?? "account-free"}-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}",
                     cancellationToken: cancellationToken);
                 if (!result.Succeeded)
                 {
@@ -116,7 +135,7 @@ public sealed class ProviderCtsWarmupService(
     }
 
     private sealed record ProviderCtsAccount(
-        Guid AccountId,
+        Guid? AccountId,
         string ProviderId,
         Guid TenantId,
         Guid OwnerUserId,

@@ -2,11 +2,13 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Health;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
+using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Services.Common;
 
@@ -14,12 +16,44 @@ public sealed class ProviderCtsDiagnosticRunner(
     IProviderRegistry providers,
     IProviderRouteAccountResolver accounts,
     ProviderCtsTrackSelector trackSelector,
-    IDurableProviderHealthObservationStore healthStore)
+    IDurableProviderHealthObservationStore healthStore,
+    IDbContextFactory<AllstarrDbContext>? contextFactory = null)
 {
     private const int SampleLimitBytes = 64 * 1024;
     private static readonly BoundedOperationGate Concurrency = new(2);
 
     public async Task<ProviderCtsDiagnosticResult> MeasureAsync(
+        ProviderActorContext actor,
+        string providerId,
+        Guid? providerAccountId,
+        ProviderAudioQuality quality,
+        string correlationId,
+        string? trackId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await MeasureCoreAsync(
+            actor, providerId, providerAccountId, quality, correlationId, trackId, cancellationToken);
+        if (contextFactory != null)
+        {
+            await using var db = await contextFactory.CreateDbContextAsync(CancellationToken.None);
+            db.AuditEvents.Add(new AuditEventRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = actor.TenantId,
+                ActorUserId = actor.EffectiveUserId,
+                Category = "provider-cts",
+                Action = "cold-connect.measure",
+                Outcome = result.Succeeded ? "succeeded" : "failed",
+                CorrelationId = correlationId,
+                DetailsJson = JsonSerializer.Serialize(result),
+                CreatedAt = result.MeasuredAt
+            });
+            await db.SaveChangesAsync(CancellationToken.None);
+        }
+        return result;
+    }
+
+    private async Task<ProviderCtsDiagnosticResult> MeasureCoreAsync(
         ProviderActorContext actor,
         string providerId,
         Guid? providerAccountId,
@@ -43,6 +77,16 @@ public sealed class ProviderCtsDiagnosticRunner(
             item.Capability == ProviderCapabilityKind.Streaming);
         if (providerAccountId == Guid.Empty)
             providerAccountId = null;
+        if (capabilityDescriptor.AccountRequirement != ProviderAccountRequirement.None &&
+            !providerAccountId.HasValue)
+        {
+            return ProviderCtsDiagnosticResult.Failure(
+                StatusCodes.Status400BadRequest,
+                providerId,
+                null,
+                "account-resolution",
+                "The selected provider streaming capability requires an account.");
+        }
         if (capabilityDescriptor.AccountRequirement == ProviderAccountRequirement.None &&
             providerAccountId.HasValue)
         {

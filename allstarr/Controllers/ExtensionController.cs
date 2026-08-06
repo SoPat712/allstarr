@@ -511,6 +511,7 @@ public class ExtensionController : ControllerBase
                 ExtensionPackageState.Disabled or ExtensionPackageState.RolledBack,
             active = item.State == ExtensionPackageState.Active,
             permissionReviewRequired = item.State == ExtensionPackageState.ReviewRequired,
+            hasPermissions = manifest?.Permissions.Count > 0,
             description = manifest?.Description,
             author = manifest?.Author,
             iconUrl = hasPackageIcon ? $"/api/admin/extensions/packages/{item.Id}/icon" : null,

@@ -186,6 +186,36 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         Assert.Equal("GAMDL", outcome.Value!.Source);
         Assert.Equal(ProviderLyricsFormat.LineTimed, outcome.Value.Format);
         Assert.Equal("[00:01.00]Fixture lyrics\n", outcome.Value.Content);
+        Assert.DoesNotContain(gateway.Requests, uri =>
+            uri.AbsolutePath.StartsWith("/api/download/", StringComparison.Ordinal) ||
+            uri.AbsolutePath.StartsWith("/api/stream/", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Lyrics_MissingCachedArtifactDoesNotTriggerMediaDownload()
+    {
+        var gateway = new GatewayHandler([], "audio/flac")
+        {
+            AdvertiseLyrics = true,
+            MissingLyrics = true
+        };
+        var settings = new AppleDownloadSettings { BaseUrl = "https://gateway.test/" };
+        var client = new HttpClient(gateway);
+        var discovery = new AppleDownloadEndpointDiscovery(
+            new StaticClientFactory(client), Options.Create(settings));
+        var adapter = new AppleDownloadLyricsCapabilityAdapter(client, settings, discovery);
+        var track = new ProviderExternalResourceId(
+            AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "missing");
+
+        var outcome = await adapter.FetchLyricsAsync(
+            Context(Guid.CreateVersion7(), Guid.CreateVersion7()),
+            new(Guid.CreateVersion7(), track, preferredFormat: ProviderLyricsFormat.LineTimed));
+
+        Assert.True(outcome.IsSuccess, outcome.Error?.Kind.ToString());
+        Assert.Equal(ProviderLyricsAvailabilityState.Unavailable, outcome.Value!.Availability);
+        Assert.DoesNotContain(gateway.Requests, uri =>
+            uri.AbsolutePath.StartsWith("/api/download/", StringComparison.Ordinal) ||
+            uri.AbsolutePath.StartsWith("/api/stream/", StringComparison.Ordinal));
     }
 
     private static ProviderExecutionContext Context(Guid tenant, Guid user) => new(
@@ -221,6 +251,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
     {
         public bool AdvertiseDownload { get; init; } = true;
         public bool AdvertiseLyrics { get; init; }
+        public bool MissingLyrics { get; init; }
         public List<Uri> Requests { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -242,8 +273,9 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
                 "/api/me" => Json("{\"authenticated\":true}"),
                 _ when path.StartsWith("/api/download/", StringComparison.Ordinal) => Audio(),
                 _ when path.StartsWith("/api/stream/", StringComparison.Ordinal) => Audio(),
-                _ when path.StartsWith("/api/lyrics/", StringComparison.Ordinal) => Json(
-                    "{\"source\":\"GAMDL\",\"format\":\"LineTimed\",\"content\":\"[00:01.00]Fixture lyrics\\n\"}"),
+                _ when path.StartsWith("/api/lyrics/", StringComparison.Ordinal) => MissingLyrics
+                    ? new(HttpStatusCode.NotFound)
+                    : Json("{\"source\":\"GAMDL\",\"format\":\"LineTimed\",\"content\":\"[00:01.00]Fixture lyrics\\n\"}"),
                 _ => new(HttpStatusCode.NotFound)
             };
             response.RequestMessage = request;

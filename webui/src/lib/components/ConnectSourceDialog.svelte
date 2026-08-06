@@ -4,7 +4,7 @@
   import { sources, type ProviderAccount, type ProviderDefinition } from "$lib/api";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
-  import { accountSettings, secretFromForm } from "$lib/sources";
+  import { accountSettings, secretFromForm, settingDefault } from "$lib/sources";
 
   let {
     open = $bindable(false),
@@ -119,13 +119,14 @@
               <label class="field" class:wide={accountSettings(selected).length === 1}>
                 <span>{field.label}</span>
                 {#if field.type === "select"}
-                  <SelectField name={field.key} label={field.label} value={field.options?.[0] ?? ""} options={field.options ?? []} required={field.required} />
+                  <SelectField name={field.key} label={field.label} value={String(settingDefault(field))} options={field.options ?? []} required={field.required} />
                 {:else if field.type === "toggle"}
-                  <input name={field.key} type="checkbox" />
+                  <input name={field.key} type="checkbox" checked={settingDefault(field) === true} />
                 {:else}
                   <input
                     name={field.key}
                     type={field.sensitive ? "password" : field.type === "number" ? "number" : field.type === "url" ? "url" : "text"}
+                    value={String(settingDefault(field))}
                     required={field.required}
                     autocomplete={field.key === "username" ? "username" : field.key === "password" ? "current-password" : "off"}
                   />

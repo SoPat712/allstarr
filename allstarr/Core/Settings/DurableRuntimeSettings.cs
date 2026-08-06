@@ -309,7 +309,7 @@ public sealed class DurableRuntimeSettingsService : IDurableRuntimeSettings
             RuntimeSettingValueType.Boolean when bool.TryParse(raw.Trim(), out var value) => (value, value ? "true" : "false", JsonSerializer.Serialize(value, JsonOptions)),
             RuntimeSettingValueType.Integer when int.TryParse(raw.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) &&
                 value >= definition.Minimum && value <= definition.Maximum => (value, value.ToString(CultureInfo.InvariantCulture), JsonSerializer.Serialize(value, JsonOptions)),
-            RuntimeSettingValueType.StringList => NormalizeList(raw),
+            RuntimeSettingValueType.StringList => NormalizeList(definition, raw),
             RuntimeSettingValueType.String => NormalizeString(definition, raw),
             _ => throw new ArgumentException($"Runtime setting '{definition.Key}' has an invalid {definition.ValueType} value.")
         };
@@ -330,12 +330,17 @@ public sealed class DurableRuntimeSettingsService : IDurableRuntimeSettings
         return (canonical, canonical, JsonSerializer.Serialize(canonical, JsonOptions));
     }
 
-    private static (object Value, string Display, string Json) NormalizeList(string raw)
+    private static (object Value, string Display, string Json) NormalizeList(
+        RuntimeSettingDefinition definition,
+        string raw)
     {
         string[] parts;
         if (raw.TrimStart().StartsWith('[')) parts = JsonSerializer.Deserialize<string[]>(raw, JsonOptions) ?? [];
         else parts = raw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        var values = parts.Select(item => item.Trim().ToLowerInvariant()).Where(item => item.Length > 0).ToArray();
+        var values = parts.Select(item => item.Trim().ToLowerInvariant())
+            .Where(item => item.Length > 0 &&
+                           (definition.Key != "Providers:LyricsOrder" || item != "lyricsplus"))
+            .ToArray();
         if (values.Length > 64 || values.Any(item => item.Length > 100 || !item.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.')) ||
             values.Distinct(StringComparer.OrdinalIgnoreCase).Count() != values.Length)
             throw new ArgumentException("A provider list contains an invalid or duplicate provider ID.");
@@ -353,7 +358,7 @@ public sealed class DurableRuntimeSettingsService : IDurableRuntimeSettings
                 RuntimeSettingValueType.Boolean => Normalize(definition, JsonSerializer.Deserialize<bool>(json, JsonOptions).ToString()),
                 RuntimeSettingValueType.Integer => Normalize(definition, JsonSerializer.Deserialize<int>(json, JsonOptions).ToString(CultureInfo.InvariantCulture)),
                 RuntimeSettingValueType.String => Normalize(definition, JsonSerializer.Deserialize<string>(json, JsonOptions) ?? string.Empty),
-                RuntimeSettingValueType.StringList => NormalizeList(json),
+                RuntimeSettingValueType.StringList => NormalizeList(definition, json),
                 _ => throw new InvalidOperationException()
             };
         }

@@ -48,6 +48,7 @@
       return "/library/playlists";
     }
     if (["/library/missing", "/library/migration"].includes(path)) return "/library/mappings";
+    if (path === "/settings/accounts") return "/sources";
     return path;
   }
 
@@ -83,7 +84,11 @@
               : route === "/intelligence"
                 ? { initialSection: routeQuery.get("section") ?? "overview" }
                 : route === "/sources"
-                  ? { administrator: session?.user?.isAdministrator ?? false }
+                  ? {
+                      administrator: session?.user?.isAdministrator ?? false,
+                      initialSource: routeQuery.get("source") ?? "",
+                      initialSection: routeQuery.get("section") ?? "data",
+                    }
                   : route.startsWith("/settings")
                     ? {
                         section: route.split("/")[2] || "general",

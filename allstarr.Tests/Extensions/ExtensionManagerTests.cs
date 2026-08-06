@@ -1,4 +1,5 @@
 using allstarr.Services.Common;
+using allstarr.Core.Extensions;
 
 namespace allstarr.Tests;
 
@@ -68,5 +69,30 @@ public class ExtensionManagerTests
         var items = ExtensionManager.ParseStoreRegistry(json);
 
         Assert.Empty(items);
+    }
+
+    [Theory]
+    [InlineData(".sflx")]
+    [InlineData(".spotiflac-ext")]
+    public void ParseStoreRegistry_CanonicalizesChecksummedSpotiFlacPackages(string suffix)
+    {
+        var json = $$"""
+        {
+          "extensions": [
+            {
+              "id": "apple-music",
+              "download_url": "https://example.test/apple-music{{suffix}}",
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "version": "1.3.8"
+            }
+          ]
+        }
+        """;
+
+        var item = Assert.Single(ExtensionManager.ParseStoreRegistry(json));
+
+        Assert.Equal("spotiflac-apple-music", item.Id);
+        Assert.Equal(SpotiFlacExtensionCompatibility.Marker, item.PackageFormat);
+        Assert.Equal(new string('a', 64), item.Sha256);
     }
 }

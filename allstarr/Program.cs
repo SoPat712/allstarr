@@ -242,7 +242,6 @@ builder.Services.AddControllers()
 
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient("Odesli", client => client.Timeout = TimeSpan.FromSeconds(5));
-builder.Services.AddHttpClient("LyricsPlus", client => client.Timeout = TimeSpan.FromSeconds(5));
 builder.Services.AddHttpClient("Lrclib", client => client.Timeout = TimeSpan.FromSeconds(5));
 builder.Services.AddHttpClient("ExtensionSdkV1")
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
@@ -585,8 +584,6 @@ builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifySessionCookieServ
 // Register Spotify lyrics service (uses Spotify's color-lyrics API)
 builder.Services.AddSingleton<allstarr.Services.Lyrics.SpotifyLyricsService>();
 
-// Register LyricsPlus service (multi-source lyrics API)
-builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsPlusService>();
 
 // Register Lyrics Orchestrator (manages priority-based lyrics fetching)
 builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsOrchestrator>();

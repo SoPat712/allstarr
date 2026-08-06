@@ -765,7 +765,7 @@ for (const viewport of viewports) {
       await expect(page.getByRole("option", { name: "Dark" })).toBeVisible();
       await page.keyboard.press("Escape");
       await page.goto("#/settings/accounts");
-      await expect(page.getByRole("link", { name: "Open Sources" })).toBeInViewport();
+      await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible();
       await page.goto("#/settings/routing");
       await expect(page.getByText("Local · fixed")).toBeVisible();
       await expect(page.getByRole("button", { name: "Move Jellyfin up" })).toHaveCount(0);
@@ -1436,11 +1436,11 @@ test("Shared selects and settings tabs animate without remounting", async ({ pag
   await page.keyboard.press("Escape");
   const tabs = page.locator(".settings-tabs");
   await tabs.evaluate((element) => element.setAttribute("data-instance", "stable"));
-  const accounts = page.getByRole("tab", { name: "Accounts" });
-  await accounts.hover();
-  expect(await accounts.evaluate((element) => getComputedStyle(element).borderTopLeftRadius))
+  const routing = page.getByRole("tab", { name: "Provider routing" });
+  await routing.hover();
+  expect(await routing.evaluate((element) => getComputedStyle(element).borderTopLeftRadius))
     .toBe(await tabs.evaluate((element) => getComputedStyle(element, "::before").borderTopLeftRadius));
-  await accounts.click();
+  await routing.click();
   await expect(tabs).toHaveAttribute("data-instance", "stable");
   await expect(tabs).toHaveCSS("overflow", "hidden");
 });
@@ -1556,7 +1556,7 @@ test("extension updates stay beside the shared management menu", async ({ page }
     body: JSON.stringify([{
       id: "old", extensionId: "lumen-audio", displayName: "Lumen Audio",
       version: "1.0.0", lifecycle: "active", state: "active", active: true,
-      installed: true, permissionReviewRequired: false, capabilities: ["metadata"],
+      installed: true, permissionReviewRequired: false, hasPermissions: true, capabilities: ["metadata"],
       previousPackageId: "previous", registryId: "registry", stagedAt: "2026-01-01", revision: 1,
     }]),
   }));
@@ -1578,6 +1578,26 @@ test("extension updates stay beside the shared management menu", async ({ page }
       errors: [],
     }),
   }));
+  let reviewRequests = 0;
+  await page.route("**/api/admin/extensions/packages/old/permissions/revoke", (route) => {
+    reviewRequests += 1;
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "old", extensionId: "lumen-audio", displayName: "Lumen Audio",
+        version: "1.0.0", lifecycle: "reviewrequired", state: "reviewrequired",
+        active: false, installed: false, permissionReviewRequired: true, hasPermissions: true,
+        capabilities: ["metadata"], registryId: "registry", revision: 2,
+      }),
+    });
+  });
+  await page.route("**/api/admin/extensions/packages/old/permissions", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify([{
+      id: "permission", permissionKind: "network", permissionValue: "https://example.test/",
+      required: true, decision: "pending",
+    }]),
+  }));
 
   await page.goto("#/settings/extensions");
   const actions = page.locator(".extension-actions");
@@ -1586,6 +1606,15 @@ test("extension updates stay beside the shared management menu", async ({ page }
   await expect(page.getByRole("menuitem", { name: "Disable" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Rollback" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Review access" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Review access" }).click();
+  const access = page.getByRole("alertdialog", { name: "Review access for Lumen Audio?" });
+  await expect(access).toContainText("runtime will stop");
+  await access.getByRole("button", { name: "Stop and review" }).click();
+  await expect.poll(() => reviewRequests).toBe(1);
+  const review = page.getByRole("dialog", { name: "Review permissions" });
+  await expect(review).toBeVisible();
+  await review.getByRole("button", { name: "Close review" }).click();
+  await actions.getByRole("button", { name: "Manage extension" }).click();
   await expect(page.getByRole("menuitem", { name: "Uninstall" })).toBeVisible();
   await page.getByRole("menuitem", { name: "Uninstall" }).click();
   const uninstall = page.getByRole("alertdialog", { name: "Uninstall Lumen Audio?" });
@@ -2059,7 +2088,7 @@ test("Sources keep primary actions visible and report scoped degradation", async
   await page.goto("#/sources");
   await expect(page.getByRole("button", { name: /Lumen Audio Account details stored/ })).toBeVisible();
   const lumenSource = page.locator(".sources-table tr").filter({ hasText: "Lumen Audio" });
-  await expect(lumenSource.locator(".operational-mobile-detail dd").filter({ hasText: "No latency data" })).toHaveText("No latency data");
+  await expect(lumenSource.locator(".operational-mobile-detail dd").filter({ hasText: "Manual only" })).toHaveText("Manual only");
   const tableGutters = await page.locator(".sources-panel").evaluate((panel) => ({
     heading: Number.parseFloat(getComputedStyle(panel.querySelector(".sources-heading")!).paddingLeft),
     cell: Number.parseFloat(getComputedStyle(panel.querySelector(".sources-table td")!).paddingLeft),
@@ -2085,7 +2114,7 @@ test("Sources keep primary actions visible and report scoped degradation", async
   await expect(appleManager.getByText("Apple Music - Gamdl is ready")).toBeVisible();
   await expect(appleManager.locator(".source-metrics .status-pill")).toHaveCount(3);
   await expect(appleManager.getByRole("link", { name: "Provider settings" }))
-    .toHaveAttribute("href", "#/settings/general?provider=provider-apple-download");
+    .toHaveAttribute("href", "#/sources?source=apple-download&section=configuration");
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();
   const accountDetails = page.getByRole("dialog", { name: "Lumen Audio", description: "Lumen Audio account" });

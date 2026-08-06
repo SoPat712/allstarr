@@ -314,9 +314,9 @@ public sealed partial class ExtensionControlPlaneService
                       ?? throw new KeyNotFoundException("Extension package not found.");
         if (package.Revision != expectedRevision)
             throw new DbUpdateConcurrencyException("The extension package changed before its grants could be revoked.");
-        if (package.State is not (ExtensionPackageState.Disabled or ExtensionPackageState.RolledBack or ExtensionPackageState.Staged))
+        if (package.State is not (ExtensionPackageState.Active or ExtensionPackageState.Disabled or ExtensionPackageState.RolledBack or ExtensionPackageState.Staged))
             throw new InvalidOperationException(
-                "Only a disabled, rolled-back, or reviewed staged package can have its grants revoked.");
+                "Only an active, disabled, rolled-back, or reviewed staged package can have its grants revoked.");
 
         var reviews = await db.ExtensionPermissionReviews
             .Where(item => item.ExtensionPackageId == package.Id)

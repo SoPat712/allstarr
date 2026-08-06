@@ -117,19 +117,6 @@ public sealed class ProviderDiagnosticsController(
                 correlationId,
                 request.TrackId,
                 cancellationToken);
-            db.AuditEvents.Add(new AuditEventRecord
-            {
-                Id = Guid.CreateVersion7(),
-                TenantId = session.TenantId,
-                ActorUserId = session.AllstarrUserId,
-                Category = "provider-cts",
-                Action = "cold-connect.measure",
-                Outcome = result.Succeeded ? "succeeded" : "failed",
-                CorrelationId = correlationId,
-                DetailsJson = JsonSerializer.Serialize(result),
-                CreatedAt = result.MeasuredAt
-            });
-            await db.SaveChangesAsync(cancellationToken);
             if (result.RetryAfterSeconds.HasValue)
                 Response.Headers.RetryAfter = result.RetryAfterSeconds.Value.ToString();
             return StatusCode(result.StatusCode, result);

@@ -98,6 +98,10 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         Assert.Equal("deezer,qobuz", Assert.Single(result.Settings).NormalizedValue);
         await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(_tenantId,
             [new("Providers:DownloadOrder", "deezer,DEEZER")], "legacy-import"));
+
+        var lyrics = await service.ApplyBatchAsync(_tenantId,
+            [new("Providers:LyricsOrder", "spotify,lyricsplus,apple-download,lrclib")], "legacy-import");
+        Assert.Equal("spotify,apple-download,lrclib", Assert.Single(lyrics.Settings).NormalizedValue);
     }
 
     [Fact]

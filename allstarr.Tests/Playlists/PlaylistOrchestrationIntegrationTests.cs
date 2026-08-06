@@ -1294,7 +1294,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.Equal(360_000, projection.DurationMilliseconds);
         Assert.Equal(["local", "external", "unmatched"],
             projection.Entries.Select(item => item.RouteKind));
-        Assert.Equal(TrackMatchState.Accepted, projection.Entries[1].MatchState);
+        Assert.Equal(TrackMatchState.Pinned, projection.Entries[1].MatchState);
         Assert.Equal("deezer", projection.Entries[1].RouteProviderId);
         Assert.Equal(["deezer", "qobuz"],
             projection.Entries[1].ProviderRoutes.Select(item => item.ProviderId));

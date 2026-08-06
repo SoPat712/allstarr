@@ -148,7 +148,7 @@
       </div>
 
       <footer class="apple-manager-footer">
-        <a class="button-secondary" href="#/settings/general?provider=provider-apple-download" onclick={() => open = false}>Provider settings</a>
+        <a class="button-secondary" href="#/sources?source=apple-download&section=configuration" onclick={() => open = false}>Provider settings</a>
         <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void load()}>Refresh status</button>
       </footer>
     </Dialog.Content>

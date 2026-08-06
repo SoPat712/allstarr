@@ -130,6 +130,25 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ActivePermissionedPackageCanStopForFreshReview()
+    {
+        var package = await _service.StageAsync(Package("1.0.0", "active-review"));
+        package = await _service.ReviewAsync(package.Id, _reviewer, package.Revision,
+        [
+            new("network", "https://api.example.test/", true),
+            new("secret", "accountToken", true)
+        ]);
+        package = await _service.ActivateAsync(package.Id, package.Revision);
+
+        package = await _service.ResetPermissionsForReviewAsync(package.Id, package.Revision);
+
+        Assert.Equal(ExtensionPackageState.ReviewRequired, package.State);
+        Assert.NotNull(package.DisabledAt);
+        Assert.All(await _service.ListPermissionReviewsAsync(package.Id),
+            item => Assert.Equal(ExtensionPermissionDecision.Pending, item.Decision));
+    }
+
+    [Fact]
     public async Task CancellingStagingRemovesContentAndLeavesHistoricalRecord()
     {
         var package = await _service.StageAsync(Package("1.0.0", "cancelled"));

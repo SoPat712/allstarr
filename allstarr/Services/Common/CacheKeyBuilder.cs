@@ -150,11 +150,6 @@ public static class CacheKeyBuilder
         return $"lyrics:v2:{DigestIdentity(artist, title, album, durationSeconds)}";
     }
 
-    public static string BuildLyricsPlusKey(string artist, string title, string? album, int? durationSeconds)
-    {
-        return $"lyricsplus:v2:{DigestIdentity(artist, title, album, durationSeconds)}";
-    }
-
     public static string BuildLyricsByIdKey(int id)
     {
         return $"lyrics:id:v2:{id.ToString(CultureInfo.InvariantCulture)}";

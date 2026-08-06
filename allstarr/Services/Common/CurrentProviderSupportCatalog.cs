@@ -114,13 +114,6 @@ public static class CurrentProviderSupportCatalog
             Capability("recommendation", Supported, "Collaborative-filtering recording recommendations join the same explained, scoped candidate pipeline.", "RecommendationSourceAdapterTests; IntelligenceCoreTests"),
             Capability("health", Partial, "Token validation and source readiness are exposed; provider failure remains isolated.", "ScrobblingAdminControllerTests; RecommendationSourceAdapterTests")),
         Provider(
-            "lyricsplus",
-            "lyricsplus",
-            "LyricsPlus",
-            "none",
-            "Optional sidecar URL.",
-            Capability("lyrics", Supported, "Typed metadata lookup preserves plain/timed content, source, and stable content revision through shared Jellyfin/Subsonic routing.", "BuiltInLyricsCapabilityAdapterTests; ProtocolLyricsResolverTests")),
-        Provider(
             "lrclib",
             "lrclib",
             "LRCLib",

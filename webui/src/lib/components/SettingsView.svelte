@@ -5,9 +5,7 @@
   import {
     home,
     settings,
-    sources,
     type ConfigSection,
-    type ProviderAccount,
     type PriorityGroup,
     type UiSchema,
   } from "$lib/api";
@@ -20,7 +18,7 @@
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import AudioQualityField from "$lib/components/AudioQualityField.svelte";
-  import { audienceLabel, humanize } from "$lib/sources";
+  import { humanize } from "$lib/sources";
   import { fieldValue, move, routingOrder } from "$lib/settings";
   import { liveUpdates } from "$lib/live-updates.svelte";
 
@@ -38,7 +36,6 @@
 
   const tabs = [
     { id: "general", label: "General", href: "#/settings/general" },
-    { id: "accounts", label: "Accounts", href: "#/settings/accounts" },
     { id: "routing", label: "Provider routing", href: "#/settings/routing" },
     { id: "extensions", label: "Extensions", href: "#/settings/extensions" },
     { id: "maintenance", label: "Maintenance", href: "#/settings/maintenance" },
@@ -46,7 +43,6 @@
 
   let schema = $state<UiSchema | null>(null);
   let config = $state<Record<string, unknown>>({});
-  let accounts = $state<ProviderAccount[]>([]);
   let storage = $state<Awaited<ReturnType<typeof settings.storage>> | null>(null);
   let cache = $state<Awaited<ReturnType<typeof settings.cache>> | null>(null);
   let cachePreview = $state<Awaited<ReturnType<typeof settings.cachePreview>> | null>(null);
@@ -67,15 +63,7 @@
 
   const active = $derived(tabs.some((item) => item.id === section) ? section : "general");
   const generalSections = $derived.by(() => {
-    const sections = (schema?.configSections ?? []).filter((item) => item.id !== "spotify-import");
-    const providerSections = (schema?.providers ?? [])
-      .filter((item) => item.connectionKind === "operator_managed" && item.configSchema?.length)
-      .map((item) => ({
-        id: `provider-${item.id}`,
-        label: item.name,
-        fields: item.configSchema ?? [],
-      }));
-    return sections.length ? [sections[0], ...providerSections, ...sections.slice(1)] : providerSections;
+    return (schema?.configSections ?? []).filter((item) => item.id !== "spotify-import");
   });
   const cacheDiskCeiling = $derived(
     Number((config.cache as Record<string, unknown> | undefined)?.mediaMaximumMegabytes ?? 512),
@@ -115,7 +103,6 @@
     const requests: Array<[string, Promise<unknown>]> = [["schema", home.schema()]];
     if (active === "general" || active === "routing")
       requests.push(["config", settings.config()]);
-    if (active === "accounts") requests.push(["accounts", sources.accounts()]);
     if (active === "maintenance") requests.push(
       ["storage", settings.storage()],
       ["cache", settings.cache()],
@@ -130,8 +117,6 @@
         if (dirtyOwners.length) serverChanged = true;
         else config = result.value as Record<string, unknown>;
       }
-      if (label === "accounts")
-        accounts = (result.value as Awaited<ReturnType<typeof sources.accounts>>).accounts;
       if (label === "storage")
         storage = result.value as Awaited<ReturnType<typeof settings.storage>>;
       if (label === "cache")
@@ -344,26 +329,6 @@
             </form>
           </details>
         {/each}
-      </div>
-    {:else if active === "accounts"}
-      <div class="settings-stack">
-        <header class="settings-intro"><p class="eyebrow">Identity and secure access</p><h2>Accounts</h2><p>Provider credentials and audiences remain in Sources so Settings does not become a second account owner.</p></header>
-        <section class="panel settings-account-panel">
-          <header><div><strong>Source connections</strong><small>{accounts.length} encrypted account{accounts.length === 1 ? "" : "s"}</small></div><a class="button-primary" href="#/sources">Open Sources</a></header>
-          <div>
-            {#each accounts as account}
-              <article>
-                <ProviderArtwork id={account.providerId} definition={provider(account.providerId)} />
-                <span><strong>{account.sourceDisplayName || account.displayName}</strong><small>{audienceLabel(account)}</small></span>
-                <span class={`status-pill ${!account.enabled ? "suggested" : account.secret.configured && !account.secret.revoked ? "healthy" : "needs_config"}`}>
-                  {account.enabled ? "Enabled" : "Disabled"} · {account.secret.configured && !account.secret.revoked ? "Stored" : "Setup needed"}
-                </span>
-              </article>
-            {:else}
-              <div class="compact-empty"><strong>No Source connections</strong><p>Connect one from Sources when a provider requires an account.</p></div>
-            {/each}
-          </div>
-        </section>
       </div>
     {:else if active === "routing"}
       <div class="settings-stack">

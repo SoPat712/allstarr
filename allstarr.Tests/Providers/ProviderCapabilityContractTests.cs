@@ -262,10 +262,10 @@ public sealed class ProviderCapabilityContractTests
             ProviderLyricsFormat.LineTimed);
         var availability = new ProviderLyricsResult(
             ProviderLyricsAvailabilityState.Available,
-            "lyricsplus");
+            "lrclib");
         var document = new ProviderLyricsResult(
             ProviderLyricsAvailabilityState.Available,
-            "lyricsplus",
+            "lrclib",
             ProviderLyricsFormat.LineTimed,
             "[00:01.00]First line\n[00:02.00]Second line\n");
 
@@ -274,7 +274,7 @@ public sealed class ProviderCapabilityContractTests
         Assert.EndsWith("\n", document.Content, StringComparison.Ordinal);
         Assert.Throws<ArgumentException>(() => new ProviderLyricsResult(
             ProviderLyricsAvailabilityState.Unavailable,
-            "lyricsplus",
+            "lrclib",
             ProviderLyricsFormat.PlainText,
             "content"));
     }

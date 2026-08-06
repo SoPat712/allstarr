@@ -34,8 +34,12 @@ public sealed class ProtocolLyricsResolver(
         ArgumentException.ThrowIfNullOrWhiteSpace(resourceKey);
         var artists = song.Artists.Count > 0 ? song.Artists : [song.Artist];
 
-        foreach (var providerId in providers.GetProviderOrder(ProviderCapabilityKind.Lyrics)
-                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        var order = providers.GetProviderOrder(ProviderCapabilityKind.Lyrics);
+        if (!string.IsNullOrWhiteSpace(sourceProvider) &&
+            order.Contains(sourceProvider, StringComparer.OrdinalIgnoreCase))
+            order = [sourceProvider, .. order];
+
+        foreach (var providerId in order.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var externalId = ResolveExternalId(
                 providerId, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId);
@@ -82,7 +86,7 @@ public sealed class ProtocolLyricsResolver(
     {
         providerId = providerId.Trim().ToLowerInvariant();
         if (providerId == "spotify") return string.IsNullOrWhiteSpace(spotifyTrackId) ? null : spotifyTrackId;
-        if (providerId is "lyricsplus" or "lrclib")
+        if (providerId == "lrclib")
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(resourceKey))).ToLowerInvariant();
         if (providerId.Equals(sourceProvider, StringComparison.OrdinalIgnoreCase)) return sourceExternalId;
         var sourceIsApple = sourceProvider is not null &&

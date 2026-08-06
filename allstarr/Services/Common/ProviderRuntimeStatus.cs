@@ -81,6 +81,8 @@ public sealed record ProviderRuntimeStatus
 
     public DateTimeOffset? TestedAt { get; init; }
 
+    public long? LatencyMilliseconds { get; init; }
+
     public string? ReasonCode { get; init; }
 
     /// <summary>

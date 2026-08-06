@@ -5,6 +5,7 @@ import type { ExtensionPackage, ExtensionStoreItem } from "./api";
 const pkg = (overrides: Partial<ExtensionPackage> = {}): ExtensionPackage => ({
   id: "1", extensionId: "demo", displayName: "Demo", version: "1.0.0", lifecycle: "active",
   state: "active", active: true, installed: true, permissionReviewRequired: false,
+  hasPermissions: true,
   stagedAt: "2026-01-01T00:00:00Z", revision: 1, ...overrides,
 });
 
@@ -25,9 +26,11 @@ describe("extension catalog", () => {
   it("offers only new or newer packages", () => {
     const store = [
       { id: "demo", version: "1.0.0" },
+      { id: "demo", version: "1.1.0" },
       { id: "new", version: "1.0.0" },
     ] as ExtensionStoreItem[];
-    expect(availablePackages(store, [pkg()]).map((item) => item.id)).toEqual(["new"]);
+    expect(availablePackages(store, [pkg()]).map((item) => `${item.id}:${item.version}`))
+      .toEqual(["demo:1.1.0", "new:1.0.0"]);
   });
 
   it("labels added, unchanged, and removed update access", () => {

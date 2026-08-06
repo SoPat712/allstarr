@@ -354,9 +354,8 @@ public class ExtensionManager : IDisposable
             var displayName = ReadString(ext, "displayName", "display_name", "title", "label", "name");
             var downloadUrl = ReadString(ext, "downloadUrl", "download_url", "zipUrl", "zip_url", "archiveUrl", "archive_url", "packageUrl", "package_url", "url");
             var sha256 = ReadString(ext, "sha256", "checksum", "packageSha256", "package_sha256");
-            var isSpotiFlacPackage = string.IsNullOrWhiteSpace(sha256) &&
-                (downloadUrl.EndsWith(".sflx", StringComparison.OrdinalIgnoreCase) ||
-                 downloadUrl.EndsWith(".spotiflac-ext", StringComparison.OrdinalIgnoreCase));
+            var isSpotiFlacPackage = downloadUrl.EndsWith(".sflx", StringComparison.OrdinalIgnoreCase) ||
+                downloadUrl.EndsWith(".spotiflac-ext", StringComparison.OrdinalIgnoreCase);
 
             if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(downloadUrl) ||
                 (!isSpotiFlacPackage && !Regex.IsMatch(sha256, "^[0-9a-fA-F]{64}$", RegexOptions.CultureInvariant)) ||
@@ -384,7 +383,9 @@ public class ExtensionManager : IDisposable
                 iconUrl = string.Empty;
             items.Add(new StoreExtensionItem
             {
-                Id = isSpotiFlacPackage ? $"spotiflac-{id}" : id,
+                Id = isSpotiFlacPackage && !id.StartsWith("spotiflac-", StringComparison.OrdinalIgnoreCase)
+                    ? $"spotiflac-{id}"
+                    : id,
                 Name = name,
                 DisplayName = displayName,
                 Description = ReadString(ext, "description", "summary"),

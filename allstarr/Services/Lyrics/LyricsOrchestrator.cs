@@ -13,7 +13,6 @@ namespace allstarr.Services.Lyrics;
 public class LyricsOrchestrator
 {
     private readonly SpotifyLyricsService _spotifyLyrics;
-    private readonly LyricsPlusService _lyricsPlus;
     private readonly LrclibService _lrclib;
     private readonly SpotifyApiSettings _spotifySettings;
     private readonly ProviderStatusManager _statusManager;
@@ -21,14 +20,12 @@ public class LyricsOrchestrator
 
     public LyricsOrchestrator(
         SpotifyLyricsService spotifyLyrics,
-        LyricsPlusService lyricsPlus,
         LrclibService lrclib,
         IOptions<SpotifyApiSettings> spotifySettings,
         ProviderStatusManager statusManager,
         ILogger<LyricsOrchestrator> logger)
     {
         _spotifyLyrics = spotifyLyrics;
-        _lyricsPlus = lyricsPlus;
         _lrclib = lrclib;
         _spotifySettings = spotifySettings.Value;
         _statusManager = statusManager;
@@ -68,11 +65,6 @@ public class LyricsOrchestrator
                         var spotifyLyrics = await TrySpotifyLyrics(spotifyTrackId, artistName, trackName);
                         if (spotifyLyrics != null) return spotifyLyrics;
                     }
-                }
-                else if (source.Equals("lyricsplus", StringComparison.OrdinalIgnoreCase))
-                {
-                    var lyricsPlusLyrics = await TryLyricsPlusLyrics(trackName, artistNames, albumName, durationSeconds, artistName);
-                    if (lyricsPlusLyrics != null) return lyricsPlusLyrics;
                 }
                 else if (source.Equals("lrclib", StringComparison.OrdinalIgnoreCase))
                 {
@@ -118,11 +110,6 @@ public class LyricsOrchestrator
                         var spotifyLyrics = await TrySpotifyLyrics(spotifyTrackId, artistName, trackName);
                         if (spotifyLyrics != null) return true;
                     }
-                }
-                else if (source.Equals("lyricsplus", StringComparison.OrdinalIgnoreCase))
-                {
-                    var lyricsPlusLyrics = await TryLyricsPlusLyrics(trackName, artistNames, albumName, durationSeconds, artistName);
-                    if (lyricsPlusLyrics != null) return true;
                 }
                 else if (source.Equals("lrclib", StringComparison.OrdinalIgnoreCase))
                 {
@@ -179,36 +166,6 @@ public class LyricsOrchestrator
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error fetching Spotify lyrics for track ID {SpotifyId}", spotifyTrackId);
-            return null;
-        }
-    }
-
-    private async Task<LyricsInfo?> TryLyricsPlusLyrics(
-        string trackName,
-        string[] artistNames,
-        string? albumName,
-        int durationSeconds,
-        string artistName)
-    {
-        try
-        {
-            _logger.LogDebug("→ Trying LyricsPlus for: {Artist} - {Track}", artistName, trackName);
-
-            var lyrics = await _lyricsPlus.GetLyricsAsync(trackName, artistNames, albumName, durationSeconds);
-
-            if (lyrics != null)
-            {
-                // LyricsPlus already logs with source info, so we just confirm success
-                _logger.LogDebug("✓ LyricsOrchestrator: Using LyricsPlus lyrics for {Artist} - {Track}", artistName, trackName);
-                return lyrics;
-            }
-
-            _logger.LogDebug("No LyricsPlus lyrics found for {Artist} - {Track}", artistName, trackName);
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error fetching LyricsPlus lyrics for {Artist} - {Track}", artistName, trackName);
             return null;
         }
     }

@@ -896,7 +896,7 @@ public sealed class ProtocolProviderGateway(
         {
             ProviderCapabilityKind.Metadata => ("Providers:MetadataOrder", "MULTI_PROVIDER_METADATA_ORDER", "apple-download,deezer,qobuz"),
             ProviderCapabilityKind.Playlist => ("Providers:PlaylistOrder", "MULTI_PROVIDER_PLAYLIST_ORDER", "spotify,apple-download,deezer,qobuz"),
-            ProviderCapabilityKind.Lyrics => ("Providers:LyricsOrder", "MULTI_PROVIDER_LYRICS_ORDER", "spotify,apple-download,lyricsplus,lrclib"),
+            ProviderCapabilityKind.Lyrics => ("Providers:LyricsOrder", "MULTI_PROVIDER_LYRICS_ORDER", "spotify,apple-download,lrclib"),
             ProviderCapabilityKind.Streaming => ("Providers:StreamingOrder", "MULTI_PROVIDER_STREAMING_ORDER", "apple-download,deezer,qobuz"),
             ProviderCapabilityKind.Download => ("Providers:DownloadOrder", "MULTI_PROVIDER_DOWNLOAD_ORDER", "apple-download,deezer,qobuz"),
             _ => (string.Empty, string.Empty, string.Empty)

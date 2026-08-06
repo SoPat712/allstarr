@@ -7,6 +7,7 @@ using allstarr.Core.Health;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
 using allstarr.Services.Common;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
@@ -190,6 +191,42 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         Assert.Equal(4, result.SampleBytes);
         Assert.Equal(media, result.Media);
         capability.VerifyAll();
+        providers.VerifyAll();
+    }
+
+    [Fact]
+    public async Task Measure_RequiresAnAccountForAccountBoundStreaming()
+    {
+        IProviderStreamingCapability? registered = Mock.Of<IProviderStreamingCapability>();
+        var providers = new Mock<IProviderRegistry>(MockBehavior.Strict);
+        providers.Setup(item => item.TryGetCapability<IProviderStreamingCapability>(
+                "qobuz", ProviderCapabilityKind.Streaming, out registered))
+            .Returns(true);
+        providers.Setup(item => item.GetRequired("qobuz"))
+            .Returns(Descriptor("qobuz", ProviderAccountRequirement.Required));
+        using var selector = new ProviderCtsTrackSelector(
+            Mock.Of<IDbContextFactory<AllstarrDbContext>>(MockBehavior.Strict));
+        var runner = new ProviderCtsDiagnosticRunner(
+            providers.Object,
+            Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
+            selector,
+            Mock.Of<IDurableProviderHealthObservationStore>(MockBehavior.Strict));
+        var actor = new ProviderActorContext(
+            Guid.CreateVersion7(),
+            ProviderActorKind.User,
+            Guid.CreateVersion7(),
+            new ProviderBackendPrincipal("jellyfin", "fixture", "principal"));
+
+        var result = await runner.MeasureAsync(
+            actor,
+            "qobuz",
+            null,
+            ProviderAudioQuality.Any,
+            "missing-account");
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(StatusCodes.Status400BadRequest, result.StatusCode);
+        Assert.Equal("account-resolution", result.Stage);
         providers.VerifyAll();
     }
 

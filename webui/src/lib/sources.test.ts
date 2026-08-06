@@ -8,6 +8,9 @@ import {
   sourceNeedsAccount,
   sourceStatus,
   supportsStreamingDiagnostic,
+  humanize,
+  settingDefault,
+  sourceTimingLabel,
 } from "./sources";
 
 const account = (scope: ProviderAccount["scope"] = "User"): ProviderAccount => ({
@@ -24,6 +27,29 @@ const account = (scope: ProviderAccount["scope"] = "User"): ProviderAccount => (
 const provider: ProviderDefinition = { id: "future-extension", name: "Future Extension" };
 
 describe("source presentation", () => {
+  it("humanizes camel-case lifecycle labels", () => {
+    expect(humanize("reviewRequired")).toBe("Review Required");
+  });
+
+  it("uses manifest defaults without exposing sensitive values", () => {
+    expect(settingDefault({ key: "storefront", label: "Storefront", type: "text", defaultValueJson: '"us"' })).toBe("us");
+    expect(settingDefault({ key: "enabled", label: "Enabled", type: "toggle", defaultValueJson: "true" })).toBe(true);
+    expect(settingDefault({ key: "token", label: "Token", type: "password", sensitive: true, defaultValueJson: '"secret"' })).toBe("");
+  });
+
+  it("labels timing sources and honest empty states", () => {
+    expect(sourceTimingLabel({
+      ...provider,
+      runtimeCapabilities: [{ id: "metadata", ready: true, canAttempt: true, canTest: true, latencyMilliseconds: 42 }],
+    })).toBe("Latest API 42 ms");
+    expect(sourceTimingLabel(provider, { providerId: provider.id, enabledAccountCount: 1, capabilityTotal: 1, healthyCapabilityCount: 1, failedCapabilityCount: 0, p95LatencyMilliseconds: 17 }))
+      .toBe("Managed p95 17 ms");
+    expect(sourceTimingLabel({ ...provider, runtimeCapabilities: [{ id: "metadata", ready: false, canAttempt: true, canTest: true }] }))
+      .toBe("Awaiting first sample");
+    expect(sourceTimingLabel({ ...provider, categories: ["streaming"] })).toBe("Manual only");
+    expect(sourceTimingLabel(provider)).toBe("Not applicable");
+  });
+
   it("uses account readiness for arbitrary schema providers", () => {
     const health: ProviderHealth[] = [{
       provider: "future-extension",

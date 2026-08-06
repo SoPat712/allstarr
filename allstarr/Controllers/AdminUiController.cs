@@ -777,7 +777,7 @@ public class AdminUiController : ControllerBase
         new()
         {
             Id = "apple-musickit",
-            Name = "Apple Music",
+            Name = "Apple MusicKit",
             Icon = "applemusic",
             Status = "available",
             Categories = ["playlist"],
@@ -855,17 +855,9 @@ public class AdminUiController : ControllerBase
             ConfigSchema =
             [
                 Field("MUSICBRAINZ_ENABLED", "Enabled", "toggle", "musicBrainz.enabled"),
-                Field("MUSICBRAINZ_USERNAME", "Username", "text", "musicBrainz.username"),
-                Field("MUSICBRAINZ_PASSWORD", "Password", "password", "musicBrainz.password", sensitive: true)
+                Field("MUSICBRAINZ_USERNAME", "Username", "text", "musicBrainz.username", ownership: "deployment", readOnly: true),
+                Field("MUSICBRAINZ_PASSWORD", "Password", "password", "musicBrainz.password", sensitive: true, ownership: "deployment", readOnly: true)
             ]
-        },
-        new()
-        {
-            Id = "lyricsplus",
-            Name = "LyricsPlus",
-            Icon = "lyrics",
-            Status = "available",
-            Categories = ["lyrics"]
         },
         new()
         {
@@ -879,6 +871,9 @@ public class AdminUiController : ControllerBase
 
         foreach (var provider in providers)
         {
+            provider.ConnectionKind ??= provider.ConfigSchema.Count > 0
+                ? "operator_managed"
+                : "built_in";
             provider.ImplementationOrigin ??= "built_in";
             provider.RouteId ??= $"builtin:{provider.Id}";
             provider.CapabilityRoutes.Add(new AdminUiProviderCapabilityRoute
@@ -1008,6 +1003,7 @@ public class AdminUiController : ControllerBase
             CanAttempt = status.CanAttempt,
             CanTest = _providerStatusManager.CanTestCapability(status.Provider, status.Capability),
             TestedAt = status.TestedAt,
+            LatencyMilliseconds = status.LatencyMilliseconds,
             ReasonCode = status.ReasonCode
         };
 
@@ -1098,7 +1094,7 @@ public class AdminUiController : ControllerBase
                 "Order used for lyrics lookup when a song is played or requested.",
                 "MULTI_PROVIDER_LYRICS_ORDER",
                 null,
-                "spotify,apple-download,lyricsplus,lrclib",
+                "spotify,apple-download,lrclib",
                 pinnedProvider: pinnedLocalProvider)
         ];
     }

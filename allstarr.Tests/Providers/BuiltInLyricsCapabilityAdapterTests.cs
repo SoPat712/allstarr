@@ -9,7 +9,7 @@ public sealed class BuiltInLyricsCapabilityAdapterTests
     [Fact]
     public async Task FetchLyrics_PreservesTimedContentSourceAndStableRevision()
     {
-        var adapter = new BuiltInLyricsCapabilityAdapter("lyricsplus", (_, _) => Task.FromResult<LyricsInfo?>(new()
+        var adapter = new BuiltInLyricsCapabilityAdapter("fixture-lyrics", (_, _) => Task.FromResult<LyricsInfo?>(new()
         {
             PlainLyrics = "First line",
             SyncedLyrics = "[00:01.00]First line\n",
@@ -17,10 +17,10 @@ public sealed class BuiltInLyricsCapabilityAdapterTests
         }));
 
         var outcome = await adapter.FetchLyricsAsync(
-            Context("lyricsplus"),
+            Context("fixture-lyrics"),
             new ProviderLyricsRequest(
                 Guid.CreateVersion7(),
-                new("lyricsplus", ProviderResourceKind.Track, "lookup"),
+                new("fixture-lyrics", ProviderResourceKind.Track, "lookup"),
                 preferredFormat: ProviderLyricsFormat.LineTimed,
                 trackTitle: "Track",
                 artistNames: ["Artist"]));

@@ -22,7 +22,7 @@ public class ProviderStatusManager
 {
     private readonly record struct ProbeOutcome(bool Success, string? ReasonCode = null);
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan ObservationLifetime = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan ObservationLifetime = TimeSpan.FromMinutes(20);
     private const string SpotifyLyricsTestTrackId = "3yII7UwgLF6K5zW3xad3MP";
     private static readonly (string Provider, string Capability, ProviderAccountRequirement AccountRequirement)[] KnownCapabilities =
     [
@@ -41,7 +41,6 @@ public class ProviderStatusManager
         ("qobuz", ProviderCapabilities.Download, ProviderAccountRequirement.Required),
         ("qobuz", ProviderCapabilities.Playlist, ProviderAccountRequirement.Required),
         ("squidwtf", ProviderCapabilities.Metadata, ProviderAccountRequirement.None),
-        ("lyricsplus", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("lrclib", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("lastfm", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
         ("listenbrainz", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required)
@@ -275,6 +274,7 @@ public class ProviderStatusManager
                         _ => ProviderHealthState.Degraded
                     },
                     TestedAt = durable.ObservedAt,
+                    LatencyMilliseconds = durable.LatencyMilliseconds,
                     ReasonCode = durable.FailureCode
                 };
             }
@@ -369,9 +369,9 @@ public class ProviderStatusManager
             key.Capability,
             key.ProviderAccountId?.ToString("N") ?? "account-free");
 
+        var startedAt = DateTimeOffset.UtcNow;
         try
         {
-            var startedAt = DateTimeOffset.UtcNow;
             var probe = await ProbeCapabilityAsync(
                 key.Provider,
                 key.Capability,
@@ -384,10 +384,12 @@ public class ProviderStatusManager
             var failureReason = key.Provider == "apple-download" && _appleDownloadSnapshot != null
                 ? _appleDownloadSnapshot.Capability(key.Capability).ReasonCode ?? _appleDownloadSnapshot.ReasonCode
                 : "probe_failed";
+            var latencyMilliseconds = (long)Math.Max(0, (DateTimeOffset.UtcNow - startedAt).TotalMilliseconds);
             var result = baseline with
             {
                 Health = probe.Success ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
                 TestedAt = DateTimeOffset.UtcNow,
+                LatencyMilliseconds = latencyMilliseconds,
                 ReasonCode = probe.Success ? null : probe.ReasonCode ?? failureReason
             };
 
@@ -397,7 +399,7 @@ public class ProviderStatusManager
                 probe.Success
                     ? allstarr.Core.Storage.ProviderHealthState.Healthy
                     : allstarr.Core.Storage.ProviderHealthState.Degraded,
-                (long)Math.Max(0, (DateTimeOffset.UtcNow - startedAt).TotalMilliseconds),
+                latencyMilliseconds,
                 result.ReasonCode,
                 cancellationToken);
             _logger.LogInformation(
@@ -419,6 +421,7 @@ public class ProviderStatusManager
             {
                 Health = ProviderHealthState.Degraded,
                 TestedAt = DateTimeOffset.UtcNow,
+                LatencyMilliseconds = (long)Math.Max(0, (DateTimeOffset.UtcNow - startedAt).TotalMilliseconds),
                 ReasonCode = ex is OperationCanceledException ? "timeout" : "unreachable"
             };
             _observations[key] = result;
@@ -572,6 +575,7 @@ public class ProviderStatusManager
             Configuration = configuration,
             Health = ProviderHealthState.Unknown,
             TestedAt = null,
+            LatencyMilliseconds = null,
             ReasonCode = reasonCode
         };
     }
@@ -615,7 +619,6 @@ public class ProviderStatusManager
                     ? (ProviderConfigurationState.Configured, null)
                     : (ProviderConfigurationState.NeedsConfiguration, "missing_spotify_lyrics_configuration"),
 
-            ("lyricsplus", ProviderCapabilities.Lyrics) or
             ("lrclib", ProviderCapabilities.Lyrics) =>
                 (ProviderConfigurationState.NotRequired, null),
 
@@ -694,7 +697,6 @@ public class ProviderStatusManager
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Playlist) => true,
             ("squidwtf", ProviderCapabilities.Metadata) => true,
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
-            ("lyricsplus", ProviderCapabilities.Lyrics) => true,
             ("lrclib", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
             ("listenbrainz", ProviderCapabilities.Scrobbling) => true,
@@ -711,7 +713,6 @@ public class ProviderStatusManager
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
             ("squidwtf", ProviderCapabilities.Metadata) => true,
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
-            ("lyricsplus", ProviderCapabilities.Lyrics) => true,
             ("lrclib", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
             ("listenbrainz", ProviderCapabilities.Scrobbling) => true,
@@ -742,7 +743,6 @@ public class ProviderStatusManager
                 SecretValue(accountSecrets, "userid") ?? _qobuzSettings.UserId,
                 cancellationToken)),
             ("squidwtf", ProviderCapabilities.Metadata) => await AsOutcome(TestSquidWtfAsync(cancellationToken)),
-            ("lyricsplus", ProviderCapabilities.Lyrics) => await AsOutcome(TestLyricsPlusAsync(cancellationToken)),
             ("lrclib", ProviderCapabilities.Lyrics) => await AsOutcome(TestLrclibAsync(cancellationToken)),
             ("lastfm", ProviderCapabilities.Scrobbling) => await AsOutcome(TestLastFmAsync(accountSecrets, cancellationToken)),
             ("listenbrainz", ProviderCapabilities.Scrobbling) => await AsOutcome(TestListenBrainzAsync(accountSecrets, cancellationToken)),
@@ -807,17 +807,6 @@ public class ProviderStatusManager
 
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
         return document.RootElement.TryGetProperty("valid", out var valid) && valid.ValueKind == JsonValueKind.True;
-    }
-
-    private async Task<bool> TestLyricsPlusAsync(CancellationToken cancellationToken)
-    {
-        const string url = "https://lyricsplus.prjktla.workers.dev/v2/lyrics/get?title=Never%20Gonna%20Give%20You%20Up&artist=Rick%20Astley&album=Whenever%20You%20Need%20Somebody&duration=213";
-        using var client = _httpClientFactory.CreateClient();
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
-        return response.IsSuccessStatusCode || response.StatusCode is
-            System.Net.HttpStatusCode.NotFound or
-            System.Net.HttpStatusCode.TooManyRequests;
     }
 
     private async Task<bool> TestLrclibAsync(CancellationToken cancellationToken)
@@ -1043,7 +1032,9 @@ public class ProviderStatusManager
             .ToList();
 
     private List<string> GetLyricsOrder() =>
-        GetProviderOrder("MULTI_PROVIDER_LYRICS_ORDER", "spotify,apple-download,lyricsplus,lrclib");
+        GetProviderOrder("MULTI_PROVIDER_LYRICS_ORDER", "spotify,apple-download,lrclib")
+            .Where(provider => provider != "lyricsplus")
+            .ToList();
 
     private List<string> GetProviderOrder(string key, string fallback)
     {
