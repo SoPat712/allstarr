@@ -98,6 +98,7 @@ public class JellyfinResponseBuilder
     public IActionResult CreateArtistResponse(Artist artist, List<Album> albums)
     {
         var artistItem = ConvertArtistToJellyfinItem(artist);
+        artistItem["AlbumCount"] = artist.AlbumCount ?? albums.Count;
         artistItem["Albums"] = albums.Select(ConvertAlbumToJellyfinItem).ToList();
 
         return CreateJsonResponse(artistItem);
@@ -683,7 +684,7 @@ public class JellyfinResponseBuilder
             ["Genres"] = !string.IsNullOrEmpty(album.Genre)
                 ? new[] { album.Genre }
                 : new string[0],
-            ["RunTimeTicks"] = 0, // Could calculate from songs
+            ["RunTimeTicks"] = album.Songs.Sum(song => (long)(song.Duration ?? 0)) * TimeSpan.TicksPerSecond,
             ["ProductionYear"] = album.Year,
             ["IsFolder"] = true,
             ["Type"] = "MusicAlbum",

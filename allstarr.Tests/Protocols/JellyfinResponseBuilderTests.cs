@@ -749,8 +749,8 @@ public class JellyfinResponseBuilderTests
             Artist = "Artist",
             Songs = new List<Song>
             {
-                new() { Id = "t1", Title = "Track 1", Artist = "Artist", Track = 1 },
-                new() { Id = "t2", Title = "Track 2", Artist = "Artist", Track = 2 }
+                new() { Id = "t1", Title = "Track 1", Artist = "Artist", Track = 1, Duration = 30 },
+                new() { Id = "t2", Title = "Track 2", Artist = "Artist", Track = 2, Duration = 45 }
             }
         };
 
@@ -760,6 +760,8 @@ public class JellyfinResponseBuilderTests
         // Assert
         var jsonResult = Assert.IsType<JsonResult>(result);
         Assert.NotNull(jsonResult.Value);
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
+        Assert.Equal(75 * TimeSpan.TicksPerSecond, document.RootElement.GetProperty("RunTimeTicks").GetInt64());
     }
 
     [Fact]
@@ -779,6 +781,8 @@ public class JellyfinResponseBuilderTests
         // Assert
         var jsonResult = Assert.IsType<JsonResult>(result);
         Assert.NotNull(jsonResult.Value);
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
+        Assert.Equal(2, document.RootElement.GetProperty("AlbumCount").GetInt32());
     }
 
     [Fact]
