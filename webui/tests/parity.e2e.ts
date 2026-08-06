@@ -943,6 +943,7 @@ for (const viewport of viewports) {
         await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-history.png`, fullPage: true });
       await page.getByRole("tab", { name: "Imports" }).click();
       await expect(page.getByRole("heading", { name: "Import listening history" })).toBeVisible();
+      await expect(page.getByText("Imported listens older than 30 days are removed automatically.", { exact: true })).toBeVisible();
       await expect(page.locator(".history-list")).toHaveCount(0);
       const historyUpload = page.locator(".upload-zone");
       await historyUpload.scrollIntoViewIfNeeded();
@@ -953,6 +954,10 @@ for (const viewport of viewports) {
       await page.getByRole("tab", { name: "Settings" }).click();
       await expect(page.getByText("Monday discoveries", { exact: true })).toBeVisible();
       await expect(page.getByText("Allstarr keeps private listening history and uses it for recommendations.", { exact: true })).toBeVisible();
+      const automaticHistory = page.getByRole("checkbox", { name: /Save my listening automatically/ });
+      await expect(automaticHistory).toBeChecked();
+      await expect(automaticHistory.locator("..")).toHaveClass(/selected/);
+      expect(await automaticHistory.evaluate((element) => getComputedStyle(element).appearance)).toBe("none");
       await expect(page.getByText("Keep listening history for", { exact: true })).toBeVisible();
       await expect(page.getByText("Use these actions for recommendations", { exact: true })).toBeVisible();
       await expect(page.locator(".settings-stack")).not.toContainText(/\bsignals?\b/i);
@@ -1102,10 +1107,18 @@ test("Intelligence history imports, corrections, and schedules use the selected 
   await expect(page.getByText("It will not send them to Last.fm or ListenBrainz.", { exact: false }).first()).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "Streaming_History.json" })).toContainText("previewed");
   await expect(page.getByRole("status").filter({ hasText: "ListenBrainz.jsonl" })).toContainText("previewed");
-  const apply = page.waitForRequest((request) => request.method() === "POST" &&
-    request.url().endsWith("/api/admin/intelligence/history/imports/55555555-5555-5555-5555-555555555555/apply"));
-  await page.locator(".import-result").filter({ hasText: "Streaming_History.json" }).getByRole("button", { name: "Add to my history" }).click();
-  expect((await apply).postDataJSON()).toMatchObject({
+  const applies: Array<{ url: string; body: unknown }> = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().match(/\/api\/admin\/intelligence\/history\/imports\/[^/]+\/apply$/))
+      applies.push({ url: request.url(), body: request.postDataJSON() });
+  });
+  await page.getByRole("button", { name: "Add all 2 files" }).click();
+  await expect.poll(() => applies.length).toBe(2);
+  expect(applies.map((request) => request.url)).toEqual(expect.arrayContaining([
+    expect.stringContaining("/55555555-5555-5555-5555-555555555555/apply"),
+    expect.stringContaining("/66666666-6666-6666-6666-666666666666/apply"),
+  ]));
+  for (const request of applies) expect(request.body).toMatchObject({
     protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music", revision: "preview-revision",
   });
 

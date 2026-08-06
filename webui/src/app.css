@@ -262,6 +262,34 @@
     font-size: var(--text-sm);
   }
 
+  input[type="checkbox"] {
+    appearance: none;
+    width: 1.15rem;
+    min-width: 1.15rem;
+    height: 1.15rem;
+    min-height: 1.15rem;
+    margin: 0.1rem 0 0;
+    border: 1px solid color-mix(in srgb, var(--color-ink-muted) 65%, var(--color-edge));
+    border-radius: 0.35rem;
+    background: var(--color-panel-raised);
+    cursor: pointer;
+    transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+  }
+
+  input[type="checkbox"]:hover:not(:disabled) {
+    border-color: var(--color-signal-text);
+  }
+
+  input[type="checkbox"]:checked {
+    border-color: var(--color-signal);
+    background-color: var(--color-signal);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3.5 8 3 3 6-7' fill='none' stroke='%2306111f' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: 0.8rem;
+    box-shadow: 0 0.2rem 0.7rem color-mix(in srgb, var(--color-signal) 24%, transparent);
+  }
+
   button,
   a {
     -webkit-tap-highlight-color: transparent;
@@ -5540,9 +5568,8 @@
   }
 
   .setting-field input[type="checkbox"] {
-    width: 1rem;
-    height: 1rem;
-    accent-color: var(--color-signal-text);
+    width: 1.15rem;
+    height: 1.15rem;
   }
 
   .setting-field > small {
