@@ -766,6 +766,12 @@ for (const viewport of viewports) {
       await page.keyboard.press("Escape");
       await page.goto("#/settings/accounts");
       await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible();
+      await page.goto("#/sources?source=lumen-audio&section=configuration");
+      await page.getByRole("button", { name: "Connect account" }).click();
+      const sourceDialog = page.getByRole("dialog", { name: "Connect a Source" });
+      await expect(sourceDialog.getByRole("button", { name: "Source", exact: true })).toContainText("Lumen Audio");
+      await expect(sourceDialog.getByLabel("Access token")).toHaveValue("");
+      await sourceDialog.getByRole("button", { name: "Cancel" }).click();
       await page.goto("#/settings/routing");
       await expect(page.getByText("Local · fixed")).toBeVisible();
       await expect(page.getByRole("button", { name: "Move Jellyfin up" })).toHaveCount(0);

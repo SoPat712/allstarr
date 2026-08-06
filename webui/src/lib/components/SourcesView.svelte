@@ -58,6 +58,7 @@
   let feedback = $state("");
   let action = $state("");
   let connectOpen = $state(false);
+  let connectProviderId = $state("");
   let appleDownloadOpen = $state(false);
   let configureOpen = $state(false);
   let accessOpen = $state(false);
@@ -352,7 +353,7 @@
         <div><p class="eyebrow">Provider-neutral routing</p><h2>Sources</h2><p>Capabilities describe what a Source can do. Latency appears after a health or click-to-stream check reports timing.</p></div>
         <div class="sources-heading-actions">
           <button class="button-secondary" type="button" onclick={() => void refresh()}>Refresh</button>
-          {#if canManage}<button class="button-primary" type="button" onclick={() => connectOpen = true}>Connect Source</button>{/if}
+          {#if canManage}<button class="button-primary" type="button" onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</button>{/if}
         </div>
       </header>
       {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
@@ -456,7 +457,7 @@
               <tr><td colspan="7"><div class="compact-empty connections-empty">
                 <strong>{canManage ? "No Source accounts yet" : "Accounts are administrator-managed"}</strong>
                 <p>{canManage ? "Connect an account to activate personal or shared Source capabilities." : "Available shared Sources appear without exposing credentials."}</p>
-                {#if canManage}<button class="button-primary" type="button" onclick={() => connectOpen = true}>Connect Source</button>{/if}
+                {#if canManage}<button class="button-primary" type="button" onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</button>{/if}
               </div></td></tr>
             {/each}
           </tbody>
@@ -543,7 +544,7 @@
                   <button class="button-primary" type="button" onclick={() => { detailOpen = false; appleDownloadOpen = true; }}>Manage Apple Music - Gamdl</button>
                 {/if}
                 {#if accountSettings(selectedSource).length}
-                  <button class="button-primary" type="button" onclick={() => { detailOpen = false; connectOpen = true; }}>Connect account</button>
+                  <button class="button-primary" type="button" onclick={() => { connectProviderId = selectedSource!.id; detailOpen = false; connectOpen = true; }}>Connect account</button>
                 {:else if selectedSource.connectionKind !== "operator_managed"}
                   <p>No account configuration is required for this extension capability.</p>
                 {/if}
@@ -615,7 +616,7 @@
     </Dialog.Portal>
   </Dialog.Root>
 
-  <ConnectSourceDialog bind:open={connectOpen} {providers} {administrator} onSaved={completed} />
+  <ConnectSourceDialog bind:open={connectOpen} {providers} {administrator} initialProviderId={connectProviderId} onSaved={completed} />
   <ConnectSourceDialog bind:open={configureOpen} {providers} {administrator} account={selectedAccount} onSaved={completed} />
   <AppleDownloadDialog bind:open={appleDownloadOpen} />
   <AccountAccessDialog bind:open={accessOpen} account={selectedAccount} users={audienceUsers} onSaved={completed} />

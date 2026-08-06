@@ -29,6 +29,7 @@ const provider: ProviderDefinition = { id: "future-extension", name: "Future Ext
 describe("source presentation", () => {
   it("humanizes camel-case lifecycle labels", () => {
     expect(humanize("reviewRequired")).toBe("Review Required");
+    expect(humanize("reviewrequired")).toBe("Review Required");
   });
 
   it("uses manifest defaults without exposing sensitive values", () => {

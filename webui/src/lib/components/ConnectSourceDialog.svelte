@@ -11,12 +11,14 @@
     providers,
     administrator,
     account = null,
+    initialProviderId = "",
     onSaved,
   }: {
     open: boolean;
     providers: ProviderDefinition[];
     administrator: boolean;
     account?: ProviderAccount | null;
+    initialProviderId?: string;
     onSaved: (message: string) => void | Promise<void>;
   } = $props();
 
@@ -30,7 +32,7 @@
   );
 
   $effect(() => {
-    if (open && !providerId && choices[0]) providerId = account?.providerId ?? choices[0].id;
+    if (open && choices[0]) providerId = account?.providerId || initialProviderId || choices[0].id;
     if (!open) error = "";
   });
 

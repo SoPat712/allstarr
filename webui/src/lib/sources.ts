@@ -8,7 +8,7 @@ import type {
 } from "./api";
 
 export const humanize = (value: string) =>
-  value.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replaceAll("_", " ").replaceAll("-", " ")
+  value.replace(/reviewrequired/gi, "review required").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replaceAll("_", " ").replaceAll("-", " ")
     .replace(/\b\w/g, (character) => character.toUpperCase());
 
 export function audienceLabel(account: ProviderAccount) {
