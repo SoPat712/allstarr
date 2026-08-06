@@ -112,6 +112,11 @@
     return formatter.format(Math.round(hours / 24), "day");
   }
 
+  function sourceTiming(providerId: string, checkedAt: string | null, cts?: CtsMeasurement) {
+    const p95 = summary(providerId)?.p95LatencyMilliseconds;
+    return p95 != null ? `${p95} ms p95` : cts ? "" : checkedAt ? "No latency data" : "Not measured";
+  }
+
   async function refresh() {
     if (refreshing) return;
     refreshing = true;
@@ -294,7 +299,7 @@
   <div class="sources-layout" aria-busy={refreshing}>
     <section class="panel sources-panel">
       <header class="sources-heading">
-        <div><p class="eyebrow">Provider-neutral routing</p><h2>Sources</h2><p>Capabilities describe what a Source can do. Connections grant secure account access without exposing credentials.</p></div>
+        <div><p class="eyebrow">Provider-neutral routing</p><h2>Sources</h2><p>Capabilities describe what a Source can do. Latency appears after a health or click-to-stream check reports timing.</p></div>
         <div class="sources-heading-actions">
           <button class="button-secondary" type="button" onclick={() => void refresh()}>Refresh</button>
           {#if canManage}<button class="button-primary" type="button" onclick={() => connectOpen = true}>Connect Source</button>{/if}
@@ -310,7 +315,7 @@
               <th>Capabilities</th>
               <th>Readiness</th>
               <th>Enabled</th>
-              <th>Timing</th>
+              <th>Latency</th>
             </tr>
           </thead>
           <tbody>
@@ -321,6 +326,7 @@
               {@const cts = measurements.find((measurement) =>
                 measurement.providerId.toLowerCase() === item.id.toLowerCase() &&
                 (!measurement.providerAccountId || connected.some((account) => account.id === measurement.providerAccountId)))}
+              {@const timing = sourceTiming(item.id, metrics.checkedAt, cts)}
               <tr data-state={state}>
                 <td>
                   <button class="operational-row-identity" type="button" onclick={() => inspectSource(item)}>
@@ -332,14 +338,14 @@
                     <summary>More details</summary>
                     <dl>
                       <div><dt>Capabilities</dt><dd>{(item.categories ?? []).map(humanize).join(", ") || "Pending"}</dd></div>
-                      <div><dt>Timing</dt><dd>{summary(item.id)?.p95LatencyMilliseconds != null ? `${summary(item.id)?.p95LatencyMilliseconds} ms p95` : "Not measured"}{#if cts} · <span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>CTS {ctsMeasurementLabel(cts)}</span>{/if}</dd></div>
+                      <div><dt>Latency</dt><dd>{timing}{#if cts}{#if timing} · {/if}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>CTS {ctsMeasurementLabel(cts)}</span>{/if}</dd></div>
                     </dl>
                   </details>
                 </td>
                 <td>{(item.categories ?? []).map(humanize).join(", ") || "Pending"}</td>
                 <td><span class={`status-pill ${state}`}>{state === "needs_config" ? "Needs setup" : humanize(state)}</span><small>{metrics.passing}/{metrics.total || 0} passing · {relativeTime(metrics.checkedAt)}</small></td>
                 <td><span class={`status-pill ${state === "disabled" ? "suggested" : "healthy"}`}>{state === "disabled" ? "Disabled" : "Enabled"}</span>{connected.length ? ` · ${connected.filter((account) => account.enabled).length} account${connected.length === 1 ? "" : "s"}` : ""}</td>
-                <td>{summary(item.id)?.p95LatencyMilliseconds != null ? `${summary(item.id)?.p95LatencyMilliseconds} ms p95` : "—"}{#if cts} · <span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>CTS {ctsMeasurementLabel(cts)}</span>{/if}</td>
+                <td>{timing}{#if cts}{#if timing} · {/if}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>CTS {ctsMeasurementLabel(cts)}</span>{/if}</td>
               </tr>
             {:else}
               <tr><td colspan="5"><div class="compact-empty"><strong>No Sources are registered</strong><p>Enable a built-in provider or install an extension.</p></div></td></tr>

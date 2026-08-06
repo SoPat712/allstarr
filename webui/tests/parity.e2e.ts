@@ -2058,6 +2058,13 @@ test("Sources keep primary actions visible and report scoped degradation", async
   }));
   await page.goto("#/sources");
   await expect(page.getByRole("button", { name: /Lumen Audio Account details stored/ })).toBeVisible();
+  const lumenSource = page.locator(".sources-table tr").filter({ hasText: "Lumen Audio" });
+  await expect(lumenSource.locator(".operational-mobile-detail dd").filter({ hasText: "No latency data" })).toHaveText("No latency data");
+  const tableGutters = await page.locator(".sources-panel").evaluate((panel) => ({
+    heading: Number.parseFloat(getComputedStyle(panel.querySelector(".sources-heading")!).paddingLeft),
+    cell: Number.parseFloat(getComputedStyle(panel.querySelector(".sources-table td")!).paddingLeft),
+  }));
+  expect(tableGutters.cell).toBe(tableGutters.heading);
   const disabledSource = page.locator(".sources-table tr").filter({ hasText: "Disabled Source" });
   const disabledStatus = disabledSource.locator(".operational-mobile-state");
   await expect(disabledStatus).toHaveText("Disabled");
