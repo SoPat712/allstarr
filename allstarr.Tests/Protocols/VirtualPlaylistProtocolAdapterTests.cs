@@ -52,7 +52,11 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             Assert.Equal(id, userData.GetProperty("ItemId").GetString());
             Assert.Equal(id, userData.GetProperty("Key").GetString());
         });
-        Assert.All(items.EnumerateArray(), item => Assert.False(item.TryGetProperty("ArtistItems", out _)));
+        Assert.All(items.EnumerateArray(), item =>
+        {
+            Assert.Empty(item.GetProperty("ArtistItems").EnumerateArray());
+            Assert.Empty(item.GetProperty("AlbumArtists").EnumerateArray());
+        });
     }
 
     [Fact]

@@ -490,6 +490,8 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         ["Artists"] = track.SourceMetadata?.Artists is { Count: > 0 } artists
             ? artists
             : [track.Artist],
+        ["ArtistItems"] = Array.Empty<Dictionary<string, object?>>(),
+        ["AlbumArtists"] = Array.Empty<Dictionary<string, object?>>(),
         ["RunTimeTicks"] = track.DurationMilliseconds * TimeSpan.TicksPerMillisecond,
         ["IndexNumber"] = track.SourcePosition + 1,
         ["IsFolder"] = false,
