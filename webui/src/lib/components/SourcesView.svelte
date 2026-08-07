@@ -211,7 +211,7 @@
     if (item.id === "apple-download")
       return "GAMDL downloads, streaming, and cached synced-lyrics artifacts.";
     if (item.id === "apple-musickit")
-      return "MusicKit playlist access for the connected Apple Music user.";
+      return "Optional personal-library and playlist access requiring an Apple Developer Program token and a Music User Token.";
     if (item.id === "spotiflac-apple-music")
       return "Apple Music extension metadata and Media User Token lyrics, including configured translation or pronunciation.";
     return item.description || "Configure this Source and its accounts here.";
@@ -528,7 +528,7 @@
                 <div><dt>Readiness</dt><dd>{metrics.passing}/{metrics.total || 0} passing · {metrics.failed} failing</dd></div>
                 <div><dt>Last check</dt><dd>{relativeTime(metrics.checkedAt)}</dd></div>
                 <div><dt>API timing</dt><dd>{sourceTimingLabel(selectedSource, summary(selectedSource.id))}</dd></div>
-                <div><dt>Click to stream</dt><dd>{#if cts}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>{ctsMeasurementLabel(cts)}</span> · {relativeTime(cts.testedAt)}{:else if selectedSource.categories?.some((item) => item.toLowerCase() === "streaming")}Awaiting first sample{:else if selectedSource.categories?.some((item) => item.toLowerCase() === "download")}Download only{:else}Not applicable{/if}</dd></div>
+                <div><dt>Click to stream</dt><dd>{#if cts}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>{ctsMeasurementLabel(cts)}</span> · {relativeTime(cts.testedAt)}{:else if selectedSource.categories?.some((item) => item.toLowerCase() === "streaming")}Awaiting first sample{:else if selectedSource.categories?.some((item) => item.toLowerCase() === "download")}Not applicable · no streaming capability{:else}Not applicable{/if}</dd></div>
               </dl>
               <div class="source-detail-capabilities">
                 {#each selectedSource.runtimeCapabilities ?? [] as capability}
@@ -545,7 +545,7 @@
                 <div><dt>State</dt><dd><span class={`status-pill ${selectedAccount.enabled ? "healthy" : "suggested"}`}>{selectedAccount.enabled ? "Enabled" : "Disabled"}</span></dd></div>
                 <div><dt>Account details</dt><dd><span class={`status-pill ${selectedAccount.secret.configured && !selectedAccount.secret.revoked ? "healthy" : "needs_config"}`}>{selectedAccount.secret.configured && !selectedAccount.secret.revoked ? "Stored" : "Setup needed"}</span></dd></div>
                 <div><dt>Health</dt><dd><span class={`status-pill ${readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}`}>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready</span></dd></div>
-                <div><dt>Click to stream</dt><dd>{#if cts}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>{ctsMeasurementLabel(cts)}</span> · {relativeTime(cts.testedAt)}{:else if capabilities.some((item) => item.capability.toLowerCase() === "streaming")}Awaiting first sample{:else if capabilities.some((item) => item.capability.toLowerCase() === "download")}Download only{:else}Not applicable{/if}</dd></div>
+                <div><dt>Click to stream</dt><dd>{#if cts}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>{ctsMeasurementLabel(cts)}</span> · {relativeTime(cts.testedAt)}{:else if capabilities.some((item) => item.capability.toLowerCase() === "streaming")}Awaiting first sample{:else if capabilities.some((item) => item.capability.toLowerCase() === "download")}Not applicable · no streaming capability{:else}Not applicable{/if}</dd></div>
               </dl>
             {:else if detailTab === "configuration" && detailKind === "source" && selectedSource}
               {@const settings = accountSettings(selectedSource)}

@@ -245,6 +245,8 @@
                       {providerName(candidateProvider(candidate))}
                       {#if resolution?.targetType === "local" && candidate.components?.localPreference}
                         <span>· +{percent(candidate.components.localPreference)} local boost</span>
+                      {:else if candidate.components?.extensionPenalty}
+                        <span>· {percent(candidate.components.extensionPenalty)} extension penalty</span>
                       {/if}
                     </span>
                   </div>
@@ -252,15 +254,13 @@
                     class="candidate-confidence"
                   >
                     <strong>{percent(
-                      resolution?.targetType === "local"
-                        ? candidate.components?.preferenceScore ?? candidate.confidence
-                        : candidate.confidence
+                      candidate.components?.preferenceScore ?? candidate.confidence
                     )}</strong>
                     <small>confidence</small>
                   </span>
                   <div class="score-components">
                     {#each scoreComponents(candidate) as [name, value]}
-                      {#if name !== "localPreference" && name !== "preferenceScore"}
+                      {#if name !== "localPreference" && name !== "extensionPenalty" && name !== "preferenceScore"}
                         <span>
                           <small>{name.replaceAll("_", " ")}</small>
                           <strong>{percent(value)}</strong>
@@ -349,6 +349,8 @@
                   {providerName(target.externalProvider)}
                   {#if !target.externalProvider && target.components?.localPreference}
                     <span>· +{percent(target.components.localPreference)} local boost</span>
+                  {:else if target.components?.extensionPenalty}
+                    <span>· {percent(target.components.extensionPenalty)} extension penalty</span>
                   {/if}
                 </span>
                 <strong>{target.title}</strong>
@@ -361,9 +363,7 @@
               </span>
               <span class="target-score">
                 <strong>{percent(
-                  !target.externalProvider
-                    ? target.components?.preferenceScore ?? target.confidence
-                    : target.confidence
+                  target.components?.preferenceScore ?? target.confidence
                 )}</strong>
                 <small>confidence</small>
                 <small>rank #{results.indexOf(target) + 1}</small>

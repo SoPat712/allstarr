@@ -774,11 +774,11 @@ public class AdminUiController : ControllerBase
         new()
         {
             Id = "apple-musickit",
-            Name = "Apple MusicKit – Personal Library",
+            Name = "Apple Music Developer API – Personal Library",
             Icon = "applemusic",
             Status = "available",
             Categories = ["playlist"],
-            Notes = ["Personal playlists", "Music User Token", "Lyrics use a separate provider"],
+            Notes = ["Requires Apple Developer Program", "Personal playlists", "Lyrics use a separate provider"],
             AccountSettings =
             [
                 new AdminUiConfigField
@@ -1168,6 +1168,14 @@ public class AdminUiController : ControllerBase
                 "number",
                 "matching.localPreferencePercent",
                 helpText: "Percentage points added to Jellyfin-local candidates. Default: 7%.",
+                min: 0,
+                max: 20),
+            Field(
+                "MATCHING_EXTENSION_PENALTY_PERCENT",
+                "Extension match penalty",
+                "number",
+                "matching.extensionPenaltyPercent",
+                helpText: "Percentage points subtracted from extension candidates so equally strong built-in matches rank first. Default: 3%.",
                 min: 0,
                 max: 20)
         ]),

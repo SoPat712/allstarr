@@ -19,7 +19,10 @@ namespace allstarr.Services.Common;
 /// </summary>
 public class ProviderStatusManager
 {
-    private readonly record struct ProbeOutcome(bool Success, string? ReasonCode = null);
+    private readonly record struct ProbeOutcome(
+        bool Success,
+        string? ReasonCode = null,
+        bool MeasuresLatency = true);
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan ObservationLifetime = TimeSpan.FromMinutes(20);
     private const string SpotifyLyricsTestTrackId = "3yII7UwgLF6K5zW3xad3MP";
@@ -54,6 +57,7 @@ public class ProviderStatusManager
     private readonly ExtensionManager? _extensionManager;
     private readonly DurableProviderHealthStore? _durableHealth;
     private readonly IAppleDownloadEndpointDiscovery? _appleDownloadDiscovery;
+    private readonly IServiceProvider? _services;
     private AppleDownloadEndpointSnapshot? _appleDownloadSnapshot;
 
     private readonly ConcurrentDictionary<ProviderRuntimeStatusKey, ProviderRuntimeStatus> _observations = new();
@@ -68,7 +72,8 @@ public class ProviderStatusManager
         IOptions<QobuzSettings> qobuzSettings,
         ExtensionManager? extensionManager = null,
         DurableProviderHealthStore? durableHealth = null,
-        IAppleDownloadEndpointDiscovery? appleDownloadDiscovery = null)
+        IAppleDownloadEndpointDiscovery? appleDownloadDiscovery = null,
+        IServiceProvider? services = null)
     {
         _configuration = configuration;
         _httpClientFactory = httpClientFactory;
@@ -80,6 +85,7 @@ public class ProviderStatusManager
         _extensionManager = extensionManager;
         _durableHealth = durableHealth;
         _appleDownloadDiscovery = appleDownloadDiscovery;
+        _services = services;
     }
 
     public IReadOnlyList<string> GetEnabledSearchProviders()
@@ -184,7 +190,7 @@ public class ProviderStatusManager
     /// a provider account. Account-bound status is available through the managed APIs.
     /// </summary>
     public IReadOnlyList<ProviderRuntimeStatus> GetAllAccountFreeStatuses() =>
-        KnownCapabilities
+        RuntimeCapabilities()
             .Where(item => item.AccountRequirement != ProviderAccountRequirement.Required)
             .Select(item => GetAccountFreeStatus(item.Provider, item.Capability))
             .ToList();
@@ -200,7 +206,7 @@ public class ProviderStatusManager
         IReadOnlyDictionary<string, string> accountSecrets)
     {
         var normalizedProvider = Normalize(provider);
-        return KnownCapabilities
+        return RuntimeCapabilities()
             .Where(item => item.Provider == normalizedProvider)
             .Select(item => GetManagedStatus(
                 item.Provider,
@@ -378,7 +384,9 @@ public class ProviderStatusManager
             var failureReason = key.Provider == "apple-download" && _appleDownloadSnapshot != null
                 ? _appleDownloadSnapshot.Capability(key.Capability).ReasonCode ?? _appleDownloadSnapshot.ReasonCode
                 : "probe_failed";
-            var latencyMilliseconds = (long)Math.Max(0, (DateTimeOffset.UtcNow - startedAt).TotalMilliseconds);
+            var latencyMilliseconds = probe.MeasuresLatency
+                ? (long?)Math.Max(0, (DateTimeOffset.UtcNow - startedAt).TotalMilliseconds)
+                : null;
             var result = baseline with
             {
                 Health = probe.Success ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
@@ -510,7 +518,7 @@ public class ProviderStatusManager
         CancellationToken cancellationToken = default)
     {
         var normalized = Normalize(provider);
-        var capabilities = KnownCapabilities
+        var capabilities = RuntimeCapabilities()
             .Where(item => item.Provider == normalized && HasProbe(item.Provider, item.Capability))
             .Select(item => item.Capability)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -548,7 +556,7 @@ public class ProviderStatusManager
     {
         var isSupported = IsCapabilitySupported(key.Provider, key.Capability);
         var isEnabled = isSupported && !GetDisabledProviders().Contains(key.Provider);
-        var (configuration, reasonCode) = GetConfigurationState(key.Provider, key.Capability);
+        var (configuration, reasonCode) = GetConfigurationState(key);
 
         if (!isSupported)
         {
@@ -575,9 +583,20 @@ public class ProviderStatusManager
     }
 
     private (ProviderConfigurationState State, string? ReasonCode) GetConfigurationState(
-        string provider,
-        string capability)
+        ProviderRuntimeStatusKey key)
     {
+        var provider = key.Provider;
+        var capability = key.Capability;
+        if (TryGetExtensionCapability(provider, capability, out var extensionCapability))
+        {
+            return extensionCapability!.AccountRequirement == ProviderAccountRequirement.Required &&
+                   !key.ProviderAccountId.HasValue
+                ? (ProviderConfigurationState.NeedsConfiguration, "provider_account_required")
+                : (key.ProviderAccountId.HasValue
+                    ? ProviderConfigurationState.Configured
+                    : ProviderConfigurationState.NotRequired, null);
+        }
+
         return (provider, capability) switch
         {
             ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) =>
@@ -615,17 +634,17 @@ public class ProviderStatusManager
         };
     }
 
-    private static bool CanRunWithoutAccount(string provider, string capability)
+    private bool CanRunWithoutAccount(string provider, string capability)
     {
         var normalizedProvider = Normalize(provider);
         var normalizedCapability = Normalize(capability);
-        return KnownCapabilities.Any(item =>
+        return RuntimeCapabilities().Any(item =>
             item.Provider == normalizedProvider &&
             item.Capability == normalizedCapability &&
             item.AccountRequirement != ProviderAccountRequirement.Required);
     }
 
-    private static void RequireAccountFreeCapability(string provider, string capability)
+    private void RequireAccountFreeCapability(string provider, string capability)
     {
         if (!CanRunWithoutAccount(provider, capability))
         {
@@ -638,6 +657,23 @@ public class ProviderStatusManager
         ProviderRuntimeStatus baseline,
         IReadOnlyDictionary<string, string> secrets)
     {
+        if (ProviderRegistry?.TryGet(baseline.Provider, out var descriptor) == true &&
+            descriptor!.Origin == ProviderOrigin.Extension)
+        {
+            var required = descriptor.Settings
+                .Where(setting => setting.Required && setting.DefaultJson == null)
+                .Select(setting => NormalizeSettingKey(setting.Key))
+                .ToArray();
+            var extensionConfigured = required.All(secrets.ContainsKey);
+            return extensionConfigured
+                ? baseline with { Configuration = ProviderConfigurationState.Configured, ReasonCode = null }
+                : baseline with
+                {
+                    Configuration = ProviderConfigurationState.NeedsConfiguration,
+                    ReasonCode = "missing_provider_account_secret"
+                };
+        }
+
         bool? configured = (baseline.Provider, baseline.Capability) switch
         {
             ("spotify", ProviderCapabilities.Playlist) =>
@@ -678,6 +714,8 @@ public class ProviderStatusManager
 
     private bool IsCapabilitySupported(string provider, string capability)
     {
+        if (TryGetExtensionCapability(provider, capability, out var extensionCapability))
+            return extensionCapability!.HasUsableImplementation;
         return (provider, capability) switch
         {
             ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) =>
@@ -692,8 +730,10 @@ public class ProviderStatusManager
         };
     }
 
-    private static bool HasProbe(string provider, string capability)
+    private bool HasProbe(string provider, string capability)
     {
+        if (TryGetExtensionCapability(provider, capability, out var extensionCapability))
+            return extensionCapability!.HasUsableImplementation;
         return (provider, capability) switch
         {
             ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) => true,
@@ -713,6 +753,10 @@ public class ProviderStatusManager
         IReadOnlyDictionary<string, string>? accountSecrets,
         CancellationToken cancellationToken)
     {
+        if (TryGetExtensionCapability(provider, capability, out var extensionCapability))
+            return new ProbeOutcome(
+                extensionCapability!.HasUsableImplementation,
+                MeasuresLatency: false);
         return (provider, capability) switch
         {
             ("spotify", ProviderCapabilities.Playlist) => await TestSpotifyPlaylistAsync(
@@ -737,6 +781,42 @@ public class ProviderStatusManager
     }
 
     private static async Task<ProbeOutcome> AsOutcome(Task<bool> probe) => new(await probe);
+
+    private IReadOnlyList<(string Provider, string Capability, ProviderAccountRequirement AccountRequirement)> RuntimeCapabilities()
+    {
+        var extensions = ProviderRegistry?.Providers
+            .Where(provider => provider.Origin == ProviderOrigin.Extension)
+            .SelectMany(provider => provider.Capabilities
+                .Where(capability => capability.Capability != ProviderCapabilityKind.Health)
+                .Select(capability => (
+                    Provider: provider.Id,
+                    Capability: capability.Capability.ToString().ToLowerInvariant(),
+                    AccountRequirement: capability.AccountRequirement))) ?? [];
+        return KnownCapabilities
+            .Concat(extensions)
+            .DistinctBy(item => (item.Provider, item.Capability))
+            .ToArray();
+    }
+
+    private bool TryGetExtensionCapability(
+        string provider,
+        string capability,
+        out ProviderCapabilityDescriptor? descriptor)
+    {
+        descriptor = null;
+        if (ProviderRegistry?.TryGet(provider, out var providerDescriptor) != true ||
+            providerDescriptor!.Origin != ProviderOrigin.Extension ||
+            !Enum.TryParse<ProviderCapabilityKind>(capability, true, out var kind))
+            return false;
+        descriptor = providerDescriptor.Capabilities.SingleOrDefault(item => item.Capability == kind);
+        return descriptor != null;
+    }
+
+    private static string NormalizeSettingKey(string value) =>
+        new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+
+    private IProviderRegistry? ProviderRegistry =>
+        _services?.GetService<IProviderRegistry>();
 
     private async Task<bool> TestLastFmAsync(
         IReadOnlyDictionary<string, string>? secrets,

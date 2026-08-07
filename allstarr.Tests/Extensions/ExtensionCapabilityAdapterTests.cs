@@ -372,6 +372,55 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task SpotiFlacDownloadProvider_PreparesAStreamAndDeletesItsTransientWorkspace()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-spotiflac-stream", Guid.NewGuid().ToString("N"));
+        try
+        {
+            const string sourceManifest = """
+                {"name":"stream-demo","displayName":"Stream demo","version":"1.0.0","description":"Fixture",
+                 "type":["download_provider"],"permissions":{"network":["media.example.test"]}}
+                """;
+            const string script = """
+                registerExtension({checkAvailability:function(){return {available:true};},
+                  download:function(id, quality, path){return file.download('https://media.example.test/audio', path, {});}});
+                """;
+            var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(sourceManifest, script);
+            var manifest = ExtensionSdkV1.ParseManifest(normalized);
+            Assert.Contains(manifest.Capabilities, item => item.Kind == ProviderCapabilityKind.Streaming);
+            var sandbox = new ExtensionSandbox(root, normalized, script,
+                new HttpClientFactory(new BytesHandler([1, 2, 3, 4])), NullLogger.Instance,
+                new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]),
+                    new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
+            var options = new ProviderDownloadWorkspaceOptions
+            {
+                RootPath = Path.Combine(root, "workspaces"),
+                MaximumArtifactBytes = 1024
+            };
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var adapter = new ExtensionDownloadStreamingCapabilityAdapter(
+                sandbox, manifest, null, resolver, options);
+            var outcome = await adapter.GetStreamLeaseAsync(
+                Context("spotiflac-stream-demo"),
+                new ProviderStreamLeaseRequest(new(
+                    "spotiflac-stream-demo", ProviderResourceKind.Track, "track-1")));
+
+            Assert.True(outcome.IsSuccess, outcome.Error?.Kind.ToString());
+            var lease = outcome.RequireValue();
+            Assert.False(lease.SupportsByteRanges);
+            Assert.Equal(1337, lease.Media.Bitrate);
+            using (var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri))
+            using (var response = await lease.ProtectedResponseFactory!(request, CancellationToken.None))
+                Assert.Equal([1, 2, 3, 4], await response.Content.ReadAsByteArrayAsync());
+            Assert.Empty(Directory.EnumerateDirectories(options.RootPath));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
     public async Task Metadata_AllDeclaredAlbumAndArtistHooksMapTypedSchemas()
     {
         string[] hooks = ["searchTracks", "getTrack", "lookupByIsrc", "searchAlbums", "getAlbum", "searchArtists", "getArtist", "getArtistAlbums", "getArtistTracks"];

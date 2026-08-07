@@ -38,7 +38,7 @@ public static class CurrentProviderSupportCatalog
         Provider(
             "apple-musickit",
             "apple-musickit",
-            "Apple MusicKit – Personal Library",
+            "Apple Music Developer API – Personal Library",
             "user",
             "Developer token plus a per-user Music User Token stored in the selected encrypted account secret.",
             Capability("playlist", Supported, "Account-bound MusicKit library playlist paging, snapshots, artwork, matching, virtual reads, and backend materialization.", "AppleMusicKitPlaylistCapabilityAdapterTests; PlaylistOrchestrationIntegrationTests"),

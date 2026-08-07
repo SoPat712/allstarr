@@ -617,7 +617,8 @@ public sealed class ProtocolProviderGateway(
             providerOrder,
             trackId,
             quality,
-            allowFallback: true));
+            allowFallback: true,
+            allowManagedDownloads: true));
         if (plan.Candidates.Count == 0)
         {
             if (plan.Decision.Candidates.Any(item =>

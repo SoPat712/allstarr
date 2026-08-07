@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
 using allstarr.Services.Common;
 using System.Text.RegularExpressions;
@@ -58,7 +59,8 @@ public sealed record LocalTrackMatchCandidate(
     string? MusicBrainzRecordingId,
     bool? IsExplicit,
     IReadOnlyDictionary<string, string>? ProviderTrackIds = null,
-    bool IsLocal = true);
+    bool IsLocal = true,
+    ProviderOrigin? ProviderOrigin = null);
 
 public sealed record ScopedTrackMatchOverride(
     Guid TenantId,
@@ -109,6 +111,8 @@ public sealed class TrackMatchPolicy
 {
     public double LocalPreferenceBoost { get; set; } = 0.07;
 
+    public double ExtensionPreferencePenalty { get; set; } = 0.03;
+
     public double AcceptThreshold { get; init; } = 0.88;
 
     public double SuggestThreshold { get; init; } = 0.72;
@@ -120,6 +124,7 @@ public sealed class TrackMatchPolicy
     public void Validate()
     {
         if (LocalPreferenceBoost is < 0 or > 1 ||
+            ExtensionPreferencePenalty is < 0 or > 1 ||
             AcceptThreshold is <= 0 or > 1 ||
             SuggestThreshold is < 0 or > 1 ||
             SuggestThreshold > AcceptThreshold ||
@@ -133,7 +138,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "normalized-v11";
+    public const string AlgorithmVersion = "normalized-v12";
 
     private readonly TrackMatchPolicy _policy;
 
@@ -179,35 +184,35 @@ public sealed class TrackMatchDecisionEngine
         ArgumentNullException.ThrowIfNull(candidates);
         ValidateSource(source);
         return candidates
-            .Select(candidate => ApplyLocalPreference(
-                ScoreCandidate(source, candidate),
-                candidate.IsLocal))
+            .Select(candidate => ApplyPreference(ScoreCandidate(source, candidate), candidate))
             .OrderByDescending(PreferenceScore)
             .ThenByDescending(candidate => candidate.Confidence)
             .ThenBy(candidate => candidate.LibraryTrackId)
             .ToArray();
     }
 
-    private TrackMatchCandidateScore ApplyLocalPreference(
+    private TrackMatchCandidateScore ApplyPreference(
         TrackMatchCandidateScore score,
-        bool isLocal)
+        LocalTrackMatchCandidate candidate)
     {
-        if (!isLocal || _policy.LocalPreferenceBoost == 0)
-        {
-            return score;
-        }
+        var adjustment = candidate.IsLocal
+            ? _policy.LocalPreferenceBoost
+            : candidate.ProviderOrigin == ProviderOrigin.Extension
+                ? -_policy.ExtensionPreferencePenalty
+                : 0;
+        if (adjustment == 0) return score;
 
         var components = new Dictionary<string, double>(
             score.Components ?? new Dictionary<string, double>())
         {
-            ["localPreference"] = _policy.LocalPreferenceBoost,
-            ["preferenceScore"] = Math.Min(1, score.Confidence + _policy.LocalPreferenceBoost)
+            [candidate.IsLocal ? "localPreference" : "extensionPenalty"] = adjustment,
+            ["preferenceScore"] = Math.Clamp(score.Confidence + adjustment, 0, 1)
         };
         return score with
         {
             Components = components,
             Reasons = score.Reasons
-                .Append("local_preference_boost")
+                .Append(candidate.IsLocal ? "local_preference_boost" : "extension_preference_penalty")
                 .Distinct(StringComparer.Ordinal)
                 .ToArray()
         };

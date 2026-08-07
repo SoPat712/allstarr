@@ -79,9 +79,11 @@ export function sourceTimingLabel(provider: ProviderDefinition, summary?: Provid
     .filter((item) => item.latencyMilliseconds != null)
     .toSorted((left, right) => String(right.testedAt ?? "").localeCompare(String(left.testedAt ?? "")))[0];
   if (latest?.latencyMilliseconds != null) return `Latest API ${latest.latencyMilliseconds} ms`;
+  if ((provider.runtimeCapabilities ?? []).some((item) => item.canTest && item.testedAt))
+    return "Readiness checked";
   if ((provider.runtimeCapabilities ?? []).some((item) => item.canTest)) return "Awaiting first sample";
   if ((provider.categories ?? []).some((item) => item.toLowerCase() === "streaming")) return "Manual only";
-  if ((provider.categories ?? []).some((item) => item.toLowerCase() === "download")) return "Download only";
+  if ((provider.categories ?? []).some((item) => item.toLowerCase() === "download")) return "No streaming capability";
   return "Not applicable";
 }
 

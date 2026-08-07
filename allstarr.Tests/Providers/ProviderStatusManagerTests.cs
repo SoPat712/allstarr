@@ -3,6 +3,8 @@ using System.Net;
 using System.Text;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
+using allstarr.Core.Capabilities;
+using Moq;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -11,6 +13,28 @@ namespace allstarr.Tests;
 
 public sealed class ProviderStatusManagerTests
 {
+    [Fact]
+    public async Task ActiveExtensionCapabilitiesReceiveReadinessChecks()
+    {
+        var implementation = new Mock<IProviderMetadataCapability>();
+        implementation.SetupGet(item => item.ProviderId).Returns("fixture-extension");
+        implementation.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        var registry = new ProviderRegistry([new ProviderRegistration(new ProviderDescriptor(
+            "fixture-extension", "Fixture", "Fixture extension", ProviderOrigin.Extension, "1", "1.0",
+            [new(ProviderCapabilityKind.Metadata, ProviderCapabilitySupportState.Supported,
+                ProviderAccountRequirement.None, "1.0", ["searchTracks", "getTrack"], [])],
+            new ProviderPermissionDescriptor(), entryPoint: "index.js"), [implementation.Object])]);
+        var manager = CreateManager(new Dictionary<string, string?>(), providerRegistry: registry);
+
+        var before = Assert.Single(manager.GetAllAccountFreeStatuses(),
+            item => item.Provider == "fixture-extension" && item.Capability == "metadata");
+        var after = await manager.TestAccountFreeProviderCapabilityAsync("fixture-extension", "metadata");
+
+        Assert.True(manager.CanTestCapability("fixture-extension", "metadata"));
+        Assert.False(before.IsReady);
+        Assert.True(after.IsReady);
+    }
+
     [Fact]
     public void SpotifyLyricsSidecar_DoesNotRequireDirectSpotifyApiMode()
     {
@@ -445,7 +469,8 @@ public sealed class ProviderStatusManagerTests
         SpotifyApiSettings? spotifySettings = null,
         AppleDownloadSettings? appleMusicSettings = null,
         DeezerSettings? deezerSettings = null,
-        QobuzSettings? qobuzSettings = null)
+        QobuzSettings? qobuzSettings = null,
+        IProviderRegistry? providerRegistry = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(values)
@@ -458,7 +483,11 @@ public sealed class ProviderStatusManagerTests
             Options.Create(spotifySettings ?? new SpotifyApiSettings()),
             Options.Create(appleMusicSettings ?? new AppleDownloadSettings()),
             Options.Create(deezerSettings ?? new DeezerSettings()),
-            Options.Create(qobuzSettings ?? new QobuzSettings()));
+            Options.Create(qobuzSettings ?? new QobuzSettings()),
+            services: providerRegistry == null
+                ? null
+                : Mock.Of<IServiceProvider>(provider =>
+                    provider.GetService(typeof(IProviderRegistry)) == providerRegistry));
     }
 
     private static HttpResponseMessage Json(HttpStatusCode status, string json) =>

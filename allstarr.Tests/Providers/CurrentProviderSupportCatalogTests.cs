@@ -66,7 +66,7 @@ public sealed class CurrentProviderSupportCatalogTests
         Assert.Equal("apple-download", download.RuntimeId);
         Assert.Equal("apple-musickit", musicKit.RuntimeId);
         Assert.Equal("Apple Music – GAMDL", download.Name);
-        Assert.Equal("Apple MusicKit – Personal Library", musicKit.Name);
+        Assert.Equal("Apple Music Developer API – Personal Library", musicKit.Name);
     }
 
     private static void AssertState(string providerId, string capabilityId, string expected)

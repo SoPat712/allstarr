@@ -59,6 +59,15 @@ public sealed record ProviderDownloadWorkspaceRequest(Guid TenantId, Guid? Owner
 
 public sealed record ProviderDownloadWorkspace(Guid RecordId, ProviderManagedWorkspaceReference Reference);
 
+public sealed record ProviderTransientDownloadWorkspace(
+    ProviderManagedWorkspaceReference Reference,
+    Guid DurableJobId);
+
+public sealed record ProviderTransientDownloadArtifact(
+    string SourcePath,
+    long Length,
+    ProviderMediaFormat Media);
+
 public sealed record ProviderDownloadArtifactWriteRequest(
     ProviderManagedWorkspaceReference Workspace,
     Guid DurableJobId,

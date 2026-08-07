@@ -65,6 +65,7 @@ public static class LegacyEnvParser
             ["CACHE_DURATION_HOURS"] = "Library:CacheDurationHours",
             ["ENABLE_EXTERNAL_PLAYLISTS"] = "Library:EnableExternalPlaylists",
             ["MATCHING_LOCAL_PREFERENCE_PERCENT"] = "Matching:LocalPreferencePercent",
+            ["MATCHING_EXTENSION_PENALTY_PERCENT"] = "Matching:ExtensionPenaltyPercent",
             ["PLAYLISTS_DIRECTORY"] = "Library:PlaylistsDirectory",
             ["SPOTIFY_IMPORT_ENABLED"] = "SpotifyImport:Enabled",
             ["SPOTIFY_IMPORT_MATCHING_INTERVAL_HOURS"] = "SpotifyImport:MatchingIntervalHours",

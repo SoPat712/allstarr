@@ -169,6 +169,7 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
             new("AppleDownload:Quality", "alac-24-96"),
             new("Qobuz:Quality", "FLAC_24_LOW"),
             new("Matching:LocalPreferencePercent", "11"),
+            new("Matching:ExtensionPenaltyPercent", "4"),
             new("SpotifyApi:LyricsApiUrl", "http://spotify-lyrics:8080"),
             new("SpotifyImport:Playlists", "[[\"Discover Weekly\",\"source-id\",\"target-id\",\"last\",\"0 8 * * *\"]]")
         ], "webui", _userId);
@@ -204,6 +205,7 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         Assert.Equal("alac-16-44", apple.Quality);
         Assert.Equal("FLAC_16", qobuz.Quality);
         Assert.Equal(0.11, matching.LocalPreferenceBoost);
+        Assert.Equal(0.04, matching.ExtensionPreferencePenalty);
         Assert.Equal("http://spotify-lyrics:8080", spotifyApi.LyricsApiUrl);
         var importedPlaylist = Assert.Single(spotifyImport.Playlists);
         Assert.Equal("Discover Weekly", importedPlaylist.Name);

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
@@ -196,6 +197,185 @@ public sealed class ExtensionDownloadCapabilityAdapter : ExtensionCapabilityAdap
         }, requireAccount: accountRequired, openInvocationScope: () => artifactScope = ExtensionArtifactInvocationScope.Open(
             artifacts, request.Workspace, request.DurableJobId, ProviderId, maximumArtifactBytes,
             context.CancellationToken));
+    }
+}
+
+public sealed class ExtensionDownloadStreamingCapabilityAdapter : IProviderStreamingCapability
+{
+    private readonly ExtensionDownloadCapabilityAdapter download;
+    private readonly ProviderDownloadArtifactResolver artifacts;
+
+    public ExtensionDownloadStreamingCapabilityAdapter(
+        ExtensionSandbox sandbox,
+        ExtensionSdkManifest manifest,
+        IProviderAccountSecretAccessor? secrets,
+        ProviderDownloadArtifactResolver artifacts,
+        ProviderDownloadWorkspaceOptions options)
+    {
+        download = new ExtensionDownloadCapabilityAdapter(sandbox, manifest, secrets, artifacts, options);
+        this.artifacts = artifacts;
+        ProviderId = manifest.Id;
+    }
+
+    public string ProviderId { get; }
+    public ProviderCapabilityKind Capability => ProviderCapabilityKind.Streaming;
+
+    public async Task<ProviderOutcome<ProviderStreamLease>> GetStreamLeaseAsync(
+        ProviderExecutionContext context,
+        ProviderStreamLeaseRequest request)
+    {
+        context.RequireResourceOwner(request.TrackId, ProviderResourceKind.Track);
+        if (!context.Policy.AllowManagedDownloads)
+            return Failure<ProviderStreamLease>(ProviderErrorKind.Forbidden);
+
+        var jobId = Guid.CreateVersion7();
+        var idempotencyKey = $"stream-{jobId:N}";
+        var workspace = artifacts.CreateTransientWorkspace(new(
+            context.Actor.TenantId,
+            context.Actor.EffectiveUserId,
+            jobId,
+            ProviderId,
+            context.Account?.AccountId,
+            idempotencyKey)
+        {
+            LibraryScopeId = context.Library?.ScopeId
+        });
+
+        try
+        {
+            var downloadContext = new ProviderExecutionContext(
+                context.Actor,
+                context.ProviderId,
+                context.Account,
+                context.Library,
+                context.Policy,
+                "extension-download-stream",
+                context.CorrelationId,
+                context.Deadline,
+                context.CancellationToken,
+                idempotencyKey);
+            var outcome = await download.DownloadAsync(
+                downloadContext,
+                new ProviderDownloadRequest(request.TrackId, jobId, workspace.Reference, request.RequestedQuality));
+            if (!outcome.IsSuccess)
+            {
+                artifacts.DeleteTransientWorkspace(workspace);
+                return ProviderOutcome<ProviderStreamLease>.Failure(outcome.Error!);
+            }
+
+            var output = outcome.RequireValue();
+            var artifact = await artifacts.ResolveTransientAsync(workspace, output, context.CancellationToken);
+            var media = output.Media.Bitrate.HasValue ? output.Media : new ProviderMediaFormat(
+                output.Media.MimeType,
+                output.Media.Container,
+                output.Media.Codec,
+                bitrate: 1337,
+                sampleRate: output.Media.SampleRate,
+                bitDepth: output.Media.BitDepth,
+                channels: output.Media.Channels);
+            var opened = 0;
+            Task<HttpResponseMessage> OpenAsync(HttpRequestMessage message, CancellationToken cancellationToken)
+            {
+                if (Interlocked.Exchange(ref opened, 1) != 0)
+                    throw new InvalidOperationException("A prepared extension stream lease can only be opened once.");
+                if (message.Method == HttpMethod.Head)
+                {
+                    artifacts.DeleteTransientWorkspace(workspace);
+                    return Task.FromResult(Response(
+                        HttpStatusCode.OK, new ByteArrayContent([]), artifact.Length, media.MimeType));
+                }
+
+                var stream = new FileStream(artifact.SourcePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+                    128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                return Task.FromResult(Response(HttpStatusCode.OK,
+                    new StreamContent(new CleanupStream(stream, () => artifacts.DeleteTransientWorkspace(workspace))),
+                    artifact.Length,
+                    media.MimeType));
+            }
+
+            return ProviderOutcome<ProviderStreamLease>.Success(new ProviderStreamLease(
+                $"download-{jobId:N}",
+                new Uri($"https://extension-download.invalid/{jobId:N}"),
+                DateTimeOffset.UtcNow.AddMinutes(5),
+                supportsByteRanges: false,
+                supportsSeeking: false,
+                media,
+                ProviderStreamRetryBehavior.DoNotRetry,
+                OpenAsync));
+        }
+        catch (OperationCanceledException)
+        {
+            artifacts.DeleteTransientWorkspace(workspace);
+            return Failure<ProviderStreamLease>(ProviderErrorKind.Canceled);
+        }
+        catch
+        {
+            artifacts.DeleteTransientWorkspace(workspace);
+            return Failure<ProviderStreamLease>(ProviderErrorKind.TransientFailure);
+        }
+    }
+
+    public async Task<ProviderOutcome<ProviderStreamProbeResult>> ProbeStreamAsync(
+        ProviderExecutionContext context,
+        ProviderStreamLeaseRequest request)
+    {
+        var result = await download.CheckAvailabilityAsync(
+            context,
+            new ProviderDownloadAvailabilityRequest(request.TrackId, request.RequestedQuality));
+        return result.IsSuccess
+            ? ProviderOutcome<ProviderStreamProbeResult>.Success(new(
+                result.RequireValue().State == ProviderDownloadAvailabilityState.Available,
+                DateTimeOffset.UtcNow))
+            : ProviderOutcome<ProviderStreamProbeResult>.Failure(result.Error!);
+    }
+
+    private static ProviderOutcome<T> Failure<T>(ProviderErrorKind kind) =>
+        ProviderOutcome<T>.Failure(new ProviderError(kind));
+
+    private static HttpResponseMessage Response(
+        HttpStatusCode status,
+        HttpContent content,
+        long length,
+        string mimeType)
+    {
+        content.Headers.ContentLength = length;
+        content.Headers.ContentType = MediaTypeHeaderValue.Parse(mimeType);
+        return new HttpResponseMessage(status) { Content = content };
+    }
+
+    private sealed class CleanupStream(Stream inner, Action cleanup) : Stream
+    {
+        private int disposed;
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => throw new NotSupportedException(); }
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            inner.ReadAsync(buffer, cancellationToken);
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && Interlocked.Exchange(ref disposed, 1) == 0)
+            {
+                inner.Dispose();
+                cleanup();
+            }
+            base.Dispose(disposing);
+        }
+        public override async ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) == 0)
+            {
+                await inner.DisposeAsync();
+                cleanup();
+            }
+            GC.SuppressFinalize(this);
+        }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }
 

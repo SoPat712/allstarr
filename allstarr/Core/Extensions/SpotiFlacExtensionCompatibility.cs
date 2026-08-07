@@ -49,7 +49,10 @@ public static class SpotiFlacExtensionCompatibility
             capabilities.Add(Capability("Lyrics", hasSettings, requiresSettings, "fetchLyrics"));
         if (types.Contains("download_provider") &&
             indexJs.Contains("download", StringComparison.Ordinal))
+        {
             capabilities.Add(Capability("Download", hasSettings, requiresSettings, "checkAvailability", "download"));
+            capabilities.Add(Capability("Streaming", hasSettings, requiresSettings, "getStreamLease", "probeStream"));
+        }
 
         if (capabilities.Count == 0)
             throw new ExtensionSdkValidationException("SpotiFLAC extension does not expose a capability Allstarr can run yet.");
@@ -305,6 +308,11 @@ public static class SpotiFlacExtensionCompatibility
             return result && result.available !== false
               ? { state: 'Available', availableQualities: ['Any'], estimatedBytes: null }
               : { state: 'Unavailable', availableQualities: [], estimatedBytes: null };
+          },
+          getStreamLease: function() { return null; },
+          probeStream: function(request) {
+            var result = this.checkAvailability(request);
+            return { available: result.state === 'Available', observedAt: new Date().toISOString() };
           },
           download: function(request) {
             if (typeof _spotiflacExtension.download !== 'function') throw new Error('SpotiFLAC extension has no download hook');

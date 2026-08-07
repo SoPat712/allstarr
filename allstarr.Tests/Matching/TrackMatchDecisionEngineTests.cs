@@ -3,6 +3,7 @@ using System.Diagnostics;
 using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
 using allstarr.Core.Storage;
+using allstarr.Core.Capabilities;
 using Xunit.Abstractions;
 
 namespace allstarr.Tests;
@@ -633,6 +634,30 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         Assert.True(score.Components!["preferenceScore"] >= decision.AcceptThreshold);
         Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
         Assert.Equal(score.Components["preferenceScore"], decision.Confidence);
+    }
+
+    [Fact]
+    public void ExtensionPreferencePenaltyFavorsAnOtherwiseEqualBuiltInCandidate()
+    {
+        var scope = Scope();
+        var builtIn = Candidate(scope) with
+        {
+            IsLocal = false,
+            ProviderOrigin = ProviderOrigin.BuiltIn
+        };
+        var extension = builtIn with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "extension-track",
+            ProviderOrigin = ProviderOrigin.Extension
+        };
+
+        var scores = new TrackMatchDecisionEngine().ScoreCandidates(Source(), [extension, builtIn]);
+        var extensionComponents = scores[1].Components!;
+
+        Assert.Equal(builtIn.LibraryTrackId, scores[0].LibraryTrackId);
+        Assert.Equal(-0.03, extensionComponents["extensionPenalty"]);
+        Assert.Equal(scores[1].Confidence - 0.03, extensionComponents["preferenceScore"], 6);
     }
 
     [Fact]

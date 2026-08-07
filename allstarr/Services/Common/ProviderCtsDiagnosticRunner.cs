@@ -8,6 +8,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Health;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
+using allstarr.Core.Extensions;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Services.Common;
@@ -164,13 +165,16 @@ public sealed class ProviderCtsDiagnosticRunner(
         trackId = string.IsNullOrWhiteSpace(trackId) ? automaticTrack!.TrackId : trackId.Trim();
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        var timeout = streaming is ExtensionDownloadStreamingCapabilityAdapter
+            ? TimeSpan.FromMinutes(5)
+            : TimeSpan.FromSeconds(30);
+        deadline.CancelAfter(timeout);
         var policy = new ProviderExecutionPolicy(
             new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
             ProviderExplicitContentPolicy.Allow,
             allowFallback: false,
             allowSharedAccount: true,
-            allowManagedDownloads: false,
+            allowManagedDownloads: true,
             [providerId]);
         var execution = new ProviderExecutionContext(
             actor,
@@ -180,7 +184,7 @@ public sealed class ProviderCtsDiagnosticRunner(
             policy,
             "provider-click-to-stream-diagnostic",
             ProviderContractValidation.RequiredText(correlationId, nameof(correlationId), 100),
-            DateTimeOffset.UtcNow.AddSeconds(30),
+            DateTimeOffset.UtcNow.Add(timeout),
             deadline.Token);
         var track = new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, trackId);
 

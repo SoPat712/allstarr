@@ -416,8 +416,8 @@
                   Base evidence uses available title, artist, album, duration, ISRC, artwork,
                   and verified provider identity. Missing evidence is omitted rather than
                   scored as zero. The acceptance threshold is {percent(match.threshold)};
-                  ambiguity and warnings keep a close result in review. Local candidates add
-                  the configured 7% preference only after compatible evidence is scored.
+                  ambiguity and warnings keep a close result in review. Configured local and
+                  extension preferences apply only after compatible evidence is scored.
                 </p>
                 <dl>
                   {#if candidate}

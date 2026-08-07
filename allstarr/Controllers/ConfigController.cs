@@ -150,7 +150,8 @@ public class ConfigController : ControllerBase
             enableExternalPlaylists = RuntimeBool("Library:EnableExternalPlaylists", fallbackEnableExternalPlaylists),
             matching = new
             {
-                localPreferencePercent = RuntimeInt("Matching:LocalPreferencePercent", 7)
+                localPreferencePercent = RuntimeInt("Matching:LocalPreferencePercent", 7),
+                extensionPenaltyPercent = RuntimeInt("Matching:ExtensionPenaltyPercent", 3)
             },
             audio = new { quality = audioQuality },
             playlistsDirectory = RuntimeString("Library:PlaylistsDirectory", fallbackPlaylistsDirectory),

@@ -237,6 +237,9 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         var implementations = manifest.Capabilities.Select(capability => (IProviderCapability)(capability.Kind switch
         {
             ProviderCapabilityKind.Metadata => new ExtensionMetadataCapabilityAdapter(sandbox, runtimeManifest, _secrets),
+            ProviderCapabilityKind.Streaming when manifest.Compatibility == SpotiFlacExtensionCompatibility.Marker =>
+                new ExtensionDownloadStreamingCapabilityAdapter(
+                    sandbox, runtimeManifest, _secrets, _downloadArtifacts, _downloadOptions),
             ProviderCapabilityKind.Streaming => new ExtensionStreamingCapabilityAdapter(sandbox, runtimeManifest, _secrets),
             ProviderCapabilityKind.Download => new ExtensionDownloadCapabilityAdapter(
                 sandbox, runtimeManifest, _secrets, _downloadArtifacts, _downloadOptions),

@@ -48,8 +48,10 @@ describe("source presentation", () => {
       .toBe("Managed p95 17 ms");
     expect(sourceTimingLabel({ ...provider, runtimeCapabilities: [{ id: "metadata", ready: false, canAttempt: true, canTest: true }] }))
       .toBe("Awaiting first sample");
+    expect(sourceTimingLabel({ ...provider, runtimeCapabilities: [{ id: "metadata", ready: true, canAttempt: true, canTest: true, testedAt: "2026-08-07T00:00:00Z" }] }))
+      .toBe("Readiness checked");
     expect(sourceTimingLabel({ ...provider, categories: ["streaming"] })).toBe("Manual only");
-    expect(sourceTimingLabel({ ...provider, categories: ["download"] })).toBe("Download only");
+    expect(sourceTimingLabel({ ...provider, categories: ["download"] })).toBe("No streaming capability");
     expect(sourceTimingLabel(provider)).toBe("Not applicable");
   });
 

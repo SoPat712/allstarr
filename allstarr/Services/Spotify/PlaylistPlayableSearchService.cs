@@ -23,7 +23,8 @@ public sealed class PlaylistPlayableSearchService(
     BackendIdentityResolver identities,
     IdentityOptions identityOptions,
     IOptions<JellyfinSettings> jellyfinSettings,
-    ILogger<PlaylistPlayableSearchService> logger)
+    ILogger<PlaylistPlayableSearchService> logger,
+    IProviderRegistry? providers = null)
 {
     private readonly SemaphoreSlim _principalLock = new(1, 1);
     private AllstarrPrincipal? _principal;
@@ -160,7 +161,7 @@ public sealed class PlaylistPlayableSearchService(
                CanUseProvider(song.ExternalProvider);
     }
 
-    private static LocalTrackMatchCandidate ToCandidate(Song song, TrackMatchScope scope) => new(
+    private LocalTrackMatchCandidate ToCandidate(Song song, TrackMatchScope scope) => new(
         CandidateId(song.ExternalProvider!, song.ExternalId!),
         scope.TenantId,
         scope.UserId,
@@ -185,7 +186,10 @@ public sealed class PlaylistPlayableSearchService(
         {
             [song.ExternalProvider!] = song.ExternalId!
         },
-        IsLocal: false);
+        IsLocal: false,
+        ProviderOrigin: providers?.TryGet(song.ExternalProvider!, out var descriptor) == true
+            ? descriptor!.Origin
+            : null);
 
     private static Guid CandidateId(string provider, string externalId) =>
         new(SHA256.HashData(Encoding.UTF8.GetBytes(

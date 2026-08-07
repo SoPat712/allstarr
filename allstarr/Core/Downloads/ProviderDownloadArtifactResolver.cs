@@ -1,10 +1,35 @@
 using System.Security.Cryptography;
+using System.Collections.Concurrent;
 using allstarr.Core.Capabilities;
 
 namespace allstarr.Core.Downloads;
 
 public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactStore store, ProviderDownloadWorkspaceOptions options)
 {
+    private readonly ConcurrentDictionary<string, ProviderDownloadWorkspaceRequest> transientWorkspaces = new(StringComparer.Ordinal);
+
+    public ProviderTransientDownloadWorkspace CreateTransientWorkspace(ProviderDownloadWorkspaceRequest request)
+    {
+        if (request.TenantId == Guid.Empty || request.DurableJobId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(request.ProviderId) || string.IsNullOrWhiteSpace(request.IdempotencyKey))
+            throw new ArgumentException("Download workspace lineage is incomplete.", nameof(request));
+
+        var workspaceId = $"transient-{Guid.NewGuid():N}";
+        if (!transientWorkspaces.TryAdd(workspaceId, request))
+            throw new InvalidOperationException("Could not reserve a transient provider workspace.");
+        var directory = Contained(WorkspaceRoot(), workspaceId);
+        try
+        {
+            Directory.CreateDirectory(directory);
+            RejectSymlink(directory);
+            return new(new ProviderManagedWorkspaceReference(workspaceId), request.DurableJobId);
+        }
+        catch
+        {
+            transientWorkspaces.TryRemove(workspaceId, out _);
+            throw;
+        }
+    }
     public async Task<ProviderDownloadWorkspace> CreateWorkspaceAsync(ProviderDownloadWorkspaceRequest request, CancellationToken cancellationToken = default)
     {
         if (request.TenantId == Guid.Empty || request.DurableJobId == Guid.Empty || string.IsNullOrWhiteSpace(request.ProviderId) || string.IsNullOrWhiteSpace(request.IdempotencyKey))
@@ -63,15 +88,21 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
         if (request.ExpectedBytes > request.MaximumBytes)
             throw new InvalidDataException("The provider download exceeds the managed artifact size limit.");
 
-        var persistedWorkspace = await store.GetWorkspaceAsync(request.Workspace.WorkspaceId, cancellationToken)
-            ?? throw new InvalidOperationException("The provider download workspace is not registered.");
         var providerId = request.ProviderId.Trim().ToLowerInvariant();
-        if (persistedWorkspace.DurableJobId != request.DurableJobId ||
-            !persistedWorkspace.ProviderId.Equals(providerId, StringComparison.Ordinal))
+        var persistedWorkspace = await store.GetWorkspaceAsync(request.Workspace.WorkspaceId, cancellationToken);
+        var transientWorkspace = persistedWorkspace == null &&
+                                 transientWorkspaces.TryGetValue(request.Workspace.WorkspaceId, out var transient)
+            ? transient
+            : null;
+        if (persistedWorkspace == null && transientWorkspace == null)
+            throw new InvalidOperationException("The provider download workspace is not registered.");
+        if ((persistedWorkspace?.DurableJobId ?? transientWorkspace!.DurableJobId) != request.DurableJobId ||
+            !(persistedWorkspace?.ProviderId ?? transientWorkspace!.ProviderId)
+                .Equals(providerId, StringComparison.OrdinalIgnoreCase))
             throw new UnauthorizedAccessException("The provider download does not belong to this workspace.");
 
         var relative = NormalizeArtifactReference(request.ArtifactId);
-        var workspaceRoot = Contained(WorkspaceRoot(), persistedWorkspace.WorkspaceId);
+        var workspaceRoot = Contained(WorkspaceRoot(), request.Workspace.WorkspaceId);
         RejectSymlink(workspaceRoot);
         var destination = Contained(workspaceRoot, relative);
         var parent = Path.GetDirectoryName(destination)!;
@@ -156,6 +187,44 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
             Revision = 1
         }, cancellationToken);
         return Result(stored, path);
+    }
+
+    public async Task<ProviderTransientDownloadArtifact> ResolveTransientAsync(
+        ProviderTransientDownloadWorkspace workspace,
+        ProviderDownloadedArtifact output,
+        CancellationToken cancellationToken = default)
+    {
+        if (!transientWorkspaces.ContainsKey(workspace.Reference.WorkspaceId))
+            throw new InvalidOperationException("The transient provider workspace is not registered.");
+        var workspaceRoot = Contained(WorkspaceRoot(), workspace.Reference.WorkspaceId);
+        RejectSymlink(workspaceRoot);
+        var path = Contained(workspaceRoot, NormalizeArtifactReference(output.ArtifactId));
+        RejectPathSymlinks(workspaceRoot, path);
+        if (!File.Exists(path)) throw new InvalidOperationException("The provider download artifact is missing.");
+        var info = new FileInfo(path);
+        if (info.Length != output.SizeBytes)
+            throw new InvalidOperationException("The provider download artifact length does not match its contract.");
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        var hash = await SHA256.HashDataAsync(stream, cancellationToken);
+        byte[] expected;
+        try { expected = Convert.FromHexString(output.Sha256); }
+        catch (FormatException exception)
+        { throw new InvalidOperationException("The provider download artifact checksum is invalid.", exception); }
+        if (expected.Length != SHA256.HashSizeInBytes || !CryptographicOperations.FixedTimeEquals(hash, expected))
+            throw new InvalidOperationException("The provider download artifact checksum does not match its contract.");
+        return new(path, info.Length, output.Media);
+    }
+
+    public void DeleteTransientWorkspace(ProviderTransientDownloadWorkspace workspace)
+    {
+        if (!transientWorkspaces.TryRemove(workspace.Reference.WorkspaceId, out _)) return;
+        var directory = Contained(WorkspaceRoot(), workspace.Reference.WorkspaceId);
+        if (!Directory.Exists(directory)) return;
+        RejectSymlink(directory);
+        foreach (var path in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.AllDirectories))
+            RejectSymlink(path);
+        Directory.Delete(directory, recursive: true);
     }
 
     public async Task<VerifiedProviderDownloadArtifact?> FindByJobAsync(Guid tenantId, Guid jobId, string providerId, CancellationToken cancellationToken = default)
