@@ -92,7 +92,7 @@ public partial class JellyfinController
                         {
                             "deezer" => $"https://www.deezer.com/track/{externalId}",
                             "qobuz" => $"https://www.qobuz.com/us-en/album/-/-/{externalId}",
-                            "applemusic" or "apple-download" =>
+                            "applemusic" or "apple-download" or "spotiflac-apple-music" =>
                                 $"https://music.apple.com/us/song/{externalId}",
                             _ => null
                         };

@@ -639,7 +639,7 @@ public class ExtensionSandbox
         _engine = new Engine(options =>
         {
             options.LimitRecursion(150);
-            options.LimitMemory(32L * 1024 * 1024);
+            options.LimitMemory(64L * 1024 * 1024);
             options.MaxStatements(1_000_000);
             options.TimeoutInterval(TimeSpan.FromSeconds(12));
         });

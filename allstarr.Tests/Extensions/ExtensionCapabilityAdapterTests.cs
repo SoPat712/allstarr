@@ -228,6 +228,36 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Fact]
+    public void SpotiFlacRuntimeAdapter_CanInspectLargeTextResponses()
+    {
+        const string prefix = "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiIsImtpZCI6IldlYlBsYXlLaWQifQ.";
+        const string sourceManifest = """
+            {"name":"large-response","displayName":"Large response","version":"1.0.0","description":"Fixture",
+             "type":["metadata_provider"],"permissions":{"network":["music.apple.com"]}}
+            """;
+        const string script = """
+            registerExtension({customSearch:function(){
+              var response=http.get('https://music.apple.com/assets/index.js',{});
+              var index=response.body.indexOf('eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiIsImtpZCI6IldlYlBsYXlLaWQifQ.');
+              return [{id:'track-1',name:String(index),artists:'Artist',item_type:'track'}];
+            }});
+            """;
+        const int markerOffset = 3_900_000;
+        const int responseBytes = 4 * 1024 * 1024 - 1;
+        var body = new string('x', markerOffset) + prefix + new string('y', responseBytes - markerOffset - prefix.Length);
+        var manifest = SpotiFlacExtensionCompatibility.NormalizeManifest(sourceManifest, script);
+        var permissions = new ExtensionRuntimePermissionSet(
+            new HashSet<string>(["https://music.apple.com/"], StringComparer.Ordinal),
+            new HashSet<string>(), new HashSet<string>());
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(), manifest, script,
+            new HttpClientFactory(new BytesHandler(Encoding.UTF8.GetBytes(body))), NullLogger.Instance, permissions);
+
+        var json = sandbox.InvokeJson("searchTracks", "{\"query\":\"Song\",\"page\":{\"limit\":1}}");
+
+        Assert.Contains($"\"title\":\"{markerOffset}\"", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SpotiFlacRuntimeAdapter_UsesKnownTrackMetadataForTimedLyrics()
     {
         const string sourceManifest = """
