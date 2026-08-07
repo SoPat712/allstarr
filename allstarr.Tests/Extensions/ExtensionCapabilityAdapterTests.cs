@@ -266,7 +266,7 @@ public sealed class ExtensionCapabilityAdapterTests
             """;
         const string script = """
             registerExtension({customSearch:function(){
-              http.get('https://api.example.test/items',{Authorization:'Bearer expected',Origin:'https://example.test'});
+              http.get('https://api.example.test/items',{Authorization:'Bearer expected',Origin:'https://example.test','Media-User-Token':'expected-user-token'});
               return [];
             }});
             """;
@@ -282,6 +282,7 @@ public sealed class ExtensionCapabilityAdapterTests
 
         Assert.Equal("Bearer expected", handler.Authorization);
         Assert.Equal("https://example.test", handler.Origin);
+        Assert.Equal("expected-user-token", handler.MediaUserToken);
     }
 
     [Fact]
@@ -958,12 +959,15 @@ public sealed class ExtensionCapabilityAdapterTests
     {
         public string? Authorization { get; private set; }
         public string? Origin { get; private set; }
+        public string? MediaUserToken { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Authorization = request.Headers.TryGetValues("Authorization", out var authorization)
                 ? authorization.Single() : null;
             Origin = request.Headers.TryGetValues("Origin", out var origin) ? origin.Single() : null;
+            MediaUserToken = request.Headers.TryGetValues("Media-User-Token", out var mediaUserToken)
+                ? mediaUserToken.Single() : null;
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("{}"),
