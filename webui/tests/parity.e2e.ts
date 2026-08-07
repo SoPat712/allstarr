@@ -24,7 +24,7 @@ const schema = {
     },
     { id: "listenbrainz", name: "ListenBrainz", categories: ["scrobbling"] },
     {
-      id: "apple-download", name: "Apple Music - Gamdl", categories: ["metadata", "streaming", "download"],
+      id: "apple-download", name: "Apple Music – GAMDL", categories: ["metadata", "streaming", "download"],
       connectionKind: "operator_managed",
       configSchema: [
         { key: "APPLE_DOWNLOAD_URL", label: "External provider URL", type: "url", valuePath: "appleDownload.baseUrl" },
@@ -1884,7 +1884,7 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await expect(dialog).toBeVisible();
   await expect(dialog.getByLabel("Search local library and playable providers")).toHaveValue("Test song");
   await expect(dialog.getByText("ISRC US-AAA-26-00001")).toHaveCount(2);
-  await expect(dialog.locator(".candidate-provider").filter({ hasText: "Apple Music - Gamdl" })).toBeVisible();
+  await expect(dialog.locator(".candidate-provider").filter({ hasText: "Apple Music – GAMDL" })).toBeVisible();
   await expect(dialog.getByText("MusicBrainz album")).toHaveCount(0);
   await expect(dialog.locator(".candidate-card .mapping-art > span").first()).toBeVisible();
   await expect(
@@ -2105,19 +2105,19 @@ test("Sources keep primary actions visible and report scoped degradation", async
   await expect(disabledStatus).toHaveText("Disabled");
   await expect(disabledStatus).toHaveCSS("border-top-width", "1px");
   await expect(disabledStatus).toHaveCSS("border-top-style", "solid");
-  await page.getByRole("button", { name: /Apple Music - Gamdl/ }).click();
+  await page.getByRole("button", { name: /Apple Music – GAMDL/ }).click();
   await page.getByRole("tab", { name: "Configuration" }).click();
   await page.getByRole("button", { name: "Measure CTS" }).click();
-  await expect(page.getByText("Apple Music - Gamdl click-to-stream measured.")).toBeVisible();
+  await expect(page.getByText("Apple Music – GAMDL click-to-stream measured.")).toBeVisible();
   expect(appleCtsRequest).toEqual({ providerId: "apple-download", quality: 0 });
-  await page.getByRole("button", { name: "Manage Apple Music - Gamdl" }).click();
-  const appleManager = page.getByRole("dialog", { name: "Apple Music - Gamdl" });
+  await page.getByRole("button", { name: "Manage Apple Music – GAMDL" }).click();
+  const appleManager = page.getByRole("dialog", { name: "Apple Music – GAMDL" });
   await appleManager.getByLabel("Apple ID").fill("tester@example.test");
   await appleManager.getByLabel("Password").fill("password");
   await appleManager.getByRole("button", { name: "Start login" }).click();
   await appleManager.getByLabel("2FA code").fill("123456");
   await appleManager.getByRole("button", { name: "Submit 2FA" }).click();
-  await expect(appleManager.getByText("Apple Music - Gamdl is ready")).toBeVisible();
+  await expect(appleManager.getByText("Apple Music – GAMDL is ready")).toBeVisible();
   await expect(appleManager.locator(".source-metrics .status-pill")).toHaveCount(3);
   await expect(appleManager.getByRole("link", { name: "Provider settings" }))
     .toHaveAttribute("href", "#/sources?source=apple-download&section=configuration");

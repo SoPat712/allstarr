@@ -8,7 +8,6 @@ using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Spotify;
-using allstarr.Services.SquidWTF;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -37,8 +36,6 @@ public sealed class DiagnosticsControllerTests : IDisposable
     {
         const string privateJellyfinUrl = "http://private-jellyfin.internal:8096";
         var controller = CreateController(
-            [],
-            new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)),
             new JellyfinSettings { Url = privateJellyfinUrl });
 
         var result = Assert.IsType<OkObjectResult>(await controller.GetStatus());
@@ -52,7 +49,7 @@ public sealed class DiagnosticsControllerTests : IDisposable
     [Fact]
     public async Task ScrobblingSessions_RequiresDurableCheckpointStore()
     {
-        var controller = CreateController([], new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)));
+        var controller = CreateController();
 
         var result = Assert.IsType<BadRequestObjectResult>(
             await controller.GetScrobblingSessions(CancellationToken.None));
@@ -118,7 +115,7 @@ public sealed class DiagnosticsControllerTests : IDisposable
         var services = new ServiceCollection()
             .AddSingleton(proxy)
             .BuildServiceProvider();
-        var controller = CreateController([], handler, settings, services);
+        var controller = CreateController(settings, services);
         controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
         {
             SessionId = "session-1",
@@ -146,106 +143,6 @@ public sealed class DiagnosticsControllerTests : IDisposable
         Assert.DoesNotContain("server-api-key", json, StringComparison.Ordinal);
         Assert.DoesNotContain("player-token", json, StringComparison.Ordinal);
         Assert.Equal(4, handler.RequestCount);
-    }
-
-    [Fact]
-    public void SquidWtfBaseUrl_ReturnsOnlyTheSameOriginProxyRoute()
-    {
-        const string upstream = "https://api.example.test/private-base";
-        var controller = CreateController(
-            [upstream],
-            new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)));
-
-        var result = Assert.IsType<OkObjectResult>(controller.GetSquidWtfBaseUrl());
-        var json = JsonSerializer.Serialize(result.Value);
-
-        Assert.Contains("/api/admin/squidwtf-browser-proxy", json, StringComparison.Ordinal);
-        Assert.DoesNotContain(upstream, json, StringComparison.Ordinal);
-        Assert.DoesNotContain("api.example.test", json, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task SquidWtfSearch_UsesKnownEndpointAndEncodesTheSearchValue()
-    {
-        Uri? requestedUri = null;
-        var handler = new StubHandler(request =>
-        {
-            requestedUri = request.RequestUri;
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(
-                    "{\"items\":[{\"id\":\"fixture\"}]}",
-                    Encoding.UTF8,
-                    "application/json")
-            };
-        });
-        var controller = CreateController(
-            ["https://api.example.test/base"],
-            handler);
-
-        var result = Assert.IsType<JsonResult>(
-            await controller.SearchSquidWtf(" artist & title "));
-
-        Assert.NotNull(requestedUri);
-        Assert.Equal("api.example.test", requestedUri.Host);
-        Assert.Equal("/base/search/", requestedUri.AbsolutePath);
-        Assert.Equal("?s=artist%20%26%20title", requestedUri.Query);
-        Assert.Contains("fixture", JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
-        Assert.Equal(1, handler.RequestCount);
-    }
-
-    [Fact]
-    public async Task SquidWtfSearch_RejectsPrivateCatalogTargetBeforeSendingRequest()
-    {
-        var handler = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK));
-        var controller = CreateController(["http://127.0.0.1:8080"], handler);
-
-        var result = Assert.IsType<ObjectResult>(
-            await controller.SearchSquidWtf("fixture"));
-
-        Assert.Equal(StatusCodes.Status502BadGateway, result.StatusCode);
-        Assert.Equal(0, handler.RequestCount);
-        Assert.DoesNotContain("127.0.0.1", JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task SquidWtfSearch_RejectsDeclaredOversizeResponse()
-    {
-        var handler = new StubHandler(_ =>
-        {
-            var response = new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new ByteArrayContent([1])
-            };
-            response.Content.Headers.ContentLength = (2 * 1024 * 1024) + 1;
-            return response;
-        });
-        var controller = CreateController(["https://api.example.test"], handler);
-
-        var result = Assert.IsType<ObjectResult>(
-            await controller.SearchSquidWtf("fixture"));
-
-        Assert.Equal(StatusCodes.Status502BadGateway, result.StatusCode);
-        Assert.Contains("size limit", JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task SquidWtfSearch_DoesNotFollowRedirectToPrivateTarget()
-    {
-        var handler = new StubHandler(_ =>
-        {
-            var response = new HttpResponseMessage(HttpStatusCode.Redirect);
-            response.Headers.Location = new Uri("http://127.0.0.1/private-json");
-            return response;
-        });
-        var controller = CreateController(["https://api.example.test"], handler);
-
-        var result = Assert.IsType<ObjectResult>(
-            await controller.SearchSquidWtf("fixture"));
-
-        Assert.Equal(StatusCodes.Status502BadGateway, result.StatusCode);
-        Assert.Equal(1, handler.RequestCount);
-        Assert.DoesNotContain("127.0.0.1", JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -303,16 +200,11 @@ public sealed class DiagnosticsControllerTests : IDisposable
     }
 
     private DiagnosticsController CreateController(
-        List<string> squidWtfApiUrls,
-        HttpMessageHandler handler,
         JellyfinSettings? jellyfinSettings = null,
         IServiceProvider? requestServices = null)
     {
-        var adminHelper = new AdminHelperService(
-            Options.Create(jellyfinSettings ?? new JellyfinSettings()));
         var spotifySettings = new SpotifyApiSettings();
         var cookieService = new SpotifySessionCookieService(Options.Create(spotifySettings));
-        var applicationCache = new DisabledApplicationCache();
         var storageOptions = new DurableStorageOptions
         {
             Provider = "Postgres",
@@ -320,8 +212,6 @@ public sealed class DiagnosticsControllerTests : IDisposable
         };
         var storageState = new DurableStorageState(storageOptions);
         storageState.Set(DurableStorageReadiness.Ready, "fixture");
-        var safeProxyClient = new SafeJsonProxyClient(
-            new StubTransportFactory(handler));
         var controller = new DiagnosticsController(
             NullLogger<DiagnosticsController>.Instance,
             new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -333,11 +223,8 @@ public sealed class DiagnosticsControllerTests : IDisposable
             Options.Create(jellyfinSettings ?? new JellyfinSettings()),
             Options.Create(new DeezerSettings()),
             Options.Create(new QobuzSettings()),
-            Options.Create(new SquidWTFSettings()),
             cookieService,
-            new SquidWtfEndpointCatalog(squidWtfApiUrls, []),
-            storageState,
-            safeProxyClient)
+            storageState)
         {
             ControllerContext = new ControllerContext
             {
@@ -370,12 +257,6 @@ public sealed class DiagnosticsControllerTests : IDisposable
             RequestCount++;
             return Task.FromResult(responseFactory(request));
         }
-    }
-
-    private sealed class StubTransportFactory(HttpMessageHandler handler)
-        : ISafeProxyTransportFactory
-    {
-        public HttpMessageHandler CreateHandler() => handler;
     }
 
     private sealed class QueueDnsResolver(params IReadOnlyList<IPAddress>[] results)

@@ -4,7 +4,6 @@ using System.Text;
 using System.Text.Json;
 using allstarr.Models.Settings;
 using allstarr.Core.Capabilities;
-using allstarr.Services.SquidWTF;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -40,7 +39,6 @@ public class ProviderStatusManager
         ("qobuz", ProviderCapabilities.Streaming, ProviderAccountRequirement.Required),
         ("qobuz", ProviderCapabilities.Download, ProviderAccountRequirement.Required),
         ("qobuz", ProviderCapabilities.Playlist, ProviderAccountRequirement.Required),
-        ("squidwtf", ProviderCapabilities.Metadata, ProviderAccountRequirement.None),
         ("lrclib", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("lastfm", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
         ("listenbrainz", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required)
@@ -53,7 +51,6 @@ public class ProviderStatusManager
     private readonly AppleDownloadSettings _appleMusicSettings;
     private readonly DeezerSettings _deezerSettings;
     private readonly QobuzSettings _qobuzSettings;
-    private readonly SquidWtfEndpointCatalog _squidWtfCatalog;
     private readonly ExtensionManager? _extensionManager;
     private readonly DurableProviderHealthStore? _durableHealth;
     private readonly IAppleDownloadEndpointDiscovery? _appleDownloadDiscovery;
@@ -69,8 +66,6 @@ public class ProviderStatusManager
         IOptions<AppleDownloadSettings> appleMusicSettings,
         IOptions<DeezerSettings> deezerSettings,
         IOptions<QobuzSettings> qobuzSettings,
-        IOptions<SquidWTFSettings> squidWtfSettings,
-        SquidWtfEndpointCatalog squidWtfCatalog,
         ExtensionManager? extensionManager = null,
         DurableProviderHealthStore? durableHealth = null,
         IAppleDownloadEndpointDiscovery? appleDownloadDiscovery = null)
@@ -82,7 +77,6 @@ public class ProviderStatusManager
         _appleMusicSettings = appleMusicSettings.Value;
         _deezerSettings = deezerSettings.Value;
         _qobuzSettings = qobuzSettings.Value;
-        _squidWtfCatalog = squidWtfCatalog;
         _extensionManager = extensionManager;
         _durableHealth = durableHealth;
         _appleDownloadDiscovery = appleDownloadDiscovery;
@@ -605,11 +599,6 @@ public class ProviderStatusManager
                     ? (ProviderConfigurationState.Configured, null)
                     : (ProviderConfigurationState.NeedsConfiguration, "missing_qobuz_account"),
 
-            ("squidwtf", ProviderCapabilities.Metadata) =>
-                _squidWtfCatalog.ApiUrls.Count > 0
-                    ? (ProviderConfigurationState.NotRequired, null)
-                    : (ProviderConfigurationState.NeedsConfiguration, "no_metadata_endpoint"),
-
             ("spotify", ProviderCapabilities.Playlist) =>
                 _spotifySettings.Enabled && IsConfiguredValue(_spotifySettings.SessionCookie)
                     ? (ProviderConfigurationState.Configured, null)
@@ -695,7 +684,6 @@ public class ProviderStatusManager
                 _appleDownloadSnapshot?.Capability(capability).State != AppleDownloadCapabilityState.Unsupported,
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Playlist) => true,
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Playlist) => true,
-            ("squidwtf", ProviderCapabilities.Metadata) => true,
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
             ("lrclib", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
@@ -711,7 +699,6 @@ public class ProviderStatusManager
             ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) => true,
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
-            ("squidwtf", ProviderCapabilities.Metadata) => true,
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
             ("lrclib", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
@@ -742,7 +729,6 @@ public class ProviderStatusManager
                 SecretValue(accountSecrets, "userauthtoken", "token") ?? _qobuzSettings.UserAuthToken,
                 SecretValue(accountSecrets, "userid") ?? _qobuzSettings.UserId,
                 cancellationToken)),
-            ("squidwtf", ProviderCapabilities.Metadata) => await AsOutcome(TestSquidWtfAsync(cancellationToken)),
             ("lrclib", ProviderCapabilities.Lyrics) => await AsOutcome(TestLrclibAsync(cancellationToken)),
             ("lastfm", ProviderCapabilities.Scrobbling) => await AsOutcome(TestLastFmAsync(accountSecrets, cancellationToken)),
             ("listenbrainz", ProviderCapabilities.Scrobbling) => await AsOutcome(TestListenBrainzAsync(accountSecrets, cancellationToken)),
@@ -976,33 +962,6 @@ public class ProviderStatusManager
         return null;
     }
 
-    private async Task<bool> TestSquidWtfAsync(CancellationToken cancellationToken)
-    {
-        using var client = _httpClientFactory.CreateClient();
-        foreach (var url in _squidWtfCatalog.ApiUrls)
-        {
-            try
-            {
-                using var request = new HttpRequestMessage(HttpMethod.Get, url);
-                using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
-                if (response.IsSuccessStatusCode)
-                {
-                    return true;
-                }
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch
-            {
-                // Try the next discovered metadata endpoint.
-            }
-        }
-
-        return false;
-    }
-
     private static async Task<HttpResponseMessage> SendWithProbeTimeoutAsync(
         HttpClient client,
         HttpRequestMessage request,
@@ -1017,19 +976,13 @@ public class ProviderStatusManager
         GetProviderOrder("MULTI_PROVIDER_METADATA_ORDER", "apple-download,deezer,qobuz");
 
     private List<string> GetDownloadOrder() =>
-        GetProviderOrder("MULTI_PROVIDER_DOWNLOAD_ORDER", "apple-download,deezer,qobuz")
-            .Where(provider => provider != "squidwtf")
-            .ToList();
+        GetProviderOrder("MULTI_PROVIDER_DOWNLOAD_ORDER", "apple-download,deezer,qobuz");
 
     private List<string> GetStreamingOrder() =>
-        GetProviderOrder("MULTI_PROVIDER_STREAMING_ORDER", "apple-download,deezer,qobuz")
-            .Where(provider => provider != "squidwtf")
-            .ToList();
+        GetProviderOrder("MULTI_PROVIDER_STREAMING_ORDER", "apple-download,deezer,qobuz");
 
     private List<string> GetPlaylistOrder() =>
-        GetProviderOrder("MULTI_PROVIDER_PLAYLIST_ORDER", "spotify,deezer,qobuz")
-            .Where(provider => provider != "squidwtf")
-            .ToList();
+        GetProviderOrder("MULTI_PROVIDER_PLAYLIST_ORDER", "spotify,deezer,qobuz");
 
     private List<string> GetLyricsOrder() =>
         GetProviderOrder("MULTI_PROVIDER_LYRICS_ORDER", "spotify,apple-download,lrclib")
@@ -1041,6 +994,7 @@ public class ProviderStatusManager
         var value = _configuration[key] ?? fallback;
         return value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(Normalize)
+            .Where(provider => provider != "squidwtf")
             .ToList();
     }
 

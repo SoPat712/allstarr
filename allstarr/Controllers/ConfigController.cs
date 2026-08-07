@@ -30,7 +30,6 @@ public class ConfigController : ControllerBase
     private readonly SubsonicSettings _subsonicSettings;
     private readonly DeezerSettings _deezerSettings;
     private readonly QobuzSettings _qobuzSettings;
-    private readonly SquidWTFSettings _squidWtfSettings;
     private readonly AppleDownloadSettings _appleMusicSettings;
     private readonly MusicBrainzSettings _musicBrainzSettings;
     private readonly SpotifyImportSettings _spotifyImportSettings;
@@ -47,7 +46,6 @@ public class ConfigController : ControllerBase
         IOptions<SubsonicSettings> subsonicSettings,
         IOptions<DeezerSettings> deezerSettings,
         IOptions<QobuzSettings> qobuzSettings,
-        IOptions<SquidWTFSettings> squidWtfSettings,
         IOptions<AppleDownloadSettings> appleMusicSettings,
         IOptions<MusicBrainzSettings> musicBrainzSettings,
         IOptions<SpotifyImportSettings> spotifyImportSettings,
@@ -63,7 +61,6 @@ public class ConfigController : ControllerBase
         _subsonicSettings = subsonicSettings.Value;
         _deezerSettings = deezerSettings.Value;
         _qobuzSettings = qobuzSettings.Value;
-        _squidWtfSettings = squidWtfSettings.Value;
         _appleMusicSettings = appleMusicSettings.Value;
         _musicBrainzSettings = musicBrainzSettings.Value;
         _spotifyImportSettings = spotifyImportSettings.Value;
@@ -235,11 +232,6 @@ public class ConfigController : ControllerBase
                 userId = _qobuzSettings.UserId ?? string.Empty,
                 quality = RuntimeString("Qobuz:Quality", _qobuzSettings.Quality ?? "FLAC"),
                 minRequestIntervalMs = RuntimeInt("Qobuz:MinRequestIntervalMs", _qobuzSettings.MinRequestIntervalMs)
-            },
-            squidWtf = new
-            {
-                quality = RuntimeString("SquidWTF:Quality", _squidWtfSettings.Quality ?? "LOSSLESS"),
-                minRequestIntervalMs = RuntimeInt("SquidWTF:MinRequestIntervalMs", _squidWtfSettings.MinRequestIntervalMs)
             },
             appleDownload = new
             {

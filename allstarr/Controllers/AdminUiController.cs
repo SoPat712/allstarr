@@ -23,7 +23,6 @@ public class AdminUiController : ControllerBase
     private readonly SpotifyApiSettings _spotifyApiSettings;
     private readonly DeezerSettings _deezerSettings;
     private readonly QobuzSettings _qobuzSettings;
-    private readonly SquidWTFSettings _squidWtfSettings;
     private readonly AppleDownloadSettings _appleMusicSettings;
     private readonly MusicBrainzSettings _musicBrainzSettings;
     private readonly ExtensionManager _extensionManager;
@@ -37,7 +36,6 @@ public class AdminUiController : ControllerBase
         IOptions<SpotifyApiSettings> spotifyApiSettings,
         IOptions<DeezerSettings> deezerSettings,
         IOptions<QobuzSettings> qobuzSettings,
-        IOptions<SquidWTFSettings> squidWtfSettings,
         IOptions<AppleDownloadSettings> appleMusicSettings,
         IOptions<MusicBrainzSettings> musicBrainzSettings,
         ExtensionManager extensionManager,
@@ -50,7 +48,6 @@ public class AdminUiController : ControllerBase
         _spotifyApiSettings = spotifyApiSettings.Value;
         _deezerSettings = deezerSettings.Value;
         _qobuzSettings = qobuzSettings.Value;
-        _squidWtfSettings = squidWtfSettings.Value;
         _appleMusicSettings = appleMusicSettings.Value;
         _musicBrainzSettings = musicBrainzSettings.Value;
         _extensionManager = extensionManager;
@@ -761,7 +758,7 @@ public class AdminUiController : ControllerBase
         new()
         {
             Id = "apple-download",
-            Name = "Apple Music - Gamdl",
+            Name = "Apple Music – GAMDL",
             Icon = "applemusic",
             Status = ProviderStatus("apple-download", string.IsNullOrWhiteSpace(_appleMusicSettings.BaseUrl) ? "needs_config" : "unknown"),
             Categories = ["metadata", "streaming", "download", "lyrics"],
@@ -777,7 +774,7 @@ public class AdminUiController : ControllerBase
         new()
         {
             Id = "apple-musickit",
-            Name = "Apple MusicKit",
+            Name = "Apple MusicKit – Personal Library",
             Icon = "applemusic",
             Status = "available",
             Categories = ["playlist"],
@@ -829,19 +826,6 @@ public class AdminUiController : ControllerBase
             ConfigSchema =
             [
                 Field("QOBUZ_MIN_REQUEST_INTERVAL_MS", "Minimum request interval", "number", "qobuz.minRequestIntervalMs", min: 0)
-            ]
-        },
-        new()
-        {
-            Id = "squidwtf",
-            Name = "SquidWTF",
-            Icon = "squidwtf",
-            Status = ProviderStatus("squidwtf", string.IsNullOrWhiteSpace(_squidWtfSettings.Quality) ? "unknown" : "configured"),
-            Categories = ["metadata"],
-            ConfigSchema =
-            [
-                Field("SQUIDWTF_QUALITY", "Quality", "select", "squidWtf.quality", ["LOW", "HIGH", "LOSSLESS"]),
-                Field("SQUIDWTF_MIN_REQUEST_INTERVAL_MS", "Minimum request interval", "number", "squidWtf.minRequestIntervalMs", min: 0)
             ]
         },
         new()
@@ -1133,7 +1117,7 @@ public class AdminUiController : ControllerBase
         var value = _configuration[envKey] ?? fallback;
         var providers = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(p => p.ToLowerInvariant())
-            .Where(p => id == "metadata" || p != "squidwtf")
+            .Where(p => p != "squidwtf")
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         if (_providerRegistry != null && Enum.TryParse<ProviderCapabilityKind>(id, true, out var capability))

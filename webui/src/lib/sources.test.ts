@@ -6,6 +6,7 @@ import {
   ctsMeasurementLabel,
   sourceMetrics,
   sourceNeedsAccount,
+  sourceOriginLabel,
   sourceStatus,
   supportsStreamingDiagnostic,
   humanize,
@@ -48,7 +49,13 @@ describe("source presentation", () => {
     expect(sourceTimingLabel({ ...provider, runtimeCapabilities: [{ id: "metadata", ready: false, canAttempt: true, canTest: true }] }))
       .toBe("Awaiting first sample");
     expect(sourceTimingLabel({ ...provider, categories: ["streaming"] })).toBe("Manual only");
+    expect(sourceTimingLabel({ ...provider, categories: ["download"] })).toBe("Download only");
     expect(sourceTimingLabel(provider)).toBe("Not applicable");
+  });
+
+  it("labels built-in and extension implementations", () => {
+    expect(sourceOriginLabel(provider)).toBe("Built-in");
+    expect(sourceOriginLabel({ ...provider, implementationOrigin: "extension" })).toBe("Extension");
   });
 
   it("uses account readiness for arbitrary schema providers", () => {
@@ -111,7 +118,7 @@ describe("source presentation", () => {
   it("uses runtime readiness for operator-managed Sources", () => {
     const managed = {
       id: "apple-download",
-      name: "Apple Music - Gamdl",
+      name: "Apple Music – GAMDL",
       connectionKind: "operator_managed",
       runtimeCapabilities: [
         { id: "download", ready: true, canAttempt: true, health: "healthy" },

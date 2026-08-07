@@ -7,7 +7,6 @@ using allstarr.Services.Jellyfin;
 using allstarr.Services.Common;
 using allstarr.Services.Admin;
 using allstarr.Services.Spotify;
-using allstarr.Services.SquidWTF;
 using System.Runtime;
 using Microsoft.EntityFrameworkCore;
 using allstarr.Core.Storage;
@@ -27,14 +26,9 @@ public class DiagnosticsController : ControllerBase
     private readonly JellyfinSettings _jellyfinSettings;
     private readonly DeezerSettings _deezerSettings;
     private readonly QobuzSettings _qobuzSettings;
-    private readonly SquidWTFSettings _squidWtfSettings;
     private readonly SpotifySessionCookieService _spotifySessionCookieService;
-    private readonly List<string> _squidWtfApiUrls;
     private readonly DurableStorageState _storageState;
-    private readonly ISafeJsonProxyClient _safeJsonProxyClient;
     private readonly BackendSelectionAuthority _backendSelection;
-    private static int _urlIndex = 0;
-    private static readonly object _urlIndexLock = new();
 
     public DiagnosticsController(
         ILogger<DiagnosticsController> logger,
@@ -44,11 +38,8 @@ public class DiagnosticsController : ControllerBase
         IOptions<JellyfinSettings> jellyfinSettings,
         IOptions<DeezerSettings> deezerSettings,
         IOptions<QobuzSettings> qobuzSettings,
-        IOptions<SquidWTFSettings> squidWtfSettings,
         SpotifySessionCookieService spotifySessionCookieService,
-        SquidWtfEndpointCatalog squidWtfEndpointCatalog,
         DurableStorageState storageState,
-        ISafeJsonProxyClient safeJsonProxyClient,
         BackendSelectionAuthority? backendSelection = null)
     {
         _logger = logger;
@@ -58,11 +49,8 @@ public class DiagnosticsController : ControllerBase
         _jellyfinSettings = jellyfinSettings.Value;
         _deezerSettings = deezerSettings.Value;
         _qobuzSettings = qobuzSettings.Value;
-        _squidWtfSettings = squidWtfSettings.Value;
         _spotifySessionCookieService = spotifySessionCookieService;
-        _squidWtfApiUrls = squidWtfEndpointCatalog.ApiUrls;
         _storageState = storageState;
-        _safeJsonProxyClient = safeJsonProxyClient;
         _backendSelection = backendSelection ?? new BackendSelectionAuthority(
             Enum.TryParse<BackendType>(
                 configuration["Backend:Type"],
@@ -158,10 +146,6 @@ public class DiagnosticsController : ControllerBase
             {
                 hasToken = !string.IsNullOrEmpty(_qobuzSettings.UserAuthToken),
                 quality = _qobuzSettings.Quality ?? "FLAC"
-            },
-            squidWtf = new
-            {
-                quality = _squidWtfSettings.Quality ?? "LOSSLESS"
             }
         });
     }
@@ -429,93 +413,6 @@ public class DiagnosticsController : ControllerBase
                 reasonCode = configured.Count == 0 ? null : "provider_account_required"
             }
         });
-    }
-
-    /// <summary>
-    /// Get a random SquidWTF base URL for searching (round-robin)
-    /// </summary>
-    [HttpGet("squidwtf-base-url")]
-    public IActionResult GetSquidWtfBaseUrl()
-    {
-        if (_squidWtfApiUrls.Count == 0)
-        {
-            return NotFound(new { error = "No SquidWTF base URLs configured" });
-        }
-
-        return Ok(new { baseUrl = "/api/admin/squidwtf-browser-proxy" });
-    }
-
-    [HttpGet("squidwtf-browser-proxy/search")]
-    public async Task<IActionResult> SearchSquidWtf(
-        [FromQuery(Name = "s")] string search,
-        CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(search) || search.Length > 300)
-        {
-            return BadRequest(new { error = "A search value between 1 and 300 characters is required" });
-        }
-
-        if (_squidWtfApiUrls.Count == 0)
-        {
-            return NotFound(new { error = "No SquidWTF search endpoint is available" });
-        }
-
-        string baseUrl;
-        lock (_urlIndexLock)
-        {
-            baseUrl = _squidWtfApiUrls[_urlIndex];
-            _urlIndex = (_urlIndex + 1) % _squidWtfApiUrls.Count;
-        }
-
-        try
-        {
-            if (!OutboundRequestGuard.TryCreateSafeHttpUri(
-                    baseUrl.TrimEnd('/') + "/",
-                    out var safeBaseUri,
-                    out _))
-            {
-                return StatusCode(
-                    StatusCodes.Status502BadGateway,
-                    new { error = "The provider search endpoint was unavailable" });
-            }
-
-            var endpoint = new Uri(
-                safeBaseUri!,
-                $"search/?s={Uri.EscapeDataString(search.Trim())}");
-            const long maximumResponseBytes = 2 * 1024 * 1024;
-            var result = await _safeJsonProxyClient.GetAsync(
-                endpoint,
-                maximumResponseBytes,
-                cancellationToken);
-            if (result.Outcome == SafeJsonProxyOutcome.Success && result.Payload.HasValue)
-            {
-                return new JsonResult(result.Payload.Value);
-            }
-
-            if (result.Outcome == SafeJsonProxyOutcome.ResponseTooLarge)
-            {
-                return StatusCode(
-                    StatusCodes.Status502BadGateway,
-                    new { error = "The provider search response exceeded the safe size limit" });
-            }
-
-            return StatusCode(
-                StatusCodes.Status502BadGateway,
-                new { error = "The provider search endpoint was unavailable" });
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(
-                "SquidWTF browser search proxy failed ({ExceptionType})",
-                ex.GetType().Name);
-            return StatusCode(
-                StatusCodes.Status502BadGateway,
-                new { error = "The provider search endpoint was unavailable" });
-        }
     }
 
     /// <summary>

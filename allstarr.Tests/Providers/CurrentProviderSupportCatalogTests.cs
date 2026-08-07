@@ -47,8 +47,7 @@ public sealed class CurrentProviderSupportCatalogTests
         AssertState("listenbrainz", "scrobbling", CurrentProviderSupportCatalog.Supported);
         AssertState("listenbrainz", "recommendation", CurrentProviderSupportCatalog.Supported);
         AssertState("lrclib", "lyrics", CurrentProviderSupportCatalog.Supported);
-        AssertState("squidwtf", "streaming", CurrentProviderSupportCatalog.PolicyBlocked);
-        AssertState("squidwtf", "download", CurrentProviderSupportCatalog.PolicyBlocked);
+        Assert.DoesNotContain(CurrentProviderSupportCatalog.All, item => item.Id == "squidwtf");
         AssertState("extensions", "metadata", CurrentProviderSupportCatalog.Supported);
         AssertState("extensions", "streaming", CurrentProviderSupportCatalog.Supported);
         AssertState("extensions", "download", CurrentProviderSupportCatalog.Supported);
@@ -66,6 +65,8 @@ public sealed class CurrentProviderSupportCatalogTests
         Assert.Equal("user", musicKit.AccountScope);
         Assert.Equal("apple-download", download.RuntimeId);
         Assert.Equal("apple-musickit", musicKit.RuntimeId);
+        Assert.Equal("Apple Music – GAMDL", download.Name);
+        Assert.Equal("Apple MusicKit – Personal Library", musicKit.Name);
     }
 
     private static void AssertState(string providerId, string capabilityId, string expected)

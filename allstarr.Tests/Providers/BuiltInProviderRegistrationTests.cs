@@ -4,7 +4,6 @@ using allstarr.Core.Providers.Deezer;
 using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Providers.AppleDownload;
 using allstarr.Core.Providers.Qobuz;
-using allstarr.Core.Providers.SquidWTF;
 using allstarr.Core.Downloads;
 using allstarr.Models.Settings;
 using allstarr.Services.AppleMusic;
@@ -31,8 +30,6 @@ public sealed class BuiltInProviderRegistrationTests
         var qobuzMetadata = new QobuzMetadataCapabilityAdapter(
             new Mock<IConcreteMetadataService>(MockBehavior.Strict).Object);
         var qobuzPlaylists = Playlist("qobuz");
-        var squidWtfMetadata = new SquidWTFMetadataCapabilityAdapter(
-            new Mock<IConcreteMetadataService>(MockBehavior.Strict).Object);
         var apple = new AppleMusicKitPlaylistCapabilityAdapter(
             new HttpClient(new Mock<HttpMessageHandler>().Object),
             new Mock<IProviderAccountSecretAccessor>(MockBehavior.Strict).Object);
@@ -62,7 +59,6 @@ public sealed class BuiltInProviderRegistrationTests
                 deezer, deezerPlaylists, deezerDownload, deezerStreaming),
             QobuzDownloadCapabilityAdapter.CreateRegistration(
                 qobuzDownload, qobuzStreaming, qobuzMetadata, qobuzPlaylists),
-            SquidWTFMetadataCapabilityAdapter.CreateRegistration(squidWtfMetadata),
             AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(apple),
             SpotifyPlaylistCapabilityAdapter.CreateRegistration(spotify, spotifyLyrics),
             AppleDownloadCapabilityAdapter.CreateRegistration(
@@ -77,14 +73,13 @@ public sealed class BuiltInProviderRegistrationTests
             "deezer",
             "lrclib",
             "qobuz",
-            "spotify",
-            "squidwtf"
+            "spotify"
         ];
         Assert.Equal(expected, registry.Providers.Select(item => item.Id));
         Assert.DoesNotContain(registry.Providers,
             item => item.Id is "lastfm" or "listenbrainz" or "musicbrainz");
         Assert.Equal(
-            ["apple-download", "deezer", "qobuz", "squidwtf"],
+            ["apple-download", "deezer", "qobuz"],
             registry.FindByCapability(ProviderCapabilityKind.Metadata)
                 .Select(item => item.Id));
         var deezerDescriptor = registry.GetRequired("deezer");
@@ -121,8 +116,6 @@ public sealed class BuiltInProviderRegistrationTests
             "qobuz", ProviderCapabilityKind.Streaming));
         Assert.Same(qobuzMetadata, registry.GetRequiredCapability<IProviderMetadataCapability>(
             "qobuz", ProviderCapabilityKind.Metadata));
-        Assert.Same(squidWtfMetadata, registry.GetRequiredCapability<IProviderMetadataCapability>(
-            "squidwtf", ProviderCapabilityKind.Metadata));
         Assert.Same(appleDownloadStreaming,
             registry.GetRequiredCapability<IProviderStreamingCapability>(
                 "apple-download", ProviderCapabilityKind.Streaming));

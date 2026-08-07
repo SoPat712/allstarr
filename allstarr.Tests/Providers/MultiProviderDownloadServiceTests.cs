@@ -2,7 +2,6 @@ using allstarr.Models.Download;
 using allstarr.Models.Settings;
 using allstarr.Services;
 using allstarr.Services.Common;
-using allstarr.Services.SquidWTF;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -30,9 +29,7 @@ public sealed class MultiProviderDownloadServiceTests
             Options.Create(new SpotifyApiSettings()),
             Options.Create(new AppleDownloadSettings { BaseUrl = "http://apple-gateway" }),
             Options.Create(new DeezerSettings { Arl = "configured-arl" }),
-            Options.Create(new QobuzSettings()),
-            Options.Create(new SquidWTFSettings()),
-            new SquidWtfEndpointCatalog([], []));
+            Options.Create(new QobuzSettings()));
         var apple = new AppleMusicRecordingService();
         var deezer = new DeezerRecordingService();
         var metadata = new Mock<IMusicMetadataService>();
@@ -84,9 +81,7 @@ public sealed class MultiProviderDownloadServiceTests
             Options.Create(new SpotifyApiSettings()),
             Options.Create(new AppleDownloadSettings { BaseUrl = "http://apple-gateway" }),
             Options.Create(new DeezerSettings()),
-            Options.Create(new QobuzSettings()),
-            Options.Create(new SquidWTFSettings()),
-            new SquidWtfEndpointCatalog([], []));
+            Options.Create(new QobuzSettings()));
         var service = new MultiProviderDownloadService(
             [new AppleMusicCancelingService()],
             [],

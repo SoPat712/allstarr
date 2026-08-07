@@ -94,7 +94,6 @@ public sealed class PlaylistPlayableSearchService(
         CancellationToken cancellationToken)
     {
         var order = gateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
-            .Concat(gateway.GetProviderOrder(ProviderCapabilityKind.Download))
             .Select((provider, index) => (
                 Provider: ExternalTrackPlaybackPolicy.Normalize(provider),
                 Index: index))
@@ -152,7 +151,6 @@ public sealed class PlaylistPlayableSearchService(
         var normalized = ExternalTrackPlaybackPolicy.Normalize(providerId);
         return normalized.Length > 0 &&
                gateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
-                   .Concat(gateway.GetProviderOrder(ProviderCapabilityKind.Download))
                    .Any(provider => ExternalTrackPlaybackPolicy.Normalize(provider) == normalized);
     }
 
@@ -196,7 +194,6 @@ public sealed class PlaylistPlayableSearchService(
     private List<Song[]> GroupEquivalent(IEnumerable<Song> songs, TrackMatchScope scope)
     {
         var order = gateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
-            .Concat(gateway.GetProviderOrder(ProviderCapabilityKind.Download))
             .Select((provider, index) => (Provider: ExternalTrackPlaybackPolicy.Normalize(provider), Index: index))
             .GroupBy(item => item.Provider, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Min(item => item.Index), StringComparer.Ordinal);

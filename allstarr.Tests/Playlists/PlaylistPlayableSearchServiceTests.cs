@@ -15,7 +15,7 @@ namespace allstarr.Tests;
 public sealed class PlaylistPlayableSearchServiceTests
 {
     [Fact]
-    public void Provider_eligibility_comes_from_streaming_and_download_routes()
+    public void Provider_eligibility_comes_from_streaming_routes()
     {
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
@@ -31,7 +31,7 @@ public sealed class PlaylistPlayableSearchServiceTests
             NullLogger<PlaylistPlayableSearchService>.Instance);
 
         Assert.True(service.CanUseProvider("stream-extension"));
-        Assert.True(service.CanUseProvider("download_extension"));
+        Assert.False(service.CanUseProvider("download_extension"));
         Assert.False(service.CanUseProvider("musicbrainz"));
         Assert.False(service.CanUseProvider("metadata-extension"));
     }
@@ -328,7 +328,7 @@ public sealed class PlaylistPlayableSearchServiceTests
     }
 
     [Fact]
-    public async Task EquivalentProviderEditionsAreOneCandidateWithFallbackRoutes()
+    public async Task DownloadOnlyProviderEditionIsExcludedFromFallbackRoutes()
     {
         var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
@@ -392,7 +392,8 @@ public sealed class PlaylistPlayableSearchServiceTests
 
         Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
         Assert.Single(result.Decision.Candidates);
-        Assert.Equal(2, result.RoutableExternalCandidates.Count);
+        Assert.Single(result.RoutableExternalCandidates);
+        Assert.Equal("deezer", result.RoutableExternalCandidates[0].ExternalProvider);
     }
 
     private static ProtocolExecutionContext Context(Guid tenant, Guid user) => new(

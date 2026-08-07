@@ -69,6 +69,9 @@ export const supportsStreamingDiagnostic = (health: ProviderHealth[]) =>
 export const ctsMeasurementLabel = (measurement: CtsMeasurement) =>
   measurement.health === "healthy" ? `${measurement.latencyMs} ms` : "Failed";
 
+export const sourceOriginLabel = (provider: ProviderDefinition) =>
+  provider.implementationOrigin === "extension" ? "Extension" : "Built-in";
+
 export function sourceTimingLabel(provider: ProviderDefinition, summary?: ProviderSummary) {
   if (summary?.p95LatencyMilliseconds != null)
     return `Managed p95 ${summary.p95LatencyMilliseconds} ms`;
@@ -78,6 +81,7 @@ export function sourceTimingLabel(provider: ProviderDefinition, summary?: Provid
   if (latest?.latencyMilliseconds != null) return `Latest API ${latest.latencyMilliseconds} ms`;
   if ((provider.runtimeCapabilities ?? []).some((item) => item.canTest)) return "Awaiting first sample";
   if ((provider.categories ?? []).some((item) => item.toLowerCase() === "streaming")) return "Manual only";
+  if ((provider.categories ?? []).some((item) => item.toLowerCase() === "download")) return "Download only";
   return "Not applicable";
 }
 

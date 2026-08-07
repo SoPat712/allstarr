@@ -3,7 +3,6 @@ using System.Net;
 using System.Text;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
-using allstarr.Services.SquidWTF;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -56,16 +55,19 @@ public sealed class ProviderStatusManagerTests
     }
 
     [Fact]
-    public void SquidWtf_IsNeverAdvertisedOutsideMetadataEvenWhenLegacyOrdersContainIt()
+    public void SquidWtf_IsNeverAdvertisedWhenLegacyOrdersContainIt()
     {
         var manager = CreateManager(new Dictionary<string, string?>
         {
+            ["MULTI_PROVIDER_METADATA_ORDER"] = "squidwtf",
+            ["MULTI_PROVIDER_ENABLED_SEARCH"] = "squidwtf",
             ["MULTI_PROVIDER_DOWNLOAD_ORDER"] = "squidwtf",
             ["MULTI_PROVIDER_STREAMING_ORDER"] = "squidwtf",
             ["MULTI_PROVIDER_PLAYLIST_ORDER"] = "squidwtf",
             ["MULTI_PROVIDER_ENABLED_PLAYLIST"] = "squidwtf"
         });
 
+        Assert.Empty(manager.GetEnabledSearchProviders());
         Assert.Empty(manager.GetEnabledDownloadProviders());
         Assert.Empty(manager.GetEnabledStreamingProviders());
         Assert.Empty(manager.GetEnabledPlaylistProviders());
@@ -443,8 +445,7 @@ public sealed class ProviderStatusManagerTests
         SpotifyApiSettings? spotifySettings = null,
         AppleDownloadSettings? appleMusicSettings = null,
         DeezerSettings? deezerSettings = null,
-        QobuzSettings? qobuzSettings = null,
-        SquidWtfEndpointCatalog? squidWtfCatalog = null)
+        QobuzSettings? qobuzSettings = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(values)
@@ -457,9 +458,7 @@ public sealed class ProviderStatusManagerTests
             Options.Create(spotifySettings ?? new SpotifyApiSettings()),
             Options.Create(appleMusicSettings ?? new AppleDownloadSettings()),
             Options.Create(deezerSettings ?? new DeezerSettings()),
-            Options.Create(qobuzSettings ?? new QobuzSettings()),
-            Options.Create(new SquidWTFSettings()),
-            squidWtfCatalog ?? new SquidWtfEndpointCatalog([], []));
+            Options.Create(qobuzSettings ?? new QobuzSettings()));
     }
 
     private static HttpResponseMessage Json(HttpStatusCode status, string json) =>

@@ -87,10 +87,10 @@
       <header>
         <div>
           <p class="eyebrow">Operator-managed Source</p>
-          <Dialog.Title>Apple Music - Gamdl</Dialog.Title>
+          <Dialog.Title>Apple Music – GAMDL</Dialog.Title>
           <Dialog.Description>Install the gateway package, then authenticate its Apple Music session.</Dialog.Description>
         </div>
-        <Dialog.Close class="icon-button" aria-label="Close Apple Music - Gamdl manager"><X size={18} aria-hidden="true" /></Dialog.Close>
+        <Dialog.Close class="icon-button" aria-label="Close Apple Music – GAMDL manager"><X size={18} aria-hidden="true" /></Dialog.Close>
       </header>
 
       <div class="apple-manager-body">
@@ -140,7 +140,7 @@
             <button class="button-primary" type="submit" disabled={Boolean(action)}>{action === "login" ? "Signing in…" : "Start login"}</button>
           </form>
         {:else}
-          <div class="compact-empty"><strong>Apple Music - Gamdl is ready</strong><p>The gateway and saved Apple Music session are authenticated.</p></div>
+          <div class="compact-empty"><strong>Apple Music – GAMDL is ready</strong><p>The gateway and saved Apple Music session are authenticated.</p></div>
         {/if}
 
         {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}

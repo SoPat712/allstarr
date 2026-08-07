@@ -169,7 +169,7 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
         IProviderMetadataCapability metadata) => new(
         new ProviderDescriptor(
             StableProviderId,
-            "Apple Music - Gamdl",
+            "Apple Music – GAMDL",
             "Optional operator-managed Apple audio downloads through a discovered compatible gateway.",
             ProviderOrigin.BuiltIn,
             sdkVersion: "1",

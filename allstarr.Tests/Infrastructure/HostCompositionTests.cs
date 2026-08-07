@@ -16,6 +16,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Services.Common;
+using allstarr.Services;
 using Microsoft.AspNetCore.Mvc.Routing;
 using Moq;
 
@@ -23,6 +24,19 @@ namespace allstarr.Tests;
 
 public sealed class HostCompositionTests
 {
+    [Fact]
+    public void RetiredSquidWtfProviderIsNotComposed()
+    {
+        using var factory = new AllstarrFactory("Jellyfin");
+
+        Assert.DoesNotContain(factory.Services.GetRequiredService<IProviderRegistry>().Providers,
+            provider => provider.Id == "squidwtf");
+        Assert.DoesNotContain(factory.Services.GetServices<IConcreteMetadataService>(),
+            service => service.GetType().Name.Contains("SquidWTF", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(factory.Services.GetServices<IConcreteDownloadService>(),
+            service => service.GetType().Name.Contains("SquidWTF", StringComparison.OrdinalIgnoreCase));
+    }
+
     [Fact]
     public void ExtensionLifecycleUsesOnlyDurablePackageRoutes()
     {

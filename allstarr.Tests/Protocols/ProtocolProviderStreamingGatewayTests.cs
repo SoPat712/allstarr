@@ -99,6 +99,52 @@ public sealed class ProtocolProviderStreamingGatewayTests
     }
 
     [Fact]
+    public async Task PlayableSearch_DoesNotTreatDownloadOnlyProviderAsStreamable()
+    {
+        var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        metadata.SetupGet(item => item.ProviderId).Returns("download-only");
+        metadata.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        var download = new Mock<IProviderDownloadCapability>(MockBehavior.Strict);
+        download.SetupGet(item => item.ProviderId).Returns("download-only");
+        download.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Download);
+        var registry = new ProviderRegistry([
+            new ProviderRegistration(
+                new ProviderDescriptor(
+                    "download-only",
+                    "Download only",
+                    "Fixture provider",
+                    ProviderOrigin.BuiltIn,
+                    "1",
+                    "1",
+                    [
+                        new ProviderCapabilityDescriptor(
+                            ProviderCapabilityKind.Metadata,
+                            ProviderCapabilitySupportState.Supported,
+                            ProviderAccountRequirement.None,
+                            "1",
+                            ["searchTracks", "getTrack"]),
+                        new ProviderCapabilityDescriptor(
+                            ProviderCapabilityKind.Download,
+                            ProviderCapabilitySupportState.Supported,
+                            ProviderAccountRequirement.None,
+                            "1",
+                            ["checkAvailability", "download"])
+                    ],
+                    new ProviderPermissionDescriptor()),
+                [metadata.Object, download.Object])
+        ]);
+        var gateway = new ProtocolProviderGateway(
+            Mock.Of<IProviderRouter>(MockBehavior.Strict),
+            registry,
+            Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
+            Mock.Of<IMusicMetadataService>(MockBehavior.Strict),
+            new HttpClientFactory());
+
+        Assert.Empty(await gateway.SearchPlayableSongsAsync(
+            Context(), "Track Artist", 10));
+    }
+
+    [Fact]
     public async Task MetadataSearch_RestrictsTheRouteToTheRequestedProvider()
     {
         var deezer = new Mock<IProviderMetadataCapability>();

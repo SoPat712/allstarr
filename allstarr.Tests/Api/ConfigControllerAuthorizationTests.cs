@@ -17,7 +17,6 @@ using allstarr.Models.Settings;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using allstarr.Services.Spotify;
-using allstarr.Services.SquidWTF;
 using allstarr.Core.Storage;
 using allstarr.Core.Health;
 using allstarr.Core.Operations;
@@ -510,8 +509,6 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             Options.Create(new AppleDownloadSettings()),
             Options.Create(new DeezerSettings()),
             Options.Create(new QobuzSettings()),
-            Options.Create(new SquidWTFSettings()),
-            new SquidWtfEndpointCatalog([], []),
             extensionManager: null,
             healthStore);
         var effectiveSecretStore = secretStore ?? CreateSecretStore();
@@ -536,7 +533,6 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             Options.Create(new SubsonicSettings()),
             Options.Create(new DeezerSettings()),
             Options.Create(new QobuzSettings()),
-            Options.Create(new SquidWTFSettings()),
             Options.Create(new AppleDownloadSettings()),
             Options.Create(new MusicBrainzSettings()),
             Options.Create(new SpotifyImportSettings()),

@@ -215,7 +215,6 @@ public sealed class ProtocolProviderGateway(
         ArgumentNullException.ThrowIfNull(protocol);
         limit = Math.Clamp(limit, 1, 200);
         var configuredProviderOrder = ResolveProviderOrder(ProviderCapabilityKind.Streaming)
-            .Concat(ResolveProviderOrder(ProviderCapabilityKind.Download))
             .Select(NormalizeProvider)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
@@ -294,27 +293,14 @@ public sealed class ProtocolProviderGateway(
             "protocol-playable-provider-check",
             configuredProviderOrder,
             sourceTrackId: null));
-        var download = await router.PlanAsync<IProviderDownloadCapability>(Request(
-            protocol,
-            actor,
-            ProviderCapabilityKind.Download,
-            "protocol-playable-provider-check",
-            configuredProviderOrder,
-            sourceTrackId: null,
-            allowManagedDownloads: true,
-            idempotencyKey: $"playable-search:{protocol.CorrelationId}"));
         var allowed = streaming.Candidates.Select(item => item.Provider.Id)
-            .Concat(download.Candidates.Select(item => item.Provider.Id))
             .Select(NormalizeProvider)
             .ToHashSet(StringComparer.Ordinal);
         var typed = registry.FindByCapability(ProviderCapabilityKind.Streaming)
-            .Concat(registry.FindByCapability(ProviderCapabilityKind.Download))
             .Select(item => NormalizeProvider(item.Id))
             .ToHashSet(StringComparer.Ordinal);
         var compatibility = (await ResolveAllowedCompatibilityProvidersAsync(
                 protocol, actor, ProviderCapabilityKind.Streaming))
-            .Concat(await ResolveAllowedCompatibilityProvidersAsync(
-                protocol, actor, ProviderCapabilityKind.Download))
             .Where(providerId => !typed.Contains(providerId));
         allowed.UnionWith(compatibility);
         return configuredProviderOrder.Where(allowed.Contains).ToArray();

@@ -27,7 +27,7 @@ public static class CurrentProviderSupportCatalog
         Provider(
             "apple-download",
             "apple-download",
-            "Apple Music - Gamdl",
+            "Apple Music – GAMDL",
             "global",
             "URL of an optional, operator-managed GAMDL-compatible service.",
             Capability("metadata", Partial, "The bundled gateway supports catalog song, album, and artist search and detail. Playlist and personal-library features remain separate capabilities.", "AppleMusicMetadataServiceTests; AppleDownloadEndpointDiscoveryTests; apple-gateway tests"),
@@ -38,7 +38,7 @@ public static class CurrentProviderSupportCatalog
         Provider(
             "apple-musickit",
             "apple-musickit",
-            "Apple Music",
+            "Apple MusicKit – Personal Library",
             "user",
             "Developer token plus a per-user Music User Token stored in the selected encrypted account secret.",
             Capability("playlist", Supported, "Account-bound MusicKit library playlist paging, snapshots, artwork, matching, virtual reads, and backend materialization.", "AppleMusicKitPlaylistCapabilityAdapterTests; PlaylistOrchestrationIntegrationTests"),
@@ -65,17 +65,6 @@ public static class CurrentProviderSupportCatalog
             Capability("download", Supported, "Account-bound signed downloads use a typed host-owned workspace with media facts, size, checksum, progress, cancellation, cleanup, and retry contracts.", "DirectProviderDownloadCapabilityAdapterTests; ProviderDownloadArtifactResolverTests"),
             Capability("playlist", Partial, "Read/discovery only.", "QobuzMetadataServiceTests"),
             Capability("health", Partial, "Account-scoped metadata, playlist, stream, and download probes with durable capability samples.", "ProviderStatusManagerTests; ConfigControllerAuthorizationTests")),
-        Provider(
-            "squidwtf",
-            "squidwtf",
-            "SquidWTF",
-            "none",
-            "Discovered public metadata endpoint; uptime feed is optional.",
-            Capability("metadata", Partial, "Tidal-shaped catalog metadata through discovered endpoints.", "SquidWTFMetadataServiceTests"),
-            Capability("streaming", PolicyBlocked, "Quarantined until a working endpoint and contract fixture exist.", "ProviderStatusManagerTests"),
-            Capability("download", PolicyBlocked, "Quarantined until a working endpoint and contract fixture exist.", "ProviderStatusManagerTests"),
-            Capability("playlist", PolicyBlocked, "Not routed as a current playlist source.", "ProviderStatusManagerTests"),
-            Capability("health", Partial, "Metadata endpoint discovery only.", "provider health gap")),
         Provider(
             "spotify",
             "spotify",

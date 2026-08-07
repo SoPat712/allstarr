@@ -3,8 +3,6 @@ using allstarr.Services;
 using allstarr.Services.Deezer;
 using allstarr.Services.Qobuz;
 using allstarr.Core.Providers.Qobuz;
-using allstarr.Core.Providers.SquidWTF;
-using allstarr.Services.SquidWTF;
 using allstarr.Services.AppleMusic;
 using allstarr.Services.Local;
 using allstarr.Services.Validation;
@@ -250,7 +248,6 @@ builder.Services.AddHttpClient("ExtensionSdkV1")
         MaxConnectionsPerServer = 8,
         PooledConnectionLifetime = TimeSpan.FromMinutes(5)
     });
-builder.Services.AddHttpClient("SquidWTF");
 builder.Services.AddHttpClient("AppleMusic")
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {
@@ -346,8 +343,6 @@ builder.Services.Configure<DeezerSettings>(
     builder.Configuration.GetSection("Deezer"));
 builder.Services.Configure<QobuzSettings>(
     builder.Configuration.GetSection("Qobuz"));
-builder.Services.Configure<SquidWTFSettings>(
-    builder.Configuration.GetSection("SquidWTF"));
 builder.Services.Configure<AppleDownloadSettings>(
     builder.Configuration.GetSection("AppleDownload"));
 builder.Services.Configure<CacheSettings>(
@@ -362,15 +357,7 @@ builder.Services.Configure<SpotifyImportSettings>(options =>
     }
 });
 
-// Discover SquidWTF endpoints for multi-provider usage
-var squidWtfEndpointCatalog = builder.Environment.IsEnvironment("Testing")
-    ? new SquidWtfEndpointCatalog([], [])
-    : await SquidWtfEndpointDiscovery.DiscoverAsync();
-var squidWtfApiUrls = squidWtfEndpointCatalog.ApiUrls;
-var squidWtfStreamingUrls = squidWtfEndpointCatalog.StreamingUrls;
-
 // Business services - shared across backends
-builder.Services.AddSingleton(squidWtfEndpointCatalog);
 builder.Services.AddSingleton<DatabaseApplicationCache>();
 builder.Services.AddSingleton<BoundedHotApplicationCache>();
 builder.Services.AddSingleton<FileMediaApplicationCache>();
@@ -446,20 +433,9 @@ builder.Services.AddSingleton<AppleMusicMetadataService>();
 builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
     provider.GetRequiredService<AppleMusicMetadataService>());
 builder.Services.AddSingleton<IAppleDownloadEndpointDiscovery, AppleDownloadEndpointDiscovery>();
-builder.Services.AddSingleton<SquidWTFMetadataService>(sp =>
-    new SquidWTFMetadataService(
-        sp.GetRequiredService<IHttpClientFactory>(),
-        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SubsonicSettings>>(),
-        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
-        sp.GetRequiredService<ILogger<SquidWTFMetadataService>>(),
-        sp.GetRequiredService<IApplicationCache>(),
-        squidWtfApiUrls,
-        sp.GetService<GenreEnrichmentService>()));
-builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
-    provider.GetRequiredService<SquidWTFMetadataService>());
 builder.Services.AddDeezerMetadataCapability();
 builder.Services.AddQobuzDownloadCapability();
-builder.Services.AddSquidWTFMetadataCapability();
+// SquidWTF is intentionally retired and not composed into the runtime.
 builder.Services.AddSpotifyPlaylistCapability();
 builder.Services.AddAppleMusicKitPlaylistCapability();
 builder.Services.AddAppleDownloadCapability();
@@ -471,18 +447,6 @@ builder.Services.AddSingleton<IConcreteDownloadService>(provider =>
 builder.Services.AddSingleton<IConcreteDownloadService>(provider =>
     provider.GetRequiredService<QobuzDownloadService>());
 builder.Services.AddSingleton<IConcreteDownloadService, AppleMusicDownloadService>();
-builder.Services.AddSingleton<IConcreteDownloadService>(sp =>
-    new SquidWTFDownloadService(
-        sp.GetRequiredService<IHttpClientFactory>(),
-        sp.GetRequiredService<IConfiguration>(),
-        sp.GetRequiredService<ILocalLibraryService>(),
-        sp.GetRequiredService<IMusicMetadataService>(),
-        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SubsonicSettings>>(),
-        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
-        sp,
-        sp.GetRequiredService<ILogger<SquidWTFDownloadService>>(),
-        sp.GetRequiredService<OdesliService>(),
-        squidWtfStreamingUrls));
 
 // 3. Status Manager & Multi-Provider Orchestrators
 builder.Services.AddSingleton<ExtensionManager>();
@@ -512,21 +476,6 @@ var probeOptionalProvidersAtStartup =
     builder.Configuration.GetValue<bool>("StartupValidation:ProbeOptionalProviders");
 if (probeOptionalProvidersAtStartup)
 {
-    var disabledProviders = ParseCsv(builder.Configuration["MULTI_PROVIDER_DISABLED_PROVIDERS"])
-        .ToHashSet(StringComparer.OrdinalIgnoreCase);
-    var enabledMetadataProviders = ParseCsv(
-        builder.Configuration["MULTI_PROVIDER_ENABLED_SEARCH"] ?? "deezer,qobuz");
-    if (!disabledProviders.Contains("squidwtf") &&
-        enabledMetadataProviders.Contains("squidwtf", StringComparer.OrdinalIgnoreCase))
-    {
-        builder.Services.AddSingleton<IStartupValidator>(sp =>
-            new SquidWTFStartupValidator(
-                sp.GetRequiredService<IHttpClientFactory>().CreateClient("SquidWTF"),
-                squidWtfApiUrls,
-                squidWtfStreamingUrls,
-                sp.GetRequiredService<EndpointBenchmarkService>(),
-                sp.GetRequiredService<ILogger<SquidWTFStartupValidator>>()));
-    }
     builder.Services.AddSingleton<IStartupValidator, LyricsStartupValidator>();
 }
 

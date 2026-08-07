@@ -32,6 +32,7 @@
     humanize,
     sourceMetrics,
     sourceNeedsAccount,
+    sourceOriginLabel,
     sourceStatus,
     sourceTimingLabel,
     supportsStreamingDiagnostic,
@@ -382,7 +383,7 @@
                 <td>
                   <button class="operational-row-identity" type="button" onclick={() => inspectSource(item)}>
                     <ProviderArtwork id={item.id} definition={item} />
-                    <span><strong>{item.name}</strong><small>{item.description || "Provider capability Source"}</small></span>
+                    <span><strong>{item.name}</strong><small>{sourceOriginLabel(item)} · {item.description || "Provider capability Source"}</small></span>
                   </button>
                   <span class={`operational-mobile-state status-pill ${state}`}>{state === "needs_config" ? "Needs setup" : humanize(state)}</span>
                   <details class="operational-mobile-detail">
@@ -510,12 +511,12 @@
               <dl class="source-detail-data">
                 <div><dt>Status</dt><dd><span class={`status-pill ${state}`}>{state === "needs_config" ? "Needs setup" : humanize(state)}</span></dd></div>
                 <div><dt>Source ID</dt><dd>{selectedSource.id}</dd></div>
-                <div><dt>Implementation</dt><dd>{humanize(selectedSource.implementationOrigin || "built in")}</dd></div>
+                <div><dt>Implementation</dt><dd>{sourceOriginLabel(selectedSource)}</dd></div>
                 <div><dt>Capabilities</dt><dd>{(selectedSource.categories ?? []).map(humanize).join(", ") || "Pending"}</dd></div>
                 <div><dt>Readiness</dt><dd>{metrics.passing}/{metrics.total || 0} passing · {metrics.failed} failing</dd></div>
                 <div><dt>Last check</dt><dd>{relativeTime(metrics.checkedAt)}</dd></div>
                 <div><dt>API timing</dt><dd>{sourceTimingLabel(selectedSource, summary(selectedSource.id))}</dd></div>
-                <div><dt>Click to stream</dt><dd>{#if cts}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>{ctsMeasurementLabel(cts)}</span> · {relativeTime(cts.testedAt)}{:else if selectedSource.categories?.some((item) => item.toLowerCase() === "streaming")}Awaiting first sample{:else}Not applicable{/if}</dd></div>
+                <div><dt>Click to stream</dt><dd>{#if cts}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>{ctsMeasurementLabel(cts)}</span> · {relativeTime(cts.testedAt)}{:else if selectedSource.categories?.some((item) => item.toLowerCase() === "streaming")}Awaiting first sample{:else if selectedSource.categories?.some((item) => item.toLowerCase() === "download")}Download only{:else}Not applicable{/if}</dd></div>
               </dl>
               <div class="source-detail-capabilities">
                 {#each selectedSource.runtimeCapabilities ?? [] as capability}
@@ -532,7 +533,7 @@
                 <div><dt>State</dt><dd><span class={`status-pill ${selectedAccount.enabled ? "healthy" : "suggested"}`}>{selectedAccount.enabled ? "Enabled" : "Disabled"}</span></dd></div>
                 <div><dt>Account details</dt><dd><span class={`status-pill ${selectedAccount.secret.configured && !selectedAccount.secret.revoked ? "healthy" : "needs_config"}`}>{selectedAccount.secret.configured && !selectedAccount.secret.revoked ? "Stored" : "Setup needed"}</span></dd></div>
                 <div><dt>Health</dt><dd><span class={`status-pill ${readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}`}>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready</span></dd></div>
-                <div><dt>Click to stream</dt><dd>{#if cts}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>{ctsMeasurementLabel(cts)}</span> · {relativeTime(cts.testedAt)}{:else if capabilities.some((item) => item.capability.toLowerCase() === "streaming")}Awaiting first sample{:else}Not applicable{/if}</dd></div>
+                <div><dt>Click to stream</dt><dd>{#if cts}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>{ctsMeasurementLabel(cts)}</span> · {relativeTime(cts.testedAt)}{:else if capabilities.some((item) => item.capability.toLowerCase() === "streaming")}Awaiting first sample{:else if capabilities.some((item) => item.capability.toLowerCase() === "download")}Download only{:else}Not applicable{/if}</dd></div>
               </dl>
             {:else if detailTab === "configuration" && detailKind === "source" && selectedSource}
               <p class="source-configuration-copy">{sourcePurpose(selectedSource)}</p>
@@ -541,7 +542,7 @@
                   <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void measureSource(selectedSource!)}>Measure CTS</button>
                 {/if}
                 {#if selectedSource.id === "apple-download"}
-                  <button class="button-primary" type="button" onclick={() => { detailOpen = false; appleDownloadOpen = true; }}>Manage Apple Music - Gamdl</button>
+                  <button class="button-primary" type="button" onclick={() => { detailOpen = false; appleDownloadOpen = true; }}>Manage Apple Music – GAMDL</button>
                 {/if}
                 {#if accountSettings(selectedSource).length}
                   <button class="button-primary" type="button" onclick={() => { connectProviderId = selectedSource!.id; detailOpen = false; connectOpen = true; }}>Connect account</button>
