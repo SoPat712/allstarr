@@ -1,5 +1,6 @@
 using System.Text.Json;
 using allstarr.Controllers;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
 using allstarr.Core.Operations;
 using allstarr.Core.Secrets;
@@ -116,6 +117,52 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         Assert.Equal("deezer", accounts[0].GetProperty("ProviderId").GetString());
         Assert.True(accounts[0].GetProperty("secret").GetProperty("configured").GetBoolean());
         Assert.False(accounts[0].GetProperty("secret").TryGetProperty("value", out _));
+    }
+
+    [Fact]
+    public async Task ExtensionConfiguration_ReturnsSafeValuesAndPreservesBlankSecretFields()
+    {
+        var registry = AppleExtensionRegistry();
+        var controller = Controller(Session(_userId), providerRegistry: registry);
+        using var secret = JsonDocument.Parse(
+            """{"storefront":"ca","mediaUserToken":"fixture-private-token","lyricsTranslationLanguage":"es"}""");
+        var created = Assert.IsType<CreatedAtActionResult>(await controller.Create(
+            new ProviderAccountsController.CreateProviderAccountRequest
+            {
+                ProviderId = "spotiflac-apple-music",
+                DisplayName = "Apple Music",
+                Scope = "User",
+                Secret = secret.RootElement.Clone()
+            }));
+        using var createdJson = JsonDocument.Parse(JsonSerializer.Serialize(created.Value));
+        var accountId = createdJson.RootElement.GetProperty("Id").GetGuid();
+
+        var listed = Assert.IsType<OkObjectResult>(await controller.List());
+        using var listedJson = JsonDocument.Parse(JsonSerializer.Serialize(listed.Value));
+        var account = listedJson.RootElement.GetProperty("accounts")[0];
+        Assert.Equal("ca", account.GetProperty("configuration").GetProperty("storefront").GetString());
+        Assert.Equal("es", account.GetProperty("configuration").GetProperty("lyricsTranslationLanguage").GetString());
+        Assert.Contains(account.GetProperty("configuredFields").EnumerateArray(),
+            item => item.GetString() == "mediaUserToken");
+        Assert.DoesNotContain("fixture-private-token", listedJson.RootElement.GetRawText(), StringComparison.Ordinal);
+
+        using var replacement = JsonDocument.Parse(
+            """{"storefront":"jp","mediaUserToken":"","lyricsTranslationLanguage":"es"}""");
+        Assert.IsType<OkObjectResult>(await controller.ReplaceSecret(
+            accountId,
+            new ProviderAccountsController.ReplaceProviderSecretRequest
+            {
+                Secret = replacement.RootElement.Clone()
+            }));
+
+        await using var context = await _factory.CreateDbContextAsync();
+        var persisted = await context.ProviderAccounts.SingleAsync(item => item.Id == accountId);
+        using var lease = await _secretStore.OpenAsync(
+            persisted.SecretReferenceId!.Value,
+            new SecretAccessContext(_tenantId));
+        using var saved = JsonDocument.Parse(lease.Value);
+        Assert.Equal("jp", saved.RootElement.GetProperty("storefront").GetString());
+        Assert.Equal("fixture-private-token", saved.RootElement.GetProperty("mediaUserToken").GetString());
     }
 
     [Fact]
@@ -424,7 +471,8 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
 
     private ProviderAccountsController Controller(
         AdminAuthSession session,
-        ProviderAccountManagementMode mode = ProviderAccountManagementMode.Hybrid)
+        ProviderAccountManagementMode mode = ProviderAccountManagementMode.Hybrid,
+        IProviderRegistry? providerRegistry = null)
     {
         var context = new DefaultHttpContext();
         context.TraceIdentifier = Guid.NewGuid().ToString("N");
@@ -433,11 +481,40 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
             _factory,
             _secretStore,
             _cache,
-            new ProviderAccountManagementOptions { ManagementMode = mode.ToString() })
+            new ProviderAccountManagementOptions { ManagementMode = mode.ToString() },
+            providerRegistry)
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };
     }
+
+    private static IProviderRegistry AppleExtensionRegistry() => new ProviderRegistry([
+        new ProviderRegistration(new ProviderDescriptor(
+            "spotiflac-apple-music",
+            "Apple Music",
+            "Apple Music metadata and lyrics",
+            ProviderOrigin.Extension,
+            "1",
+            "1",
+            [new ProviderCapabilityDescriptor(
+                ProviderCapabilityKind.Metadata,
+                ProviderCapabilitySupportState.ConfiguredOnly,
+                ProviderAccountRequirement.None,
+                "1")],
+            new ProviderPermissionDescriptor(secretSettingKeys: ["mediaUserToken"]),
+            [
+                new ProviderSettingDescriptor(
+                    "storefront", ProviderSettingValueKind.Text, ProviderSettingScope.ProviderAccount,
+                    "Storefront", defaultJson: "\"us\""),
+                new ProviderSettingDescriptor(
+                    "mediaUserToken", ProviderSettingValueKind.Secret, ProviderSettingScope.ProviderAccount,
+                    "Media User Token"),
+                new ProviderSettingDescriptor(
+                    "lyricsTranslationLanguage", ProviderSettingValueKind.Text,
+                    ProviderSettingScope.ProviderAccount, "Lyrics Translation Language")
+            ],
+            entryPoint: "index.js"))
+    ]);
 
     private AdminAuthSession Session(Guid userId, bool administrator = false) => new()
     {

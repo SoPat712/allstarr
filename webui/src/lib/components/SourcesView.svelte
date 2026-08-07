@@ -13,6 +13,7 @@
     type ProviderAccount,
     type ProviderDefinition,
     type ProviderHealth,
+    type ProviderSetting,
     type ProviderSummary,
     type UiSchema,
   } from "$lib/api";
@@ -35,6 +36,7 @@
     sourceOriginLabel,
     sourceStatus,
     sourceTimingLabel,
+    settingDefault,
     supportsStreamingDiagnostic,
   } from "$lib/sources";
   import { liveUpdates } from "$lib/live-updates.svelte";
@@ -213,6 +215,16 @@
     if (item.id === "spotiflac-apple-music")
       return "Apple Music extension metadata and Media User Token lyrics, including configured translation or pronunciation.";
     return item.description || "Configure this Source and its accounts here.";
+  }
+
+  function accountSettingValue(account: ProviderAccount, field: ProviderSetting) {
+    if (field.sensitive)
+      return account.configuredFields?.includes(field.key) ? "Stored" : "Not set";
+    const saved = account.configuration?.[field.key];
+    const value = saved ?? settingDefault(field);
+    if (value === "" || value == null) return "Not set";
+    if (field.type === "toggle") return value === true || value === "true" ? "Enabled" : "Disabled";
+    return String(value);
   }
 
   async function saveSourceConfiguration(event: SubmitEvent) {
@@ -536,6 +548,8 @@
                 <div><dt>Click to stream</dt><dd>{#if cts}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>{ctsMeasurementLabel(cts)}</span> · {relativeTime(cts.testedAt)}{:else if capabilities.some((item) => item.capability.toLowerCase() === "streaming")}Awaiting first sample{:else if capabilities.some((item) => item.capability.toLowerCase() === "download")}Download only{:else}Not applicable{/if}</dd></div>
               </dl>
             {:else if detailTab === "configuration" && detailKind === "source" && selectedSource}
+              {@const settings = accountSettings(selectedSource)}
+              {@const sourceAccounts = providerAccounts(selectedSource.id)}
               <p class="source-configuration-copy">{sourcePurpose(selectedSource)}</p>
               <div class="source-detail-actions">
                 {#if administrator && !sourceNeedsAccount(selectedSource) && selectedSource.categories?.some((item) => item.toLowerCase() === "streaming")}
@@ -544,12 +558,37 @@
                 {#if selectedSource.id === "apple-download"}
                   <button class="button-primary" type="button" onclick={() => { detailOpen = false; appleDownloadOpen = true; }}>Manage Apple Music – GAMDL</button>
                 {/if}
-                {#if accountSettings(selectedSource).length}
-                  <button class="button-primary" type="button" onclick={() => { connectProviderId = selectedSource!.id; detailOpen = false; connectOpen = true; }}>Connect account</button>
-                {:else if selectedSource.connectionKind !== "operator_managed"}
+                {#if !settings.length && selectedSource.connectionKind !== "operator_managed"}
                   <p>No account configuration is required for this extension capability.</p>
                 {/if}
               </div>
+              {#if settings.length}
+                <div class="source-account-configurations">
+                  {#each sourceAccounts as account}
+                    <section class="source-account-configuration">
+                      <header>
+                        <span><strong>{account.sourceDisplayName || account.displayName}</strong><small>Encrypted account configuration</small></span>
+                        <span class={`status-pill ${account.enabled ? "healthy" : "suggested"}`}>{account.enabled ? "Enabled" : "Disabled"}</span>
+                      </header>
+                      <dl class="source-detail-data">
+                        {#each settings as field}
+                          <div>
+                            <dt>{field.label}</dt>
+                            <dd>{accountSettingValue(account, field)}</dd>
+                            {#if field.helpText}<small>{field.helpText}</small>{/if}
+                          </div>
+                        {/each}
+                      </dl>
+                      <footer><button class="button-primary" type="button" onclick={() => configure(account)}>Edit configuration</button></footer>
+                    </section>
+                  {:else}
+                    <p class="credential-safety">These settings are saved on an encrypted Source account. Connect one to configure them.</p>
+                  {/each}
+                </div>
+                <div class="source-detail-actions">
+                  <button class="button-primary" type="button" disabled={!canManage} onclick={() => { connectProviderId = selectedSource!.id; detailOpen = false; connectOpen = true; }}>{sourceAccounts.length ? "Connect another account" : "Connect account"}</button>
+                </div>
+              {/if}
               {#if selectedSource.connectionKind === "operator_managed" && selectedSource.configSchema?.length}
                 {#if administrator}
                   <form class="settings-fields source-configuration-form" onsubmit={(event) => void saveSourceConfiguration(event)}>

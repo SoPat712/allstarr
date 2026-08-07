@@ -20,7 +20,10 @@ const schema = {
     { id: "jellyfin", name: "Jellyfin", categories: ["streaming"] },
     {
       id: "lumen-audio", name: "Lumen Audio", categories: ["metadata", "streaming"],
-      accountSettings: [{ key: "token", label: "Access token", type: "password", sensitive: true, required: true }],
+      accountSettings: [
+        { key: "token", label: "Access token", type: "password", sensitive: true, required: true },
+        { key: "region", label: "Region", type: "select", options: ["us", "ca"], defaultValueJson: '"us"' },
+      ],
     },
     { id: "listenbrainz", name: "ListenBrainz", categories: ["scrobbling"] },
     {
@@ -169,6 +172,7 @@ const responses: Record<string, unknown> = {
       sourceDisplayName: "Lumen Audio", scope: "User", enabled: true, revision: 1,
       ownerUserId: "user", ownerDisplayName: "Tester", createdByUserId: "user",
       creatorDisplayName: "Tester",
+      configuration: { region: "ca" }, configuredFields: ["token", "region"],
       secret: { configured: true, revoked: false }, createdAt: "2026-01-01", updatedAt: "2026-01-01",
     }],
   },
@@ -767,7 +771,7 @@ for (const viewport of viewports) {
       await page.goto("#/settings/accounts");
       await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible();
       await page.goto("#/sources?source=lumen-audio&section=configuration");
-      await page.getByRole("button", { name: "Connect account" }).click();
+      await page.getByRole("button", { name: "Connect another account" }).click();
       const sourceDialog = page.getByRole("dialog", { name: "Connect a Source" });
       await expect(sourceDialog.getByRole("button", { name: "Source", exact: true })).toContainText("Lumen Audio");
       await expect(sourceDialog.getByLabel("Access token")).toHaveValue("");
@@ -2100,6 +2104,19 @@ test("Sources keep primary actions visible and report scoped degradation", async
     cell: Number.parseFloat(getComputedStyle(panel.querySelector(".sources-table td")!).paddingLeft),
   }));
   expect(tableGutters.cell).toBe(tableGutters.heading);
+  await lumenSource.getByRole("button").first().click();
+  const sourceDetails = page.getByRole("dialog", { name: "Lumen Audio", description: "Source capability and readiness" });
+  await sourceDetails.getByRole("tab", { name: "Configuration" }).click();
+  await expect(sourceDetails.getByText("Access token")).toBeVisible();
+  await expect(sourceDetails.getByText("Stored", { exact: true })).toBeVisible();
+  await expect(sourceDetails.getByText("Region")).toBeVisible();
+  await expect(sourceDetails.getByText("ca", { exact: true })).toBeVisible();
+  await expect(sourceDetails.getByRole("button", { name: "Connect another account" })).toBeVisible();
+  await sourceDetails.getByRole("button", { name: "Edit configuration" }).click();
+  const sourceEditor = page.getByRole("dialog", { name: "Configure Lumen Audio" });
+  await expect(sourceEditor.getByRole("button", { name: "Region" })).toHaveText("ca");
+  await expect(sourceEditor.getByLabel("Access token")).toHaveValue("");
+  await page.keyboard.press("Escape");
   const disabledSource = page.locator(".sources-table tr").filter({ hasText: "Disabled Source" });
   const disabledStatus = disabledSource.locator(".operational-mobile-state");
   await expect(disabledStatus).toHaveText("Disabled");

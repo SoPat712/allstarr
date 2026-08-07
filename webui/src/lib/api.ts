@@ -386,6 +386,8 @@ export type ProviderAccount = {
   libraryScopeId?: string | null;
   enabled: boolean;
   revision: number;
+  configuration?: Record<string, unknown>;
+  configuredFields?: string[];
   secret: {
     configured: boolean;
     version?: number | null;

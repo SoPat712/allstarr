@@ -31,6 +31,9 @@
     choices.find((provider) => provider.id === (account?.providerId ?? providerId)) ?? choices[0],
   );
 
+  const currentSetting = (key: string, fallback: unknown) =>
+    account?.configuration?.[key] ?? fallback;
+
   $effect(() => {
     if (open && choices[0]) providerId = account?.providerId || initialProviderId || choices[0].id;
     if (!open) error = "";
@@ -121,14 +124,14 @@
               <label class="field" class:wide={accountSettings(selected).length === 1}>
                 <span>{field.label}</span>
                 {#if field.type === "select"}
-                  <SelectField name={field.key} label={field.label} value={String(settingDefault(field))} options={field.options ?? []} required={field.required} />
+                  <SelectField name={field.key} label={field.label} value={String(currentSetting(field.key, settingDefault(field)))} options={field.options ?? []} required={field.required} />
                 {:else if field.type === "toggle"}
-                  <input name={field.key} type="checkbox" checked={settingDefault(field) === true} />
+                  <input name={field.key} type="checkbox" checked={currentSetting(field.key, settingDefault(field)) === true} />
                 {:else}
                   <input
                     name={field.key}
                     type={field.sensitive ? "password" : field.type === "number" ? "number" : field.type === "url" ? "url" : "text"}
-                    value={String(settingDefault(field))}
+                    value={field.sensitive ? "" : String(currentSetting(field.key, settingDefault(field)))}
                     required={field.required}
                     autocomplete={field.key === "username" ? "username" : field.key === "password" ? "current-password" : "off"}
                   />

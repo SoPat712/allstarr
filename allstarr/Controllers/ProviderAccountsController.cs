@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
 using allstarr.Core.Secrets;
 using allstarr.Core.Storage;
@@ -22,17 +23,20 @@ public sealed partial class ProviderAccountsController : ControllerBase
     private readonly EncryptedSecretStore _secretStore;
     private readonly IApplicationCache _cache;
     private readonly ProviderAccountManagementMode _managementMode;
+    private readonly IProviderRegistry? _providerRegistry;
 
     public ProviderAccountsController(
         IDbContextFactory<AllstarrDbContext> contextFactory,
         EncryptedSecretStore secretStore,
         IApplicationCache cache,
-        ProviderAccountManagementOptions managementOptions)
+        ProviderAccountManagementOptions managementOptions,
+        IProviderRegistry? providerRegistry = null)
     {
         _contextFactory = contextFactory;
         _secretStore = secretStore;
         _cache = cache;
         _managementMode = managementOptions.ParseManagementMode();
+        _providerRegistry = providerRegistry;
     }
 
     [HttpGet]
@@ -81,6 +85,12 @@ public sealed partial class ProviderAccountsController : ControllerBase
                 .Select(item => new { item.Id, item.DisplayName })
                 .ToListAsync(cancellationToken)
             : [];
+        var configurations = await ReadAccountConfigurationsAsync(
+            accounts.Where(account => account.SecretReferenceId.HasValue &&
+                                      secrets.TryGetValue(account.SecretReferenceId.Value, out var secret) &&
+                                      !secret.RevokedAt.HasValue)
+                .ToList(),
+            cancellationToken);
         return Ok(new
         {
             managementMode = _managementMode.ToString(),
@@ -92,7 +102,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
                     ? secret
                     : null,
                 account.OwnerUserId.HasValue ? users.GetValueOrDefault(account.OwnerUserId.Value) : null,
-                account.CreatedByUserId.HasValue ? users.GetValueOrDefault(account.CreatedByUserId.Value) : null))
+                account.CreatedByUserId.HasValue ? users.GetValueOrDefault(account.CreatedByUserId.Value) : null,
+                configurations.GetValueOrDefault(account.Id)))
         });
     }
 
@@ -256,7 +267,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             return NotFound();
         }
 
-        var bytes = Encoding.UTF8.GetBytes(request.Secret.GetRawText());
+        var bytes = await MergeProviderSecretAsync(account, request.Secret, cancellationToken);
         var secret = await _secretStore.StoreAsync(
             account.TenantId,
             $"provider-account:{account.ProviderId}:{account.Id:N}",
@@ -655,7 +666,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
         ProviderAccountRecord account,
         SecretReferenceRecord? secret,
         string? ownerDisplayName = null,
-        string? creatorDisplayName = null) => new
+        string? creatorDisplayName = null,
+        AccountConfigurationSummary? configuration = null) => new
         {
             account.Id,
             account.ProviderId,
@@ -670,6 +682,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
             account.LibraryScopeId,
             account.Enabled,
             account.Revision,
+            configuration = configuration?.Values ?? new Dictionary<string, JsonElement>(),
+            configuredFields = configuration?.ConfiguredFields ?? [],
             secret = new
             {
                 configured = account.SecretReferenceId.HasValue,
@@ -680,6 +694,99 @@ public sealed partial class ProviderAccountsController : ControllerBase
             account.CreatedAt,
             account.UpdatedAt
         };
+
+    private async Task<Dictionary<Guid, AccountConfigurationSummary>> ReadAccountConfigurationsAsync(
+        IReadOnlyList<ProviderAccountRecord> accounts,
+        CancellationToken cancellationToken)
+    {
+        var summaries = new Dictionary<Guid, AccountConfigurationSummary>();
+        if (_providerRegistry == null) return summaries;
+
+        foreach (var account in accounts.Where(item => item.SecretReferenceId.HasValue))
+        {
+            if (!_providerRegistry.TryGet(account.ProviderId, out var provider) ||
+                provider == null || provider.Settings.Count == 0)
+            {
+                continue;
+            }
+
+            using var lease = await _secretStore.OpenAsync(
+                account.SecretReferenceId!.Value,
+                SecretAccess(account),
+                cancellationToken);
+            using var document = JsonDocument.Parse(lease.Value);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) continue;
+
+            var values = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            var configured = new List<string>();
+            foreach (var setting in provider.Settings)
+            {
+                if (!document.RootElement.TryGetProperty(setting.Key, out var value) || !HasValue(value)) continue;
+                configured.Add(setting.Key);
+                if (setting.ValueKind != ProviderSettingValueKind.Secret)
+                    values[setting.Key] = value.Clone();
+            }
+
+            summaries[account.Id] = new AccountConfigurationSummary(values, configured);
+        }
+
+        return summaries;
+    }
+
+    private async Task<byte[]> MergeProviderSecretAsync(
+        ProviderAccountRecord account,
+        JsonElement replacement,
+        CancellationToken cancellationToken)
+    {
+        if (replacement.ValueKind != JsonValueKind.Object ||
+            !account.SecretReferenceId.HasValue ||
+            _providerRegistry == null ||
+            !_providerRegistry.TryGet(account.ProviderId, out var provider) ||
+            provider == null)
+        {
+            return Encoding.UTF8.GetBytes(replacement.GetRawText());
+        }
+
+        var secretKeys = provider.Settings
+            .Where(item => item.ValueKind == ProviderSettingValueKind.Secret)
+            .Select(item => item.Key)
+            .ToArray();
+        if (secretKeys.Length == 0) return Encoding.UTF8.GetBytes(replacement.GetRawText());
+
+        using var lease = await _secretStore.OpenAsync(
+            account.SecretReferenceId.Value,
+            SecretAccess(account),
+            cancellationToken);
+        using var current = JsonDocument.Parse(lease.Value);
+        if (current.RootElement.ValueKind != JsonValueKind.Object)
+            return Encoding.UTF8.GetBytes(replacement.GetRawText());
+
+        var values = replacement.EnumerateObject()
+            .ToDictionary(item => item.Name, item => item.Value.Clone(), StringComparer.Ordinal);
+        foreach (var key in secretKeys)
+        {
+            if ((!values.TryGetValue(key, out var value) || !HasValue(value)) &&
+                current.RootElement.TryGetProperty(key, out var existing))
+            {
+                values[key] = existing.Clone();
+            }
+        }
+
+        return JsonSerializer.SerializeToUtf8Bytes(values);
+    }
+
+    private static SecretAccessContext SecretAccess(ProviderAccountRecord account) =>
+        account.Scope == ProviderAccountScope.Global
+            ? new SecretAccessContext(null, AllowGlobal: true)
+            : new SecretAccessContext(account.TenantId);
+
+    private static bool HasValue(JsonElement value) =>
+        value.ValueKind != JsonValueKind.Null &&
+        (value.ValueKind != JsonValueKind.String || !string.IsNullOrWhiteSpace(value.GetString()));
+
+    private sealed record AccountConfigurationSummary(
+        IReadOnlyDictionary<string, JsonElement> Values,
+        IReadOnlyList<string> ConfiguredFields);
 
     private static string SourceDisplayName(ProviderAccountRecord account, string? creatorDisplayName)
     {
