@@ -15,6 +15,24 @@ namespace allstarr.Tests;
 public sealed class ExtensionCapabilityAdapterTests
 {
     [Fact]
+    public void StoredSpotiFlacDownloadManifest_GainsStreamingWithoutReinstallation()
+    {
+        const string stored = """
+            {"id":"spotiflac-demo","displayName":"Demo","version":"1.0.0","sdkVersion":"1","entryPoint":"index.js",
+             "capabilities":[{"kind":"Download","hooks":["checkAvailability","download"],"accountScopes":["User"],"accountRequired":true}],
+             "permissions":[],"compatibility":"spotiflac-v1"}
+            """;
+
+        var manifest = ExtensionSdkV1.ParseManifest(
+            SpotiFlacExtensionCompatibility.EnsureDownloadStreamingCapability(stored));
+
+        var streaming = Assert.Single(manifest.Capabilities,
+            item => item.Kind == ProviderCapabilityKind.Streaming);
+        Assert.True(streaming.AccountRequired);
+        Assert.Contains(ProviderAccountScope.User, streaming.AccountScopes);
+    }
+
+    [Fact]
     public void RepeatedExtensionRuntimeErrors_AreSanitizedAndDeduplicated()
     {
         const string manifest = """

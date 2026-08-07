@@ -187,7 +187,9 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     private async Task<RuntimeBuild> BuildRegistrationAsync(
         ExtensionPackageRecord package, CancellationToken cancellationToken)
     {
-        var manifest = ExtensionSdkV1.ParseManifest(package.ManifestJson);
+        var manifestJson = SpotiFlacExtensionCompatibility.EnsureDownloadStreamingCapability(
+            package.ManifestJson);
+        var manifest = ExtensionSdkV1.ParseManifest(manifestJson);
         if (!manifest.Id.Equals(package.ExtensionId, StringComparison.Ordinal) ||
             !manifest.Version.Equals(package.Version, StringComparison.Ordinal))
             throw new ExtensionSdkValidationException("Stored extension identity does not match its manifest.");
@@ -228,7 +230,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             (level, message) => _controlPlane.WriteLogAsync(package.Id, level, "runtime.log", message,
                 "extension-runtime", CancellationToken.None).GetAwaiter().GetResult(),
             (manifest.Settings ?? []).Select(setting => setting.Key).ToHashSet(StringComparer.Ordinal));
-        var sandbox = new ExtensionSandbox(package.PackagePath, package.ManifestJson,
+        var sandbox = new ExtensionSandbox(package.PackagePath, manifestJson,
             await File.ReadAllTextAsync(Path.Combine(package.PackagePath, manifest.EntryPoint), cancellationToken),
             _clients, _logger, permissions, Path.Combine(_runtimeRoot, manifest.Id),
             _sessionProtector);

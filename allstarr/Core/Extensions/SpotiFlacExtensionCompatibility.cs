@@ -26,6 +26,28 @@ public static class SpotiFlacExtensionCompatibility
                value.ValueKind == JsonValueKind.String && value.GetString() == Marker;
     }
 
+    public static string EnsureDownloadStreamingCapability(string normalizedJson)
+    {
+        if (!IsNormalizedManifest(normalizedJson)) return normalizedJson;
+        var root = JsonNode.Parse(normalizedJson)?.AsObject() ??
+                   throw new ExtensionSdkValidationException("SpotiFLAC manifest must be a JSON object.");
+        var capabilities = root["capabilities"]?.AsArray() ?? [];
+        if (capabilities.OfType<JsonObject>().Any(item =>
+                Text(item, "kind").Equals("Streaming", StringComparison.OrdinalIgnoreCase)))
+            return normalizedJson;
+        var download = capabilities.OfType<JsonObject>().SingleOrDefault(item =>
+            Text(item, "kind").Equals("Download", StringComparison.OrdinalIgnoreCase));
+        if (download == null) return normalizedJson;
+        capabilities.Add(new JsonObject
+        {
+            ["kind"] = "Streaming",
+            ["hooks"] = new JsonArray("getStreamLease", "probeStream"),
+            ["accountScopes"] = download["accountScopes"]?.DeepClone() ?? new JsonArray(),
+            ["accountRequired"] = download["accountRequired"]?.DeepClone() ?? false
+        });
+        return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+    }
+
     public static string NormalizeManifest(string originalJson, string indexJs)
     {
         var original = JsonNode.Parse(originalJson)?.AsObject() ??
