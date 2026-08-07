@@ -1749,11 +1749,19 @@ public class ExtensionHostBridge
 
     private void AddHeaders(HttpRequestMessage request, object? headersObj)
     {
-        if (headersObj is not Jint.Native.Object.ObjectInstance obj) return;
-        foreach (var prop in obj.GetOwnProperties())
+        var headers = headersObj switch
         {
-            var headerKey = prop.Key.ToString();
-            var headerVal = ResolveSecretMarkers(obj.Get(prop.Key).ToString());
+            Jint.Native.Object.ObjectInstance obj => obj.GetOwnProperties()
+                .Select(prop => new KeyValuePair<string, string>(
+                    prop.Key.ToString(), obj.Get(prop.Key).ToString())),
+            IDictionary<string, object?> values => values.Select(item =>
+                new KeyValuePair<string, string>(item.Key, item.Value?.ToString() ?? string.Empty)),
+            _ => []
+        };
+        foreach (var header in headers)
+        {
+            var headerKey = header.Key;
+            var headerVal = ResolveSecretMarkers(header.Value);
             if (string.IsNullOrEmpty(headerVal) || headerKey.Contains('\r') || headerKey.Contains('\n') ||
                 headerVal.Contains('\r') || headerVal.Contains('\n') ||
                 headerKey.Equals("Host", StringComparison.OrdinalIgnoreCase) ||

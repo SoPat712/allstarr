@@ -258,6 +258,33 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Fact]
+    public void SpotiFlacRuntimeAdapter_ForwardsHttpHeaders()
+    {
+        const string sourceManifest = """
+            {"name":"headers","displayName":"Headers","version":"1.0.0","description":"Fixture",
+             "type":["metadata_provider"],"permissions":{"network":["api.example.test"]}}
+            """;
+        const string script = """
+            registerExtension({customSearch:function(){
+              http.get('https://api.example.test/items',{Authorization:'Bearer expected',Origin:'https://example.test'});
+              return [];
+            }});
+            """;
+        var handler = new HeaderHandler();
+        var manifest = SpotiFlacExtensionCompatibility.NormalizeManifest(sourceManifest, script);
+        var permissions = new ExtensionRuntimePermissionSet(
+            new HashSet<string>(["https://api.example.test/"], StringComparer.Ordinal),
+            new HashSet<string>(), new HashSet<string>());
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(), manifest, script,
+            new HttpClientFactory(handler), NullLogger.Instance, permissions);
+
+        sandbox.InvokeJson("searchTracks", "{\"query\":\"Song\",\"page\":{\"limit\":1}}");
+
+        Assert.Equal("Bearer expected", handler.Authorization);
+        Assert.Equal("https://example.test", handler.Origin);
+    }
+
+    [Fact]
     public async Task SpotiFlacRuntimeAdapter_UsesKnownTrackMetadataForTimedLyrics()
     {
         const string sourceManifest = """
@@ -924,6 +951,24 @@ public sealed class ExtensionCapabilityAdapterTests
                 RequestMessage = request
             };
             return Task.FromResult(response);
+        }
+    }
+
+    private sealed class HeaderHandler : HttpMessageHandler
+    {
+        public string? Authorization { get; private set; }
+        public string? Origin { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Authorization = request.Headers.TryGetValues("Authorization", out var authorization)
+                ? authorization.Single() : null;
+            Origin = request.Headers.TryGetValues("Origin", out var origin) ? origin.Single() : null;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{}"),
+                RequestMessage = request
+            });
         }
     }
 
