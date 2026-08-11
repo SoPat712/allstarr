@@ -165,12 +165,15 @@ public class WebSocketProxyMiddleware
                 await sessionManager.RegisterProxiedWebSocketAsync(deviceId);
             }
 
-            // Start bidirectional proxying
-            var clientToServer = ProxyMessagesAsync(clientWebSocket, serverWebSocket, "Client→Server", context.RequestAborted);
-            var serverToClient = ProxyMessagesAsync(serverWebSocket, clientWebSocket, "Server→Client", context.RequestAborted);
+            // Start bidirectional proxying. When either side closes, cancel and await the
+            // other direction so no relay task survives the connection cleanup.
+            using var relayCancellation = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+            var clientToServer = ProxyMessagesAsync(clientWebSocket, serverWebSocket, "Client→Server", relayCancellation.Token);
+            var serverToClient = ProxyMessagesAsync(serverWebSocket, clientWebSocket, "Server→Client", relayCancellation.Token);
 
-            // Wait for either direction to complete
             await Task.WhenAny(clientToServer, serverToClient);
+            await relayCancellation.CancelAsync();
+            await Task.WhenAll(clientToServer, serverToClient);
 
             _logger.LogDebug("🔌 WEBSOCKET: WebSocket proxy connection closed");
         }
@@ -277,7 +280,7 @@ public class WebSocketProxyMiddleware
         return parts.Count > 0 ? "?" + string.Join("&", parts) : string.Empty;
     }
 
-    private async Task ProxyMessagesAsync(
+    internal async Task ProxyMessagesAsync(
         WebSocket source,
         WebSocket destination,
         string direction,

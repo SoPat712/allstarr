@@ -377,11 +377,46 @@ public static class JellyfinMusicEndpointPolicy
             return true;
         }
 
+        if (IsSessionRemoteControlRoute(method, path))
+        {
+            return true;
+        }
+
         return HttpMethods.IsPost(method) &&
                (path.Equals("sessions/playing", StringComparison.OrdinalIgnoreCase) ||
                 path.Equals("sessions/playing/progress", StringComparison.OrdinalIgnoreCase) ||
                 path.Equals("sessions/playing/stopped", StringComparison.OrdinalIgnoreCase) ||
-                path.Equals("sessions/playing/ping", StringComparison.OrdinalIgnoreCase));
+                path.Equals("sessions/playing/ping", StringComparison.OrdinalIgnoreCase) ||
+                path.Equals("sessions/viewing", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsSessionRemoteControlRoute(string method, string path)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length == 1 &&
+            segments[0].Equals("sessions", StringComparison.OrdinalIgnoreCase))
+        {
+            return HttpMethods.IsGet(method);
+        }
+
+        if (!HttpMethods.IsPost(method) || segments.Length is < 3 or > 4 ||
+            !segments[0].Equals("sessions", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(segments[1]))
+        {
+            return false;
+        }
+
+        if (segments.Length == 3)
+        {
+            return segments[2].Equals("command", StringComparison.OrdinalIgnoreCase) ||
+                   segments[2].Equals("message", StringComparison.OrdinalIgnoreCase) ||
+                   segments[2].Equals("playing", StringComparison.OrdinalIgnoreCase) ||
+                   segments[2].Equals("viewing", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return segments[2].Equals("command", StringComparison.OrdinalIgnoreCase) ||
+               segments[2].Equals("playing", StringComparison.OrdinalIgnoreCase) ||
+               segments[2].Equals("system", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsDirectMusicRoute(string method, string path)

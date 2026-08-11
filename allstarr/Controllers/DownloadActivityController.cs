@@ -45,6 +45,57 @@ public class DownloadActivityController : ControllerBase
         return Ok(allDownloads);
     }
 
+    [HttpGet("/api/admin/ui/now-playing")]
+    public async Task<IActionResult> GetNowPlaying(CancellationToken cancellationToken)
+    {
+        if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
+            value is not AdminAuthSession { IsAdministrator: true } session)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Administrator permissions required" });
+        }
+
+        var states = _playbackSources
+            .SelectMany(source => source.GetActivePlaybackStates(TimeSpan.FromMinutes(5)))
+            .Where(state => state.TenantId == session.TenantId)
+            .GroupBy(state => state.DeviceId, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderByDescending(state => state.LastActivity).First())
+            .OrderByDescending(state => state.LastActivity)
+            .ToList();
+        var items = new List<NowPlayingEntry>(states.Count);
+
+        foreach (var state in states)
+        {
+            var itemId = NormalizeExternalItemId(state.ItemId);
+            var metadata = await TryResolvePlaybackMetadataAsync(itemId, cancellationToken);
+            var duration = metadata?.DurationSeconds;
+            var position = (int)Math.Max(0, state.PositionTicks / TimeSpan.TicksPerSecond);
+            items.Add(new NowPlayingEntry
+            {
+                DeviceId = state.DeviceId,
+                UserId = state.UserId,
+                UserName = state.UserName ?? "Unknown listener",
+                AvatarUrl = string.IsNullOrWhiteSpace(state.BackendUserId)
+                    ? null
+                    : $"/api/admin/ui/users/{Uri.EscapeDataString(state.BackendUserId)}/avatar",
+                Client = state.Client ?? "Music client",
+                Device = state.Device,
+                ItemId = itemId,
+                Title = metadata?.Title ?? ResolvePlaybackTitle(itemId),
+                Artist = metadata?.Artist ?? "Unknown artist",
+                Album = metadata?.Album,
+                ProviderId = ResolvePlaybackProvider(itemId),
+                ArtworkUrl = string.IsNullOrWhiteSpace(metadata?.CoverArtUrl) ? null : ArtworkUrl(itemId),
+                PositionSeconds = position,
+                DurationSeconds = duration,
+                Progress = duration > 0 ? Math.Clamp(position / (double)duration.Value, 0d, 1d) : null,
+                LastActivity = state.LastActivity,
+                Scrobbled = _playbackDeliveries?.WasDelivered(itemId, state.DeviceId) == true
+            });
+        }
+
+        return Ok(new { items });
+    }
+
     [HttpGet("artwork/{itemId}")]
     public async Task<IActionResult> GetPlaybackArtwork(
         string itemId,
@@ -276,6 +327,27 @@ public class DownloadActivityController : ControllerBase
         public DateTime? PlaybackLastActivity { get; init; }
         public int? PlaybackPositionSeconds { get; init; }
         public double? PlaybackProgress { get; init; }
+        public bool Scrobbled { get; init; }
+    }
+
+    private sealed class NowPlayingEntry
+    {
+        public required string DeviceId { get; init; }
+        public Guid? UserId { get; init; }
+        public required string UserName { get; init; }
+        public string? AvatarUrl { get; init; }
+        public required string Client { get; init; }
+        public string? Device { get; init; }
+        public required string ItemId { get; init; }
+        public required string Title { get; init; }
+        public required string Artist { get; init; }
+        public string? Album { get; init; }
+        public required string ProviderId { get; init; }
+        public string? ArtworkUrl { get; init; }
+        public int PositionSeconds { get; init; }
+        public int? DurationSeconds { get; init; }
+        public double? Progress { get; init; }
+        public DateTime LastActivity { get; init; }
         public bool Scrobbled { get; init; }
     }
 }

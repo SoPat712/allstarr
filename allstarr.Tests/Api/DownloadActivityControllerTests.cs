@@ -2,6 +2,7 @@ using System.Text.Json;
 using allstarr.Controllers;
 using allstarr.Models.Download;
 using allstarr.Services;
+using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -103,6 +104,43 @@ public sealed class DownloadActivityControllerTests
     }
 
     [Fact]
+    public async Task NowPlaying_ProjectsUserClientSourceProgressAndScrobbleState()
+    {
+        var tenantId = Guid.CreateVersion7();
+        var userId = Guid.CreateVersion7();
+        var source = new StubPlaybackSource(new PlaybackActivityState(
+            "device-1",
+            "ext-deezer-song-123",
+            TimeSpan.FromSeconds(30).Ticks,
+            DateTime.UtcNow,
+            userId,
+            "backend-user-1",
+            "Josh",
+            "Feishin",
+            "Desktop",
+            tenantId));
+        var resolver = new StubMetadataResolver(
+            new PlaybackTrackMetadata("Rocket", "Artist", "Album", "/art", DurationSeconds: 120));
+        var deliveries = new PlaybackDeliveryActivityStore();
+        deliveries.MarkDelivered("ext-deezer-song-123", "device-1");
+        var controller = CreateController([], [source], [resolver], deliveries);
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = AdministratorSession(tenantId);
+
+        var result = await controller.GetNowPlaying(CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var item = Assert.Single(document.RootElement.GetProperty("items").EnumerateArray());
+        Assert.Equal(userId, item.GetProperty("UserId").GetGuid());
+        Assert.Equal("Josh", item.GetProperty("UserName").GetString());
+        Assert.Equal("Feishin", item.GetProperty("Client").GetString());
+        Assert.Equal("deezer", item.GetProperty("ProviderId").GetString());
+        Assert.Equal(0.25, item.GetProperty("Progress").GetDouble());
+        Assert.True(item.GetProperty("Scrobbled").GetBoolean());
+        Assert.Equal("/api/admin/ui/users/backend-user-1/avatar", item.GetProperty("AvatarUrl").GetString());
+    }
+
+    [Fact]
     public async Task Artwork_IsServedThroughProtectedAdminControllerAdapter()
     {
         var resolver = new StubMetadataResolver(
@@ -140,6 +178,18 @@ public sealed class DownloadActivityControllerTests
         };
         return controller;
     }
+
+    private static AdminAuthSession AdministratorSession(Guid tenantId) => new()
+    {
+        SessionId = "session",
+        UserId = "admin",
+        UserName = "Admin",
+        IsAdministrator = true,
+        TenantId = tenantId,
+        JellyfinAccessToken = "token",
+        ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
+        LastSeenUtc = DateTime.UtcNow
+    };
 
     private sealed class StubPlaybackSource(params PlaybackActivityState[] states)
         : IPlaybackActivitySource

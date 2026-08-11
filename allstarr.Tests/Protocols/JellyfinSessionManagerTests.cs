@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Configuration;
+using allstarr.Core.Identity;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
@@ -119,7 +120,15 @@ public class JellyfinSessionManagerTests
                 "MediaBrowser Client=\"Feishin\", Device=\"Desktop\", DeviceId=\"dev-123\", Version=\"1.0\", Token=\"abc\""
         };
 
-        var ensured = await manager.EnsureSessionAsync("dev-123", "Feishin", "Desktop", "1.0", headers);
+        var tenantId = Guid.CreateVersion7();
+        var userId = Guid.CreateVersion7();
+        var ensured = await manager.EnsureSessionAsync(
+            "dev-123",
+            "Feishin",
+            "Desktop",
+            "1.0",
+            headers,
+            new AllstarrPrincipal(tenantId, userId, "jellyfin", "main", "backend-user-1", "Josh", false));
         Assert.True(ensured);
 
         manager.UpdatePlayingItem("dev-123", "ext-squidwtf-song-35734823", 45 * TimeSpan.TicksPerSecond);
@@ -130,6 +139,12 @@ public class JellyfinSessionManagerTests
         Assert.Equal("dev-123", state.DeviceId);
         Assert.Equal("ext-squidwtf-song-35734823", state.ItemId);
         Assert.Equal(45 * TimeSpan.TicksPerSecond, state.PositionTicks);
+        Assert.Equal(userId, state.UserId);
+        Assert.Equal("backend-user-1", state.BackendUserId);
+        Assert.Equal("Josh", state.UserName);
+        Assert.Equal("Feishin", state.Client);
+        Assert.Equal("Desktop", state.Device);
+        Assert.Equal(tenantId, state.TenantId);
     }
 
     [Fact]

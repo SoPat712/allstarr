@@ -12,7 +12,13 @@ public sealed class JellyfinPlaybackActivitySource(JellyfinSessionManager sessio
                 state.DeviceId,
                 state.ItemId,
                 state.PositionTicks,
-                state.LastActivity))
+                state.LastActivity,
+                state.UserId,
+                state.BackendUserId,
+                state.UserName,
+                state.Client,
+                state.Device,
+                state.TenantId))
             .ToList();
     }
 }

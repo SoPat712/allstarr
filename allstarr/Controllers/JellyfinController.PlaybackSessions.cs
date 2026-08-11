@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Globalization;
+using allstarr.Core.Identity;
 using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
 using allstarr.Services.Common;
@@ -145,7 +146,8 @@ public partial class JellyfinController
                                 client ?? "Unknown",
                                 device ?? "Unknown",
                                 version ?? "1.0",
-                                Request.Headers);
+                                Request.Headers,
+                                CurrentPlaybackPrincipal());
 
                             if (!ensured)
                             {
@@ -355,7 +357,7 @@ public partial class JellyfinController
                 if (!isExt)
                 {
                     var sessionCreated = await _sessionManager.EnsureSessionAsync(deviceId, client ?? "Unknown",
-                        device ?? "Unknown", version ?? "1.0", Request.Headers);
+                        device ?? "Unknown", version ?? "1.0", Request.Headers, CurrentPlaybackPrincipal());
                     if (sessionCreated)
                     {
                         _sessionManager.UpdateActivity(deviceId);
@@ -439,7 +441,8 @@ public partial class JellyfinController
                                 client ?? "Unknown",
                                 device ?? "Unknown",
                                 version ?? "1.0",
-                                Request.Headers);
+                                Request.Headers,
+                                CurrentPlaybackPrincipal());
 
                             if (!ensured)
                             {
@@ -573,7 +576,8 @@ public partial class JellyfinController
                             client ?? "Unknown",
                             device ?? "Unknown",
                             version ?? "1.0",
-                            Request.Headers);
+                            Request.Headers,
+                            CurrentPlaybackPrincipal());
 
                         if (!ensured)
                         {
@@ -896,6 +900,11 @@ public partial class JellyfinController
 
         return _settings.UserId;
     }
+
+    private AllstarrPrincipal? CurrentPlaybackPrincipal() =>
+        HttpContext.Items.TryGetValue(BackendIdentityResolver.HttpContextPrincipalItemKey, out var value)
+            ? value as AllstarrPrincipal
+            : null;
 
     private string? ResolveDeviceId(string? parsedDeviceId, JsonElement? payload = null)
     {
@@ -1238,65 +1247,8 @@ public partial class JellyfinController
     [HttpDelete("Sessions/{**path}")]
     public async Task<IActionResult> ProxySessionRequest(string? path = null)
     {
-        try
-        {
-            var method = Request.Method;
-            var queryString = Request.QueryString.HasValue ? Request.QueryString.Value : "";
-            var endpoint = string.IsNullOrEmpty(path) ? $"Sessions{queryString}" : $"Sessions/{path}{queryString}";
-            var maskedQueryString = MaskSensitiveQueryString(queryString);
-            var logEndpoint = string.IsNullOrEmpty(path)
-                ? $"Sessions{maskedQueryString}"
-                : $"Sessions/{path}{maskedQueryString}";
-
-            _logger.LogDebug("🔄 Proxying session request: {Method} {Endpoint}", method, logEndpoint);
-            _logger.LogDebug("Session proxy auth header keys: {HeaderKeys}",
-                string.Join(", ", Request.Headers.Keys.Where(h =>
-                    h.Contains("Auth", StringComparison.OrdinalIgnoreCase))));
-
-            // Read body if present. Preserve true empty-body requests because Jellyfin
-            // uses several POST session-control endpoints with query params only.
-            string? body = null;
-            var hasRequestBody = !HttpMethods.IsGet(method) &&
-                                 (Request.ContentLength.GetValueOrDefault() > 0 ||
-                                  Request.Headers.ContainsKey("Transfer-Encoding"));
-
-            if (hasRequestBody)
-            {
-                Request.EnableBuffering();
-                using (var reader = new StreamReader(Request.Body, System.Text.Encoding.UTF8,
-                           detectEncodingFromByteOrderMarks: false, bufferSize: 1024, leaveOpen: true))
-                {
-                    body = await reader.ReadToEndAsync();
-                }
-
-                Request.Body.Position = 0;
-                _logger.LogDebug("Session proxy body length: {BodyLength} bytes", body.Length);
-            }
-
-            // Forward to Jellyfin
-            var (result, statusCode) = method switch
-            {
-                "GET" => await _proxyService.GetJsonAsync(endpoint, null, Request.Headers),
-                "POST" => await _proxyService.SendAsync(HttpMethod.Post, endpoint, body, Request.Headers, Request.ContentType),
-                "PUT" => await _proxyService.SendAsync(HttpMethod.Put, endpoint, body, Request.Headers, Request.ContentType),
-                "DELETE" => await _proxyService.SendAsync(HttpMethod.Delete, endpoint, body, Request.Headers, Request.ContentType),
-                _ => (null, 405)
-            };
-
-            if (result != null)
-            {
-                _logger.LogDebug("✓ Session request proxied successfully ({StatusCode})", statusCode);
-                return new JsonResult(result.RootElement.Clone());
-            }
-
-            _logger.LogDebug("✓ Session request proxied ({StatusCode}, no body)", statusCode);
-            return StatusCode(statusCode);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to proxy session request: {Path}", path);
-            return StatusCode(500);
-        }
+        var endpoint = string.IsNullOrEmpty(path) ? "Sessions" : $"Sessions/{path}";
+        return await RelayCurrentRequestAsync(endpoint);
     }
 
     private static long? ParseOptionalInt64(JsonElement value)

@@ -136,6 +136,26 @@ export type ProviderSummary = {
   lastFailureCode?: string | null;
 };
 
+export type NowPlayingItem = {
+  deviceId: string;
+  userId?: string | null;
+  userName: string;
+  avatarUrl?: string | null;
+  client: string;
+  device?: string | null;
+  itemId: string;
+  title: string;
+  artist: string;
+  album?: string | null;
+  providerId: string;
+  artworkUrl?: string | null;
+  positionSeconds: number;
+  durationSeconds?: number | null;
+  progress?: number | null;
+  lastActivity: string;
+  scrobbled: boolean;
+};
+
 export type ProviderSetting = {
   key: string;
   label: string;
@@ -1289,6 +1309,7 @@ export const home = {
     }),
   activity: () => json<ActivityResponse>("/api/admin/ui/activity?limit=8"),
   providers: () => json<{ providers: ProviderSummary[] }>("/api/admin/ui/provider-summaries"),
+  nowPlaying: () => json<{ items: NowPlayingItem[] }>("/api/admin/ui/now-playing"),
 };
 
 export const sources = {

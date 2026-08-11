@@ -3386,6 +3386,71 @@ public sealed class ProtocolRouteFixtureTests
         }
     }
 
+    [Fact]
+    public async Task JellyfinSessionControlRelay_PreservesFullResponseAndCommandBody()
+    {
+        const string sessionsBody = """
+            [ { "Id": "session-1", "UserId": "user-1", "UnknownFutureField": { "Keep": true } } ]
+            """;
+        const string commandBody = """{ "Name": "DisplayMessage", "Arguments": { "Text": "hello" } }""";
+        var observed = new List<ObservedRequest>();
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            observed.Add(Observe(request));
+            if (request.RequestUri!.AbsolutePath == "/Users/Me")
+            {
+                return Json(StatusCodes.Status200OK, """{"Id":"user-1"}""");
+            }
+
+            if (request.RequestUri.AbsolutePath == "/Sessions")
+            {
+                var content = new ByteArrayContent(Encoding.UTF8.GetBytes(sessionsBody));
+                content.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(
+                    "application/json; charset=utf-8");
+                var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+                response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"sessions-1\"");
+                return response;
+            }
+
+            if (request.RequestUri.AbsolutePath == "/Sessions/session-1/Command")
+            {
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            }
+
+            throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}");
+        });
+        using var client = factory.CreateClient();
+
+        using var sessionsRequest = new HttpRequestMessage(
+            HttpMethod.Get,
+            "/Sessions?ControllableByUserId=user-1");
+        sessionsRequest.Headers.TryAddWithoutValidation(
+            "X-Emby-Authorization",
+            "MediaBrowser Client=\"Fixture\", Device=\"Tests\", DeviceId=\"test-1\", Version=\"1\", UserId=\"user-1\", Token=\"fixture-token\"");
+        using var sessionsResponse = await client.SendAsync(sessionsRequest);
+
+        Assert.Equal(HttpStatusCode.OK, sessionsResponse.StatusCode);
+        Assert.Equal(sessionsBody, await sessionsResponse.Content.ReadAsStringAsync());
+        Assert.Equal("application/json", sessionsResponse.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("\"sessions-1\"", sessionsResponse.Headers.ETag?.Tag);
+
+        using var commandRequest = new HttpRequestMessage(HttpMethod.Post, "/Sessions/session-1/Command")
+        {
+            Content = new StringContent(commandBody, Encoding.UTF8, "application/json")
+        };
+        commandRequest.Headers.TryAddWithoutValidation(
+            "X-Emby-Authorization",
+            "MediaBrowser Client=\"Fixture\", Device=\"Tests\", DeviceId=\"test-1\", Version=\"1\", UserId=\"user-1\", Token=\"fixture-token\"");
+        using var commandResponse = await client.SendAsync(commandRequest);
+
+        Assert.Equal(HttpStatusCode.NoContent, commandResponse.StatusCode);
+        Assert.Equal(
+            ["/Users/Me", "/Sessions?ControllableByUserId=user-1", "/Users/Me", "/Sessions/session-1/Command"],
+            observed.Select(item => item.PathAndQuery));
+        Assert.Equal(commandBody, observed[^1].Body);
+        Assert.Equal("application/json; charset=utf-8", observed[^1].ContentType);
+    }
+
     [Theory]
     [InlineData("Jellyfin", "/Audio/local-song/stream?api_key=fixture-key")]
     [InlineData("Subsonic", "/rest/stream.view?u=fixture&p=fixture-password&v=1.16.1&c=fixture&id=local-song")]
@@ -3462,7 +3527,8 @@ public sealed class ProtocolRouteFixtureTests
     private static ObservedRequest Observe(HttpRequestMessage request) => new(
         request.Method.Method,
         request.RequestUri!.PathAndQuery,
-        request.Content?.ReadAsStringAsync().GetAwaiter().GetResult());
+        request.Content?.ReadAsStringAsync().GetAwaiter().GetResult(),
+        request.Content?.Headers.ContentType?.ToString());
 
     private static void AssertObservedRequest(JsonElement expected, ObservedRequest actual)
     {
@@ -3494,7 +3560,11 @@ public sealed class ProtocolRouteFixtureTests
     private static string CanonicalJson(JsonElement value) =>
         JsonSerializer.Serialize(JsonSerializer.Deserialize<object>(value.GetRawText()));
 
-    private sealed record ObservedRequest(string Method, string PathAndQuery, string? Body);
+    private sealed record ObservedRequest(
+        string Method,
+        string PathAndQuery,
+        string? Body,
+        string? ContentType = null);
 
     private sealed class FixedPlaylistMutationResolver(SubsonicPlaylistMutationRoute? route)
         : ISubsonicPlaylistMutationResolver

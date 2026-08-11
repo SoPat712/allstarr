@@ -4,7 +4,9 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
+using allstarr.Core.Identity;
 using allstarr.Models.Settings;
+using allstarr.Services.Common;
 
 namespace allstarr.Services.Jellyfin;
 
@@ -44,6 +46,15 @@ public class JellyfinSessionManager : IDisposable
     /// Returns false if token is expired (401), indicating client needs to re-authenticate.
     /// </summary>
     public async Task<bool> EnsureSessionAsync(string deviceId, string client, string device, string version, IHeaderDictionary headers)
+        => await EnsureSessionAsync(deviceId, client, device, version, headers, null);
+
+    public async Task<bool> EnsureSessionAsync(
+        string deviceId,
+        string client,
+        string device,
+        string version,
+        IHeaderDictionary headers,
+        AllstarrPrincipal? principal)
     {
         if (string.IsNullOrEmpty(deviceId))
         {
@@ -62,6 +73,10 @@ public class JellyfinSessionManager : IDisposable
             {
                 existingSession.LastActivity = DateTime.UtcNow;
                 existingSession.HasProxiedWebSocket = hasProxiedWebSocket;
+                existingSession.UserId ??= principal?.UserId;
+                existingSession.TenantId ??= principal?.TenantId;
+                existingSession.BackendUserId ??= principal?.BackendPrincipalId ?? AuthHeaderHelper.ExtractUserId(headers);
+                existingSession.UserName ??= principal?.DisplayName;
                 _logger.LogInformation("Session already exists for device {DeviceId}", deviceId);
 
                 if (!hasProxiedWebSocket)
@@ -123,7 +138,11 @@ public class JellyfinSessionManager : IDisposable
                 LastActivity = DateTime.UtcNow,
                 Headers = CloneHeaders(headers),
                 ClientIp = clientIp,
-                HasProxiedWebSocket = hasProxiedWebSocket
+                HasProxiedWebSocket = hasProxiedWebSocket,
+                TenantId = principal?.TenantId,
+                UserId = principal?.UserId,
+                BackendUserId = principal?.BackendPrincipalId ?? AuthHeaderHelper.ExtractUserId(headers),
+                UserName = principal?.DisplayName
             };
 
             // Start a synthetic WebSocket connection only when the client itself does not
@@ -377,7 +396,13 @@ public class JellyfinSessionManager : IDisposable
                 session.DeviceId,
                 session.LastPlayingItemId!,
                 session.LastPlayingPositionTicks ?? 0,
-                session.LastActivity))
+                session.LastActivity,
+                session.UserId,
+                session.BackendUserId,
+                session.UserName,
+                session.Client,
+                session.Device,
+                session.TenantId))
             .ToList();
     }
 
@@ -802,13 +827,23 @@ public class JellyfinSessionManager : IDisposable
         public string? LastExplicitStopItemId { get; set; }
         public DateTime? LastExplicitStopAtUtc { get; set; }
         public bool HasProxiedWebSocket { get; set; }
+        public Guid? TenantId { get; set; }
+        public Guid? UserId { get; set; }
+        public string? BackendUserId { get; set; }
+        public string? UserName { get; set; }
     }
 
     public sealed record ActivePlaybackState(
         string DeviceId,
         string ItemId,
         long PositionTicks,
-        DateTime LastActivity);
+        DateTime LastActivity,
+        Guid? UserId = null,
+        string? BackendUserId = null,
+        string? UserName = null,
+        string? Client = null,
+        string? Device = null,
+        Guid? TenantId = null);
 
     private enum CapabilitiesPostResult
     {

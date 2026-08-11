@@ -119,6 +119,16 @@ const responses: Record<string, unknown> = {
       failedCapabilityCount: 0, lastCheckedAt: "2026-01-01",
     }],
   },
+  "/api/admin/ui/now-playing": {
+    items: [{
+      deviceId: "device-1", userId: "user-1", userName: "Tester",
+      avatarUrl: null, client: "Feishin", device: "Desktop",
+      itemId: "ext-lumen-audio-song-1", title: "Rocket", artist: "Beyoncé",
+      album: "Act II", providerId: "lumen-audio", artworkUrl: null,
+      positionSeconds: 30, durationSeconds: 120, progress: 0.25,
+      lastActivity: "2026-01-01", scrobbled: false,
+    }],
+  },
   "/api/admin/playlist-links": {
     playlistLinks: [{
       id: "playlist-link", enabled: true, name: "Test playlist",
@@ -668,7 +678,7 @@ const routes = [
 const stateRoutes = [
   ["#/", "Home", "Loading Home", "/api/admin/status", [
     "/api/admin/ui/schema", "/api/admin/status", "/api/admin/playlists", "/api/admin/playlist-links", "/api/admin/jobs",
-    "/api/admin/ui/activity", "/api/admin/ui/provider-summaries",
+    "/api/admin/ui/activity", "/api/admin/ui/provider-summaries", "/api/admin/ui/now-playing",
   ]],
   ["#/library/playlists", "Library", "Loading playlists", "/api/admin/playlist-links", ["/api/admin/playlist-links"]],
   ["#/library/mappings", "Library", "Loading match review", "/api/admin/track-matches", ["/api/admin/track-matches"]],
@@ -1315,6 +1325,11 @@ test("Home stays inside runtime and request budgets", async ({ page }) => {
   await expect(page.getByText("Playlist Check", { exact: true })).toBeVisible();
   await expect(page.locator(".provider-line .provider-mark")).toBeVisible();
   await expect(page.locator(".activity-line .activity-artwork")).toHaveText("≡");
+  const nowPlaying = page.getByRole("region", { name: "Now playing" });
+  await expect(nowPlaying).toContainText("Rocket");
+  await expect(nowPlaying.getByText("Tester", { exact: true })).toBeVisible();
+  await expect(nowPlaying.getByText("Feishin · Desktop", { exact: true })).toBeVisible();
+  await expect(nowPlaying.locator(".scrobble-state")).toContainText("Not scrobbled");
 
   const apiRequests = requests.filter((path) => path.startsWith("/api/admin/"));
   const jsRequests = requests.filter((path) => path.endsWith(".js"));

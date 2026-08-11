@@ -4,7 +4,13 @@ public sealed record PlaybackActivityState(
     string DeviceId,
     string ItemId,
     long PositionTicks,
-    DateTime LastActivity);
+    DateTime LastActivity,
+    Guid? UserId = null,
+    string? BackendUserId = null,
+    string? UserName = null,
+    string? Client = null,
+    string? Device = null,
+    Guid? TenantId = null);
 
 public sealed record PlaybackTrackMetadata(
     string Title,

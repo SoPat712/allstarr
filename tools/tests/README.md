@@ -11,8 +11,9 @@ The reusable Jellyfin kit has deterministic and live layers:
 - `jellyfin-openapi-10.11-qualification.json` records the complete delta from
   12.0, including legacy audio HLS and query-form artist instant-mix routes.
 - `live_jellyfin_smoke.sh` compares a real Jellyfin instance directly with
-  Allstarr. It covers bootstrap and authentication, native structural/stable
-  data parity, non-empty virtual playlist projections with client-indexable
+  Allstarr. It covers bootstrap and authentication, exact native profile,
+  browse, detail, search, filter, playlist, artwork, and lyrics parity; stable
+  remote-session parity; non-empty virtual playlist projections with client-indexable
   track/artist/album fields, exact full-object parity between every matched
   injected entry and its original Jellyfin item (apart from playlist context
   and source labels), metadata-only visibility for unmatched source rows,
@@ -92,7 +93,9 @@ each unperformed stateful class.
 `structural-parity` compares recursive JSON field types. `declared-diff`
 prints native-versus-synthesized differences that are expected and reviewed.
 The `full objects` checks compare every native field and nested/unknown value after only the
-documented identity normalization required by that route.
+documented identity normalization required by that route. Native collection checks request the
+same complete field set from Jellyfin and fail when Allstarr drops a field, adds a field, changes
+a value or type, or changes any nested value.
 `BLOCKED` lines name qualification that was not performed rather than silently
 counting it as passed.
 

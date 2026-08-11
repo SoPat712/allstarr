@@ -1,6 +1,7 @@
 import type {
   ActivityItem,
   Job,
+  NowPlayingItem,
   PlaylistLink,
   PlaylistResponse,
   ProviderDefinition,
@@ -16,6 +17,7 @@ export type HomeSnapshot = {
   jobs?: Job[];
   activity?: ActivityItem[];
   providers?: ProviderSummary[];
+  nowPlaying?: NowPlayingItem[];
   failures: string[];
 };
 

@@ -569,6 +569,36 @@ compare_projection() {
     fi
 }
 
+compare_binary() {
+    local label="$1" direct_url="$2" allstarr_url="$3"
+    local direct_result allstarr_result direct_code direct_type direct_bytes
+    local allstarr_code allstarr_type allstarr_bytes signature
+    : >"$direct_media_file"
+    : >"$allstarr_media_file"
+    : >"$direct_headers_file"
+    : >"$allstarr_headers_file"
+    direct_result="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
+        -D "$direct_headers_file" -o "$direct_media_file" \
+        -w '%{http_code}\t%{content_type}\t%{size_download}' "$direct_url" || true)"
+    allstarr_result="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
+        -D "$allstarr_headers_file" -o "$allstarr_media_file" \
+        -w '%{http_code}\t%{content_type}\t%{size_download}' "$allstarr_url" || true)"
+    IFS=$'\t' read -r direct_code direct_type direct_bytes <<<"$direct_result"
+    IFS=$'\t' read -r allstarr_code allstarr_type allstarr_bytes <<<"$allstarr_result"
+    checks=$((checks + 1))
+    if [[ "$direct_code" == 200 && "$allstarr_code" == 200 &&
+          "$direct_type" == "$allstarr_type" && "$direct_bytes" == "$allstarr_bytes" &&
+          "${direct_bytes%.*}" -gt 0 ]] && cmp -s "$direct_media_file" "$allstarr_media_file"; then
+        signature="$("${sha256_command[@]}" "$allstarr_media_file" | awk '{print $1}')"
+        printf 'PASS %-34s bytes=%s sha256=%s\n' "$label" "$allstarr_bytes" "$signature"
+    else
+        printf 'FAIL %-34s direct=%s/%s/%s allstarr=%s/%s/%s\n' \
+            "$label" "$direct_code" "$direct_type" "$direct_bytes" \
+            "$allstarr_code" "$allstarr_type" "$allstarr_bytes"
+        failures=$((failures + 1))
+    fi
+}
+
 compare_native_collection_items() {
     local label="$1" allstarr_url="$2" filter="${3:-.Items}"
     local item item_id item_count=0 invalid_count=0
@@ -583,17 +613,24 @@ compare_native_collection_items() {
         item_count=$((item_count + 1))
         item_id="$(jq -r '.Id // empty' <<<"$item")"
         if [[ -z "$item_id" || "$item_id" == ext-* || "$item_id" == allstarr-unresolved-* ]] ||
-           ! curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
-                "$DIRECT_BASE/Users/$best_user_id/Items?Ids=$item_id&Limit=1" |
+           ! curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" --get \
+                --data-urlencode "Ids=$item_id" \
+                --data-urlencode "UserId=$best_user_id" \
+                --data-urlencode "Fields=$full_item_fields" \
+                --data-urlencode "EnableImages=true" \
+                --data-urlencode "EnableUserData=true" \
+                --data-urlencode "Limit=1" \
+                "$DIRECT_BASE/Items" |
                 jq -S '.Items[0]' >"$direct_shape_file"; then
             invalid_count=$((invalid_count + 1))
             continue
         fi
         jq -S . <<<"$item" >"$response_file"
         if ! jq -ne --slurpfile actual "$response_file" --slurpfile direct "$direct_shape_file" '
-            ($actual[0] | keys_unsorted) as $keys |
-            ($direct[0] | with_entries(select(.key as $key | $keys | index($key)))) == $actual[0]
+            $actual[0] == $direct[0]
             ' >/dev/null; then
+            printf 'DIFF %-34s item=%s\n' "$label" "$item_id"
+            diff -u "$direct_shape_file" "$response_file" | sed -n '1,80p' || true
             invalid_count=$((invalid_count + 1))
         fi
     done <"$allstarr_shape_file"
@@ -1071,11 +1108,31 @@ fi
 
 check_json "current user profile" "$ALLSTARR_BASE/Users/$best_user_id" \
     '.Id != null and (.Policy.IsDisabled | type == "boolean")'
+compare_projection "current user exact object" \
+    "$DIRECT_BASE/Users/$best_user_id" \
+    "$ALLSTARR_BASE/Users/$best_user_id" \
+    '.'
+if [[ "$actor_bound" == 1 ]]; then
+    compare_projection "current actor exact object" \
+        "$DIRECT_BASE/Users/Me" \
+        "$ALLSTARR_BASE/Users/Me" \
+        '.'
+fi
 check_json "authenticated system info" "$ALLSTARR_BASE/System/Info" \
     '(.Id | type == "string" and length > 0) and (.Version | type == "string" and length > 0)'
 check_json "request endpoint info" "$ALLSTARR_BASE/System/Endpoint" 'type == "object"'
 check_json "view grouping options" "$ALLSTARR_BASE/UserViews/GroupingOptions?UserId=$best_user_id" \
     'type == "array"'
+compare_projection "view grouping exact data" \
+    "$DIRECT_BASE/UserViews/GroupingOptions?UserId=$best_user_id" \
+    "$ALLSTARR_BASE/UserViews/GroupingOptions?UserId=$best_user_id" \
+    '.'
+check_json "remote-control sessions" "$ALLSTARR_BASE/Sessions?ControllableByUserId=$best_user_id" \
+    'type == "array" and all(.[]; (.Id | type == "string" and length > 0))'
+compare_projection "remote sessions stable data" \
+    "$DIRECT_BASE/Sessions?ControllableByUserId=$best_user_id" \
+    "$ALLSTARR_BASE/Sessions?ControllableByUserId=$best_user_id" \
+    '[.[] | {Id,UserId,UserName,Client,DeviceId,DeviceName,ApplicationVersion,SupportsRemoteControl,Capabilities}] | sort_by(.Id)'
 check_json "audio browse shape" "$ALLSTARR_BASE/Users/$best_user_id/Items?$items_query" \
     '(.Items | type == "array") and (.TotalRecordCount | type == "number") and all(.Items[]; .Type == "Audio")'
 check_json "audio recursive DTO IDs" "$ALLSTARR_BASE/Users/$best_user_id/Items?$items_query" \
@@ -1099,7 +1156,15 @@ if [[ -n "$artist_id" ]]; then
         '.'
 fi
 check_json "item filters" "$ALLSTARR_BASE/Items/Filters?UserId=$best_user_id" 'type == "object"'
+compare_projection "item filters exact data" \
+    "$DIRECT_BASE/Items/Filters?UserId=$best_user_id" \
+    "$ALLSTARR_BASE/Items/Filters?UserId=$best_user_id" \
+    '.'
 check_json "item filters2" "$ALLSTARR_BASE/Items/Filters2?UserId=$best_user_id" 'type == "object"'
+compare_projection "item filters2 exact data" \
+    "$DIRECT_BASE/Items/Filters2?UserId=$best_user_id" \
+    "$ALLSTARR_BASE/Items/Filters2?UserId=$best_user_id" \
+    '.'
 check_json "genres browse" "$ALLSTARR_BASE/Genres?UserId=$best_user_id&Limit=10" \
     '(.Items | type == "array") and all(.Items[]; .Type == "Genre")'
 check_json "latest music only" "$ALLSTARR_BASE/Items/Latest?UserId=$best_user_id&Limit=10" \
@@ -1134,7 +1199,7 @@ check_json "similar music" "$ALLSTARR_BASE/Items/$media_id/Similar?UserId=$best_
      .StartIndex == 0 and
      all(.Items[]; (.Type == "Audio" or .Type == "MusicAlbum" or .Type == "MusicArtist"))'
 compare_native_collection_items "similar full native objects" \
-    "$ALLSTARR_BASE/Items/$media_id/Similar?UserId=$best_user_id&Limit=10" \
+    "$ALLSTARR_BASE/Items/$media_id/Similar?UserId=$best_user_id&Limit=10&Fields=$full_item_fields&EnableImages=true&EnableUserData=true" \
     '[.Items[] | select(.Type == "Audio" or .Type == "MusicAlbum" or .Type == "MusicArtist")]'
 check_json "instant mix" "$ALLSTARR_BASE/Songs/$media_id/InstantMix?UserId=$best_user_id&Limit=10" \
     '(.Items | type == "array") and
@@ -1142,7 +1207,7 @@ check_json "instant mix" "$ALLSTARR_BASE/Songs/$media_id/InstantMix?UserId=$best
      .StartIndex == 0 and
      all(.Items[]; .Type == "Audio")'
 compare_native_collection_items "instant mix full objects" \
-    "$ALLSTARR_BASE/Songs/$media_id/InstantMix?UserId=$best_user_id&Limit=10"
+    "$ALLSTARR_BASE/Songs/$media_id/InstantMix?UserId=$best_user_id&Limit=10&Fields=$full_item_fields&EnableImages=true&EnableUserData=true"
 if [[ -n "$album_id" ]]; then
     check_json "album detail" "$ALLSTARR_BASE/Items/$album_id?UserId=$best_user_id" '.Type == "MusicAlbum"'
     compare_projection "album detail full object" \
@@ -1155,7 +1220,7 @@ if [[ -n "$album_id" ]]; then
          .StartIndex == 0 and
          all(.Items[]; .Type == "Audio")'
     compare_native_collection_items "album mix full objects" \
-        "$ALLSTARR_BASE/Albums/$album_id/InstantMix?UserId=$best_user_id&Limit=10"
+        "$ALLSTARR_BASE/Albums/$album_id/InstantMix?UserId=$best_user_id&Limit=10&Fields=$full_item_fields&EnableImages=true&EnableUserData=true"
 fi
 
 for denied_path in \
@@ -1605,6 +1670,13 @@ compare_projection "native playlist stable data" \
         ((((.Id // "") | startswith("allstarr-vpl-")) or
           ((.Id // "") | test("^ext-.+-playlist-"; "i"))) | not)) |
         {Id,Name,Type,ImageTags,ProviderIds}] | sort_by(.Id)'
+compare_projection "native playlist full objects" \
+    "$DIRECT_BASE/Users/$best_user_id/Items?$playlist_query" \
+    "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query" \
+    '[.Items[]] | sort_by(.Id)' \
+    '[.Items[] | select(
+        ((((.Id // "") | startswith("allstarr-vpl-")) or
+          ((.Id // "") | test("^ext-.+-playlist-"; "i"))) | not))] | sort_by(.Id)'
 if [[ -n "$playlist_id" ]]; then
     check_json "playlist entries music only" "$ALLSTARR_BASE/Playlists/$playlist_id/Items?UserId=$best_user_id&Limit=100" \
         '(.Items | type == "array") and all(.Items[]; .Type == "Audio")'
@@ -1621,6 +1693,10 @@ if [[ -n "$playlist_id" ]]; then
             "$DIRECT_BASE/Playlists/$playlist_id?UserId=$best_user_id" \
             "$ALLSTARR_BASE/Playlists/$playlist_id?UserId=$best_user_id" \
             '{OpenAccess,Shares,ItemIds}'
+        compare_projection "playlist definition exact data" \
+            "$DIRECT_BASE/Playlists/$playlist_id?UserId=$best_user_id" \
+            "$ALLSTARR_BASE/Playlists/$playlist_id?UserId=$best_user_id" \
+            '.'
     else
         block "playlist-definition-upstream=status-$direct_playlist_definition_code"
         check_code "playlist definition status parity" \
@@ -1634,6 +1710,10 @@ if [[ -n "$playlist_id" ]]; then
         "$DIRECT_BASE/Playlists/$playlist_id/Items?UserId=$best_user_id&Limit=100" \
         "$ALLSTARR_BASE/Playlists/$playlist_id/Items?UserId=$best_user_id&Limit=100" \
         '[.Items[] | {Id,PlaylistItemId,ParentId,AlbumId,Name,Type,Artists,ArtistItems,RunTimeTicks}]'
+    compare_projection "playlist entries exact data" \
+        "$DIRECT_BASE/Playlists/$playlist_id/Items?UserId=$best_user_id&Limit=100" \
+        "$ALLSTARR_BASE/Playlists/$playlist_id/Items?UserId=$best_user_id&Limit=100" \
+        '.'
 fi
 if [[ -n "$external_playlist_id" ]]; then
     check_json "external playlist DTO IDs" \
@@ -1872,6 +1952,9 @@ if [[ -n "$art_id" ]]; then
     measure "direct artwork" "$DIRECT_BASE/Items/$art_id/Images/Primary?maxWidth=300&maxHeight=300&UserId=$best_user_id"
     measure "allstarr artwork" "$ALLSTARR_BASE/Items/$art_id/Images/Primary?maxWidth=300&maxHeight=300&UserId=$best_user_id"
     timing_delta "artwork proxy delta" "direct artwork" "allstarr artwork"
+    compare_binary "artwork exact bytes" \
+        "$DIRECT_BASE/Items/$art_id/Images/Primary?maxWidth=300&maxHeight=300&UserId=$best_user_id" \
+        "$ALLSTARR_BASE/Items/$art_id/Images/Primary?maxWidth=300&maxHeight=300&UserId=$best_user_id"
 else
     echo "artwork skipped=no candidate in first 100 audio items"
 fi
@@ -1888,6 +1971,10 @@ if [[ "$direct_lyrics_code" == 200 && "$allstarr_lyrics_code" == 200 ]]; then
     compare_structure "lyrics structure parity" \
         "$DIRECT_BASE/Audio/$lyrics_id/Lyrics?UserId=$best_user_id" \
         "$ALLSTARR_BASE/Audio/$lyrics_id/Lyrics?UserId=$best_user_id"
+    compare_projection "lyrics exact data" \
+        "$DIRECT_BASE/Audio/$lyrics_id/Lyrics?UserId=$best_user_id" \
+        "$ALLSTARR_BASE/Audio/$lyrics_id/Lyrics?UserId=$best_user_id" \
+        '.'
 else
     echo "lyrics structure skipped=direct:$direct_lyrics_code allstarr:$allstarr_lyrics_code"
 fi

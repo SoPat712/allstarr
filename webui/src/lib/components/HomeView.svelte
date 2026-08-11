@@ -14,6 +14,7 @@
   let refreshing = $state(false);
   let pendingRefresh = false;
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let nowPlayingTimer: ReturnType<typeof setInterval> | null = null;
 
   const summary = $derived(snapshot ? summarizeHome(snapshot) : null);
   const completelyUnavailable = $derived(
@@ -23,7 +24,8 @@
       !snapshot.playlistLinks &&
       !snapshot.jobs &&
       !snapshot.activity &&
-      !snapshot.providers,
+      !snapshot.providers &&
+      !snapshot.nowPlaying,
   );
 
   async function refresh() {
@@ -43,6 +45,7 @@
         ? [
             ["Recent activity", home.activity()],
             ["Provider health", home.providers()],
+            ["Now playing", home.nowPlaying()],
           ]
         : []),
     ] as const;
@@ -63,6 +66,7 @@
       if (label === "Jobs") next.jobs = (result.value as Awaited<ReturnType<typeof home.jobs>>).jobs;
       if (label === "Recent activity") next.activity = (result.value as Awaited<ReturnType<typeof home.activity>>).items;
       if (label === "Provider health") next.providers = (result.value as Awaited<ReturnType<typeof home.providers>>).providers;
+      if (label === "Now playing") next.nowPlaying = (result.value as Awaited<ReturnType<typeof home.nowPlaying>>).items;
     });
 
     snapshot = next;
@@ -80,6 +84,16 @@
       refreshTimer = null;
       void refresh();
     }, 250);
+  }
+
+  async function refreshNowPlaying() {
+    if (!administrator || !snapshot) return;
+    try {
+      const response = await home.nowPlaying();
+      snapshot = { ...snapshot, nowPlaying: response.items };
+    } catch {
+      // Keep the last known playback state; the normal refresh surfaces persistent failures.
+    }
   }
 
   function relativeTime(value?: string | null) {
@@ -114,12 +128,24 @@
     return /[_-]/.test(value) ? humanize(value) : value;
   }
 
+  function clockTime(seconds?: number | null) {
+    if (seconds === undefined || seconds === null || !Number.isFinite(seconds)) return "—";
+    const whole = Math.max(0, Math.floor(seconds));
+    return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+  }
+
+  function initials(name: string) {
+    return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
+  }
+
   onMount(() => {
     void refresh();
+    if (administrator) nowPlayingTimer = setInterval(() => void refreshNowPlaying(), 5_000);
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
       unsubscribe();
       if (refreshTimer) clearTimeout(refreshTimer);
+      if (nowPlayingTimer) clearInterval(nowPlayingTimer);
     };
   });
 </script>
@@ -192,6 +218,73 @@
       </small>
     </article>
   </section>
+
+  {#if administrator}
+    <section class="panel now-playing-panel" aria-label="Now playing">
+      <header>
+        <div>
+          <p class="eyebrow">Listening now</p>
+          <h2>Now playing</h2>
+        </div>
+        <span class="status-pill" class:healthy={!!snapshot.nowPlaying?.length}>
+          {snapshot.nowPlaying?.length ?? 0} active
+        </span>
+      </header>
+
+      {#if snapshot.nowPlaying?.length}
+        <div class="now-playing-rail" aria-label="Active listeners">
+          {#each snapshot.nowPlaying as item (item.deviceId)}
+            <article class="now-playing-card">
+              <div class="listener-profile">
+                <span class="listener-avatar" aria-label={`${item.userName} profile`}>
+                  <span aria-hidden="true">{initials(item.userName)}</span>
+                  {#if item.avatarUrl}
+                    <img src={item.avatarUrl} alt="" onerror={(event) => event.currentTarget.remove()} />
+                  {/if}
+                </span>
+                <span>
+                  <strong>{item.userName}</strong>
+                  <small>{item.client}{item.device ? ` · ${item.device}` : ""}</small>
+                </span>
+              </div>
+
+              <div class="now-playing-track">
+                <span class="now-playing-artwork">
+                  {#if item.artworkUrl}
+                    <img src={item.artworkUrl} alt="" />
+                  {:else}
+                    <span aria-hidden="true">♫</span>
+                  {/if}
+                </span>
+                <span class="track-copy">
+                  <strong>{item.title}</strong>
+                  <small>{item.artist}{item.album ? ` · ${item.album}` : ""}</small>
+                </span>
+              </div>
+
+              <div class="now-playing-facts">
+                <span class="status-pill">{providerName(item.providerId)}</span>
+                <span class="scrobble-state" class:complete={item.scrobbled}>
+                  <span aria-hidden="true">{item.scrobbled ? "✓" : "○"}</span>
+                  {item.scrobbled ? "Scrobbled" : "Not scrobbled"}
+                </span>
+              </div>
+
+              <div class="playback-progress">
+                <progress max="1" value={item.progress ?? 0} aria-label={`Playback progress for ${item.title}`}></progress>
+                <span>{clockTime(item.positionSeconds)} / {clockTime(item.durationSeconds)}</span>
+              </div>
+            </article>
+          {/each}
+        </div>
+      {:else}
+        <div class="now-playing-empty">
+          <strong>Nothing is playing right now.</strong>
+          <span>Active Jellyfin music sessions will appear here.</span>
+        </div>
+      {/if}
+    </section>
+  {/if}
 
   <section class="home-columns">
     <article class="panel home-panel">

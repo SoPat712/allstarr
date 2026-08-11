@@ -242,6 +242,32 @@ public class AdminAuthController : ControllerBase
             return NotFound();
         }
 
+        return await GetUserAvatarAsync(session, session.UserId, cancellationToken);
+    }
+
+    [HttpGet("/api/admin/ui/users/{userId}/avatar")]
+    public async Task<IActionResult> GetUserAvatar(string userId, CancellationToken cancellationToken)
+    {
+        var session = await _sessionService.GetValidSessionAsync(Request, cancellationToken);
+        if (session is not { IsAdministrator: true } ||
+            !session.BackendType.Equals(BackendType.Jellyfin.ToString(), StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(session.JellyfinAccessToken) ||
+            string.IsNullOrWhiteSpace(_jellyfinSettings.Url) ||
+            string.IsNullOrWhiteSpace(userId) ||
+            userId.Length > 128 ||
+            userId.Any(character => !char.IsLetterOrDigit(character) && character is not '-' and not '_'))
+        {
+            return NotFound();
+        }
+
+        return await GetUserAvatarAsync(session, userId, cancellationToken);
+    }
+
+    private async Task<IActionResult> GetUserAvatarAsync(
+        AdminAuthSession session,
+        string userId,
+        CancellationToken cancellationToken)
+    {
         var asset = await _mediaAssets.ResolveAsync(
             new MediaAssetIdentity(
                 session.TenantId,
@@ -249,13 +275,13 @@ public class AdminAuthController : ControllerBase
                 null,
                 "jellyfin",
                 "user-avatar",
-                session.UserId,
+                userId,
                 session.JellyfinServerId,
                 Width: 96),
             async token =>
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get,
-                    $"{_jellyfinSettings.Url.TrimEnd('/')}/Users/{Uri.EscapeDataString(session.UserId)}/Images/Primary?width=96&quality=90");
+                    $"{_jellyfinSettings.Url!.TrimEnd('/')}/Users/{Uri.EscapeDataString(userId)}/Images/Primary?width=96&quality=90");
                 request.Headers.TryAddWithoutValidation("X-Emby-Token", session.JellyfinAccessToken);
                 using var response = await _httpClient.SendAsync(request, token);
                 var contentType = response.Content.Headers.ContentType?.MediaType;

@@ -46,7 +46,7 @@ json_string() {
     printf '"%s"' "${value}"
 }
 
-version="$(sed -n 's/.*Version = "\([^"]*\)";.*/\1/p' allstarr/AppVersion.cs)"
+version="$(sed -n 's/^[[:space:]]*public const string Version = "\([^"]*\)";.*/\1/p' allstarr/AppVersion.cs)"
 test -n "${version}" || {
     printf '%s\n' 'Could not read the canonical version from allstarr/AppVersion.cs.' >&2
     exit 1
