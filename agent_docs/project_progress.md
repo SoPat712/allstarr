@@ -1,29 +1,34 @@
 # Project Progress
 
-## Completed deployment package: extension health, configuration, and lyrics cleanup
+## Deployment status
 
-- Route: Heavy; package complete.
-- Deployed application revision: `b231769ddd4b9ccd5a4c8cbded935ff3429af4f4` on `dev`.
-- Constraints: preserve unrelated dirty/untracked work; no new framework or duplicate health store; browser-only UI verification; no Musiver, Computer Use, or automated Feishin; live GAMDL generation is cached-only without separate bounded authorization.
+The client-parity, remote-control, and live-playback package is complete.
 
-## Checklist
+- Runtime revision: `c6893cd82e073c5b1f1d021867bcd4fb639676c3`
+- Branch: `dev`
+- Deployment: live and healthy on `192.168.1.116`
+- CI: run `31451827156` passed every required job
 
-- [x] EXT-1 Canonicalize SpotiFLAC package identity, truthful update projection, and active permission review.
-- [x] SRC-1 Make Sources the single provider configuration, account, health, and diagnostics home; normalize shared UI geometry.
-- [x] CTS-1 Retain account-free probe latency and schedule only bounded account-free typed-stream CTS.
-- [x] LYR-1 Remove LyricsPlus and complete source-native/Apple/fallback lyrics routing.
-- [x] VER-1 Pass focused tests, the complete release matrix, browser smoke, push, authorized deployment, and live read-only verification.
+## Delivered
 
-## Acceptance gates
+- Exact native Jellyfin object, artwork, lyrics, and bounded-stream comparisons.
+- Jellyfin music-client remote-control allowlist and WebSocket frame, auth, close, and session coverage.
+- Tenant-scoped admin Now Playing API with user, client, device, source, progress, and scrobble state.
+- Responsive Home Now Playing rail using the existing playback and scrobble owners.
+- Expanded playlist, provider, injected-object, range, cancellation, concurrency, and timing smoke coverage.
 
-- Installed catalog versions are hidden; newer versions show an explicit update action.
-- Permission-bearing active extensions can enter review-required state safely; permissionless packages cannot offer the action.
-- Settings owns extension lifecycle only; Sources owns provider configuration and exact deep links.
-- Timing cells distinguish latest API latency, managed p95, CTS, not applicable, manual-only, and awaiting-sample states.
-- Production and configuration contain no LyricsPlus owner or executable reference.
-- Apple extension settings and GAMDL lyrics remain distinct, and provider failure continues to the next distinct lyrics fallback.
-- No protocol break, new dependency, duplicate health table, unrelated staged file, or destructive live media operation.
+## Verification
 
-## Next action
+- .NET: 2,278 passed; state-transfer: 90 passed; Release build and format clean.
+- WebUI: 44 unit and 129 browser tests passed; check, build, and budgets passed.
+- Apple gateway: 19 passed; Compose profiles and seven helper tests passed.
+- Read-only live smoke: 199 checks, 0 failures, 4 unavailable fixtures.
+- Guarded throwaway-playlist smoke: 218 checks, 0 failures, 3 unavailable fixtures; direct Jellyfin confirmed deletion with `404`.
+- Browser smoke passed at phone, tablet, and desktop widths with no overflow or console errors.
 
-None. This deployment package is complete.
+## Known live fixture limits
+
+- The test user had no visible injected playlist.
+- The selected external songs had genuine lyric misses.
+- The YouTube Music extension omitted an album relationship ID for its sampled item.
+- External playback remains for user-run Feishin testing; no automated Feishin or Computer Use was used.
