@@ -74,7 +74,13 @@ public partial class JellyfinController
             });
         }
 
-        var endpoint = $"Items/{Uri.EscapeDataString(musicLibraryId)}{Request.QueryString.Value}";
+        var credentialQuery = Request.Query
+            .Where(item => item.Key.Equals("api_key", StringComparison.OrdinalIgnoreCase) ||
+                           item.Key.Equals("access_token", StringComparison.OrdinalIgnoreCase) ||
+                           item.Key.Equals("ApiKey", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(item => item.Value.Select(value =>
+                new KeyValuePair<string, string?>(item.Key, value)));
+        var endpoint = $"Items/{Uri.EscapeDataString(musicLibraryId)}{QueryString.Create(credentialQuery)}";
         var (body, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
         return HandleProxyResponse(body, statusCode);
     }
@@ -198,6 +204,7 @@ public partial class JellyfinController
                 };
             }
 
+            var originalCount = items.Count;
             var filtered = items
                 .Where(item => item is JsonObject candidate &&
                                JellyfinMusicEndpointPolicy.IsMusicItemType(candidate["Type"]?.GetValue<string>()))
@@ -205,7 +212,7 @@ public partial class JellyfinController
                 .ToArray();
             items.Clear();
             foreach (var item in filtered) items.Add(item);
-            root["TotalRecordCount"] = filtered.Length;
+            if (filtered.Length != originalCount) root["TotalRecordCount"] = filtered.Length;
             return new ContentResult
             {
                 Content = root.ToJsonString(),

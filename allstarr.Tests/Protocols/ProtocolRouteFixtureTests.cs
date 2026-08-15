@@ -558,6 +558,31 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task JellyfinNativePlaylistItems_PreserveUpstreamTotalWhenEveryRowIsAudio()
+    {
+        const string playlistId = "0123456789abcdef0123456789abcdef";
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/Users/Me")
+                return Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}""");
+            if (request.RequestUri.AbsolutePath == "/Items")
+                return ItemLookup($$"""{"Id":"{{playlistId}}","Type":"Playlist"}""");
+            return Json(StatusCodes.Status200OK,
+                """{"Items":[{"Id":"song-1","Type":"Audio","Sentinel":"complete"}],"TotalRecordCount":903,"StartIndex":0}""");
+        });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            $"/Playlists/{playlistId}/Items?Limit=100&api_key=fixture-key");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(903, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Equal("complete",
+            body.RootElement.GetProperty("Items")[0].GetProperty("Sentinel").GetString());
+    }
+
+    [Fact]
     public async Task JellyfinSearchAdapter_PreservesFixtureStatusBodyAndPaging()
     {
         using var fixture = ReadFixture("jellyfin-search-shaping.json");
