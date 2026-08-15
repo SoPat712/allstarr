@@ -21,6 +21,9 @@ The reusable Jellyfin kit has deterministic and live layers:
   virtual/external DTOs and artwork, lyrics,
   playlists, security denials, exact bounded stream bytes (including Finer's
   query-only `Items/{id}/File?ApiKey=...` request), and latency.
+- `live_jellyfin_websocket_smoke.py` verifies header-authenticated direct and
+  proxied WebSocket handshakes plus bidirectional session frames. It requires
+  Python's `websockets` package and never prints the supplied token.
 
 The source URLs, versions, commits, paths, and SHA-256 hashes for both OpenAPI
 files are locked in `allstarr.Tests/Fixtures/Protocols/protocol-source-lock.json`.
