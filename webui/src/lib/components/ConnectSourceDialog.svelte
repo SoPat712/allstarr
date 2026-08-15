@@ -2,7 +2,7 @@
   import { Dialog } from "$lib/components/ui/dialog";
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { Checkbox } from "$lib/components/ui/checkbox";
-  import { X } from "lucide-svelte";
+  import { X } from "@lucide/svelte";
   import { sources, type ProviderAccount, type ProviderDefinition } from "$lib/api";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SelectField from "$lib/components/SelectField.svelte";

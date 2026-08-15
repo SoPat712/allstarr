@@ -5,7 +5,7 @@
   import { Dialog } from "$lib/components/ui/dialog";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
   import { Skeleton } from "$lib/components/ui/skeleton";
-  import { X } from "lucide-svelte";
+  import { X } from "@lucide/svelte";
   import {
     extensions,
     type ExtensionLog,

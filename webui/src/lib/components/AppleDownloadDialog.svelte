@@ -2,7 +2,7 @@
   import { Dialog } from "$lib/components/ui/dialog";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
-  import { Check, X } from "lucide-svelte";
+  import { Check, X } from "@lucide/svelte";
   import { appleDownload, type AppleDownloadStatus } from "$lib/api";
   import { humanize } from "$lib/sources";
 

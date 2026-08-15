@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Select } from "$lib/components/ui/select";
-  import { Check, ChevronDown } from "lucide-svelte";
+  import { Check, ChevronDown } from "@lucide/svelte";
 
   type Option = string | { value: string; label: string; disabled?: boolean };
 

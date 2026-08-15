@@ -3,7 +3,7 @@
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Badge } from "$lib/components/ui/badge";
   import { Button, buttonVariants } from "$lib/components/ui/button";
-  import { X } from "lucide-svelte";
+  import { X } from "@lucide/svelte";
   import { playlistLinks, type PlaylistRematchPreview } from "$lib/api";
 
   let {

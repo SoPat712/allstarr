@@ -6,7 +6,7 @@
   import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import UiIcon from "$lib/components/UiIcon.svelte";
-  import { PanelLeftClose, PanelLeftOpen } from "lucide-svelte";
+  import { PanelLeftClose, PanelLeftOpen } from "@lucide/svelte";
 
   const destinations = [
     { href: "#/", label: "Home", icon: "home" },

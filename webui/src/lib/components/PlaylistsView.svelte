@@ -7,7 +7,7 @@
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { Badge } from "$lib/components/ui/badge";
   import { Button, buttonVariants } from "$lib/components/ui/button";
-  import { ArrowRight, ChevronDown, MoreHorizontal, X } from "lucide-svelte";
+  import { ArrowRight, ChevronDown, MoreHorizontal, X } from "@lucide/svelte";
   import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
   import CoverageBar from "$lib/components/CoverageBar.svelte";
   import MatchDialog from "$lib/components/MatchDialog.svelte";

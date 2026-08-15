@@ -2,7 +2,7 @@
   import { Dialog } from "$lib/components/ui/dialog";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Button, buttonVariants } from "$lib/components/ui/button";
-  import { X } from "lucide-svelte";
+  import { X } from "@lucide/svelte";
   import {
     playlistLinks,
     type PlaylistDetails,

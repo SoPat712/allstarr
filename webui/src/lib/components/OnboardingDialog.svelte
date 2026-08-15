@@ -2,7 +2,7 @@
   import { Dialog } from "$lib/components/ui/dialog";
   import { Badge } from "$lib/components/ui/badge";
   import { Button, buttonVariants } from "$lib/components/ui/button";
-  import { X } from "lucide-svelte";
+  import { X } from "@lucide/svelte";
   import type { OnboardingState } from "$lib/api";
 
   let {

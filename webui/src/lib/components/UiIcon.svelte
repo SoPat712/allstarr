@@ -7,7 +7,7 @@
     LogOut,
     Settings,
     Waypoints,
-  } from "lucide-svelte";
+  } from "@lucide/svelte";
 
   let { name, size = 18 }: { name: string; size?: number } = $props();
   const icons = {
