@@ -229,6 +229,7 @@ public sealed class PostgresStorageIntegrationTests
 
     [Fact]
     [Trait("Category", "Postgres")]
+    [Trait("Lane", "ReleaseCritical")]
     public async Task NativePostgresHostOptions_ImportPortableStateInsideExplicitTransaction()
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
