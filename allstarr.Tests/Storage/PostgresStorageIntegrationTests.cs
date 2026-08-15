@@ -480,6 +480,7 @@ public sealed class PostgresStorageIntegrationTests
 
     [Fact]
     [Trait("Category", "Postgres")]
+    [Trait("Lane", "ReleaseCritical")]
     public async Task BackendCredentialMigration_BindsExistingExactIntelligenceScope()
     {
         await using var database = await PostgresTestDatabase.CreateAsync(useTemplate: false);
@@ -1019,6 +1020,7 @@ public sealed class PostgresStorageIntegrationTests
 
     [Fact]
     [Trait("Category", "Postgres")]
+    [Trait("Lane", "ReleaseCritical")]
     public async Task NativePostgresBackup_VerifiesAndRestoresIntoIsolatedDatabase()
     {
         await using var sourceDatabase = await PostgresTestDatabase.CreateAsync();

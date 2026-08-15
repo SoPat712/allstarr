@@ -86,6 +86,7 @@ public sealed class PostgresTestDatabaseTests
 
     [Fact]
     [Trait("Category", "Postgres")]
+    [Trait("Lane", "ReleaseCritical")]
     public async Task ParallelCreation_UsesBoundedClonePools()
     {
         var databases = await Task.WhenAll(
