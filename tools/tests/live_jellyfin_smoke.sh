@@ -842,13 +842,13 @@ run_stateful_playlist_smoke() {
     fi
 
     candidate_playlist_id="$(jq -r '.Id // empty' "$response_file" 2>/dev/null || true)"
+    stateful_playlist_id="$candidate_playlist_id"
+    stateful_playlist_name="$playlist_name"
+    stateful_playlist_original_name="$playlist_name"
     if ! wait_stateful_playlist_identity \
         "stateful create direct-visible" "$candidate_playlist_id" "$playlist_name"; then
         return
     fi
-    stateful_playlist_id="$candidate_playlist_id"
-    stateful_playlist_name="$playlist_name"
-    stateful_playlist_original_name="$playlist_name"
 
     jq -cn --arg name "$renamed_name" '{Name:$name}' >"$direct_shape_file"
     if ! stateful_call "stateful playlist rename" "204" POST \
@@ -1213,12 +1213,14 @@ check_json "legacy user views music only" "$ALLSTARR_BASE/Users/$best_user_id/Vi
      (.TotalRecordCount == (.Items | length)) and
      all(.Items[]; .CollectionType == "music")'
 check_json "music library root" "$ALLSTARR_BASE/Items/Root?UserId=$best_user_id" \
-    '(.Id | type == "string" and length > 0) and .IsFolder == true'
+    '(.Id | type == "string" and length > 0) and .IsFolder == true and
+     (.ChildCount | type == "number")'
 music_root_id="$(jq -r '.Id // empty' "$response_file")"
-compare_projection "music library root full object" \
+compare_projection "music library root stable object" \
     "$DIRECT_BASE/Items/$music_root_id" \
     "$ALLSTARR_BASE/Items/Root?UserId=$best_user_id" \
-    '.'
+    'del(.ChildCount)'
+echo "declared-diff music library ChildCount=Jellyfin returns a volatile value across identical reads"
 check_json "music-only counts" "$ALLSTARR_BASE/Items/Counts?UserId=$best_user_id" \
     '.MovieCount == 0 and .SeriesCount == 0 and .EpisodeCount == 0 and .MusicVideoCount == 0'
 check_json "playback info" "$ALLSTARR_BASE/Items/$media_id/PlaybackInfo?UserId=$best_user_id" \
