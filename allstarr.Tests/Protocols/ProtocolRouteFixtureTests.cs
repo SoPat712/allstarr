@@ -501,7 +501,7 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task JellyfinMusicRoot_UsesConfiguredUserScope()
+    public async Task JellyfinMusicRoot_UsesFullItemRouteAndCallerAuthentication()
     {
         var observedRequests = new List<string>();
         using var factory = new ProtocolFactory(
@@ -511,7 +511,8 @@ public sealed class ProtocolRouteFixtureTests
                 observedRequests.Add(request.RequestUri!.PathAndQuery);
                 return request.RequestUri.AbsolutePath == "/Users/Me"
                     ? Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}""")
-                    : ItemLookup("""{"Id":"music-1","Type":"CollectionFolder","CollectionType":"music"}""");
+                    : Json(StatusCodes.Status200OK,
+                        """{"Id":"music-1","Type":"CollectionFolder","CollectionType":"music","Etag":"full-object"}""");
             },
             configuration: new Dictionary<string, string?>
             {
@@ -521,11 +522,39 @@ public sealed class ProtocolRouteFixtureTests
         using var client = factory.CreateClient();
 
         using var response = await client.GetAsync("/Items/Root?api_key=fixture-key");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("full-object", body.RootElement.GetProperty("Etag").GetString());
         Assert.Equal(
-            ["/Users/Me?api_key=fixture-key", "/Items?ids=music-1&limit=1&userId=user-1"],
+            ["/Users/Me?api_key=fixture-key", "/Items/music-1?api_key=fixture-key"],
             observedRequests);
+    }
+
+    [Theory]
+    [InlineData("Download")]
+    [InlineData("File")]
+    public async Task JellyfinNativeFileHead_PreservesMethodAndStatus(string route)
+    {
+        HttpMethod? observedMethod = null;
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/Users/Me")
+                return Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}""");
+            if (request.RequestUri.AbsolutePath == "/Items")
+                return ItemLookup("""{"Id":"0123456789abcdef0123456789abcdef","Type":"Audio"}""");
+            observedMethod = request.Method;
+            return new HttpResponseMessage(HttpStatusCode.MethodNotAllowed);
+        });
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(
+            HttpMethod.Head,
+            $"/Items/0123456789abcdef0123456789abcdef/{route}?api_key=fixture-key");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode);
+        Assert.Equal(HttpMethod.Head, observedMethod);
     }
 
     [Fact]
@@ -2318,6 +2347,8 @@ public sealed class ProtocolRouteFixtureTests
         var browseItem = Assert.Single(browse.RootElement.GetProperty("Items").EnumerateArray());
         Assert.Equal(nativeId, browseItem.GetProperty("Id").GetString());
         Assert.Equal(50, browseItem.GetProperty("ChildCount").GetInt32());
+        Assert.Equal("spotify",
+            browseItem.GetProperty("ProviderIds").GetProperty("AllstarrSource").GetString());
         Assert.True(browseItem.GetProperty("CanDelete").GetBoolean());
         Assert.Equal(
             "keep-native-fields",

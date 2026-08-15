@@ -1621,6 +1621,7 @@ if [[ -s "$direct_playlists_file" && -s "$allstarr_playlists_file" ]]; then
         first(.Items[] as $direct |
             select(any($proxy[0].Items[];
                 .Id == $direct.Id and
+                .ProviderIds.AllstarrSource == null and
                 (.ChildCount // 0) == ($direct.ChildCount // 0))) |
             $direct.Id) // empty' "$direct_playlists_file")"
 fi
@@ -1691,28 +1692,28 @@ elif [[ -n "$INJECTED_PLAYLIST_ID" ]]; then
         --slurpfile full "$external_search_file"
     [[ -n "$virtual_playlist_id" ]] || virtual_playlist_id="$INJECTED_PLAYLIST_ID"
 fi
+alias_ids_json="$(jq -c '[.Items[] | select(.ProviderIds.AllstarrSource != null) | .Id]' \
+    "$allstarr_playlists_file" 2>/dev/null || printf '[]')"
+native_direct_filter="$alias_ids_json as \$aliases | [.Items[] | select(.Id as \$id | \$aliases | index(\$id) | not)]"
+native_allstarr_filter="$alias_ids_json as \$aliases | [.Items[] | select(
+    (.Id as \$id | \$aliases | index(\$id) | not) and
+    (((.Id // \"\") | startswith(\"allstarr-vpl-\")) | not) and
+    (((.Id // \"\") | test(\"^ext-.+-playlist-\"; \"i\")) | not))]"
 compare_structure "native playlist structure parity" \
     "$DIRECT_BASE/Users/$best_user_id/Items?$playlist_query" \
     "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query" \
-    '.Items' \
-    '[.Items[] | select(
-        ((((.Id // "") | startswith("allstarr-vpl-")) or
-          ((.Id // "") | test("^ext-.+-playlist-"; "i"))) | not))]'
+    "$native_direct_filter" \
+    "$native_allstarr_filter"
 compare_projection "native playlist stable data" \
     "$DIRECT_BASE/Users/$best_user_id/Items?$playlist_query" \
     "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query" \
-    '[.Items[] | {Id,Name,Type,ImageTags,ProviderIds}] | sort_by(.Id)' \
-    '[.Items[] | select(
-        ((((.Id // "") | startswith("allstarr-vpl-")) or
-          ((.Id // "") | test("^ext-.+-playlist-"; "i"))) | not)) |
-        {Id,Name,Type,ImageTags,ProviderIds}] | sort_by(.Id)'
+    "$native_direct_filter | [.[] | {Id,Name,Type,ImageTags,ProviderIds}] | sort_by(.Id)" \
+    "$native_allstarr_filter | [.[] | {Id,Name,Type,ImageTags,ProviderIds}] | sort_by(.Id)"
 compare_projection "native playlist full objects" \
     "$DIRECT_BASE/Users/$best_user_id/Items?$playlist_query" \
     "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query" \
-    '[.Items[]] | sort_by(.Id)' \
-    '[.Items[] | select(
-        ((((.Id // "") | startswith("allstarr-vpl-")) or
-          ((.Id // "") | test("^ext-.+-playlist-"; "i"))) | not))] | sort_by(.Id)'
+    "$native_direct_filter | sort_by(.Id)" \
+    "$native_allstarr_filter | sort_by(.Id)"
 if [[ -n "$playlist_id" ]]; then
     check_json "playlist entries music only" "$ALLSTARR_BASE/Playlists/$playlist_id/Items?UserId=$best_user_id&Limit=100" \
         '(.Items | type == "array") and all(.Items[]; .Type == "Audio")'

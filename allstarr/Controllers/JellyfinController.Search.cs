@@ -1093,6 +1093,9 @@ public partial class JellyfinController
                 item["ChildCount"] = playlist.Tracks.Count;
                 item["RunTimeTicks"] = playlist.Tracks.Sum(track => track.DurationMilliseconds) *
                                        TimeSpan.TicksPerMillisecond;
+                var providerIds = item["ProviderIds"] as JsonObject ?? [];
+                item["ProviderIds"] = providerIds;
+                providerIds["AllstarrSource"] = playlist.SourceProviderId;
             }
         }
 

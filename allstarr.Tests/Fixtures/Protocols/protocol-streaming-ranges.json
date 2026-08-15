@@ -20,7 +20,6 @@
   {
     "protocol": "jellyfin",
     "method": "HEAD",
-    "upstreamMethod": "GET",
     "path": "/Items/local-song/Download?api_key=fixture-key",
     "verificationPath": "/Users/Me?api_key=fixture-key",
     "streamPath": "/Items/local-song/Download?api_key=fixture-key",
