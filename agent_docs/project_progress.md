@@ -179,6 +179,8 @@ Evidence in progress: the caller/composition audit deleted `IAudioContentStream`
 - [x] Report production deletions, test deletions, vendored Canvas UI lines, generated lines, and net handwritten change separately.
 - [ ] Commit, push, deploy, and run live checks only after exact revision authorization.
 
+Live evidence: `73ce04a18b0daa35f0af56f9f3072cbd575815e8` was pushed and source-deployed to the clean `.116` stack after authorization; all five containers are healthy and readiness/ping return 200. The first authenticated LAN smoke completed 189 checks with 14 failures and 6 declared blocks. Exact native browse/detail/search, playback bitrate, mixes, playlist objects, 64 KiB stream bytes, cancellation/concurrency, provider matrices, artwork, and Apple extension lyrics passed. Four real Apple GAMDL artist failures came from three invalid rows poisoning 100-item pages; the shared adapter correction now preserves the valid rows. The remaining failed artwork/file/filter/root assertions were harness assumptions that contradicted direct Jellyfin's identical response and now require truthful direct parity. Focused correction coverage passes 108/108 and the full fast lane passes 2,207/2,207 in 67 seconds; format, shell syntax, and diff checks pass. The correction revision and full live rerun remain pending. The in-app browser crashed on both LAN and public URLs while direct health/assets remained available, so responsive live visual smoke remains tool-blocked.
+
 ### Completion gate
 
 Current exact staged revision: production is 461 additions and 3,758 deletions (net -3,297); tests are 500 additions and 2,582 deletions (net -2,082); WebUI is 1,014 additions and 936 deletions (net +78); tooling/CI is 209 additions and 41 deletions (net +168); durable plan/handoff documentation is net +173. Total staged change is 2,393 additions and 7,353 deletions (net -4,960). Vendored Canvas UI and generated migration/model lines are both zero.
@@ -195,4 +197,4 @@ This package is complete only when:
 
 ### Immediate next action
 
-Create and push the exact tested revision, fast-forward the clean source deployment on `root@192.168.1.116`, then run browser-only readiness, direct-Jellyfin, artwork, lyrics, search, external traversal, playlist, and WebSocket smoke. Canvas UI source remains queued behind a GPL-compatible grant; do not recreate its effects locally.
+Commit and deploy the exact live-smoke correction, then rerun authenticated direct-Jellyfin, artwork, lyrics, search, external traversal, playlist, and WebSocket smoke. Canvas UI source remains queued behind a GPL-compatible grant; do not recreate its effects locally.

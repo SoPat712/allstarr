@@ -89,6 +89,26 @@ public sealed class DeezerMetadataCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task CollectionMapping_SkipsInvalidProviderRecordsInsteadOfFailingThePage()
+    {
+        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        legacy.Setup(item => item.GetArtistAlbumsAsync("deezer", "27", It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new Album { Id = "1", ExternalId = "1", Title = "Valid", Artist = "Artist" },
+                new Album { Id = "2", ExternalId = "2", Title = "Invalid", Artist = new string('x', 301) }
+            ]);
+        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+
+        var outcome = await adapter.GetArtistAlbumsAsync(
+            Context(),
+            new ProviderArtistItemsRequest(
+                new ProviderExternalResourceId("deezer", ProviderResourceKind.Artist, "27"),
+                new ProviderPageRequest(10)));
+
+        Assert.Equal("1", Assert.Single(outcome.RequireValue().Items).Id.Value);
+    }
+
+    [Fact]
     public async Task CursorThatLegacyProviderCannotHonor_ReturnsTypedNotSupported()
     {
         var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);

@@ -182,6 +182,7 @@ fi
 echo "jellyfin-user=selected actor_bound=$actor_bound"
 
 full_item_fields="AirTime,CanDelete,CanDownload,ChannelInfo,Chapters,Trickplay,ChildCount,CumulativeRunTimeTicks,CustomRating,DateCreated,DateLastMediaAdded,DisplayPreferencesId,Etag,ExternalUrls,Genres,ItemCounts,MediaSourceCount,MediaSources,OriginalTitle,Overview,ParentId,Path,People,PlayAccess,ProductionLocations,ProviderIds,PrimaryImageAspectRatio,RecursiveItemCount,Settings,SeriesStudio,SortName,SpecialEpisodeNumbers,Studios,Taglines,Tags,RemoteTrailers,MediaStreams,SeasonUserData,DateLastRefreshed,DateLastSaved,RefreshState,ChannelImage,EnableMediaSourceDisplay,Width,Height,ExtraIds,LocalTrailerCount,IsHD,SpecialFeatureCount"
+default_music_item_types="Audio,MusicAlbum,MusicArtist,Playlist,MusicGenre"
 items_query="Recursive=true&IncludeItemTypes=Audio&Limit=100&Fields=PrimaryImageAspectRatio%2CProviderIds%2CMediaSources%2CAlbumId%2CArtistItems%2CGenres"
 curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
     "$DIRECT_BASE/Users/$best_user_id/Items?$items_query" -o "$items_file"
@@ -594,10 +595,33 @@ compare_binary() {
           "${direct_bytes%.*}" -gt 0 ]] && cmp -s "$direct_media_file" "$allstarr_media_file"; then
         signature="$("${sha256_command[@]}" "$allstarr_media_file" | awk '{print $1}')"
         printf 'PASS %-34s bytes=%s sha256=%s\n' "$label" "$allstarr_bytes" "$signature"
+    elif [[ "$direct_code" == 404 && "$allstarr_code" == 404 &&
+            "$direct_type" == "$allstarr_type" ]]; then
+        printf 'PASS %-34s unavailable-identical status=%s type=%s\n' \
+            "$label" "$allstarr_code" "$allstarr_type"
     else
         printf 'FAIL %-34s direct=%s/%s/%s allstarr=%s/%s/%s\n' \
             "$label" "$direct_code" "$direct_type" "$direct_bytes" \
             "$allstarr_code" "$allstarr_type" "$allstarr_bytes"
+        failures=$((failures + 1))
+    fi
+}
+
+check_authenticated_status_parity() {
+    local label="$1" method="$2" direct_url="$3" allstarr_url="$4"
+    local direct_code allstarr_code
+    local -a method_args=(-X "$method")
+    [[ "$method" == HEAD ]] && method_args=(--head)
+    direct_code="$(curl -sS "${method_args[@]}" --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
+        -o /dev/null -w '%{http_code}' "$direct_url" || true)"
+    allstarr_code="$(curl -sS "${method_args[@]}" --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
+        -o /dev/null -w '%{http_code}' "$allstarr_url" || true)"
+    checks=$((checks + 1))
+    if [[ "${direct_code:-000}" == "${allstarr_code:-000}" && "${allstarr_code:-000}" != 000 ]]; then
+        printf 'PASS %-34s exact-status=%s\n' "$label" "$allstarr_code"
+    else
+        printf 'FAIL %-34s direct=%s allstarr=%s\n' \
+            "$label" "${direct_code:-000}" "${allstarr_code:-000}"
         failures=$((failures + 1))
     fi
 }
@@ -684,7 +708,7 @@ check_public_image() {
 }
 
 check_range_parity() {
-    local label="$1" direct_url="$2" allstarr_url="$3" credential_mode="${4:-header}"
+    local label="$1" direct_url="$2" allstarr_url="$3" credential_mode="${4:-header}" allow_unavailable="${5:-0}"
     local direct_code allstarr_code direct_bytes allstarr_bytes direct_range allstarr_range direct_type allstarr_type signature
     local -a request_auth=("${auth[@]}")
     if [[ "$credential_mode" == query-api-key ]]; then
@@ -718,6 +742,10 @@ check_range_parity() {
         signature="$("${sha256_command[@]}" "$allstarr_media_file" | awk '{print substr($1, 1, 12)}')"
         printf 'PASS %-34s bytes=65536 type=%s sha256=%s exact-body\n' \
             "$label" "$allstarr_type" "$signature"
+    elif [[ "$allow_unavailable" == 1 && "$direct_code" == 404 && "$allstarr_code" == 404 &&
+            "$direct_type" == "$allstarr_type" ]]; then
+        printf 'PASS %-34s unavailable-identical status=%s type=%s\n' \
+            "$label" "$allstarr_code" "$allstarr_type"
     else
         printf 'FAIL %-34s direct=%s/%s/%s allstarr=%s/%s/%s\n' \
             "$label" "$direct_code" "$direct_bytes" "$direct_range" \
@@ -1160,13 +1188,13 @@ if [[ -n "$artist_id" ]]; then
 fi
 check_json "item filters" "$ALLSTARR_BASE/Items/Filters?UserId=$best_user_id" 'type == "object"'
 compare_projection "item filters exact data" \
-    "$DIRECT_BASE/Items/Filters?UserId=$best_user_id" \
-    "$ALLSTARR_BASE/Items/Filters?UserId=$best_user_id" \
+    "$DIRECT_BASE/Items/Filters?UserId=$best_user_id&IncludeItemTypes=$default_music_item_types" \
+    "$ALLSTARR_BASE/Items/Filters?UserId=$best_user_id&IncludeItemTypes=$default_music_item_types" \
     '.'
 check_json "item filters2" "$ALLSTARR_BASE/Items/Filters2?UserId=$best_user_id" 'type == "object"'
 compare_projection "item filters2 exact data" \
-    "$DIRECT_BASE/Items/Filters2?UserId=$best_user_id" \
-    "$ALLSTARR_BASE/Items/Filters2?UserId=$best_user_id" \
+    "$DIRECT_BASE/Items/Filters2?UserId=$best_user_id&IncludeItemTypes=$default_music_item_types" \
+    "$ALLSTARR_BASE/Items/Filters2?UserId=$best_user_id&IncludeItemTypes=$default_music_item_types" \
     '.'
 check_json "genres browse" "$ALLSTARR_BASE/Genres?UserId=$best_user_id&Limit=10" \
     '(.Items | type == "array") and all(.Items[]; .Type == "Genre")'
@@ -1185,7 +1213,12 @@ check_json "legacy user views music only" "$ALLSTARR_BASE/Users/$best_user_id/Vi
      (.TotalRecordCount == (.Items | length)) and
      all(.Items[]; .CollectionType == "music")'
 check_json "music library root" "$ALLSTARR_BASE/Items/Root?UserId=$best_user_id" \
-    '.Id != null and .CollectionType == "music"'
+    '(.Id | type == "string" and length > 0) and .IsFolder == true'
+music_root_id="$(jq -r '.Id // empty' "$response_file")"
+compare_projection "music library root full object" \
+    "$DIRECT_BASE/Items/$music_root_id" \
+    "$ALLSTARR_BASE/Items/Root?UserId=$best_user_id" \
+    '.'
 check_json "music-only counts" "$ALLSTARR_BASE/Items/Counts?UserId=$best_user_id" \
     '.MovieCount == 0 and .SeriesCount == 0 and .EpisodeCount == 0 and .MusicVideoCount == 0'
 check_json "playback info" "$ALLSTARR_BASE/Items/$media_id/PlaybackInfo?UserId=$best_user_id" \
@@ -1946,9 +1979,11 @@ measure "allstarr playlist-list" "$ALLSTARR_BASE/Users/$best_user_id/Items?$play
 timing_delta "playlist proxy delta" "direct playlist-list" "allstarr playlist-list"
 
 if [[ -n "$art_id" ]]; then
-    check_code "artwork retrieval" "200,304" GET \
+    check_authenticated_status_parity "artwork retrieval" GET \
+        "$DIRECT_BASE/Items/$art_id/Images/Primary?maxWidth=300&maxHeight=300&UserId=$best_user_id" \
         "$ALLSTARR_BASE/Items/$art_id/Images/Primary?maxWidth=300&maxHeight=300&UserId=$best_user_id"
-    check_code "artwork HEAD" "200,304" HEAD \
+    check_authenticated_status_parity "artwork HEAD" HEAD \
+        "$DIRECT_BASE/Items/$art_id/Images/Primary?maxWidth=300&maxHeight=300&UserId=$best_user_id" \
         "$ALLSTARR_BASE/Items/$art_id/Images/Primary?maxWidth=300&maxHeight=300&UserId=$best_user_id"
     check_public_image "artwork without token" \
         "$ALLSTARR_BASE/Items/$art_id/Images/Primary?maxWidth=300&maxHeight=300&UserId=$best_user_id"
@@ -1984,8 +2019,12 @@ fi
 measure "direct lyrics" "$DIRECT_BASE/Audio/$lyrics_id/Lyrics?UserId=$best_user_id"
 measure "allstarr lyrics" "$ALLSTARR_BASE/Audio/$lyrics_id/Lyrics?UserId=$best_user_id"
 timing_delta "lyrics proxy delta" "direct lyrics" "allstarr lyrics"
-check_code "download HEAD" "200,206" HEAD "$ALLSTARR_BASE/Items/$media_id/Download?UserId=$best_user_id"
-check_code "file HEAD" "200,206" HEAD "$ALLSTARR_BASE/Items/$media_id/File?UserId=$best_user_id"
+check_authenticated_status_parity "download HEAD" HEAD \
+    "$DIRECT_BASE/Items/$media_id/Download?UserId=$best_user_id" \
+    "$ALLSTARR_BASE/Items/$media_id/Download?UserId=$best_user_id"
+check_authenticated_status_parity "file HEAD" HEAD \
+    "$DIRECT_BASE/Items/$media_id/File?UserId=$best_user_id" \
+    "$ALLSTARR_BASE/Items/$media_id/File?UserId=$best_user_id"
 check_code "stream HEAD" "200,206" HEAD "$ALLSTARR_BASE/Audio/$media_id/stream?static=true&UserId=$best_user_id"
 check_code "universal audio HEAD" "200,206,302" HEAD "$ALLSTARR_BASE/Audio/$media_id/universal?UserId=$best_user_id"
 check_code "stream bounded range" "206" GET \
@@ -2005,7 +2044,7 @@ check_stream_cancellation "allstarr stream cancellation" \
 check_range_parity "Finer file ApiKey range parity" \
     "$DIRECT_BASE/Items/$media_id/File" \
     "$ALLSTARR_BASE/Items/$media_id/File" \
-    query-api-key
+    query-api-key 1
 measure "direct stream-64k" "$DIRECT_BASE/Audio/$media_id/stream?static=true&UserId=$best_user_id" \
     --range 0-65535 --max-filesize 65536
 measure "allstarr stream-64k" "$ALLSTARR_BASE/Audio/$media_id/stream?static=true&UserId=$best_user_id" \

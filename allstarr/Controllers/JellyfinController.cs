@@ -1443,11 +1443,7 @@ public partial class JellyfinController : ControllerBase
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to create instant mix for external song {ItemId}", itemId);
-                return _responseBuilder.CreateJsonResponse(new
-                {
-                    Items = Array.Empty<object>(),
-                    TotalRecordCount = 0
-                });
+                return CreateProtocolResponse(_interactionProtocolAdapter.ShapeInstantMix([]));
             }
         }
 

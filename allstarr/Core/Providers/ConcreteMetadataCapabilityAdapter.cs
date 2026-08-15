@@ -105,7 +105,7 @@ public abstract class ConcreteMetadataCapabilityAdapter(
             var values = await fetch(context.CancellationToken);
             context.CancellationToken.ThrowIfCancellationRequested();
             return ProviderOutcome<ProviderPage<TTarget>>.Success(new(
-                ProviderId, values.Select(map), isPartial: values.Count >= page.Limit));
+                ProviderId, MapValid(values, map), isPartial: values.Count >= page.Limit));
         }
         catch (OperationCanceledException)
         {
@@ -171,8 +171,9 @@ public abstract class ConcreteMetadataCapabilityAdapter(
         {
             var values = await fetch(context.CancellationToken);
             context.CancellationToken.ThrowIfCancellationRequested();
-            var items = values.Skip(offset).Take(request.Page.Limit).Select(map).ToArray();
-            var nextOffset = offset + items.Length;
+            var pageValues = values.Skip(offset).Take(request.Page.Limit).ToArray();
+            var items = MapValid(pageValues, map);
+            var nextOffset = offset + pageValues.Length;
             var nextCursor = nextOffset < values.Count
                 ? nextOffset.ToString(CultureInfo.InvariantCulture)
                 : null;
@@ -187,6 +188,19 @@ public abstract class ConcreteMetadataCapabilityAdapter(
         {
             return ProviderOutcome<ProviderPage<TTarget>>.Failure(new(ProviderErrorKind.TransientFailure));
         }
+    }
+
+    private static IReadOnlyList<TTarget> MapValid<TLegacy, TTarget>(
+        IEnumerable<TLegacy> values,
+        Func<TLegacy, TTarget> map)
+    {
+        var mapped = new List<TTarget>();
+        foreach (var value in values)
+        {
+            try { mapped.Add(map(value)); }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { }
+        }
+        return mapped;
     }
 
     internal ProviderError? ValidateContext(ProviderExecutionContext context)

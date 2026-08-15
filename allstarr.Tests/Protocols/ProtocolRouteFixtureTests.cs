@@ -1385,6 +1385,45 @@ public sealed class ProtocolRouteFixtureTests
         interaction.VerifyAll();
     }
 
+    [Fact]
+    public async Task JellyfinExternalInstantMix_ProviderFailureKeepsTheStandardEnvelope()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.GetSongAsync(
+                It.IsAny<ProtocolExecutionContext>(), "deezer", "42"))
+            .ThrowsAsync(new HttpRequestException("provider unavailable"));
+        var interaction = new Mock<IJellyfinInteractionProtocolAdapter>(MockBehavior.Strict);
+        interaction.Setup(adapter => adapter.CanRunOptionalUserWork(
+                It.IsAny<ProtocolExecutionContext?>()))
+            .Returns(true);
+        interaction.Setup(adapter => adapter.ShapeInstantMix(
+                It.Is<IReadOnlyList<Dictionary<string, object?>>>(items => items.Count == 0)))
+            .Returns(new JellyfinInteractionProtocolAdapter().ShapeInstantMix([]));
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request => request.RequestUri!.AbsolutePath == "/Users/Me"
+                ? Json(StatusCodes.Status200OK, """{"Id":"user-1"}""")
+                : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
+            services =>
+            {
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
+                services.RemoveAll<IJellyfinInteractionProtocolAdapter>();
+                services.AddSingleton(interaction.Object);
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/Items/ext-deezer-song-42/InstantMix?Limit=2&api_key=fixture-key");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            "{\"Items\":[],\"TotalRecordCount\":0,\"StartIndex\":0}",
+            await response.Content.ReadAsStringAsync());
+        gateway.VerifyAll();
+        interaction.VerifyAll();
+    }
+
     [Theory]
     [InlineData("/Albums/ext-deezer-album-42/InstantMix?Limit=2&api_key=fixture-key", "album")]
     [InlineData("/Artists/ext-deezer-artist-42/InstantMix?Limit=2&api_key=fixture-key", "artist")]
