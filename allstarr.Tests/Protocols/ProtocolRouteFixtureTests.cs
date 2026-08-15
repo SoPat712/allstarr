@@ -2030,6 +2030,58 @@ public sealed class ProtocolRouteFixtureTests
             JsonDocument.Parse(body).RootElement.GetRawText());
     }
 
+    [Theory]
+    [InlineData("getArtist", "artist", "local-artist")]
+    [InlineData("getAlbum", "album", "local-album")]
+    public async Task SubsonicNativeMusicDetail_IsRelayedWithoutProviderEnrichment(
+        string endpoint,
+        string itemType,
+        string itemId)
+    {
+        var itemBody = JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["subsonic-response"] = new Dictionary<string, object>
+            {
+                ["status"] = "ok",
+                ["version"] = "1.16.1",
+                [itemType] = new Dictionary<string, string>
+                {
+                    ["id"] = itemId,
+                    ["name"] = "Native Item",
+                    ["unknownNativeField"] = "preserved"
+                }
+            }
+        });
+        var observed = new List<ObservedRequest>();
+        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        using var factory = new ProtocolFactory(
+            "Subsonic",
+            request =>
+            {
+                observed.Add(Observe(request));
+                return request.RequestUri!.AbsolutePath == "/rest/ping.view"
+                    ? Json(StatusCodes.Status200OK, """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""")
+                    : Json(StatusCodes.Status200OK, itemBody);
+            },
+            services =>
+            {
+                services.RemoveAll<IMusicMetadataService>();
+                services.AddSingleton(metadata.Object);
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            $"/rest/{endpoint}.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json&id={itemId}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(itemBody, await response.Content.ReadAsStringAsync());
+        Assert.Equal(2, observed.Count);
+        Assert.Equal(
+            $"/rest/{endpoint}.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json&id={itemId}",
+            observed[1].PathAndQuery);
+        metadata.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public async Task SubsonicAuthBoundary_RejectsBeforeBackendActionsAndPreservesVerificationResponse()
     {

@@ -1,7 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
 using System.Xml.Linq;
-using System.Text;
-using System.Text.Json;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
@@ -390,7 +388,7 @@ public partial class SubsonicController : ControllerBase
     }
 
     /// <summary>
-    /// Merges local and Deezer albums.
+    /// Returns provider-backed artists and relays native artists unchanged.
     /// </summary>
     [HttpGet, HttpPost]
     [Route("rest/getArtist")]
@@ -434,106 +432,16 @@ public partial class SubsonicController : ControllerBase
             return _responseBuilder.CreateArtistResponse(format, artist, albums);
         }
 
-        var navidromeResult = await _proxyService.RelayRawAsync(
-            "rest/getArtist",
+        var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? "rest/getArtist";
+        var nativeResult = await _proxyService.RelayRawAsync(
+            relayEndpoint,
             parameters,
             HttpContext.RequestAborted);
-
-        if (!navidromeResult.IsSuccessStatusCode)
-        {
-            return _relayProtocolAdapter.CreateResult(navidromeResult, $"application/{format}");
-        }
-
-        var navidromeContent = Encoding.UTF8.GetString(navidromeResult.Body);
-        string artistName = "";
-        string localArtistId = id; // Keep the local artist ID for merged albums
-        var localAlbums = new List<object>();
-        object? artistData = null;
-
-        if (format == "json" || navidromeResult.ContentType?.Contains("json") == true)
-        {
-            using var jsonDoc = JsonDocument.Parse(navidromeContent);
-            if (jsonDoc.RootElement.TryGetProperty("subsonic-response", out var response) &&
-                response.TryGetProperty("artist", out var artistElement))
-            {
-                artistName = artistElement.TryGetProperty("name", out var name) ? name.GetString() ?? "" : "";
-                artistData = _responseBuilder.ConvertSubsonicJsonElement(artistElement, true);
-
-                if (artistElement.TryGetProperty("album", out var albums))
-                {
-                    foreach (var album in albums.EnumerateArray())
-                    {
-                        localAlbums.Add(_responseBuilder.ConvertSubsonicJsonElement(album, true));
-                    }
-                }
-            }
-        }
-
-        if (string.IsNullOrEmpty(artistName) || artistData == null)
-        {
-            return File(navidromeResult.Body, navidromeResult.ContentType ?? "application/json");
-        }
-
-        var deezerArtists = await _metadataService.SearchArtistsAsync(artistName, 1);
-        var deezerAlbums = new List<Album>();
-
-        if (deezerArtists.Count > 0)
-        {
-            var deezerArtist = deezerArtists[0];
-            if (deezerArtist.Name.Equals(artistName, StringComparison.OrdinalIgnoreCase))
-            {
-                deezerAlbums = await _metadataService.GetArtistAlbumsAsync("deezer", deezerArtist.ExternalId!);
-
-                // Fill artist info for each album (Deezer API doesn't include it in artist/albums endpoint)
-                // Use local artist ID and name so albums link back to the local artist
-                foreach (var album in deezerAlbums)
-                {
-                    if (string.IsNullOrEmpty(album.Artist))
-                    {
-                        album.Artist = artistName;
-                    }
-                    if (string.IsNullOrEmpty(album.ArtistId))
-                    {
-                        album.ArtistId = localArtistId;
-                    }
-                }
-            }
-        }
-
-        var localAlbumNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var album in localAlbums)
-        {
-            if (album is Dictionary<string, object> dict && dict.TryGetValue("name", out var nameObj))
-            {
-                localAlbumNames.Add(nameObj?.ToString() ?? "");
-            }
-        }
-
-        var mergedAlbums = localAlbums.ToList();
-        foreach (var deezerAlbum in deezerAlbums)
-        {
-            if (!localAlbumNames.Contains(deezerAlbum.Title))
-            {
-                mergedAlbums.Add(_responseBuilder.ConvertAlbumToJson(deezerAlbum));
-            }
-        }
-
-        if (artistData is Dictionary<string, object> artistDict)
-        {
-            artistDict["album"] = mergedAlbums;
-            artistDict["albumCount"] = mergedAlbums.Count;
-        }
-
-        return _responseBuilder.CreateJsonResponse(new
-        {
-            status = "ok",
-            version = "1.16.1",
-            artist = artistData
-        });
+        return _relayProtocolAdapter.CreateResult(nativeResult, $"application/{format}");
     }
 
     /// <summary>
-    /// Enriches local albums with Deezer songs.
+    /// Returns provider-backed albums and relays native albums unchanged.
     /// </summary>
     [HttpGet, HttpPost]
     [Route("rest/getAlbum")]
@@ -593,131 +501,12 @@ public partial class SubsonicController : ControllerBase
             return _responseBuilder.CreateAlbumResponse(format, album);
         }
 
-        var navidromeResult = await _proxyService.RelayRawAsync(
-            "rest/getAlbum",
+        var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? "rest/getAlbum";
+        var nativeResult = await _proxyService.RelayRawAsync(
+            relayEndpoint,
             parameters,
             HttpContext.RequestAborted);
-
-        if (!navidromeResult.IsSuccessStatusCode)
-        {
-            return _relayProtocolAdapter.CreateResult(navidromeResult, $"application/{format}");
-        }
-
-        var navidromeContent = Encoding.UTF8.GetString(navidromeResult.Body);
-        string albumName = "";
-        string artistName = "";
-        var localSongs = new List<object>();
-        object? albumData = null;
-
-        if (format == "json" || navidromeResult.ContentType?.Contains("json") == true)
-        {
-            using var jsonDoc = JsonDocument.Parse(navidromeContent);
-            if (jsonDoc.RootElement.TryGetProperty("subsonic-response", out var response) &&
-                response.TryGetProperty("album", out var albumElement))
-            {
-                albumName = albumElement.TryGetProperty("name", out var name) ? name.GetString() ?? "" : "";
-                artistName = albumElement.TryGetProperty("artist", out var artist) ? artist.GetString() ?? "" : "";
-                albumData = _responseBuilder.ConvertSubsonicJsonElement(albumElement, true);
-
-                if (albumElement.TryGetProperty("song", out var songs))
-                {
-                    foreach (var song in songs.EnumerateArray())
-                    {
-                        localSongs.Add(_responseBuilder.ConvertSubsonicJsonElement(song, true));
-                    }
-                }
-            }
-        }
-
-        if (string.IsNullOrEmpty(albumName) || string.IsNullOrEmpty(artistName) || albumData == null)
-        {
-            return File(navidromeResult.Body, navidromeResult.ContentType ?? "application/json");
-        }
-
-        var searchQuery = $"{artistName} {albumName}";
-        var deezerAlbums = await _metadataService.SearchAlbumsAsync(searchQuery, 5);
-        Album? deezerAlbum = null;
-
-        // Find matching album on Deezer (exact match first)
-        foreach (var candidate in deezerAlbums)
-        {
-            if (candidate.Artist != null &&
-                candidate.Artist.Equals(artistName, StringComparison.OrdinalIgnoreCase) &&
-                candidate.Title.Equals(albumName, StringComparison.OrdinalIgnoreCase))
-            {
-                deezerAlbum = await GetProviderAlbumAsync("deezer", candidate.ExternalId!);
-                break;
-            }
-        }
-
-        // Fallback to fuzzy match
-        if (deezerAlbum == null)
-        {
-            foreach (var candidate in deezerAlbums)
-            {
-                if (candidate.Artist != null &&
-                    candidate.Artist.Contains(artistName, StringComparison.OrdinalIgnoreCase) &&
-                    (candidate.Title.Contains(albumName, StringComparison.OrdinalIgnoreCase) ||
-                     albumName.Contains(candidate.Title, StringComparison.OrdinalIgnoreCase)))
-                {
-                    deezerAlbum = await GetProviderAlbumAsync("deezer", candidate.ExternalId!);
-                    break;
-                }
-            }
-        }
-
-        if (deezerAlbum != null && deezerAlbum.Songs.Count > 0)
-        {
-            var localSongTitles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var song in localSongs)
-            {
-                if (song is Dictionary<string, object> dict && dict.TryGetValue("title", out var titleObj))
-                {
-                    localSongTitles.Add(titleObj?.ToString() ?? "");
-                }
-            }
-
-            var mergedSongs = localSongs.ToList();
-            foreach (var deezerSong in deezerAlbum.Songs)
-            {
-                if (!localSongTitles.Contains(deezerSong.Title))
-                {
-                    mergedSongs.Add(_responseBuilder.ConvertSongToJson(deezerSong));
-                }
-            }
-
-            mergedSongs = mergedSongs
-                .OrderBy(s => s is Dictionary<string, object> dict && dict.TryGetValue("track", out var track)
-                    ? Convert.ToInt32(track)
-                    : 0)
-                .ToList();
-
-            if (albumData is Dictionary<string, object> albumDict)
-            {
-                albumDict["song"] = mergedSongs;
-                albumDict["songCount"] = mergedSongs.Count;
-
-                var durations = mergedSongs.Select(song =>
-                    song is Dictionary<string, object> dict &&
-                    dict.TryGetValue("duration", out var value) &&
-                    int.TryParse(value?.ToString(), out var duration) &&
-                    duration > 0
-                        ? (int?)duration
-                        : null).ToArray();
-                var totalDuration = durations.Sum(duration => (long?)duration ?? 0);
-                if (durations.All(duration => duration.HasValue) && totalDuration <= int.MaxValue)
-                    albumDict["duration"] = (int)totalDuration;
-                else
-                    albumDict.Remove("duration");
-            }
-        }
-
-        return _responseBuilder.CreateJsonResponse(new
-        {
-            status = "ok",
-            version = "1.16.1",
-            album = albumData
-        });
+        return _relayProtocolAdapter.CreateResult(nativeResult, $"application/{format}");
     }
 
     /// <summary>
