@@ -265,11 +265,6 @@ builder.Services.AddHttpClient("AppleDownloadDiscovery", client =>
         MaxConnectionsPerServer = 4,
         PooledConnectionLifetime = TimeSpan.FromMinutes(2)
     });
-builder.Services.AddSingleton<IPublicEndpointDnsResolver, SystemPublicEndpointDnsResolver>();
-builder.Services.AddSingleton<IResolvedIpConnector, SocketResolvedIpConnector>();
-builder.Services.AddSingleton<PublicEndpointConnector>();
-builder.Services.AddSingleton<ISafeProxyTransportFactory, SafeProxyTransportFactory>();
-builder.Services.AddSingleton<ISafeJsonProxyClient, SafeJsonProxyClient>();
 builder.Services.ConfigureAll<HttpClientFactoryOptions>(options =>
 {
     options.HttpMessageHandlerBuilderActions.Add(builder =>
@@ -375,6 +370,7 @@ builder.Services.AddSingleton<IManualLyricsMappingStore, EfManualLyricsMappingSt
 builder.Services.AddSingleton<ILocalLibraryService, LocalLibraryService>();
 builder.Services.AddSingleton<LrclibService>();
 builder.Services.AddSingleton<ProtocolStreamingResponseAdapter>();
+builder.Services.AddSingleton<ManagedTrackCacheService>();
 builder.Services.AddSingleton<IProtocolLyricsResolver, ProtocolLyricsResolver>();
 builder.Services.AddSingleton<JellyfinProxyService>();
 
@@ -435,7 +431,6 @@ builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
 builder.Services.AddSingleton<IAppleDownloadEndpointDiscovery, AppleDownloadEndpointDiscovery>();
 builder.Services.AddDeezerMetadataCapability();
 builder.Services.AddQobuzDownloadCapability();
-// SquidWTF is intentionally retired and not composed into the runtime.
 builder.Services.AddSpotifyPlaylistCapability();
 builder.Services.AddAppleMusicKitPlaylistCapability();
 builder.Services.AddAppleDownloadCapability();
@@ -468,9 +463,6 @@ else
 {
     builder.Services.AddSingleton<IStartupValidator, SubsonicStartupValidator>();
 }
-
-// Register endpoint benchmark service
-builder.Services.AddSingleton<EndpointBenchmarkService>();
 
 var probeOptionalProvidersAtStartup =
     builder.Configuration.GetValue<bool>("StartupValidation:ProbeOptionalProviders");

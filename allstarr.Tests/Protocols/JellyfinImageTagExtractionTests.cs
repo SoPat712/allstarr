@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.Json;
 using allstarr.Controllers;
 
@@ -18,7 +17,7 @@ public class JellyfinImageTagExtractionTests
         }
         """);
 
-        var imageTag = InvokeExtractImageTag(document.RootElement, "Primary");
+        var imageTag = JellyfinController.ExtractImageTag(document.RootElement, "Primary");
 
         Assert.Equal("playlist-primary-tag", imageTag);
     }
@@ -32,7 +31,7 @@ public class JellyfinImageTagExtractionTests
         }
         """);
 
-        var imageTag = InvokeExtractImageTag(document.RootElement, "Primary");
+        var imageTag = JellyfinController.ExtractImageTag(document.RootElement, "Primary");
 
         Assert.Equal("primary-fallback-tag", imageTag);
     }
@@ -48,7 +47,7 @@ public class JellyfinImageTagExtractionTests
         }
         """);
 
-        var imageTag = InvokeExtractImageTag(document.RootElement, "Primary");
+        var imageTag = JellyfinController.ExtractImageTag(document.RootElement, "Primary");
 
         Assert.Null(imageTag);
     }
@@ -68,15 +67,5 @@ public class JellyfinImageTagExtractionTests
         Assert.Same(
             source,
             JellyfinController.SelectExternalArtworkVariant(source, "apple-download", null, null));
-    }
-
-    private static string? InvokeExtractImageTag(JsonElement item, string imageType)
-    {
-        var method = typeof(JellyfinController).GetMethod(
-            "ExtractImageTag",
-            BindingFlags.Static | BindingFlags.NonPublic);
-
-        Assert.NotNull(method);
-        return (string?)method!.Invoke(null, new object?[] { item, imageType });
     }
 }

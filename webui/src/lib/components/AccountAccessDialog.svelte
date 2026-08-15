@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Dialog } from "$lib/components/ui/dialog";
+  import { Button, buttonVariants } from "$lib/components/ui/button";
   import { X } from "lucide-svelte";
   import { sources, type ProviderAccount } from "$lib/api";
   import { audienceLabel } from "$lib/sources";
@@ -125,8 +126,8 @@
           <p class="credential-safety">Credentials stay encrypted and are never shown when access changes.</p>
           {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
           <footer>
-            <Dialog.Close class="button-secondary">Cancel</Dialog.Close>
-            <button class="button-primary" type="submit" disabled={saving}>{saving ? "Saving…" : "Save access"}</button>
+            <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
+            <Button type="submit" disabled={saving}>{saving ? "Saving…" : "Save access"}</Button>
           </footer>
         </form>
       {/if}

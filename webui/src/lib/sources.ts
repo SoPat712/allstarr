@@ -7,9 +7,20 @@ import type {
   ProviderSummary,
 } from "./api";
 
-export const humanize = (value: string) =>
-  value.replace(/reviewrequired/gi, "review required").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replaceAll("_", " ").replaceAll("-", " ")
-    .replace(/\b\w/g, (character) => character.toUpperCase());
+export { humanize } from "./activity";
+
+export const findProviderDefinition = (
+  providers: ProviderDefinition[],
+  providerId?: string | null,
+) => providerId
+  ? providers.find((provider) => provider.id.toLowerCase() === providerId.toLowerCase())
+  : undefined;
+
+export const providerDisplayName = (
+  providers: ProviderDefinition[],
+  providerId?: string | null,
+  fallback = "Unknown source",
+) => providerId ? findProviderDefinition(providers, providerId)?.name ?? providerId : fallback;
 
 export function audienceLabel(account: ProviderAccount) {
   if (account.scope === "Global") return "Everyone";
@@ -63,8 +74,8 @@ export function sourceMetrics(
   };
 }
 
-export const supportsStreamingDiagnostic = (health: ProviderHealth[]) =>
-  health.some((item) => item.capability.toLowerCase() === "streaming" && item.supported);
+export const supportsPlaybackDiagnostic = (health: ProviderHealth[]) =>
+  health.some((item) => ["streaming", "download"].includes(item.capability.toLowerCase()) && item.supported);
 
 export const ctsMeasurementLabel = (measurement: CtsMeasurement) =>
   measurement.health === "healthy" ? `${measurement.latencyMs} ms` : "Failed";
@@ -82,8 +93,8 @@ export function sourceTimingLabel(provider: ProviderDefinition, summary?: Provid
   if ((provider.runtimeCapabilities ?? []).some((item) => item.canTest && item.testedAt))
     return "Readiness checked";
   if ((provider.runtimeCapabilities ?? []).some((item) => item.canTest)) return "Awaiting first sample";
-  if ((provider.categories ?? []).some((item) => item.toLowerCase() === "streaming")) return "Manual only";
-  if ((provider.categories ?? []).some((item) => item.toLowerCase() === "download")) return "No streaming capability";
+  if ((provider.categories ?? []).some((item) => ["streaming", "download"].includes(item.toLowerCase())))
+    return "Awaiting first CTS sample";
   return "Not applicable";
 }
 

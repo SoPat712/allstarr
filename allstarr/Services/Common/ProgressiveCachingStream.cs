@@ -1,15 +1,10 @@
 namespace allstarr.Services.Common;
 
-public interface IAudioContentStream
-{
-    string ContentType { get; }
-}
-
 /// <summary>
 /// Relays a sequential upstream audio response immediately while writing the same
 /// bytes to a temporary cache artifact. The artifact is published only after EOF.
 /// </summary>
-public sealed class ProgressiveCachingStream : Stream, IAudioContentStream
+public sealed class ProgressiveCachingStream : Stream
 {
     private readonly Stream source;
     private readonly Stream cache;

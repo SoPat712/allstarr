@@ -9,7 +9,7 @@ namespace allstarr.Tests;
 public sealed class ProtocolLyricsResolverTests
 {
     [Fact]
-    public async Task Resolver_UsesOneConfiguredOrderForMetadataSourcesAndPreservesFacts()
+    public async Task Resolver_DeezerTrackFallsBackToLrclibWithFullMetadata()
     {
         var protocol = new ProtocolExecutionContext(
             ProtocolKind.Jellyfin,
@@ -49,7 +49,7 @@ public sealed class ProtocolLyricsResolverTests
             Artists = ["First artist", "Second artist"],
             Album = "Fixture album",
             Duration = 180
-        }, "library-song-id");
+        }, "ext-deezer-song-3135556", "deezer", "3135556");
 
         Assert.NotNull(result);
         Assert.Equal("[00:01.00]Fixture line\n", result.SyncedLyrics);

@@ -1,5 +1,8 @@
 <script lang="ts">
   import { Dialog } from "$lib/components/ui/dialog";
+  import { Checkbox } from "$lib/components/ui/checkbox";
+  import { Badge } from "$lib/components/ui/badge";
+  import { Button, buttonVariants } from "$lib/components/ui/button";
   import { X } from "lucide-svelte";
   import { playlistLinks, type PlaylistRematchPreview } from "$lib/api";
 
@@ -96,15 +99,15 @@
           <div class="compact-empty" role="alert">
             <strong>The rematch preview could not be prepared</strong>
             <p>{error}</p>
-            <button class="button-secondary" type="button" onclick={() => void loadPreview()}>Try again</button>
+            <Button variant="secondary" onclick={() => void loadPreview()}>Try again</Button>
           </div>
         {:else if preview}
           <section class="rematch-consequence">
             <div>
               <strong>{preview.canApply ? `${tracks(preview.uniqueTracksToRematch)} ${preview.uniqueTracksToRematch === 1 ? "needs" : "need"} review` : "No rematch needed"}</strong>
-              <span class={`status-pill ${preview.canApply ? "suggested" : "healthy"}`}>
+              <Badge state={preview.canApply ? "suggested" : "healthy"}>
                 {preview.canApply ? "Ready to queue" : "Current"}
-              </span>
+              </Badge>
             </div>
             <p>
               Allstarr checked {preview.playlistCount.toLocaleString()} linked playlists across
@@ -131,7 +134,7 @@
 
           {#if preview.canApply}
             <label class="rematch-confirm">
-              <input type="checkbox" bind:checked={confirmed} />
+              <Checkbox class="mt-0.5" bind:checked={confirmed} />
               <span>I reviewed these counts and want to queue this exact rematch.</span>
             </label>
           {/if}
@@ -139,11 +142,11 @@
       </div>
 
       <footer class="rematch-footer">
-        <Dialog.Close class="button-secondary">{preview?.canApply ? "Cancel" : "Close"}</Dialog.Close>
+        <Dialog.Close class={buttonVariants({ variant: "secondary" })}>{preview?.canApply ? "Cancel" : "Close"}</Dialog.Close>
         {#if preview?.canApply}
-          <button class="button-primary" type="button" disabled={!confirmed || applying} onclick={() => void applyRematch()}>
+          <Button disabled={!confirmed || applying} onclick={() => void applyRematch()}>
             {applying ? "Queueing rematch…" : `Rematch ${tracks(preview.uniqueTracksToRematch)}`}
-          </button>
+          </Button>
         {/if}
       </footer>
     </Dialog.Content>
@@ -151,7 +154,7 @@
 </Dialog.Root>
 
 <style>
-  .rematch-dialog{max-height:min(860px,calc(100dvh - 32px));width:min(720px,calc(100vw - 32px))}
+  :global(.rematch-dialog){max-height:min(860px,calc(100dvh - 32px));width:min(720px,calc(100vw - 32px))}
   .rematch-body{display:grid;gap:18px;min-height:160px;overflow:auto;padding:20px}
   .rematch-consequence{display:grid;gap:8px}
   .rematch-consequence>div{align-items:center;display:flex;gap:12px;justify-content:space-between}
@@ -162,6 +165,5 @@
   .rematch-counts dt{color:var(--color-text-muted);font-size:.78rem;line-height:1.3}
   .rematch-counts dd{font-size:1.15rem;font-weight:700;margin:0}
   .rematch-confirm{align-items:start;background:var(--color-surface-raised);border:1px solid var(--color-edge);border-radius:12px;cursor:pointer;display:grid;gap:10px;grid-template-columns:auto minmax(0,1fr);padding:14px}
-  .rematch-confirm input{margin-block-start:2px}
-  @media(max-width:620px){.rematch-counts{grid-template-columns:repeat(2,minmax(0,1fr))}.rematch-footer{align-items:stretch;display:grid}.rematch-footer>*{width:100%}}
+  @media(max-width:620px){.rematch-counts{grid-template-columns:repeat(2,minmax(0,1fr))}.rematch-footer{align-items:stretch;display:grid}.rematch-footer :global(button){width:100%}}
 </style>

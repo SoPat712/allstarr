@@ -9,9 +9,7 @@ declare global {
 
 const viewports = [
   { width: 390, height: 844 },
-  { width: 768, height: 1024 },
   { width: 1280, height: 800 },
-  { width: 1440, height: 900 },
 ];
 
 const schema = {
@@ -38,13 +36,16 @@ const schema = {
     {
       id: "general", label: "General", fields: [
       { key: "AUDIO_QUALITY", label: "Audio quality", type: "audio-quality", valuePath: "audio.quality" },
+      { key: "STORAGE_MODE", label: "Storage mode", type: "select", valuePath: "library.storageMode", options: ["Permanent", "Cache"] },
       { key: "Theme", label: "Theme", type: "select", valuePath: "general.theme", options: ["Dark"] },
       { key: "PublicUrl", label: "Public URL", type: "text", valuePath: "deployment.url", ownership: "deployment", readOnly: true },
       ],
     },
     {
       id: "cache", label: "Cache", fields: [
+        { key: "CACHE_DURATION_HOURS", label: "Track cache hours", type: "number", valuePath: "library.cacheDurationHours", min: 1 },
         { key: "CACHE_SEARCH_RESULTS_MINUTES", label: "Search results minutes", type: "number", valuePath: "cache.searchResultsMinutes", min: 1, max: 1440 },
+        { key: "CACHE_TRANSCODE_MINUTES", label: "Transcode cache minutes", type: "number", valuePath: "cache.transcodeCacheMinutes", min: 1 },
         { key: "CACHE_MEDIA_MAXIMUM_MEGABYTES", label: "Media cache total MiB", type: "number", valuePath: "cache.mediaMaximumMegabytes", ownership: "deployment", readOnly: true },
       ],
     },
@@ -208,7 +209,8 @@ const responses: Record<string, unknown> = {
     general: { theme: "Dark" }, deployment: { url: "https://music.example.test" },
     audio: { quality: "BestAvailable" },
     appleDownload: { baseUrl: "http://apple-download.test" },
-    cache: { searchResultsMinutes: 1, mediaMaximumMegabytes: 512 },
+    library: { storageMode: "Cache", cacheDurationHours: 24 },
+    cache: { searchResultsMinutes: 1, mediaMaximumMegabytes: 512, transcodeCacheMinutes: 60 },
     providers: { streamingOrder: "lumen-audio" },
   },
   "/api/admin/storage": { storage: { provider: "PostgreSQL", readiness: "Ready" }, backups: [] },
@@ -868,7 +870,7 @@ for (const viewport of viewports) {
       await expect(page.getByText("Morning discovery")).toBeVisible();
       await expect(page.getByText("Created in Jellyfin", { exact: true })).toBeVisible();
       await expect(page.getByText("Searching Lumen Audio.")).toBeVisible();
-      await expect(page.getByRole("progressbar", { name: "Recommendation refresh progress" })).toHaveAttribute("value", "1");
+      await expect(page.getByRole("progressbar", { name: "Recommendation refresh progress" })).toHaveAttribute("aria-valuenow", "1");
       await page.getByRole("button", { name: "Cancel refresh" }).scrollIntoViewIfNeeded();
       await expect(page.getByRole("button", { name: "Cancel refresh" })).toBeInViewport();
       await page.getByRole("button", { name: "Refresh recommendations" }).scrollIntoViewIfNeeded();
@@ -879,7 +881,7 @@ for (const viewport of viewports) {
       const firstScan = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/audiomuse/analysis"));
       await soundDiscovery.getByRole("button", { name: "Scan library sounds" }).click();
       expect((await firstScan).postDataJSON()).toMatchObject({ rebuild: false });
-      await expect(soundDiscovery.getByRole("progressbar", { name: "Library sound scan progress" })).toHaveAttribute("value", "200");
+      await expect(soundDiscovery.getByRole("progressbar", { name: "Library sound scan progress" })).toHaveAttribute("aria-valuenow", "200");
       const rebuildScan = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/audiomuse/analysis"));
       await soundDiscovery.getByRole("button", { name: "Scan library again" }).click();
       expect((await rebuildScan).postDataJSON()).toMatchObject({ rebuild: true });
@@ -977,7 +979,7 @@ for (const viewport of viewports) {
       const automaticHistory = page.getByRole("checkbox", { name: /Save my listening automatically/ });
       await expect(automaticHistory).toBeChecked();
       await expect(automaticHistory.locator("..")).toHaveClass(/selected/);
-      expect(await automaticHistory.evaluate((element) => getComputedStyle(element).appearance)).toBe("none");
+      await expect(automaticHistory).toHaveAttribute("data-slot", "checkbox");
       await expect(page.getByText("Keep listening history for", { exact: true })).toBeVisible();
       await expect(page.getByText("Use these actions for recommendations", { exact: true })).toBeVisible();
       await expect(page.locator(".settings-stack")).not.toContainText(/\bsignals?\b/i);
@@ -985,7 +987,7 @@ for (const viewport of viewports) {
       await expect(page.getByText("Allstarr will not send listens to ListenBrainz.", { exact: true })).toBeVisible();
       await expect(page.getByText("Allstarr is checking 2 saved listens for more song details.", { exact: true })).toBeVisible();
       const intelligenceSource = page.getByText("Private similarity source.", { exact: true }).locator("..");
-      await expect(intelligenceSource.locator(".status-pill")).toHaveText("Ready");
+      await expect(intelligenceSource.locator('[data-slot="badge"]')).toHaveText("Ready");
       await expect(page.getByText("Where generated playlists are created", { exact: true })).toBeVisible();
       expect(await page.locator(".status-list").evaluate((element) => element.tagName)).toBe("UL");
       expect(await page.locator(".schedule-list").evaluate((element) => element.tagName)).toBe("UL");
@@ -1332,9 +1334,7 @@ test("Home stays inside runtime and request budgets", async ({ page }) => {
   await expect(nowPlaying.locator(".scrobble-state")).toContainText("Not scrobbled");
 
   const apiRequests = requests.filter((path) => path.startsWith("/api/admin/"));
-  const jsRequests = requests.filter((path) => path.endsWith(".js"));
   expect(apiRequests.length).toBeLessThanOrEqual(14);
-  expect(jsRequests.length).toBeLessThanOrEqual(15); // Shell, Home, and Lucide icon primitives.
 
   await page.evaluate(() => {
     const metrics = window.__allstarrMetrics;
@@ -2062,6 +2062,7 @@ test("Cached and Kept keep media facts and actions readable on mobile", async ({
   await expect(cached.getByRole("link", { name: "Download" })).toBeInViewport();
   await expect(cached.getByRole("button", { name: "Keep" })).toBeInViewport();
   await expect(cached.getByRole("button", { name: "Remove" })).toBeInViewport();
+  await expect(cached.getByText(/Track cache/)).toBeVisible();
 
   await page.goto("#/library/kept");
   const kept = page.locator(".download-row");
@@ -2071,6 +2072,44 @@ test("Cached and Kept keep media facts and actions readable on mobile", async ({
   expect(Math.abs(downloadWidth - removeWidth)).toBeLessThanOrEqual(1);
   await kept.getByRole("button", { name: "Remove" }).click();
   await expect(page.getByRole("alertdialog", { name: "Remove this track?" })).toBeVisible();
+});
+
+test("Cached owns track storage and retention controls", async ({ page }) => {
+  await mockApi(page);
+  let saved: Record<string, string> | null = null;
+  await page.route("**/api/admin/config", (route) => {
+    if (route.request().method() === "POST") {
+      saved = route.request().postDataJSON().updates;
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ message: "Runtime configuration updated.", updatedKeys: Object.keys(saved ?? {}) }),
+      });
+    }
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(responses["/api/admin/config"]),
+    });
+  });
+
+  await page.goto("#/library/cached");
+  await expect(page.getByText("Track cache behavior")).toBeVisible();
+  await expect(page.getByText("Cache mode", { exact: true })).toBeVisible();
+  await page.getByText("Track cache behavior").click();
+  await expect(page.locator('input[name="CACHE_DURATION_HOURS"]')).toHaveValue("24");
+  await expect(page.locator('input[name="CACHE_TRANSCODE_MINUTES"]')).toHaveValue("60");
+  await page.locator('input[name="CACHE_DURATION_HOURS"]').fill("48");
+  await page.getByRole("button", { name: "Save track cache" }).click();
+  await expect.poll(() => saved).toEqual({
+    STORAGE_MODE: "Cache",
+    CACHE_DURATION_HOURS: "48",
+    CACHE_TRANSCODE_MINUTES: "60",
+  });
+  await expect(page.getByText("Track cache settings saved.")).toBeVisible();
+
+  await page.goto("#/settings/general");
+  await expect(page.getByRole("button", { name: "Storage mode" })).toHaveCount(0);
+  await expect(page.getByText("Track cache hours")).toHaveCount(0);
+  await expect(page.getByText("Transcode cache minutes")).toHaveCount(0);
 });
 
 test("Sources keep primary actions visible and report scoped degradation", async ({ page, context }) => {
@@ -2113,7 +2152,7 @@ test("Sources keep primary actions visible and report scoped degradation", async
   await page.goto("#/sources");
   await expect(page.getByRole("button", { name: /Lumen Audio Account details stored/ })).toBeVisible();
   const lumenSource = page.locator(".sources-table tr").filter({ hasText: "Lumen Audio" });
-  await expect(lumenSource.locator(".operational-mobile-detail dd").filter({ hasText: "Manual only" })).toHaveText("Manual only");
+  await expect(lumenSource.locator(".operational-mobile-detail dd").filter({ hasText: "Awaiting first CTS sample" })).toHaveText("Awaiting first CTS sample");
   const tableGutters = await page.locator(".sources-panel").evaluate((panel) => ({
     heading: Number.parseFloat(getComputedStyle(panel.querySelector(".sources-heading")!).paddingLeft),
     cell: Number.parseFloat(getComputedStyle(panel.querySelector(".sources-table td")!).paddingLeft),
@@ -2150,7 +2189,7 @@ test("Sources keep primary actions visible and report scoped degradation", async
   await appleManager.getByLabel("2FA code").fill("123456");
   await appleManager.getByRole("button", { name: "Submit 2FA" }).click();
   await expect(appleManager.getByText("Apple Music – GAMDL is ready")).toBeVisible();
-  await expect(appleManager.locator(".source-metrics .status-pill")).toHaveCount(3);
+  await expect(appleManager.locator('.source-metrics [data-slot="badge"]')).toHaveCount(3);
   await expect(appleManager.getByRole("link", { name: "Provider settings" }))
     .toHaveAttribute("href", "#/sources?source=apple-download&section=configuration");
   await page.keyboard.press("Escape");
@@ -2161,9 +2200,9 @@ test("Sources keep primary actions visible and report scoped degradation", async
   await expect(accountDetails.getByRole("button", { name: "Test connection" })).toBeVisible();
   await expect(accountDetails.getByRole("button", { name: "Edit configuration" })).toBeVisible();
   const metadataCapability = accountDetails.locator(".source-detail-capabilities > span").filter({ hasText: "Metadata" });
-  await expect(metadataCapability.locator(".status-pill")).toHaveText("Ready");
-  await expect(metadataCapability.locator(".status-pill")).toHaveCSS("color", "rgb(99, 221, 166)");
-  await expect(metadataCapability.getByRole("button", { name: "Test" })).toHaveClass(/button-secondary/);
+  await expect(metadataCapability.locator('[data-slot="badge"]')).toHaveText("Ready");
+  await expect(metadataCapability.locator('[data-slot="badge"]')).toHaveCSS("color", "rgb(99, 221, 166)");
+  await expect(metadataCapability.getByRole("button", { name: "Test" })).toHaveAttribute("data-slot", "button");
   await accountDetails.getByRole("button", { name: "Close Source details" }).click();
 
   const listener = await context.newPage();

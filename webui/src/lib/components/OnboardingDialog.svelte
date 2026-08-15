@@ -1,5 +1,7 @@
 <script lang="ts">
   import { Dialog } from "$lib/components/ui/dialog";
+  import { Badge } from "$lib/components/ui/badge";
+  import { Button, buttonVariants } from "$lib/components/ui/button";
   import { X } from "lucide-svelte";
   import type { OnboardingState } from "$lib/api";
 
@@ -58,27 +60,27 @@
 
       <div class="setup-checklist">
         <section>
-          <span class={`status-pill ${backendRecorded ? "healthy" : "suggested"}`}>{backendRecorded ? "Recorded" : "Required"}</span>
+          <Badge state={backendRecorded ? "healthy" : "suggested"}>{backendRecorded ? "Recorded" : "Required"}</Badge>
           <div><strong>Media server identity</strong><p>Your authenticated Jellyfin or Subsonic identity anchors account and library ownership.</p></div>
         </section>
         <section>
-          <span class={`status-pill ${onboardingState.migration.completed ? "healthy" : "suggested"}`}>{onboardingState.migration.completed ? "Imported" : "Optional"}</span>
+          <Badge state={onboardingState.migration.completed ? "healthy" : "suggested"}>{onboardingState.migration.completed ? "Imported" : "Optional"}</Badge>
           <div><strong>Legacy v2 settings</strong><p>Preview a prior <code>.env</code> from Settings → Maintenance when you need it.</p></div>
         </section>
         <section>
-          <span class="status-pill suggested">Next</span>
+          <Badge state="suggested">Next</Badge>
           <div><strong>Connect Sources</strong><p>Add provider accounts only when their capabilities are useful to you.</p></div>
         </section>
         <section>
-          <span class="status-pill suggested">Next</span>
+          <Badge state="suggested">Next</Badge>
           <div><strong>Add a playlist</strong><p>Allstarr will prefer playable local tracks and retain configured provider fallbacks.</p></div>
         </section>
       </div>
 
       {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
       <footer class="dialog-actions">
-        {#if !onboardingState.shouldRedirectToSetup}<Dialog.Close class="button-secondary">Close</Dialog.Close>{/if}
-        <button class="button-primary" type="button" disabled={saving} onclick={() => void complete()}>{saving ? "Saving…" : "Finish setup"}</button>
+        {#if !onboardingState.shouldRedirectToSetup}<Dialog.Close class={buttonVariants({ variant: "secondary" })}>Close</Dialog.Close>{/if}
+        <Button disabled={saving} onclick={() => void complete()}>{saving ? "Saving…" : "Finish setup"}</Button>
       </footer>
     </Dialog.Content>
   </Dialog.Portal>

@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { settings, type EnvMigrationPreview } from "$lib/api";
+  import { Checkbox } from "$lib/components/ui/checkbox";
+  import { Badge } from "$lib/components/ui/badge";
+  import { Button } from "$lib/components/ui/button";
 
   let status = $state<Awaited<ReturnType<typeof settings.migrationStatus>> | null>(null);
   let preview = $state<EnvMigrationPreview | null>(null);
@@ -78,9 +81,9 @@
 <article class="panel maintenance-card">
   <header>
     <div><strong>Legacy v2 import</strong><small>One-time durable migration</small></div>
-    <span class={`status-pill ${status?.completed ? "healthy" : "suggested"}`}>
+    <Badge state={status?.completed ? "healthy" : "suggested"}>
       {status?.completed ? "Imported" : "Optional"}
-    </span>
+    </Badge>
   </header>
   <p>Preview a legacy <code>.env</code> locally, then import supported settings, accounts, playlists, and schedules into PostgreSQL. Secrets are never echoed.</p>
 
@@ -103,17 +106,17 @@
       </ul>
     </details>
     <label class="permission-confirm">
-      <input type="checkbox" bind:checked={confirmed} />
+      <Checkbox bind:checked={confirmed} />
       <span>I reviewed this preview and understand that imported accounts remain disabled when required.</span>
     </label>
     <div class="maintenance-actions">
-      <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void reset()}>{action === "reset" ? "Discarding…" : "Discard and retry"}</button>
-      <button class="button-primary" type="button" disabled={!confirmed || !preview.canApply || Boolean(action)} onclick={() => void apply()}>{action === "apply" ? "Importing…" : "Import preview"}</button>
+      <Button variant="secondary" disabled={Boolean(action)} onclick={() => void reset()}>{action === "reset" ? "Discarding…" : "Discard and retry"}</Button>
+      <Button disabled={!confirmed || !preview.canApply || Boolean(action)} onclick={() => void apply()}>{action === "apply" ? "Importing…" : "Import preview"}</Button>
     </div>
   {:else}
     <form class="settings-fields" onsubmit={(event) => { event.preventDefault(); void inspect(); }}>
       <label class="setting-field"><span><strong>Legacy environment file</strong></span><input type="file" onchange={(event) => { file = event.currentTarget.files?.[0] ?? null; }} /></label>
-      <button class="button-secondary" type="submit" disabled={!file || Boolean(action)}>{action === "preview" ? "Inspecting…" : status?.completed ? "Preview revision" : "Preview import"}</button>
+      <Button variant="secondary" type="submit" disabled={!file || Boolean(action)}>{action === "preview" ? "Inspecting…" : status?.completed ? "Preview revision" : "Preview import"}</Button>
     </form>
   {/if}
   {#if feedback}<p class={failed ? "notice-error" : "action-feedback"} role={failed ? "alert" : "status"}>{feedback}</p>{/if}

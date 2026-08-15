@@ -31,7 +31,7 @@ public class CacheSettings
     public int GenreDays { get; set; } = 30;
 
     /// <summary>
-    /// External metadata (SquidWTF albums/artists) cache duration in days.
+    /// External metadata cache duration in days.
     /// Default: 7 days
     /// </summary>
     public int MetadataDays { get; set; } = 7;

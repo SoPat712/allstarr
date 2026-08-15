@@ -444,6 +444,7 @@ public sealed class PostgresStorageIntegrationTests
 
     [Fact]
     [Trait("Category", "Postgres")]
+    [Trait("Lane", "ReleaseCritical")]
     public async Task NativePostgresAdditiveMigrations_CanRollBackToFoundationAndReapply()
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
@@ -703,6 +704,7 @@ public sealed class PostgresStorageIntegrationTests
 
     [Fact]
     [Trait("Category", "Postgres")]
+    [Trait("Lane", "ReleaseCritical")]
     public async Task NativePostgresMigrationLockAndDurableQueue_WorkAgainstSelectedDatabase()
     {
         await using var database = await PostgresTestDatabase.CreateAsync(useTemplate: false);
@@ -804,6 +806,7 @@ public sealed class PostgresStorageIntegrationTests
 
     [Fact]
     [Trait("Category", "Postgres")]
+    [Trait("Lane", "ReleaseCritical")]
     public async Task NativePostgresCacheLoss_PreservesDurableWorkAndProgressAcrossCacheRestart()
     {
         await using var database = await PostgresTestDatabase.CreateAsync();

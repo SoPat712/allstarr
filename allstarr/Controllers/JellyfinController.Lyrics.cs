@@ -1,6 +1,7 @@
 using System.Text.Json;
 using allstarr.Models.Domain;
 using allstarr.Core.Protocols;
+using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers;
@@ -80,28 +81,12 @@ public partial class JellyfinController
                 else
                 {
                     // Last resort: Try to convert via Odesli/song.link
-                    if (provider == "squidwtf")
+                    var sourceUrl = OdesliService.BuildTrackUrl(provider!, externalId!);
+
+                    if (!string.IsNullOrEmpty(sourceUrl))
                     {
                         spotifyTrackId =
-                            await _odesliService.ConvertTidalToSpotifyIdAsync(externalId!, HttpContext.RequestAborted);
-                    }
-                    else
-                    {
-                        // For other providers, build the URL and convert
-                        var sourceUrl = provider?.ToLowerInvariant() switch
-                        {
-                            "deezer" => $"https://www.deezer.com/track/{externalId}",
-                            "qobuz" => $"https://www.qobuz.com/us-en/album/-/-/{externalId}",
-                            "applemusic" or "apple-download" or "spotiflac-apple-music" =>
-                                $"https://music.apple.com/us/song/{externalId}",
-                            _ => null
-                        };
-
-                        if (!string.IsNullOrEmpty(sourceUrl))
-                        {
-                            spotifyTrackId =
-                                await _odesliService.ConvertUrlToSpotifyIdAsync(sourceUrl, HttpContext.RequestAborted);
-                        }
+                            await _odesliService.ConvertUrlToSpotifyIdAsync(sourceUrl, HttpContext.RequestAborted);
                     }
 
                     if (!string.IsNullOrEmpty(spotifyTrackId))

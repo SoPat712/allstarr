@@ -20,14 +20,13 @@ public static class ExternalTrackPlaybackPolicy
     public static bool CanUseForPlayback(string? provider, string? trackId = null)
     {
         var normalized = Normalize(provider);
-        if (normalized is "squidwtf" or "tidal")
+        if (normalized == "tidal")
         {
             return false;
         }
 
         var normalizedTrackId = (trackId ?? string.Empty).Trim().ToLowerInvariant();
-        if (normalizedTrackId.StartsWith("ext-squidwtf-", StringComparison.Ordinal) ||
-            normalizedTrackId.StartsWith("ext-tidal-", StringComparison.Ordinal))
+        if (normalizedTrackId.StartsWith("ext-tidal-", StringComparison.Ordinal))
         {
             return false;
         }

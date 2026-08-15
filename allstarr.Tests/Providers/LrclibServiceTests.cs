@@ -1,10 +1,9 @@
-using Xunit;
+using System.Net;
 using Moq;
+using Moq.Protected;
 using Microsoft.Extensions.Logging;
 using allstarr.Services.Lyrics;
 using allstarr.Services.Common;
-using Microsoft.Extensions.Options;
-using allstarr.Models.Settings;
 using allstarr.Core.Storage;
 
 namespace allstarr.Tests;
@@ -15,7 +14,7 @@ public class LrclibServiceTests
     private readonly Mock<IHttpClientFactory> _mockHttpClientFactory;
     private readonly Mock<IApplicationCache> _mockCache;
     private readonly Mock<IManualLyricsMappingStore> _mockMappingStore;
-    private readonly HttpClient _httpClient;
+    private readonly Mock<HttpMessageHandler> _handler;
 
     public LrclibServiceTests()
     {
@@ -26,73 +25,74 @@ public class LrclibServiceTests
         _mockCache = new Mock<IApplicationCache>();
         _mockMappingStore = new Mock<IManualLyricsMappingStore>();
 
-        _httpClient = new HttpClient
+        _handler = new Mock<HttpMessageHandler>();
+        var httpClient = new HttpClient(_handler.Object)
         {
             BaseAddress = new Uri("https://lrclib.net")
         };
 
-        _mockHttpClientFactory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(_httpClient);
+        _mockHttpClientFactory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
     }
 
     [Fact]
-    public void Constructor_InitializesWithDependencies()
+    public async Task GetLyricsAsync_WithMissingTrack_DoesNotCallProvider()
     {
-        // Act
         var service = CreateService();
 
-        // Assert
-        Assert.NotNull(service);
+        var result = await service.GetLyricsAsync("", "Artist", "Album", 180);
+
+        Assert.Null(result);
+        _handler.Protected().Verify(
+            "SendAsync",
+            Times.Never(),
+            ItExpr.IsAny<HttpRequestMessage>(),
+            ItExpr.IsAny<CancellationToken>());
     }
 
     [Fact]
-    public void GetLyricsAsync_RequiresValidParameters()
+    public async Task GetLyricsCachedAsync_ReturnsProviderResult()
     {
-        // Arrange
+        _handler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(request => request.RequestUri!.AbsolutePath == "/api/get-cached"),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"id":42,"trackName":"Rocket","artistName":"Beyoncé","albumName":"4","duration":244,"plainLyrics":"plain","syncedLyrics":"[00:01]line"}""")
+            });
         var service = CreateService();
 
-        // Act & Assert - Should handle empty parameters gracefully
-        var result = service.GetLyricsAsync("", "Artist", "Album", 180);
+        var result = await service.GetLyricsCachedAsync("Rocket", "Beyoncé", "4", 244);
+
         Assert.NotNull(result);
+        Assert.Equal(42, result.Id);
+        Assert.Equal("plain", result.PlainLyrics);
+        Assert.Equal("[00:01]line", result.SyncedLyrics);
+        _handler.Protected().Verify(
+            "SendAsync",
+            Times.Once(),
+            ItExpr.Is<HttpRequestMessage>(request =>
+                request.RequestUri!.Query.Contains("track_name=Rocket", StringComparison.Ordinal)),
+            ItExpr.IsAny<CancellationToken>());
     }
 
     [Fact]
-    public void GetLyricsAsync_SupportsMultipleArtists()
+    public async Task GetLyricsAsync_ReturnsApplicationCacheWithoutProviderCall()
     {
-        // Arrange
-        var service = CreateService();
-        var artists = new[] { "Artist 1", "Artist 2", "Artist 3" };
-
-        // Act
-        var result = service.GetLyricsAsync("Track Name", artists, "Album", 180);
-
-        // Assert
-        Assert.NotNull(result);
-    }
-
-    [Fact]
-    public void GetLyricsByIdAsync_AcceptsValidId()
-    {
-        // Arrange
+        _mockCache.Setup(cache => cache.GetStringAsync(It.IsAny<string>())).ReturnsAsync(
+            """{"id":7,"trackName":"Cached","artistName":"Artist","plainLyrics":"cached lyrics"}""");
         var service = CreateService();
 
-        // Act
-        var result = service.GetLyricsByIdAsync(123456);
+        var result = await service.GetLyricsAsync("Cached", "Artist", "Album", 180);
 
-        // Assert
         Assert.NotNull(result);
-    }
-
-    [Fact]
-    public void GetLyricsCachedAsync_UsesCache()
-    {
-        // Arrange
-        var service = CreateService();
-
-        // Act
-        var result = service.GetLyricsCachedAsync("Track", "Artist", "Album", 180);
-
-        // Assert
-        Assert.NotNull(result);
+        Assert.Equal("cached lyrics", result.PlainLyrics);
+        _handler.Protected().Verify(
+            "SendAsync",
+            Times.Never(),
+            ItExpr.IsAny<HttpRequestMessage>(),
+            ItExpr.IsAny<CancellationToken>());
     }
 
     private LrclibService CreateService() =>

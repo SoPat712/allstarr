@@ -167,16 +167,18 @@ public partial class JellyfinController
         {
             try
             {
+                var protocol = HttpContext.RequireProtocolExecutionContext();
+                var requestedQuality = quality switch
+                {
+                    StreamQuality.Low => ProviderAudioQuality.DataSaver,
+                    StreamQuality.High => ProviderAudioQuality.Lossy,
+                    _ => ProviderAudioQuality.Any
+                };
                 var routed = await _providerGateway.OpenStreamAsync(
-                    HttpContext.RequireProtocolExecutionContext(),
+                    protocol,
                     provider,
                     externalId,
-                    quality switch
-                    {
-                        StreamQuality.Low => ProviderAudioQuality.DataSaver,
-                        StreamQuality.High => ProviderAudioQuality.Lossy,
-                        _ => ProviderAudioQuality.Any
-                    },
+                    requestedQuality,
                     Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null,
                     headOnly: HttpMethods.IsHead(Request.Method));
                 if (routed != null)
@@ -186,6 +188,17 @@ public partial class JellyfinController
                         var status = (int)routed.Response.StatusCode;
                         routed.Response.Dispose();
                         return StatusCode(status);
+                    }
+                    if (_managedTrackCache != null)
+                    {
+                        await _managedTrackCache.WrapAsync(
+                            routed,
+                            provider,
+                            externalId,
+                            requestedQuality,
+                            HttpMethods.IsHead(Request.Method),
+                            () => _providerGateway.GetSongAsync(protocol, provider, externalId),
+                            HttpContext.RequestAborted);
                     }
                     return await _streamingResponseAdapter.CreateAsync(
                         HttpContext,
@@ -209,7 +222,7 @@ public partial class JellyfinController
                 quality != StreamQuality.Original ? quality : null,
                 HttpContext.RequestAborted);
 
-            var contentType = downloadStream is IAudioContentStream typed
+            var contentType = downloadStream is ProgressiveCachingStream typed
                 ? typed.ContentType
                 : "audio/mpeg";
             if (downloadStream is FileStream fs)
@@ -297,8 +310,7 @@ public partial class JellyfinController
             return (StatusCodes.Status503ServiceUnavailable, "External provider has no healthy endpoints");
         }
 
-        if (ex.Message.Contains("endpoints failed", StringComparison.OrdinalIgnoreCase) ||
-            ex.Message.Contains("No SquidWTF endpoints", StringComparison.OrdinalIgnoreCase))
+        if (ex.Message.Contains("endpoints failed", StringComparison.OrdinalIgnoreCase))
         {
             return (StatusCodes.Status503ServiceUnavailable, "External provider has no healthy endpoints");
         }

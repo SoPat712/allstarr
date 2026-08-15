@@ -1117,7 +1117,6 @@ public class AdminUiController : ControllerBase
         var value = _configuration[envKey] ?? fallback;
         var providers = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(p => p.ToLowerInvariant())
-            .Where(p => p != "squidwtf")
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         if (_providerRegistry != null && Enum.TryParse<ProviderCapabilityKind>(id, true, out var capability))

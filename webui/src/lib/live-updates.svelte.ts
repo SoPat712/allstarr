@@ -48,6 +48,26 @@ export function acceptUpdate(
   return true;
 }
 
+export function createRefreshScheduler(
+  refresh: () => void | Promise<void>,
+  delay = 250,
+) {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return {
+    schedule() {
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        void refresh();
+      }, delay);
+    },
+    cancel() {
+      if (timer) clearTimeout(timer);
+      timer = null;
+    },
+  };
+}
+
 function scheduleStale() {
   if (staleTimer) clearTimeout(staleTimer);
   staleTimer = setTimeout(() => {

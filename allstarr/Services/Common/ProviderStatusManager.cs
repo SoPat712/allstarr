@@ -1074,7 +1074,6 @@ public class ProviderStatusManager
         var value = _configuration[key] ?? fallback;
         return value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(Normalize)
-            .Where(provider => provider != "squidwtf")
             .ToList();
     }
 

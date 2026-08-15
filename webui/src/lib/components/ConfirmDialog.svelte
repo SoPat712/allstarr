@@ -1,5 +1,6 @@
 <script lang="ts">
   import { AlertDialog } from "$lib/components/ui/alert-dialog";
+  import { buttonVariants, type ButtonVariant } from "$lib/components/ui/button";
 
   let {
     open = $bindable(false),
@@ -7,7 +8,7 @@
     description,
     confirmLabel,
     cancelLabel = "Cancel",
-    confirmClass = "button-danger",
+    confirmVariant = "destructive",
     disabled = false,
     onConfirm,
   }: {
@@ -16,7 +17,7 @@
     description: string;
     confirmLabel: string;
     cancelLabel?: string;
-    confirmClass?: string;
+    confirmVariant?: ButtonVariant;
     disabled?: boolean;
     onConfirm: () => void | Promise<void>;
   } = $props();
@@ -29,8 +30,8 @@
       <AlertDialog.Title>{title}</AlertDialog.Title>
       <AlertDialog.Description>{description}</AlertDialog.Description>
       <footer>
-        <AlertDialog.Cancel class="button-secondary" {disabled}>{cancelLabel}</AlertDialog.Cancel>
-        <AlertDialog.Action class={confirmClass} {disabled} onclick={() => void onConfirm()}>{confirmLabel}</AlertDialog.Action>
+        <AlertDialog.Cancel class={buttonVariants({ variant: "secondary" })} {disabled}>{cancelLabel}</AlertDialog.Cancel>
+        <AlertDialog.Action class={buttonVariants({ variant: confirmVariant })} {disabled} onclick={() => void onConfirm()}>{confirmLabel}</AlertDialog.Action>
       </footer>
     </AlertDialog.Content>
   </AlertDialog.Portal>

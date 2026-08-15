@@ -15,21 +15,40 @@ namespace allstarr.Tests;
 public sealed class ExtensionCapabilityAdapterTests
 {
     [Fact]
-    public void StoredSpotiFlacDownloadManifest_GainsStreamingWithoutReinstallation()
+    public void DownloadOnlyManifest_GainsHostBackedStreamingWithoutReinstallation()
     {
         const string stored = """
-            {"id":"spotiflac-demo","displayName":"Demo","version":"1.0.0","sdkVersion":"1","entryPoint":"index.js",
+            {"id":"download-demo","displayName":"Demo","version":"1.0.0","sdkVersion":"1","entryPoint":"index.js",
              "capabilities":[{"kind":"Download","hooks":["checkAvailability","download"],"accountScopes":["User"],"accountRequired":true}],
-             "permissions":[],"compatibility":"spotiflac-v1"}
+             "permissions":[]}
             """;
 
-        var manifest = ExtensionSdkV1.ParseManifest(
+        var storedManifest = ExtensionSdkV1.ParseManifest(stored);
+        var playableManifest = ExtensionSdkV1.ParseManifest(
             SpotiFlacExtensionCompatibility.EnsureDownloadStreamingCapability(stored));
 
-        var streaming = Assert.Single(manifest.Capabilities,
+        Assert.True(SpotiFlacExtensionCompatibility.UsesDownloadBackedStreaming(storedManifest));
+        var streaming = Assert.Single(playableManifest.Capabilities,
             item => item.Kind == ProviderCapabilityKind.Streaming);
         Assert.True(streaming.AccountRequired);
         Assert.Contains(ProviderAccountScope.User, streaming.AccountScopes);
+    }
+
+    [Fact]
+    public void ExplicitStreamingManifest_KeepsItsOwnStreamingAdapter()
+    {
+        const string stored = """
+            {"id":"stream-demo","displayName":"Demo","version":"1.0.0","sdkVersion":"1","entryPoint":"index.js",
+             "capabilities":[
+               {"kind":"Download","hooks":["checkAvailability","download"],"accountScopes":[],"accountRequired":false},
+               {"kind":"Streaming","hooks":["getStreamLease","probeStream"],"accountScopes":[],"accountRequired":false}],
+             "permissions":[]}
+            """;
+
+        var manifest = ExtensionSdkV1.ParseManifest(stored);
+
+        Assert.False(SpotiFlacExtensionCompatibility.UsesDownloadBackedStreaming(manifest));
+        Assert.Equal(stored, SpotiFlacExtensionCompatibility.EnsureDownloadStreamingCapability(stored));
     }
 
     [Fact]

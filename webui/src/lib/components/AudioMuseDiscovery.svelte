@@ -1,6 +1,8 @@
 <script lang="ts">
   import SelectField from "$lib/components/SelectField.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import { Progress } from "$lib/components/ui/progress";
+  import { Button } from "$lib/components/ui/button";
   import {
     intelligence,
     type AudioMuseAnalysis,
@@ -202,15 +204,15 @@
       <h3>Explore by sound</h3>
       <p>Find songs already in this library. Allstarr will not create or change a {serverName} playlist unless you confirm below.</p>
     </div>
-    <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void startAnalysis(analysis?.state === "completed")}>
+    <Button variant="secondary" disabled={Boolean(action)} onclick={() => void startAnalysis(analysis?.state === "completed")}>
       {action === "analysis" ? "Starting…" : analysis?.state === "completed" ? "Scan library again" : "Scan library sounds"}
-    </button>
+    </Button>
   </header>
 
   {#if analysis}
     <div class="scan-status" role="status">
       <span><strong>{analysisLabel(analysis)}</strong>{#if analysis.total}<small>{analysis.completed} of {analysis.total} songs</small>{/if}</span>
-      {#if analysis.total}<progress aria-label="Library sound scan progress" max={analysis.total} value={analysis.completed}>{analysis.completed} of {analysis.total}</progress>{/if}
+      {#if analysis.total}<Progress aria-label="Library sound scan progress" max={analysis.total} value={analysis.completed} />{/if}
     </div>
   {/if}
   {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
@@ -228,18 +230,18 @@
     {#if mode === "listening"}
       <form class="sound-form" onsubmit={(event) => { event.preventDefault(); void discover("listening", "Songs based on what you played", async () => (await intelligence.audioMuseFingerprint(scope, Number(listeningPeriod) as 30 | 90 | 365)).tracks); }}>
         <label class="field grow"><span>Listening period</span><SelectField bind:value={listeningPeriod} label="Listening period" options={[{ value: "30", label: "Past month" }, { value: "90", label: "Past 3 months" }, { value: "365", label: "Past year" }]} /></label>
-        <button class="button-primary" type="submit" disabled={Boolean(action)}>{action === "listening" ? "Finding…" : "Find songs"}</button>
+        <Button type="submit" disabled={Boolean(action)}>{action === "listening" ? "Finding…" : "Find songs"}</Button>
       </form>
     {:else if mode === "search"}
       <form class="sound-form" onsubmit={(event) => { event.preventDefault(); void discover("search", searchMode === "lyrics" ? "Songs with matching words" : "Songs matching your description", async () => (await intelligence.audioMuseSearch(scope, query.trim(), searchMode)).tracks); }}>
         <label class="field grow"><span>{searchMode === "lyrics" ? "Words to find" : "Describe a sound"}</span><input bind:value={query} maxlength="500" placeholder={searchMode === "lyrics" ? "city lights in the rain" : "warm, quiet acoustic music"} required /></label>
         <label class="field"><span>Match</span><SelectField bind:value={searchMode} label="What to match" options={[{ value: "text", label: "The sound" }, { value: "lyrics", label: "Song lyrics" }]} /></label>
-        <button class="button-primary" type="submit" disabled={Boolean(action) || !query.trim()}>{action === "search" ? "Searching…" : "Find songs"}</button>
+        <Button type="submit" disabled={Boolean(action) || !query.trim()}>{action === "search" ? "Searching…" : "Find songs"}</Button>
       </form>
     {:else if mode === "library"}
       <div class="library-actions">
-        <button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => void loadClusters()}>{action === "clusters" ? "Grouping…" : "Group similar songs"}</button>
-        <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void loadMap()}>{action === "map" ? "Loading…" : "List the sound map"}</button>
+        <Button disabled={Boolean(action)} onclick={() => void loadClusters()}>{action === "clusters" ? "Grouping…" : "Group similar songs"}</Button>
+        <Button variant="secondary" disabled={Boolean(action)} onclick={() => void loadMap()}>{action === "map" ? "Loading…" : "List the sound map"}</Button>
       </div>
     {:else if songOptions.length}
       <form class="sound-form" onsubmit={(event) => {
@@ -254,7 +256,7 @@
         {:else if mode === "blend"}
           <label class="field grow"><span>Sound to avoid</span><SelectField bind:value={avoidSong} label="Sound to avoid" options={songOptions} /></label>
         {/if}
-        <button class="button-primary" type="submit" disabled={Boolean(action) || (mode === "path" && firstSong === secondSong) || (mode === "blend" && firstSong === avoidSong)}>{action ? "Finding…" : "Find songs"}</button>
+        <Button type="submit" disabled={Boolean(action) || (mode === "path" && firstSong === secondSong) || (mode === "blend" && firstSong === avoidSong)}>{action ? "Finding…" : "Find songs"}</Button>
       </form>
     {:else}
       <p class="credential-safety">Refresh recommendations first so you can choose a song from this library.</p>
@@ -274,13 +276,13 @@
       {:else if results.length}
         <ol>{#each results as song, index}<li><span>{index + 1}</span><div><strong>{song.title || "Unknown song"}</strong><small>{song.artist || "Unknown artist"}{song.album ? ` · ${song.album}` : ""}</small>{#if song.explanation}<small>{song.explanation}</small>{/if}</div></li>{/each}</ol>
       {:else if !action}<div class="compact-empty"><strong>No matching songs</strong><p>Try a different song or description.</p></div>{/if}
-      {#if clustersNext}<button class="button-secondary more-results" type="button" disabled={Boolean(action)} onclick={() => void loadClusters(clustersNext!)}>{action === "clusters-more" ? "Loading…" : "Show more groups"}</button>{/if}
-      {#if map?.nextCursor}<button class="button-secondary more-results" type="button" disabled={Boolean(action)} onclick={() => void loadMap(map!.nextCursor!)}>{action === "map-more" ? "Loading…" : "Show more songs"}</button>{/if}
+      {#if clustersNext}<Button class="more-results" variant="secondary" disabled={Boolean(action)} onclick={() => void loadClusters(clustersNext!)}>{action === "clusters-more" ? "Loading…" : "Show more groups"}</Button>{/if}
+      {#if map?.nextCursor}<Button class="more-results" variant="secondary" disabled={Boolean(action)} onclick={() => void loadMap(map!.nextCursor!)}>{action === "map-more" ? "Loading…" : "Show more songs"}</Button>{/if}
       {#if resultSongs.length}
         <form class="create-form" onsubmit={(event) => { event.preventDefault(); confirmCreation(); }}>
           <label class="field grow"><span>Playlist name</span><input bind:value={playlistName} maxlength="200" required /></label>
           <p>Allstarr will create <strong>{playlistName.trim() || "this playlist"}</strong> in {serverName} with {resultCount} {resultCount === 1 ? "song" : "songs"}.</p>
-          <button class="button-primary" type="submit" disabled={Boolean(action)}>{`Create ${serverName} playlist`}</button>
+          <Button type="submit" disabled={Boolean(action)}>{`Create ${serverName} playlist`}</Button>
         </form>
       {/if}
       {#if createdMessage}<p class="notice-success" role="status">{createdMessage}</p>{/if}
@@ -292,11 +294,11 @@
   title={`Create ${playlistName.trim() || "this playlist"} in ${serverName}?`}
   description={`Allstarr will create ${playlistName.trim() || "this playlist"} in ${serverName} with ${resultCount} ${resultCount === 1 ? "song" : "songs"}.`}
   confirmLabel={action === "create" ? "Creating…" : `Create ${serverName} playlist`}
-  cancelLabel="Do not create playlist" confirmClass="button-primary" disabled={Boolean(action)}
+  cancelLabel="Do not create playlist" confirmVariant="default" disabled={Boolean(action)}
   onConfirm={createPlaylist} />
 
 <style>
-  .sound-discovery{display:grid;gap:1rem;padding:1.15rem}.sound-discovery>header,.sound-results>header{display:flex;align-items:start;justify-content:space-between;gap:1rem}.sound-discovery h3{margin:.2rem 0}.sound-discovery>header p:last-child{max-width:48rem;margin:0;color:var(--color-ink-muted)}.scan-status{display:grid;grid-template-columns:minmax(0,1fr) minmax(12rem,.5fr);align-items:center;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.scan-status small,.sound-results small{display:block;color:var(--color-ink-muted)}.scan-status progress{width:100%;accent-color:var(--color-signal)}.sound-controls{display:grid;grid-template-columns:minmax(13rem,.4fr) minmax(0,1.6fr);align-items:end;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.sound-form{display:flex;align-items:end;gap:.75rem}.sound-form .grow{flex:1}.library-actions{display:flex;gap:.75rem}.sound-results{display:grid;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}.sound-results h4,.sound-results h5{margin:0}.sound-results ol{display:grid;margin:0;padding:0;list-style:none}.sound-results li{display:grid;grid-template-columns:2rem minmax(0,1fr);gap:.5rem;border-top:1px solid var(--color-edge);padding:.65rem 0}.sound-results li>span{color:var(--color-ink-muted);font-variant-numeric:tabular-nums}.sound-group{display:grid;gap:.5rem}.sound-group+ .sound-group{margin-top:.5rem}.more-results{justify-self:start}.create-form{display:grid;grid-template-columns:minmax(12rem,.7fr) minmax(14rem,1fr) auto;align-items:end;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}.create-form p{margin:0;color:var(--color-ink-muted)}
+  .sound-discovery{display:grid;gap:1rem;padding:1.15rem}.sound-discovery>header,.sound-results>header{display:flex;align-items:start;justify-content:space-between;gap:1rem}.sound-discovery h3{margin:.2rem 0}.sound-discovery>header p:last-child{max-width:48rem;margin:0;color:var(--color-ink-muted)}.scan-status{display:grid;grid-template-columns:minmax(0,1fr) minmax(12rem,.5fr);align-items:center;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.scan-status small,.sound-results small{display:block;color:var(--color-ink-muted)}.sound-controls{display:grid;grid-template-columns:minmax(13rem,.4fr) minmax(0,1.6fr);align-items:end;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.sound-form{display:flex;align-items:end;gap:.75rem}.sound-form .grow{flex:1}.library-actions{display:flex;gap:.75rem}.sound-results{display:grid;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}.sound-results h4,.sound-results h5{margin:0}.sound-results ol{display:grid;margin:0;padding:0;list-style:none}.sound-results li{display:grid;grid-template-columns:2rem minmax(0,1fr);gap:.5rem;border-top:1px solid var(--color-edge);padding:.65rem 0}.sound-results li>span{color:var(--color-ink-muted);font-variant-numeric:tabular-nums}.sound-group{display:grid;gap:.5rem}.sound-group+ .sound-group{margin-top:.5rem}:global(.more-results){justify-self:start}.create-form{display:grid;grid-template-columns:minmax(12rem,.7fr) minmax(14rem,1fr) auto;align-items:end;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}.create-form p{margin:0;color:var(--color-ink-muted)}
   @media(max-width:900px){.sound-controls,.create-form{grid-template-columns:1fr}.sound-form{flex-wrap:wrap}.sound-form .grow{min-width:14rem}}
-  @media(max-width:620px){.sound-discovery>header,.sound-form,.library-actions{align-items:stretch;flex-direction:column}.sound-discovery>header>button,.sound-form>button,.library-actions>button,.create-form>button{width:100%}.scan-status{grid-template-columns:1fr}.sound-form .grow{min-width:0}}
+  @media(max-width:620px){.sound-discovery>header,.sound-form,.library-actions{align-items:stretch;flex-direction:column}.sound-discovery>header>:global([data-slot="button"]),.sound-form>:global([data-slot="button"]),.library-actions>:global([data-slot="button"]),.create-form>:global([data-slot="button"]){width:100%}.scan-status{grid-template-columns:1fr}.sound-form .grow{min-width:0}}
 </style>

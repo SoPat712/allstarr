@@ -1,5 +1,7 @@
 <script lang="ts">
   import { Dialog } from "$lib/components/ui/dialog";
+  import { Button, buttonVariants } from "$lib/components/ui/button";
+  import { Checkbox } from "$lib/components/ui/checkbox";
   import { X } from "lucide-svelte";
   import { sources, type ProviderAccount, type ProviderDefinition } from "$lib/api";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
@@ -126,7 +128,7 @@
                 {#if field.type === "select"}
                   <SelectField name={field.key} label={field.label} value={String(currentSetting(field.key, settingDefault(field)))} options={field.options ?? []} required={field.required} />
                 {:else if field.type === "toggle"}
-                  <input name={field.key} type="checkbox" checked={currentSetting(field.key, settingDefault(field)) === true} />
+                  <Checkbox name={field.key} checked={currentSetting(field.key, settingDefault(field)) === true} />
                 {:else}
                   <input
                     name={field.key}
@@ -142,8 +144,8 @@
           </div>
           {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
           <footer>
-            <Dialog.Close class="button-secondary">Cancel</Dialog.Close>
-            <button class="button-primary" type="submit" disabled={saving}>{saving ? "Saving…" : "Save and test"}</button>
+            <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
+            <Button type="submit" disabled={saving}>{saving ? "Saving…" : "Save and test"}</Button>
           </footer>
         </form>
       {:else}

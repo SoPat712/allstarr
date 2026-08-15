@@ -1,4 +1,3 @@
-using System.Reflection;
 using allstarr.Controllers;
 
 namespace allstarr.Tests;
@@ -8,7 +7,7 @@ public class JellyfinQueryRedactionTests
     [Fact]
     public void MaskSensitiveQueryString_RedactsSensitiveValues()
     {
-        var masked = InvokeMaskSensitiveQueryString(
+        var masked = JellyfinController.MaskSensitiveQueryString(
             "?api_key=secret1&query=hello&x-emby-token=secret2&AuthToken=secret3");
 
         Assert.Contains("api_key=<redacted>", masked);
@@ -25,18 +24,7 @@ public class JellyfinQueryRedactionTests
     [InlineData("")]
     public void MaskSensitiveQueryString_EmptyOrNull_ReturnsEmpty(string? input)
     {
-        var masked = InvokeMaskSensitiveQueryString(input);
+        var masked = JellyfinController.MaskSensitiveQueryString(input);
         Assert.Equal(string.Empty, masked);
-    }
-
-    private static string InvokeMaskSensitiveQueryString(string? queryString)
-    {
-        var method = typeof(JellyfinController).GetMethod(
-            "MaskSensitiveQueryString",
-            BindingFlags.Static | BindingFlags.NonPublic);
-
-        Assert.NotNull(method);
-        var result = method!.Invoke(null, new object?[] { queryString });
-        return Assert.IsType<string>(result);
     }
 }

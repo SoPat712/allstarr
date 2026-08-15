@@ -41,8 +41,9 @@ public class DownloadsController : ControllerBase
         try
         {
             var roots = ResolveListRoots(storage);
+            var qualifyPath = NormalizeStorage(storage) == "cache";
             var files = roots.SelectMany(root => EnumerateFiles(root.Path)
-                    .Select(path => Describe(path, root)))
+                    .Select(path => Describe(path, root, qualifyPath)))
                 .OrderBy(item => item.Artist)
                 .ThenBy(item => item.Album)
                 .ThenBy(item => item.Title)
@@ -245,7 +246,7 @@ public class DownloadsController : ControllerBase
 
     private IReadOnlyList<StorageRoot> ResolveListRoots(string storage) => NormalizeStorage(storage) switch
     {
-        "cache" => [Root("cache")],
+        "cache" => [Root("cache"), Root("transcoded")],
         "kept" => [Root("permanent"), Root("legacy")],
         "permanent" => [Root("permanent")],
         "legacy" => [Root("legacy")],
@@ -258,6 +259,7 @@ public class DownloadsController : ControllerBase
         var directory = key switch
         {
             "cache" => "cache",
+            "transcoded" => "transcoded",
             "permanent" => "permanent",
             "legacy" => "kept",
             _ => throw new ArgumentException("Unsupported storage root")
@@ -273,10 +275,13 @@ public class DownloadsController : ControllerBase
             ? Directory.GetFiles(root, "*.*", SearchOption.AllDirectories).Where(IsSupportedAudioFile)
             : [];
 
-    private ManagedDownloadFile Describe(string filePath, StorageRoot root)
+    private ManagedDownloadFile Describe(string filePath, StorageRoot root, bool qualifyPath = false)
     {
         var info = new FileInfo(filePath);
         var relativePath = Path.GetRelativePath(root.Path, filePath);
+        var requestedPath = qualifyPath
+            ? $"{root.Key}/{relativePath.Replace('\\', '/')}"
+            : relativePath;
         var parts = relativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var fallbackArtist = parts.Length > 0 ? parts[0] : string.Empty;
         var fallbackAlbum = parts.Length > 1 ? parts[1] : string.Empty;
@@ -326,7 +331,7 @@ public class DownloadsController : ControllerBase
                 : codec;
 
         return new(
-            relativePath,
+            requestedPath,
             root.Key,
             artist,
             album,
@@ -377,7 +382,8 @@ public class DownloadsController : ControllerBase
         if (string.IsNullOrWhiteSpace(requestedPath)) return false;
         foreach (var candidateRoot in ResolveListRoots(storage))
         {
-            if (!TryResolvePathUnderRoot(candidateRoot.Path, requestedPath, out var candidatePath) ||
+            if (!TryGetRelativeRequestPath(storage, candidateRoot, requestedPath, out var relativePath) ||
+                !TryResolvePathUnderRoot(candidateRoot.Path, relativePath, out var candidatePath) ||
                 !System.IO.File.Exists(candidatePath) ||
                 !IsSupportedAudioFile(candidatePath)) continue;
             root = candidateRoot;
@@ -388,7 +394,29 @@ public class DownloadsController : ControllerBase
     }
 
     private bool IsSafeRequestedPath(string storage, string requestedPath) =>
-        ResolveListRoots(storage).Any(root => TryResolvePathUnderRoot(root.Path, requestedPath, out _));
+        ResolveListRoots(storage).Any(root =>
+            TryGetRelativeRequestPath(storage, root, requestedPath, out var relativePath) &&
+            TryResolvePathUnderRoot(root.Path, relativePath, out _));
+
+    private static bool TryGetRelativeRequestPath(
+        string storage,
+        StorageRoot root,
+        string requestedPath,
+        out string relativePath)
+    {
+        relativePath = requestedPath;
+        if (!NormalizeStorage(storage).Equals("cache", StringComparison.Ordinal)) return true;
+
+        var normalized = requestedPath.Replace('\\', '/');
+        foreach (var prefix in new[] { "cache", "transcoded" })
+        {
+            if (!normalized.StartsWith($"{prefix}/", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!root.Key.Equals(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+            relativePath = normalized[(prefix.Length + 1)..];
+            return relativePath.Length > 0;
+        }
+        return true;
+    }
 
     private static bool TryResolvePathUnderRoot(string rootPath, string requestedPath, out string resolvedPath)
     {

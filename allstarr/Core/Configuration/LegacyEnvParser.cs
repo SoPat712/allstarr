@@ -84,8 +84,6 @@ public static class LegacyEnvParser
             ["DEEZER_MIN_REQUEST_INTERVAL_MS"] = "Deezer:MinRequestIntervalMs",
             ["QOBUZ_QUALITY"] = "Qobuz:Quality",
             ["QOBUZ_MIN_REQUEST_INTERVAL_MS"] = "Qobuz:MinRequestIntervalMs",
-            ["SQUIDWTF_QUALITY"] = "SquidWTF:Quality",
-            ["SQUIDWTF_MIN_REQUEST_INTERVAL_MS"] = "SquidWTF:MinRequestIntervalMs",
             ["APPLE_DOWNLOAD_URL"] = "AppleDownload:BaseUrl",
             ["APPLE_DOWNLOAD_QUALITY"] = "AppleDownload:Quality",
             ["APPLE_MUSIC_AIO_URL"] = "AppleDownload:BaseUrl",

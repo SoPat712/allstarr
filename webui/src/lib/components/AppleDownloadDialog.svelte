@@ -1,5 +1,7 @@
 <script lang="ts">
   import { Dialog } from "$lib/components/ui/dialog";
+  import { Badge } from "$lib/components/ui/badge";
+  import { Button } from "$lib/components/ui/button";
   import { Check, X } from "lucide-svelte";
   import { appleDownload, type AppleDownloadStatus } from "$lib/api";
   import { humanize } from "$lib/sources";
@@ -95,10 +97,10 @@
 
       <div class="apple-manager-body">
         <dl class="source-metrics">
-          <div><dt>Gateway</dt><dd><span class={`status-pill ${gatewayReady ? "healthy" : "suggested"}`}>{gatewayReady ? "Ready" : humanize(status?.state ?? "unknown")}</span></dd></div>
-          <div><dt>Session</dt><dd><span class={`status-pill ${status?.logged_in ? "healthy" : "suggested"}`}>{status?.logged_in ? "Authenticated" : humanize(loginState)}</span></dd></div>
+          <div><dt>Gateway</dt><dd><Badge state={gatewayReady ? "healthy" : "suggested"}>{gatewayReady ? "Ready" : humanize(status?.state ?? "unknown")}</Badge></dd></div>
+          <div><dt>Session</dt><dd><Badge state={status?.logged_in ? "healthy" : "suggested"}>{status?.logged_in ? "Authenticated" : humanize(loginState)}</Badge></dd></div>
           <div><dt>API contract</dt><dd>{status?.api_version || "Not discovered"}</dd></div>
-          <div><dt>Provider</dt><dd><span class={`status-pill ${status?.ready ? "healthy" : "needs_config"}`}>{status?.ready ? "Playable" : "Needs setup"}</span></dd></div>
+          <div><dt>Provider</dt><dd><Badge state={status?.ready ? "healthy" : "needs_config"}>{status?.ready ? "Playable" : "Needs setup"}</Badge></dd></div>
         </dl>
 
         <ol class="apple-setup-progress" aria-label="Apple download setup progress">
@@ -120,7 +122,7 @@
               <input type="file" accept=".apk,.apkm,application/vnd.android.package-archive" required onchange={(event) => packageFile = event.currentTarget.files?.[0] ?? null} />
               <small>Choose a legally obtained APK or APKM, up to 512 MB.</small>
             </label>
-            <button class="button-primary" type="submit" disabled={!packageFile || Boolean(action)}>{action === "upload" ? "Uploading…" : "Upload package"}</button>
+            <Button type="submit" disabled={!packageFile || Boolean(action)}>{action === "upload" ? "Uploading…" : "Upload package"}</Button>
           </form>
         {:else if !gatewayReady}
           <section class="apple-host-action">
@@ -131,13 +133,13 @@
         {:else if awaiting2fa}
           <form class="apple-manager-form" onsubmit={(event) => { event.preventDefault(); void submit2fa(); }}>
             <label class="field"><span>2FA code</span><input bind:value={code} inputmode="numeric" autocomplete="one-time-code" required /></label>
-            <button class="button-primary" type="submit" disabled={Boolean(action)}>{action === "2fa" ? "Submitting…" : "Submit 2FA"}</button>
+            <Button type="submit" disabled={Boolean(action)}>{action === "2fa" ? "Submitting…" : "Submit 2FA"}</Button>
           </form>
         {:else if !status?.logged_in}
           <form class="apple-manager-form" onsubmit={(event) => { event.preventDefault(); void login(); }}>
             <label class="field"><span>Apple ID</span><input bind:value={username} autocomplete="username" required /></label>
             <label class="field"><span>Password</span><input bind:value={password} type="password" autocomplete="current-password" required /></label>
-            <button class="button-primary" type="submit" disabled={Boolean(action)}>{action === "login" ? "Signing in…" : "Start login"}</button>
+            <Button type="submit" disabled={Boolean(action)}>{action === "login" ? "Signing in…" : "Start login"}</Button>
           </form>
         {:else}
           <div class="compact-empty"><strong>Apple Music – GAMDL is ready</strong><p>The gateway and saved Apple Music session are authenticated.</p></div>
@@ -148,8 +150,8 @@
       </div>
 
       <footer class="apple-manager-footer">
-        <a class="button-secondary" href="#/sources?source=apple-download&section=configuration" onclick={() => open = false}>Provider settings</a>
-        <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void load()}>Refresh status</button>
+        <Button variant="secondary" href="#/sources?source=apple-download&section=configuration" onclick={() => open = false}>Provider settings</Button>
+        <Button variant="secondary" disabled={Boolean(action)} onclick={() => void load()}>Refresh status</Button>
       </footer>
     </Dialog.Content>
   </Dialog.Portal>

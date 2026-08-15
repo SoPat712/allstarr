@@ -36,6 +36,10 @@ class TestTiming:
     milliseconds: float
 
 
+DEFAULT_CHILD_TIMEOUT_SECONDS = 600.0
+TIMEOUT_EXIT_CODE = 124
+
+
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
@@ -225,20 +229,49 @@ def _parse_trx(path: Path) -> tuple[Counts, list[TestTiming]]:
     return counts, timings
 
 
-def _walk_playwright_json(value: object, timings: list[TestTiming]) -> None:
+def _walk_playwright_json(
+    value: object,
+    timings: list[TestTiming],
+    names: tuple[str, ...] = (),
+    in_result: bool = False,
+) -> None:
+    """Collect Playwright result durations with their suite/spec title path."""
     if isinstance(value, dict):
-        if "title" in value and isinstance(value.get("title"), str):
-            duration = value.get("duration")
-            if isinstance(duration, (int, float)):
-                timings.append(TestTiming(value["title"], float(duration)))
-        for child in value.values():
-            _walk_playwright_json(child, timings)
+        title = value.get("title")
+        if not isinstance(title, str) or not title:
+            title = value.get("file") if "specs" in value or "suites" in value else None
+        child_names = names + (title,) if isinstance(title, str) and title else names
+
+        duration = value.get("duration")
+        if in_result and isinstance(duration, (int, float)) and not isinstance(duration, bool):
+            timings.append(TestTiming(" > ".join(child_names) or "unnamed", float(duration)))
+        elif "tests" in value and isinstance(duration, (int, float)) and not isinstance(duration, bool):
+            # Some compatible reporters put the aggregate duration on the spec.
+            timings.append(TestTiming(" > ".join(child_names) or "unnamed", float(duration)))
+
+        for key, child in value.items():
+            if key == "results":
+                _walk_playwright_json(child, timings, child_names, True)
+            elif key not in {"duration", "title", "file"}:
+                _walk_playwright_json(child, timings, child_names, False)
     elif isinstance(value, list):
         for child in value:
-            _walk_playwright_json(child, timings)
+            _walk_playwright_json(child, timings, names, in_result)
 
 
-def _parse_timings(output: str, trx_paths: Iterable[Path]) -> list[TestTiming]:
+def _read_playwright_json(path: Path, timings: list[TestTiming]) -> None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    _walk_playwright_json(value, timings)
+
+
+def _parse_timings(
+    output: str,
+    trx_paths: Iterable[Path],
+    playwright_json_paths: Iterable[Path] = (),
+) -> list[TestTiming]:
     output = _strip_ansi(output)
     timings: list[TestTiming] = []
     for path in trx_paths:
@@ -249,12 +282,19 @@ def _parse_timings(output: str, trx_paths: Iterable[Path]) -> list[TestTiming]:
         milliseconds = _duration(match.group(2))
         if milliseconds is not None:
             timings.append(TestTiming(match.group(1).strip(), milliseconds))
-    for candidate in re.findall(r"(?:PLAYWRIGHT_JSON_OUTPUT_FILE|playwright-report/[^\s]+\.json)=(\S+)", output):
-        try:
-            parsed_json = json.loads(Path(candidate).read_text())
-        except (OSError, json.JSONDecodeError):
+    paths = list(playwright_json_paths)
+    paths.extend(
+        Path(candidate)
+        for candidate in re.findall(
+            r"(?:PLAYWRIGHT_JSON_OUTPUT_FILE|playwright-report/[^\s]+\.json)=(\S+)", output
+        )
+    )
+    seen: set[Path] = set()
+    for path in paths:
+        if path in seen:
             continue
-        _walk_playwright_json(parsed_json, timings)
+        seen.add(path)
+        _read_playwright_json(path, timings)
     return sorted(timings, key=lambda item: item.milliseconds, reverse=True)
 
 
@@ -281,12 +321,14 @@ def _report(
     output: str,
     trx_paths: list[Path],
     cwd: Path,
+    playwright_json_paths: Iterable[Path] = (),
+    timeout_seconds: float | None = None,
 ) -> str:
     counts = _parse_counts(output)
     for path in trx_paths:
         parsed, _ = _parse_trx(path)
         _merge_counts(counts, parsed)
-    timings = _parse_timings(output, trx_paths)
+    timings = _parse_timings(output, trx_paths, playwright_json_paths)
     retried = _parse_retries(output)
     versions = {
         "python": _version("python3 --version", cwd),
@@ -297,7 +339,8 @@ def _report(
         "vitest": _local_node_tool_version("vitest", cwd),
     }
     lines = [
-        f"TIMING name={name} duration_ms={elapsed_ms:.0f} exit_code={returncode}",
+        f"TIMING name={name} duration_ms={elapsed_ms:.0f} exit_code={returncode}"
+        + (" timed_out=1" if timeout_seconds is not None else ""),
         f"SHA {_git_sha(_repository_root(cwd))}",
         "TOOLS " + " ".join(f"{key}={value}" for key, value in versions.items()),
         "COUNTS "
@@ -312,6 +355,8 @@ def _report(
             )
         ),
     ]
+    if timeout_seconds is not None:
+        lines.append(f"TIMEOUT name={name} limit_seconds={timeout_seconds:g} exit_code={returncode}")
     lines.extend(
         f"SLOWEST name={item.name} duration_ms={item.milliseconds:.0f}" for item in timings[:20]
     )
@@ -345,6 +390,55 @@ def _self_test() -> None:
     assert _duration("12ms") == 12
     assert _duration("00:00:01.2500000") == 1250
     assert _duration("1.02:03:04.5") == 93784500
+    assert DEFAULT_CHILD_TIMEOUT_SECONDS >= 600
+    with tempfile.TemporaryDirectory() as directory:
+        report_path = Path(directory) / "playwright.json"
+        report_path.write_text(
+            json.dumps(
+                {
+                    "suites": [
+                        {
+                            "title": "parity.e2e.ts",
+                            "suites": [
+                                {
+                                    "title": "settings",
+                                    "specs": [
+                                        {
+                                            "title": "loads",
+                                            "tests": [{"results": [{"duration": 120}]}],
+                                        }
+                                    ],
+                                }
+                            ],
+                            "specs": [
+                                {
+                                    "title": "home",
+                                    "tests": [{"results": [{"duration": 40}, {"duration": 20}]}],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert _parse_timings("", [], [report_path]) == [
+            TestTiming("parity.e2e.ts > settings > loads", 120),
+            TestTiming("parity.e2e.ts > home", 40),
+            TestTiming("parity.e2e.ts > home", 20),
+        ]
+        timeout_report = _report(
+            "fixture",
+            ["fixture"],
+            600,
+            TIMEOUT_EXIT_CODE,
+            "",
+            [],
+            cwd=Path(directory),
+            timeout_seconds=DEFAULT_CHILD_TIMEOUT_SECONDS,
+        )
+        assert "timed_out=1" in timeout_report
+        assert "TIMEOUT name=fixture limit_seconds=600 exit_code=124" in timeout_report
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -360,18 +454,84 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cwd", default=".")
     parser.add_argument("--trx", action="append", default=[])
     parser.add_argument("--require-tests", action="store_true")
+    parser.add_argument(
+        "--playwright-json",
+        "--playwright-json-output",
+        "--playwright-json-output-file",
+        dest="playwright_json",
+        metavar="PATH",
+        help="write Playwright JSON results to PATH and include per-test timings",
+    )
+    parser.add_argument(
+        "--timeout",
+        "--timeout-seconds",
+        "--child-timeout-seconds",
+        dest="timeout_seconds",
+        type=float,
+        help="child watchdog in seconds (default: 600; env: TIMING_REPORT_TIMEOUT_SECONDS)",
+    )
     options = parser.parse_args(argv[:separator])
     command = argv[separator + 1 :]
     if not command:
         raise SystemExit("timing_report.py: a child command is required")
     cwd = Path(options.cwd).resolve()
     trx_paths = [Path(path).resolve() if os.path.isabs(path) else cwd / path for path in options.trx]
+    timeout_value = options.timeout_seconds
+    if timeout_value is None:
+        timeout_text = os.environ.get("TIMING_REPORT_TIMEOUT_SECONDS") or os.environ.get(
+            "TIMING_REPORT_CHILD_TIMEOUT_SECONDS"
+        )
+        try:
+            timeout_value = float(timeout_text) if timeout_text else DEFAULT_CHILD_TIMEOUT_SECONDS
+        except ValueError as error:
+            raise SystemExit("timing_report.py: timeout must be a positive number") from error
+    if timeout_value <= 0:
+        raise SystemExit("timing_report.py: timeout must be a positive number")
+
+    playwright_json = options.playwright_json or os.environ.get("PLAYWRIGHT_JSON_OUTPUT_FILE")
+    playwright_json_paths: list[Path] = []
+    child_env = os.environ.copy()
+    if playwright_json:
+        child_env["PLAYWRIGHT_JSON_OUTPUT_FILE"] = playwright_json
+        playwright_json_paths.append(
+            Path(playwright_json).resolve() if os.path.isabs(playwright_json) else cwd / playwright_json
+        )
+
     started = time.monotonic()
-    result = subprocess.run(command, cwd=cwd, check=False, text=True, capture_output=True)
+    timed_out = False
+    try:
+        result = subprocess.run(
+            command,
+            cwd=cwd,
+            check=False,
+            text=True,
+            capture_output=True,
+            env=child_env,
+            timeout=timeout_value,
+        )
+        returncode = result.returncode
+        output = (result.stdout or "") + (result.stderr or "")
+    except subprocess.TimeoutExpired as error:
+        timed_out = True
+        returncode = TIMEOUT_EXIT_CODE
+        stdout = error.stdout.decode(errors="replace") if isinstance(error.stdout, bytes) else error.stdout or ""
+        stderr = error.stderr.decode(errors="replace") if isinstance(error.stderr, bytes) else error.stderr or ""
+        output = stdout + stderr
     elapsed_ms = (time.monotonic() - started) * 1000
-    output = (result.stdout or "") + (result.stderr or "")
     sys.stdout.write(output)
-    report = _report(options.name, command, elapsed_ms, result.returncode, output, trx_paths, cwd)
+    if playwright_json:
+        sys.stdout.write(f"PLAYWRIGHT_JSON_OUTPUT_FILE={playwright_json}\n")
+    report = _report(
+        options.name,
+        command,
+        elapsed_ms,
+        returncode,
+        output,
+        trx_paths,
+        cwd,
+        playwright_json_paths,
+        timeout_seconds=timeout_value if timed_out else None,
+    )
     sys.stdout.write(report)
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:
@@ -382,11 +542,11 @@ def main(argv: list[str] | None = None) -> int:
         for path in trx_paths:
             parsed, _ = _parse_trx(path)
             _merge_counts(counts, parsed)
-        failures = _required_test_failures(result.returncode, counts, _parse_retries(output))
+        failures = _required_test_failures(returncode, counts, _parse_retries(output))
         if failures:
             print("TEST_GATE failure=" + ", ".join(failures))
             return 1
-    return result.returncode
+    return returncode
 
 
 if __name__ == "__main__":

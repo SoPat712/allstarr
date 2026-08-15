@@ -146,13 +146,13 @@ public class OdesliService
     /// </summary>
     public async Task<string?> TranslateTrackUrlAsync(string sourceUrl, string targetProvider, CancellationToken cancellationToken = default)
     {
-        var targetPlatform = targetProvider.ToLowerInvariant() switch
+        var normalizedProvider = NormalizeProviderId(targetProvider);
+        var targetPlatform = normalizedProvider switch
         {
-            "spotify" => "spotify",
-            "applemusic" or "apple-download" => "appleMusic",
+            "spotify" or "spotify-web" => "spotify",
+            "applemusic" or "apple-music" or "apple-download" or "apple-musickit" => "appleMusic",
             "deezer" => "deezer",
             "qobuz" => "qobuz",
-            "squidwtf" => "tidal",
             "tidal" => "tidal",
             _ => null
         };
@@ -202,6 +202,21 @@ public class OdesliService
         return null;
     }
 
+    public static string? BuildTrackUrl(string provider, string trackId)
+    {
+        var normalizedProvider = NormalizeProviderId(provider);
+        return normalizedProvider switch
+        {
+            "spotify" or "spotify-web" => $"https://open.spotify.com/track/{trackId}",
+            "deezer" => $"https://www.deezer.com/track/{trackId}",
+            "applemusic" or "apple-music" or "apple-download" or "apple-musickit" =>
+                $"https://music.apple.com/us/song/{trackId}",
+            "qobuz" => $"https://open.qobuz.com/track/{trackId}",
+            "tidal" => $"https://tidal.com/browse/track/{trackId}",
+            _ => null
+        };
+    }
+
     private static string? ExtractTrackIdFromUrl(string url, string platform)
     {
         if (string.IsNullOrEmpty(url)) return null;
@@ -236,5 +251,12 @@ public class OdesliService
         }
 
         return null;
+    }
+
+    internal static string NormalizeProviderId(string provider)
+    {
+        const string prefix = "spotiflac-";
+        var normalized = provider.Trim().ToLowerInvariant();
+        return normalized.StartsWith(prefix, StringComparison.Ordinal) ? normalized[prefix.Length..] : normalized;
     }
 }

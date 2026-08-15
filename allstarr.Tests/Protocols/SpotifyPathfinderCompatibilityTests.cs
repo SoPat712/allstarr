@@ -29,17 +29,25 @@ public sealed class SpotifyPathfinderCompatibilityTests
     }
 
     [Fact]
-    public void PersistedQueries_HaveExplicitVersionedDefinitions()
+    public async Task LibraryQuery_SendsVersionedPersistedQueryDefinition()
     {
-        var source = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Core", "Providers", "Spotify", "SpotifyPathfinderPlaylistClient.cs"));
+        var handler = new JsonHandler("""{"data":{"me":{"libraryV3":{"items":[],"totalCount":0}}}}""");
+        using var http = new HttpClient(handler);
+        var client = new SpotifyPathfinderPlaylistClient(http);
 
-        Assert.Contains("PathfinderOperationDefinition LibraryQuery", source, StringComparison.Ordinal);
-        Assert.Contains("PathfinderOperationDefinition PlaylistQuery", source, StringComparison.Ordinal);
-        Assert.Contains("new(LibraryOperation, LibraryQueryHash, 1)", source, StringComparison.Ordinal);
-        Assert.Contains("new(PlaylistOperation, PlaylistQueryHash, 1)", source, StringComparison.Ordinal);
-        Assert.Contains("version = operation.Version", source, StringComparison.Ordinal);
-        Assert.Contains("sha256Hash = operation.Sha256Hash", source, StringComparison.Ordinal);
+        var outcome = await client.GetUserPlaylistsAsync(
+            "token",
+            new ProviderPageRequest(20),
+            null,
+            CancellationToken.None);
+
+        Assert.True(outcome.IsSuccess);
+        AssertOperation(handler.LastRequestUri, "libraryV3", SpotifyPathfinderPlaylistClient.LibraryQueryHash);
+        var query = Query(handler.LastRequestUri);
+        using var variables = JsonDocument.Parse(query["variables"]);
+        Assert.Equal(["Playlists"], variables.RootElement.GetProperty("filters")
+            .EnumerateArray().Select(item => item.GetString()));
+        Assert.Equal("", variables.RootElement.GetProperty("textFilter").GetString());
     }
 
     [Fact]
@@ -88,7 +96,8 @@ public sealed class SpotifyPathfinderCompatibilityTests
                 }
             }
         });
-        using var http = new HttpClient(new JsonHandler(payload));
+        var handler = new JsonHandler(payload);
+        using var http = new HttpClient(handler);
         var client = new SpotifyPathfinderPlaylistClient(
             http,
             new CollectingLogger<SpotifyPathfinderPlaylistClient>(messages));
@@ -119,17 +128,23 @@ public sealed class SpotifyPathfinderCompatibilityTests
         Assert.DoesNotContain("Synthetic replacement", completion);
         Assert.DoesNotContain("track-4", completion);
         Assert.DoesNotContain("token", completion, StringComparison.OrdinalIgnoreCase);
+        AssertOperation(handler.LastRequestUri, "fetchPlaylist", SpotifyPathfinderPlaylistClient.PlaylistQueryHash);
     }
 
     private sealed class JsonHandler(string json) : HttpMessageHandler
     {
+        public Uri? LastRequestUri { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            CancellationToken cancellationToken)
+        {
+            LastRequestUri = request.RequestUri;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(json, Encoding.UTF8, "application/json")
             });
+        }
     }
 
     private sealed class CollectingLogger<T>(List<string> messages) : ILogger<T>
@@ -145,15 +160,21 @@ public sealed class SpotifyPathfinderCompatibilityTests
             messages.Add(formatter(state, exception));
     }
 
-    private static string FindRepositoryFile(params string[] parts)
+    private static void AssertOperation(Uri? requestUri, string operationName, string hash)
     {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory != null && !File.Exists(Path.Combine(directory.FullName, "allstarr.sln")))
-        {
-            directory = directory.Parent;
-        }
+        var query = Query(requestUri);
+        Assert.Equal(operationName, query["operationName"]);
+        using var extensions = JsonDocument.Parse(query["extensions"]);
+        var persisted = extensions.RootElement.GetProperty("persistedQuery");
+        Assert.Equal(1, persisted.GetProperty("version").GetInt32());
+        Assert.Equal(hash, persisted.GetProperty("sha256Hash").GetString());
+    }
 
-        return Path.Combine(directory?.FullName
-            ?? throw new DirectoryNotFoundException("Could not locate the repository root."), Path.Combine(parts));
+    private static Dictionary<string, string> Query(Uri? requestUri)
+    {
+        Assert.NotNull(requestUri);
+        return requestUri.Query.TrimStart('?').Split('&')
+            .Select(pair => pair.Split('=', 2))
+            .ToDictionary(pair => Uri.UnescapeDataString(pair[0]), pair => Uri.UnescapeDataString(pair[1]));
     }
 }

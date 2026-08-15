@@ -164,6 +164,7 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Lane", "ReleaseCritical")]
     public async Task PostgresMigration_PreservesEveryLegacyReferenceAcrossUpgradeAndRollback()
     {
         const string previous = "20260713225623_Phase2BLegacyEnvImportIdempotency";

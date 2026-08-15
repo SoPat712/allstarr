@@ -52,6 +52,7 @@ public sealed class StorageOperatorCommandTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Lane", "ReleaseCritical")]
     public async Task StateTransfer_RequiresConfirmationsAndImportsIntoEmptyPostgresTarget()
     {
         var sourceDatabase = await CreateDatabase();

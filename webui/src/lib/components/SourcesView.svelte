@@ -2,8 +2,12 @@
   import { onMount } from "svelte";
   import { Dialog } from "$lib/components/ui/dialog";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
+  import { Skeleton } from "$lib/components/ui/skeleton";
   import { MoreHorizontal, X } from "lucide-svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import { Checkbox } from "$lib/components/ui/checkbox";
+  import { Badge } from "$lib/components/ui/badge";
+  import { Button } from "$lib/components/ui/button";
   import {
     home,
     settings,
@@ -26,6 +30,7 @@
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import { fieldValue } from "$lib/settings";
+  import { relativeTime } from "$lib/activity";
   import {
     accountSettings,
     audienceLabel,
@@ -37,9 +42,9 @@
     sourceStatus,
     sourceTimingLabel,
     settingDefault,
-    supportsStreamingDiagnostic,
+    supportsPlaybackDiagnostic,
   } from "$lib/sources";
-  import { liveUpdates } from "$lib/live-updates.svelte";
+  import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
 
   let {
     administrator,
@@ -73,7 +78,6 @@
   let removal = $state<ProviderAccount | null>(null);
   let removeOpen = $state(false);
   let testResults = $state<Record<string, ConnectivityResult>>({});
-  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   const providers = $derived(
     [...(schema?.providers ?? [])].toSorted((left, right) => {
@@ -115,16 +119,6 @@
   const readinessClass = (ready: boolean, health?: string | null) =>
     ready ? "healthy" : health === "degraded" ? "degraded" : "suggested";
 
-  function relativeTime(value?: string | null) {
-    if (!value) return "Not checked";
-    const minutes = Math.round((new Date(value).getTime() - Date.now()) / 60_000);
-    const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-    if (Math.abs(minutes) < 60) return formatter.format(minutes, "minute");
-    const hours = Math.round(minutes / 60);
-    if (Math.abs(hours) < 24) return formatter.format(hours, "hour");
-    return formatter.format(Math.round(hours / 24), "day");
-  }
-
   async function refresh() {
     if (refreshing) return;
     refreshing = true;
@@ -160,13 +154,8 @@
     refreshing = false;
   }
 
-  function scheduleRefresh() {
-    if (refreshTimer) return;
-    refreshTimer = setTimeout(() => {
-      refreshTimer = null;
-      void refresh();
-    }, 250);
-  }
+  const refreshScheduler = createRefreshScheduler(refresh);
+  const scheduleRefresh = refreshScheduler.schedule;
 
   async function completed(message: string) {
     feedback = message;
@@ -338,13 +327,13 @@
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
       unsubscribe();
-      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshScheduler.cancel();
     };
   });
 </script>
 
 {#if loading}
-  <section class="panel sources-panel skeleton-panel" aria-label="Loading Sources" aria-busy="true"></section>
+  <Skeleton class="panel sources-panel skeleton-panel" aria-label="Loading Sources" aria-busy="true" />
 {:else if !schema}
   <RouteError
     eyebrow="Sources unavailable"
@@ -356,7 +345,7 @@
   {#if error}
     <div class="degraded-banner" role="status">
       <span aria-hidden="true">!</span><p><strong>Source readiness may be stale.</strong> {error}</p>
-      <button type="button" onclick={() => void refresh()}>Retry</button>
+      <Button variant="secondary" size="sm" onclick={() => void refresh()}>Retry</Button>
     </div>
   {/if}
 
@@ -365,8 +354,8 @@
       <header class="sources-heading">
         <div><p class="eyebrow">Provider-neutral routing</p><h2>Sources</h2><p>Capabilities describe what a Source can do. Latency appears after a health or click-to-stream check reports timing.</p></div>
         <div class="sources-heading-actions">
-          <button class="button-secondary" type="button" onclick={() => void refresh()}>Refresh</button>
-          {#if canManage}<button class="button-primary" type="button" onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</button>{/if}
+          <Button variant="secondary" onclick={() => void refresh()}>Refresh</Button>
+          {#if canManage}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</Button>{/if}
         </div>
       </header>
       {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
@@ -397,19 +386,19 @@
                     <ProviderArtwork id={item.id} definition={item} />
                     <span><strong>{item.name}</strong><small>{sourceOriginLabel(item)} · {item.description || "Provider capability Source"}</small></span>
                   </button>
-                  <span class={`operational-mobile-state status-pill ${state}`}>{state === "needs_config" ? "Needs setup" : humanize(state)}</span>
+                  <Badge class="operational-mobile-state" state={state}>{state === "needs_config" ? "Needs setup" : humanize(state)}</Badge>
                   <details class="operational-mobile-detail">
                     <summary>More details</summary>
                     <dl>
                       <div><dt>Capabilities</dt><dd>{(item.categories ?? []).map(humanize).join(", ") || "Pending"}</dd></div>
-                      <div><dt>Latency</dt><dd>{timing}{#if cts}{#if timing} · {/if}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>CTS {ctsMeasurementLabel(cts)}</span>{/if}</dd></div>
+                      <div><dt>Latency</dt><dd>{timing}{#if cts}{#if timing} · {/if}<Badge state={cts.health === "healthy" ? "healthy" : "degraded"}>CTS {ctsMeasurementLabel(cts)}</Badge>{/if}</dd></div>
                     </dl>
                   </details>
                 </td>
                 <td>{(item.categories ?? []).map(humanize).join(", ") || "Pending"}</td>
-                <td><span class={`status-pill ${state}`}>{state === "needs_config" ? "Needs setup" : humanize(state)}</span><small>{metrics.passing}/{metrics.total || 0} passing · {relativeTime(metrics.checkedAt)}</small></td>
-                <td><span class={`status-pill ${state === "disabled" ? "suggested" : "healthy"}`}>{state === "disabled" ? "Disabled" : "Enabled"}</span>{connected.length ? ` · ${connected.filter((account) => account.enabled).length} account${connected.length === 1 ? "" : "s"}` : ""}</td>
-                <td>{timing}{#if cts}{#if timing} · {/if}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>CTS {ctsMeasurementLabel(cts)}</span>{/if}</td>
+                <td><Badge state={state}>{state === "needs_config" ? "Needs setup" : humanize(state)}</Badge><small>{metrics.passing}/{metrics.total || 0} passing · {relativeTime(metrics.checkedAt)}</small></td>
+                <td><Badge state={state === "disabled" ? "suggested" : "healthy"}>{state === "disabled" ? "Disabled" : "Enabled"}</Badge>{connected.length ? ` · ${connected.filter((account) => account.enabled).length} account${connected.length === 1 ? "" : "s"}` : ""}</td>
+                <td>{timing}{#if cts}{#if timing} · {/if}<Badge state={cts.health === "healthy" ? "healthy" : "degraded"}>CTS {ctsMeasurementLabel(cts)}</Badge>{/if}</td>
               </tr>
             {:else}
               <tr><td colspan="5"><div class="compact-empty"><strong>No Sources are registered</strong><p>Enable a built-in provider or install an extension.</p></div></td></tr>
@@ -438,21 +427,21 @@
                     <ProviderArtwork id={account.providerId} definition={definition} />
                     <span><strong>{account.sourceDisplayName || account.displayName}</strong><small>{account.secret.configured && !account.secret.revoked ? "Account details stored" : "Setup needed"}</small></span>
                   </button>
-                  <span class={`operational-mobile-state status-pill ${account.enabled ? "healthy" : "disabled"}`}>{account.enabled ? "Enabled" : "Disabled"}</span>
+                  <Badge class="operational-mobile-state" state={account.enabled ? "healthy" : "disabled"}>{account.enabled ? "Enabled" : "Disabled"}</Badge>
                   <details class="operational-mobile-detail">
                     <summary>More details</summary>
                     <dl>
                       <div><dt>Owner</dt><dd>{account.creatorDisplayName || account.ownerDisplayName || "Unknown"}</dd></div>
                       <div><dt>Audience</dt><dd>{audienceLabel(account)}</dd></div>
-                      <div><dt>Health</dt><dd><span class={`status-pill ${readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}`}>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready</span>{#if cts} · <span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>CTS {ctsMeasurementLabel(cts)}</span>{/if}</dd></div>
+                      <div><dt>Health</dt><dd><Badge state={readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready</Badge>{#if cts} · <Badge state={cts.health === "healthy" ? "healthy" : "degraded"}>CTS {ctsMeasurementLabel(cts)}</Badge>{/if}</dd></div>
                     </dl>
                   </details>
                 </td>
                 <td>{definition?.name ?? account.providerId}</td>
                 <td>{account.creatorDisplayName || account.ownerDisplayName || "Unknown"}</td>
                 <td>{audienceLabel(account)}</td>
-                <td><span class={`status-pill ${account.enabled ? "healthy" : "disabled"}`}>{account.enabled ? "Enabled" : "Disabled"}</span></td>
-                <td><span class={`status-pill ${readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}`}>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready</span>{#if cts} · <span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>CTS {ctsMeasurementLabel(cts)}</span>{/if}</td>
+                <td><Badge state={account.enabled ? "healthy" : "disabled"}>{account.enabled ? "Enabled" : "Disabled"}</Badge></td>
+                <td><Badge state={readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready</Badge>{#if cts} · <Badge state={cts.health === "healthy" ? "healthy" : "degraded"}>CTS {ctsMeasurementLabel(cts)}</Badge>{/if}</td>
                 <td>
                   <DropdownMenu.Root>
                     <DropdownMenu.Trigger class="icon-button" aria-label={`Actions for ${account.displayName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
@@ -470,7 +459,7 @@
               <tr><td colspan="7"><div class="compact-empty connections-empty">
                 <strong>{canManage ? "No Source accounts yet" : "Accounts are administrator-managed"}</strong>
                 <p>{canManage ? "Connect an account to activate personal or shared Source capabilities." : "Available shared Sources appear without exposing credentials."}</p>
-                {#if canManage}<button class="button-primary" type="button" onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</button>{/if}
+                {#if canManage}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</Button>{/if}
               </div></td></tr>
             {/each}
           </tbody>
@@ -482,7 +471,7 @@
   <Dialog.Root bind:open={detailOpen}>
     <Dialog.Portal>
       <Dialog.Overlay class="dialog-overlay" />
-      <Dialog.Content class="source-detail-dialog">
+      <Dialog.Content class="source-dialog source-detail-dialog">
         {#if selectedSource || selectedAccount}
           <header>
             <div class="source-identity">
@@ -521,18 +510,18 @@
               {@const cts = measurements.find((item) =>
                 item.providerId.toLowerCase() === selectedSource!.id.toLowerCase() && !item.providerAccountId)}
               <dl class="source-detail-data">
-                <div><dt>Status</dt><dd><span class={`status-pill ${state}`}>{state === "needs_config" ? "Needs setup" : humanize(state)}</span></dd></div>
+                <div><dt>Status</dt><dd><Badge state={state}>{state === "needs_config" ? "Needs setup" : humanize(state)}</Badge></dd></div>
                 <div><dt>Source ID</dt><dd>{selectedSource.id}</dd></div>
                 <div><dt>Implementation</dt><dd>{sourceOriginLabel(selectedSource)}</dd></div>
                 <div><dt>Capabilities</dt><dd>{(selectedSource.categories ?? []).map(humanize).join(", ") || "Pending"}</dd></div>
                 <div><dt>Readiness</dt><dd>{metrics.passing}/{metrics.total || 0} passing · {metrics.failed} failing</dd></div>
                 <div><dt>Last check</dt><dd>{relativeTime(metrics.checkedAt)}</dd></div>
                 <div><dt>API timing</dt><dd>{sourceTimingLabel(selectedSource, summary(selectedSource.id))}</dd></div>
-                <div><dt>Click to stream</dt><dd>{#if cts}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>{ctsMeasurementLabel(cts)}</span> · {relativeTime(cts.testedAt)}{:else if selectedSource.categories?.some((item) => item.toLowerCase() === "streaming")}Awaiting first sample{:else if selectedSource.categories?.some((item) => item.toLowerCase() === "download")}Not applicable · no streaming capability{:else}Not applicable{/if}</dd></div>
+                <div><dt>Click to stream</dt><dd>{#if cts}<Badge state={cts.health === "healthy" ? "healthy" : "degraded"}>{ctsMeasurementLabel(cts)}</Badge> · {relativeTime(cts.testedAt)}{:else if selectedSource.categories?.some((item) => ["streaming", "download"].includes(item.toLowerCase()))}Awaiting first sample{:else}Not applicable{/if}</dd></div>
               </dl>
               <div class="source-detail-capabilities">
                 {#each selectedSource.runtimeCapabilities ?? [] as capability}
-                  <span><strong>{humanize(capability.id)}</strong><span class={`status-pill ${readinessClass(capability.ready, capability.health)}`}>{capability.ready ? "Ready" : humanize(capability.reasonCode || capability.configuration || capability.health || "Unavailable")}</span></span>
+                  <span><strong>{humanize(capability.id)}</strong><Badge state={readinessClass(capability.ready, capability.health)}>{capability.ready ? "Ready" : humanize(capability.reasonCode || capability.configuration || capability.health || "Unavailable")}</Badge></span>
                 {:else}<p>No runtime capability probes are published for this Source.</p>{/each}
               </div>
             {:else if detailTab === "data" && selectedAccount}
@@ -542,21 +531,21 @@
                 <div><dt>Provider</dt><dd>{selectedSource?.name ?? selectedAccount.providerId}</dd></div>
                 <div><dt>Owner</dt><dd>{selectedAccount.creatorDisplayName || selectedAccount.ownerDisplayName || "Unknown"}</dd></div>
                 <div><dt>Audience</dt><dd>{audienceLabel(selectedAccount)}</dd></div>
-                <div><dt>State</dt><dd><span class={`status-pill ${selectedAccount.enabled ? "healthy" : "suggested"}`}>{selectedAccount.enabled ? "Enabled" : "Disabled"}</span></dd></div>
-                <div><dt>Account details</dt><dd><span class={`status-pill ${selectedAccount.secret.configured && !selectedAccount.secret.revoked ? "healthy" : "needs_config"}`}>{selectedAccount.secret.configured && !selectedAccount.secret.revoked ? "Stored" : "Setup needed"}</span></dd></div>
-                <div><dt>Health</dt><dd><span class={`status-pill ${readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}`}>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready</span></dd></div>
-                <div><dt>Click to stream</dt><dd>{#if cts}<span class={`status-pill ${cts.health === "healthy" ? "healthy" : "degraded"}`}>{ctsMeasurementLabel(cts)}</span> · {relativeTime(cts.testedAt)}{:else if capabilities.some((item) => item.capability.toLowerCase() === "streaming")}Awaiting first sample{:else if capabilities.some((item) => item.capability.toLowerCase() === "download")}Not applicable · no streaming capability{:else}Not applicable{/if}</dd></div>
+                <div><dt>State</dt><dd><Badge state={selectedAccount.enabled ? "healthy" : "suggested"}>{selectedAccount.enabled ? "Enabled" : "Disabled"}</Badge></dd></div>
+                <div><dt>Account details</dt><dd><Badge state={selectedAccount.secret.configured && !selectedAccount.secret.revoked ? "healthy" : "needs_config"}>{selectedAccount.secret.configured && !selectedAccount.secret.revoked ? "Stored" : "Setup needed"}</Badge></dd></div>
+                <div><dt>Health</dt><dd><Badge state={readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready</Badge></dd></div>
+                <div><dt>Click to stream</dt><dd>{#if cts}<Badge state={cts.health === "healthy" ? "healthy" : "degraded"}>{ctsMeasurementLabel(cts)}</Badge> · {relativeTime(cts.testedAt)}{:else if supportsPlaybackDiagnostic(capabilities)}Awaiting first sample{:else}Not applicable{/if}</dd></div>
               </dl>
             {:else if detailTab === "configuration" && detailKind === "source" && selectedSource}
               {@const settings = accountSettings(selectedSource)}
               {@const sourceAccounts = providerAccounts(selectedSource.id)}
               <p class="source-configuration-copy">{sourcePurpose(selectedSource)}</p>
               <div class="source-detail-actions">
-                {#if administrator && !sourceNeedsAccount(selectedSource) && selectedSource.categories?.some((item) => item.toLowerCase() === "streaming")}
-                  <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void measureSource(selectedSource!)}>Measure CTS</button>
+                {#if administrator && !sourceNeedsAccount(selectedSource) && selectedSource.categories?.some((item) => ["streaming", "download"].includes(item.toLowerCase()))}
+                  <Button variant="secondary" disabled={Boolean(action)} onclick={() => void measureSource(selectedSource!)}>Measure CTS</Button>
                 {/if}
                 {#if selectedSource.id === "apple-download"}
-                  <button class="button-primary" type="button" onclick={() => { detailOpen = false; appleDownloadOpen = true; }}>Manage Apple Music – GAMDL</button>
+                  <Button onclick={() => { detailOpen = false; appleDownloadOpen = true; }}>Manage Apple Music – GAMDL</Button>
                 {/if}
                 {#if !settings.length && selectedSource.connectionKind !== "operator_managed"}
                   <p>No account configuration is required for this extension capability.</p>
@@ -568,7 +557,7 @@
                     <section class="source-account-configuration">
                       <header>
                         <span><strong>{account.sourceDisplayName || account.displayName}</strong><small>Encrypted account configuration</small></span>
-                        <span class={`status-pill ${account.enabled ? "healthy" : "suggested"}`}>{account.enabled ? "Enabled" : "Disabled"}</span>
+                        <Badge state={account.enabled ? "healthy" : "suggested"}>{account.enabled ? "Enabled" : "Disabled"}</Badge>
                       </header>
                       <dl class="source-detail-data">
                         {#each settings as field}
@@ -579,14 +568,14 @@
                           </div>
                         {/each}
                       </dl>
-                      <footer><button class="button-primary" type="button" onclick={() => configure(account)}>Edit configuration</button></footer>
+                      <footer><Button onclick={() => configure(account)}>Edit configuration</Button></footer>
                     </section>
                   {:else}
                     <p class="credential-safety">These settings are saved on an encrypted Source account. Connect one to configure them.</p>
                   {/each}
                 </div>
                 <div class="source-detail-actions">
-                  <button class="button-primary" type="button" disabled={!canManage} onclick={() => { connectProviderId = selectedSource!.id; detailOpen = false; connectOpen = true; }}>{sourceAccounts.length ? "Connect another account" : "Connect account"}</button>
+                  <Button disabled={!canManage} onclick={() => { connectProviderId = selectedSource!.id; detailOpen = false; connectOpen = true; }}>{sourceAccounts.length ? "Connect another account" : "Connect account"}</Button>
                 </div>
               {/if}
               {#if selectedSource.connectionKind === "operator_managed" && selectedSource.configSchema?.length}
@@ -600,7 +589,7 @@
                         {:else if field.type === "select"}
                           <SelectField name={field.key} label={field.label} value={field.sensitive ? "" : String(fieldValue(config, field))} options={field.options ?? []} />
                         {:else if field.type === "toggle"}
-                          <input name={field.key} type="checkbox" checked={Boolean(fieldValue(config, field))} />
+                          <Checkbox name={field.key} checked={Boolean(fieldValue(config, field))} />
                         {:else}
                           <input
                             name={field.key}
@@ -615,7 +604,7 @@
                         {#if field.helpText}<small>{field.helpText}</small>{/if}
                       </label>
                     {/each}
-                    <footer><button class="button-primary" type="submit" disabled={Boolean(action)}>{action === `configure:${selectedSource.id}` ? "Saving…" : "Save configuration"}</button></footer>
+                    <footer><Button type="submit" disabled={Boolean(action)}>{action === `configure:${selectedSource.id}` ? "Saving…" : "Save configuration"}</Button></footer>
                   </form>
                 {:else}
                   <p class="credential-safety">Only an administrator can change deployment-managed Source settings.</p>
@@ -624,21 +613,21 @@
             {:else if detailTab === "configuration" && selectedAccount}
               {@const capabilities = health.filter((item) => item.providerAccountId === selectedAccount?.id)}
               <div class="source-detail-actions">
-                <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void toggle(selectedAccount!)}>{selectedAccount.enabled ? "Disable" : "Enable"} account</button>
-                <button class="button-secondary" type="button" disabled={!selectedAccount.enabled || Boolean(action)} onclick={() => void test(selectedAccount!)}>Test connection</button>
-                {#if administrator && supportsStreamingDiagnostic(capabilities)}
-                  <button class="button-secondary" type="button" disabled={!selectedAccount.enabled || Boolean(action)} onclick={() => void measure(selectedAccount!)}>Measure CTS</button>
+                <Button variant="secondary" disabled={Boolean(action)} onclick={() => void toggle(selectedAccount!)}>{selectedAccount.enabled ? "Disable" : "Enable"} account</Button>
+                <Button variant="secondary" disabled={!selectedAccount.enabled || Boolean(action)} onclick={() => void test(selectedAccount!)}>Test connection</Button>
+                {#if administrator && supportsPlaybackDiagnostic(capabilities)}
+                  <Button variant="secondary" disabled={!selectedAccount.enabled || Boolean(action)} onclick={() => void measure(selectedAccount!)}>Measure CTS</Button>
                 {/if}
-                <button class="button-primary" type="button" onclick={() => configure(selectedAccount!)}>Edit configuration</button>
+                <Button onclick={() => configure(selectedAccount!)}>Edit configuration</Button>
               </div>
               <div class="source-detail-capabilities">
                 {#each capabilities as capability}
                   {@const result = testResults[`${selectedAccount.id}:${capability.capability}`]}
                   <span>
                     <strong>{humanize(capability.capability)}</strong>
-                    <span class={`status-pill ${readinessClass(capability.ready, capability.health)}`}>{capability.ready ? "Ready" : humanize(capability.reasonCode || capability.configuration)}</span>
+                    <Badge state={readinessClass(capability.ready, capability.health)}>{capability.ready ? "Ready" : humanize(capability.reasonCode || capability.configuration)}</Badge>
                     {#if result?.bars != null}<ConnectivityBars bars={result.healthy ?? result.success ? result.bars : 0} latency={result.latencyMs} />{/if}
-                    {#if capability.canTest}<button class="button-secondary" type="button" disabled={!selectedAccount.enabled || Boolean(action)} onclick={() => void test(selectedAccount!, capability.capability)}>Test</button>{/if}
+                    {#if capability.canTest}<Button variant="secondary" disabled={!selectedAccount.enabled || Boolean(action)} onclick={() => void test(selectedAccount!, capability.capability)}>Test</Button>{/if}
                   </span>
                 {/each}
               </div>
@@ -648,7 +637,7 @@
                 <div><dt>Owner</dt><dd>{selectedAccount.ownerDisplayName || "Current user"}</dd></div>
                 <div><dt>Scope</dt><dd>{selectedAccount.scope}</dd></div>
               </dl>
-              {#if administrator}<button class="button-primary" type="button" onclick={() => manageAccess(selectedAccount!)}>Edit access</button>{/if}
+              {#if administrator}<Button onclick={() => manageAccess(selectedAccount!)}>Edit access</Button>{/if}
             {/if}
           </div>
         {/if}

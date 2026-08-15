@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
+  import { Skeleton } from "$lib/components/ui/skeleton";
+  import { Badge } from "$lib/components/ui/badge";
+  import { Button } from "$lib/components/ui/button";
   import { ArrowRight, MoreHorizontal } from "lucide-svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import {
@@ -27,7 +30,9 @@
     scoreComponents,
   } from "$lib/mappings";
   import { formatDuration } from "$lib/playlists";
-  import { liveUpdates } from "$lib/live-updates.svelte";
+  import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
+  import { relativeTime } from "$lib/activity";
+  import { findProviderDefinition, providerDisplayName } from "$lib/sources";
 
   type DestructiveAction = { kind: "reject" | "clear"; match: MatchReviewItem };
 
@@ -50,7 +55,6 @@
   let feedback = $state("");
   let action = $state("");
   let loadVersion = 0;
-  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   let dialogOpen = $state(false);
   let initialReviewOpened = $state(false);
@@ -58,26 +62,12 @@
   let destructiveOpen = $state(false);
   let destructive = $state<DestructiveAction | null>(null);
 
-  function provider(providerId: string) {
-    return providers.find((item) => item.id.toLowerCase() === providerId.toLowerCase());
-  }
+  const provider = (providerId: string) => findProviderDefinition(providers, providerId);
 
   function providerName(providerId?: string | null) {
     if (!providerId) return "Unresolved";
     if (providerId === "local") return backend;
-    return provider(providerId)?.name ?? providerId;
-  }
-
-  function relativeTime(value?: string | null) {
-    if (!value) return "Not decided";
-    const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1_000);
-    const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-    if (Math.abs(seconds) < 60) return formatter.format(seconds, "second");
-    const minutes = Math.round(seconds / 60);
-    if (Math.abs(minutes) < 60) return formatter.format(minutes, "minute");
-    const hours = Math.round(minutes / 60);
-    if (Math.abs(hours) < 24) return formatter.format(hours, "hour");
-    return formatter.format(Math.round(hours / 24), "day");
+    return providerDisplayName(providers, providerId);
   }
 
   async function load() {
@@ -124,13 +114,8 @@
     }
   }
 
-  function scheduleRefresh() {
-    if (refreshTimer) return;
-    refreshTimer = setTimeout(() => {
-      refreshTimer = null;
-      void load();
-    }, 250);
-  }
+  const refreshScheduler = createRefreshScheduler(load);
+  const scheduleRefresh = refreshScheduler.schedule;
 
   function setState(value: string) {
     stateFilter = value;
@@ -229,14 +214,14 @@
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
       unsubscribe();
-      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshScheduler.cancel();
     };
   });
 </script>
 
 {#if loading}
   <section class="mapping-page" aria-label="Loading match review" aria-busy="true">
-    <div class="panel skeleton-panel"></div>
+    <Skeleton class="panel skeleton-panel" />
   </section>
 {:else if error && !data}
   <RouteError
@@ -250,7 +235,7 @@
     <div class="degraded-banner" role="status">
       <span aria-hidden="true">!</span>
       <p><strong>Some mapping data is unavailable.</strong> {error || degraded}</p>
-      <button type="button" onclick={() => { void loadProviders(); void load(); }}>Retry</button>
+      <Button variant="secondary" size="sm" onclick={() => { void loadProviders(); void load(); }}>Retry</Button>
     </div>
   {/if}
 
@@ -262,7 +247,7 @@
           <h2>Match review queue</h2>
           <p>Automatic and manual decisions share one durable matching pipeline.</p>
         </div>
-        <button class="button-secondary" type="button" onclick={() => void load()}>Refresh</button>
+        <Button variant="secondary" onclick={() => void load()}>Refresh</Button>
       </header>
 
       <div class="mapping-metrics" aria-label="Match totals">
@@ -290,7 +275,7 @@
           { value: "", label: "Default order" }, { value: "confidence_desc", label: "Highest first" },
           { value: "confidence_asc", label: "Lowest first" },
         ]} /></div>
-        <button class="button-primary" type="submit">Apply</button>
+        <Button type="submit">Apply</Button>
       </form>
 
       {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
@@ -368,11 +353,11 @@
 
             <div class="mapping-row-footer">
               <div class="mapping-evidence">
-                <span class={`status-pill ${match.state}`}>{reviewStateLabel(match.state)}</span>
+                <Badge state={match.state}>{reviewStateLabel(match.state)}</Badge>
                 <span class="mapping-evidence-summary">
                   {candidate || target ? `${percent(match.confidence)} confidence` : "Not scored"}
                   {#if match.threshold != null} · {percent(match.threshold)} auto threshold{/if}
-                  · {relativeTime(match.decidedAt)}
+                  · {relativeTime(match.decidedAt, "Not decided")}
                   {#if match.reasons.length || match.warnings.length}
                     · {[...match.reasons, ...match.warnings].slice(0, 2).map((reason) => reason.replaceAll("_", " ")).join(" · ")}
                   {/if}
@@ -388,14 +373,14 @@
                     <strong>{percent(candidate?.confidence ?? match.confidence)}</strong>
                     <small>Confidence</small>
                   </span>
-                  <button class="button-primary" type="button" disabled={action === match.externalSnapshotId} onclick={() => void accept(match)}>Accept</button>
+                  <Button disabled={action === match.externalSnapshotId} onclick={() => void accept(match)}>Accept</Button>
                 {/if}
                 {#if !target}
-                  <button class="button-secondary" type="button" disabled={action === match.externalSnapshotId} onclick={() => void rematch(match)}>Rematch</button>
+                  <Button variant="secondary" disabled={action === match.externalSnapshotId} onclick={() => void rematch(match)}>Rematch</Button>
                 {/if}
-                <button class="button-primary" type="button" onclick={() => openMatch(match)}>
+                <Button onclick={() => openMatch(match)}>
                   {target ? "Review match" : "Interactive search"}
-                </button>
+                </Button>
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger class="track-menu-trigger" aria-label={`More actions for ${match.title || "track"}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
                   <DropdownMenu.Portal>
@@ -448,9 +433,9 @@
       <nav class="playlist-pagination mapping-pagination" aria-label="Match review pages">
         <span>{data.pagination.total} tracks</span>
         <div>
-          <button type="button" disabled={data.pagination.page <= 1} onclick={() => { page -= 1; void load(); }}>Previous</button>
+          <Button variant="secondary" size="sm" disabled={data.pagination.page <= 1} onclick={() => { page -= 1; void load(); }}>Previous</Button>
           <span>Page {data.pagination.page} of {data.pagination.totalPages}</span>
-          <button type="button" disabled={data.pagination.page >= data.pagination.totalPages} onclick={() => { page += 1; void load(); }}>Next</button>
+          <Button variant="secondary" size="sm" disabled={data.pagination.page >= data.pagination.totalPages} onclick={() => { page += 1; void load(); }}>Next</Button>
         </div>
       </nav>
     </article>

@@ -15,7 +15,6 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
     private readonly CacheSettings _cache;
     private readonly DeezerSettings _deezer;
     private readonly QobuzSettings _qobuz;
-    private readonly SquidWTFSettings _squid;
     private readonly AppleDownloadSettings _apple;
     private readonly SpotifyApiSettings _spotifyApi;
     private readonly SpotifyImportSettings _spotifyImport;
@@ -31,7 +30,7 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
     public DefaultTenantRuntimeSettingsProjector(
         IDurableRuntimeSettings settings, IRuntimeSettingsChangeSignal signal, IdentityOptions identity,
         IConfiguration configuration, IOptions<CacheSettings> cache, IOptions<DeezerSettings> deezer,
-        IOptions<QobuzSettings> qobuz, IOptions<SquidWTFSettings> squid, IOptions<AppleDownloadSettings> apple,
+        IOptions<QobuzSettings> qobuz, IOptions<AppleDownloadSettings> apple,
         IOptions<SpotifyApiSettings> spotifyApi, IOptions<SpotifyImportSettings> spotifyImport,
         IOptions<MusicBrainzSettings> musicBrainz, IOptions<ScrobblingSettings> scrobbling,
         IOptions<JellyfinSettings> jellyfin, IOptions<SubsonicSettings> subsonic,
@@ -41,7 +40,7 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
         (_settings, _signal, _configuration, _logger) = (settings, signal, configuration, logger);
         _bootstrapAppleBaseUrl = configuration["AppleDownload:BaseUrl"];
         _tenantId = identity.GetDefaultTenantId();
-        (_cache, _deezer, _qobuz, _squid, _apple) = (cache.Value, deezer.Value, qobuz.Value, squid.Value, apple.Value);
+        (_cache, _deezer, _qobuz, _apple) = (cache.Value, deezer.Value, qobuz.Value, apple.Value);
         (_spotifyApi, _spotifyImport, _musicBrainz, _scrobbling) =
             (spotifyApi.Value, spotifyImport.Value, musicBrainz.Value, scrobbling.Value);
         (_jellyfin, _subsonic) = (jellyfin.Value, subsonic.Value);
@@ -137,8 +136,6 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
             case "Deezer:MinRequestIntervalMs": _deezer.MinRequestIntervalMs = (int)value; break;
             case "Qobuz:Quality": _qobuz.Quality = (string)value; break;
             case "Qobuz:MinRequestIntervalMs": _qobuz.MinRequestIntervalMs = (int)value; break;
-            case "SquidWTF:Quality": _squid.Quality = (string)value; break;
-            case "SquidWTF:MinRequestIntervalMs": _squid.MinRequestIntervalMs = (int)value; break;
             case "AppleDownload:BaseUrl":
                 if (string.IsNullOrWhiteSpace(_bootstrapAppleBaseUrl)) _apple.BaseUrl = (string)value;
                 break;

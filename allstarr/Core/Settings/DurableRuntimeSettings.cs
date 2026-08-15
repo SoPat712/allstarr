@@ -115,8 +115,6 @@ public static class RuntimeSettingCatalog
         Int("Cache:MediaMaximumEntryMegabytes", 1, 1024);
         Int("Cache:MediaCleanupFileLimit", 100, 1000000);
         Text(AudioQualityPolicy.SettingKey, AudioQualityPolicy.Steps.ToArray());
-        Text("SquidWTF:Quality", ["LOW", "HIGH", "LOSSLESS", "FLAC", "HI_RES", "HI_RES_LOSSLESS"], allowEmpty: true);
-        Int("SquidWTF:MinRequestIntervalMs", 0, 60000);
         Text("Deezer:Quality", ["FLAC", "MP3_320", "MP3_128"], allowEmpty: true); Int("Deezer:MinRequestIntervalMs", 0, 60000);
         Text("Qobuz:Quality", ["FLAC", "FLAC_24_HIGH", "FLAC_24_LOW", "FLAC_16", "MP3_320"], allowEmpty: true);
         Int("Qobuz:MinRequestIntervalMs", 0, 60000);

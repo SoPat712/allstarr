@@ -18,9 +18,22 @@ export type ActivityGroup = {
 export function humanize(value?: string | null) {
   if (!value) return "Unknown";
   return value
+    .replace(/reviewrequired/gi, "review required")
     .replaceAll(/[-_.]+/g, " ")
     .replaceAll(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+export function relativeTime(value?: string | null, fallback = "Not checked") {
+  if (!value) return fallback;
+  const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1_000);
+  const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  if (Math.abs(seconds) < 60) return formatter.format(seconds, "second");
+  const minutes = Math.round(seconds / 60);
+  if (Math.abs(minutes) < 60) return formatter.format(minutes, "minute");
+  const hours = Math.round(minutes / 60);
+  if (Math.abs(hours) < 24) return formatter.format(hours, "hour");
+  return formatter.format(Math.round(hours / 24), "day");
 }
 
 export function filterActivity(items: ActivityItem[], filters: ActivityFilters) {

@@ -2,6 +2,10 @@
   import { onMount } from "svelte";
   import { ArrowDown, ArrowUp } from "lucide-svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import { Checkbox } from "$lib/components/ui/checkbox";
+  import { Badge } from "$lib/components/ui/badge";
+  import { Button } from "$lib/components/ui/button";
+  import { Skeleton } from "$lib/components/ui/skeleton";
   import {
     home,
     settings,
@@ -20,7 +24,7 @@
   import AudioQualityField from "$lib/components/AudioQualityField.svelte";
   import { humanize } from "$lib/sources";
   import { fieldValue, move, routingOrder } from "$lib/settings";
-  import { liveUpdates } from "$lib/live-updates.svelte";
+  import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
 
   let {
     section = "general",
@@ -40,6 +44,11 @@
     { id: "extensions", label: "Extensions", href: "#/settings/extensions" },
     { id: "maintenance", label: "Maintenance", href: "#/settings/maintenance" },
   ] as const;
+  const contextualTrackCacheKeys = new Set([
+    "STORAGE_MODE",
+    "CACHE_DURATION_HOURS",
+    "CACHE_TRANSCODE_MINUTES",
+  ]);
 
   let schema = $state<UiSchema | null>(null);
   let config = $state<Record<string, unknown>>({});
@@ -54,7 +63,6 @@
   let feedback = $state("");
   let purgeTarget = $state("");
   let purgeOpen = $state(false);
-  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
   let dragging = $state<{ groupId: string; index: number } | null>(null);
   let loadedSection = $state("");
   let dirtyOwners = $state<string[]>([]);
@@ -63,7 +71,13 @@
 
   const active = $derived(tabs.some((item) => item.id === section) ? section : "general");
   const generalSections = $derived.by(() => {
-    return (schema?.configSections ?? []).filter((item) => item.id !== "spotify-import");
+    return (schema?.configSections ?? [])
+      .filter((item) => item.id !== "spotify-import")
+      .map((item) => ({
+        ...item,
+        fields: item.fields.filter((field) => !contextualTrackCacheKeys.has(field.key)),
+      }))
+      .filter((item) => item.fields.length);
   });
   const cacheDiskCeiling = $derived(
     Number((config.cache as Record<string, unknown> | undefined)?.mediaMaximumMegabytes ?? 512),
@@ -135,13 +149,8 @@
     refreshing = false;
   }
 
-  function scheduleRefresh() {
-    if (refreshTimer) return;
-    refreshTimer = setTimeout(() => {
-      refreshTimer = null;
-      void refresh();
-    }, 250);
-  }
+  const refreshScheduler = createRefreshScheduler(refresh);
+  const scheduleRefresh = refreshScheduler.schedule;
 
   async function saveSection(event: SubmitEvent, item: ConfigSection) {
     event.preventDefault();
@@ -236,13 +245,13 @@
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
       unsubscribe();
-      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshScheduler.cancel();
     };
   });
 </script>
 
 {#if loading}
-  <section class="panel settings-panel skeleton-panel" aria-label="Loading Settings" aria-busy="true"></section>
+  <Skeleton class="panel settings-panel skeleton-panel" aria-label="Loading Settings" aria-busy="true" />
 {:else if !schema}
   <RouteError
     eyebrow="Settings unavailable"
@@ -257,14 +266,14 @@
     {#if error}
       <div class="degraded-banner" role="status">
         <span aria-hidden="true">!</span><p><strong>Some settings may be stale.</strong> {error}</p>
-        <button type="button" onclick={() => void refresh()}>Retry</button>
+        <Button variant="secondary" size="sm" onclick={() => void refresh()}>Retry</Button>
       </div>
     {/if}
     {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
     {#if serverChanged}
       <div class="degraded-banner" role="status">
         <p><strong>Server settings changed.</strong> Your unsaved edits are preserved.</p>
-        <button type="button" onclick={() => { dirtyOwners = []; serverChanged = false; void refresh(); }}>Reload server values</button>
+        <Button variant="secondary" size="sm" onclick={() => { dirtyOwners = []; serverChanged = false; void refresh(); }}>Reload server values</Button>
       </div>
     {/if}
 
@@ -304,7 +313,7 @@
                       onchange={() => markDirty(item.id)}
                     />
                   {:else if field.type === "toggle"}
-                    <input name={field.key} type="checkbox" checked={Boolean(fieldValue(config, field))} />
+                    <Checkbox name={field.key} checked={Boolean(fieldValue(config, field))} />
                   {:else}
                     <input
                       name={field.key}
@@ -324,7 +333,7 @@
                 </p>
               {/if}
               {#if item.fields.some((field) => !field.readOnly && field.ownership !== "deployment")}
-                <footer><button class="button-primary" type="submit" disabled={Boolean(action)}>{action === item.id ? "Saving…" : `Save ${item.label}`}</button></footer>
+                <footer><Button type="submit" disabled={Boolean(action)}>{action === item.id ? "Saving…" : `Save ${item.label}`}</Button></footer>
               {/if}
             </form>
           </details>
@@ -336,13 +345,13 @@
         <div class="routing-groups">
           {#each schema.priorityGroups ?? [] as group}
             <section class="panel routing-group">
-              <header><div><strong>{group.label}</strong><small>{group.description}</small></div><button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => void saveOrder(group)}>{action === group.id ? "Saving…" : "Save order"}</button></header>
+              <header><div><strong>{group.label}</strong><small>{group.description}</small></div><Button disabled={Boolean(action)} onclick={() => void saveOrder(group)}>{action === group.id ? "Saving…" : "Save order"}</Button></header>
               <ol>
                 {#if group.pinnedProvider}
                   <li class="pinned">
                     <ProviderArtwork id={group.pinnedProvider.id} label={group.pinnedProvider.name} />
                     <span><strong>{group.pinnedProvider.name}</strong><small>{group.pinnedProvider.reason}</small></span>
-                    <span class="status-pill healthy">Local · fixed</span>
+                    <Badge state="healthy">Local · fixed</Badge>
                   </li>
                 {/if}
                 {#each orders[group.id] ?? group.providers as providerId, index}
@@ -358,8 +367,8 @@
                     <ProviderArtwork id={providerId} definition={definition} />
                     <span><strong>{definition?.name ?? humanize(providerId)}</strong><small>{definition?.categories?.map(humanize).join(" · ") || "Provider Source"}</small></span>
                     <span class="routing-actions">
-                      <button type="button" aria-label={`Move ${definition?.name ?? providerId} up`} disabled={index === 0} onclick={() => moveProvider(group, index, -1)}><ArrowUp size={18} aria-hidden="true" /></button>
-                      <button type="button" aria-label={`Move ${definition?.name ?? providerId} down`} disabled={index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></button>
+                      <Button variant="outline" size="icon-sm" aria-label={`Move ${definition?.name ?? providerId} up`} disabled={index === 0} onclick={() => moveProvider(group, index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
+                      <Button variant="outline" size="icon-sm" aria-label={`Move ${definition?.name ?? providerId} down`} disabled={index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
                     </span>
                   </li>
                 {/each}
@@ -378,9 +387,9 @@
         <header class="settings-intro"><p class="eyebrow">Operations</p><h2>Maintenance</h2><p>Readiness, verified backups, bounded cache cleanup, and read-only media diagnostics.</p></header>
         <section class="maintenance-grid">
           <article class="panel maintenance-card">
-            <header><div><strong>PostgreSQL</strong><small>Durable application state</small></div><span class={`status-pill ${storage?.storage.readiness?.toLowerCase() === "ready" ? "healthy" : "degraded"}`}>{storage?.storage.readiness ?? "Unknown"}</span></header>
+            <header><div><strong>PostgreSQL</strong><small>Durable application state</small></div><Badge state={storage?.storage.readiness?.toLowerCase() === "ready" ? "healthy" : "degraded"}>{storage?.storage.readiness ?? "Unknown"}</Badge></header>
             <dl><div><dt>Provider</dt><dd>{storage?.storage.provider ?? "PostgreSQL"}</dd></div><div><dt>Verified backups</dt><dd>{storage?.backups.filter((backup) => backup.verifiedAt).length ?? 0}</dd></div></dl>
-            <button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => void run("backup", settings.backup, "Verified database backup created.")}>{action === "backup" ? "Creating…" : "Create verified backup"}</button>
+            <Button disabled={Boolean(action)} onclick={() => void run("backup", settings.backup, "Verified database backup created.")}>{action === "backup" ? "Creating…" : "Create verified backup"}</Button>
             <p>Restore remains an offline operator procedure and is intentionally unavailable against the active database.</p>
           </article>
           <CacheDiagnosticsCard
@@ -392,18 +401,18 @@
           />
           <article class="panel maintenance-card">
             <header><div><strong>Media pipeline</strong><small>Metadata, artwork, and authenticated playback</small></div></header>
-            <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void run("media", settings.mediaProbe, "Media pipeline checked.")}>{action === "media" ? "Testing…" : "Test media pipeline"}</button>
+            <Button variant="secondary" disabled={Boolean(action)} onclick={() => void run("media", settings.mediaProbe, "Media pipeline checked.")}>{action === "media" ? "Testing…" : "Test media pipeline"}</Button>
           </article>
           <article class="panel maintenance-card">
             <header><div><strong>Playlist readiness</strong><small>Source access and songs available to listeners</small></div></header>
-            <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void run("playlists", settings.playlistProbe, "Playlist pipeline checked.")}>{action === "playlists" ? "Testing…" : "Test playlist readiness"}</button>
+            <Button variant="secondary" disabled={Boolean(action)} onclick={() => void run("playlists", settings.playlistProbe, "Playlist pipeline checked.")}>{action === "playlists" ? "Testing…" : "Test playlist readiness"}</Button>
           </article>
           {#if administrator}<SelectiveTransferCard />{/if}
           {#if administrator}
             <article class="panel maintenance-card">
               <header><div><strong>Setup guide</strong><small>Durable account onboarding</small></div></header>
               <p>Reopen setup without clearing browser data or changing runtime health.</p>
-              <button class="button-secondary" type="button" onclick={() => void onOpenSetup()}>Open setup guide</button>
+              <Button variant="secondary" onclick={() => void onOpenSetup()}>Open setup guide</Button>
             </article>
           {/if}
           {#if administrator}<EnvMigrationCard />{/if}

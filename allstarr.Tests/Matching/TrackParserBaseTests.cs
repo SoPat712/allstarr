@@ -10,7 +10,7 @@ public class TrackParserBaseTests
     {
         Assert.Equal("ext-deezer-song-123", TrackParserProbe.SongId("deezer", "123"));
         Assert.Equal("ext-qobuz-album-555", TrackParserProbe.AlbumId("qobuz", "555"));
-        Assert.Equal("ext-squidwtf-artist-77", TrackParserProbe.ArtistId("squidwtf", "77"));
+        Assert.Equal("ext-soundcloud-artist-77", TrackParserProbe.ArtistId("soundcloud", "77"));
 
         Assert.Equal(2024, TrackParserProbe.Year("2024-11-03"));
         Assert.Null(TrackParserProbe.Year(""));

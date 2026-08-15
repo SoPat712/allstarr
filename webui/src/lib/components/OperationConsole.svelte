@@ -2,9 +2,12 @@
   import { onMount } from "svelte";
   import { home, type JobResponse } from "$lib/api";
   import { compactProgress, progressDetails } from "$lib/jobs";
-  import { liveUpdates } from "$lib/live-updates.svelte";
+  import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { Popover } from "$lib/components/ui/popover";
+  import { Progress } from "$lib/components/ui/progress";
+  import { Badge } from "$lib/components/ui/badge";
+  import { Button } from "$lib/components/ui/button";
 
   let {
     playlistName,
@@ -20,7 +23,6 @@
   let open = $state(false);
   let cancelOpen = $state(false);
   let cancelling = $state(false);
-  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
   let observedJobId = "";
   let observedState = "";
 
@@ -60,13 +62,8 @@
     }
   }
 
-  function scheduleRefresh() {
-    if (refreshTimer) return;
-    refreshTimer = setTimeout(() => {
-      refreshTimer = null;
-      void load();
-    }, 250);
-  }
+  const refreshScheduler = createRefreshScheduler(load);
+  const scheduleRefresh = refreshScheduler.schedule;
 
   async function cancel() {
     if (!job || cancelling) return;
@@ -85,7 +82,7 @@
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
       unsubscribe();
-      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshScheduler.cancel();
     };
   });
 </script>
@@ -94,17 +91,17 @@
   <Popover.Root bind:open>
     <Popover.Trigger class="operation-trigger" aria-label={`Operation details: ${latest.stage?.replaceAll(".", " ") || job.type.replaceAll(".", " ")}, ${job.state}`}>
       <span aria-live="polite">{latest.stage?.replaceAll(".", " ") || job.type.replaceAll(".", " ")}</span>
-      <span class={`status-pill ${job.state.toLowerCase()}`}>{job.state}</span>
+      <Badge state={job.state}>{job.state}</Badge>
     </Popover.Trigger>
     <Popover.Portal>
       <Popover.Content class="bits-menu operation-popover" sideOffset={6} align="end">
         <header>
           <span><strong>{latest.stage?.replaceAll(".", " ") || job.type.replaceAll(".", " ")}</strong><small>{latest.message || job.state}</small></span>
-          <span class={`status-pill ${job.state.toLowerCase()}`}>{job.state}</span>
+          <Badge state={job.state}>{job.state}</Badge>
         </header>
         <div class="operation-console-body">
           {#if percent !== null}
-            <div class="operation-progress" aria-label={`${percent}% complete`}><span style={`width:${percent}%`}></span></div>
+            <Progress value={percent} aria-label={`${percent}% complete`} />
           {/if}
           <div class="operation-facts">
             {#if latest.playlist}<span><small>Playlist</small><strong>{latest.playlist}</strong></span>{/if}
@@ -125,7 +122,7 @@
             {/each}
           </ol>
           {#if active && !job.cancellationRequestedAt}
-            <button class="button-secondary" type="button" onclick={() => { open = false; cancelOpen = true; }}>Cancel operation</button>
+            <Button variant="secondary" onclick={() => { open = false; cancelOpen = true; }}>Cancel operation</Button>
           {/if}
         </div>
       </Popover.Content>

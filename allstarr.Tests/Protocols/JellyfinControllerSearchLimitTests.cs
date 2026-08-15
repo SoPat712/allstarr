@@ -1,4 +1,3 @@
-using System.Reflection;
 using allstarr.Controllers;
 
 namespace allstarr.Tests;
@@ -26,15 +25,8 @@ public class JellyfinControllerSearchLimitTests
             ? null
             : includeItemTypes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        var method = typeof(JellyfinController).GetMethod(
-            "GetExternalSearchLimits",
-            BindingFlags.Static | BindingFlags.NonPublic);
-
-        Assert.NotNull(method);
-
-        var result = ((int SongLimit, int AlbumLimit, int ArtistLimit))method!.Invoke(
-            null,
-            new object?[] { requestedTypes, limit, includePlaylistsAsAlbums })!;
+        var result = JellyfinController.GetExternalSearchLimits(
+            requestedTypes, limit, includePlaylistsAsAlbums);
 
         Assert.Equal(expectedSongLimit, result.SongLimit);
         Assert.Equal(expectedAlbumLimit, result.AlbumLimit);
@@ -52,11 +44,7 @@ public class JellyfinControllerSearchLimitTests
         int limit,
         int expected)
     {
-        var method = typeof(JellyfinController).GetMethod(
-            "GetIntegratedSearchFetchLimit",
-            BindingFlags.Static | BindingFlags.NonPublic);
-
-        Assert.Equal(expected, (int)method!.Invoke(null, [startIndex, limit])!);
+        Assert.Equal(expected, JellyfinController.GetIntegratedSearchFetchLimit(startIndex, limit));
     }
 
     [Theory]
@@ -74,12 +62,8 @@ public class JellyfinControllerSearchLimitTests
         int expectedStart,
         int expectedTake)
     {
-        var method = typeof(JellyfinController).GetMethod(
-            "GetVirtualPlaylistPage",
-            BindingFlags.Static | BindingFlags.NonPublic);
-
-        var result = ((int BackendTotal, int Start, int Take))method!.Invoke(
-            null, [backendTotal, backendReturned, startIndex, limit])!;
+        var result = JellyfinController.GetVirtualPlaylistPage(
+            backendTotal, backendReturned, startIndex, limit);
 
         Assert.Equal(expectedBackendTotal, result.BackendTotal);
         Assert.Equal(expectedStart, result.Start);

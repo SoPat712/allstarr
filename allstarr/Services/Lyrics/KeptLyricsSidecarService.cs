@@ -120,13 +120,10 @@ public class KeptLyricsSidecarService : IKeptLyricsSidecarService
         string externalId,
         CancellationToken cancellationToken)
     {
-        return externalProvider.ToLowerInvariant() switch
-        {
-            "squidwtf" => await _odesliService.ConvertTidalToSpotifyIdAsync(externalId, cancellationToken),
-            "deezer" => await _odesliService.ConvertUrlToSpotifyIdAsync($"https://www.deezer.com/track/{externalId}", cancellationToken),
-            "qobuz" => await _odesliService.ConvertUrlToSpotifyIdAsync($"https://www.qobuz.com/us-en/album/-/-/{externalId}", cancellationToken),
-            _ => null
-        };
+        var sourceUrl = OdesliService.BuildTrackUrl(externalProvider, externalId);
+        return sourceUrl == null
+            ? null
+            : await _odesliService.ConvertUrlToSpotifyIdAsync(sourceUrl, cancellationToken);
     }
 
     private static (string? Provider, string? ExternalId) ParseExternalReferenceFromPath(string audioFilePath)

@@ -28,7 +28,7 @@ public static class PathHelper
     /// <param name="title">Track title (will be sanitized).</param>
     /// <param name="trackNumber">Optional track number for prefix.</param>
     /// <param name="extension">File extension (e.g., ".flac", ".mp3").</param>
-    /// <param name="provider">Optional provider name (e.g., "squidwtf", "deezer").</param>
+    /// <param name="provider">Optional provider name (for example, "deezer").</param>
     /// <param name="externalId">Optional external ID from the provider.</param>
     /// <returns>Full path for the track file.</returns>
     public static string BuildTrackPath(string downloadPath, string artist, string album, string title, int? trackNumber, string extension, string? provider = null, string? externalId = null)

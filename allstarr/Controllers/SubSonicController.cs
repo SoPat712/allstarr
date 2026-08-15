@@ -54,6 +54,7 @@ public partial class SubsonicController : ControllerBase
     private readonly IAudioMuseRecommendationClient? _audioMuse;
     private readonly IProtocolLibraryScopeResolver? _libraryScopes;
     private readonly IIntelligencePolicyService? _intelligencePolicies;
+    private readonly ManagedTrackCacheService? _managedTrackCache;
 
     public SubsonicController(
         IOptions<SubsonicSettings> subsonicSettings,
@@ -78,7 +79,8 @@ public partial class SubsonicController : ControllerBase
         ProtocolStreamingResponseAdapter? streamingResponseAdapter = null,
         IAudioMuseRecommendationClient? audioMuse = null,
         IProtocolLibraryScopeResolver? libraryScopes = null,
-        IIntelligencePolicyService? intelligencePolicies = null)
+        IIntelligencePolicyService? intelligencePolicies = null,
+        ManagedTrackCacheService? managedTrackCache = null)
     {
         _subsonicSettings = subsonicSettings.Value;
         _metadataService = metadataService;
@@ -103,6 +105,7 @@ public partial class SubsonicController : ControllerBase
         _audioMuse = audioMuse;
         _libraryScopes = libraryScopes;
         _intelligencePolicies = intelligencePolicies;
+        _managedTrackCache = managedTrackCache;
 
         if (string.IsNullOrWhiteSpace(_subsonicSettings.Url))
         {
@@ -280,6 +283,17 @@ public partial class SubsonicController : ControllerBase
                         var status = (int)routed.Response.StatusCode;
                         routed.Response.Dispose();
                         return StatusCode(status);
+                    }
+                    if (_managedTrackCache != null)
+                    {
+                        await _managedTrackCache.WrapAsync(
+                            routed,
+                            provider!,
+                            externalId!,
+                            requestedQuality,
+                            HttpMethods.IsHead(Request.Method),
+                            () => _providerGateway.GetSongAsync(CurrentProtocolContext, provider!, externalId!),
+                            HttpContext.RequestAborted);
                     }
                     return await _streamingResponseAdapter.CreateAsync(
                         HttpContext,

@@ -19,7 +19,7 @@ public sealed class LegacyEnvParserTests
             JELLYFIN_URL=http://jellyfin:8096
             JELLYFIN_API_KEY=backend-secret
             SCROBBLING_LASTFM_SESSION_KEY=personal-secret
-            MUSIC_SERVICE=SquidWTF
+            MUSIC_SERVICE=Deezer
             UNKNOWN_TOKEN=unknown-secret
             """);
 

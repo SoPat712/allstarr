@@ -157,6 +157,44 @@ public class DownloadsControllerPathSecurityTests
         }
     }
 
+    [Fact]
+    public void CacheListing_IncludesCanonicalAndTranscodedAudioWithQualifiedPaths()
+    {
+        var testRoot = CreateTestRoot();
+        var downloadsRoot = Path.Combine(testRoot, "downloads");
+        var cached = Path.Combine(downloadsRoot, "cache", "Artist", "cached.mp3");
+        var transcoded = Path.Combine(downloadsRoot, "transcoded", "Artist", "transcoded.mp3");
+        Directory.CreateDirectory(Path.GetDirectoryName(cached)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(transcoded)!);
+        File.WriteAllText(cached, "cached");
+        File.WriteAllText(transcoded, "transcoded");
+
+        try
+        {
+            var controller = CreateController(downloadsRoot);
+            var result = Assert.IsType<OkObjectResult>(controller.GetDownloads("cache"));
+            using var document = JsonDocument.Parse(JsonSerializer.Serialize(
+                result.Value,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            var files = document.RootElement.GetProperty("files").EnumerateArray().ToArray();
+
+            Assert.Equal(2, files.Length);
+            Assert.Contains(files, item => item.GetProperty("path").GetString() == "cache/Artist/cached.mp3" &&
+                                           item.GetProperty("storage").GetString() == "cache");
+            Assert.Contains(files, item => item.GetProperty("path").GetString() == "transcoded/Artist/transcoded.mp3" &&
+                                           item.GetProperty("storage").GetString() == "transcoded");
+
+            Assert.IsType<OkObjectResult>(
+                controller.DeleteDownload("transcoded/Artist/transcoded.mp3", "cache"));
+            Assert.True(File.Exists(cached));
+            Assert.False(File.Exists(transcoded));
+        }
+        finally
+        {
+            DeleteTestRoot(testRoot);
+        }
+    }
+
     private static DownloadsController CreateController(
         string downloadsRoot,
         IProviderRegistry? providerRegistry = null)

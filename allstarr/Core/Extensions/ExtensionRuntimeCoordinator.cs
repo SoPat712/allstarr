@@ -187,6 +187,8 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     private async Task<RuntimeBuild> BuildRegistrationAsync(
         ExtensionPackageRecord package, CancellationToken cancellationToken)
     {
+        var storedManifest = ExtensionSdkV1.ParseManifest(package.ManifestJson);
+        var downloadBackedStreaming = SpotiFlacExtensionCompatibility.UsesDownloadBackedStreaming(storedManifest);
         var manifestJson = SpotiFlacExtensionCompatibility.EnsureDownloadStreamingCapability(
             package.ManifestJson);
         var manifest = ExtensionSdkV1.ParseManifest(manifestJson);
@@ -234,12 +236,14 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             await File.ReadAllTextAsync(Path.Combine(package.PackagePath, manifest.EntryPoint), cancellationToken),
             _clients, _logger, permissions, Path.Combine(_runtimeRoot, manifest.Id),
             _sessionProtector);
-        if (manifest.Capabilities.SelectMany(item => item.Hooks).Any(hook => !sandbox.HasCallableHook(hook)))
+        if (manifest.Capabilities.SelectMany(item => item.Hooks).Any(hook =>
+                !(downloadBackedStreaming && hook is "getStreamLease" or "probeStream") &&
+                !sandbox.HasCallableHook(hook)))
             throw new ExtensionSdkValidationException("The extension does not implement every declared SDK hook.");
         var implementations = manifest.Capabilities.Select(capability => (IProviderCapability)(capability.Kind switch
         {
             ProviderCapabilityKind.Metadata => new ExtensionMetadataCapabilityAdapter(sandbox, runtimeManifest, _secrets),
-            ProviderCapabilityKind.Streaming when manifest.Compatibility == SpotiFlacExtensionCompatibility.Marker =>
+            ProviderCapabilityKind.Streaming when downloadBackedStreaming =>
                 new ExtensionDownloadStreamingCapabilityAdapter(
                     sandbox, runtimeManifest, _secrets, _downloadArtifacts, _downloadOptions),
             ProviderCapabilityKind.Streaming => new ExtensionStreamingCapabilityAdapter(sandbox, runtimeManifest, _secrets),

@@ -94,11 +94,6 @@ public enum MusicService
     Qobuz,
 
     /// <summary>
-    /// SquidWTF music service
-    /// </summary>
-    SquidWTF,
-
-    /// <summary>
     /// Apple catalog audio through an optional external download gateway
     /// </summary>
     AppleMusic
@@ -132,7 +127,7 @@ public class SubsonicSettings
     /// <summary>
     /// Optional legacy music-service override. Modern provider routing uses configured accounts.
     /// Environment variable: MUSIC_SERVICE
-    /// Values: "Deezer", "Qobuz", "SquidWTF"
+    /// Values: "Deezer", "Qobuz", "AppleMusic"
     /// </summary>
 
     public MusicService MusicService { get; set; } = MusicService.None;

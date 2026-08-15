@@ -182,8 +182,8 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         var identity = new IdentityOptions { DefaultTenantId = _tenantId.ToString() };
         var matching = new TrackMatchPolicy();
         var projector = new DefaultTenantRuntimeSettingsProjector(service, signal, identity, configuration,
-            Options.Create(cache), Options.Create(deezer), Options.Create(qobuz), Options.Create(new SquidWTFSettings()),
-            Options.Create(apple), Options.Create(spotifyApi), Options.Create(spotifyImport),
+            Options.Create(cache), Options.Create(deezer), Options.Create(qobuz), Options.Create(apple),
+            Options.Create(spotifyApi), Options.Create(spotifyImport),
             Options.Create(new MusicBrainzSettings()), Options.Create(new ScrobblingSettings()), Options.Create(jellyfin), Options.Create(subsonic),
             matching,
             NullLogger<DefaultTenantRuntimeSettingsProjector>.Instance);

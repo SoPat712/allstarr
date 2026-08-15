@@ -1,9 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import { Skeleton } from "$lib/components/ui/skeleton";
+  import { Badge } from "$lib/components/ui/badge";
+  import { Button } from "$lib/components/ui/button";
   import {
     downloads,
     home,
+    settings,
     type DownloadsResponse,
     type ManagedDownload,
     type ProviderDefinition,
@@ -18,7 +22,10 @@
     type DownloadSort,
   } from "$lib/downloads";
   import { formatDuration } from "$lib/playlists";
-  import { liveUpdates } from "$lib/live-updates.svelte";
+  import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
+  import { pathValue } from "$lib/settings";
+  import { relativeTime } from "$lib/activity";
+  import { findProviderDefinition, providerDisplayName } from "$lib/sources";
 
   let { storage }: { storage: "cache" | "kept" } = $props();
 
@@ -36,7 +43,11 @@
   let action = $state("");
   let removal = $state<Removal | null>(null);
   let confirmOpen = $state(false);
-  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let storageMode = $state("Cache");
+  let cacheDurationHours = $state(24);
+  let transcodeCacheMinutes = $state(60);
+  let controlsReady = $state(false);
+  let controlsError = $state("");
 
   const cached = $derived(storage === "cache");
   const label = $derived(cached ? "Cached" : "Kept");
@@ -47,49 +58,44 @@
       .filter((value): value is string => Boolean(value)))].toSorted(),
   );
 
-  function provider(providerId?: string | null) {
-    return providers.find((item) => item.id.toLowerCase() === providerId?.toLowerCase());
-  }
+  const provider = (providerId?: string | null) => findProviderDefinition(providers, providerId);
+  const providerName = (providerId?: string | null) => providerDisplayName(providers, providerId);
 
-  function providerName(providerId?: string | null) {
-    return providerId ? (provider(providerId)?.name ?? providerId) : "Unknown source";
-  }
-
-  function relativeTime(value: string) {
-    const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1_000);
-    const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-    if (Math.abs(seconds) < 60) return formatter.format(seconds, "second");
-    const minutes = Math.round(seconds / 60);
-    if (Math.abs(minutes) < 60) return formatter.format(minutes, "minute");
-    const hours = Math.round(minutes / 60);
-    if (Math.abs(hours) < 24) return formatter.format(hours, "hour");
-    return formatter.format(Math.round(hours / 24), "day");
+  function cacheType(storage: string) {
+    return storage === "transcoded" ? "Quality override" : "Track cache";
   }
 
   async function refresh() {
     if (refreshing) return;
     refreshing = true;
     error = "";
-    const [downloadsResult, schemaResult] = await Promise.allSettled([
+    const [downloadsResult, schemaResult, configResult] = await Promise.allSettled([
       downloads.list(storage),
       home.schema(),
+      cached ? settings.config() : Promise.resolve(null),
     ]);
     if (downloadsResult.status === "fulfilled") data = downloadsResult.value;
     else error = downloadsResult.reason instanceof Error
       ? downloadsResult.reason.message
       : `${label} tracks are unavailable.`;
     if (schemaResult.status === "fulfilled") providers = schemaResult.value.providers;
+    if (cached && configResult.status === "fulfilled" && configResult.value) {
+      storageMode = String(pathValue(configResult.value, "library.storageMode") ?? "Cache");
+      cacheDurationHours = Number(pathValue(configResult.value, "library.cacheDurationHours") ?? 24);
+      transcodeCacheMinutes = Number(pathValue(configResult.value, "cache.transcodeCacheMinutes") ?? 60);
+      controlsReady = true;
+      controlsError = "";
+    } else if (cached && configResult.status === "rejected") {
+      controlsError = configResult.reason instanceof Error
+        ? configResult.reason.message
+        : "Track cache settings are unavailable.";
+    }
     loading = false;
     refreshing = false;
   }
 
-  function scheduleRefresh() {
-    if (refreshTimer) return;
-    refreshTimer = setTimeout(() => {
-      refreshTimer = null;
-      void refresh();
-    }, 250);
-  }
+  const refreshScheduler = createRefreshScheduler(refresh);
+  const scheduleRefresh = refreshScheduler.schedule;
 
   async function keep(file: ManagedDownload) {
     if (action) return;
@@ -100,6 +106,25 @@
       await refresh();
     } catch (cause) {
       feedback = cause instanceof Error ? cause.message : "The track could not be kept.";
+    } finally {
+      action = "";
+    }
+  }
+
+  async function saveCacheControls(event: SubmitEvent) {
+    event.preventDefault();
+    if (action) return;
+    action = "cache-settings";
+    try {
+      await settings.save({
+        STORAGE_MODE: storageMode,
+        CACHE_DURATION_HOURS: String(cacheDurationHours),
+        CACHE_TRANSCODE_MINUTES: String(transcodeCacheMinutes),
+      });
+      feedback = "Track cache settings saved.";
+      await refresh();
+    } catch (cause) {
+      feedback = cause instanceof Error ? cause.message : "Track cache settings could not be saved.";
     } finally {
       action = "";
     }
@@ -135,13 +160,13 @@
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
       unsubscribe();
-      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshScheduler.cancel();
     };
   });
 </script>
 
 {#if loading}
-  <section class="panel downloads-panel skeleton-panel" aria-label={`Loading ${label} tracks`} aria-busy="true"></section>
+  <Skeleton class="panel downloads-panel skeleton-panel" aria-label={`Loading ${label} tracks`} aria-busy="true" />
 {:else if error && !data}
   <RouteError
     eyebrow={`${label} tracks unavailable`}
@@ -154,7 +179,7 @@
     <div class="degraded-banner" role="status">
       <span aria-hidden="true">!</span>
       <p><strong>Managed audio may be stale.</strong> {error}</p>
-      <button type="button" onclick={() => void refresh()}>Retry</button>
+      <Button variant="secondary" size="sm" onclick={() => void refresh()}>Retry</Button>
     </div>
   {/if}
 
@@ -164,7 +189,9 @@
         <p class="eyebrow">Library storage</p>
         <h2>{label} tracks</h2>
         <p>{cached
-          ? "Temporary playback files. Keep a track to move it into permanent storage."
+          ? storageMode === "Cache"
+            ? "Completed provider streams and temporary quality overrides. Keep a track to retain it permanently."
+            : "Automatic track caching is off. Managed downloads are retained permanently instead."
           : "Permanent downloads retained across playback-cache cleanup."}</p>
       </div>
       <div class="downloads-summary" aria-label={`${label} totals`}>
@@ -172,9 +199,9 @@
         <span><small>Size</small><strong>{data.totalSizeFormatted}</strong></span>
       </div>
       <div class="downloads-heading-actions">
-        <button class="button-secondary" type="button" onclick={() => void refresh()}>Refresh</button>
+        <Button variant="secondary" onclick={() => void refresh()}>Refresh</Button>
         {#if data.files.length}
-          <button class="button-danger" type="button" onclick={() => confirm({ kind: "all" })}>Remove all</button>
+          <Button variant="destructive" onclick={() => confirm({ kind: "all" })}>Remove all</Button>
         {/if}
       </div>
     </header>
@@ -217,7 +244,7 @@
                 <span>
                   <strong>{file.title || file.fileName}</strong>
                   <small>{file.artist || "Unknown artist"}{file.album ? ` · ${file.album}` : ""}</small>
-                  <small>{formatDuration(file.durationMilliseconds)}</small>
+                  <small>{formatDuration(file.durationMilliseconds)}{cached ? ` · ${cacheType(file.storage)}` : ""}</small>
                 </span>
               </span>
               <span class="download-provider" role="cell">
@@ -233,9 +260,9 @@
                 <time datetime={file.lastModified}>{relativeTime(file.lastModified)}</time>
               </span>
               <span class="download-actions" role="cell">
-                <a class="button-secondary" href={downloads.fileUrl(file.path, storage)}>Download</a>
-                {#if cached}<button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => void keep(file)}>Keep</button>{/if}
-                <button class="button-danger" type="button" disabled={Boolean(action)} onclick={() => confirm({ kind: "one", file })}>Remove</button>
+                <Button variant="secondary" href={downloads.fileUrl(file.path, storage)}>Download</Button>
+                {#if cached}<Button disabled={Boolean(action)} onclick={() => void keep(file)}>Keep</Button>{/if}
+                <Button variant="destructive" disabled={Boolean(action)} onclick={() => confirm({ kind: "one", file })}>Remove</Button>
               </span>
             </div>
           {:else}
@@ -247,9 +274,45 @@
       <div class="compact-empty downloads-empty">
         <strong>No {label.toLowerCase()} tracks</strong>
         <p>{cached
-          ? "Streamed and temporary provider downloads will appear here."
+          ? storageMode === "Cache"
+            ? "A track appears after an external stream reaches the end. Interrupted and partial streams are not retained."
+            : "Storage mode is Permanent, so managed downloads appear under Kept instead."
           : "Use Keep on a cached track to retain it permanently."}</p>
       </div>
+    {/if}
+
+    {#if cached}
+      <details class="track-cache-controls">
+        <summary>
+          <span>
+            <strong id="track-cache-controls-title">Track cache behavior</strong>
+            <small>Playback storage and retention, next to the files they control.</small>
+          </span>
+          <Badge state={storageMode === "Cache" ? "healthy" : "suggested"}>{storageMode} mode</Badge>
+        </summary>
+        {#if controlsReady}
+          <form class="settings-fields track-cache-settings" onsubmit={(event) => void saveCacheControls(event)}>
+            <label class="setting-field">
+              <span><strong>Storage mode</strong></span>
+              <SelectField bind:value={storageMode} name="STORAGE_MODE" label="Storage mode" options={["Cache", "Permanent"]} />
+              <small>Cache retains completed provider streams. Permanent sends managed downloads to Kept.</small>
+            </label>
+            <label class="setting-field">
+              <span><strong>Track retention</strong><small>Hours</small></span>
+              <input bind:value={cacheDurationHours} name="CACHE_DURATION_HOURS" type="number" min="1" max="8760" />
+              <small>Completed cached tracks older than this may be removed.</small>
+            </label>
+            <label class="setting-field">
+              <span><strong>Quality override retention</strong><small>Minutes</small></span>
+              <input bind:value={transcodeCacheMinutes} name="CACHE_TRANSCODE_MINUTES" type="number" min="1" max="10080" />
+              <small>Temporary lower-bandwidth versions use this shorter window.</small>
+            </label>
+            <footer><Button type="submit" disabled={Boolean(action)}>{action === "cache-settings" ? "Saving…" : "Save track cache"}</Button></footer>
+          </form>
+        {:else}
+          <p class="action-feedback" role="status">{controlsError || "Loading track cache settings…"}</p>
+        {/if}
+      </details>
     {/if}
   </section>
 

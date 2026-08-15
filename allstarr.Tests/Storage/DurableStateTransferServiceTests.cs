@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Tests;
 
+[Trait("Lane", "ReleaseCritical")]
 public sealed class DurableStateTransferServiceTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(

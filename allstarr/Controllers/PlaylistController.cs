@@ -519,7 +519,7 @@ public class PlaylistController : ControllerBase
     }
 
     private static bool IsSupportedExternalPlaylistProvider(string provider) =>
-        provider is "deezer" or "qobuz" or "squidwtf" or "applemusic";
+        provider is "deezer" or "qobuz" or "applemusic";
 
     private IConcreteMetadataService? GetConcreteMetadataServiceByName(string provider)
     {
@@ -528,7 +528,6 @@ public class PlaylistController : ControllerBase
 
         return services.FirstOrDefault(s =>
             s.GetType().Name.StartsWith(normalizedProvider, StringComparison.OrdinalIgnoreCase) ||
-            (normalizedProvider == "squidwtf" && s.GetType().Name.StartsWith("SquidWTF", StringComparison.OrdinalIgnoreCase)) ||
             (normalizedProvider == "applemusic" && s.GetType().Name.StartsWith("AppleMusic", StringComparison.OrdinalIgnoreCase)));
     }
 

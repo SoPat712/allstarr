@@ -82,7 +82,7 @@ jobs:
           --trx "${{ runner.temp }}/build-and-test.trx"
           --
           dotnet test --configuration Release --no-build
-          --filter "FullyQualifiedName!~allstarr.Tests.DurableStateTransferServiceTests"
+          --filter "Lane!=ReleaseCritical"
           --verbosity minimal
           --logger "trx;LogFileName=${{ runner.temp }}/build-and-test.trx"
 
@@ -94,7 +94,7 @@ jobs:
           path: ${{ runner.temp }}/build-and-test.trx
           if-no-files-found: warn
 
-  state-transfer-tests:
+  release-critical-tests:
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -121,29 +121,29 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Restore dependencies
-        run: python3 tools/tests/timing_report.py --name state-transfer-restore -- dotnet restore -p:NuGetAudit=true
+        run: python3 tools/tests/timing_report.py --name release-critical-restore -- dotnet restore -p:NuGetAudit=true
 
       - name: Build
-        run: python3 tools/tests/timing_report.py --name state-transfer-build -- dotnet build --configuration Release --no-restore -p:TreatWarningsAsErrors=true
+        run: python3 tools/tests/timing_report.py --name release-critical-build -- dotnet build --configuration Release --no-restore -p:TreatWarningsAsErrors=true
 
-      - name: Test state transfer
+      - name: Test release-critical contracts
         run: >-
           python3 tools/tests/timing_report.py
-          --name state-transfer-test
+          --name release-critical-test
           --require-tests
-          --trx "${{ runner.temp }}/state-transfer-tests.trx"
+          --trx "${{ runner.temp }}/release-critical-tests.trx"
           --
           dotnet test --configuration Release --no-build
-          --filter "FullyQualifiedName~allstarr.Tests.DurableStateTransferServiceTests"
+          --filter "Lane=ReleaseCritical"
           --verbosity minimal
-          --logger "trx;LogFileName=${{ runner.temp }}/state-transfer-tests.trx"
+          --logger "trx;LogFileName=${{ runner.temp }}/release-critical-tests.trx"
 
-      - name: Upload state-transfer test results
+      - name: Upload release-critical test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: dotnet-test-results-state-transfer
-          path: ${{ runner.temp }}/state-transfer-tests.trx
+          name: dotnet-test-results-release-critical
+          path: ${{ runner.temp }}/release-critical-tests.trx
           if-no-files-found: warn
 
   csharp-format:
@@ -200,12 +200,17 @@ jobs:
 
       - name: WebUI E2E
         working-directory: webui
-        run: python3 ../tools/tests/timing_report.py --name webui-e2e --require-tests -- npm run test:e2e:existing-build
+        run: >-
+          python3 ../tools/tests/timing_report.py
+          --name webui-e2e
+          --require-tests
+          --playwright-json "$RUNNER_TEMP/allstarr-playwright.json"
+          -- npm run test:e2e:existing-build
 
   release-manifest:
     needs:
       - build-and-test
-      - state-transfer-tests
+      - release-critical-tests
       - csharp-format
       - webui
       - apple-contracts

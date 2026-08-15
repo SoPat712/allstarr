@@ -16,7 +16,7 @@
     "target": "Authenticated, stable paging/order with local and eligible external results.",
     "authBoundary": "Users/Me verifies a backend principal and the shared protocol filter creates a ProtocolExecutionContext before the action can read cache or call local/external search; unresolved users remain transparent but cannot authorize user-owned work.",
     "fixture": "jellyfin-auth-boundary.json; jellyfin-search-shaping.json",
-    "testLocation": "ProtocolRouteFixtureTests; JellyfinSearchResponseSerializationTests; JellyfinSearchInterleaveTests; JellyfinControllerSearchLimitTests; ProtocolProviderGatewayContractTests",
+    "testLocation": "ProtocolRouteFixtureTests; JellyfinSearchResponseSerializationTests; JellyfinSearchInterleaveTests; JellyfinControllerSearchLimitTests",
     "notes": "Auth failures preserve status/body and make zero provider calls. Merged-result status, body, content type, ordering, and paging are fixture-covered behind the Jellyfin search protocol adapter. Typed metadata providers route through ProtocolProviderGateway and ProviderRouter; compatibility-only providers remain explicit until migrated. Public accountless metadata remains available to verified but unlinked backend users. Integrated search and Search/Hints apply the requested page or limit once after the final merge."
   },
   {
@@ -26,7 +26,7 @@
     "target": "Typed external IDs and client-compatible metadata/images without fabricated stream facts.",
     "authBoundary": "Direct local and external item actions require Users/Me verification; admin artwork uses a separately protected server credential adapter.",
     "fixture": "jellyfin-auth-boundary.json; jellyfin-item-image-shaping.json; jellyfin-openapi-qualification.json",
-    "testLocation": "ProtocolRouteFixtureTests; JellyfinItemLyricsImageProtocolAdapterTests; JellyfinResponseStructureTests; JellyfinImageTagExtractionTests; JellyfinPlaybackMetadataResolverTests; ProtocolProviderGatewayContractTests",
+    "testLocation": "ProtocolRouteFixtureTests; JellyfinItemLyricsImageProtocolAdapterTests; JellyfinResponseStructureTests; JellyfinImageTagExtractionTests; JellyfinPlaybackMetadataResolverTests",
     "notes": "External typed metadata lookups pass through ProviderRouter; compatibility-only providers require an allowed durable account unless their metadata contract is explicitly public and accountless. Placeholder image, ETag, conditional 304, bounded resizing, and JPG/PNG/WebP long-route shaping are covered. Synthetic non-primary, overlay, and unsupported-format routes deny. External codec/size/path facts are never fabricated."
   },
   {
@@ -36,8 +36,8 @@
     "target": "Streaming lane with range, cancellation, expiry, and typed provider failure semantics.",
     "authBoundary": "Users/Me verification and the shared ProtocolExecutionContext precede local or external stream actions; unresolved users cannot authorize user-owned provider work.",
     "fixture": "jellyfin-auth-boundary.json; protocol-streaming-ranges.json",
-    "testLocation": "ProtocolRouteFixtureTests; ProtocolStreamingResponseAdapterTests; JellyfinProxyServiceTests; ProtocolProviderGatewayContractTests",
-    "notes": "Local relay preserves GET/HEAD, Range, If-Range, 206/416 status, media type, validators, cache headers, and cancellation. Typed provider streams use protected server-side leases and forward a requested byte range only when the lease advertises range support. Compatibility download-backed providers remain visibly outside the typed range-lease path."
+    "testLocation": "ProtocolRouteFixtureTests; ProtocolStreamingResponseAdapterTests; JellyfinProxyServiceTests; ExtensionCapabilityAdapterTests",
+    "notes": "Local relay preserves GET/HEAD, Range, If-Range, 206/416 status, media type, validators, cache headers, and cancellation. Typed provider streams use protected server-side leases and forward a requested byte range only when the lease advertises range support. Download-only extensions receive a typed download-backed streaming adapter; range forwarding remains limited to leases that advertise support."
   },
   {
     "protocol": "jellyfin",
@@ -126,7 +126,7 @@
     "target": "GET/form POST and XML/JSON with independent offsets/counts and stable order.",
     "authBoundary": "Backend credentials are verified and the shared ProtocolExecutionContext is created before the merge can read cache or call external metadata. Typed providers use ProviderRouter; compatibility-only providers are filtered through exact durable account resolution, while explicitly public accountless metadata needs no provider account.",
     "fixture": "subsonic-empty-search.json; subsonic-auth-boundary.json; subsonic-search-windows.json",
-    "testLocation": "ProtocolRouteFixtureTests; SubsonicProtocolAdapterTests; SubsonicRequestParserTests; SubsonicResponseBuilderTests; SubsonicModelMapperTests; ProtocolProviderGatewayContractTests",
+    "testLocation": "ProtocolRouteFixtureTests; SubsonicProtocolAdapterTests; SubsonicRequestParserTests; SubsonicResponseBuilderTests; SubsonicModelMapperTests",
     "notes": "GET/form POST, XML/JSON, empty-query relay, failed-auth blocking, and independent song/album/artist external offsets and counts are fixture-covered."
   },
   {
@@ -136,7 +136,7 @@
     "target": "Protocol-complete song/album/artist fields and safe conditional image relay.",
     "authBoundary": "Backend verification and the shared ProtocolExecutionContext precede both relayed and synthesized item/image handling. Typed providers use ProviderRouter; compatibility-only providers require an allowed durable account unless their metadata contract is explicitly public and accountless.",
     "fixture": "subsonic-auth-boundary.json; subsonic-item-relay.json",
-    "testLocation": "ProtocolRouteFixtureTests; SubsonicModelMapperTests; SubsonicResponseBuilderTests; ProtocolProviderGatewayContractTests",
+    "testLocation": "ProtocolRouteFixtureTests; SubsonicModelMapperTests; SubsonicResponseBuilderTests",
     "notes": "Local item errors preserve the exact .view route, protocol body, and status. Conditional cover-art validators and end-to-end response headers are preserved. JSON/XML songs expose known media type, ISRC, genre, identified artist credits, display fields, BPM, and explicit status without inventing missing IDs or media facts."
   },
   {
@@ -146,8 +146,8 @@
     "target": "Range/If-Range/HEAD/cancellation and Subsonic-compatible errors through the streaming lane.",
     "authBoundary": "Backend verification and the shared ProtocolExecutionContext precede local relay or external provider work; unresolved users cannot authorize user-owned provider work.",
     "fixture": "subsonic-auth-boundary.json; protocol-streaming-ranges.json",
-    "testLocation": "ProtocolRouteFixtureTests; ProtocolStreamingResponseAdapterTests; SubsonicProxyServiceTests; ProtocolProviderGatewayContractTests",
-    "notes": "Local relay preserves GET/POST/HEAD, Range, If-Range, 206/416 status, media type, validators, cache headers, and maps client cancellation to 499. Upstream ranges are not processed a second time. Typed provider streams use protected server-side leases and forward ranges only when supported; compatibility download-backed providers remain outside that typed lease path."
+    "testLocation": "ProtocolRouteFixtureTests; ProtocolStreamingResponseAdapterTests; SubsonicProxyServiceTests; ExtensionCapabilityAdapterTests",
+    "notes": "Local relay preserves GET/POST/HEAD, Range, If-Range, 206/416 status, media type, validators, cache headers, and maps client cancellation to 499. Upstream ranges are not processed a second time. Typed provider streams use protected server-side leases and forward ranges only when supported; download-only extensions use the typed download-backed streaming adapter."
   },
   {
     "protocol": "subsonic",

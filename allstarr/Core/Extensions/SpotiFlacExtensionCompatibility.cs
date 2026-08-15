@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using allstarr.Core.Capabilities;
 
 namespace allstarr.Core.Extensions;
 
@@ -28,9 +29,8 @@ public static class SpotiFlacExtensionCompatibility
 
     public static string EnsureDownloadStreamingCapability(string normalizedJson)
     {
-        if (!IsNormalizedManifest(normalizedJson)) return normalizedJson;
         var root = JsonNode.Parse(normalizedJson)?.AsObject() ??
-                   throw new ExtensionSdkValidationException("SpotiFLAC manifest must be a JSON object.");
+                   throw new ExtensionSdkValidationException("Extension manifest must be a JSON object.");
         var capabilities = root["capabilities"]?.AsArray() ?? [];
         if (capabilities.OfType<JsonObject>().Any(item =>
                 Text(item, "kind").Equals("Streaming", StringComparison.OrdinalIgnoreCase)))
@@ -47,6 +47,11 @@ public static class SpotiFlacExtensionCompatibility
         });
         return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
+
+    public static bool UsesDownloadBackedStreaming(ExtensionSdkManifest manifest) =>
+        manifest.Compatibility == Marker ||
+        manifest.Capabilities.Any(item => item.Kind == ProviderCapabilityKind.Download) &&
+        manifest.Capabilities.All(item => item.Kind != ProviderCapabilityKind.Streaming);
 
     public static string NormalizeManifest(string originalJson, string indexJs)
     {

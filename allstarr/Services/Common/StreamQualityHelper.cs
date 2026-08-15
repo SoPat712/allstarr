@@ -18,14 +18,14 @@ public enum StreamQuality
     /// <summary>
     /// High quality lossy (e.g., 320kbps AAC/MP3).
     /// Covers client selections: 320K, 256K, 192K.
-    /// Maps to: SquidWTF HIGH, Deezer MP3_320, Qobuz MP3_320.
+    /// Maps to: Deezer MP3_320, Qobuz MP3_320.
     /// </summary>
     High,
 
     /// <summary>
     /// Low quality lossy (e.g., 96-128kbps AAC/MP3).
     /// Covers client selections: 128K, 64K.
-    /// Maps to: SquidWTF LOW, Deezer MP3_128, Qobuz MP3_320 (lowest available).
+    /// Maps to: Deezer MP3_128, Qobuz MP3_320 (lowest available).
     /// </summary>
     Low
 }

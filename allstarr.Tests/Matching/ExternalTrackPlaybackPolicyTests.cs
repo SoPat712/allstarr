@@ -6,10 +6,6 @@ namespace allstarr.Tests;
 public class ExternalTrackPlaybackPolicyTests
 {
     [Theory]
-    [InlineData("squidwtf")]
-    [InlineData("SquidWTF")]
-    [InlineData("squid-wtf")]
-    [InlineData("squid_wtf")]
     [InlineData("tidal")]
     public void MetadataOnlyProvidersCannotBecomePlaybackMappings(string provider)
     {
@@ -17,7 +13,6 @@ public class ExternalTrackPlaybackPolicyTests
     }
 
     [Theory]
-    [InlineData("ext-squidwtf-song-25")]
     [InlineData("ext-tidal-song-25")]
     public void LegacyTrackIdsCannotHideMetadataOnlyProvider(string trackId)
     {
@@ -41,7 +36,7 @@ public class ExternalTrackPlaybackPolicyTests
         {
             Id = "local-track-id",
             IsLocal = true,
-            ExternalProvider = "squidwtf"
+            ExternalProvider = "tidal"
         };
 
         Assert.True(ExternalTrackPlaybackPolicy.CanUseForPlayback(song));
@@ -52,9 +47,9 @@ public class ExternalTrackPlaybackPolicyTests
     {
         var song = new Song
         {
-            Id = "ext-squidwtf-song-25",
+            Id = "ext-tidal-song-25",
             IsLocal = false,
-            ExternalProvider = "squidwtf",
+            ExternalProvider = "tidal",
             ExternalId = "25"
         };
 

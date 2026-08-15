@@ -166,28 +166,6 @@ public class LocalLibraryServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RegisterDownloadedSongAsync_WithNullProvider_DoesNothing()
-    {
-        // Arrange
-        var song = new Song
-        {
-            Id = "local-123",
-            Title = "Local Song",
-            Artist = "Local Artist",
-            Album = "Local Album",
-            ExternalProvider = null,
-            ExternalId = null
-        };
-        var localPath = Path.Combine(_testDownloadPath, "local-song.mp3");
-
-        // Act - should not throw
-        await _service.RegisterDownloadedSongAsync(song, localPath);
-
-        // Assert - nothing to assert, just checking it doesn't throw
-        Assert.True(true);
-    }
-
-    [Fact]
     public async Task TriggerLibraryScanAsync_ReturnsTrue()
     {
         // Act

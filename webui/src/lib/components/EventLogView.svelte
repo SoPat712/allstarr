@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { ArrowRight, ChevronRight } from "lucide-svelte";
+  import { Skeleton } from "$lib/components/ui/skeleton";
+  import { Badge } from "$lib/components/ui/badge";
+  import { Button } from "$lib/components/ui/button";
   import {
     eventLog,
     home,
@@ -17,6 +20,7 @@
     humanize,
     mergeActivity,
     outcomeClass,
+    relativeTime,
   } from "$lib/activity";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
@@ -24,7 +28,8 @@
   import SearchField from "$lib/components/SearchField.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import { formatDuration } from "$lib/playlists";
-  import { liveUpdates } from "$lib/live-updates.svelte";
+  import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
+  import { findProviderDefinition, providerDisplayName } from "$lib/sources";
 
   let items = $state<ActivityItem[]>([]);
   let providers = $state<ProviderDefinition[]>([]);
@@ -42,7 +47,6 @@
   let providerFilter = $state("");
   let severity = $state("");
   let expanded = $state(new Set<string>());
-  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   const filtered = $derived(filterActivity(items, {
     query,
@@ -62,15 +66,12 @@
     return [...new Set(values.filter((value): value is string => Boolean(value)))].toSorted();
   }
 
-  function provider(providerId?: string | null) {
-    return providers.find((item) =>
-      item.id.toLowerCase() === providerId?.toLowerCase());
-  }
+  const provider = (providerId?: string | null) => findProviderDefinition(providers, providerId);
 
   function providerName(providerId?: string | null) {
     if (!providerId) return "System";
     if (providerId === "library") return backend;
-    return provider(providerId)?.name ?? humanize(providerId);
+    return findProviderDefinition(providers, providerId)?.name ?? humanize(providerDisplayName(providers, providerId));
   }
 
   async function load(mode: "initial" | "refresh" | "older" = "refresh") {
@@ -109,13 +110,8 @@
     }
   }
 
-  function scheduleRefresh() {
-    if (refreshTimer) return;
-    refreshTimer = setTimeout(() => {
-      refreshTimer = null;
-      void load("refresh");
-    }, 250);
-  }
+  const refreshScheduler = createRefreshScheduler(() => load("refresh"));
+  const scheduleRefresh = refreshScheduler.schedule;
 
   function resetFilters() {
     query = "";
@@ -130,17 +126,6 @@
     if (open) next.add(key);
     else next.delete(key);
     expanded = next;
-  }
-
-  function relativeTime(value: string) {
-    const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1_000);
-    const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-    if (Math.abs(seconds) < 60) return formatter.format(seconds, "second");
-    const minutes = Math.round(seconds / 60);
-    if (Math.abs(minutes) < 60) return formatter.format(minutes, "minute");
-    const hours = Math.round(minutes / 60);
-    if (Math.abs(hours) < 24) return formatter.format(hours, "hour");
-    return formatter.format(Math.round(hours / 24), "day");
   }
 
   function fullTime(value: string) {
@@ -172,13 +157,13 @@
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
       unsubscribe();
-      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshScheduler.cancel();
     };
   });
 </script>
 
 {#if loading}
-  <section class="panel event-log-panel skeleton-panel" aria-label="Loading Event log" aria-busy="true"></section>
+  <Skeleton class="panel event-log-panel skeleton-panel" aria-label="Loading Event log" aria-busy="true" />
 {:else if error && !items.length}
   <RouteError
     eyebrow="Event log unavailable"
@@ -191,7 +176,7 @@
     <div class="degraded-banner" role="status">
       <span aria-hidden="true">!</span>
       <p><strong>New events could not be loaded.</strong> {error}</p>
-      <button type="button" onclick={() => void load("refresh")}>Retry</button>
+      <Button variant="secondary" size="sm" onclick={() => void load("refresh")}>Retry</Button>
     </div>
   {/if}
 
@@ -202,7 +187,7 @@
         <h2>Event log</h2>
         <p>Matching, playlists, providers, jobs, and administrative changes.</p>
       </div>
-      <button class="button-secondary" type="button" onclick={() => void load("refresh")}>Refresh</button>
+      <Button variant="secondary" onclick={() => void load("refresh")}>Refresh</Button>
     </header>
 
     <form class="playlist-filters event-log-filters" onsubmit={(event) => event.preventDefault()}>
@@ -223,7 +208,7 @@
 
     <div class="event-log-count">
       <span>{filtered.length} of {items.length} loaded events</span>
-      {#if filtering && groups.length}<button type="button" onclick={resetFilters}>Reset filters</button>{/if}
+      {#if filtering && groups.length}<Button variant="link" size="sm" onclick={resetFilters}>Reset filters</Button>{/if}
     </div>
 
     <div class="event-log-list">
@@ -266,7 +251,7 @@
                 <small>{providerName(first.providerId)} · {first.detail}</small>
               {/if}
             </span>
-            <span class={`status-pill ${outcomeClass(groupState)}`}>{humanize(groupState)}</span>
+            <Badge state={outcomeClass(groupState)}>{humanize(groupState)}</Badge>
             <time datetime={first.occurredAt}>{relativeTime(first.occurredAt)}</time>
             <ChevronRight class="event-chevron" size={18} aria-hidden="true" />
           </summary>
@@ -294,7 +279,7 @@
                     <p>{item.detail}</p>
                   {/if}
                   <div class="event-child-meta">
-                    <span class={`status-pill ${outcomeClass(item.state)}`}>{humanize(item.state)}</span>
+                    <Badge state={outcomeClass(item.state)}>{humanize(item.state)}</Badge>
                     {#if item.durationMilliseconds}<span>{formatDuration(item.durationMilliseconds)}</span>{/if}
                     {#if item.playlistName}<span>{item.playlistName}</span>{/if}
                     {#if link}<a href={link}>Open related view</a>{/if}
@@ -320,7 +305,7 @@
           <p>{items.length
             ? "Reset the current filters to return to the complete loaded history."
             : "Allstarr returned zero durable events. New matching, playlist, provider, and job activity will appear here."}</p>
-          {#if items.length}<button class="button-secondary" type="button" onclick={resetFilters}>Reset filters</button>{/if}
+          {#if items.length}<Button variant="secondary" onclick={resetFilters}>Reset filters</Button>{/if}
         </div>
       {/each}
     </div>
@@ -328,9 +313,9 @@
     <nav class="playlist-pagination event-log-pagination" aria-label="Event log pages">
       <span>{items.length} events retained in this view</span>
       {#if hasMore}
-        <button type="button" disabled={loadingEarlier} onclick={() => void load("older")}>
+        <Button variant="secondary" size="sm" disabled={loadingEarlier} onclick={() => void load("older")}>
           {loadingEarlier ? "Loading…" : "Load earlier events"}
-        </button>
+        </Button>
       {/if}
     </nav>
   </section>

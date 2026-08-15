@@ -1,5 +1,7 @@
 <script lang="ts">
   import { Dialog } from "$lib/components/ui/dialog";
+  import { Button, buttonVariants } from "$lib/components/ui/button";
+  import { Checkbox } from "$lib/components/ui/checkbox";
   import { X } from "lucide-svelte";
   import {
     playlistLinks,
@@ -340,7 +342,7 @@
         {:else if error && step === 1 && !accounts.length}
           <div class="compact-empty">
             <strong>Playlist setup is unavailable</strong>
-            <button class="button-secondary" type="button" onclick={() => void load()}>Try again</button>
+            <Button variant="secondary" onclick={() => void load()}>Try again</Button>
           </div>
         {:else if step === 3}
           <section class="playlist-add-step">
@@ -370,7 +372,7 @@
               {#if needsTargetPlaylist}
                 <form class="playlist-add-search" onsubmit={(event) => { event.preventDefault(); void browseTargets(); }}>
                   <SearchField class="field" bind:value={targetQuery} label={`Find a playlist in ${targetName}`} placeholder="Playlist name" />
-                  <button class="button-secondary" type="submit" disabled={loading}>Search</button>
+                  <Button variant="secondary" type="submit" disabled={loading}>Search</Button>
                 </form>
                 <fieldset class="audience-options playlist-add-list">
                   <legend>Playlists in {targetName}</legend>
@@ -390,7 +392,7 @@
         {:else if step === 1}
           <section class="playlist-add-step">
             {#if !accounts.length && !loading}
-              <div class="compact-empty"><strong>No Playlist Sources are available</strong><p>Connect a Playlist-capable account under Sources first.</p><a class="button-primary" href="#/sources">Open Sources</a></div>
+              <div class="compact-empty"><strong>No Playlist Sources are available</strong><p>Connect a Playlist-capable account under Sources first.</p><Button href="#/sources">Open Sources</Button></div>
             {:else}
               <div class="playlist-source-groups">
                 {#each providerIds as providerId}
@@ -410,7 +412,7 @@
               {#if accountId}
                 <form class="playlist-add-search" onsubmit={(event) => { event.preventDefault(); void browseSources(); }}>
                   <SearchField class="field" bind:value={sourceQuery} label="Find a source playlist" placeholder="Playlist name" />
-                  <button class="button-secondary" type="submit" disabled={loading}>Search</button>
+                  <Button variant="secondary" type="submit" disabled={loading}>Search</Button>
                 </form>
                 <fieldset class="audience-options playlist-add-list">
                   <legend>Source playlists</legend>
@@ -422,7 +424,7 @@
                     </label>
                   {:else}{#if !loading}<p class="credential-safety">Choose a Source account to browse its playlists.</p>{/if}{/each}
                 </fieldset>
-                {#if sourceCursor}<button class="button-secondary" type="button" disabled={loading} onclick={() => void browseSources(sourceCursor)}>Load more</button>{/if}
+                {#if sourceCursor}<Button variant="secondary" disabled={loading} onclick={() => void browseSources(sourceCursor)}>Load more</Button>{/if}
               {/if}
             {/if}
           </section>
@@ -474,9 +476,9 @@
               {/if}
               <fieldset class="playlist-sync-fields">
                 <legend>{materializationMode === "recreate" ? "Copy these details to the new playlist" : "Keep these details updated"}</legend>
-                <label><input bind:checked={syncName} type="checkbox" /> Playlist name</label>
-                <label><input bind:checked={syncDescription} type="checkbox" /> Description</label>
-                <label><input bind:checked={syncArtwork} type="checkbox" /> Artwork</label>
+                <label><Checkbox bind:checked={syncName} /> Playlist name</label>
+                <label><Checkbox bind:checked={syncDescription} /> Description</label>
+                <label><Checkbox bind:checked={syncArtwork} /> Artwork</label>
               </fieldset>
             {/if}
           </section>
@@ -484,11 +486,11 @@
       </div>
 
       <footer class="playlist-add-footer">
-        {#if step === 1}<Dialog.Close class="button-secondary">Cancel</Dialog.Close>{:else}<button class="button-secondary" type="button" onclick={() => step--}>Back</button>{/if}
+        {#if step === 1}<Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>{:else}<Button variant="secondary" onclick={() => step--}>Back</Button>{/if}
         {#if step < 4}
-          <button class="button-primary" type="button" disabled={!stepReady || loading} onclick={() => void next()}>Continue</button>
+          <Button disabled={!stepReady || loading} onclick={() => void next()}>Continue</Button>
         {:else}
-          <button class="button-primary" type="button" disabled={!sourcePlaylistId || !targetId || (needsTargetPlaylist && !targetPlaylistId) || !selectedLibraryScope || saving} onclick={() => void save()}>{saving ? "Linking…" : "Link playlist"}</button>
+          <Button disabled={!sourcePlaylistId || !targetId || (needsTargetPlaylist && !targetPlaylistId) || !selectedLibraryScope || saving} onclick={() => void save()}>{saving ? "Linking…" : "Link playlist"}</Button>
         {/if}
       </footer>
     </Dialog.Content>

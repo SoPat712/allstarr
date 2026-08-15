@@ -164,7 +164,6 @@ public class MultiProviderDownloadService : IDownloadService
         var normalizedName = name.ToLowerInvariant();
         return _allServices.FirstOrDefault(s =>
             s.GetType().Name.StartsWith(normalizedName, StringComparison.OrdinalIgnoreCase) ||
-            (normalizedName == "squidwtf" && s.GetType().Name.StartsWith("SquidWTF", StringComparison.OrdinalIgnoreCase)) ||
             (normalizedName is "apple-download" or "applemusic" && s.GetType().Name.StartsWith("AppleMusic", StringComparison.OrdinalIgnoreCase))
         );
     }
@@ -190,7 +189,6 @@ public class MultiProviderDownloadService : IDownloadService
         var normalizedName = name.ToLowerInvariant();
         return _allMetadataServices.FirstOrDefault(s =>
             s.GetType().Name.StartsWith(normalizedName, StringComparison.OrdinalIgnoreCase) ||
-            (normalizedName == "squidwtf" && s.GetType().Name.StartsWith("SquidWTF", StringComparison.OrdinalIgnoreCase)) ||
             (normalizedName is "apple-download" or "applemusic" && s.GetType().Name.StartsWith("AppleMusic", StringComparison.OrdinalIgnoreCase))
         );
     }
@@ -200,7 +198,7 @@ public class MultiProviderDownloadService : IDownloadService
         var sourceSong = await _metadataService.GetSongAsync(sourceProvider, sourceId, cancellationToken);
         if (sourceSong == null) return null;
 
-        var sourceUrl = GetTrackUrl(sourceProvider, sourceId, sourceSong);
+        var sourceUrl = OdesliService.BuildTrackUrl(sourceProvider, sourceId);
         if (!string.IsNullOrEmpty(sourceUrl))
         {
             var odesliId = await _odesliService.TranslateTrackUrlAsync(sourceUrl, targetProvider, cancellationToken);
@@ -244,17 +242,4 @@ public class MultiProviderDownloadService : IDownloadService
         return null;
     }
 
-    private string? GetTrackUrl(string provider, string id, Song song)
-    {
-        return provider.ToLowerInvariant() switch
-        {
-            "spotify" => $"https://open.spotify.com/track/{id}",
-            "deezer" => $"https://www.deezer.com/track/{id}",
-            "applemusic" or "apple-download" => $"https://music.apple.com/us/song/{id}",
-            "qobuz" => $"https://open.qobuz.com/track/{id}",
-            "squidwtf" => $"https://tidal.com/browse/track/{id}",
-            "tidal" => $"https://tidal.com/browse/track/{id}",
-            _ => null
-        };
-    }
 }

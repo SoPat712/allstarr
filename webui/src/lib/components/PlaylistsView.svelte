@@ -1,8 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { Dialog } from "$lib/components/ui/dialog";
+  import { Checkbox } from "$lib/components/ui/checkbox";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
   import { Popover } from "$lib/components/ui/popover";
+  import { Skeleton } from "$lib/components/ui/skeleton";
+  import { Badge } from "$lib/components/ui/badge";
+  import { Button, buttonVariants } from "$lib/components/ui/button";
   import { ArrowRight, ChevronDown, MoreHorizontal, X } from "lucide-svelte";
   import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
   import CoverageBar from "$lib/components/CoverageBar.svelte";
@@ -27,7 +31,7 @@
     type PlaylistTrack,
     type ProviderDefinition,
   } from "$lib/api";
-  import { humanize } from "$lib/activity";
+  import { humanize, relativeTime } from "$lib/activity";
   import {
     confirmationCoverage,
     filterPlaylists,
@@ -43,7 +47,8 @@
     type TrackRouteFilter,
     type TrackSort,
   } from "$lib/playlists";
-  import { liveUpdates } from "$lib/live-updates.svelte";
+  import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
+  import { findProviderDefinition, providerDisplayName } from "$lib/sources";
 
   let { initialId = "" }: { initialId?: string } = $props();
 
@@ -66,7 +71,6 @@
   let degraded = $state("");
   let feedback = $state("");
   let action = $state("");
-  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
   let refreshQueued = false;
   let detailRequest = 0;
   let detailWasOpen = false;
@@ -200,24 +204,10 @@
     });
   });
 
-  function provider(providerId: string) {
-    return providers.find((item) => item.id.toLowerCase() === providerId.toLowerCase());
-  }
+  const provider = (providerId: string) => findProviderDefinition(providers, providerId);
 
   function providerName(providerId?: string | null) {
-    return providerId ? humanize(provider(providerId)?.name ?? providerId) : "Unresolved";
-  }
-
-  function relativeTime(value?: string | null) {
-    if (!value) return "Not yet";
-    const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1_000);
-    const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-    if (Math.abs(seconds) < 60) return formatter.format(seconds, "second");
-    const minutes = Math.round(seconds / 60);
-    if (Math.abs(minutes) < 60) return formatter.format(minutes, "minute");
-    const hours = Math.round(minutes / 60);
-    if (Math.abs(hours) < 24) return formatter.format(hours, "hour");
-    return formatter.format(Math.round(hours / 24), "day");
+    return humanize(providerDisplayName(providers, providerId, "Unresolved"));
   }
 
   function editSchedule() {
@@ -335,13 +325,8 @@
     }
   }
 
-  function scheduleRefresh() {
-    if (refreshTimer) return;
-    refreshTimer = setTimeout(() => {
-      refreshTimer = null;
-      void refresh();
-    }, 250);
-  }
+  const refreshScheduler = createRefreshScheduler(refresh);
+  const scheduleRefresh = refreshScheduler.schedule;
 
   async function run(name: "sync" | "toggle") {
     if (!selected || action) return;
@@ -443,15 +428,15 @@
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
       unsubscribe();
-      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshScheduler.cancel();
     };
   });
 </script>
 
 {#if loading}
   <section class="playlist-layout" aria-label="Loading playlists" aria-busy="true">
-    <div class="panel playlist-list skeleton-panel"></div>
-    <div class="panel playlist-detail skeleton-panel"></div>
+    <Skeleton class="panel playlist-list skeleton-panel" />
+    <Skeleton class="panel playlist-detail skeleton-panel" />
   </section>
 {:else if error}
   <RouteError
@@ -466,14 +451,14 @@
     <p class="eyebrow">Library playlists</p>
     <h2>No linked playlists yet.</h2>
     <p>Add a playlist from a connected Source. Allstarr will show which songs can play and whether the playlist needs attention.</p>
-    <button class="button-primary empty-action" type="button" onclick={() => addOpen = true}>Add playlist</button>
+    <Button class="empty-action" onclick={() => addOpen = true}>Add playlist</Button>
   </section>
 {:else}
   {#if degraded}
     <div class="degraded-banner" role="status">
       <span aria-hidden="true">!</span>
       <p><strong>Some playlist data is unavailable.</strong> {degraded}</p>
-      <button type="button" onclick={() => void refresh()}>Retry</button>
+      <Button variant="secondary" size="sm" onclick={() => void refresh()}>Retry</Button>
     </div>
   {/if}
 
@@ -485,23 +470,23 @@
           <h2>{playlists.length} linked</h2>
         </div>
         <div class="playlist-toolbar-actions">
-          <button class="button-primary" type="button" onclick={() => addOpen = true}>Add playlist</button>
-          <button
-            class="button-secondary"
+          <Button onclick={() => addOpen = true}>Add playlist</Button>
+          <Button
+            variant="secondary"
             disabled={Boolean(action) || refreshing}
             type="button"
             onclick={() => rematchOpen = true}
           >
             Review rematch
-          </button>
-          <button
-            class="button-secondary"
+          </Button>
+          <Button
+            variant="secondary"
             disabled={Boolean(action) || refreshing}
             type="button"
             onclick={() => void refreshSources()}
           >
             {action === "refresh-sources" ? `Refreshing ${bulkProgress}` : "Refresh playlists"}
-          </button>
+          </Button>
         </div>
       </header>
       {#if feedback}<p class="playlist-feedback" role="status">{feedback}</p>{/if}
@@ -564,7 +549,7 @@
                 <small>confirmed</small>
               </span>
               <small>{playlist.playableCount} of {playlist.trackCount} playable</small>
-              {#if !playlist.enabled}<small class="status-pill suggested">Paused</small>{/if}
+              {#if !playlist.enabled}<Badge state="suggested">Paused</Badge>{/if}
             </span>
             <CoverageBar
               routes={playlist.routeCoverage}
@@ -577,15 +562,15 @@
         {:else}
           <div class="compact-empty">
             <strong>No playlists match these filters</strong>
-            <button type="button" onclick={() => { query = ""; stateFilter = "all"; }}>Clear filters</button>
+            <Button variant="secondary" size="sm" onclick={() => { query = ""; stateFilter = "all"; }}>Clear filters</Button>
           </div>
         {/each}
       </div>
       {#if pageCount > 1}
         <nav class="playlist-pagination" aria-label="Playlist pages">
-          <button type="button" disabled={currentPage === 1} onclick={() => { page = Math.max(1, currentPage - 1); }}>Previous</button>
+          <Button variant="secondary" size="sm" disabled={currentPage === 1} onclick={() => { page = Math.max(1, currentPage - 1); }}>Previous</Button>
           <span>Page {currentPage} of {pageCount}</span>
-          <button type="button" disabled={currentPage === pageCount} onclick={() => { page = Math.min(pageCount, currentPage + 1); }}>Next</button>
+          <Button variant="secondary" size="sm" disabled={currentPage === pageCount} onclick={() => { page = Math.min(pageCount, currentPage + 1); }}>Next</Button>
         </nav>
       {/if}
     </article>
@@ -593,14 +578,14 @@
     <Dialog.Root bind:open={detailOpen}>
       <Dialog.Portal>
         <Dialog.Overlay class="dialog-overlay" />
-        <Dialog.Content class="panel playlist-detail playlist-detail-dialog">
+        <Dialog.Content class="source-dialog playlist-detail playlist-detail-dialog">
       {#if detailLoading && !details}
         <div class="detail-loading" aria-busy="true">Loading playlist tracks…</div>
       {:else if detailError && !details}
         <div class="compact-empty playlist-projection-empty" role="alert">
           <strong>Playlist details are unavailable</strong>
           <p>{detailError}</p>
-          <button class="button-secondary" type="button" onclick={() => void loadDetails(selectedId, undefined, viewMode)}>Try again</button>
+          <Button variant="secondary" onclick={() => void loadDetails(selectedId, undefined, viewMode)}>Try again</Button>
         </div>
       {:else if details && selected}
         <header class="playlist-hero">
@@ -626,7 +611,7 @@
           </div>
           <Dialog.Close class="icon-button playlist-dialog-close" aria-label="Close playlist details"><X size={18} aria-hidden="true" /></Dialog.Close>
           <DropdownMenu.Root>
-            <DropdownMenu.Trigger class="button-secondary playlist-actions-trigger">
+            <DropdownMenu.Trigger class={`${buttonVariants({ variant: "secondary" })} playlist-actions-trigger`}>
               Actions <ChevronDown size={16} aria-hidden="true" />
             </DropdownMenu.Trigger>
             <DropdownMenu.Portal>
@@ -697,12 +682,12 @@
           <span><strong>{details.localCount}</strong> local</span>
           <span><strong>{details.externalCount}</strong> external</span>
           <span class:attention={details.unresolvedCount > 0}><strong>{details.unresolvedCount}</strong> unresolved</span>
-          <span>Refreshed <strong>{relativeTime(details.retrievedAt)}</strong></span>
-          <span>Rematched <strong>{relativeTime(details.lastRematchedAt)}</strong></span>
+          <span>Refreshed <strong>{relativeTime(details.retrievedAt, "Not yet")}</strong></span>
+          <span>Rematched <strong>{relativeTime(details.lastRematchedAt, "Not yet")}</strong></span>
           <span>
             {#if details.schedule?.enabled}
               <strong>{scheduleCadence(details.schedule.cronExpression)}</strong>
-              · next {relativeTime(details.schedule.nextRunAt)}
+              · next {relativeTime(details.schedule.nextRunAt, "Not yet")}
               · {details.schedule.timeZoneId}
             {:else if details.schedule}
               <strong>Automatic updates paused</strong>
@@ -728,13 +713,13 @@
                     <input bind:value={scheduleTimeZone} required spellcheck="false" />
                   </label>
                   <label class="schedule-enabled">
-                    <input type="checkbox" bind:checked={scheduleEnabled} />
+                    <Checkbox bind:checked={scheduleEnabled} />
                     Automatic updates enabled
                   </label>
                   {#if scheduleError}<p class="field-error" role="alert">{scheduleError}</p>{/if}
-                  <button class="button-primary" type="submit" disabled={scheduleSaving}>
+                  <Button type="submit" disabled={scheduleSaving}>
                     {scheduleSaving ? "Saving…" : "Save schedule"}
-                  </button>
+                  </Button>
                 </form>
               </Popover.Content>
             </Popover.Portal>
@@ -752,7 +737,7 @@
           <div class="compact-empty playlist-projection-empty" role="alert">
             <strong>{selectedProjectionLabel} could not be loaded</strong>
             <p>{detailError}</p>
-            <button class="button-secondary" type="button" onclick={() => void loadDetails(selectedId, undefined, viewMode)}>Try again</button>
+            <Button variant="secondary" onclick={() => void loadDetails(selectedId, undefined, viewMode)}>Try again</Button>
           </div>
         {:else if details.clientProjection}
         <div class="track-toolbar">
@@ -768,7 +753,7 @@
           ]} />
           <Popover.Root>
             <Popover.Trigger
-              class="button-secondary track-column-trigger"
+              class={`${buttonVariants({ variant: "secondary" })} track-column-trigger`}
               aria-label={`Choose track columns, ${visibleTrackColumnCount} optional columns shown`}
             >
               Columns <ChevronDown size={16} aria-hidden="true" />
@@ -778,10 +763,9 @@
                 <strong>Show columns</strong>
                 {#each trackColumnOptions as column}
                   <label>
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={trackColumns[column.id]}
-                      onchange={(event) => setTrackColumn(column.id, event.currentTarget.checked)}
+                      onCheckedChange={(checked) => setTrackColumn(column.id, checked)}
                     />
                     {column.label}
                   </label>
@@ -886,11 +870,10 @@
                               {/each}
                               {#if track.outcomeCode}<small>{playlistOutcomeLabel(track.outcomeCode, `${providerName(details.targetProtocol)} playlist`)}</small>{/if}
                               {#if track.externalSnapshotId}
-                                <button
-                                  type="button"
-                                  class="button-secondary"
+                                <Button
+                                  variant="secondary"
                                   onclick={(event) => void openTrackMatch(track.externalSnapshotId, event.currentTarget)}
-                                >Review match</button>
+                                >Review match</Button>
                               {/if}
                             </div>
                           </Popover.Content>

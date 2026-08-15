@@ -47,7 +47,6 @@ public sealed class CurrentProviderSupportCatalogTests
         AssertState("listenbrainz", "scrobbling", CurrentProviderSupportCatalog.Supported);
         AssertState("listenbrainz", "recommendation", CurrentProviderSupportCatalog.Supported);
         AssertState("lrclib", "lyrics", CurrentProviderSupportCatalog.Supported);
-        Assert.DoesNotContain(CurrentProviderSupportCatalog.All, item => item.Id == "squidwtf");
         AssertState("extensions", "metadata", CurrentProviderSupportCatalog.Supported);
         AssertState("extensions", "streaming", CurrentProviderSupportCatalog.Supported);
         AssertState("extensions", "download", CurrentProviderSupportCatalog.Supported);

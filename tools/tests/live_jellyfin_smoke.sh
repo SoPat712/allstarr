@@ -8,6 +8,7 @@ ALLSTARR_BASE="${ALLSTARR_BASE:-https://jfm.joshpatra.me}"
 JELLYFIN_USER_ID="${JELLYFIN_USER_ID:-}"
 SAMPLES="${SAMPLES:-3}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-20}"
+CONSISTENCY_TIMEOUT_SECONDS="${CONSISTENCY_TIMEOUT_SECONDS:-5}"
 TEST_EXTERNAL_STREAM="${TEST_EXTERNAL_STREAM:-0}"
 TEST_PLAYLIST_WRITES="${TEST_PLAYLIST_WRITES:-0}"
 PLAYLIST_WRITE_CONFIRM="${PLAYLIST_WRITE_CONFIRM:-}"
@@ -34,6 +35,8 @@ else
     exit 1
 fi
 [[ "$SAMPLES" =~ ^[1-9][0-9]*$ ]] || { echo "SAMPLES must be a positive integer" >&2; exit 1; }
+[[ "$CONSISTENCY_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] ||
+    { echo "CONSISTENCY_TIMEOUT_SECONDS must be a positive integer" >&2; exit 1; }
 [[ "$TEST_EXTERNAL_STREAM" == 0 || "$TEST_EXTERNAL_STREAM" == 1 ]] ||
     { echo "TEST_EXTERNAL_STREAM must be 0 or 1" >&2; exit 1; }
 [[ "$TEST_PLAYLIST_WRITES" == 0 || "$TEST_PLAYLIST_WRITES" == 1 ]] ||
@@ -326,9 +329,9 @@ check_json() {
 }
 
 wait_json() {
-    local label="$1" url="$2" filter="$3" code attempt streak=0
+    local label="$1" url="$2" filter="$3" code streak=0 deadline=$((SECONDS + CONSISTENCY_TIMEOUT_SECONDS))
     shift 3
-    for ((attempt = 1; attempt <= 20; attempt++)); do
+    while (( SECONDS <= deadline )); do
         : >"$response_file"
         code="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
             -o "$response_file" -w '%{http_code}' "$url" || true)"
@@ -342,7 +345,7 @@ wait_json() {
         else
             streak=0
         fi
-        sleep 0.25
+        sleep 0.1
     done
     checks=$((checks + 1))
     failures=$((failures + 1))
@@ -489,8 +492,8 @@ check_stateful_playlist_identity() {
 }
 
 wait_stateful_playlist_identity() {
-    local label="$1" playlist_id="$2" playlist_name="$3" attempt streak=0
-    for ((attempt = 1; attempt <= 20; attempt++)); do
+    local label="$1" playlist_id="$2" playlist_name="$3" streak=0 deadline=$((SECONDS + CONSISTENCY_TIMEOUT_SECONDS))
+    while (( SECONDS <= deadline )); do
         if playlist_identity_matches "$playlist_id" "$playlist_name"; then
             streak=$((streak + 1))
             if (( streak == 5 )); then
@@ -501,7 +504,7 @@ wait_stateful_playlist_identity() {
         else
             streak=0
         fi
-        sleep 0.25
+        sleep 0.1
     done
     checks=$((checks + 1))
     failures=$((failures + 1))

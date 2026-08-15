@@ -450,7 +450,7 @@ public sealed class HostCompositionTests
                     ["Cache:GenreDirectory"] = Path.Combine(
                         Directory.GetParent(_extensionDirectory)!.FullName,
                         "genres"),
-                    ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = "applemusic,deezer,qobuz,squidwtf,spotify"
+                    ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = "applemusic,deezer,qobuz,spotify"
                 });
             });
             builder.ConfigureServices(services => services.RemoveAll<IHostedService>());

@@ -116,7 +116,7 @@ public sealed class CacheIslandRegressionContractTests
     [Fact]
     public void TemporaryAudio_UsesConfiguredRootPolicyTtlAndQualityIdentity()
     {
-        var services = new[] { "Qobuz", "Deezer", "SquidWTF" }
+        var services = new[] { "Qobuz", "Deezer" }
             .Select(provider => File.ReadAllText(Path.Combine(
                 _repositoryRoot,
                 "allstarr",
@@ -138,7 +138,6 @@ public sealed class CacheIslandRegressionContractTests
         });
         Assert.Contains("quality.ToString().ToLowerInvariant()", services[0], StringComparison.Ordinal);
         Assert.Contains("quality.ToString().ToLowerInvariant()", services[1], StringComparison.Ordinal);
-        Assert.Contains("quality.ToLowerInvariant()", services[2], StringComparison.Ordinal);
         Assert.Contains("CacheExtensions.TranscodeCacheTTL", cleanup, StringComparison.Ordinal);
         Assert.Contains("_subsonicSettings.StorageMode == StorageMode.Cache", cleanup, StringComparison.Ordinal);
         Assert.DoesNotContain("CacheCleanupService disabled", cleanup, StringComparison.Ordinal);

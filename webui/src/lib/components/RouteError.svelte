@@ -15,5 +15,5 @@
 <section class="panel route-error" role="alert">
   <span aria-hidden="true">!</span>
   <div><p class="eyebrow">{eyebrow}</p><h2>{title}</h2><p>{message}</p></div>
-  <button class="button-secondary" type="button" onclick={() => void onRetry()}>Try again</button>
+  <button class="route-error-retry" type="button" onclick={() => void onRetry()}>Try again</button>
 </section>

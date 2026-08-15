@@ -588,8 +588,7 @@ public class JellyfinResponseBuilder
     private static bool ShouldDisableTranscoding(string provider)
     {
         return provider.Equals("deezer", StringComparison.OrdinalIgnoreCase) ||
-               provider.Equals("qobuz", StringComparison.OrdinalIgnoreCase) ||
-               provider.Equals("squidwtf", StringComparison.OrdinalIgnoreCase);
+               provider.Equals("qobuz", StringComparison.OrdinalIgnoreCase);
     }
 
     internal static string AppendExternalSourceLabel(string value, string? provider)
@@ -632,7 +631,6 @@ public class JellyfinResponseBuilder
             "amazon" or "amazonmusic" or "amazon-music" => "AmM",
             "spotify" => "S",
             "tidal" or "tidal-web" => "T",
-            "squidwtf" => "Sq",
             "soundcloud" => "So",
             "ytmusic" or "ytmusic-spotiflac" or "youtube-music" => "YM",
             "ext" or "external" or "unknown" => "EXT",

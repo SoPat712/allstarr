@@ -3,7 +3,6 @@
   import { page } from "$app/state";
   import { auth, onboarding, type OnboardingState, type Session } from "$lib/api";
   import { liveUpdates } from "$lib/live-updates.svelte";
-  import HomeView from "$lib/components/HomeView.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import UiIcon from "$lib/components/UiIcon.svelte";
@@ -123,7 +122,7 @@
   }
 
   function viewLoader(path: string) {
-    if (path === "/") return Promise.resolve({ default: HomeView });
+    if (path === "/") return import("$lib/components/HomeView.svelte");
     if (path === "/library/playlists") return import("$lib/components/PlaylistsView.svelte");
     if (path === "/library/mappings") return import("$lib/components/MappingView.svelte");
     if (path === "/library/cached" || path === "/library/kept") {
@@ -262,7 +261,7 @@
           Keep me signed in
         </label>
         {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
-        <button class="button-primary w-full" type="submit">Sign in</button>
+        <button class="auth-submit w-full" type="submit">Sign in</button>
       </form>
     </section>
   </main>

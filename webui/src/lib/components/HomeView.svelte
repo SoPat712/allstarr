@@ -1,11 +1,16 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { home, playlistLinks } from "$lib/api";
-  import { activityIcon, humanize } from "$lib/activity";
+  import { activityIcon, humanize, relativeTime } from "$lib/activity";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
+  import { Button } from "$lib/components/ui/button";
+  import { Progress } from "$lib/components/ui/progress";
+  import { Badge } from "$lib/components/ui/badge";
+  import { Skeleton } from "$lib/components/ui/skeleton";
   import { summarizeHome, type HomeSnapshot } from "$lib/home";
-  import { liveUpdates } from "$lib/live-updates.svelte";
+  import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
+  import { findProviderDefinition, providerDisplayName } from "$lib/sources";
 
   let { administrator }: { administrator: boolean } = $props();
 
@@ -13,7 +18,6 @@
   let loading = $state(true);
   let refreshing = $state(false);
   let pendingRefresh = false;
-  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
   let nowPlayingTimer: ReturnType<typeof setInterval> | null = null;
 
   const summary = $derived(snapshot ? summarizeHome(snapshot) : null);
@@ -78,13 +82,8 @@
     }
   }
 
-  function scheduleRefresh() {
-    if (refreshTimer) return;
-    refreshTimer = setTimeout(() => {
-      refreshTimer = null;
-      void refresh();
-    }, 250);
-  }
+  const refreshScheduler = createRefreshScheduler(refresh);
+  const scheduleRefresh = refreshScheduler.schedule;
 
   async function refreshNowPlaying() {
     if (!administrator || !snapshot) return;
@@ -96,26 +95,11 @@
     }
   }
 
-  function relativeTime(value?: string | null) {
-    if (!value) return "Not checked";
-    const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1_000);
-    const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-    if (Math.abs(seconds) < 60) return formatter.format(seconds, "second");
-    const minutes = Math.round(seconds / 60);
-    if (Math.abs(minutes) < 60) return formatter.format(minutes, "minute");
-    const hours = Math.round(minutes / 60);
-    if (Math.abs(hours) < 24) return formatter.format(hours, "hour");
-    return formatter.format(Math.round(hours / 24), "day");
-  }
-
-  function providerDefinition(providerId: string) {
-    return snapshot?.providerCatalog?.find(
-      (provider) => provider.id.toLowerCase() === providerId.toLowerCase(),
-    );
-  }
+  const providerDefinition = (providerId: string) =>
+    findProviderDefinition(snapshot?.providerCatalog ?? [], providerId);
 
   function providerName(providerId: string) {
-    return providerDefinition(providerId)?.name ?? providerId;
+    return providerDisplayName(snapshot?.providerCatalog ?? [], providerId);
   }
 
   function accountName(providerId: string, displayName?: string | null) {
@@ -144,7 +128,7 @@
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
       unsubscribe();
-      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshScheduler.cancel();
       if (nowPlayingTimer) clearInterval(nowPlayingTimer);
     };
   });
@@ -153,9 +137,9 @@
 {#if loading}
   <section class="home-grid" aria-busy="true" aria-label="Loading Home">
     {#each Array(4) as _}
-      <div class="metric-card skeleton-card"></div>
+      <Skeleton class="metric-card skeleton-card" />
     {/each}
-    <div class="panel skeleton-panel"></div>
+    <Skeleton class="panel skeleton-panel" />
   </section>
 {:else if completelyUnavailable}
   <RouteError
@@ -169,7 +153,7 @@
     <div class="degraded-banner" role="status">
       <span aria-hidden="true">!</span>
       <p><strong>Some live data is unavailable.</strong> {snapshot.failures.join(" · ")}</p>
-      <button type="button" onclick={() => void refresh()}>Retry</button>
+      <Button variant="secondary" size="sm" onclick={() => void refresh()}>Retry</Button>
     </div>
   {/if}
 
@@ -180,9 +164,9 @@
         <p>Media server</p>
         <strong>{snapshot.status?.backendType ?? "Unknown"}</strong>
       </div>
-      <small class={`status-pill ${snapshot.status?.durableStorage?.readiness === "Ready" ? "healthy" : "degraded"}`}>
+      <Badge state={snapshot.status?.durableStorage?.readiness === "Ready" ? "healthy" : "degraded"}>
         {snapshot.status?.durableStorage?.readiness ?? "Unavailable"}
-      </small>
+      </Badge>
     </article>
 
     <article class="metric-card">
@@ -226,9 +210,9 @@
           <p class="eyebrow">Listening now</p>
           <h2>Now playing</h2>
         </div>
-        <span class="status-pill" class:healthy={!!snapshot.nowPlaying?.length}>
+        <Badge state={snapshot.nowPlaying?.length ? "healthy" : ""}>
           {snapshot.nowPlaying?.length ?? 0} active
-        </span>
+        </Badge>
       </header>
 
       {#if snapshot.nowPlaying?.length}
@@ -263,7 +247,7 @@
               </div>
 
               <div class="now-playing-facts">
-                <span class="status-pill">{providerName(item.providerId)}</span>
+                <Badge>{providerName(item.providerId)}</Badge>
                 <span class="scrobble-state" class:complete={item.scrobbled}>
                   <span aria-hidden="true">{item.scrobbled ? "✓" : "○"}</span>
                   {item.scrobbled ? "Scrobbled" : "Not scrobbled"}
@@ -271,7 +255,7 @@
               </div>
 
               <div class="playback-progress">
-                <progress max="1" value={item.progress ?? 0} aria-label={`Playback progress for ${item.title}`}></progress>
+                <Progress class="min-w-0 flex-1" max={1} value={item.progress ?? 0} aria-label={`Playback progress for ${item.title}`} />
                 <span>{clockTime(item.positionSeconds)} / {clockTime(item.durationSeconds)}</span>
               </div>
             </article>

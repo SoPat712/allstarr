@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { acceptUpdate, liveUpdates } from "./live-updates.svelte";
+import { acceptUpdate, createRefreshScheduler, liveUpdates } from "./live-updates.svelte";
 
 afterEach(() => {
   liveUpdates.close();
@@ -62,5 +62,21 @@ describe("acceptUpdate", () => {
     liveUpdates.state.status = "stale";
     vi.advanceTimersByTime(1_000);
     expect(listener).toHaveBeenCalledOnce();
+  });
+
+  it("coalesces refreshes and cancels pending work", () => {
+    vi.useFakeTimers();
+    const refresh = vi.fn();
+    const scheduler = createRefreshScheduler(refresh, 250);
+
+    scheduler.schedule();
+    scheduler.schedule();
+    vi.advanceTimersByTime(250);
+    expect(refresh).toHaveBeenCalledOnce();
+
+    scheduler.schedule();
+    scheduler.cancel();
+    vi.advanceTimersByTime(250);
+    expect(refresh).toHaveBeenCalledOnce();
   });
 });

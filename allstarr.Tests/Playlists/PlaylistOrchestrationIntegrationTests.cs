@@ -108,6 +108,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     }
 
     [Fact]
+    [Trait("Lane", "ReleaseCritical")]
     public async Task PostgreSql_playlist_baseline_is_chunk_bounded_at_100_1000_and_10000_tracks()
     {
         await SetLink(mode: PlaylistLinkMode.Virtual);

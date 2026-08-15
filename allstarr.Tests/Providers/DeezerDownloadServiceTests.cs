@@ -199,31 +199,6 @@ public class DeezerDownloadServiceTests : IDisposable
         service.DownloadRemainingAlbumTracksInBackground("spotify", "123456", "789");
     }
 
-    [Fact]
-    public void DownloadRemainingAlbumTracksInBackground_WithDeezerProvider_StartsBackgroundTask()
-    {
-        // Arrange
-        _metadataServiceMock
-            .Setup(s => s.GetAlbumAsync("deezer", "123456"))
-            .ReturnsAsync(new Album
-            {
-                Id = "ext-deezer-album-123456",
-                Title = "Test Album",
-                Songs = new List<Song>
-                {
-                    new Song { ExternalId = "111", Title = "Track 1" },
-                    new Song { ExternalId = "222", Title = "Track 2" }
-                }
-            });
-
-        var service = CreateService(arl: "test-arl", downloadMode: DownloadMode.Album);
-
-        // Act - Should not throw (fire-and-forget)
-        service.DownloadRemainingAlbumTracksInBackground("deezer", "123456", "111");
-
-        // Assert - Just verify it doesn't throw, actual download is async
-        Assert.True(true);
-    }
 }
 
 /// <summary>

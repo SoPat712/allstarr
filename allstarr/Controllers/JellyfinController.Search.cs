@@ -30,6 +30,7 @@ public partial class JellyfinController
         [FromQuery] string? parentId = null,
         [FromQuery] string? artistIds = null,
         [FromQuery] string? albumArtistIds = null,
+        [FromQuery] string? contributingArtistIds = null,
         [FromQuery] string? albumIds = null,
         [FromQuery] string? sortBy = null,
         [FromQuery] bool recursive = true,
@@ -39,12 +40,12 @@ public partial class JellyfinController
         searchTerm = GetEffectiveSearchTerm(searchTerm, Request.QueryString.Value);
         string? searchCacheKey = null;
 
-        // AlbumArtistIds takes precedence over ArtistIds if both are provided
-        var effectiveArtistIds = albumArtistIds ?? artistIds;
+        // Preserve Jellyfin's distinct primary and contributing artist relationships.
+        var effectiveArtistIds = albumArtistIds ?? contributingArtistIds ?? artistIds;
         var favoritesOnlyRequest = IsFavoritesOnlyRequest();
 
-        _logger.LogDebug("=== SEARCHITEMS V2 CALLED === searchTerm={SearchTerm}, includeItemTypes={ItemTypes}, parentId={ParentId}, artistIds={ArtistIds}, albumArtistIds={AlbumArtistIds}, albumIds={AlbumIds}, userId={UserId}",
-            searchTerm, includeItemTypes, parentId, artistIds, albumArtistIds, albumIds, userId);
+        _logger.LogDebug("=== SEARCHITEMS V2 CALLED === searchTerm={SearchTerm}, includeItemTypes={ItemTypes}, parentId={ParentId}, artistIds={ArtistIds}, albumArtistIds={AlbumArtistIds}, contributingArtistIds={ContributingArtistIds}, albumIds={AlbumIds}, userId={UserId}",
+            searchTerm, includeItemTypes, parentId, artistIds, albumArtistIds, contributingArtistIds, albumIds, userId);
         _logger.LogInformation(
             "SEARCH TRACE: rawQuery='{RawQuery}', boundSearchTerm='{BoundSearchTerm}', effectiveSearchTerm='{EffectiveSearchTerm}', includeItemTypes='{IncludeItemTypes}'",
             Request.QueryString.Value ?? string.Empty,
@@ -74,7 +75,19 @@ public partial class JellyfinController
 
                 _logger.LogDebug("Fetching content for external artist: {Provider}/{ExternalId}, type={Type}, parentId={ParentId}",
                     provider, externalId, type, parentId);
-                return await GetExternalChildItems(provider!, type!, externalId!, includeItemTypes, HttpContext.RequestAborted);
+                var artistRelation = !string.IsNullOrWhiteSpace(albumArtistIds)
+                    ? ExternalArtistRelation.AlbumArtist
+                    : !string.IsNullOrWhiteSpace(contributingArtistIds)
+                        ? ExternalArtistRelation.ContributingArtist
+                        : ExternalArtistRelation.All;
+                return await GetExternalChildItems(
+                    provider!,
+                    type!,
+                    externalId!,
+                    includeItemTypes,
+                    HttpContext.RequestAborted,
+                    artistId,
+                    artistRelation);
             }
             // If library artist, fall through to handle with ParentId or proxy
         }
@@ -737,7 +750,7 @@ public partial class JellyfinController
         return string.Equals(Request.Query["IsFavorite"].ToString(), "true", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static (int SongLimit, int AlbumLimit, int ArtistLimit) GetExternalSearchLimits(
+    internal static (int SongLimit, int AlbumLimit, int ArtistLimit) GetExternalSearchLimits(
         string[]? requestedTypes,
         int limit,
         bool includePlaylistsAsAlbums)
@@ -764,7 +777,7 @@ public partial class JellyfinController
             includeArtists ? limit : 0);
     }
 
-    private static int GetIntegratedSearchFetchLimit(int startIndex, int limit) =>
+    internal static int GetIntegratedSearchFetchLimit(int startIndex, int limit) =>
         Math.Min(Math.Max(20, Math.Max(0, startIndex) + Math.Max(0, limit)), 500);
 
     private static IActionResult CreateEmptyItemsResponse(int startIndex)
@@ -781,7 +794,7 @@ public partial class JellyfinController
     /// Merges two source queues without reordering either queue.
     /// At each step, compare only the current head from each source and dequeue the winner.
     /// </summary>
-    private List<Dictionary<string, object?>> InterleaveByScore(
+    internal static List<Dictionary<string, object?>> InterleaveByScore(
         List<Dictionary<string, object?>> primaryItems,
         List<Dictionary<string, object?>> secondaryItems,
         string query,
@@ -841,7 +854,7 @@ public partial class JellyfinController
     /// <summary>
     /// Calculates query relevance using the product's per-type rules.
     /// </summary>
-    private double CalculateItemRelevanceScore(string query, Dictionary<string, object?> item)
+    internal static double CalculateItemRelevanceScore(string query, Dictionary<string, object?> item)
     {
         return GetItemType(item) switch
         {
@@ -855,26 +868,26 @@ public partial class JellyfinController
     /// <summary>
     /// Extracts the name/title from a Jellyfin item dictionary.
     /// </summary>
-    private string GetItemName(Dictionary<string, object?> item)
+    private static string GetItemName(Dictionary<string, object?> item)
     {
         return GetItemStringValue(item, "Name");
     }
 
-    private double CalculateSongRelevanceScore(string query, Dictionary<string, object?> item)
+    private static double CalculateSongRelevanceScore(string query, Dictionary<string, object?> item)
     {
         var title = GetItemName(item);
         var artistText = GetSongArtistText(item);
         return CalculateBestFuzzyScore(query, title, CombineSearchFields(title, artistText));
     }
 
-    private double CalculateAlbumRelevanceScore(string query, Dictionary<string, object?> item)
+    private static double CalculateAlbumRelevanceScore(string query, Dictionary<string, object?> item)
     {
         var albumName = GetItemName(item);
         var artistText = GetAlbumArtistText(item);
         return CalculateBestFuzzyScore(query, albumName, CombineSearchFields(albumName, artistText));
     }
 
-    private double CalculateArtistRelevanceScore(string query, Dictionary<string, object?> item)
+    private static double CalculateArtistRelevanceScore(string query, Dictionary<string, object?> item)
     {
         var artistName = GetItemName(item);
         if (string.IsNullOrWhiteSpace(artistName))
@@ -885,7 +898,7 @@ public partial class JellyfinController
         return FuzzyMatcher.CalculateSimilarityAggressive(query, artistName);
     }
 
-    private double CalculateBestFuzzyScore(string query, params string?[] candidates)
+    private static double CalculateBestFuzzyScore(string query, params string?[] candidates)
     {
         var best = 0;
 
@@ -907,12 +920,12 @@ public partial class JellyfinController
         return string.Join(" ", fields.Where(field => !string.IsNullOrWhiteSpace(field)));
     }
 
-    private string GetItemType(Dictionary<string, object?> item)
+    private static string GetItemType(Dictionary<string, object?> item)
     {
         return GetItemStringValue(item, "Type");
     }
 
-    private string GetSongArtistText(Dictionary<string, object?> item)
+    private static string GetSongArtistText(Dictionary<string, object?> item)
     {
         var artists = GetItemStringList(item, "Artists").Take(3).ToList();
         if (artists.Count > 0)
@@ -929,7 +942,7 @@ public partial class JellyfinController
         return GetItemStringValue(item, "Artist");
     }
 
-    private string GetAlbumArtistText(Dictionary<string, object?> item)
+    private static string GetAlbumArtistText(Dictionary<string, object?> item)
     {
         var albumArtist = GetItemStringValue(item, "AlbumArtist");
         if (!string.IsNullOrWhiteSpace(albumArtist))
@@ -946,7 +959,7 @@ public partial class JellyfinController
         return GetItemStringValue(item, "Artist");
     }
 
-    private string GetItemStringValue(Dictionary<string, object?> item, string key)
+    private static string GetItemStringValue(Dictionary<string, object?> item, string key)
     {
         if (!item.TryGetValue(key, out var value) || value == null)
         {
@@ -968,7 +981,7 @@ public partial class JellyfinController
         return value.ToString() ?? string.Empty;
     }
 
-    private IEnumerable<string> GetItemStringList(Dictionary<string, object?> item, string key)
+    private static IEnumerable<string> GetItemStringList(Dictionary<string, object?> item, string key)
     {
         if (!item.TryGetValue(key, out var value) || value == null)
         {
@@ -1095,7 +1108,7 @@ public partial class JellyfinController
         return Content(root.ToJsonString(), "application/json");
     }
 
-    private static (int BackendTotal, int Start, int Take) GetVirtualPlaylistPage(
+    internal static (int BackendTotal, int Start, int Take) GetVirtualPlaylistPage(
         int backendTotal,
         int backendReturned,
         int startIndex,

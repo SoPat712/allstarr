@@ -8,7 +8,7 @@ import {
   sourceNeedsAccount,
   sourceOriginLabel,
   sourceStatus,
-  supportsStreamingDiagnostic,
+  supportsPlaybackDiagnostic,
   humanize,
   settingDefault,
   sourceTimingLabel,
@@ -50,8 +50,8 @@ describe("source presentation", () => {
       .toBe("Awaiting first sample");
     expect(sourceTimingLabel({ ...provider, runtimeCapabilities: [{ id: "metadata", ready: true, canAttempt: true, canTest: true, testedAt: "2026-08-07T00:00:00Z" }] }))
       .toBe("Readiness checked");
-    expect(sourceTimingLabel({ ...provider, categories: ["streaming"] })).toBe("Manual only");
-    expect(sourceTimingLabel({ ...provider, categories: ["download"] })).toBe("No streaming capability");
+    expect(sourceTimingLabel({ ...provider, categories: ["streaming"] })).toBe("Awaiting first CTS sample");
+    expect(sourceTimingLabel({ ...provider, categories: ["download"] })).toBe("Awaiting first CTS sample");
     expect(sourceTimingLabel(provider)).toBe("Not applicable");
   });
 
@@ -135,7 +135,7 @@ describe("source presentation", () => {
     });
   });
 
-  it("offers CTS only for a typed streaming capability", () => {
+  it("offers CTS for typed streaming and download playback capabilities", () => {
     const streaming = {
       provider: "future-extension",
       providerAccountId: "account-1",
@@ -151,9 +151,10 @@ describe("source presentation", () => {
       canTest: true,
     } satisfies ProviderHealth;
 
-    expect(supportsStreamingDiagnostic([streaming])).toBe(true);
-    expect(supportsStreamingDiagnostic([{ ...streaming, supported: false }])).toBe(false);
-    expect(supportsStreamingDiagnostic([{ ...streaming, capability: "metadata" }])).toBe(false);
+    expect(supportsPlaybackDiagnostic([streaming])).toBe(true);
+    expect(supportsPlaybackDiagnostic([{ ...streaming, capability: "download" }])).toBe(true);
+    expect(supportsPlaybackDiagnostic([{ ...streaming, supported: false }])).toBe(false);
+    expect(supportsPlaybackDiagnostic([{ ...streaming, capability: "metadata" }])).toBe(false);
   });
 
   it("does not present a failed CTS probe as zero-millisecond playback", () => {

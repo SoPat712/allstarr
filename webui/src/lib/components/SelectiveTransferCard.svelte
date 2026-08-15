@@ -1,5 +1,8 @@
 <script lang="ts">
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import { Checkbox } from "$lib/components/ui/checkbox";
+  import { Badge } from "$lib/components/ui/badge";
+  import { Button, buttonVariants } from "$lib/components/ui/button";
   import {
     settings,
     type SelectiveTransferOptions,
@@ -136,17 +139,16 @@
       <strong>Selective state transfer</strong>
       <small>Move bounded durable state between compatible Allstarr installations.</small>
     </div>
-    <span class="status-pill suggested">128 MiB max</span>
+    <Badge state="suggested">128 MiB max</Badge>
   </header>
 
   <fieldset class="transfer-categories" disabled={Boolean(busy)}>
     <legend>Categories</legend>
     {#each categories as category}
       <label>
-        <input
-          type="checkbox"
+        <Checkbox
           checked={options[category.key]}
-          onchange={(event) => setCategory(category.key, event.currentTarget.checked)}
+          onCheckedChange={(checked) => setCategory(category.key, checked)}
         />
         <span>{category.label}</span>
       </label>
@@ -154,10 +156,10 @@
   </fieldset>
 
   <div class="transfer-actions">
-    <button class="button-secondary" type="button" disabled={!selectedCount || Boolean(busy)} onclick={() => void exportState()}>
+    <Button variant="secondary" disabled={!selectedCount || Boolean(busy)} onclick={() => void exportState()}>
       {busy === "export" ? "Preparing export…" : "Export selected categories"}
-    </button>
-    <label class="button-secondary transfer-file">
+    </Button>
+    <label class={`${buttonVariants({ variant: "secondary" })} transfer-file`}>
       <span>{file ? "Choose another archive" : "Choose import archive"}</span>
       <input
         type="file"
@@ -178,9 +180,9 @@
           { value: "Replace", label: "Replace selected categories" },
         ]} />
       </div>
-      <button class="button-primary" type="button" disabled={!selectedCount || Boolean(busy)} onclick={() => void previewState()}>
+      <Button disabled={!selectedCount || Boolean(busy)} onclick={() => void previewState()}>
         {busy === "preview" ? "Validating…" : "Validate archive"}
-      </button>
+      </Button>
     </div>
   {/if}
 
@@ -188,7 +190,7 @@
     <div class="transfer-progress" role="status">
       <progress aria-label={`${busy} in progress`}></progress>
       <span>{busy === "preview" ? "Server is validating dependencies and conflicts." : busy === "import" ? "Applying the validated archive atomically." : "Server is creating the archive."}</span>
-      <button type="button" onclick={cancel}>Cancel</button>
+      <Button variant="secondary" size="sm" onclick={cancel}>Cancel</Button>
     </div>
   {/if}
 
@@ -198,21 +200,21 @@
 
   {#if preview}
     <section class="transfer-report" aria-label="Selective transfer preview">
-      <header><strong>Validated preview</strong><span class={`status-pill ${preview.canImport ? "healthy" : "degraded"}`}>{preview.canImport ? "Ready" : "Blocked"}</span></header>
+      <header><strong>Validated preview</strong><Badge state={preview.canImport ? "healthy" : "degraded"}>{preview.canImport ? "Ready" : "Blocked"}</Badge></header>
       <p>{preview.report.totalRows} rows across {preview.report.includedCategories.length} selected categories.</p>
       {#if preview.dependencies.length}<p><strong>Dependencies:</strong> {preview.dependencies.join(", ")}</p>{/if}
       {#if preview.conflicts.length}
         <ul>{#each preview.conflicts as conflict}<li>{conflict}</li>{/each}</ul>
       {/if}
-      <button class={mode === "Replace" ? "button-danger" : "button-primary"} type="button" disabled={!preview.canImport || Boolean(busy)} onclick={() => { confirmOpen = true; }}>
+      <Button variant={mode === "Replace" ? "destructive" : "default"} disabled={!preview.canImport || Boolean(busy)} onclick={() => { confirmOpen = true; }}>
         Import validated archive
-      </button>
+      </Button>
     </section>
   {/if}
 
   {#if result}
     <section class="transfer-report" aria-label="Selective transfer result">
-      <header><strong>Import complete</strong><span class="status-pill healthy">{result.totalRows} rows</span></header>
+      <header><strong>Import complete</strong><Badge state="healthy">{result.totalRows} rows</Badge></header>
       <dl class="transfer-rows">
         {#each Object.entries(result.rowsByEntry) as [entry, rows]}
           <div><dt>{entry}</dt><dd>{rows}</dd></div>
@@ -230,7 +232,7 @@
       ? "Selected target categories will be replaced atomically. This cannot be undone without a backup."
       : "The validated rows will be imported atomically using the selected conflict policy."}
     confirmLabel={mode === "Replace" ? "Replace and import" : "Import archive"}
-    confirmClass={mode === "Replace" ? "button-danger" : "button-primary"}
+    confirmVariant={mode === "Replace" ? "destructive" : "default"}
     disabled={Boolean(busy)}
     onConfirm={importState}
   />

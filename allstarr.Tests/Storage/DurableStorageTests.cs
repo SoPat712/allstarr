@@ -84,6 +84,7 @@ public sealed class DurableStorageTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Lane", "ReleaseCritical")]
     public async Task Initializer_RejectsUnknownNewerMigrationWithoutChangingSchema()
     {
         await using (var context = await Factory().CreateDbContextAsync())
@@ -323,6 +324,7 @@ public sealed class DurableStorageTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Lane", "ReleaseCritical")]
     public async Task ProbeCacheSnapshot_AppliesToFreshPostgres()
     {
         await using var context = await Factory().CreateDbContextAsync();
@@ -354,6 +356,7 @@ public sealed class DurableStorageTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Lane", "ReleaseCritical")]
     public async Task DownloadedSongMappingRepair_UpgradesLegacyLowercaseIdWithoutDataLoss()
     {
         await using var context = await Factory().CreateDbContextAsync();
@@ -377,6 +380,7 @@ public sealed class DurableStorageTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Lane", "ReleaseCritical")]
     public async Task SchemaCompatibility_RejectsCaseDivergentMigrationId()
     {
         await using var context = await Factory().CreateDbContextAsync();

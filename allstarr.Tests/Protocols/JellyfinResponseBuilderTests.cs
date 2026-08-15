@@ -54,6 +54,10 @@ public class JellyfinResponseBuilderTests
         Assert.Equal(245 * TimeSpan.TicksPerSecond, result["RunTimeTicks"]);
         Assert.NotNull(result["AudioInfo"]);
         Assert.Equal(false, result["CanDelete"]);
+        AssertRequiredKeys(result,
+            "ServerId", "MediaType", "Container", "HasLyrics", "Genres", "GenreItems", "UserData",
+            "ImageTags", "BackdropImageTags", "ImageBlurHashes", "LocationType", "ParentLogoItemId",
+            "ParentBackdropItemId", "ParentBackdropImageTags");
     }
 
     [Fact]
@@ -211,18 +215,18 @@ public class JellyfinResponseBuilderTests
     {
         var song = new Song
         {
-            Id = "ext-squidwtf-song-12345",
+            Id = "ext-deezer-song-12345",
             Title = "Sunflower",
             Artist = "Artist",
             IsLocal = false,
-            ExternalProvider = "squidwtf",
+            ExternalProvider = "deezer",
             ExternalId = "12345",
             ExplicitContentLyrics = 1
         };
 
         var result = _builder.ConvertSongToJellyfinItem(song);
 
-        Assert.Equal("Sunflower [Sq] [E]", result["Name"]);
+        Assert.Equal("Sunflower [D] [E]", result["Name"]);
     }
 
     [Fact]
@@ -230,18 +234,18 @@ public class JellyfinResponseBuilderTests
     {
         var song = new Song
         {
-            Id = "ext-squidwtf-song-12345",
+            Id = "ext-deezer-song-12345",
             Title = "Sunflower",
             Artist = "Artist",
             IsLocal = false,
-            ExternalProvider = "squidwtf",
+            ExternalProvider = "deezer",
             ExternalId = "12345",
             ExplicitContentLyrics = 0
         };
 
         var result = _builder.ConvertSongToJellyfinItem(song);
 
-        Assert.Equal("Sunflower [Sq]", result["Name"]);
+        Assert.Equal("Sunflower [D]", result["Name"]);
     }
 
     [Theory]
@@ -253,7 +257,6 @@ public class JellyfinResponseBuilderTests
     [InlineData("apple-musickit", "[AM]")]
     [InlineData("spotify", "[S]")]
     [InlineData("tidal", "[T]")]
-    [InlineData("squidwtf", "[Sq]")]
     [InlineData("spotiflac-qobuz", "[Q]")]
     [InlineData("spotiflac-qobuz-web", "[Q]")]
     [InlineData("spotiflac-amazon", "[AmM]")]
@@ -399,10 +402,8 @@ public class JellyfinResponseBuilderTests
     [Theory]
     [InlineData("deezer")]
     [InlineData("qobuz")]
-    [InlineData("squidwtf")]
     [InlineData("Deezer")]
     [InlineData("Qobuz")]
-    [InlineData("SquidWTF")]
     public void ConvertSongToJellyfinItem_ExternalStreamingProviders_DisableTranscoding(string provider)
     {
         // Arrange
@@ -478,12 +479,15 @@ public class JellyfinResponseBuilderTests
         Assert.Equal("Greatest Hits", result["SortName"]);
         Assert.NotNull(result["DateCreated"]);
         Assert.NotNull(result["BasicSyncInfo"]);
+        AssertRequiredKeys(result,
+            "ServerId", "MediaType", "Genres", "GenreItems", "Artists", "ArtistItems", "AlbumArtists",
+            "UserData", "ParentLogoItemId", "ParentBackdropItemId", "ParentLogoImageTag");
     }
 
     [Theory]
     [InlineData("deezer", "[D]")]
     [InlineData("qobuz", "[Q]")]
-    [InlineData("squidwtf", "[Sq]")]
+    [InlineData("soundcloud", "[So]")]
     public void ConvertAlbumToJellyfinItem_ExternalAlbum_UsesProviderSourceLabel(string provider, string label)
     {
         var album = new Album
@@ -528,12 +532,14 @@ public class JellyfinResponseBuilderTests
         Assert.Equal("The Rockers", result["SortName"]);
         Assert.Equal(1.0, result["PrimaryImageAspectRatio"]);
         Assert.NotNull(result["BasicSyncInfo"]);
+        AssertRequiredKeys(result,
+            "ServerId", "MediaType", "Genres", "GenreItems", "RunTimeTicks", "UserData");
     }
 
     [Theory]
     [InlineData("deezer", "[D]")]
     [InlineData("qobuz", "[Q]")]
-    [InlineData("squidwtf", "[Sq]")]
+    [InlineData("soundcloud", "[So]")]
     public void ConvertArtistToJellyfinItem_ExternalArtist_UsesProviderSourceLabel(string provider, string label)
     {
         var artist = new Artist
@@ -810,4 +816,9 @@ public class JellyfinResponseBuilderTests
         var jsonResult = Assert.IsType<JsonResult>(result);
         Assert.NotNull(jsonResult.Value);
     }
+
+    private static void AssertRequiredKeys(
+        IReadOnlyDictionary<string, object?> item,
+        params string[] keys) =>
+        Assert.All(keys, key => Assert.True(item.ContainsKey(key), $"Missing required key '{key}'."));
 }

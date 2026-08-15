@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { AlertDialog } from "$lib/components/ui/alert-dialog";
+  import { Checkbox } from "$lib/components/ui/checkbox";
   import { Dialog } from "$lib/components/ui/dialog";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
+  import { Skeleton } from "$lib/components/ui/skeleton";
   import { X } from "lucide-svelte";
   import {
     extensions,
@@ -13,6 +15,7 @@
     type ExtensionStoreItem,
   } from "$lib/api";
   import { Badge } from "$lib/components/ui/badge";
+  import { Button, buttonVariants } from "$lib/components/ui/button";
   import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -279,12 +282,12 @@
 </script>
 
 {#if loading}
-  <section class="panel skeleton-panel extension-skeleton" aria-label="Loading extensions" aria-busy="true"></section>
+  <Skeleton class="panel skeleton-panel extension-skeleton" aria-label="Loading extensions" aria-busy="true" />
 {:else}
   <section class="extension-workspace">
     <header class="extension-header">
       <div><strong>Extension manager</strong><small>Verified packages, explicit permissions, and reversible lifecycle actions.</small></div>
-      <button class="button-primary" type="button" onclick={() => { installOpen = true; }}>Install extension</button>
+      <Button onclick={() => { installOpen = true; }}>Install extension</Button>
     </header>
     <SegmentedNav
       items={extensionTabs}
@@ -302,15 +305,15 @@
           <article class="panel extension-row">
             <ProviderArtwork id={item.extensionId} definition={definition(item)} />
             <div class="extension-copy"><span><strong>{item.displayName}</strong><small>v{item.version}{item.author ? ` · ${item.author}` : ""}</small></span><p>{item.description || "No description supplied."}</p><div>{#each item.capabilities ?? [] as capability}<Badge>{humanize(capability)}</Badge>{/each}</div></div>
-            <span class={`status-pill ${item.active ? "healthy" : item.state === "failed" ? "degraded" : "suggested"}`}>{humanize(item.state)}</span>
+            <Badge state={item.active ? "healthy" : item.state === "failed" ? "degraded" : "suggested"}>{humanize(item.state)}</Badge>
             <div class="extension-actions">
-              {#if item.active}<a class="button-secondary" href={`#/sources?source=${encodeURIComponent(item.extensionId)}&section=configuration`}>Configure Source</a>{/if}
-              {#if update}<button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => void stage(update)}>{action === `install:${update.id}` ? "Verifying…" : `Update ${item.version} → ${update.version}`}</button>{/if}
-              {#if item.permissionReviewRequired}<button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => void openReview(item)}>{action === `review-load:${item.id}` ? "Loading review…" : "Review permissions"}</button>
-              {:else if ["staged", "disabled"].includes(item.state.toLowerCase())}<button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => confirmActivation(item)}>Enable</button>
+              {#if item.active}<Button variant="secondary" href={`#/sources?source=${encodeURIComponent(item.extensionId)}&section=configuration`}>Configure Source</Button>{/if}
+              {#if update}<Button disabled={Boolean(action)} onclick={() => void stage(update)}>{action === `install:${update.id}` ? "Verifying…" : `Update ${item.version} → ${update.version}`}</Button>{/if}
+              {#if item.permissionReviewRequired}<Button disabled={Boolean(action)} onclick={() => void openReview(item)}>{action === `review-load:${item.id}` ? "Loading review…" : "Review permissions"}</Button>
+              {:else if ["staged", "disabled"].includes(item.state.toLowerCase())}<Button disabled={Boolean(action)} onclick={() => confirmActivation(item)}>Enable</Button>
               {/if}
               <DropdownMenu.Root>
-                <DropdownMenu.Trigger class="button-secondary">Manage extension</DropdownMenu.Trigger>
+                <DropdownMenu.Trigger class={buttonVariants({ variant: "secondary" })}>Manage extension</DropdownMenu.Trigger>
                 <DropdownMenu.Portal>
                   <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
                     {#if item.active}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run(item.id, () => extensions.disable(item), "Extension disabled.")}>Disable</DropdownMenu.Item>{/if}
@@ -337,7 +340,7 @@
             <article>
               <ProviderArtwork id={item.id} definition={definition(item)} />
               <span><strong>{item.displayName}</strong><small>v{item.version}{item.author ? ` · ${item.author}` : ""}</small><p>{item.description || "No description supplied."}</p></span>
-              <button class="button-primary" type="button" disabled={!item.sha256 || Boolean(action)} onclick={() => void stage(item)}>{action === `install:${item.id}` ? "Verifying…" : installedVersion ? `Update ${installedVersion} → ${item.version}` : "Install"}</button>
+              <Button disabled={!item.sha256 || Boolean(action)} onclick={() => void stage(item)}>{action === `install:${item.id}` ? "Verifying…" : installedVersion ? `Update ${installedVersion} → ${item.version}` : "Install"}</Button>
             </article>
           {:else}<div class="compact-empty"><strong>No matching packages</strong><p>Everything may already be current.</p></div>{/each}
         </div>
@@ -348,15 +351,15 @@
           <header><strong>Add registry</strong><small>The URL is validated before it is saved.</small></header>
           <label><span>Name</span><input name="name" required maxlength="200" placeholder="Community catalog" /></label>
           <label><span>Registry JSON URL</span><input name="registryUrl" type="url" required pattern="https://.*" placeholder="https://example.org/registry.json" /></label>
-          <button class="button-primary" type="submit" disabled={Boolean(action)}>{action === "registry:add" ? "Validating…" : "Validate and add"}</button>
+          <Button type="submit" disabled={Boolean(action)}>{action === "registry:add" ? "Validating…" : "Validate and add"}</Button>
         </form>
         <div class="extension-registry-list">
           {#each registries as item}
             {@const usedBy = dependencies(item)}
             <article class="panel">
               <span><strong>{item.name}</strong><small>{item.registryUrl}</small>{#if usedBy.length}<em>{usedBy.length} installed package version{usedBy.length === 1 ? "" : "s"} must be removed first.</em>{/if}</span>
-              <span class={`status-pill ${item.enabled ? "healthy" : "suggested"}`}>{item.enabled ? "Enabled" : "Disabled"}</span>
-              <div><button type="button" disabled={Boolean(action)} onclick={() => void run(`registry:${item.id}`, () => extensions.setRegistryEnabled(item, !item.enabled), `Registry ${item.enabled ? "disabled" : "enabled"}.`)}>{action === `registry:${item.id}` ? "Saving…" : item.enabled ? "Disable" : "Enable"}</button><button class="danger-text" type="button" disabled={usedBy.length > 0 || Boolean(action)} onclick={() => confirmRemoval(item)}>Remove</button></div>
+              <Badge state={item.enabled ? "healthy" : "suggested"}>{item.enabled ? "Enabled" : "Disabled"}</Badge>
+              <div><Button variant="secondary" size="sm" disabled={Boolean(action)} onclick={() => void run(`registry:${item.id}`, () => extensions.setRegistryEnabled(item, !item.enabled), `Registry ${item.enabled ? "disabled" : "enabled"}.`)}>{action === `registry:${item.id}` ? "Saving…" : item.enabled ? "Disable" : "Enable"}</Button><Button variant="destructive" size="sm" disabled={usedBy.length > 0 || Boolean(action)} onclick={() => confirmRemoval(item)}>Remove</Button></div>
             </article>
           {:else}<div class="panel compact-empty"><strong>No registries connected</strong></div>{/each}
         </div>
@@ -378,7 +381,7 @@
         <label class="setting-field"><span><strong>Package URL</strong></span><input name="downloadUrl" type="url" required pattern="https://.*" autocomplete="off" /></label>
         <label class="setting-field"><span><strong>SHA-256 checksum</strong></span><input name="sha256" required minlength="64" maxlength="64" pattern="[A-Fa-f0-9]{64}" autocomplete="off" spellcheck="false" /></label>
         <label class="setting-field"><span><strong>Registry attribution</strong></span><SelectField name="registryId" label="Registry attribution" value="" options={[{ value: "", label: "Direct package" }, ...registries.filter((item) => item.enabled).map((item) => ({ value: item.id, label: item.name }))]} /></label>
-        <footer><Dialog.Close class="button-secondary">Cancel</Dialog.Close><button class="button-primary" type="submit" disabled={Boolean(action)}>{action === "install:" ? "Verifying…" : "Verify package"}</button></footer>
+        <footer><Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close><Button type="submit" disabled={Boolean(action)}>{action === "install:" ? "Verifying…" : "Verify package"}</Button></footer>
       </form>
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>
@@ -397,14 +400,14 @@
           {#each permissions as item}
             {@const help = permissionHelp(item.permissionKind)}
             {@const change = permissionChanges.find((entry) => entry.value === `${item.permissionKind}:${item.permissionValue}`)?.change}
-            <article><span><strong>{help[0]} {humanize(item.permissionKind)}</strong><small>{item.permissionValue} · {help[1]}</small><em>{change === "added" ? "New access" : previousPackage ? "Unchanged" : "New install"}{item.required ? " · Required" : ""}</em></span><div role="group" aria-label={`Decision for ${item.permissionKind}`}><button class:button-primary={decisions[item.id] === true} type="button" onclick={() => { decisions = { ...decisions, [item.id]: true }; }}>Allow</button><button class:button-danger={decisions[item.id] === false} type="button" onclick={() => { decisions = { ...decisions, [item.id]: false }; }}>Deny</button></div></article>
+            <article><span><strong>{help[0]} {humanize(item.permissionKind)}</strong><small>{item.permissionValue} · {help[1]}</small><em>{change === "added" ? "New access" : previousPackage ? "Unchanged" : "New install"}{item.required ? " · Required" : ""}</em></span><div role="group" aria-label={`Decision for ${item.permissionKind}`}><Button variant={decisions[item.id] === true ? "default" : "outline"} onclick={() => { decisions = { ...decisions, [item.id]: true }; }}>Allow</Button><Button variant={decisions[item.id] === false ? "destructive" : "outline"} onclick={() => { decisions = { ...decisions, [item.id]: false }; }}>Deny</Button></div></article>
           {/each}
           {#each permissionChanges.filter((item) => item.change === "removed") as item}
             <article><span><strong>− Removed access</strong><small>{item.value.replace(":", " · ")}</small><em>No longer requested</em></span></article>
           {/each}
         </div>
-        <label class="permission-confirm"><input type="checkbox" bind:checked={permissionConfirmed} /><span>I understand the access requested by this extension.</span></label>
-        <footer class="dialog-actions"><button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void cancelReview()}>{reviewingExisting ? "Close review" : action.startsWith("cancel:") ? "Cancelling…" : "Cancel installation"}</button><button class="button-primary" type="button" disabled={!permissionConfirmed || permissions.some((item) => decisions[item.id] === undefined) || Boolean(action)} onclick={() => void approve()}>{action.startsWith("review:") ? "Saving…" : "Save review"}</button></footer>
+        <label class="permission-confirm"><Checkbox bind:checked={permissionConfirmed} /><span>I understand the access requested by this extension.</span></label>
+        <footer class="dialog-actions"><Button variant="secondary" disabled={Boolean(action)} onclick={() => void cancelReview()}>{reviewingExisting ? "Close review" : action.startsWith("cancel:") ? "Cancelling…" : "Cancel installation"}</Button><Button disabled={!permissionConfirmed || permissions.some((item) => decisions[item.id] === undefined) || Boolean(action)} onclick={() => void approve()}>{action.startsWith("review:") ? "Saving…" : "Save review"}</Button></footer>
       </div>
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>
@@ -414,7 +417,7 @@
       <AlertDialog.Title>{reviewAccessPackage ? `Review access for ${reviewAccessPackage.displayName}?` : activatePackage ? `Activate ${activatePackage.displayName}?` : removePackage ? `Uninstall ${removePackage.displayName}?` : `Remove ${removeRegistry?.name ?? "this registry"}?`}</AlertDialog.Title>
       <AlertDialog.Description>{reviewAccessPackage ? reviewAccessPackage.active ? "The extension runtime will stop now and remain disabled until you save a fresh permission review and reactivate it." : "The extension will remain disabled until you save a fresh permission review and reactivate it." : activatePackage ? "The reviewed runtime will start with only the approved capabilities and permissions." : removePackage ? "The package and runtime are removed. Encrypted Source accounts remain available for a later reinstall." : "You can add this registry URL again later."}</AlertDialog.Description>
       {#if feedback}<p class="error-text" role="alert">{feedback}</p>{/if}
-      <footer><AlertDialog.Cancel class="button-secondary" disabled={Boolean(action)}>Cancel</AlertDialog.Cancel><button class={activatePackage || reviewAccessPackage ? "button-primary" : "button-danger"} type="button" disabled={Boolean(action)} onclick={() => void confirm()}>{action ? reviewAccessPackage ? "Stopping…" : activatePackage ? "Activating…" : "Removing…" : reviewAccessPackage ? "Stop and review" : activatePackage ? "Activate extension" : removePackage ? "Uninstall" : "Remove registry"}</button></footer>
+      <footer><AlertDialog.Cancel class={buttonVariants({ variant: "secondary" })} disabled={Boolean(action)}>Cancel</AlertDialog.Cancel><Button variant={activatePackage || reviewAccessPackage ? "default" : "destructive"} disabled={Boolean(action)} onclick={() => void confirm()}>{action ? reviewAccessPackage ? "Stopping…" : activatePackage ? "Activating…" : "Removing…" : reviewAccessPackage ? "Stop and review" : activatePackage ? "Activate extension" : removePackage ? "Uninstall" : "Remove registry"}</Button></footer>
     </AlertDialog.Content></AlertDialog.Portal>
   </AlertDialog.Root>
 {/if}

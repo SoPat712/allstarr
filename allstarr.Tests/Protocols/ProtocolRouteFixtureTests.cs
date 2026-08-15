@@ -326,10 +326,11 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Theory]
-    [InlineData("/Search/Hints?SearchTerm=fixture&Limit=2&api_key=fixture-key")]
-    [InlineData("/Users/user-1/Search/Hints?SearchTerm=fixture&Limit=2&api_key=fixture-key")]
-    public async Task JellyfinSearchHints_AppliesOneGlobalLimitAfterMerging(string path)
+    [InlineData("/Search/Hints?SearchTerm=fixture&Limit=2&api_key=fixture-key", false)]
+    [InlineData("/Users/user-1/Search/Hints?SearchTerm=fixture&Limit=2&api_key=fixture-key", true)]
+    public async Task JellyfinSearchHints_AppliesOneGlobalLimitAfterMerging(string path, bool userScoped)
     {
+        var observedRequests = new List<string>();
         var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
         metadata.Setup(service => service.SearchAllAsync(
                 "fixture", 2, 2, 2, It.IsAny<CancellationToken>()))
@@ -341,10 +342,14 @@ public sealed class ProtocolRouteFixtureTests
             });
         using var factory = new ProtocolFactory(
             "Jellyfin",
-            request => request.RequestUri!.AbsolutePath == "/Users/Me"
-                ? Json(StatusCodes.Status200OK, """{"Id":"user-1"}""")
-                : Json(StatusCodes.Status200OK,
-                    """{"SearchHints":[{"Id":"native-1","Type":"Audio"},{"Id":"native-2","Type":"Audio"}],"TotalRecordCount":2}"""),
+            request =>
+            {
+                observedRequests.Add(request.RequestUri!.PathAndQuery);
+                return request.RequestUri.AbsolutePath == "/Users/Me"
+                    ? Json(StatusCodes.Status200OK, """{"Id":"user-1"}""")
+                    : Json(StatusCodes.Status200OK,
+                        """{"SearchHints":[{"Id":"native-1","Type":"Audio"},{"Id":"native-2","Type":"Audio"}],"TotalRecordCount":2}""");
+            },
             services =>
             {
                 services.RemoveAll<IMusicMetadataService>();
@@ -359,6 +364,11 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(2, body.RootElement.GetProperty("SearchHints").GetArrayLength());
         Assert.Equal(2, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Contains(observedRequests, request =>
+            request.StartsWith("/Search/Hints?", StringComparison.Ordinal) &&
+            (!userScoped || request.Contains("UserId=user-1", StringComparison.Ordinal)));
+        Assert.DoesNotContain(observedRequests, request =>
+            request.StartsWith("/Users/user-1/Search/Hints", StringComparison.Ordinal));
         metadata.VerifyAll();
     }
 
@@ -1814,6 +1824,20 @@ public sealed class ProtocolRouteFixtureTests
                     AlbumId = "ext-spotiflac-amazon-album-album-1",
                     Duration = 210,
                     IsLocal = false
+                },
+                new Song
+                {
+                    Id = "ext-spotiflac-amazon-song-guest-track",
+                    ExternalProvider = "spotiflac-amazon",
+                    ExternalId = "guest-track",
+                    Title = "Guest Track",
+                    Artist = "NAS",
+                    Artists = ["NAS"],
+                    ArtistId = "ext-spotiflac-amazon-artist-artist-1",
+                    ArtistIds = ["ext-spotiflac-amazon-artist-artist-1"],
+                    Album = "Guest Appearance",
+                    AlbumId = "ext-spotiflac-amazon-album-appearance",
+                    IsLocal = false
                 }
             ]);
         gateway.Setup(service => service.GetArtistAsync(
@@ -1824,6 +1848,18 @@ public sealed class ProtocolRouteFixtureTests
                 ExternalProvider = "spotiflac-amazon",
                 ExternalId = "artist-1",
                 Name = "NAS",
+                IsLocal = false
+            });
+        gateway.Setup(service => service.GetAlbumAsync(
+                It.IsAny<ProtocolExecutionContext>(), "spotiflac-amazon", "appearance"))
+            .ReturnsAsync(new Album
+            {
+                Id = "ext-spotiflac-amazon-album-appearance",
+                ExternalProvider = "spotiflac-amazon",
+                ExternalId = "appearance",
+                Title = "Guest Appearance",
+                Artist = "Other Album Artist",
+                ArtistId = "ext-spotiflac-amazon-artist-other",
                 IsLocal = false
             });
         using var factory = new ProtocolFactory(
@@ -1844,13 +1880,29 @@ public sealed class ProtocolRouteFixtureTests
         var items = body.RootElement.GetProperty("Items").EnumerateArray().ToArray();
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(2, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Equal(3, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
         var album = Assert.Single(items, item => item.GetProperty("Type").GetString() == "MusicAlbum");
         Assert.Equal("NAS [AmM]", album.GetProperty("AlbumArtist").GetString());
-        var track = Assert.Single(items, item => item.GetProperty("Type").GetString() == "Audio");
+        var track = Assert.Single(items, item =>
+            item.GetProperty("Id").GetString() == "ext-spotiflac-amazon-song-track-1");
         Assert.Equal(210 * TimeSpan.TicksPerSecond, track.GetProperty("RunTimeTicks").GetInt64());
         Assert.Equal("NAS [AmM]", track.GetProperty("Artists")[0].GetString());
         Assert.Equal("ext-spotiflac-amazon-artist-artist-1", track.GetProperty("ArtistItems")[0].GetProperty("Id").GetString());
+        using var albumsResponse = await client.GetAsync(
+            "/Items?AlbumArtistIds=ext-spotiflac-amazon-artist-artist-1&IncludeItemTypes=MusicAlbum&Fields=AlbumArtist,ArtistItems&api_key=fixture-key");
+        using var albumsBody = JsonDocument.Parse(await albumsResponse.Content.ReadAsStringAsync());
+        var primaryAlbum = Assert.Single(albumsBody.RootElement.GetProperty("Items").EnumerateArray());
+
+        using var appearancesResponse = await client.GetAsync(
+            "/Items?ContributingArtistIds=ext-spotiflac-amazon-artist-artist-1&IncludeItemTypes=MusicAlbum&Fields=AlbumArtist,ArtistItems&api_key=fixture-key");
+        using var appearancesBody = JsonDocument.Parse(await appearancesResponse.Content.ReadAsStringAsync());
+        var appearance = Assert.Single(appearancesBody.RootElement.GetProperty("Items").EnumerateArray());
+
+        Assert.Equal(HttpStatusCode.OK, albumsResponse.StatusCode);
+        Assert.Equal("ext-spotiflac-amazon-album-album-1", primaryAlbum.GetProperty("Id").GetString());
+        Assert.Equal(HttpStatusCode.OK, appearancesResponse.StatusCode);
+        Assert.Equal("ext-spotiflac-amazon-album-appearance", appearance.GetProperty("Id").GetString());
+        Assert.Equal("Other Album Artist [AmM]", appearance.GetProperty("AlbumArtist").GetString());
         gateway.VerifyAll();
     }
 
@@ -3766,7 +3818,7 @@ public sealed class ProtocolRouteFixtureTests
                     ["Storage:EnforceMutationGuard"] = "false",
                     ["Extensions:Directory"] = Path.Combine(_stateRoot, "extensions"),
                     ["Cache:GenreDirectory"] = Path.Combine(_stateRoot, "genres"),
-                    ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = "applemusic,deezer,qobuz,squidwtf,spotify"
+                    ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = "applemusic,deezer,qobuz,spotify"
                 });
                 if (_configuration != null) configuration.AddInMemoryCollection(_configuration);
             });

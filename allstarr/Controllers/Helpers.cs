@@ -47,7 +47,7 @@ public partial class JellyfinController
     }
 
     // Redacts security-sensitive query params before any logging or analytics persistence.
-    private static string MaskSensitiveQueryString(string? queryString)
+    internal static string MaskSensitiveQueryString(string? queryString)
     {
         if (string.IsNullOrEmpty(queryString))
         {
@@ -91,7 +91,7 @@ public partial class JellyfinController
         return includeItemTypes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
-    private static string? GetExactPlaylistItemsRequestId(string path)
+    internal static string? GetExactPlaylistItemsRequestId(string path)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -118,7 +118,7 @@ public partial class JellyfinController
             : null;
     }
 
-    private static string? ExtractImageTag(JsonElement item, string imageType)
+    internal static string? ExtractImageTag(JsonElement item, string imageType)
     {
         if (item.TryGetProperty("ImageTags", out var imageTags) &&
             imageTags.ValueKind == JsonValueKind.Object)
@@ -187,7 +187,7 @@ public partial class JellyfinController
     /// Recovers SearchTerm directly from raw query string.
     /// Handles malformed clients that do not URL-encode '&' inside SearchTerm.
     /// </summary>
-    private static string? RecoverSearchTermFromRawQuery(string? rawQueryString)
+    internal static string? RecoverSearchTermFromRawQuery(string? rawQueryString)
     {
         if (string.IsNullOrWhiteSpace(rawQueryString))
         {
@@ -245,7 +245,7 @@ public partial class JellyfinController
     /// <summary>
     /// Uses model-bound SearchTerm when valid; falls back to raw query recovery when needed.
     /// </summary>
-    private static string? GetEffectiveSearchTerm(string? boundSearchTerm, string? rawQueryString)
+    internal static string? GetEffectiveSearchTerm(string? boundSearchTerm, string? rawQueryString)
     {
         var recovered = RecoverSearchTermFromRawQuery(rawQueryString);
         if (string.IsNullOrWhiteSpace(recovered))

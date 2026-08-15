@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { CacheDiagnostics, CacheMaintenancePreview, CacheTierUsage } from "$lib/api";
   import { humanize } from "$lib/sources";
+  import { Badge } from "$lib/components/ui/badge";
+  import { Button } from "$lib/components/ui/button";
 
   let {
     snapshot,
@@ -82,15 +84,15 @@
           <span>
             <strong>{humanize(category.category)}</strong>
             <small>{category.owner} · {humanize(category.storageTier)}</small>
-            <span class={`status-pill ${category.enabled ? "healthy" : "suggested"}`}>{category.enabled ? "Enabled" : "Disabled"}</span>
+            <Badge state={category.enabled ? "healthy" : "suggested"}>{category.enabled ? "Enabled" : "Disabled"}</Badge>
           </span>
           <span>
             <strong>{bytes(category.payloadBytes)} / {bytes(category.maximumBytes)}</strong>
             <small>{category.entryCount} / {category.maximumEntries} entries · {duration(category.freshSeconds)} fresh</small>
           </span>
-          <button type="button" disabled={busy || category.entryCount === 0} onclick={() => onPurge(category.category)}>
+          <Button variant="destructive" size="sm" disabled={busy || category.entryCount === 0} onclick={() => onPurge(category.category)}>
             Purge
-          </button>
+          </Button>
         </article>
       {/each}
     </div>
@@ -117,9 +119,9 @@
   </details>
 
   <div class="maintenance-actions cache-actions">
-    <button class="button-primary" type="button" disabled={busy} onclick={onClean}>{busy ? "Working…" : "Clean reclaimable entries"}</button>
-    <button class="button-secondary" type="button" disabled={busy} onclick={() => onPurge("metadata")}>Purge metadata</button>
-    <button class="button-secondary" type="button" disabled={busy} onclick={() => onPurge("media")}>Purge media</button>
-    <button class="button-danger" type="button" disabled={busy} onclick={() => onPurge("all")}>Purge all cache</button>
+    <Button disabled={busy} onclick={onClean}>{busy ? "Working…" : "Clean reclaimable entries"}</Button>
+    <Button variant="secondary" disabled={busy} onclick={() => onPurge("metadata")}>Purge metadata</Button>
+    <Button variant="secondary" disabled={busy} onclick={() => onPurge("media")}>Purge media</Button>
+    <Button variant="destructive" disabled={busy} onclick={() => onPurge("all")}>Purge all cache</Button>
   </div>
 </article>

@@ -269,10 +269,6 @@ public static class PerProviderServiceResolver
         {
             return typeName.StartsWith("AppleMusic", StringComparison.OrdinalIgnoreCase);
         }
-        if (normalized == "squidwtf")
-        {
-            return typeName.StartsWith("SquidWTF", StringComparison.OrdinalIgnoreCase);
-        }
         return typeName.StartsWith(normalized, StringComparison.OrdinalIgnoreCase);
     }
 }

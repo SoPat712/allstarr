@@ -441,8 +441,11 @@ public sealed class ProtocolSupportMatrixTests
             row.GetProperty("feature").GetString() is "search-and-browse" or "search3" or
                 "item-metadata-and-images" or "item-metadata-and-cover-art" or "streaming-and-ranges");
         Assert.All(routedRows, row => Assert.Contains(
-            "ProtocolProviderGatewayContractTests",
+            "ProtocolRouteFixtureTests",
             row.GetProperty("testLocation").GetString(),
+            StringComparison.Ordinal));
+        Assert.DoesNotContain(rows, row => row.GetProperty("testLocation").GetString()!.Contains(
+            "ProtocolProviderGatewayContractTests",
             StringComparison.Ordinal));
         Assert.DoesNotContain(rows, row =>
             row.GetProperty("authBoundary").GetString()!.Contains(

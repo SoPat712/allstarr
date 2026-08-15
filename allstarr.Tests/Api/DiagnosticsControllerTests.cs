@@ -145,60 +145,6 @@ public sealed class DiagnosticsControllerTests : IDisposable
         Assert.Equal(4, handler.RequestCount);
     }
 
-    [Fact]
-    public async Task PublicEndpointConnector_RejectsMixedPrivateDnsResultsBeforeConnect()
-    {
-        var dns = new QueueDnsResolver(
-            [IPAddress.Parse("93.184.216.34"), IPAddress.Loopback]);
-        var socket = new RecordingIpConnector();
-        var connector = new PublicEndpointConnector(dns, socket);
-
-        await Assert.ThrowsAsync<HttpRequestException>(() =>
-            connector.ConnectAsync("api.example.test", 443, CancellationToken.None).AsTask());
-
-        Assert.Equal(1, dns.ResolveCount);
-        Assert.Equal(0, socket.ConnectCount);
-    }
-
-    [Fact]
-    public async Task PublicEndpointConnector_ReResolvesAndBlocksDnsRebinding()
-    {
-        var publicAddress = IPAddress.Parse("93.184.216.34");
-        var dns = new QueueDnsResolver([publicAddress], [IPAddress.Loopback]);
-        var socket = new RecordingIpConnector();
-        var connector = new PublicEndpointConnector(dns, socket);
-
-        await using (var stream = await connector.ConnectAsync(
-                         "api.example.test",
-                         443,
-                         CancellationToken.None))
-        {
-        }
-
-        await Assert.ThrowsAsync<HttpRequestException>(() =>
-            connector.ConnectAsync("api.example.test", 443, CancellationToken.None).AsTask());
-
-        Assert.Equal(2, dns.ResolveCount);
-        Assert.Equal(1, socket.ConnectCount);
-        Assert.Equal(publicAddress, Assert.Single(socket.Addresses));
-    }
-
-    [Fact]
-    public void SafeProxyProductionTransport_DisablesRedirectsCookiesAndEnvironmentProxy()
-    {
-        var connector = new PublicEndpointConnector(
-            new QueueDnsResolver([IPAddress.Parse("93.184.216.34")]),
-            new RecordingIpConnector());
-        using var handler = Assert.IsType<SocketsHttpHandler>(
-            new SafeProxyTransportFactory(connector).CreateHandler());
-
-        Assert.False(handler.AllowAutoRedirect);
-        Assert.False(handler.UseCookies);
-        Assert.False(handler.UseProxy);
-        Assert.NotNull(handler.ConnectCallback);
-        Assert.Equal(TimeSpan.Zero, handler.PooledConnectionLifetime);
-    }
-
     private DiagnosticsController CreateController(
         JellyfinSettings? jellyfinSettings = null,
         IServiceProvider? requestServices = null)
@@ -259,35 +205,4 @@ public sealed class DiagnosticsControllerTests : IDisposable
         }
     }
 
-    private sealed class QueueDnsResolver(params IReadOnlyList<IPAddress>[] results)
-        : IPublicEndpointDnsResolver
-    {
-        private readonly Queue<IReadOnlyList<IPAddress>> _results = new(results);
-
-        public int ResolveCount { get; private set; }
-
-        public ValueTask<IReadOnlyList<IPAddress>> ResolveAsync(
-            string host,
-            CancellationToken cancellationToken)
-        {
-            ResolveCount++;
-            return ValueTask.FromResult(_results.Dequeue());
-        }
-    }
-
-    private sealed class RecordingIpConnector : IResolvedIpConnector
-    {
-        public int ConnectCount { get; private set; }
-        public List<IPAddress> Addresses { get; } = [];
-
-        public ValueTask<Stream> ConnectAsync(
-            IPAddress address,
-            int port,
-            CancellationToken cancellationToken)
-        {
-            ConnectCount++;
-            Addresses.Add(address);
-            return ValueTask.FromResult<Stream>(new MemoryStream());
-        }
-    }
 }

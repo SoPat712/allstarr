@@ -16,7 +16,6 @@ using allstarr.Services.Subsonic;
 using allstarr.Services.Spotify;
 using allstarr.Services.Scrobbling;
 using allstarr.Services.Admin;
-using allstarr.Services.SquidWTF;
 using allstarr.Filters;
 using allstarr.Core.Protocols.Jellyfin;
 using allstarr.Core.Protocols;
@@ -29,7 +28,7 @@ namespace allstarr.Controllers;
 
 /// <summary>
 /// Jellyfin-compatible API controller. Merges local library with external providers
-/// (Deezer, Qobuz, SquidWTF). Auth goes through Jellyfin.
+/// (Deezer, Qobuz, Apple Music, and extensions). Auth goes through Jellyfin.
 /// </summary>
 [ApiController]
 [Route("")]
@@ -71,6 +70,7 @@ public partial class JellyfinController : ControllerBase
     private readonly IAudioMuseRecommendationClient? _audioMuse;
     private readonly IProtocolLibraryScopeResolver? _libraryScopes;
     private readonly IIntelligencePolicyService? _intelligencePolicies;
+    private readonly ManagedTrackCacheService? _managedTrackCache;
 
     public JellyfinController(
         IOptions<JellyfinSettings> settings,
@@ -102,7 +102,8 @@ public partial class JellyfinController : ControllerBase
         IProtocolProviderGateway? providerGateway = null,
         IAudioMuseRecommendationClient? audioMuse = null,
         IProtocolLibraryScopeResolver? libraryScopes = null,
-        IIntelligencePolicyService? intelligencePolicies = null)
+        IIntelligencePolicyService? intelligencePolicies = null,
+        ManagedTrackCacheService? managedTrackCache = null)
     {
         _settings = settings.Value;
         _spotifySettings = spotifySettings.Value;
@@ -134,6 +135,7 @@ public partial class JellyfinController : ControllerBase
         _audioMuse = audioMuse;
         _libraryScopes = libraryScopes;
         _intelligencePolicies = intelligencePolicies;
+        _managedTrackCache = managedTrackCache;
 
         if (string.IsNullOrWhiteSpace(_settings.Url))
         {
@@ -342,7 +344,21 @@ public partial class JellyfinController : ControllerBase
     /// <summary>
     /// Gets child items for an external parent (album tracks or artist albums).
     /// </summary>
-    private async Task<IActionResult> GetExternalChildItems(string provider, string type, string externalId, string? includeItemTypes, CancellationToken cancellationToken = default)
+    private enum ExternalArtistRelation
+    {
+        All,
+        AlbumArtist,
+        ContributingArtist
+    }
+
+    private async Task<IActionResult> GetExternalChildItems(
+        string provider,
+        string type,
+        string externalId,
+        string? includeItemTypes,
+        CancellationToken cancellationToken = default,
+        string? selectedArtistId = null,
+        ExternalArtistRelation artistRelation = ExternalArtistRelation.All)
     {
         if (IsFavoritesOnlyRequest())
         {
@@ -389,7 +405,7 @@ public partial class JellyfinController : ControllerBase
                                 itemTypes!.Contains("MusicAlbum", StringComparer.OrdinalIgnoreCase);
             if (includeTracks || includeAlbums)
             {
-                var tracksTask = includeTracks
+                var tracksTask = includeTracks || artistRelation == ExternalArtistRelation.ContributingArtist
                     ? GetProviderArtistTracksAsync(provider, externalId, cancellationToken)
                     : Task.FromResult(new List<Song>());
                 var albumsTask = includeAlbums || includeTracks
@@ -403,11 +419,65 @@ public partial class JellyfinController : ControllerBase
                 var tracks = await tracksTask;
                 var albums = await albumsTask;
                 var artist = await artistTask;
+
+                if (artistRelation == ExternalArtistRelation.ContributingArtist)
+                {
+                    var knownAlbumIds = albums.Select(album => album.Id)
+                        .Where(id => !string.IsNullOrWhiteSpace(id))
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var requestedCount = int.TryParse(Request.Query["Limit"], out var requestedLimit)
+                        ? Math.Clamp(requestedLimit, 1, 200)
+                        : 50;
+                    var lookupCount = (int)Math.Min(
+                        200L,
+                        (long)GetRequestedStartIndex() + requestedCount);
+                    var appearanceLookups = tracks
+                        .Select(track => track.AlbumId)
+                        .Where(id => !string.IsNullOrWhiteSpace(id) && !knownAlbumIds.Contains(id))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Select(id => _localLibraryService.ParseExternalId(id!))
+                        .Where(parsed => parsed.isExternal &&
+                                         parsed.type == "album" &&
+                                         string.Equals(parsed.provider, provider, StringComparison.OrdinalIgnoreCase))
+                        .Take(lookupCount)
+                        .Select(parsed => GetProviderAlbumAsync(
+                            provider,
+                            parsed.externalId!,
+                            cancellationToken));
+                    albums.AddRange((await Task.WhenAll(appearanceLookups)).OfType<Album>());
+                    albums = albums.DistinctBy(album => album.Id, StringComparer.OrdinalIgnoreCase).ToList();
+                }
+
                 if (includeTracks && tracks.Count == 0)
                     tracks = albums.SelectMany(album => album.Songs)
                         .DistinctBy(song => song.Id, StringComparer.OrdinalIgnoreCase)
                         .ToList();
-                if (artist != null)
+
+                if (artistRelation != ExternalArtistRelation.All)
+                {
+                    bool HasArtistIdentity(Album album) =>
+                        !string.IsNullOrWhiteSpace(album.ArtistId) ||
+                        artist != null && !string.IsNullOrWhiteSpace(album.Artist);
+                    bool IsPrimaryAlbum(Album album) => !string.IsNullOrWhiteSpace(album.ArtistId)
+                        ? string.Equals(album.ArtistId, selectedArtistId, StringComparison.OrdinalIgnoreCase)
+                        : string.Equals(album.Artist, artist?.Name, StringComparison.OrdinalIgnoreCase);
+                    var wantsPrimaryAlbums = artistRelation == ExternalArtistRelation.AlbumArtist;
+                    albums = albums.Where(album =>
+                            HasArtistIdentity(album) && IsPrimaryAlbum(album) == wantsPrimaryAlbums)
+                        .ToList();
+
+                    if (includeTracks)
+                    {
+                        var albumIds = albums.Select(album => album.Id)
+                            .Where(id => !string.IsNullOrWhiteSpace(id))
+                            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                        tracks = tracks.Where(track =>
+                                !string.IsNullOrWhiteSpace(track.AlbumId) && albumIds.Contains(track.AlbumId))
+                            .ToList();
+                    }
+                }
+
+                if (artist != null && artistRelation != ExternalArtistRelation.ContributingArtist)
                 {
                     foreach (var album in albums)
                     {
@@ -417,7 +487,7 @@ public partial class JellyfinController : ControllerBase
                 }
 
                 var items = (includeAlbums ? albums : []).Select(_responseBuilder.ConvertAlbumToJellyfinItem)
-                    .Concat(tracks.Select(_responseBuilder.ConvertSongToJellyfinItem))
+                    .Concat((includeTracks ? tracks : []).Select(_responseBuilder.ConvertSongToJellyfinItem))
                     .ToList();
                 var startIndex = GetRequestedStartIndex();
                 var limit = int.TryParse(Request.Query["Limit"], out var parsedLimit) && parsedLimit >= 0
@@ -1172,12 +1242,8 @@ public partial class JellyfinController : ControllerBase
         [FromQuery] string? userId = null)
     {
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
-        var isRawSquidTrackId = !isExternal && long.TryParse(itemId, out _);
-        var squidTrackId = provider?.Equals("squidwtf", StringComparison.OrdinalIgnoreCase) == true
-            ? externalId
-            : (isRawSquidTrackId ? itemId : null);
 
-        if (isExternal || !string.IsNullOrWhiteSpace(squidTrackId))
+        if (isExternal)
         {
             // Check if this is an artist
             if (itemId.Contains("-artist-", StringComparison.OrdinalIgnoreCase))
@@ -1194,41 +1260,6 @@ public partial class JellyfinController : ControllerBase
 
             try
             {
-                if (!string.IsNullOrWhiteSpace(squidTrackId) &&
-                    _metadataService is SquidWTFMetadataService squidWtfMetadataService)
-                {
-                    var recommendations = await squidWtfMetadataService
-                        .GetTrackRecommendationsAsync(squidTrackId, limit, HttpContext.RequestAborted);
-
-                    var recommendedItems = recommendations
-                        .Select(s => _responseBuilder.ConvertSongToJellyfinItem(s))
-                        .ToList();
-
-                    _logger.LogInformation(
-                        "SQUIDWTF similar lookup: itemId={ItemId}, trackId={TrackId}, recommendations={Count}",
-                        itemId,
-                        squidTrackId,
-                        recommendedItems.Count);
-
-                    return _responseBuilder.CreateJsonResponse(new
-                    {
-                        Items = recommendedItems,
-                        TotalRecordCount = recommendedItems.Count,
-                        StartIndex = 0
-                    });
-                }
-
-                if (!isExternal)
-                {
-                    _logger.LogDebug("Similar lookup skipped for non-external item {ItemId}", itemId);
-                    return _responseBuilder.CreateJsonResponse(new
-                    {
-                        Items = Array.Empty<object>(),
-                        TotalRecordCount = 0,
-                        StartIndex = 0
-                    });
-                }
-
                 // Get the original song to find similar content
                 var song = await GetProviderSongAsync(provider!, externalId!);
                 if (song == null)
@@ -2004,7 +2035,6 @@ public partial class JellyfinController : ControllerBase
     private Task<string?> FindSpotifyIdForExternalTrackAsync(Song externalSong) =>
         externalSong.ExternalProvider?.ToLowerInvariant() switch
         {
-            "squidwtf" => _odesliService.ConvertTidalToSpotifyIdAsync(externalSong.ExternalId!, CancellationToken.None),
             "deezer" => _odesliService.ConvertUrlToSpotifyIdAsync(
                 $"https://www.deezer.com/track/{externalSong.ExternalId}", CancellationToken.None),
             "qobuz" => _odesliService.ConvertUrlToSpotifyIdAsync(

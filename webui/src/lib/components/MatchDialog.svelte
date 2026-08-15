@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Dialog } from "$lib/components/ui/dialog";
+  import { Button, buttonVariants } from "$lib/components/ui/button";
   import { X } from "lucide-svelte";
   import {
     matchReview,
@@ -19,6 +20,7 @@
     scoreComponents,
   } from "$lib/mappings";
   import { formatDuration } from "$lib/playlists";
+  import { findProviderDefinition, providerDisplayName } from "$lib/sources";
 
   let {
     open = $bindable(false),
@@ -79,14 +81,12 @@
     if (autoSearch) void search();
   });
 
-  function provider(providerId: string) {
-    return providers.find((item) => item.id.toLowerCase() === providerId.toLowerCase());
-  }
+  const provider = (providerId: string) => findProviderDefinition(providers, providerId);
 
   function providerName(providerId?: string | null) {
     if (!providerId || providerId === "local")
       return backend.toLowerCase() === "jellyfin" ? "Jellyfin" : backend;
-    return provider(providerId)?.name ?? providerId;
+    return providerDisplayName(providers, providerId);
   }
 
   function candidateProvider(candidate: MatchReviewItem["candidates"][number]) {
@@ -280,14 +280,14 @@
                     {/each}
                   </div>
                   {#if resolution?.targetType === "local"}
-                    <button type="button" disabled={saving} onclick={() => void chooseLocal(resolution.libraryTrackId, "Selected from automatic candidate evidence")}>Choose candidate</button>
+                    <Button class="candidate-action" variant="secondary" size="sm" disabled={saving} onclick={() => void chooseLocal(resolution.libraryTrackId, "Selected from automatic candidate evidence")}>Choose candidate</Button>
                   {:else if resolution}
-                    <button type="button" disabled={saving} onclick={() => void chooseProvider({
+                    <Button class="candidate-action" variant="secondary" size="sm" disabled={saving} onclick={() => void chooseProvider({
                       id: resolution.externalId,
                       externalId: resolution.externalId,
                       externalProvider: resolution.externalProvider,
                       title: candidate.title || candidate.backendItemId || "Provider track",
-                    })}>Choose candidate</button>
+                    })}>Choose candidate</Button>
                   {/if}
                 </article>
               {/each}
@@ -302,9 +302,9 @@
             <span>Search local library and playable providers</span>
             <input bind:value={targetQuery} required minlength="2" />
           </label>
-          <button class="button-primary" type="submit" disabled={loading}>
+          <Button type="submit" disabled={loading}>
             {loading ? "Searching…" : "Search"}
-          </button>
+          </Button>
         </form>
 
         {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
@@ -378,9 +378,9 @@
 
         <footer>
           {#if showReject}
-            <button class="button-danger" type="button" onclick={() => { open = false; onReject?.(match!); }}>Reject candidate</button>
+            <Button variant="destructive" onclick={() => { open = false; onReject?.(match!); }}>Reject candidate</Button>
           {/if}
-          <Dialog.Close class="button-secondary">Cancel</Dialog.Close>
+          <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
         </footer>
       {/if}
     </Dialog.Content>

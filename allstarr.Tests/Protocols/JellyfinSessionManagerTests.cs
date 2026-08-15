@@ -131,13 +131,13 @@ public class JellyfinSessionManagerTests
             new AllstarrPrincipal(tenantId, userId, "jellyfin", "main", "backend-user-1", "Josh", false));
         Assert.True(ensured);
 
-        manager.UpdatePlayingItem("dev-123", "ext-squidwtf-song-35734823", 45 * TimeSpan.TicksPerSecond);
+        manager.UpdatePlayingItem("dev-123", "ext-deezer-song-35734823", 45 * TimeSpan.TicksPerSecond);
 
         var states = manager.GetActivePlaybackStates(TimeSpan.FromMinutes(1));
 
         var state = Assert.Single(states);
         Assert.Equal("dev-123", state.DeviceId);
-        Assert.Equal("ext-squidwtf-song-35734823", state.ItemId);
+        Assert.Equal("ext-deezer-song-35734823", state.ItemId);
         Assert.Equal(45 * TimeSpan.TicksPerSecond, state.PositionTicks);
         Assert.Equal(userId, state.UserId);
         Assert.Equal("backend-user-1", state.BackendUserId);

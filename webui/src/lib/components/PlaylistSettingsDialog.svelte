@@ -1,5 +1,7 @@
 <script lang="ts">
   import { Dialog } from "$lib/components/ui/dialog";
+  import { Checkbox } from "$lib/components/ui/checkbox";
+  import { Button, buttonVariants } from "$lib/components/ui/button";
   import { X } from "lucide-svelte";
   import {
     playlistLinks,
@@ -244,24 +246,24 @@
           {/if}
           <fieldset class="playlist-sync-fields">
             <legend>{materializationMode === "recreate" ? "Copy these details to the new playlist" : "Keep these details updated"}</legend>
-            <label><input bind:checked={syncName} type="checkbox" /> Playlist name</label>
-            <label><input bind:checked={syncDescription} type="checkbox" /> Description</label>
-            <label><input bind:checked={syncArtwork} type="checkbox" /> Artwork</label>
+            <label><Checkbox bind:checked={syncName} /> Playlist name</label>
+            <label><Checkbox bind:checked={syncDescription} /> Description</label>
+            <label><Checkbox bind:checked={syncArtwork} /> Artwork</label>
           </fieldset>
         {/if}
 
         <div class="setting-field playlist-schedule-setting">
           <span><strong>Automatic updates</strong><small>{details?.schedule ? scheduleCadence(details.schedule.cronExpression) : "Manual only"}</small></span>
-          <button class="button-secondary" type="button" onclick={() => { open = false; onEditSchedule(); }}>Edit schedule</button>
+          <Button variant="secondary" onclick={() => { open = false; onEditSchedule(); }}>Edit schedule</Button>
         </div>
 
         <p class="credential-safety">{behaviorSummary}</p>
 
         <footer>
-          <Dialog.Close class="button-secondary">Cancel</Dialog.Close>
-          <button class="button-primary" type="submit" disabled={loading || saving || playlist?.revision !== revision || !targetSelectionValid}>
+          <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
+          <Button type="submit" disabled={loading || saving || playlist?.revision !== revision || !targetSelectionValid}>
             {saving ? "Saving…" : "Save settings"}
-          </button>
+          </Button>
         </footer>
       </form>
     </Dialog.Content>

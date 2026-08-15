@@ -47,10 +47,6 @@ public interface IRecommendationProviderStatusService
 {
     Task<IReadOnlyList<RecommendationProviderReadiness>> ListAsync(IntelligenceScope scope, CancellationToken cancellationToken = default);
 }
-public interface IListeningProfileService
-{
-    Task<ListeningProfile> BuildAsync(IntelligenceScope scope, CancellationToken cancellationToken = default);
-}
 public interface ISmartPlaylistService
 {
     Task<Guid> CreateGeneratedSetAsync(IntelligenceScope scope, Guid runId, string name,

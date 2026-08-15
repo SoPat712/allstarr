@@ -10,7 +10,6 @@ using Microsoft.EntityFrameworkCore;
 namespace allstarr.Core.Intelligence;
 
 public sealed class ListeningProfileService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock)
-    : IListeningProfileService
 {
     public async Task<ListeningProfile> BuildAsync(IntelligenceScope scope, CancellationToken cancellationToken = default)
     {
@@ -228,7 +227,7 @@ public sealed record RecommendationAutomationSnapshot(Guid ScheduleId, DateTimeO
     string GeneratedSetName);
 
 public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbContext> factory,
-    IEnumerable<IRecommendationProvider> providers, IListeningProfileService profiles, IPlatformClock clock,
+    IEnumerable<IRecommendationProvider> providers, ListeningProfileService profiles, IPlatformClock clock,
     ISmartPlaylistService? smartPlaylists = null) : IDurableJobHandler
 {
     public string JobType => "recommendation.generate";
@@ -468,7 +467,7 @@ public static class IntelligenceRegistration
     public static IServiceCollection AddIntelligenceCore(this IServiceCollection services)
     {
         services.AddSingleton<IIntelligencePolicyService, IntelligencePolicyService>(); services.AddSingleton<IRecommendationSignalWriter, RecommendationSignalWriter>();
-        services.AddSingleton<IListeningProfileService, ListeningProfileService>(); services.AddSingleton<ISmartPlaylistService, SmartPlaylistService>();
+        services.AddSingleton<ListeningProfileService>(); services.AddSingleton<ISmartPlaylistService, SmartPlaylistService>();
         services.AddSingleton<IRecommendationRunService, RecommendationRunService>(); services.AddSingleton<IDurableJobHandler, RecommendationRunJobHandler>();
         services.AddSingleton<IRecommendationProviderStatusService, RecommendationProviderStatusService>();
         services.AddSingleton<ListeningIntakeTokenService>();

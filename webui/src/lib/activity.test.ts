@@ -6,6 +6,7 @@ import {
   groupOutcome,
   humanize,
   mergeActivity,
+  relativeTime,
 } from "./activity";
 import type { ActivityItem } from "./api";
 
@@ -64,6 +65,8 @@ describe("event log presentation", () => {
       severity: "",
     })).toHaveLength(0);
     expect(humanize("provider_health.failed")).toBe("Provider Health Failed");
+    expect(humanize("reviewrequired")).toBe("Review Required");
+    expect(relativeTime(null, "Never")).toBe("Never");
     expect(activityLink({ ...item("1", "Song A"), sourceTitle: "Song A" }))
       .toBe("#/library/mappings?search=Song%20A");
     expect(activityLink({ ...item("2", "Cached"), kind: "caching" }))

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Dialog } from "$lib/components/ui/dialog";
+  import { Button, buttonVariants } from "$lib/components/ui/button";
   import { X } from "lucide-svelte";
   import {
     playlistLinks,
@@ -115,7 +116,7 @@
           <div class="compact-empty" role="alert">
             <strong>The playlists could not be compared</strong>
             <p>{error}</p>
-            <button class="button-secondary" type="button" onclick={() => void loadPreview()}>Try again</button>
+            <Button variant="secondary" onclick={() => void loadPreview()}>Try again</Button>
           </div>
         {:else if preview}
           <section class="playlist-source-update-summary">
@@ -188,11 +189,11 @@
       </div>
 
       <footer>
-        <Dialog.Close class="button-secondary">{preview?.canApply ? "Cancel" : "Close"}</Dialog.Close>
+        <Dialog.Close class={buttonVariants({ variant: "secondary" })}>{preview?.canApply ? "Cancel" : "Close"}</Dialog.Close>
         {#if preview?.canApply}
-          <button class="button-primary" type="button" disabled={applying} onclick={() => void applyUpdate()}>
+          <Button disabled={applying} onclick={() => void applyUpdate()}>
             {applying ? `Queueing ${preview.providerName} update…` : `Update ${preview.providerName}`}
-          </button>
+          </Button>
         {/if}
       </footer>
     </Dialog.Content>

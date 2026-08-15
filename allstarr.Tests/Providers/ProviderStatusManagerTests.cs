@@ -79,16 +79,16 @@ public sealed class ProviderStatusManagerTests
     }
 
     [Fact]
-    public void SquidWtf_IsNeverAdvertisedWhenLegacyOrdersContainIt()
+    public void UnknownProvider_IsNeverAdvertisedWhenOrdersContainIt()
     {
         var manager = CreateManager(new Dictionary<string, string?>
         {
-            ["MULTI_PROVIDER_METADATA_ORDER"] = "squidwtf",
-            ["MULTI_PROVIDER_ENABLED_SEARCH"] = "squidwtf",
-            ["MULTI_PROVIDER_DOWNLOAD_ORDER"] = "squidwtf",
-            ["MULTI_PROVIDER_STREAMING_ORDER"] = "squidwtf",
-            ["MULTI_PROVIDER_PLAYLIST_ORDER"] = "squidwtf",
-            ["MULTI_PROVIDER_ENABLED_PLAYLIST"] = "squidwtf"
+            ["MULTI_PROVIDER_METADATA_ORDER"] = "unknown-provider",
+            ["MULTI_PROVIDER_ENABLED_SEARCH"] = "unknown-provider",
+            ["MULTI_PROVIDER_DOWNLOAD_ORDER"] = "unknown-provider",
+            ["MULTI_PROVIDER_STREAMING_ORDER"] = "unknown-provider",
+            ["MULTI_PROVIDER_PLAYLIST_ORDER"] = "unknown-provider",
+            ["MULTI_PROVIDER_ENABLED_PLAYLIST"] = "unknown-provider"
         });
 
         Assert.Empty(manager.GetEnabledSearchProviders());
