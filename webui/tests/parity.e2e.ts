@@ -1067,6 +1067,8 @@ for (const viewport of viewports) {
       const reject = page.getByRole("alertdialog", { name: "Reject this candidate?" });
       await expect(reject).toBeVisible();
       await expect(reject.getByRole("button", { name: "Reject candidate" })).toBeInViewport();
+      await reject.getByRole("button", { name: "Cancel" }).click();
+      await expect(reject).toBeHidden();
 
       await page.goto("#/library/cached");
       await page.getByRole("button", { name: "Remove", exact: true }).click();
