@@ -676,7 +676,7 @@ public partial class JellyfinController : ControllerBase
             {
                 foreach (var item in items.EnumerateArray())
                 {
-                    artistItems.Add(JsonElementToDictionary(item));
+                    artistItems.Add(item.Deserialize<Dictionary<string, object?>>() ?? []);
                 }
             }
 
@@ -1902,71 +1902,6 @@ public partial class JellyfinController : ControllerBase
     }
 
     /// <summary>
-    /// Converts a JsonElement to a Dictionary while properly preserving nested objects and arrays.
-    /// This prevents metadata from being stripped when deserializing Jellyfin responses.
-    /// </summary>
-    private Dictionary<string, object?> JsonElementToDictionary(JsonElement element)
-    {
-        var dict = new Dictionary<string, object?>();
-
-        foreach (var property in element.EnumerateObject())
-        {
-            dict[property.Name] = ConvertJsonElement(property.Value);
-        }
-
-        return dict;
-    }
-
-    /// <summary>
-    /// Recursively converts JsonElement values to proper C# types (Dictionary, List, primitives).
-    /// </summary>
-    private object? ConvertJsonElement(JsonElement element)
-    {
-        switch (element.ValueKind)
-        {
-            case JsonValueKind.Object:
-                var dict = new Dictionary<string, object?>();
-                foreach (var property in element.EnumerateObject())
-                {
-                    dict[property.Name] = ConvertJsonElement(property.Value);
-                }
-                return dict;
-
-            case JsonValueKind.Array:
-                var list = new List<object?>();
-                foreach (var item in element.EnumerateArray())
-                {
-                    list.Add(ConvertJsonElement(item));
-                }
-                return list;
-
-            case JsonValueKind.String:
-                return element.GetString();
-
-            case JsonValueKind.Number:
-                if (element.TryGetInt32(out var intValue))
-                    return intValue;
-                if (element.TryGetInt64(out var longValue))
-                    return longValue;
-                if (element.TryGetDouble(out var doubleValue))
-                    return doubleValue;
-                return element.GetDecimal();
-
-            case JsonValueKind.True:
-                return true;
-
-            case JsonValueKind.False:
-                return false;
-
-            case JsonValueKind.Null:
-                return null;
-
-            default:
-                return null;
-        }
-    }
-
-    /// <summary>
     /// Extracts device information from Authorization header.
     /// </summary>
     private (string? deviceId, string? client, string? device, string? version) ExtractDeviceInfo(IHeaderDictionary headers)
@@ -2038,5 +1973,3 @@ public partial class JellyfinController : ControllerBase
             _ => Task.FromResult<string?>(null)
         };
 }
-
-// force rebuild Sun Jan 25 13:22:47 EST 2026

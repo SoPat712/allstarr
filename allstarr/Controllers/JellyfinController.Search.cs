@@ -414,7 +414,7 @@ public partial class JellyfinController
             {
                 if (!item.TryGetProperty("Type", out var typeEl)) continue;
                 var type = typeEl.GetString();
-                var itemDict = JsonElementToDictionary(item);
+                var itemDict = item.Deserialize<Dictionary<string, object?>>() ?? [];
 
                 if (type == "Audio")
                 {
