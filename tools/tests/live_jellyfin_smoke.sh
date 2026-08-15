@@ -79,6 +79,7 @@ fi
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_id="${started_at//[:T-]/}"
 users_file="$(mktemp)"
+current_user_file="$(mktemp)"
 items_file="$(mktemp)"
 response_file="$(mktemp)"
 timings_file="$(mktemp)"
@@ -130,7 +131,7 @@ cleanup() {
             echo 'CLEANUP-BLOCKED exact playlist ID/name/type verification failed' >&2
         fi
     fi
-    rm -f "$users_file" "$items_file" "$response_file" "$timings_file" \
+    rm -f "$users_file" "$current_user_file" "$items_file" "$response_file" "$timings_file" \
         "$direct_shape_file" "$allstarr_shape_file" "$metrics_file" \
         "$direct_media_file" "$allstarr_media_file" "$direct_headers_file" \
         "$allstarr_headers_file" "$virtual_items_file" "$direct_virtual_items_file" \
@@ -146,10 +147,18 @@ curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" "$DIRECT_BASE/Users" -o "$u
 best_user_id=""
 best_audio_count=-1
 user_candidates="$(jq -r '.[].Id' "$users_file")"
+if curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
+       "$DIRECT_BASE/Users/Me" -o "$current_user_file" 2>/dev/null; then
+    authenticated_user_id="$(jq -r '.Id // empty' "$current_user_file")"
+else
+    authenticated_user_id=""
+fi
 if [[ -n "$JELLYFIN_USER_ID" ]]; then
     jq -e --arg id "$JELLYFIN_USER_ID" 'any(.[]; .Id == $id)' "$users_file" >/dev/null ||
         { echo "JELLYFIN_USER_ID is not visible to this credential" >&2; exit 1; }
     user_candidates="$JELLYFIN_USER_ID"
+elif [[ -n "$authenticated_user_id" ]]; then
+    user_candidates="$authenticated_user_id"
 fi
 while IFS= read -r user_id; do
     if ! curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
@@ -180,6 +189,10 @@ if curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
     actor_bound=1
 fi
 echo "jellyfin-user=selected actor_bound=$actor_bound"
+if [[ "$TEST_PLAYLIST_WRITES" == 1 && "$actor_bound" != 1 ]]; then
+    echo "Playlist writes require a user-bound credential for the selected Jellyfin user" >&2
+    exit 1
+fi
 
 full_item_fields="AirTime,CanDelete,CanDownload,ChannelInfo,Chapters,Trickplay,ChildCount,CumulativeRunTimeTicks,CustomRating,DateCreated,DateLastMediaAdded,DisplayPreferencesId,Etag,ExternalUrls,Genres,ItemCounts,MediaSourceCount,MediaSources,OriginalTitle,Overview,ParentId,Path,People,PlayAccess,ProductionLocations,ProviderIds,PrimaryImageAspectRatio,RecursiveItemCount,Settings,SeriesStudio,SortName,SpecialEpisodeNumbers,Studios,Taglines,Tags,RemoteTrailers,MediaStreams,SeasonUserData,DateLastRefreshed,DateLastSaved,RefreshState,ChannelImage,EnableMediaSourceDisplay,Width,Height,ExtraIds,LocalTrailerCount,IsHD,SpecialFeatureCount"
 default_music_item_types="Audio,MusicAlbum,MusicArtist,Playlist,MusicGenre"
