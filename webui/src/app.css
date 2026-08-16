@@ -242,7 +242,6 @@
 
   html {
     min-width: 320px;
-    scrollbar-gutter: stable;
     background: var(--color-canvas);
     color: var(--color-ink);
     font-family: var(--font-sans);
