@@ -2662,6 +2662,13 @@
     min-width: 0;
   }
 
+  .select-trigger [data-select-value] {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .select-chevron {
     width: 1rem;
     height: 1rem;

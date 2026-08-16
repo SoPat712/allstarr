@@ -953,14 +953,14 @@ for (const viewport of viewports) {
       await expect(soundDiscovery.getByText("Far Song", { exact: true })).toBeVisible();
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
         await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-recommendations.png`, fullPage: true });
-      await expect.poll(() => page.locator(".intelligence-view").evaluate((element) =>
-        element.scrollWidth <= element.clientWidth)).toBe(true);
+      await expect.poll(() => page.evaluate(() =>
+        document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.getByRole("tab", { name: "History" }).click();
       await expect(page.getByRole("heading", { name: "Listening history", level: 3, exact: true })).toBeVisible();
       await expect(page.locator(".history-list").getByText("Moon Song", { exact: true })).toBeVisible();
       await expect(page.getByRole("heading", { name: "Import listening history" })).toHaveCount(0);
-      await expect.poll(() => page.locator(".intelligence-view").evaluate((element) =>
-        element.scrollWidth <= element.clientWidth)).toBe(true);
+      await expect.poll(() => page.evaluate(() =>
+        document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
         await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-history.png`, fullPage: true });
       await page.getByRole("tab", { name: "Imports" }).click();
@@ -971,8 +971,8 @@ for (const viewport of viewports) {
       await historyUpload.scrollIntoViewIfNeeded();
       await expect(historyUpload).toBeInViewport();
       await expect(page.getByLabel("History export files")).toHaveAttribute("multiple", "");
-      await expect.poll(() => page.locator(".intelligence-view").evaluate((element) =>
-        element.scrollWidth <= element.clientWidth)).toBe(true);
+      await expect.poll(() => page.evaluate(() =>
+        document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.getByRole("tab", { name: "Settings" }).click();
       await expect(page.getByText("Monday discoveries", { exact: true })).toBeVisible();
       await expect(page.getByText("Allstarr keeps private listening history and uses it for recommendations.", { exact: true })).toBeVisible();
