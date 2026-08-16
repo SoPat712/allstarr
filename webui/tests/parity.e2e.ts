@@ -1069,9 +1069,14 @@ for (const viewport of viewports) {
       await expect(reject.getByRole("button", { name: "Reject candidate" })).toBeInViewport();
       await reject.getByRole("button", { name: "Cancel" }).click();
       await expect(reject).toBeHidden();
+      await page.getByRole("button", { name: "Close match dialog" }).click();
+      await expect(page.getByRole("dialog", { name: "Test song" })).toBeHidden();
+      await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).pointerEvents)).toBe("auto");
 
       await page.goto("#/library/cached");
-      await page.getByRole("button", { name: "Remove", exact: true }).click();
+      const removeButton = page.getByRole("button", { name: "Remove", exact: true });
+      await expect(removeButton).toBeInViewport();
+      await removeButton.click();
       const removal = page.getByRole("alertdialog", { name: "Remove this track?" });
       await expect(removal).toBeVisible();
       await expect(removal.getByRole("button", { name: "Remove track" })).toBeInViewport();

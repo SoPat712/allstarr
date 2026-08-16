@@ -180,7 +180,7 @@
 <Dialog.Root bind:open>
   <Dialog.Portal>
     <Dialog.Overlay class="dialog-overlay match-dialog-overlay" />
-    <Dialog.Content class="match-dialog">
+    <Dialog.Content class="match-dialog" preventScroll={false}>
       {#if match}
         <header>
           <div>
@@ -378,7 +378,7 @@
 
         <footer>
           {#if showReject}
-            <Button variant="destructive" onclick={() => { open = false; onReject?.(match!); }}>Reject candidate</Button>
+            <Button variant="destructive" onclick={() => onReject?.(match!)}>Reject candidate</Button>
           {/if}
           <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
         </footer>

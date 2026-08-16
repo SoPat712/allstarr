@@ -10,6 +10,7 @@
     cancelLabel = "Cancel",
     confirmVariant = "destructive",
     disabled = false,
+    preventScroll = true,
     onConfirm,
   }: {
     open: boolean;
@@ -19,14 +20,15 @@
     cancelLabel?: string;
     confirmVariant?: ButtonVariant;
     disabled?: boolean;
+    preventScroll?: boolean;
     onConfirm: () => void | Promise<void>;
   } = $props();
 </script>
 
 <AlertDialog.Root bind:open>
   <AlertDialog.Portal>
-    <AlertDialog.Overlay class="dialog-overlay" />
-    <AlertDialog.Content class="confirm-dialog">
+    <AlertDialog.Overlay class="dialog-overlay confirm-dialog-overlay" />
+    <AlertDialog.Content class="confirm-dialog" {preventScroll}>
       <AlertDialog.Title>{title}</AlertDialog.Title>
       <AlertDialog.Description>{description}</AlertDialog.Description>
       <footer>

@@ -452,6 +452,7 @@
 
   <ConfirmDialog
     bind:open={destructiveOpen}
+    preventScroll={!dialogOpen}
     title={destructive?.kind === "clear" ? "Clear manual review?" : "Reject this candidate?"}
     description={destructive?.kind === "clear"
       ? "The durable manual decision will be revoked and automatic matching will become authoritative again."

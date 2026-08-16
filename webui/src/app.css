@@ -242,6 +242,7 @@
 
   html {
     min-width: 320px;
+    scrollbar-gutter: stable;
     background: var(--color-canvas);
     color: var(--color-ink);
     font-family: var(--font-sans);
@@ -3140,6 +3141,10 @@
     z-index: var(--layer-nested-overlay);
   }
 
+  .confirm-dialog-overlay {
+    z-index: calc(var(--layer-nested-dialog) + 1);
+  }
+
   .match-dialog,
   .source-dialog,
   .confirm-dialog {
@@ -3159,6 +3164,10 @@
 
   .match-dialog {
     z-index: var(--layer-nested-dialog);
+  }
+
+  .confirm-dialog {
+    z-index: calc(var(--layer-nested-dialog) + 2);
   }
 
   .match-dialog > header,
@@ -4548,7 +4557,7 @@
   .download-head,
   .download-row {
     display: grid;
-    grid-template-columns: minmax(14rem, 1fr) minmax(7rem, 0.5fr) minmax(10rem, 0.65fr) 5rem 6rem auto;
+    grid-template-columns: minmax(10rem, 1fr) minmax(6rem, 0.5fr) minmax(7rem, 0.65fr) 3rem 4rem auto;
     align-items: center;
     gap: 0.75rem;
     padding: 0.65rem 0.8rem;
@@ -4643,19 +4652,7 @@
   }
 }
 
-@media (max-width: 1050px) {
-  .download-head,
-  .download-row {
-    grid-template-columns: minmax(12rem, 1fr) minmax(9rem, 0.65fr) 5rem 6rem auto;
-  }
-
-  .download-head > span:nth-child(2),
-  .download-provider {
-    display: none;
-  }
-}
-
-@media (max-width: 1100px) {
+@media (max-width: 1200px) {
   .downloads-heading,
   .downloads-heading-actions {
     align-items: stretch;
