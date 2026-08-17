@@ -21,6 +21,20 @@ export type HomeSnapshot = {
   failures: string[];
 };
 
+export function playbackSourceIssues(providers: ProviderDefinition[]) {
+  return providers.flatMap((provider) => {
+    const capability = provider.runtimeCapabilities?.find((item) =>
+      item.supported !== false &&
+      ["streaming", "download"].includes(item.id.toLowerCase()) &&
+      !item.canAttempt);
+    return capability ? [{
+      providerId: provider.id,
+      providerName: provider.name,
+      reason: capability.reasonCode || capability.configuration || capability.health || "unavailable",
+    }] : [];
+  });
+}
+
 export function summarizeHome(snapshot: HomeSnapshot) {
   const playlists = snapshot.playlists?.playlists ?? [];
   const links = snapshot.playlistLinks;

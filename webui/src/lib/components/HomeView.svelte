@@ -8,7 +8,7 @@
   import { Progress } from "$lib/components/ui/progress";
   import { Badge } from "$lib/components/ui/badge";
   import { Skeleton } from "$lib/components/ui/skeleton";
-  import { summarizeHome, type HomeSnapshot } from "$lib/home";
+  import { playbackSourceIssues, summarizeHome, type HomeSnapshot } from "$lib/home";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { findProviderDefinition, providerDisplayName } from "$lib/sources";
 
@@ -21,6 +21,7 @@
   let nowPlayingTimer: ReturnType<typeof setInterval> | null = null;
 
   const summary = $derived(snapshot ? summarizeHome(snapshot) : null);
+  const sourceIssues = $derived(playbackSourceIssues(snapshot?.providerCatalog ?? []));
   const completelyUnavailable = $derived(
     snapshot !== null &&
       !snapshot.status &&
@@ -154,6 +155,17 @@
       <span aria-hidden="true">!</span>
       <p><strong>Some live data is unavailable.</strong> {snapshot.failures.join(" · ")}</p>
       <Button variant="secondary" size="sm" onclick={() => void refresh()}>Retry</Button>
+    </div>
+  {/if}
+
+  {#if sourceIssues.length}
+    <div class="degraded-banner" role="status">
+      <span aria-hidden="true">!</span>
+      <p>
+        <strong>{sourceIssues[0].providerName} needs attention.</strong>
+        {humanize(sourceIssues[0].reason)}{sourceIssues.length > 1 ? ` · ${sourceIssues.length - 1} more` : ""}
+      </p>
+      <Button variant="secondary" size="sm" href={`#/sources?source=${encodeURIComponent(sourceIssues[0].providerId)}&section=configuration`}>Open source</Button>
     </div>
   {/if}
 

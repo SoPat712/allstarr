@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { summarizeHome, type HomeSnapshot } from "./home";
+import { playbackSourceIssues, summarizeHome, type HomeSnapshot } from "./home";
+
+it("surfaces blocked playback sources once per provider", () => {
+  expect(playbackSourceIssues([{
+    id: "apple-download",
+    name: "Apple Music – GAMDL",
+    runtimeCapabilities: [
+      { id: "streaming", ready: false, canAttempt: false, reasonCode: "login_required" },
+      { id: "download", ready: false, canAttempt: false, reasonCode: "login_required" },
+    ],
+  }])).toEqual([{
+    providerId: "apple-download",
+    providerName: "Apple Music – GAMDL",
+    reason: "login_required",
+  }]);
+});
 
 describe("summarizeHome", () => {
   it("keeps playlist counts and routes separate", () => {
