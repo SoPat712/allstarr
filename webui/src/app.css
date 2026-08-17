@@ -657,6 +657,7 @@
 
   .workspace {
     min-width: 0;
+    overflow-x: clip;
     padding: clamp(1rem, 2.25vw, 2rem);
   }
 
