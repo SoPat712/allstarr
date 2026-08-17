@@ -41,7 +41,7 @@
   }
 </script>
 
-<nav class="segmented-nav" aria-label={label}>
+<nav aria-label={label}>
   <div
     bind:this={tablist}
     class={`segmented-tabs ${className}`}
@@ -70,7 +70,3 @@
     {/each}
   </div>
 </nav>
-
-<style>
-  .segmented-nav{min-width:0}
-</style>

@@ -953,8 +953,38 @@ for (const viewport of viewports) {
       await expect(soundDiscovery.getByText("Far Song", { exact: true })).toBeVisible();
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
         await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-recommendations.png`, fullPage: true });
-      await expect.poll(() => page.evaluate(() =>
-        document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      await expect.poll(() => page.evaluate(() => {
+        const root = document.documentElement;
+        if (root.scrollWidth <= root.clientWidth) return "";
+        const describe = (element: Element | null) => {
+          if (!(element instanceof HTMLElement)) return null;
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return {
+            tag: element.tagName,
+            className: element.className,
+            left: rect.left,
+            right: rect.right,
+            width: rect.width,
+            clientWidth: element.clientWidth,
+            scrollWidth: element.scrollWidth,
+            overflowX: style.overflowX,
+            position: style.position,
+          };
+        };
+        return JSON.stringify({
+          viewport: root.clientWidth,
+          page: root.scrollWidth,
+          body: describe(document.body),
+          active: describe(document.activeElement),
+          landmarks: [".app-shell", ".workspace", ".intelligence-view", ".intelligence-tabs", ".sound-discovery", ".sound-controls", ".sound-results", ".create-form"]
+            .map((selector) => [selector, describe(document.querySelector(selector))]),
+          offenders: [...document.querySelectorAll("body *")]
+            .map(describe)
+            .filter((item) => item && (item.right > root.clientWidth + .5 || item.left < -.5))
+            .slice(0, 20),
+        });
+      })).toBe("");
       await page.getByRole("tab", { name: "History" }).click();
       await expect(page.getByRole("heading", { name: "Listening history", level: 3, exact: true })).toBeVisible();
       await expect(page.locator(".history-list").getByText("Moon Song", { exact: true })).toBeVisible();
