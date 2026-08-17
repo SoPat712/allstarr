@@ -5,7 +5,7 @@ import shutil
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query
@@ -274,12 +274,24 @@ def create_app(
 
     @application.get("/api/stream/{song_id}")
     async def stream_song(song_id: str, quality: str = "alac-16-44") -> StreamingResponse:
-        root, source = await prepare_song(song_id, quality, "aac-web")
+        async def content() -> AsyncIterator[bytes]:
+            root: Path | None = None
+            try:
+                root, source = await prepare_song(song_id, quality, "aac-web")
+                async for chunk in process_runner.stream_flac(source):
+                    yield chunk
+            finally:
+                if root is not None:
+                    shutil.rmtree(root, ignore_errors=True)
+
         return StreamingResponse(
-            process_runner.stream_flac(source),
+            content(),
             media_type="audio/flac",
-            headers={"Content-Disposition": f'inline; filename="{song_id}.flac"'},
-            background=BackgroundTask(shutil.rmtree, root, ignore_errors=True),
+            headers={
+                "Content-Disposition": f'inline; filename="{song_id}.flac"',
+                "Cache-Control": "no-store",
+                "X-Accel-Buffering": "no",
+            },
         )
 
     @application.head("/api/stream/{song_id}")

@@ -47,12 +47,7 @@ public sealed class AppleDownloadStreamingCapabilityAdapter : IProviderStreaming
                 return ProviderOutcome<ProviderStreamLease>.Failure(new(ErrorFor(snapshot.State)));
             if (!OutboundRequestGuard.TryCreateConfiguredServiceUri(settings.BaseUrl, out var baseUri, out _))
                 return ProviderOutcome<ProviderStreamLease>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration));
-            // Cold lossless preparation can outlast music-client startup timeouts.
-            // Keep configured lossless quality for downloads; default playback starts at AAC 320.
-            var playbackQuality = request.RequestedQuality == ProviderAudioQuality.Any
-                ? ProviderAudioQuality.Lossy
-                : request.RequestedQuality;
-            var quality = AppleDownloadCapabilityAdapter.Quality(playbackQuality, settings.Quality);
+            var quality = AppleDownloadCapabilityAdapter.Quality(request.RequestedQuality, settings.Quality);
             var source = new Uri(baseUri!,
                 $"api/stream/{Uri.EscapeDataString(request.TrackId.Value)}?quality={Uri.EscapeDataString(quality)}");
             return ProviderOutcome<ProviderStreamLease>.Success(new(

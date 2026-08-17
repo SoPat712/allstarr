@@ -148,7 +148,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
             "apple/track 1");
 
         var lease = (await adapter.GetStreamLeaseAsync(
-            Context(tenant, user), new(track))).RequireValue();
+            Context(tenant, user), new(track, ProviderAudioQuality.HighResolution))).RequireValue();
         using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
         using var response = await lease.ProtectedResponseFactory!(request, CancellationToken.None);
 
@@ -162,7 +162,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(audio, await response.Content.ReadAsByteArrayAsync());
         Assert.Contains(gateway.Requests, uri =>
-            uri.PathAndQuery == "/api/stream/apple%2Ftrack%201?quality=aac-320");
+            uri.PathAndQuery == "/api/stream/apple%2Ftrack%201?quality=alac-24-96");
     }
 
     [Fact]

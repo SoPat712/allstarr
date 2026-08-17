@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from fastapi.responses import StreamingResponse
 
 from apple_gateway.app import API_VERSION, create_app
 from apple_gateway.catalog import CatalogClient
@@ -245,6 +246,22 @@ def test_song_stream_head_reports_only_known_facts_without_preparing_media(clien
     assert client[2].transcodes == []
     assert client[0].head("/api/stream/not-an-id").status_code == 400
     assert client[0].head("/api/stream/102", params={"quality": "made-up"}).status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_song_stream_opens_before_preparing_configured_quality(settings: Settings):
+    runner = FakeRunner()
+    app = create_app(settings, FakeWrapper(), FakeCatalog(), runner)
+    route = next(route for route in app.routes if getattr(route, "path", None) == "/api/stream/{song_id}")
+
+    response = await route.endpoint("102", "alac-16-44")
+
+    assert isinstance(response, StreamingResponse)
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert runner.calls == []
+    assert b"".join([chunk async for chunk in response.body_iterator]) == b"fLaCfixture"
+    assert runner.calls[-1][1] == "alac"
 
 
 def test_song_stream_falls_back_to_web_aac_when_lossless_is_unavailable(settings):
