@@ -77,7 +77,8 @@ public partial class JellyfinController
         var credentialQuery = Request.Query
             .Where(item => item.Key.Equals("api_key", StringComparison.OrdinalIgnoreCase) ||
                            item.Key.Equals("access_token", StringComparison.OrdinalIgnoreCase) ||
-                           item.Key.Equals("ApiKey", StringComparison.OrdinalIgnoreCase))
+                           item.Key.Equals("ApiKey", StringComparison.OrdinalIgnoreCase) ||
+                           item.Key.Equals("UserId", StringComparison.OrdinalIgnoreCase))
             .SelectMany(item => item.Value.Select(value =>
                 new KeyValuePair<string, string?>(item.Key, value)));
         var endpoint = $"Items/{Uri.EscapeDataString(musicLibraryId)}{QueryString.Create(credentialQuery)}";

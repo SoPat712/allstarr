@@ -521,13 +521,13 @@ public sealed class ProtocolRouteFixtureTests
             });
         using var client = factory.CreateClient();
 
-        using var response = await client.GetAsync("/Items/Root?api_key=fixture-key");
+        using var response = await client.GetAsync("/Items/Root?api_key=fixture-key&UserId=user-1");
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("full-object", body.RootElement.GetProperty("Etag").GetString());
         Assert.Equal(
-            ["/Users/Me?api_key=fixture-key", "/Items/music-1?api_key=fixture-key"],
+            ["/Users/Me?api_key=fixture-key", "/Items/music-1?api_key=fixture-key&UserId=user-1"],
             observedRequests);
     }
 
