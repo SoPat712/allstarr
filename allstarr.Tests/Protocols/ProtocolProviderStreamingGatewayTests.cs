@@ -160,6 +160,10 @@ public sealed class ProtocolProviderStreamingGatewayTests
                     request.ProviderPriority.SequenceEqual(new[] { "deezer" }))))
             .ReturnsAsync((ProviderRouteRequest request) =>
                 EmptyPlan<IProviderMetadataCapability>(request));
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(
+                It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) =>
+                EmptyPlan<IProviderStreamingCapability>(request));
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
@@ -171,6 +175,68 @@ public sealed class ProtocolProviderStreamingGatewayTests
             Context(), "Track Artist", 10, 0, 0, "deezer");
 
         Assert.Empty(result.Songs);
+        router.VerifyAll();
+    }
+
+    [Fact]
+    public async Task MetadataSearch_DoesNotPublishSongsWithoutAPlayableRoute()
+    {
+        var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        metadata.SetupGet(item => item.ProviderId).Returns("metadata-only");
+        metadata.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        metadata.Setup(item => item.SearchTracksAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new(
+                "metadata-only",
+                [new ProviderTrackMetadata(
+                    new("metadata-only", ProviderResourceKind.Track, "track-1"),
+                    "Track",
+                    [new("Artist")])])));
+        metadata.Setup(item => item.SearchAlbumsAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Success(
+                new("metadata-only", [])));
+        metadata.Setup(item => item.SearchArtistsAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderArtistMetadata>>.Success(
+                new("metadata-only", [])));
+        var registry = new ProviderRegistry([
+            new ProviderRegistration(
+                new ProviderDescriptor(
+                    "metadata-only",
+                    "Metadata only",
+                    "Fixture provider",
+                    ProviderOrigin.BuiltIn,
+                    "1",
+                    "1",
+                    [new ProviderCapabilityDescriptor(
+                        ProviderCapabilityKind.Metadata,
+                        ProviderCapabilitySupportState.Supported,
+                        ProviderAccountRequirement.None,
+                        "1",
+                        ["searchTracks", "getTrack"])],
+                    new ProviderPermissionDescriptor()),
+                [metadata.Object])
+        ]);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(
+                It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) =>
+                MetadataPlan(request, registry, metadata.Object));
+        var gateway = new ProtocolProviderGateway(
+            router.Object,
+            registry,
+            Mock.Of<IProviderRouteAccountResolver>(),
+            Mock.Of<IMusicMetadataService>(),
+            new HttpClientFactory());
+
+        var result = await gateway.SearchAsync(Context(), "Track", 10, 0, 0);
+
+        Assert.Empty(result.Songs);
+        metadata.VerifyAll();
         router.VerifyAll();
     }
 
@@ -231,7 +297,14 @@ public sealed class ProtocolProviderStreamingGatewayTests
                 It.Is<ProviderTrackLookupRequest>(request => request.Id.Value == "track-1")))
             .ReturnsAsync(ProviderOutcome<ProviderTrackMetadata>.Success(track));
         var registry = MetadataRegistry(capability.Object);
+        var streaming = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
+        streaming.SetupGet(item => item.ProviderId).Returns(providerId);
+        streaming.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(
+                It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) =>
+                Plan(request, registry, streaming.Object));
         router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(
                 It.IsAny<ProviderRouteRequest>()))
             .ReturnsAsync((ProviderRouteRequest request) =>
@@ -680,7 +753,8 @@ public sealed class ProtocolProviderStreamingGatewayTests
             return new ProviderRouteCandidate<IProviderStreamingCapability>(
                 index,
                 provider,
-                provider.Capabilities.Single(),
+                provider.Capabilities.Single(item =>
+                    item.Capability == ProviderCapabilityKind.Streaming),
                 capability,
                 new ProviderExecutionContext(
                     request.Actor,

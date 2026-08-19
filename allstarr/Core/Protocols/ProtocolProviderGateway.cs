@@ -125,7 +125,11 @@ public sealed class ProtocolProviderGateway(
                 query, songLimit, albumLimit, artistLimit, protocol.CancellationToken);
             return new SearchResult
             {
-                Songs = publicLegacy.Songs.Where(item => IsRequestedPublicProvider(item.ExternalProvider)).Take(songLimit).ToList(),
+                Songs = publicLegacy.Songs
+                    .Where(item => IsRequestedPublicProvider(item.ExternalProvider) &&
+                                   IsPublicStreamingProvider(item.ExternalProvider))
+                    .Take(songLimit)
+                    .ToList(),
                 Albums = publicLegacy.Albums.Where(item => IsRequestedPublicProvider(item.ExternalProvider)).Take(albumLimit).ToList(),
                 Artists = publicLegacy.Artists.Where(item => IsRequestedPublicProvider(item.ExternalProvider)).Take(artistLimit).ToList()
             };
@@ -136,6 +140,13 @@ public sealed class ProtocolProviderGateway(
                  NormalizeProvider(itemProvider) == requestedProviderId);
         }
         var actor = protocol.RequireActor();
+        var playableProviders = songLimit > 0
+            ? (await ResolvePlayableProviderOrderAsync(
+                    protocol,
+                    actor,
+                    ResolveProviderOrder(ProviderCapabilityKind.Streaming)))
+                .ToHashSet(StringComparer.Ordinal)
+            : [];
         var fetchLimit = Math.Clamp(Math.Max(songLimit, Math.Max(albumLimit, artistLimit)), 1, 200);
         var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Metadata)
             .Where(item => requestedProviderId == null || item == requestedProviderId)
@@ -163,6 +174,7 @@ public sealed class ProtocolProviderGateway(
                 await Task.WhenAll(songsTask, albumsTask, artistsTask);
                 return new
                 {
+                    ProviderId = NormalizeProvider(candidate.Provider.Id),
                     SongsResult = await songsTask,
                     AlbumsResult = await albumsTask,
                     ArtistsResult = await artistsTask
@@ -184,7 +196,7 @@ public sealed class ProtocolProviderGateway(
             var artists = outcome.ArtistsResult.IsSuccess
                 ? outcome.ArtistsResult.RequireValue().Items
                 : [];
-            if (outcome.SongsResult.IsSuccess)
+            if (playableProviders.Contains(outcome.ProviderId) && outcome.SongsResult.IsSuccess)
             {
                 routed.Songs.AddRange(outcome.SongsResult.RequireValue().Items
                     .Select(item => EnrichRelationships(Map(item), albums, artists)));
@@ -286,6 +298,7 @@ public sealed class ProtocolProviderGateway(
         ProviderActorContext actor,
         IReadOnlyList<string> configuredProviderOrder)
     {
+        if (configuredProviderOrder.Count == 0) return [];
         var streaming = await router.PlanAsync<IProviderStreamingCapability>(Request(
             protocol,
             actor,
@@ -874,6 +887,15 @@ public sealed class ProtocolProviderGateway(
         return registry.FindByCapability(ProviderCapabilityKind.Metadata, includeNonOperational: true)
             .Any(descriptor => descriptor.Id.Equals(providerId, StringComparison.Ordinal) &&
                                descriptor.Capabilities.Single(item => item.Capability == ProviderCapabilityKind.Metadata)
+                                   .AccountRequirement == ProviderAccountRequirement.None);
+    }
+
+    private bool IsPublicStreamingProvider(string? providerId)
+    {
+        if (string.IsNullOrWhiteSpace(providerId)) return false;
+        return registry.FindByCapability(ProviderCapabilityKind.Streaming, includeNonOperational: true)
+            .Any(descriptor => descriptor.Id.Equals(providerId, StringComparison.Ordinal) &&
+                               descriptor.Capabilities.Single(item => item.Capability == ProviderCapabilityKind.Streaming)
                                    .AccountRequirement == ProviderAccountRequirement.None);
     }
 
