@@ -451,6 +451,9 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
           providerIdentities: [], reasons: ["title_match"], warnings: [], candidates: [{
             libraryTrackId: "local-track", backendItemId: "backend-track", title: "Test song",
             artist: "Artist", album: "Album", candidateIsrc: "US-AAA-26-00001",
+            sourceIsrc: "US-AAA-26-00001", normalizedSourceTitle: "test song remix",
+            normalizedCandidateTitle: "test song", artistOverlap: 1, albumEvidence: 1,
+            durationDeltaMilliseconds: 250,
             providerTrackIds: { "lumen-audio": "provider-track", "apple-download": "apple-track" },
             confidence: 0.82, durationMilliseconds: 180_000, components: { title: 1 },
           }, {
@@ -1999,6 +2002,9 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await expect(dialog.getByText("rank #1")).toBeVisible();
   await dialog.locator(".candidate-card").first().getByText("Full evidence").click();
   await expect(dialog.locator(".candidate-card").first().getByText("Candidate ID")).toBeVisible();
+  await expect(dialog.locator(".candidate-card").first().getByText("Artist overlap")).toBeVisible();
+  await expect(dialog.locator(".candidate-card").first().getByText("Duration difference")).toBeVisible();
+  await expect(dialog.locator(".candidate-card").first().getByText("Apple Music – GAMDL track ID")).toBeVisible();
   await dialog.locator(".candidate-card").last().getByText("Full evidence").click();
   await expect(dialog.locator(".candidate-card").last().getByText("preference score")).toBeVisible();
   await dialog.getByLabel("Search local library and playable providers").fill("No local copy");

@@ -21,6 +21,10 @@ The reusable Jellyfin kit has deterministic and live layers:
   virtual/external DTOs and artwork, lyrics,
   playlists, security denials, exact bounded stream bytes (including Finer's
   query-only `Items/{id}/File?ApiKey=...` request), and latency.
+- Native counts compare Jellyfin's album, song, and artist totals exactly;
+  non-music totals remain the documented music-only projection. Musiver's
+  original-playlist-ID shape and Feishin-class header/WebSocket sessions are
+  covered alongside Finer's query-key file request.
 - `live_jellyfin_websocket_smoke.py` verifies header-authenticated direct and
   proxied WebSocket handshakes plus bidirectional session frames. It requires
   Python's `websockets` package and never prints the supplied token.

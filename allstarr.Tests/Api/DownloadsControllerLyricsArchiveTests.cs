@@ -1,9 +1,12 @@
 using System.IO.Compression;
 using allstarr.Controllers;
+using allstarr.Core.Downloads;
+using allstarr.Core.Storage;
 using allstarr.Models.Domain;
 using allstarr.Services.Lyrics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -73,8 +76,10 @@ public class DownloadsControllerLyricsArchiveTests
     }
 
     [Fact]
-    public void DeleteDownload_RemovesAdjacentLyricsSidecar()
+    [Trait("Category", "Postgres")]
+    public async Task DeleteDownload_RemovesAdjacentLyricsSidecar()
     {
+        await using var database = await PostgresTestDatabase.CreateAsync();
         var testRoot = CreateTestRoot();
         var downloadsRoot = Path.Combine(testRoot, "downloads");
         var artistDir = Path.Combine(downloadsRoot, "kept", "Artist");
@@ -87,13 +92,34 @@ public class DownloadsControllerLyricsArchiveTests
 
         try
         {
-            var controller = CreateController(downloadsRoot, new FakeKeptLyricsSidecarService(createSidecar: false));
+            await using (var db = new AllstarrDbContext(database.Options))
+            {
+                db.DownloadedSongMappings.Add(new DownloadedSongMappingEntity
+                {
+                    Id = Guid.CreateVersion7(),
+                    ProviderId = "fixture",
+                    ExternalId = "track",
+                    LocalPath = audioPath,
+                    Title = "Track",
+                    Artist = "Artist",
+                    Album = "Album",
+                    DownloadedAt = DateTimeOffset.UtcNow,
+                    Revision = 1
+                });
+                await db.SaveChangesAsync();
+            }
+            var controller = CreateController(
+                downloadsRoot,
+                new FakeKeptLyricsSidecarService(createSidecar: false),
+                new DbFactory(database.Options));
 
-            var result = controller.DeleteDownload("Artist/track.mp3");
+            var result = await controller.DeleteDownload("Artist/track.mp3");
 
             Assert.IsType<OkObjectResult>(result);
             Assert.False(File.Exists(audioPath));
             Assert.False(File.Exists(sidecarPath));
+            await using var verification = new AllstarrDbContext(database.Options);
+            Assert.Empty(await verification.DownloadedSongMappings.ToListAsync());
         }
         finally
         {
@@ -101,7 +127,10 @@ public class DownloadsControllerLyricsArchiveTests
         }
     }
 
-    private static DownloadsController CreateController(string downloadsRoot, IKeptLyricsSidecarService? keptLyricsSidecarService = null)
+    private static DownloadsController CreateController(
+        string downloadsRoot,
+        IKeptLyricsSidecarService? keptLyricsSidecarService = null,
+        IDbContextFactory<AllstarrDbContext>? contextFactory = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -113,7 +142,8 @@ public class DownloadsControllerLyricsArchiveTests
         return new DownloadsController(
             NullLogger<DownloadsController>.Instance,
             config,
-            keptLyricsSidecarService)
+            keptLyricsSidecarService,
+            contextFactory: contextFactory)
         {
             ControllerContext = new ControllerContext
             {
@@ -144,6 +174,15 @@ public class DownloadsControllerLyricsArchiveTests
         {
             Directory.Delete(root, recursive: true);
         }
+    }
+
+    private sealed class DbFactory(DbContextOptions<AllstarrDbContext> options)
+        : IDbContextFactory<AllstarrDbContext>
+    {
+        public AllstarrDbContext CreateDbContext() => new(options);
+
+        public Task<AllstarrDbContext> CreateDbContextAsync(
+            CancellationToken cancellationToken = default) => Task.FromResult(new AllstarrDbContext(options));
     }
 
     private sealed class FakeKeptLyricsSidecarService : IKeptLyricsSidecarService

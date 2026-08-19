@@ -1236,6 +1236,10 @@ compare_projection "music library root stable object" \
 echo "declared-diff music library ChildCount=Jellyfin returns a volatile value across identical reads"
 check_json "music-only counts" "$ALLSTARR_BASE/Items/Counts?UserId=$best_user_id" \
     '.MovieCount == 0 and .SeriesCount == 0 and .EpisodeCount == 0 and .MusicVideoCount == 0'
+compare_projection "native music counts exact data" \
+    "$DIRECT_BASE/Items/Counts?UserId=$best_user_id" \
+    "$ALLSTARR_BASE/Items/Counts?UserId=$best_user_id" \
+    '{AlbumCount,SongCount,ArtistCount}'
 check_json "playback info" "$ALLSTARR_BASE/Items/$media_id/PlaybackInfo?UserId=$best_user_id" \
     '(.MediaSources | type == "array") and (.MediaSources | length > 0)'
 compare_structure "playback info structure parity" \

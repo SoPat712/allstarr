@@ -738,6 +738,8 @@ export type MatchCandidate = {
   durationMilliseconds?: number | null;
   sourceIsrc?: string | null;
   candidateIsrc?: string | null;
+  normalizedSourceTitle?: string | null;
+  normalizedCandidateTitle?: string | null;
   artistOverlap?: number | null;
   albumEvidence?: number | null;
   durationDeltaMilliseconds?: number | null;

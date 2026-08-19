@@ -116,6 +116,21 @@
     return value.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ");
   }
 
+  function candidateFacts(candidate: MatchReviewItem["candidates"][number]) {
+    const facts: Array<readonly [string, string | null | undefined]> = [
+      ["Normalized source title", candidate.normalizedSourceTitle],
+      ["Normalized candidate title", candidate.normalizedCandidateTitle],
+      ["Source ISRC", candidate.sourceIsrc],
+      ["Candidate ISRC", candidate.candidateIsrc],
+      ["Artist overlap", candidate.artistOverlap == null ? null : percent(candidate.artistOverlap)],
+      ["Album evidence", candidate.albumEvidence == null ? null : percent(candidate.albumEvidence)],
+      ["Duration difference", candidate.durationDeltaMilliseconds == null ? null : `${Math.round(candidate.durationDeltaMilliseconds)} ms`],
+      ...Object.entries(candidate.providerTrackIds ?? {}).map(([providerId, trackId]) =>
+        [`${providerName(providerId)} track ID`, trackId] as const),
+    ];
+    return facts.filter((fact) => fact[1]);
+  }
+
   async function search() {
     if (!match || targetQuery.trim().length < 2 || loading) return;
     loading = true;
@@ -293,6 +308,9 @@
                     <dl>
                       <div><dt>Candidate ID</dt><dd>{candidate.libraryTrackId || candidate.backendItemId || candidateExternalId(candidate) || "—"}</dd></div>
                       <div><dt>Raw confidence</dt><dd>{percent(candidate.confidence)}</dd></div>
+                      {#each candidateFacts(candidate) as [label, value]}
+                        <div><dt>{label}</dt><dd>{value}</dd></div>
+                      {/each}
                       {#each scoreComponents(candidate) as [name, value]}
                         <div><dt>{evidenceLabel(name)}</dt><dd>{percent(value)}</dd></div>
                       {/each}
@@ -396,6 +414,7 @@
                 <div><dt>Rank</dt><dd>#{results.indexOf(target) + 1}</dd></div>
                 <div><dt>Candidate ID</dt><dd>{target.externalId || target.backendItemId || target.id}</dd></div>
                 <div><dt>Raw confidence</dt><dd>{percent(target.confidence)}</dd></div>
+                {#if target.isrc}<div><dt>ISRC</dt><dd>{target.isrc}</dd></div>{/if}
                 {#each Object.entries(target.components ?? {}) as [name, value]}
                   <div><dt>{evidenceLabel(name)}</dt><dd>{percent(value)}</dd></div>
                 {/each}
