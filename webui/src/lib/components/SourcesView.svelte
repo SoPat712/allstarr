@@ -47,10 +47,16 @@
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
 
   let {
+    mode = "services",
     administrator,
     initialSource = "",
     initialSection = "data",
-  }: { administrator: boolean; initialSource?: string; initialSection?: string } = $props();
+  }: {
+    mode?: "services" | "accounts";
+    administrator: boolean;
+    initialSource?: string;
+    initialSection?: string;
+  } = $props();
 
   let schema = $state<UiSchema | null>(null);
   let accounts = $state<ProviderAccount[]>([]);
@@ -206,6 +212,11 @@
     return item.description || "Configure this Source and its accounts here.";
   }
 
+  function implementationLabel(item: ProviderDefinition) {
+    const count = item.capabilityRoutes?.length ?? 0;
+    return count > 1 ? `${count} interchangeable implementations` : `${sourceOriginLabel(item)} implementation`;
+  }
+
   function accountSettingValue(account: ProviderAccount, field: ProviderSetting) {
     if (field.sensitive)
       return account.configuredFields?.includes(field.key) ? "Stored" : "Not set";
@@ -333,11 +344,11 @@
 </script>
 
 {#if loading}
-  <Skeleton class="panel sources-panel skeleton-panel" aria-label="Loading Sources" aria-busy="true" />
+  <Skeleton class="panel sources-panel skeleton-panel" aria-label={`Loading ${mode === "accounts" ? "Accounts" : "Services"}`} aria-busy="true" />
 {:else if !schema}
   <RouteError
-    eyebrow="Sources unavailable"
-    title="Allstarr could not load the Source catalog."
+    eyebrow={`${mode === "accounts" ? "Accounts" : "Services"} unavailable`}
+    title={`Allstarr could not load ${mode === "accounts" ? "provider accounts" : "the Service catalog"}.`}
     message={error}
     onRetry={refresh}
   />
@@ -350,9 +361,10 @@
   {/if}
 
   <div class="sources-layout" aria-busy={refreshing}>
+    {#if mode === "services"}
     <section class="panel sources-panel">
       <header class="sources-heading">
-        <div><p class="eyebrow">Provider-neutral routing</p><h2>Sources</h2><p>Capabilities describe what a Source can do. Latency appears after a health or click-to-stream check reports timing.</p></div>
+        <div><p class="eyebrow">Provider-neutral services</p><h2>Services</h2><p>Capabilities describe what a Service can do. Latency appears after a health or click-to-stream check reports timing.</p></div>
         <div class="sources-heading-actions">
           <Button variant="secondary" onclick={() => void refresh()}>Refresh</Button>
           {#if canManage}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</Button>{/if}
@@ -384,7 +396,7 @@
                 <td>
                   <button class="operational-row-identity" type="button" onclick={() => inspectSource(item)}>
                     <ProviderArtwork id={item.id} definition={item} />
-                    <span><strong>{item.name}</strong><small>{sourceOriginLabel(item)} · {item.description || "Provider capability Source"}</small></span>
+                    <span><strong>{item.name}</strong><small>{implementationLabel(item)} · {sourcePurpose(item)}</small></span>
                   </button>
                   <Badge class="operational-mobile-state" state={state}>{state === "needs_config" ? "Needs setup" : humanize(state)}</Badge>
                   <details class="operational-mobile-detail">
@@ -407,7 +419,9 @@
         </table>
       </div>
     </section>
+    {/if}
 
+    {#if mode === "accounts"}
     <section class="panel connections-panel">
       <header class="connections-heading">
         <div><p class="eyebrow">Encrypted account access</p><h2>Accounts</h2><p>{managementMode || schema.providerAccountManagementMode || "Managed"} · credentials are never returned to the browser.</p></div>
@@ -466,6 +480,7 @@
         </table>
       </div>
     </section>
+    {/if}
   </div>
 
   <Dialog.Root bind:open={detailOpen}>
@@ -512,7 +527,7 @@
               <dl class="source-detail-data">
                 <div><dt>Status</dt><dd><Badge state={state}>{state === "needs_config" ? "Needs setup" : humanize(state)}</Badge></dd></div>
                 <div><dt>Source ID</dt><dd>{selectedSource.id}</dd></div>
-                <div><dt>Implementation</dt><dd>{sourceOriginLabel(selectedSource)}</dd></div>
+                <div><dt>Implementations</dt><dd>{implementationLabel(selectedSource)}</dd></div>
                 <div><dt>Capabilities</dt><dd>{(selectedSource.categories ?? []).map(humanize).join(", ") || "Pending"}</dd></div>
                 <div><dt>Readiness</dt><dd>{metrics.passing}/{metrics.total || 0} passing · {metrics.failed} failing</dd></div>
                 <div><dt>Last check</dt><dd>{relativeTime(metrics.checkedAt)}</dd></div>
@@ -520,6 +535,9 @@
                 <div><dt>Click to stream</dt><dd>{#if cts}<Badge state={cts.health === "healthy" ? "healthy" : "degraded"}>{ctsMeasurementLabel(cts)}</Badge> · {relativeTime(cts.testedAt)}{:else if selectedSource.categories?.some((item) => ["streaming", "download"].includes(item.toLowerCase()))}Awaiting first sample{:else}Not applicable{/if}</dd></div>
               </dl>
               <div class="source-detail-capabilities">
+                {#each selectedSource.capabilityRoutes ?? [] as route (route.routeId)}
+                  <span><strong>{route.name || selectedSource.name}</strong><small>{humanize(route.origin || "built_in")} · {route.capabilities.map(humanize).join(", ") || "No published capabilities"}</small></span>
+                {/each}
                 {#each selectedSource.runtimeCapabilities ?? [] as capability}
                   <span><strong>{humanize(capability.id)}</strong><Badge state={readinessClass(capability.ready, capability.health)}>{capability.ready ? "Ready" : humanize(capability.reasonCode || capability.configuration || capability.health || "Unavailable")}</Badge></span>
                 {:else}<p>No runtime capability probes are published for this Source.</p>{/each}

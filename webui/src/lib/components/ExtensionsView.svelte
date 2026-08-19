@@ -307,7 +307,7 @@
             <div class="extension-copy"><span><strong>{item.displayName}</strong><small>v{item.version}{item.author ? ` · ${item.author}` : ""}</small></span><p>{item.description || "No description supplied."}</p><div>{#each item.capabilities ?? [] as capability}<Badge>{humanize(capability)}</Badge>{/each}</div></div>
             <Badge state={item.active ? "healthy" : item.state === "failed" ? "degraded" : "suggested"}>{humanize(item.state)}</Badge>
             <div class="extension-actions">
-              {#if item.active}<Button variant="secondary" href={`#/sources?source=${encodeURIComponent(item.extensionId)}&section=configuration`}>Configure Source</Button>{/if}
+              {#if item.active}<Button variant="secondary" href={`#/integrations/services?source=${encodeURIComponent(item.extensionId)}&section=configuration`}>Configure Service</Button>{/if}
               {#if update}<Button disabled={Boolean(action)} onclick={() => void stage(update)}>{action === `install:${update.id}` ? "Verifying…" : `Update ${item.version} → ${update.version}`}</Button>{/if}
               {#if item.permissionReviewRequired}<Button disabled={Boolean(action)} onclick={() => void openReview(item)}>{action === `review-load:${item.id}` ? "Loading review…" : "Review permissions"}</Button>
               {:else if ["staged", "disabled"].includes(item.state.toLowerCase())}<Button disabled={Boolean(action)} onclick={() => confirmActivation(item)}>Enable</Button>

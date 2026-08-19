@@ -165,7 +165,7 @@
         <strong>{sourceIssues[0].providerName} needs attention.</strong>
         {humanize(sourceIssues[0].reason)}{sourceIssues.length > 1 ? ` · ${sourceIssues.length - 1} more` : ""}
       </p>
-      <Button variant="secondary" size="sm" href={`#/sources?source=${encodeURIComponent(sourceIssues[0].providerId)}&section=configuration`}>Open source</Button>
+      <Button variant="secondary" size="sm" href={`#/integrations/services?source=${encodeURIComponent(sourceIssues[0].providerId)}&section=configuration`}>Open service</Button>
     </div>
   {/if}
 
@@ -289,7 +289,7 @@
           <p class="eyebrow">Sources</p>
           <h2>Provider readiness</h2>
         </div>
-        <a href="#/sources">Manage</a>
+        <a href="#/integrations/services">Manage</a>
       </header>
 
       {#if snapshot.providers?.length}
@@ -320,7 +320,7 @@
         <div class="compact-empty">
           <strong>No provider checks yet</strong>
           <p>Connect a Source to see its capability health here.</p>
-          <a href="#/sources">Open Sources</a>
+          <a href="#/integrations/services">Open Services</a>
         </div>
       {/if}
     </article>

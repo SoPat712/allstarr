@@ -150,7 +150,7 @@
       </div>
 
       <footer class="apple-manager-footer">
-        <Button variant="secondary" href="#/sources?source=apple-download&section=configuration" onclick={() => open = false}>Provider settings</Button>
+        <Button variant="secondary" href="#/integrations/services?source=apple-download&section=configuration" onclick={() => open = false}>Provider settings</Button>
         <Button variant="secondary" disabled={Boolean(action)} onclick={() => void load()}>Refresh status</Button>
       </footer>
     </Dialog.Content>

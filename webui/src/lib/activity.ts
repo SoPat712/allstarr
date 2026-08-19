@@ -147,7 +147,7 @@ export function activityLink(item: ActivityItem) {
     const search = item.sourceTitle || item.sourceProviderTrackId || item.detail;
     return `#/library/mappings?search=${encodeURIComponent(search)}`;
   }
-  if (item.providerId) return "#/sources";
+  if (item.providerId) return "#/integrations/services";
   return null;
 }
 

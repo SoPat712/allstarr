@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { ArrowDown, ArrowUp } from "@lucide/svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Badge } from "$lib/components/ui/badge";
@@ -10,20 +9,16 @@
     home,
     settings,
     type ConfigSection,
-    type PriorityGroup,
     type UiSchema,
   } from "$lib/api";
-  import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
   import EnvMigrationCard from "$lib/components/EnvMigrationCard.svelte";
-  import ExtensionsView from "$lib/components/ExtensionsView.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SelectiveTransferCard from "$lib/components/SelectiveTransferCard.svelte";
   import CacheDiagnosticsCard from "$lib/components/CacheDiagnosticsCard.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
-  import AudioQualityField from "$lib/components/AudioQualityField.svelte";
   import { humanize } from "$lib/sources";
-  import { fieldValue, move, routingOrder } from "$lib/settings";
+  import { fieldValue } from "$lib/settings";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
 
   let {
@@ -40,8 +35,6 @@
 
   const tabs = [
     { id: "general", label: "General", href: "#/settings/general" },
-    { id: "routing", label: "Provider routing", href: "#/settings/routing" },
-    { id: "extensions", label: "Extensions", href: "#/settings/extensions" },
     { id: "maintenance", label: "Maintenance", href: "#/settings/maintenance" },
   ] as const;
   const contextualTrackCacheKeys = new Set([
@@ -49,13 +42,17 @@
     "CACHE_DURATION_HOURS",
     "CACHE_TRANSCODE_MINUTES",
   ]);
+  const integrationRoutingKeys = new Set([
+    "AUDIO_QUALITY",
+    "MATCHING_LOCAL_PREFERENCE_PERCENT",
+    "MATCHING_EXTENSION_PENALTY_PERCENT",
+  ]);
 
   let schema = $state<UiSchema | null>(null);
   let config = $state<Record<string, unknown>>({});
   let storage = $state<Awaited<ReturnType<typeof settings.storage>> | null>(null);
   let cache = $state<Awaited<ReturnType<typeof settings.cache>> | null>(null);
   let cachePreview = $state<Awaited<ReturnType<typeof settings.cachePreview>> | null>(null);
-  let orders = $state<Record<string, string[]>>({});
   let loading = $state(true);
   let refreshing = $state(false);
   let action = $state("");
@@ -63,19 +60,19 @@
   let feedback = $state("");
   let purgeTarget = $state("");
   let purgeOpen = $state(false);
-  let dragging = $state<{ groupId: string; index: number } | null>(null);
   let loadedSection = $state("");
   let dirtyOwners = $state<string[]>([]);
   let serverChanged = $state(false);
   let openSections = $state(["general"]);
 
-  const active = $derived(tabs.some((item) => item.id === section) ? section : "general");
+  const active = $derived(section === "maintenance" ? "maintenance" : "general");
   const generalSections = $derived.by(() => {
     return (schema?.configSections ?? [])
       .filter((item) => item.id !== "spotify-import")
       .map((item) => ({
         ...item,
-        fields: item.fields.filter((field) => !contextualTrackCacheKeys.has(field.key)),
+        fields: item.fields.filter((field) =>
+          !contextualTrackCacheKeys.has(field.key) && !integrationRoutingKeys.has(field.key)),
       }))
       .filter((item) => item.fields.length);
   });
@@ -90,10 +87,6 @@
     loadedSection = section;
     if (hadSection) void refresh();
   });
-
-  function provider(id: string) {
-    return schema?.providers.find((item) => item.id.toLowerCase() === id.toLowerCase());
-  }
 
   function markDirty(owner: string) {
     if (!dirtyOwners.includes(owner)) dirtyOwners = [...dirtyOwners, owner];
@@ -115,7 +108,7 @@
     refreshing = true;
     error = "";
     const requests: Array<[string, Promise<unknown>]> = [["schema", home.schema()]];
-    if (active === "general" || active === "routing")
+    if (active === "general")
       requests.push(["config", settings.config()]);
     if (active === "maintenance") requests.push(
       ["storage", settings.storage()],
@@ -138,10 +131,6 @@
       if (label === "cachePreview")
         cachePreview = result.value as Awaited<ReturnType<typeof settings.cachePreview>>;
     });
-    if (schema && !dirtyOwners.length) {
-      orders = Object.fromEntries((schema.priorityGroups ?? [])
-        .map((group) => [group.id, routingOrder(config, group)]));
-    }
     const failed = results.filter((result) => result.status === "rejected");
     if (failed.length)
       error = failed[0].reason instanceof Error ? failed[0].reason.message : "Some settings are unavailable.";
@@ -173,40 +162,6 @@
     } finally {
       action = "";
     }
-  }
-
-  async function saveOrder(group: PriorityGroup) {
-    if (action) return;
-    action = group.id;
-    try {
-      await settings.save({ [group.envKey]: (orders[group.id] ?? []).join(",") });
-      markSaved(group.id);
-      feedback = `${group.label} saved.`;
-      await refresh();
-    } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "Provider routing could not be saved.";
-    } finally {
-      action = "";
-    }
-  }
-
-  function moveProvider(group: PriorityGroup, index: number, direction: -1 | 1) {
-    const order = orders[group.id] ?? [];
-    const providerId = order[index];
-    orders = { ...orders, [group.id]: move(order, index, direction) };
-    markDirty(group.id);
-    feedback = `${provider(providerId)?.name ?? humanize(providerId)} moved to position ${index + direction + 1}.`;
-  }
-
-  function dropProvider(group: PriorityGroup, index: number) {
-    if (!dragging || dragging.groupId !== group.id || dragging.index === index) return;
-    const order = [...(orders[group.id] ?? [])];
-    const [providerId] = order.splice(dragging.index, 1);
-    order.splice(index, 0, providerId);
-    orders = { ...orders, [group.id]: order };
-    markDirty(group.id);
-    feedback = `${provider(providerId)?.name ?? humanize(providerId)} moved to position ${index + 1}.`;
-    dragging = null;
   }
 
   async function run(name: string, operation: () => Promise<unknown>, message: string) {
@@ -289,18 +244,7 @@
             <summary><span><strong>{item.label}</strong><small>{item.fields.filter((field) => !field.readOnly).length} editable</small></span></summary>
             <form class="settings-fields" oninput={() => markDirty(item.id)} onsubmit={(event) => void saveSection(event, item)}>
               {#each item.fields as field}
-                {#if field.type === "audio-quality"}
-                  <div class="setting-field audio-quality-field">
-                    <span><strong>{field.label}</strong></span>
-                    <AudioQualityField
-                      name={field.key}
-                      value={String(fieldValue(config, field))}
-                      onchange={() => markDirty(item.id)}
-                    />
-                    {#if field.helpText}<small>{field.helpText}</small>{/if}
-                  </div>
-                {:else}
-                  <label class="setting-field" class:read-only={field.readOnly || field.ownership === "deployment"}>
+                <label class="setting-field" class:read-only={field.readOnly || field.ownership === "deployment"}>
                   <span><strong>{field.label}</strong>{#if field.ownership === "deployment"}<small>Deployment-owned</small>{/if}</span>
                   {#if field.readOnly || field.ownership === "deployment"}
                     <output>{String(fieldValue(config, field))}</output>
@@ -324,8 +268,7 @@
                     />
                   {/if}
                   {#if field.helpText}<small>{field.helpText}</small>{/if}
-                  </label>
-                {/if}
+                </label>
               {/each}
               {#if item.id === "cache"}
                 <p class="settings-impact">
@@ -338,49 +281,6 @@
             </form>
           </details>
         {/each}
-      </div>
-    {:else if active === "routing"}
-      <div class="settings-stack">
-        <header class="settings-intro"><p class="eyebrow">Provider-neutral policy</p><h2>Provider routing</h2><p>The local media server remains locked first. Move fallback Sources into the order Allstarr should try them.</p></header>
-        <div class="routing-groups">
-          {#each schema.priorityGroups ?? [] as group}
-            <section class="panel routing-group">
-              <header><div><strong>{group.label}</strong><small>{group.description}</small></div><Button disabled={Boolean(action)} onclick={() => void saveOrder(group)}>{action === group.id ? "Saving…" : "Save order"}</Button></header>
-              <ol>
-                {#if group.pinnedProvider}
-                  <li class="pinned">
-                    <ProviderArtwork id={group.pinnedProvider.id} label={group.pinnedProvider.name} />
-                    <span><strong>{group.pinnedProvider.name}</strong><small>{group.pinnedProvider.reason}</small></span>
-                    <Badge state="healthy">Local · fixed</Badge>
-                  </li>
-                {/if}
-                {#each orders[group.id] ?? group.providers as providerId, index}
-                  {@const definition = provider(providerId)}
-                  <li
-                    draggable="true"
-                    class:dragging={dragging?.groupId === group.id && dragging.index === index}
-                    ondragstart={() => { dragging = { groupId: group.id, index }; }}
-                    ondragover={(event) => event.preventDefault()}
-                    ondrop={() => dropProvider(group, index)}
-                    ondragend={() => { dragging = null; }}
-                  >
-                    <ProviderArtwork id={providerId} definition={definition} />
-                    <span><strong>{definition?.name ?? humanize(providerId)}</strong><small>{definition?.categories?.map(humanize).join(" · ") || "Provider Source"}</small></span>
-                    <span class="routing-actions">
-                      <Button variant="outline" size="icon-sm" aria-label={`Move ${definition?.name ?? providerId} up`} disabled={index === 0} onclick={() => moveProvider(group, index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
-                      <Button variant="outline" size="icon-sm" aria-label={`Move ${definition?.name ?? providerId} down`} disabled={index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
-                    </span>
-                  </li>
-                {/each}
-              </ol>
-            </section>
-          {/each}
-        </div>
-      </div>
-    {:else if active === "extensions"}
-      <div class="settings-stack">
-        <header class="settings-intro"><p class="eyebrow">Extension control plane</p><h2>Extensions</h2><p>Installed providers use the same capability, account, routing, and readiness components as built-ins.</p></header>
-        <ExtensionsView />
       </div>
     {:else}
       <div class="settings-stack">

@@ -392,7 +392,7 @@
         {:else if step === 1}
           <section class="playlist-add-step">
             {#if !accounts.length && !loading}
-              <div class="compact-empty"><strong>No Playlist Sources are available</strong><p>Connect a Playlist-capable account under Sources first.</p><Button href="#/sources">Open Sources</Button></div>
+              <div class="compact-empty"><strong>No Playlist Sources are available</strong><p>Connect a Playlist-capable account under Integrations first.</p><Button href="#/integrations/accounts">Open Accounts</Button></div>
             {:else}
               <div class="playlist-source-groups">
                 {#each providerIds as providerId}

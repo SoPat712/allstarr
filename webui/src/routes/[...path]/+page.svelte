@@ -12,7 +12,7 @@
     { href: "#/", label: "Home", icon: "home" },
     { href: "#/library/playlists", prefix: "/library/", label: "Library", icon: "library" },
     { href: "#/intelligence", label: "Intelligence", icon: "headphones" },
-    { href: "#/sources", label: "Sources", icon: "sources" },
+    { href: "#/integrations/services", prefix: "/integrations/", label: "Integrations", icon: "sources" },
     { href: "#/activity", label: "Activity", icon: "activity" },
     { href: "#/settings", label: "Settings", icon: "settings" },
   ];
@@ -54,7 +54,10 @@
       return "/library/playlists";
     }
     if (["/library/missing", "/library/migration"].includes(path)) return "/library/mappings";
-    if (path === "/settings/accounts") return "/sources";
+    if (path === "/sources") return "/integrations/services";
+    if (path === "/settings/accounts") return "/integrations/accounts";
+    if (path === "/settings/extensions") return "/integrations/extensions";
+    if (path === "/settings/routing") return "/integrations/routing";
     return path;
   }
 
@@ -89,8 +92,9 @@
               ? { storage: "kept" }
               : route === "/intelligence"
                 ? { initialSection: routeQuery.get("section") ?? "overview" }
-                : route === "/sources"
+                : route.startsWith("/integrations")
                   ? {
+                      section: route.split("/")[2] || "services",
                       administrator: session?.user?.isAdministrator ?? false,
                       initialSource: routeQuery.get("source") ?? "",
                       initialSection: routeQuery.get("section") ?? "data",
@@ -137,11 +141,12 @@
     }
     if (path === "/activity") return import("$lib/components/EventLogView.svelte");
     if (path === "/intelligence") return import("$lib/components/IntelligenceView.svelte");
-    if (path === "/sources") return import("$lib/components/SourcesView.svelte");
+    if (path.startsWith("/integrations")) return import("$lib/components/IntegrationsView.svelte");
     if (path.startsWith("/settings")) return import("$lib/components/SettingsView.svelte");
   }
 
-  const viewKey = (path: string) => path.startsWith("/settings") ? "/settings" : path;
+  const viewKey = (path: string) => path.startsWith("/settings") ? "/settings"
+    : path.startsWith("/integrations") ? "/integrations" : path;
 
   $effect(() => {
     const path = route;

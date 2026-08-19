@@ -237,7 +237,7 @@
       <div class="scope-card-status">
         <strong>{mediaTargets.length ? "Finish indexing your music library" : "Connect a music server"}</strong>
         <span>{mediaTargets.length ? "Allstarr found your server, but it has not indexed a music library yet." : "Connect Jellyfin or Subsonic before opening Intelligence."}</span>
-        <Button variant="secondary" href="#/sources">Open Sources</Button>
+        <Button variant="secondary" href="#/integrations/services">Open Services</Button>
       </div>
     {/if}
     {#if !targetsLoading && selectedTarget && error}
@@ -341,7 +341,7 @@
             </ol>
           {:else if !data.policy?.enabled}<div class="compact-empty"><strong>Recommendations are off</strong><p><a class="touch-link" href="#/intelligence?section=settings">Turn on automatic history</a>, then import retained history or complete a play.</p></div>
           {:else if readyRecommendationSources}<div class="compact-empty"><strong>No recommendations yet</strong><p>Your sources are ready. Complete a play or import history inside the retention window, then refresh recommendations.</p></div>
-          {:else}<div class="compact-empty"><strong>No recommendation sources are ready</strong><p><a class="touch-link" href="#/sources">Connect or configure a source</a>, then refresh.</p></div>{/if}
+          {:else}<div class="compact-empty"><strong>No recommendation sources are ready</strong><p><a class="touch-link" href="#/integrations/services">Connect or configure a source</a>, then refresh.</p></div>{/if}
         </section>
 
         <aside class="side-stack">

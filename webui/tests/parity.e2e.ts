@@ -36,6 +36,8 @@ const schema = {
     {
       id: "general", label: "General", fields: [
       { key: "AUDIO_QUALITY", label: "Audio quality", type: "audio-quality", valuePath: "audio.quality" },
+      { key: "MATCHING_LOCAL_PREFERENCE_PERCENT", label: "Local track preference", type: "number", valuePath: "matching.localPreferencePercent", min: 0, max: 20, helpText: "Percentage points added to Jellyfin-local candidates. Default: 7%." },
+      { key: "MATCHING_EXTENSION_PENALTY_PERCENT", label: "Extension match penalty", type: "number", valuePath: "matching.extensionPenaltyPercent", min: 0, max: 20, helpText: "Percentage points subtracted from extension candidates. Default: 3%." },
       { key: "STORAGE_MODE", label: "Storage mode", type: "select", valuePath: "library.storageMode", options: ["Permanent", "Cache"] },
       { key: "Theme", label: "Theme", type: "select", valuePath: "general.theme", options: ["Dark"] },
       { key: "PublicUrl", label: "Public URL", type: "text", valuePath: "deployment.url", ownership: "deployment", readOnly: true },
@@ -208,6 +210,7 @@ const responses: Record<string, unknown> = {
   "/api/admin/config": {
     general: { theme: "Dark" }, deployment: { url: "https://music.example.test" },
     audio: { quality: "BestAvailable" },
+    matching: { localPreferencePercent: 7, extensionPenaltyPercent: 3 },
     appleDownload: { baseUrl: "http://apple-download.test" },
     library: { storageMode: "Cache", cacheDurationHours: 24 },
     cache: { searchResultsMinutes: 1, mediaMaximumMegabytes: 512, transcodeCacheMinutes: 60 },
@@ -673,7 +676,10 @@ const routes = [
   ["#/library/kept", "Library"],
   ["#/activity", "Activity"],
   ["#/intelligence", "Intelligence"],
-  ["#/sources", "Sources"],
+  ["#/integrations/services", "Integrations"],
+  ["#/integrations/accounts", "Integrations"],
+  ["#/integrations/extensions", "Integrations"],
+  ["#/integrations/routing", "Integrations"],
   ["#/settings/general", "Settings"],
 ] as const;
 
@@ -686,7 +692,7 @@ const stateRoutes = [
   ["#/library/mappings", "Library", "Loading match review", "/api/admin/track-matches", ["/api/admin/track-matches"]],
   ["#/library/cached", "Library", "Loading Cached tracks", "/api/admin/downloads", ["/api/admin/downloads"]],
   ["#/activity", "Activity", "Loading Event log", "/api/admin/ui/activity", ["/api/admin/ui/activity"]],
-  ["#/sources", "Sources", "Loading Sources", "/api/admin/provider-accounts", ["/api/admin/ui/schema", "/api/admin/provider-accounts"]],
+  ["#/integrations/services", "Integrations", "Loading Services", "/api/admin/provider-accounts", ["/api/admin/ui/schema", "/api/admin/provider-accounts"]],
   ["#/settings/general", "Settings", "Loading Settings", "/api/admin/ui/schema", ["/api/admin/ui/schema"]],
 ] as const;
 
@@ -781,14 +787,17 @@ for (const viewport of viewports) {
       await expect(page.getByRole("option", { name: "Dark" })).toBeVisible();
       await page.keyboard.press("Escape");
       await page.goto("#/settings/accounts");
-      await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Integrations", level: 1 })).toBeVisible();
+      await expect(page.getByRole("tab", { name: "Accounts" })).toHaveAttribute("aria-selected", "true");
       await page.goto("#/sources?source=lumen-audio&section=configuration");
+      await expect(page.getByRole("tab", { name: "Services" })).toHaveAttribute("aria-selected", "true");
       await page.getByRole("button", { name: "Connect another account" }).click();
       const sourceDialog = page.getByRole("dialog", { name: "Connect a Source" });
       await expect(sourceDialog.getByRole("button", { name: "Source", exact: true })).toContainText("Lumen Audio");
       await expect(sourceDialog.getByLabel("Access token")).toHaveValue("");
       await sourceDialog.getByRole("button", { name: "Cancel" }).click();
       await page.goto("#/settings/routing");
+      await expect(page.getByRole("tab", { name: "Routing" })).toHaveAttribute("aria-selected", "true");
       await expect(page.getByText("Local · fixed")).toBeVisible();
       await expect(page.getByRole("button", { name: "Move Jellyfin up" })).toHaveCount(0);
       await expect(page.locator(".provider-art").first()).toHaveCSS("border-top-width", "0px");
@@ -798,6 +807,7 @@ for (const viewport of viewports) {
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.goto("#/settings/extensions");
+      await expect(page.getByRole("tab", { name: "Extensions" })).toHaveAttribute("aria-selected", "true");
       await expect(page.locator(".extension-row .badge")).toContainText(["Metadata", "Streaming"]);
       await expect(page.locator(".segmented-tab-count").first()).toHaveCSS("border-style", "solid");
       await expect(page.getByRole("tab", { name: /Available/ })).toHaveCSS("border-right-width", "0px");
@@ -1029,6 +1039,7 @@ for (const viewport of viewports) {
       await expect(connect.getByText("Leave blank to send listens to ListenBrainz. To use Koito, paste its HTTPS listening address.")).toBeVisible();
       await expect(connect.getByRole("button", { name: "Save and test" })).toBeInViewport();
       await page.getByRole("button", { name: "Close source connection dialog" }).click();
+      await page.goto("#/integrations/accounts");
       await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();
       await page.getByRole("tab", { name: "Access" }).click();
       await page.getByRole("button", { name: "Edit access" }).click();
@@ -1442,7 +1453,7 @@ test("Slim sidebar centers navigation and profile controls", async ({ page }) =>
   await page.goto("#/");
   const sidebar = await page.locator(".sidebar").boundingBox();
   const home = await page.getByRole("link", { name: "Home", exact: true }).boundingBox();
-  const sourcesIcon = await page.getByRole("link", { name: "Sources" }).locator("svg").boundingBox();
+  const sourcesIcon = await page.getByRole("link", { name: "Integrations" }).locator("svg").boundingBox();
   const profile = await page.getByRole("link", { name: "Settings for Tester" }).boundingBox();
   expect(sidebar && home && sourcesIcon && profile).toBeTruthy();
   const center = (box: NonNullable<typeof sidebar>) => box.x + box.width / 2;
@@ -1463,9 +1474,10 @@ test("Shared selects and settings tabs animate without remounting", async ({ pag
   await page.getByRole("button", { name: "Theme", exact: true }).click();
   await expect(page.locator(".select-content")).toHaveCSS("animation-name", "dropdown-in");
   await page.keyboard.press("Escape");
+  await page.goto("#/integrations/services");
   const tabs = page.locator(".settings-tabs");
   await tabs.evaluate((element) => element.setAttribute("data-instance", "stable"));
-  const routing = page.getByRole("tab", { name: "Provider routing" });
+  const routing = page.getByRole("tab", { name: "Routing" });
   await routing.hover();
   expect(await routing.evaluate((element) => getComputedStyle(element).borderTopLeftRadius))
     .toBe(await tabs.evaluate((element) => getComputedStyle(element, "::before").borderTopLeftRadius));
@@ -1484,6 +1496,20 @@ test("Legacy Library links open their current shared views", async ({ page }) =>
   for (const route of ["#/library/missing", "#/library/migration"]) {
     await page.goto(route);
     await expect(page.getByRole("tab", { name: "Mappings" })).toHaveAttribute("aria-selected", "true");
+  }
+});
+
+test("Legacy integration links open their canonical tabs", async ({ page }) => {
+  await mockApi(page);
+  for (const [route, tab] of [
+    ["#/sources", "Services"],
+    ["#/settings/accounts", "Accounts"],
+    ["#/settings/extensions", "Extensions"],
+    ["#/settings/routing", "Routing"],
+  ] as const) {
+    await page.goto(route);
+    await expect(page.getByRole("heading", { name: "Integrations", level: 1 })).toBeVisible();
+    await expect(page.getByRole("tab", { name: tab })).toHaveAttribute("aria-selected", "true");
   }
 });
 
@@ -2116,7 +2142,7 @@ test("Cached owns track storage and retention controls", async ({ page }) => {
   await expect(page.getByText("Transcode cache minutes")).toHaveCount(0);
 });
 
-test("Sources keep primary actions visible and report scoped degradation", async ({ page, context }) => {
+test("Integrations keep primary actions visible and report scoped degradation", async ({ page, context }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
   let appleState = {
@@ -2154,7 +2180,6 @@ test("Sources keep primary actions visible and report scoped degradation", async
     }),
   }));
   await page.goto("#/sources");
-  await expect(page.getByRole("button", { name: /Lumen Audio Account details stored/ })).toBeVisible();
   const lumenSource = page.locator(".sources-table tr").filter({ hasText: "Lumen Audio" });
   await expect(lumenSource.locator(".operational-mobile-detail dd").filter({ hasText: "Awaiting first CTS sample" })).toHaveText("Awaiting first CTS sample");
   const tableGutters = await page.locator(".sources-panel").evaluate((panel) => ({
@@ -2195,8 +2220,9 @@ test("Sources keep primary actions visible and report scoped degradation", async
   await expect(appleManager.getByText("Apple Music – GAMDL is ready")).toBeVisible();
   await expect(appleManager.locator('.source-metrics [data-slot="badge"]')).toHaveCount(3);
   await expect(appleManager.getByRole("link", { name: "Provider settings" }))
-    .toHaveAttribute("href", "#/sources?source=apple-download&section=configuration");
+    .toHaveAttribute("href", "#/integrations/services?source=apple-download&section=configuration");
   await page.keyboard.press("Escape");
+  await page.goto("#/integrations/accounts");
   await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();
   const accountDetails = page.getByRole("dialog", { name: "Lumen Audio", description: "Lumen Audio account" });
   await accountDetails.getByRole("tab", { name: "Configuration" }).click();
@@ -2224,7 +2250,7 @@ test("Sources keep primary actions visible and report scoped degradation", async
     contentType: "application/json",
     body: JSON.stringify({ error: "Account scope unavailable" }),
   }));
-  await listener.goto("#/sources");
+  await listener.goto("#/integrations/accounts");
   await expect(listener.getByText("Source readiness may be stale.")).toBeVisible();
   await expect(listener.getByText("Accounts are administrator-managed")).toBeVisible();
 });
@@ -2273,7 +2299,7 @@ test("Audio quality supports keyboard changes, provider outcomes, save, and relo
     });
   });
 
-  await page.goto("#/settings/general");
+  await page.goto("#/integrations/routing");
   const slider = page.getByRole("slider", { name: "Audio quality" });
   await expect(slider).toHaveAttribute("aria-valuetext", /Best available/);
   await slider.focus();
@@ -2289,7 +2315,9 @@ test("Audio quality supports keyboard changes, provider outcomes, save, and relo
   await page.getByText("What each music source will use").click();
   await expect(page.getByText("Apple Music: AAC 320 kbps")).toBeVisible();
   await expect(page.getByText("Deezer: MP3 320 kbps")).toBeVisible();
-  await page.getByRole("button", { name: "Save General" }).click();
+  await expect(page.getByLabel("Local track preference")).toHaveValue("7");
+  await expect(page.getByLabel("Extension match penalty")).toHaveValue("3");
+  await page.getByRole("button", { name: "Save playback and matching" }).click();
   await expect.poll(() => saved).toBe("High");
   await page.reload();
   await expect(page.getByRole("slider", { name: "Audio quality" }))
