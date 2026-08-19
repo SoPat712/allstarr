@@ -2,7 +2,11 @@ using System.Text.Json;
 using allstarr.Filters;
 using allstarr.Core.Identity;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Intelligence;
+using allstarr.Core.Jobs;
 using allstarr.Core.Matching;
+using allstarr.Core.Playback;
+using allstarr.Core.Playlists;
 using allstarr.Models.Admin;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
@@ -157,7 +161,9 @@ public class AdminUiController : ControllerBase
 
         var contextFactory = HttpContext.RequestServices.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var accounts = await context.ProviderAccounts.AsNoTracking().ToListAsync(cancellationToken);
+        var accounts = await context.ProviderAccounts.AsNoTracking()
+            .Where(item => item.TenantId == null || item.TenantId == tenantId)
+            .ToListAsync(cancellationToken);
         var accountIds = accounts.Select(item => item.Id).ToArray();
         var rollups = await context.ProviderHealthRollups.AsNoTracking()
             .Where(item => accountIds.Contains(item.ProviderAccountId))
@@ -201,6 +207,94 @@ public class AdminUiController : ControllerBase
             .ToList();
 
         return Ok(new { providers = summaries });
+    }
+
+    [HttpGet("home")]
+    public async Task<IActionResult> GetHome(CancellationToken cancellationToken = default)
+    {
+        if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
+            value is not AdminAuthSession { TenantId: { } tenantId } session ||
+            !session.IsAdministrator && session.AllstarrUserId is null)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "A linked Allstarr user is required" });
+        }
+
+        var schema = (GetSchema() as OkObjectResult)?.Value as AdminUiSchemaResponse;
+        if (schema == null) return StatusCode(StatusCodes.Status500InternalServerError);
+        var services = HttpContext.RequestServices;
+        var contextFactory = services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var linksQuery = context.PlaylistLinks.AsNoTracking().Where(item => item.TenantId == tenantId);
+        var jobsQuery = context.Jobs.AsNoTracking().Where(item => item.TenantId == tenantId);
+        var listensQuery = context.ListeningEvents.AsNoTracking().Where(item => item.TenantId == tenantId);
+        if (!session.IsAdministrator && session.AllstarrUserId is { } ownerUserId)
+        {
+            linksQuery = linksQuery.Where(item => item.OwnerUserId == ownerUserId);
+            jobsQuery = jobsQuery.Where(item => item.OwnerUserId == ownerUserId);
+            listensQuery = listensQuery.Where(item => item.OwnerUserId == ownerUserId);
+        }
+
+        var linkIds = await linksQuery.Select(item => item.Id).ToArrayAsync(cancellationToken);
+        var projections = await services.GetRequiredService<DurablePlaylistProjectionReader>()
+            .ReadByLinkIdsAsync(tenantId, session.IsAdministrator ? null : session.AllstarrUserId,
+                linkIds, cancellationToken);
+        var activeJobs = await jobsQuery.CountAsync(item =>
+            item.State != DurableJobState.Succeeded && item.State != DurableJobState.Failed &&
+            item.State != DurableJobState.Cancelled, cancellationToken);
+        var lastDay = DateTimeOffset.UtcNow.AddHours(-24);
+        var lastMonth = DateTimeOffset.UtcNow.AddDays(-30);
+        var completedListens = await listensQuery.CountAsync(item =>
+            item.State == ListeningEventState.Completed && item.ListenedAt >= lastDay, cancellationToken);
+        var topArtist = await listensQuery
+            .Where(item => item.State == ListeningEventState.Completed && item.ListenedAt >= lastMonth && item.Artist != null)
+            .GroupBy(item => item.Artist)
+            .Select(group => new { name = group.Key, listens = group.Count() })
+            .OrderByDescending(item => item.listens)
+            .ThenBy(item => item.name)
+            .FirstOrDefaultAsync(cancellationToken);
+        var scrobbleDeliveries = session.IsAdministrator
+            ? await context.PlaybackDeliveryCheckpoints.AsNoTracking().CountAsync(item =>
+                item.TenantId == tenantId && item.Kind == PlaybackScrobbleDeliveryKind.Completed &&
+                item.UpdatedAt >= lastDay &&
+                (item.State == ScopedPlaybackScrobbleOutcome.Delivered ||
+                 item.State == ScopedPlaybackScrobbleOutcome.Ignored), cancellationToken)
+            : 0;
+        var storage = services.GetService<DurableStorageState>()?.GetSnapshot();
+        var providerHealth = session.IsAdministrator
+            ? (await GetProviderSummaries(cancellationToken) as OkObjectResult)?.Value
+            : new { providers = Array.Empty<object>() };
+        var activity = session.IsAdministrator
+            ? (await GetDashboardActivity(8, cancellationToken: cancellationToken) as OkObjectResult)?.Value
+            : new { items = Array.Empty<object>(), hasMore = false };
+
+        return Ok(new
+        {
+            schema,
+            status = new
+            {
+                version = AppVersion.Version,
+                backendType = schema.ActiveBackend,
+                durableStorage = storage == null ? null : new
+                {
+                    provider = storage.Provider.ToString(),
+                    readiness = storage.Readiness.ToString(),
+                    storage.ErrorCode,
+                    storage.CheckedAt
+                }
+            },
+            stats = new
+            {
+                linkedPlaylists = linkIds.Length,
+                playableTracks = projections.Values.Sum(item => item.PlayableCount),
+                unresolvedTracks = projections.Values.Sum(item => item.MissingCount),
+                activeJobs,
+                completedListens,
+                scrobbleDeliveries,
+                topArtist
+            },
+            providerHealth,
+            activity
+        });
     }
 
     [HttpGet("activity")]

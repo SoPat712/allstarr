@@ -148,12 +148,39 @@ export type NowPlayingItem = {
   artist: string;
   album?: string | null;
   providerId: string;
+  providerAccountName?: string | null;
   artworkUrl?: string | null;
   positionSeconds: number;
   durationSeconds?: number | null;
   progress?: number | null;
   lastActivity: string;
+  scrobbleThresholdSeconds?: number | null;
+  scrobbleEligible?: boolean;
+  scrobbleDeliveries?: Array<{
+    targetId: string;
+    kind: string;
+    state: string;
+    requiresReauthentication: boolean;
+    message?: string | null;
+    updatedAt: string;
+  }>;
   scrobbled: boolean;
+};
+
+export type HomeOverview = {
+  schema: UiSchema;
+  status: RuntimeStatus;
+  stats: {
+    linkedPlaylists: number;
+    playableTracks: number;
+    unresolvedTracks: number;
+    activeJobs: number;
+    completedListens: number;
+    scrobbleDeliveries: number;
+    topArtist?: { name?: string | null; listens: number } | null;
+  };
+  providerHealth: { providers: ProviderSummary[] };
+  activity: ActivityResponse;
 };
 
 export type ProviderSetting = {
@@ -1310,16 +1337,14 @@ export const intelligence = {
 };
 
 export const home = {
+  overview: () => json<HomeOverview>("/api/admin/ui/home"),
   schema: () =>
     json<UiSchema>("/api/admin/ui/schema"),
-  status: () => json<RuntimeStatus>("/api/admin/status"),
-  playlists: () => json<PlaylistResponse>("/api/admin/playlists"),
   jobs: () => json<JobResponse>("/api/admin/jobs?limit=100"),
   cancelJob: (id: string) =>
     json<{ jobId: string; state: string }>(`/api/admin/jobs/${encodeURIComponent(id)}/cancel`, {
       method: "POST",
     }),
-  activity: () => json<ActivityResponse>("/api/admin/ui/activity?limit=8"),
   providers: () => json<{ providers: ProviderSummary[] }>("/api/admin/ui/provider-summaries"),
   nowPlaying: () => json<{ items: NowPlayingItem[] }>("/api/admin/ui/now-playing"),
 };

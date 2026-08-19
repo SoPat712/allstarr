@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { home, playlistLinks } from "$lib/api";
-  import { activityIcon, humanize, relativeTime } from "$lib/activity";
+  import { Activity, CircleCheck, CircleDashed, Headphones, KeyRound, ListMusic, Mic2, Route, Server } from "@lucide/svelte";
+  import { home } from "$lib/api";
+  import { humanize, relativeTime } from "$lib/activity";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import ActivityIcon from "$lib/components/ActivityIcon.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import { Button } from "$lib/components/ui/button";
   import { Progress } from "$lib/components/ui/progress";
@@ -25,9 +27,7 @@
   const completelyUnavailable = $derived(
     snapshot !== null &&
       !snapshot.status &&
-      !snapshot.playlists &&
-      !snapshot.playlistLinks &&
-      !snapshot.jobs &&
+      !snapshot.stats &&
       !snapshot.activity &&
       !snapshot.providers &&
       !snapshot.nowPlaying,
@@ -41,18 +41,8 @@
 
     refreshing = true;
     const requests = [
-      ["Provider catalog", home.schema()],
-      ["Runtime status", home.status()],
-      ["Playlist inventory", home.playlists()],
-      ["Linked playlists", playlistLinks.list()],
-      ["Jobs", home.jobs()],
-      ...(administrator
-        ? [
-            ["Recent activity", home.activity()],
-            ["Provider health", home.providers()],
-            ["Now playing", home.nowPlaying()],
-          ]
-        : []),
+      ["Home overview", home.overview()],
+      ...(administrator ? [["Now playing", home.nowPlaying()]] as const : []),
     ] as const;
     const results = await Promise.allSettled(requests.map((request) => request[1]));
     const next: HomeSnapshot = { failures: [] };
@@ -64,13 +54,14 @@
         return;
       }
 
-      if (label === "Provider catalog") next.providerCatalog = (result.value as Awaited<ReturnType<typeof home.schema>>).providers;
-      if (label === "Runtime status") next.status = result.value as Awaited<ReturnType<typeof home.status>>;
-      if (label === "Playlist inventory") next.playlists = result.value as Awaited<ReturnType<typeof home.playlists>>;
-      if (label === "Linked playlists") next.playlistLinks = (result.value as Awaited<ReturnType<typeof playlistLinks.list>>).playlistLinks;
-      if (label === "Jobs") next.jobs = (result.value as Awaited<ReturnType<typeof home.jobs>>).jobs;
-      if (label === "Recent activity") next.activity = (result.value as Awaited<ReturnType<typeof home.activity>>).items;
-      if (label === "Provider health") next.providers = (result.value as Awaited<ReturnType<typeof home.providers>>).providers;
+      if (label === "Home overview") {
+        const overview = result.value as Awaited<ReturnType<typeof home.overview>>;
+        next.providerCatalog = overview.schema.providers;
+        next.status = overview.status;
+        next.stats = overview.stats;
+        next.activity = overview.activity.items;
+        next.providers = overview.providerHealth.providers;
+      }
       if (label === "Now playing") next.nowPlaying = (result.value as Awaited<ReturnType<typeof home.nowPlaying>>).items;
     });
 
@@ -109,6 +100,15 @@
       : displayName || providerName(providerId);
   }
 
+  function implementationName(providerId: string) {
+    const origin = providerDefinition(providerId)?.implementationOrigin;
+    return origin ? humanize(origin) : "Built in";
+  }
+
+  function deliveryComplete(kind: string, state: string) {
+    return kind === "completed" && ["delivered", "ignored"].includes(state);
+  }
+
   function activityDetail(value: string) {
     return /[_-]/.test(value) ? humanize(value) : value;
   }
@@ -137,7 +137,7 @@
 
 {#if loading}
   <section class="home-grid" aria-busy="true" aria-label="Loading Home">
-    {#each Array(4) as _}
+    {#each Array(6) as _}
       <Skeleton class="metric-card skeleton-card" />
     {/each}
     <Skeleton class="panel skeleton-panel" />
@@ -171,7 +171,7 @@
 
   <section class="home-grid" aria-label="Allstarr overview" aria-busy={refreshing}>
     <article class="metric-card">
-      <span class="metric-icon backend" aria-hidden="true">◇</span>
+      <span class="metric-icon backend" aria-hidden="true"><Server size={19} /></span>
       <div>
         <p>Media server</p>
         <strong>{snapshot.status?.backendType ?? "Unknown"}</strong>
@@ -182,16 +182,13 @@
     </article>
 
     <article class="metric-card">
-      <span class="metric-icon playlists" aria-hidden="true">♫</span>
-      <div class="split-metric">
-        <a href="#/library/playlists"><p>Linked</p><strong>{summary.managed}</strong></a>
-        <a href="#/library/playlists"><p>Not linked</p><strong>{summary.unmanaged}</strong></a>
-      </div>
-      <small>{summary.managed + summary.unmanaged} playlists in the library</small>
+      <span class="metric-icon playlists" aria-hidden="true"><ListMusic size={19} /></span>
+      <div><p>Linked playlists</p><strong>{summary.managed}</strong></div>
+      <small><a href="#/library/playlists">Open playlist control</a></small>
     </article>
 
     <article class="metric-card">
-      <span class="metric-icon playable" aria-hidden="true">▶</span>
+      <span class="metric-icon playable" aria-hidden="true"><Route size={19} /></span>
       <div>
         <p>Playable tracks</p>
         <strong>{summary.playable.toLocaleString()}</strong>
@@ -204,7 +201,7 @@
     </article>
 
     <article class="metric-card">
-      <span class="metric-icon jobs" aria-hidden="true">↻</span>
+      <span class="metric-icon jobs" aria-hidden="true"><Activity size={19} /></span>
       <div>
         <p>Active work</p>
         <strong>{summary.activeJobs}</strong>
@@ -212,6 +209,24 @@
       <small class:attention={summary.activeJobs > 0}>
         {summary.activeJobs ? "Operations are running" : "Queue is clear"}
       </small>
+    </article>
+
+    <article class="metric-card">
+      <span class="metric-icon listening" aria-hidden="true"><Headphones size={19} /></span>
+      <div>
+        <p>Completed listens · 24h</p>
+        <strong>{snapshot.stats?.completedListens.toLocaleString() ?? "—"}</strong>
+      </div>
+      <small>{snapshot.stats?.scrobbleDeliveries.toLocaleString() ?? 0} scrobble deliveries</small>
+    </article>
+
+    <article class="metric-card">
+      <span class="metric-icon artist" aria-hidden="true"><Mic2 size={19} /></span>
+      <div>
+        <p>Top artist · 30d</p>
+        <strong class="metric-name">{snapshot.stats?.topArtist?.name || "No history yet"}</strong>
+      </div>
+      <small>{snapshot.stats?.topArtist ? `${snapshot.stats.topArtist.listens.toLocaleString()} completed listens` : "Import or save listening history"}</small>
     </article>
   </section>
 
@@ -259,17 +274,41 @@
               </div>
 
               <div class="now-playing-facts">
-                <Badge>{providerName(item.providerId)}</Badge>
+                <span class="playback-route">
+                  <ProviderMark id={item.providerId} definition={providerDefinition(item.providerId)} />
+                  <span>
+                    <strong>{providerName(item.providerId)}</strong>
+                    <small>{item.providerAccountName || implementationName(item.providerId)}</small>
+                  </span>
+                </span>
                 <span class="scrobble-state" class:complete={item.scrobbled}>
-                  <span aria-hidden="true">{item.scrobbled ? "✓" : "○"}</span>
-                  {item.scrobbled ? "Scrobbled" : "Not scrobbled"}
+                  {#if item.scrobbled}<CircleCheck size={16} aria-hidden="true" />{:else}<CircleDashed size={16} aria-hidden="true" />{/if}
+                  {item.scrobbled ? "Delivered" : item.scrobbleEligible ? "Delivering" : "Listening"}
                 </span>
               </div>
 
               <div class="playback-progress">
-                <Progress class="min-w-0 flex-1" max={1} value={item.progress ?? 0} aria-label={`Playback progress for ${item.title}`} />
+                <span class="playback-progress-track" style={`--scrobble-at: ${Math.min(100, ((item.scrobbleThresholdSeconds ?? 0) / (item.durationSeconds || 1)) * 100)}%`}>
+                  <Progress class="min-w-0 flex-1" max={1} value={item.progress ?? 0} aria-label={`Playback progress for ${item.title}`} />
+                  {#if item.scrobbleThresholdSeconds}
+                    <i title={`Scrobble at ${clockTime(item.scrobbleThresholdSeconds)}`} aria-label={`Scrobble threshold at ${clockTime(item.scrobbleThresholdSeconds)}`}></i>
+                  {/if}
+                </span>
                 <span>{clockTime(item.positionSeconds)} / {clockTime(item.durationSeconds)}</span>
               </div>
+
+              {#if item.scrobbleDeliveries?.length}
+                <div class="scrobble-targets" aria-label="Scrobble delivery targets">
+                  {#each item.scrobbleDeliveries as delivery (delivery.targetId)}
+                    <span class:complete={deliveryComplete(delivery.kind, delivery.state)} class:attention={delivery.requiresReauthentication} title={delivery.message || humanize(delivery.state)}>
+                      <ProviderMark id={delivery.targetId} definition={providerDefinition(delivery.targetId)} />
+                      <small>{providerName(delivery.targetId)}</small>
+                      {#if delivery.requiresReauthentication}<KeyRound size={13} aria-label="Reconnect required" />{/if}
+                      {#if deliveryComplete(delivery.kind, delivery.state)}<CircleCheck size={13} aria-label="Delivered" />{/if}
+                    </span>
+                  {/each}
+                </div>
+              {/if}
             </article>
           {/each}
         </div>
@@ -341,8 +380,9 @@
               <span
                 class="activity-artwork"
                 class:failed={["failed", "degraded", "unavailable"].includes(item.state.toLowerCase())}
+                data-kind={item.kind}
                 aria-hidden="true"
-              >{activityIcon(item.kind)}</span>
+              ><ActivityIcon kind={item.kind} /></span>
               <span>
                 <strong>{humanize(item.label)}</strong>
                 <small>{providerName(item.source)} · {activityDetail(item.detail)}</small>

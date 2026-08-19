@@ -122,6 +122,29 @@ const responses: Record<string, unknown> = {
       failedCapabilityCount: 0, lastCheckedAt: "2026-01-01",
     }],
   },
+  "/api/admin/ui/home": {
+    schema,
+    status: { version: "test", backendType: "Jellyfin", durableStorage: { readiness: "Ready" } },
+    stats: {
+      linkedPlaylists: 1, playableTracks: 1, unresolvedTracks: 1, activeJobs: 1,
+      completedListens: 12, scrobbleDeliveries: 2, topArtist: { name: "Beyoncé", listens: 7 },
+    },
+    providerHealth: {
+      providers: [{
+        providerId: "lumen-audio", connectedAccountName: "Legacy .env import",
+        enabledAccountCount: 1, capabilityTotal: 2, healthyCapabilityCount: 2,
+        failedCapabilityCount: 0, lastCheckedAt: "2026-01-01",
+      }],
+    },
+    activity: {
+      items: [{
+        id: "activity", kind: "playlist", source: "lumen-audio",
+        label: "playlist check", state: "succeeded", detail: "66 ms",
+        occurredAt: "2026-01-01",
+      }],
+      hasMore: false,
+    },
+  },
   "/api/admin/ui/now-playing": {
     items: [{
       deviceId: "device-1", userId: "user-1", userName: "Tester",
@@ -129,7 +152,8 @@ const responses: Record<string, unknown> = {
       itemId: "ext-lumen-audio-song-1", title: "Rocket", artist: "Beyoncé",
       album: "Act II", providerId: "lumen-audio", artworkUrl: null,
       positionSeconds: 30, durationSeconds: 120, progress: 0.25,
-      lastActivity: "2026-01-01", scrobbled: false,
+      lastActivity: "2026-01-01", scrobbleThresholdSeconds: 60,
+      scrobbleEligible: false, scrobbleDeliveries: [], scrobbled: false,
     }],
   },
   "/api/admin/playlist-links": {
@@ -689,10 +713,7 @@ const routes = [
 ] as const;
 
 const stateRoutes = [
-  ["#/", "Home", "Loading Home", "/api/admin/status", [
-    "/api/admin/ui/schema", "/api/admin/status", "/api/admin/playlists", "/api/admin/playlist-links", "/api/admin/jobs",
-    "/api/admin/ui/activity", "/api/admin/ui/provider-summaries", "/api/admin/ui/now-playing",
-  ]],
+  ["#/", "Home", "Loading Home", "/api/admin/ui/home", ["/api/admin/ui/home", "/api/admin/ui/now-playing"]],
   ["#/library/playlists", "Library", "Loading playlists", "/api/admin/playlist-links", ["/api/admin/playlist-links"]],
   ["#/library/mappings", "Library", "Loading match review", "/api/admin/track-matches", ["/api/admin/track-matches"]],
   ["#/library/cached", "Library", "Loading Cached tracks", "/api/admin/downloads", ["/api/admin/downloads"]],
@@ -1344,18 +1365,17 @@ test("Home stays inside runtime and request budgets", async ({ page }) => {
   await mockApi(page);
   await page.goto("#/");
   await expect(page.getByLabel("Loading Home")).toBeHidden();
-  await expect(page.getByText("Linked", { exact: true })).toBeVisible();
-  await expect(page.getByText("Not linked", { exact: true })).toBeVisible();
+  await expect(page.getByText("Linked playlists", { exact: true })).toBeVisible();
   await expect(page.getByText("Legacy .env import")).toHaveCount(0);
   await expect(page.locator(".provider-line strong", { hasText: "Lumen Audio" })).toBeVisible();
   await expect(page.getByText("Playlist Check", { exact: true })).toBeVisible();
   await expect(page.locator(".provider-line .provider-mark")).toBeVisible();
-  await expect(page.locator(".activity-line .activity-artwork")).toHaveText("≡");
+  await expect(page.locator(".activity-line .activity-artwork svg")).toBeVisible();
   const nowPlaying = page.getByRole("region", { name: "Now playing" });
   await expect(nowPlaying).toContainText("Rocket");
   await expect(nowPlaying.getByText("Tester", { exact: true })).toBeVisible();
   await expect(nowPlaying.getByText("Feishin · Desktop", { exact: true })).toBeVisible();
-  await expect(nowPlaying.locator(".scrobble-state")).toContainText("Not scrobbled");
+  await expect(nowPlaying.locator(".scrobble-state")).toContainText("Listening");
 
   const apiRequests = requests.filter((path) => path.startsWith("/api/admin/"));
   expect(apiRequests.length).toBeLessThanOrEqual(14);
@@ -2065,7 +2085,7 @@ test("Event log groups matching work and preserves actionable history", async ({
 
   await expect(page.getByText("Matched 3 tracks across 2 playlists")).toBeVisible();
   await expect(page.locator(".event-log-group summary .event-kind-icon img")).toHaveCount(0);
-  await expect(page.locator(".event-log-group summary .event-kind-icon")).toContainText("↔");
+  await expect(page.locator(".event-log-group summary .event-kind-icon svg")).toBeVisible();
   await expect.poll(() => page.evaluate(() =>
     document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   await page.getByLabel("Search").fill("missing event");

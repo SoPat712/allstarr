@@ -1,9 +1,13 @@
 using allstarr.Models.Download;
+using allstarr.Core.Intelligence;
+using allstarr.Core.Playback;
+using allstarr.Core.Storage;
 using allstarr.Services;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 using allstarr.Filters;
+using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Controllers;
 
@@ -18,6 +22,7 @@ public class DownloadActivityController : ControllerBase
     private readonly IMediaAssetResolver _mediaAssets;
     private readonly ILogger<DownloadActivityController> _logger;
     private readonly IPlaybackDeliveryActivitySource? _playbackDeliveries;
+    private readonly IDbContextFactory<AllstarrDbContext>? _contextFactory;
 
     public DownloadActivityController(
         IEnumerable<IDownloadService> downloadServices,
@@ -25,7 +30,8 @@ public class DownloadActivityController : ControllerBase
         IEnumerable<IPlaybackMetadataResolver> metadataResolvers,
         IMediaAssetResolver mediaAssets,
         ILogger<DownloadActivityController> logger,
-        IPlaybackDeliveryActivitySource? playbackDeliveries = null)
+        IPlaybackDeliveryActivitySource? playbackDeliveries = null,
+        IDbContextFactory<AllstarrDbContext>? contextFactory = null)
     {
         _downloadServices = downloadServices;
         _playbackSources = playbackSources.ToList();
@@ -33,6 +39,7 @@ public class DownloadActivityController : ControllerBase
         _mediaAssets = mediaAssets;
         _logger = logger;
         _playbackDeliveries = playbackDeliveries;
+        _contextFactory = contextFactory;
     }
 
     /// <summary>
@@ -62,6 +69,7 @@ public class DownloadActivityController : ControllerBase
             .OrderByDescending(state => state.LastActivity)
             .ToList();
         var items = new List<NowPlayingEntry>(states.Count);
+        var deliveryState = await LoadDeliveryStateAsync(session, states, cancellationToken);
 
         foreach (var state in states)
         {
@@ -69,6 +77,8 @@ public class DownloadActivityController : ControllerBase
             var metadata = await TryResolvePlaybackMetadataAsync(itemId, cancellationToken);
             var duration = metadata?.DurationSeconds;
             var position = (int)Math.Max(0, state.PositionTicks / TimeSpan.TicksPerSecond);
+            deliveryState.TryGetValue(DeliveryKey(state.UserId, itemId), out var delivery);
+            var threshold = duration is >= 30 ? Math.Min(duration.Value / 2d, 240d) : (double?)null;
             items.Add(new NowPlayingEntry
             {
                 DeviceId = state.DeviceId,
@@ -83,18 +93,85 @@ public class DownloadActivityController : ControllerBase
                 Title = metadata?.Title ?? ResolvePlaybackTitle(itemId),
                 Artist = metadata?.Artist ?? "Unknown artist",
                 Album = metadata?.Album,
-                ProviderId = ResolvePlaybackProvider(itemId),
+                ProviderId = delivery?.Event.ProviderId ?? ResolvePlaybackProvider(itemId),
+                ProviderAccountName = delivery?.ProviderAccountName,
                 ArtworkUrl = string.IsNullOrWhiteSpace(metadata?.CoverArtUrl) ? null : ArtworkUrl(itemId),
                 PositionSeconds = position,
                 DurationSeconds = duration,
                 Progress = duration > 0 ? Math.Clamp(position / (double)duration.Value, 0d, 1d) : null,
                 LastActivity = state.LastActivity,
-                Scrobbled = _playbackDeliveries?.WasDelivered(itemId, state.DeviceId) == true
+                ScrobbleThresholdSeconds = threshold,
+                ScrobbleEligible = threshold.HasValue && position >= threshold.Value,
+                ScrobbleDeliveries = delivery?.Checkpoints.Select(item => new ScrobbleDeliveryEntry
+                {
+                    TargetId = item.TargetId,
+                    Kind = item.Kind.ToString().ToLowerInvariant(),
+                    State = item.State.ToString().ToLowerInvariant(),
+                    RequiresReauthentication = item.RequiresReauthentication,
+                    Message = item.SafeMessage,
+                    UpdatedAt = item.UpdatedAt
+                }).ToList() ?? [],
+                Scrobbled = _playbackDeliveries?.WasDelivered(itemId, state.DeviceId) == true ||
+                    delivery?.Checkpoints.Any(item => item.Kind == PlaybackScrobbleDeliveryKind.Completed &&
+                        item.State is ScopedPlaybackScrobbleOutcome.Delivered or ScopedPlaybackScrobbleOutcome.Ignored) == true
             });
         }
 
         return Ok(new { items });
     }
+
+    private async Task<Dictionary<string, PlaybackDeliveryState>> LoadDeliveryStateAsync(
+        AdminAuthSession session,
+        IReadOnlyCollection<PlaybackActivityState> states,
+        CancellationToken cancellationToken)
+    {
+        if (_contextFactory == null || session.TenantId is not { } tenantId) return [];
+        var userIds = states.Select(item => item.UserId).OfType<Guid>().Distinct().ToArray();
+        if (userIds.Length == 0) return [];
+        var trackReferences = states
+            .SelectMany(item => new[] { item.ItemId, NormalizeExternalItemId(item.ItemId) })
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var events = await db.ListeningEvents.AsNoTracking()
+            .Where(item => item.TenantId == tenantId && userIds.Contains(item.OwnerUserId) &&
+                trackReferences.Contains(item.TrackReference) && item.UpdatedAt >= DateTimeOffset.UtcNow.AddHours(-8))
+            .OrderByDescending(item => item.UpdatedAt)
+            .ToListAsync(cancellationToken);
+        var latest = events
+            .GroupBy(item => DeliveryKey(item.OwnerUserId, NormalizeExternalItemId(item.TrackReference)))
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var occurrenceKeys = latest.Values.Select(item => item.OccurrenceKey).Distinct().ToArray();
+        var checkpoints = occurrenceKeys.Length == 0
+            ? []
+            : await db.PlaybackDeliveryCheckpoints.AsNoTracking()
+                .Where(item => item.TenantId == tenantId && item.OccurrenceKey != null &&
+                    occurrenceKeys.Contains(item.OccurrenceKey))
+                .OrderByDescending(item => item.Kind)
+                .ThenByDescending(item => item.UpdatedAt)
+                .ToListAsync(cancellationToken);
+        var accountIds = latest.Values.Select(item => item.ProviderAccountId).OfType<Guid>().Distinct().ToArray();
+        var accountNames = accountIds.Length == 0
+            ? []
+            : await db.ProviderAccounts.AsNoTracking()
+                .Where(item => accountIds.Contains(item.Id))
+                .ToDictionaryAsync(item => item.Id, item => item.DisplayName, cancellationToken);
+
+        return latest.ToDictionary(
+            item => item.Key,
+            item => new PlaybackDeliveryState(
+                item.Value,
+                checkpoints.Where(checkpoint => checkpoint.OccurrenceKey == item.Value.OccurrenceKey)
+                    .GroupBy(checkpoint => checkpoint.TargetId, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => group.First())
+                    .OrderBy(checkpoint => checkpoint.TargetId, StringComparer.OrdinalIgnoreCase)
+                    .ToList(),
+                item.Value.ProviderAccountId is { } accountId ? accountNames.GetValueOrDefault(accountId) : null),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string DeliveryKey(Guid? userId, string itemId) =>
+        $"{userId?.ToString("N") ?? "unknown"}\n{itemId}";
 
     [HttpGet("artwork/{itemId}")]
     public async Task<IActionResult> GetPlaybackArtwork(
@@ -343,11 +420,30 @@ public class DownloadActivityController : ControllerBase
         public required string Artist { get; init; }
         public string? Album { get; init; }
         public required string ProviderId { get; init; }
+        public string? ProviderAccountName { get; init; }
         public string? ArtworkUrl { get; init; }
         public int PositionSeconds { get; init; }
         public int? DurationSeconds { get; init; }
         public double? Progress { get; init; }
         public DateTime LastActivity { get; init; }
+        public double? ScrobbleThresholdSeconds { get; init; }
+        public bool ScrobbleEligible { get; init; }
+        public IReadOnlyList<ScrobbleDeliveryEntry> ScrobbleDeliveries { get; init; } = [];
         public bool Scrobbled { get; init; }
     }
+
+    private sealed class ScrobbleDeliveryEntry
+    {
+        public required string TargetId { get; init; }
+        public required string Kind { get; init; }
+        public required string State { get; init; }
+        public bool RequiresReauthentication { get; init; }
+        public string? Message { get; init; }
+        public DateTimeOffset UpdatedAt { get; init; }
+    }
+
+    private sealed record PlaybackDeliveryState(
+        ListeningEventRecord Event,
+        IReadOnlyList<PlaybackDeliveryCheckpointEntity> Checkpoints,
+        string? ProviderAccountName);
 }

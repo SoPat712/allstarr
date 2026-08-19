@@ -137,6 +137,9 @@ public sealed class DownloadActivityControllerTests
         Assert.Equal("deezer", item.GetProperty("ProviderId").GetString());
         Assert.Equal(0.25, item.GetProperty("Progress").GetDouble());
         Assert.True(item.GetProperty("Scrobbled").GetBoolean());
+        Assert.Equal(60, item.GetProperty("ScrobbleThresholdSeconds").GetDouble());
+        Assert.False(item.GetProperty("ScrobbleEligible").GetBoolean());
+        Assert.Empty(item.GetProperty("ScrobbleDeliveries").EnumerateArray());
         Assert.Equal("/api/admin/ui/users/backend-user-1/avatar", item.GetProperty("AvatarUrl").GetString());
     }
 

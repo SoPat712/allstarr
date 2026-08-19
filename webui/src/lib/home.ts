@@ -1,23 +1,18 @@
 import type {
-  ActivityItem,
-  Job,
   NowPlayingItem,
-  PlaylistLink,
-  PlaylistResponse,
   ProviderDefinition,
   ProviderSummary,
   RuntimeStatus,
+  HomeOverview,
 } from "./api";
 
 export type HomeSnapshot = {
   providerCatalog?: ProviderDefinition[];
   status?: RuntimeStatus;
-  playlists?: PlaylistResponse;
-  playlistLinks?: PlaylistLink[];
-  jobs?: Job[];
-  activity?: ActivityItem[];
+  activity?: HomeOverview["activity"]["items"];
   providers?: ProviderSummary[];
   nowPlaying?: NowPlayingItem[];
+  stats?: HomeOverview["stats"];
   failures: string[];
 };
 
@@ -36,24 +31,10 @@ export function playbackSourceIssues(providers: ProviderDefinition[]) {
 }
 
 export function summarizeHome(snapshot: HomeSnapshot) {
-  const playlists = snapshot.playlists?.playlists ?? [];
-  const links = snapshot.playlistLinks;
-  const activeJobs = (snapshot.jobs ?? []).filter(
-    (job) => !["Succeeded", "Failed", "Cancelled"].includes(job.state),
-  ).length;
-
   return {
-    activeJobs,
-    managed: links?.length ?? snapshot.playlists?.inventory.managed ?? playlists.length,
-    unmanaged: snapshot.playlists?.inventory.unmanaged ?? 0,
-    playable: links
-      ? links.reduce((total, playlist) => total + playlist.playableCount, 0)
-      : playlists.reduce(
-          (total, playlist) => total + playlist.localTracks + playlist.externalTracks,
-          0,
-        ),
-    unresolved: links
-      ? links.reduce((total, playlist) => total + playlist.unmatchedCount, 0)
-      : playlists.reduce((total, playlist) => total + playlist.unmatchedTracks, 0),
+    activeJobs: snapshot.stats?.activeJobs ?? 0,
+    managed: snapshot.stats?.linkedPlaylists ?? 0,
+    playable: snapshot.stats?.playableTracks ?? 0,
+    unresolved: snapshot.stats?.unresolvedTracks ?? 0,
   };
 }

@@ -23,6 +23,7 @@
     relativeTime,
   } from "$lib/activity";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
+  import ActivityIcon from "$lib/components/ActivityIcon.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
@@ -222,8 +223,8 @@
           ontoggle={(event) => rememberExpanded(group.key, event.currentTarget.open)}
         >
           <summary>
-            <span class="event-kind-icon" data-severity={severityState} aria-hidden="true">
-              <span>{activityIcon(first.kind)}</span>
+            <span class="event-kind-icon" data-severity={severityState} data-kind={first.kind} aria-hidden="true">
+              <span><ActivityIcon kind={first.kind} /></span>
               {#if first.artworkUrl}
                 <img src={first.artworkUrl} alt="" loading="lazy" onerror={(event) => event.currentTarget.remove()} />
               {/if}
