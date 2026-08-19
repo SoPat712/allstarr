@@ -242,6 +242,8 @@ public class AdminUiController : ControllerBase
             item.State != DurableJobState.Succeeded && item.State != DurableJobState.Failed &&
             item.State != DurableJobState.Cancelled, cancellationToken);
         var lastDay = DateTimeOffset.UtcNow.AddHours(-24);
+        var currentWeekStart = DateTimeOffset.UtcNow.AddDays(-7);
+        var previousWeekStart = DateTimeOffset.UtcNow.AddDays(-14);
         var lastMonth = DateTimeOffset.UtcNow.AddDays(-30);
         var completedListens = await listensQuery.CountAsync(item =>
             item.State == ListeningEventState.Completed && item.ListenedAt >= lastDay, cancellationToken);
@@ -259,6 +261,25 @@ public class AdminUiController : ControllerBase
                 (item.State == ScopedPlaybackScrobbleOutcome.Delivered ||
                  item.State == ScopedPlaybackScrobbleOutcome.Ignored), cancellationToken)
             : 0;
+        var currentWeekListens = await listensQuery.CountAsync(item =>
+            item.State == ListeningEventState.Completed && item.ListenedAt >= currentWeekStart,
+            cancellationToken);
+        var previousWeekListens = await listensQuery.CountAsync(item =>
+            item.State == ListeningEventState.Completed && item.ListenedAt >= previousWeekStart &&
+            item.ListenedAt < currentWeekStart, cancellationToken);
+        int? cacheTracks = null;
+        int? keptTracks = null;
+        if (session.IsAdministrator)
+        {
+            var downloadRoot = Path.GetFullPath(_configuration["Library:DownloadPath"] ?? "./downloads");
+            var paths = await context.DownloadedSongMappings.AsNoTracking()
+                .Select(item => item.LocalPath)
+                .ToArrayAsync(cancellationToken);
+            cacheTracks = paths.Count(path => IsStoredUnder(path, Path.Combine(downloadRoot, "cache")) ||
+                                              IsStoredUnder(path, Path.Combine(downloadRoot, "transcoded")));
+            keptTracks = paths.Count(path => IsStoredUnder(path, Path.Combine(downloadRoot, "permanent")) ||
+                                             IsStoredUnder(path, Path.Combine(downloadRoot, "kept")));
+        }
         var storage = services.GetService<DurableStorageState>()?.GetSnapshot();
         var providerHealth = session.IsAdministrator
             ? (await GetProviderSummaries(cancellationToken) as OkObjectResult)?.Value
@@ -289,12 +310,30 @@ public class AdminUiController : ControllerBase
                 unresolvedTracks = projections.Values.Sum(item => item.MissingCount),
                 activeJobs,
                 completedListens,
+                currentWeekListens,
+                previousWeekListens,
                 scrobbleDeliveries,
+                cacheTracks,
+                keptTracks,
                 topArtist
             },
             providerHealth,
             activity
         });
+    }
+
+    private static bool IsStoredUnder(string path, string root)
+    {
+        try
+        {
+            var relative = Path.GetRelativePath(Path.GetFullPath(root), Path.GetFullPath(path));
+            return relative != ".." && !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal) &&
+                   !Path.IsPathRooted(relative);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     [HttpGet("activity")]

@@ -52,6 +52,8 @@
   const cached = $derived(storage === "cache");
   const label = $derived(cached ? "Cached" : "Kept");
   const visible = $derived(filterDownloads(data?.files ?? [], query, providerFilter, sort));
+  const removableCount = $derived((data?.files ?? []).filter((file) => file.removable).length);
+  const referencedCount = $derived((data?.files ?? []).filter((file) => file.publicationState === "Referenced").length);
   const availableProviders = $derived(
     [...new Set((data?.files ?? [])
       .map((file) => file.provider)
@@ -141,7 +143,7 @@
     try {
       if (removal.kind === "all") {
         const result = await downloads.removeAll(storage);
-        feedback = `${result.deletedCount} ${label.toLowerCase()} track${result.deletedCount === 1 ? "" : "s"} removed.`;
+        feedback = `${result.deletedCount} indexed ${label.toLowerCase()} track${result.deletedCount === 1 ? "" : "s"} removed${result.skippedUnknown ? `; ${result.skippedUnknown} diagnostic file${result.skippedUnknown === 1 ? "" : "s"} skipped` : ""}${result.skippedReferenced ? `; ${result.skippedReferenced} referenced file${result.skippedReferenced === 1 ? "" : "s"} protected` : ""}.`;
       } else {
         await downloads.remove(removal.file.path, storage);
         feedback = `${removal.file.title || removal.file.fileName} removed.`;
@@ -195,12 +197,13 @@
           : "Permanent downloads retained across playback-cache cleanup."}</p>
       </div>
       <div class="downloads-summary" aria-label={`${label} totals`}>
-        <span><small>Tracks</small><strong>{data.count}</strong></span>
+        <span><small>Indexed</small><strong>{data.managedCount}</strong></span>
+        <span><small>Diagnostics</small><strong>{data.diagnosticCount}</strong></span>
         <span><small>Size</small><strong>{data.totalSizeFormatted}</strong></span>
       </div>
       <div class="downloads-heading-actions">
         <Button variant="secondary" onclick={() => void refresh()}>Refresh</Button>
-        {#if data.files.length}
+        {#if removableCount}
           <Button variant="destructive" onclick={() => confirm({ kind: "all" })}>Remove all</Button>
         {/if}
       </div>
@@ -227,6 +230,7 @@
           <span role="columnheader">Track</span>
           <span role="columnheader">Provider</span>
           <span role="columnheader">Format</span>
+          <span role="columnheader">Lifecycle</span>
           <span role="columnheader">Size</span>
           <span role="columnheader">Updated</span>
           <span role="columnheader">Actions</span>
@@ -255,14 +259,22 @@
                 <strong>{file.quality || file.codec}</strong>
                 <small>{qualityDetails(file).join(" · ")}</small>
               </span>
+              <span class="download-lifecycle" role="cell">
+                <Badge state={file.removable ? "healthy" : "suggested"}>{file.publicationState}</Badge>
+                <small>Last access {relativeTime(file.lastAccessedAt)}</small>
+                {#if file.expiresAt}<small>Expires {relativeTime(file.expiresAt)}</small>{/if}
+                {#if file.referenceCount != null}<small>{file.referenceCount} reference{file.referenceCount === 1 ? "" : "s"}</small>{/if}
+              </span>
               <span role="cell" aria-label={`Size ${file.sizeFormatted}`}>{file.sizeFormatted}</span>
               <span role="cell" aria-label={`Updated ${relativeTime(file.lastModified)}`}>
                 <time datetime={file.lastModified}>{relativeTime(file.lastModified)}</time>
               </span>
               <span class="download-actions" role="cell">
                 <Button variant="secondary" href={downloads.fileUrl(file.path, storage)}>Download</Button>
-                {#if cached}<Button disabled={Boolean(action)} onclick={() => void keep(file)}>Keep</Button>{/if}
-                <Button variant="destructive" disabled={Boolean(action)} onclick={() => confirm({ kind: "one", file })}>Remove</Button>
+                {#if file.removable}
+                  {#if cached}<Button disabled={Boolean(action)} onclick={() => void keep(file)}>Keep</Button>{/if}
+                  <Button variant="destructive" disabled={Boolean(action)} onclick={() => confirm({ kind: "one", file })}>Remove</Button>
+                {/if}
               </span>
             </div>
           {:else}
@@ -320,8 +332,8 @@
     bind:open={confirmOpen}
     title={removal?.kind === "all" ? `Remove all ${label.toLowerCase()} tracks?` : "Remove this track?"}
     description={removal?.kind === "all"
-      ? `This deletes every ${label.toLowerCase()} audio file and its lyrics sidecar.`
-      : "This deletes the managed audio file and its lyrics sidecar. This cannot be undone."}
+      ? `This deletes ${removableCount} unreferenced ${label.toLowerCase()} track${removableCount === 1 ? "" : "s"} and their lyrics sidecars. ${data.diagnosticCount} diagnostic and ${referencedCount} referenced file${data.diagnosticCount + referencedCount === 1 ? " is" : "s are"} left untouched.`
+      : "This deletes the indexed audio file and its lyrics sidecar. This cannot be undone."}
     confirmLabel={removal?.kind === "all" ? "Remove all" : "Remove track"}
     onConfirm={remove}
   />

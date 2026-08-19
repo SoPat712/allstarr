@@ -22,7 +22,8 @@ describe("summarizeHome", () => {
       failures: [],
       stats: {
         activeJobs: 1, linkedPlaylists: 2, playableTracks: 6, unresolvedTracks: 2,
-        completedListens: 12, scrobbleDeliveries: 2,
+        completedListens: 12, currentWeekListens: 24, previousWeekListens: 20,
+        scrobbleDeliveries: 2, cacheTracks: 3, keptTracks: 4,
       },
     };
 

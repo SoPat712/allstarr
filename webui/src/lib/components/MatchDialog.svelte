@@ -96,15 +96,24 @@
     return resolution?.targetType === "provider" ? resolution.externalProvider : "";
   }
 
+  function candidateExternalId(candidate: MatchReviewItem["candidates"][number]) {
+    const providerId = candidateProvider(candidate);
+    return providerId ? candidate.providerTrackIds?.[providerId] : null;
+  }
+
   function candidateArtwork(candidate: MatchReviewItem["candidates"][number]) {
     const providerId = candidateProvider(candidate);
-    const externalId = providerId ? candidate.providerTrackIds?.[providerId] : "";
+    const externalId = candidateExternalId(candidate);
     const itemId = providerId && externalId
       ? `ext-${providerId}-song-${externalId}`
       : candidate.backendItemId;
     return itemId
       ? `/api/admin/downloads/artwork/${encodeURIComponent(itemId)}`
       : "";
+  }
+
+  function evidenceLabel(value: string) {
+    return value.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ");
   }
 
   async function search() {
@@ -225,7 +234,7 @@
           </div>
           {#if eligibleCandidates.length}
             <div class="candidate-list">
-              {#each eligibleCandidates.slice(0, 5) as candidate}
+              {#each eligibleCandidates as candidate}
                 {@const resolution = candidateResolution(candidate, match.providerId, playbackProviders)}
                 <article class="candidate-card">
                   <MediaArtwork
@@ -275,10 +284,22 @@
                     {/if}
                   </div>
                   <div class="candidate-reasons">
-                    {#each [...(candidate.reasons ?? []), ...(candidate.warnings ?? [])].slice(0, 3) as reason}
-                      <span>{reason.replaceAll("_", " ")}</span>
+                    {#each [...(candidate.reasons ?? []), ...(candidate.warnings ?? [])] as reason}
+                      <span>{evidenceLabel(reason)}</span>
                     {/each}
                   </div>
+                  <details class="candidate-evidence">
+                    <summary>Full evidence</summary>
+                    <dl>
+                      <div><dt>Candidate ID</dt><dd>{candidate.libraryTrackId || candidate.backendItemId || candidateExternalId(candidate) || "—"}</dd></div>
+                      <div><dt>Raw confidence</dt><dd>{percent(candidate.confidence)}</dd></div>
+                      {#each scoreComponents(candidate) as [name, value]}
+                        <div><dt>{evidenceLabel(name)}</dt><dd>{percent(value)}</dd></div>
+                      {/each}
+                      {#each candidate.reasons ?? [] as reason}<div><dt>Reason</dt><dd>{evidenceLabel(reason)}</dd></div>{/each}
+                      {#each candidate.warnings ?? [] as warning}<div><dt>Warning</dt><dd>{evidenceLabel(warning)}</dd></div>{/each}
+                    </dl>
+                  </details>
                   {#if resolution?.targetType === "local"}
                     <Button class="candidate-action" variant="secondary" size="sm" disabled={saving} onclick={() => void chooseLocal(resolution.libraryTrackId, "Selected from automatic candidate evidence")}>Choose candidate</Button>
                   {:else if resolution}
@@ -369,6 +390,19 @@
                 <small>rank #{results.indexOf(target) + 1}</small>
               </span>
             </button>
+            <details class="target-evidence">
+              <summary>Evidence for {target.title}</summary>
+              <dl>
+                <div><dt>Rank</dt><dd>#{results.indexOf(target) + 1}</dd></div>
+                <div><dt>Candidate ID</dt><dd>{target.externalId || target.backendItemId || target.id}</dd></div>
+                <div><dt>Raw confidence</dt><dd>{percent(target.confidence)}</dd></div>
+                {#each Object.entries(target.components ?? {}) as [name, value]}
+                  <div><dt>{evidenceLabel(name)}</dt><dd>{percent(value)}</dd></div>
+                {/each}
+                {#each target.reasons ?? [] as reason}<div><dt>Reason</dt><dd>{evidenceLabel(reason)}</dd></div>{/each}
+                {#each target.warnings ?? [] as warning}<div><dt>Warning</dt><dd>{evidenceLabel(warning)}</dd></div>{/each}
+              </dl>
+            </details>
           {:else}
             {#if searched && !loading}
               <div class="compact-empty"><strong>No matching candidates found</strong><p>Try a more exact artist and title.</p></div>

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Activity, CircleCheck, CircleDashed, Headphones, KeyRound, ListMusic, Mic2, Route, Server } from "@lucide/svelte";
+  import { Activity, CircleCheck, CircleDashed, HardDrive, Headphones, KeyRound, ListMusic, Mic2, Route, Server, TrendingUp } from "@lucide/svelte";
   import { home } from "$lib/api";
   import { humanize, relativeTime } from "$lib/activity";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
@@ -123,6 +123,12 @@
     return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
   }
 
+  function listenTrend(current = 0, previous = 0) {
+    const change = current - previous;
+    if (!change) return "Same as the prior 7 days";
+    return `${Math.abs(change).toLocaleString()} ${change > 0 ? "more" : "fewer"} than the prior 7 days`;
+  }
+
   onMount(() => {
     void refresh();
     if (administrator) nowPlayingTimer = setInterval(() => void refreshNowPlaying(), 5_000);
@@ -137,7 +143,7 @@
 
 {#if loading}
   <section class="home-grid" aria-busy="true" aria-label="Loading Home">
-    {#each Array(6) as _}
+    {#each Array(8) as _}
       <Skeleton class="metric-card skeleton-card" />
     {/each}
     <Skeleton class="panel skeleton-panel" />
@@ -227,6 +233,24 @@
         <strong class="metric-name">{snapshot.stats?.topArtist?.name || "No history yet"}</strong>
       </div>
       <small>{snapshot.stats?.topArtist ? `${snapshot.stats.topArtist.listens.toLocaleString()} completed listens` : "Import or save listening history"}</small>
+    </article>
+
+    <article class="metric-card">
+      <span class="metric-icon cache" aria-hidden="true"><HardDrive size={19} /></span>
+      <div>
+        <p>Managed audio</p>
+        <strong>{snapshot.stats?.cacheTracks == null ? "—" : (snapshot.stats.cacheTracks + (snapshot.stats.keptTracks ?? 0)).toLocaleString()}</strong>
+      </div>
+      <small>{snapshot.stats?.cacheTracks == null ? "Administrator view only" : `${snapshot.stats.cacheTracks} cached · ${snapshot.stats.keptTracks ?? 0} kept`}</small>
+    </article>
+
+    <article class="metric-card">
+      <span class="metric-icon trend" aria-hidden="true"><TrendingUp size={19} /></span>
+      <div>
+        <p>Completed listens · 7d</p>
+        <strong>{snapshot.stats?.currentWeekListens.toLocaleString() ?? "—"}</strong>
+      </div>
+      <small>{listenTrend(snapshot.stats?.currentWeekListens, snapshot.stats?.previousWeekListens)}</small>
     </article>
   </section>
 

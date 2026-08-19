@@ -19,6 +19,9 @@ const file = (title: string, provider: string, size: number): ManagedDownload =>
   channels: 2,
   quality: "24-bit / 44.1 kHz",
   provider,
+  lastAccessedAt: "2026-07-27T00:00:00Z",
+  publicationState: "Indexed",
+  removable: true,
 });
 
 describe("managed download presentation", () => {

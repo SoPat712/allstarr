@@ -138,7 +138,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "normalized-v12";
+    public const string AlgorithmVersion = "normalized-v13";
 
     private readonly TrackMatchPolicy _policy;
 
@@ -327,7 +327,7 @@ public sealed class TrackMatchDecisionEngine
                                    artistScore >= 0.7;
         var state = decisionScore >= _policy.AcceptThreshold && strongArtistEvidence
             ? TrackMatchReviewState.Accepted
-            : decisionScore >= _policy.SuggestThreshold
+            : decisionScore >= _policy.SuggestThreshold && strongArtistEvidence
                 ? TrackMatchReviewState.Suggested
                 : TrackMatchReviewState.Unresolved;
         return Result(
@@ -340,8 +340,9 @@ public sealed class TrackMatchDecisionEngine
             best.Reasons,
             state switch
             {
-                TrackMatchReviewState.Suggested when !strongArtistEvidence => ["weak_artist_evidence_review"],
                 TrackMatchReviewState.Suggested => ["below_accept_threshold_review"],
+                TrackMatchReviewState.Unresolved when
+                    decisionScore >= _policy.SuggestThreshold && !strongArtistEvidence => ["weak_artist_evidence_review"],
                 TrackMatchReviewState.Unresolved => ["below_suggestion_threshold"],
                 _ => []
             },

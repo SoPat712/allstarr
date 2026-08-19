@@ -5,6 +5,17 @@ namespace allstarr.Tests;
 
 public class FuzzyMatcherTests
 {
+    [Fact]
+    public void Artist_aware_search_uses_the_primary_credit()
+    {
+        Assert.Equal(
+            "Crush Selena Gomez & The Scene",
+            FuzzyMatcher.SearchQuery("Crush", "Selena Gomez & The Scene"));
+        Assert.Equal(
+            "Feels Calvin Harris",
+            FuzzyMatcher.SearchQuery("Feels", "Calvin Harris, Pharrell Williams"));
+    }
+
     [Theory]
     [InlineData("Link Up (Metro Boomin & Don Toliver, Wizkid feat. BEAM & Toian) - Spider-Verse Remix (Spider-Man: Across the Spider-Verse)", "Link Up")]
     [InlineData("Feels", "Feels")]

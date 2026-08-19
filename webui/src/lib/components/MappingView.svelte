@@ -19,6 +19,7 @@
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
+  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import {
     candidateResolution,
@@ -42,6 +43,7 @@
   let providers = $state<ProviderDefinition[]>([]);
   let backend = $state("Local library");
   let stateFilter = $state("attention");
+  let view = $state<"all" | "review" | "unresolved" | "history">("review");
   let searchInput = $state("");
   let search = $state("");
   let libraryScopeId = $state("");
@@ -85,13 +87,6 @@
       });
       if (version !== loadVersion) return;
       data = response;
-      if (initialReview && !initialReviewOpened) {
-        const requested = data.matches.find((item) => item.externalSnapshotId === initialReview);
-        if (requested) {
-          initialReviewOpened = true;
-          openMatch(requested);
-        }
-      }
     } catch (cause) {
       if (version !== loadVersion) return;
       error = cause instanceof Error ? cause.message : "Match review is unavailable.";
@@ -114,6 +109,19 @@
     }
   }
 
+  async function openInitialReview() {
+    if (!initialReview || initialReviewOpened) return;
+    try {
+      const requested = data?.matches.find((item) => item.externalSnapshotId === initialReview) ??
+        await matchReview.get(initialReview);
+      if (!requested) return;
+      initialReviewOpened = true;
+      openMatch(requested);
+    } catch {
+      // The review queue remains usable when a stale deep link no longer resolves.
+    }
+  }
+
   const refreshScheduler = createRefreshScheduler(load);
   const scheduleRefresh = refreshScheduler.schedule;
 
@@ -121,6 +129,29 @@
     stateFilter = value;
     page = 1;
     void load();
+  }
+
+  function setView(value: string) {
+    view = value as typeof view;
+    setState(view === "all" ? "" : view === "review" ? "attention" : view);
+  }
+
+  function removeResolvedFromQueue(match: MatchReviewItem) {
+    if (!data || !["review", "unresolved"].includes(view)) return;
+    const wasVisible = data.matches.some((item) => item.externalSnapshotId === match.externalSnapshotId);
+    data = {
+      ...data,
+      matches: data.matches.filter((item) => item.externalSnapshotId !== match.externalSnapshotId),
+      stats: {
+        ...data.stats,
+        attention: Math.max(0, data.stats.attention - (wasVisible && view === "review" ? 1 : 0)),
+        unresolved: Math.max(0, data.stats.unresolved - (wasVisible && view === "unresolved" ? 1 : 0)),
+      },
+      pagination: {
+        ...data.pagination,
+        total: Math.max(0, data.pagination.total - (wasVisible ? 1 : 0)),
+      },
+    };
   }
 
   function submitFilters() {
@@ -135,8 +166,10 @@
   }
 
   async function matchSaved(message: string) {
+    const resolved = selected;
     feedback = message;
     await load();
+    if (resolved) removeResolvedFromQueue(resolved);
   }
 
   async function rematch(match: MatchReviewItem) {
@@ -166,6 +199,7 @@
       });
       feedback = "Highest-confidence candidate accepted.";
       await load();
+      removeResolvedFromQueue(match);
     } catch (cause) {
       feedback = cause instanceof Error ? cause.message : "The candidate could not be accepted.";
     } finally {
@@ -198,6 +232,7 @@
       destructiveOpen = false;
       dialogOpen = false;
       await load();
+      if (destructive.kind === "reject") removeResolvedFromQueue(destructive.match);
     } catch (cause) {
       feedback = cause instanceof Error ? cause.message : "The action failed.";
     } finally {
@@ -208,9 +243,15 @@
   onMount(() => {
     searchInput = initialSearch;
     search = initialSearch;
-    if (initialSearch) stateFilter = "";
+    if (initialSearch) {
+      stateFilter = "";
+      view = "all";
+    }
     void loadProviders();
-    void load();
+    void (async () => {
+      await load();
+      await openInitialReview();
+    })();
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
       unsubscribe();
@@ -250,20 +291,18 @@
         <Button variant="secondary" onclick={() => void load()}>Refresh</Button>
       </header>
 
-      <div class="mapping-metrics" aria-label="Match totals">
-        <button class="metric-card" aria-pressed={stateFilter === "matched"} onclick={() => setState("matched")}>
-          <span>Matched</span><strong>{data.stats.matched}</strong>
-        </button>
-        <button class="metric-card attention-card" aria-pressed={stateFilter === "attention"} onclick={() => setState("attention")}>
-          <span>Needs attention</span><strong>{data.stats.attention}</strong>
-        </button>
-        <button class="metric-card" aria-pressed={stateFilter === "unresolved"} onclick={() => setState("unresolved")}>
-          <span>Unresolved</span><strong>{data.stats.unresolved}</strong>
-        </button>
-        <button class="metric-card" aria-pressed={stateFilter === ""} onclick={() => setState("")}>
-          <span>Total</span><strong>{data.stats.total}</strong>
-        </button>
-      </div>
+      <SegmentedNav
+        items={[
+          { id: "all", label: "All", count: data.stats.total },
+          { id: "review", label: "Review", count: data.stats.attention },
+          { id: "unresolved", label: "Unresolved", count: data.stats.unresolved },
+          { id: "history", label: "History", count: data.stats.accepted + data.stats.rejected },
+        ]}
+        active={view}
+        label="Mapping views"
+        class="mapping-view-tabs"
+        onchange={setView}
+      />
 
       <form class="playlist-filters mapping-filters" onsubmit={(event) => { event.preventDefault(); submitFilters(); }}>
         <SearchField bind:value={searchInput} label="Search" placeholder="Title, artist, album, or provider" />

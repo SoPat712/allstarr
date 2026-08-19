@@ -38,7 +38,7 @@ public class DownloadsControllerPathSecurityTests
     }
 
     [Fact]
-    public void DeleteDownload_PathTraversalIntoPrefixedSibling_IsRejected()
+    public async Task DeleteDownload_PathTraversalIntoPrefixedSibling_IsRejected()
     {
         var testRoot = CreateTestRoot();
         var downloadsRoot = Path.Combine(testRoot, "downloads");
@@ -53,7 +53,7 @@ public class DownloadsControllerPathSecurityTests
         try
         {
             var controller = CreateController(downloadsRoot);
-            var result = controller.DeleteDownload("../kept-malicious/attack.mp3");
+            var result = await controller.DeleteDownload("../kept-malicious/attack.mp3");
 
             var badRequest = Assert.IsType<BadRequestObjectResult>(result);
             Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
@@ -90,7 +90,7 @@ public class DownloadsControllerPathSecurityTests
     }
 
     [Fact]
-    public void GetDownloads_UsesNullableMillisecondsForUnreadableDuration()
+    public async Task GetDownloads_UsesNullableMillisecondsForUnreadableDuration()
     {
         var testRoot = CreateTestRoot();
         var downloadsRoot = Path.Combine(testRoot, "downloads");
@@ -100,7 +100,7 @@ public class DownloadsControllerPathSecurityTests
 
         try
         {
-            var result = Assert.IsType<OkObjectResult>(CreateController(downloadsRoot).GetDownloads());
+            var result = Assert.IsType<OkObjectResult>(await CreateController(downloadsRoot).GetDownloads());
             using var document = JsonDocument.Parse(JsonSerializer.Serialize(
                 result.Value,
                 new JsonSerializerOptions(JsonSerializerDefaults.Web)));
@@ -115,7 +115,7 @@ public class DownloadsControllerPathSecurityTests
     }
 
     [Fact]
-    public void GetDownloads_ProjectsProviderArtworkThroughTheSharedResolverRoute()
+    public async Task GetDownloads_ProjectsProviderArtworkThroughTheSharedResolverRoute()
     {
         var testRoot = CreateTestRoot();
         var downloadsRoot = Path.Combine(testRoot, "downloads");
@@ -140,7 +140,7 @@ public class DownloadsControllerPathSecurityTests
             var registry = new Mock<IProviderRegistry>(MockBehavior.Strict);
             registry.SetupGet(item => item.Providers).Returns([provider]);
             var result = Assert.IsType<OkObjectResult>(
-                CreateController(downloadsRoot, registry.Object).GetDownloads());
+                await CreateController(downloadsRoot, registry.Object).GetDownloads());
             using var document = JsonDocument.Parse(JsonSerializer.Serialize(
                 result.Value,
                 new JsonSerializerOptions(JsonSerializerDefaults.Web)));
@@ -158,7 +158,7 @@ public class DownloadsControllerPathSecurityTests
     }
 
     [Fact]
-    public void CacheListing_IncludesCanonicalAndTranscodedAudioWithQualifiedPaths()
+    public async Task CacheListing_IncludesCanonicalAndTranscodedAudioWithQualifiedPaths()
     {
         var testRoot = CreateTestRoot();
         var downloadsRoot = Path.Combine(testRoot, "downloads");
@@ -172,7 +172,7 @@ public class DownloadsControllerPathSecurityTests
         try
         {
             var controller = CreateController(downloadsRoot);
-            var result = Assert.IsType<OkObjectResult>(controller.GetDownloads("cache"));
+            var result = Assert.IsType<OkObjectResult>(await controller.GetDownloads("cache"));
             using var document = JsonDocument.Parse(JsonSerializer.Serialize(
                 result.Value,
                 new JsonSerializerOptions(JsonSerializerDefaults.Web)));
@@ -183,11 +183,16 @@ public class DownloadsControllerPathSecurityTests
                                            item.GetProperty("storage").GetString() == "cache");
             Assert.Contains(files, item => item.GetProperty("path").GetString() == "transcoded/Artist/transcoded.mp3" &&
                                            item.GetProperty("storage").GetString() == "transcoded");
+            Assert.All(files, item =>
+            {
+                Assert.Equal("Diagnostic", item.GetProperty("publicationState").GetString());
+                Assert.False(item.GetProperty("removable").GetBoolean());
+            });
 
-            Assert.IsType<OkObjectResult>(
-                controller.DeleteDownload("transcoded/Artist/transcoded.mp3", "cache"));
+            Assert.IsType<ConflictObjectResult>(
+                await controller.DeleteDownload("transcoded/Artist/transcoded.mp3", "cache"));
             Assert.True(File.Exists(cached));
-            Assert.False(File.Exists(transcoded));
+            Assert.True(File.Exists(transcoded));
         }
         finally
         {

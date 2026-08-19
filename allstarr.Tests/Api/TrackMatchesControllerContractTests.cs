@@ -9,14 +9,19 @@ namespace allstarr.Tests;
 public sealed class TrackMatchesControllerContractTests
 {
     [Fact]
-    public void Candidate_projection_keeps_local_and_provider_only_playable_results()
+    public void Candidate_projection_keeps_all_credible_playable_results()
     {
         var localId = Guid.NewGuid();
         var candidates =
             $$"""
             [
+              { "libraryTrackId": "weak", "providerTrackIds": { "qobuz": "weak" }, "title": "Wrong", "components": { "title": 1, "artist": 0.15 } },
               { "libraryTrackId": "{{localId}}", "title": "Local" },
               { "libraryTrackId": "legacy-external", "providerTrackIds": { "qobuz": "external" }, "title": "External" },
+              { "libraryTrackId": "external-2", "providerTrackIds": { "qobuz": "external-2" }, "title": "External 2" },
+              { "libraryTrackId": "external-3", "providerTrackIds": { "qobuz": "external-3" }, "title": "External 3" },
+              { "libraryTrackId": "external-4", "providerTrackIds": { "qobuz": "external-4" }, "title": "External 4" },
+              { "libraryTrackId": "external-5", "providerTrackIds": { "qobuz": "external-5" }, "title": "External 5" },
               { "libraryTrackId": "legacy-metadata", "providerTrackIds": { "musicbrainzalbum": "release" }, "title": "MusicBrainz album" },
               { "providerTrackIds": {}, "title": "Metadata only" }
             ]
@@ -35,6 +40,8 @@ public sealed class TrackMatchesControllerContractTests
         Assert.Contains("\"isLocal\":false", projected);
         Assert.DoesNotContain("MusicBrainz album", projected);
         Assert.DoesNotContain("Metadata only", projected);
+        Assert.DoesNotContain("Wrong", projected);
+        Assert.Equal(6, JsonDocument.Parse(projected).RootElement.GetArrayLength());
     }
 
     [Fact]
@@ -65,10 +72,12 @@ public sealed class TrackMatchesControllerContractTests
 
         Assert.True(Filter(TrackMatchState.Suggested, "attention"));
         Assert.True(Filter(TrackMatchState.Ambiguous, "attention"));
-        Assert.True(Filter(TrackMatchState.Rejected, "attention"));
+        Assert.False(Filter(TrackMatchState.Rejected, "attention"));
         Assert.False(Filter(TrackMatchState.Unresolved, "attention"));
         Assert.False(Filter(TrackMatchState.Accepted, "attention"));
         Assert.True(Filter(TrackMatchState.Unresolved, "unresolved"));
         Assert.True(Filter(TrackMatchState.Accepted, "matched"));
+        Assert.True(Filter(TrackMatchState.Pinned, "history"));
+        Assert.True(Filter(TrackMatchState.Rejected, "history"));
     }
 }

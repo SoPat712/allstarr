@@ -127,7 +127,9 @@ const responses: Record<string, unknown> = {
     status: { version: "test", backendType: "Jellyfin", durableStorage: { readiness: "Ready" } },
     stats: {
       linkedPlaylists: 1, playableTracks: 1, unresolvedTracks: 1, activeJobs: 1,
-      completedListens: 12, scrobbleDeliveries: 2, topArtist: { name: "Beyoncé", listens: 7 },
+      completedListens: 12, currentWeekListens: 24, previousWeekListens: 20,
+      scrobbleDeliveries: 2, cacheTracks: 3, keptTracks: 4,
+      topArtist: { name: "Beyoncé", listens: 7 },
     },
     providerHealth: {
       providers: [{
@@ -433,8 +435,11 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
           bitrateKbps: 900, sampleRateHz: 44_100, bitDepth: 16, channels: 2,
           durationMilliseconds: 180_000, quality: "Lossless", provider: "lumen-audio",
           externalId: "track-1", artworkUrl: "/missing-download-art",
+          lastAccessedAt: "2026-01-02", expiresAt: "2026-01-03",
+          publicationState: "Indexed", referenceCount: 0, removable: true,
         }],
         totalSize: 1_024_000, totalSizeFormatted: "1000 KiB", count: 1,
+        managedCount: 1, diagnosticCount: 0,
       };
     if (url.pathname === "/api/admin/track-matches")
       body = {
@@ -462,6 +467,8 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
         stats: { total: 1, matched: 0, accepted: 0, unresolved: 0, suggested: 1, review: 1, rejected: 0, attention: 1 },
         pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
       };
+    if (url.pathname === "/api/admin/track-matches/snapshot/resolve" && route.request().method() === "POST")
+      body = { success: true };
     if (url.pathname === "/api/admin/track-matches/targets/local")
       body = {
         tracks: [{
@@ -1971,7 +1978,6 @@ test("Tentative mappings sort by confidence and deep links open review", async (
       .filter({ hasText: "Jellyfin · +7% local boost" }),
   ).toBeVisible();
   await expect(dialog.locator(".automatic-candidates .candidate-confidence").getByText("89%")).toBeVisible();
-  await expect(dialog.locator(".automatic-candidates").getByText("preference score")).toHaveCount(0);
   await dialog.getByLabel("Search local library and playable providers").fill("Kiss Me More");
   await dialog.getByRole("button", { name: "Search", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "Searching…" })).toBeVisible();
@@ -1982,7 +1988,7 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await expect(dialog.getByRole("button", { name: /Lumen Audio 1/ })).toBeVisible();
   await expect(dialog.getByRole("button", { name: /Qobuz/ })).toHaveCount(0);
   await expect(dialog.getByText("Planet Her")).toHaveCount(2);
-  await expect(dialog.locator(".target-results").getByText("confidence")).toHaveCount(2);
+  await expect(dialog.locator(".target-results > button .target-score")).toHaveCount(2);
   await expect(dialog.locator(".target-results").getByText("· +7% local boost")).toHaveCount(1);
   await expect(dialog.locator(".target-results")).toHaveCSS("overflow-y", "visible");
   await expect(dialog.locator(":scope > footer")).toHaveCSS("position", "sticky");
@@ -1991,6 +1997,10 @@ test("Tentative mappings sort by confidence and deep links open review", async (
       .locator(".target-score").getByText("98%"),
   ).toBeVisible();
   await expect(dialog.getByText("rank #1")).toBeVisible();
+  await dialog.locator(".candidate-card").first().getByText("Full evidence").click();
+  await expect(dialog.locator(".candidate-card").first().getByText("Candidate ID")).toBeVisible();
+  await dialog.locator(".candidate-card").last().getByText("Full evidence").click();
+  await expect(dialog.locator(".candidate-card").last().getByText("preference score")).toBeVisible();
   await dialog.getByLabel("Search local library and playable providers").fill("No local copy");
   await dialog.getByRole("button", { name: "Search", exact: true }).click();
   await expect.poll(() => localSearches).toBe(2);
@@ -2007,14 +2017,16 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   const unresolved = page.waitForRequest((item) =>
     item.url().includes("/api/admin/track-matches") &&
     new URL(item.url()).searchParams.get("state") === "unresolved");
-  await page.getByRole("button", { name: "Unresolved 0" }).click();
+  await page.getByRole("tab", { name: "Unresolved 0" }).click();
   await unresolved;
   const attention = page.waitForRequest((item) =>
     item.url().includes("/api/admin/track-matches") &&
     new URL(item.url()).searchParams.get("state") === "attention");
-  await page.getByRole("button", { name: "Needs attention 1" }).click();
+  await page.getByRole("tab", { name: "Review 1" }).click();
   await attention;
   await expect(page.getByRole("button", { name: "Accept" })).toBeVisible();
+  await page.getByRole("button", { name: "Accept" }).click();
+  await expect(page.locator(".mapping-row")).toHaveCount(0);
 });
 
 test("Shared search fields reserve icon space", async ({ page }) => {

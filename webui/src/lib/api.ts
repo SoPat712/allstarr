@@ -176,7 +176,11 @@ export type HomeOverview = {
     unresolvedTracks: number;
     activeJobs: number;
     completedListens: number;
+    currentWeekListens: number;
+    previousWeekListens: number;
     scrobbleDeliveries: number;
+    cacheTracks?: number | null;
+    keptTracks?: number | null;
     topArtist?: { name?: string | null; listens: number } | null;
   };
   providerHealth: { providers: ProviderSummary[] };
@@ -846,6 +850,11 @@ export type ManagedDownload = {
   provider?: string | null;
   externalId?: string | null;
   artworkUrl?: string | null;
+  lastAccessedAt: string;
+  expiresAt?: string | null;
+  publicationState: string;
+  referenceCount?: number | null;
+  removable: boolean;
 };
 
 export type DownloadsResponse = {
@@ -854,6 +863,8 @@ export type DownloadsResponse = {
   totalSize: number;
   totalSizeFormatted: string;
   count: number;
+  managedCount: number;
+  diagnosticCount: number;
 };
 
 export type IntelligenceScope = {
@@ -1661,7 +1672,7 @@ export const downloads = {
       { method: "DELETE" },
     ),
   removeAll: (storage: "cache" | "kept") =>
-    json<{ success: boolean; deletedCount: number }>(
+    json<{ success: boolean; deletedCount: number; skippedUnknown: number; skippedReferenced: number }>(
       `/api/admin/downloads/all?storage=${storage}`,
       { method: "DELETE" },
     ),

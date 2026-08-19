@@ -68,6 +68,13 @@ public static partial class FuzzyMatcher
         return query.Length >= 2 ? query : cleaned;
     }
 
+    public static string SearchQuery(string title, string? artist)
+    {
+        var primaryArtist = artist?.Split(',', 2, StringSplitOptions.TrimEntries)[0];
+        return string.Join(' ', new[] { SearchQuery(title), primaryArtist }
+            .Where(value => !string.IsNullOrWhiteSpace(value)));
+    }
+
     /// <summary>
     /// Calculates similarity score following OPTIMAL ORDER:
     /// 1. Strip decorators (already done by caller)

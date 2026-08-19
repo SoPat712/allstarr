@@ -62,13 +62,22 @@ public sealed class PlaylistPlayableSearchService(
         ScopedTrackMatchOverride? manualOverride,
         CancellationToken cancellationToken)
     {
-        var query = FuzzyMatcher.SearchQuery(source.Title);
-        var songs = (await gateway.SearchPlayableSongsAsync(context, query, 60))
-            .Where(IsPlayable)
-            .Where(song => !string.IsNullOrWhiteSpace(song.ExternalProvider) &&
-                           !string.IsNullOrWhiteSpace(song.ExternalId))
-            .Where(song => !song.ExternalProvider!.Equals(source.ProviderId, StringComparison.OrdinalIgnoreCase) ||
-                           !song.ExternalId!.Equals(source.ExternalId, StringComparison.Ordinal))
+        var title = FuzzyMatcher.SearchQuery(source.Title);
+        var artist = source.Artist?.Split(',', 2, StringSplitOptions.TrimEntries)[0];
+        var queries = new[]
+            {
+                FuzzyMatcher.SearchQuery(source.Title, source.Artist),
+                Join(title, source.Album),
+                title,
+                artist,
+                source.Album
+            }
+            .Where(query => !string.IsNullOrWhiteSpace(query) && query.Trim().Length >= 2)
+            .Select(query => query!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var songs = (await Task.WhenAll(queries.Select(SearchAsync)))
+            .SelectMany(result => result)
             .DistinctBy(song => $"{song.ExternalProvider}:{song.ExternalId}", StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var groups = GroupEquivalent(songs, scope);
@@ -85,6 +94,19 @@ public sealed class PlaylistPlayableSearchService(
             groups.ToDictionary(
                 group => CandidateId(group[0].ExternalProvider!, group[0].ExternalId!),
                 group => (IReadOnlyList<Song>)group));
+
+        async Task<Song[]> SearchAsync(string query) =>
+            ((await gateway.SearchPlayableSongsAsync(context, query, 60)) ?? [])
+            .Where(IsPlayable)
+            .Where(song => !string.IsNullOrWhiteSpace(song.ExternalProvider) &&
+                           !string.IsNullOrWhiteSpace(song.ExternalId))
+            .Where(song => !song.ExternalProvider!.Equals(source.ProviderId, StringComparison.OrdinalIgnoreCase) ||
+                           !song.ExternalId!.Equals(source.ExternalId, StringComparison.Ordinal))
+            .DistinctBy(song => $"{song.ExternalProvider}:{song.ExternalId}", StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        static string Join(string? left, string? right) =>
+            string.Join(' ', new[] { left, right }.Where(value => !string.IsNullOrWhiteSpace(value)));
     }
 
     public async Task<PlayableTrackMatch?> ReuseAsync(

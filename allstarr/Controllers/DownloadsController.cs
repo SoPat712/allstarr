@@ -1,9 +1,11 @@
 using System.Text.RegularExpressions;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Services.Admin;
 using allstarr.Services.Lyrics;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using TagLib;
 
 namespace allstarr.Controllers;
@@ -22,28 +24,38 @@ public class DownloadsController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly IKeptLyricsSidecarService? _keptLyricsSidecarService;
     private readonly IProviderRegistry? _providerRegistry;
+    private readonly IDbContextFactory<AllstarrDbContext>? _contextFactory;
 
     public DownloadsController(
         ILogger<DownloadsController> logger,
         IConfiguration configuration,
         IKeptLyricsSidecarService? keptLyricsSidecarService = null,
-        IProviderRegistry? providerRegistry = null)
+        IProviderRegistry? providerRegistry = null,
+        IDbContextFactory<AllstarrDbContext>? contextFactory = null)
     {
         _logger = logger;
         _configuration = configuration;
         _keptLyricsSidecarService = keptLyricsSidecarService;
         _providerRegistry = providerRegistry;
+        _contextFactory = contextFactory;
     }
 
     [HttpGet("downloads")]
-    public IActionResult GetDownloads([FromQuery] string storage = "kept")
+    public async Task<IActionResult> GetDownloads(
+        [FromQuery] string storage = "kept",
+        CancellationToken cancellationToken = default)
     {
         try
         {
             var roots = ResolveListRoots(storage);
             var qualifyPath = NormalizeStorage(storage) == "cache";
-            var files = roots.SelectMany(root => EnumerateFiles(root.Path)
-                    .Select(path => Describe(path, root, qualifyPath)))
+            var paths = roots.SelectMany(root => EnumerateFiles(root.Path).Select(path => (root, path))).ToArray();
+            var ownership = await LoadOwnershipAsync(paths.Select(item => item.path), cancellationToken);
+            var files = paths.Select(item => Describe(
+                    item.path,
+                    item.root,
+                    qualifyPath,
+                    ownership.GetValueOrDefault(Path.GetFullPath(item.path))))
                 .OrderBy(item => item.Artist)
                 .ThenBy(item => item.Album)
                 .ThenBy(item => item.Title)
@@ -55,7 +67,9 @@ public class DownloadsController : ControllerBase
                 files,
                 totalSize,
                 totalSizeFormatted = AdminHelperService.FormatFileSize(totalSize),
-                count = files.Length
+                count = files.Length,
+                managedCount = files.Count(item => item.PublicationState != "Diagnostic"),
+                diagnosticCount = files.Count(item => item.PublicationState == "Diagnostic")
             });
         }
         catch (ArgumentException exception)
@@ -70,7 +84,10 @@ public class DownloadsController : ControllerBase
     }
 
     [HttpDelete("downloads")]
-    public IActionResult DeleteDownload([FromQuery] string path, [FromQuery] string storage = "kept")
+    public async Task<IActionResult> DeleteDownload(
+        [FromQuery] string path,
+        [FromQuery] string storage = "kept",
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -78,10 +95,22 @@ public class DownloadsController : ControllerBase
                 return BadRequest(new { error = string.IsNullOrWhiteSpace(path) ? "Path is required" : "Invalid path" });
             if (!TryResolveExistingFile(storage, path, out var root, out var fullPath))
                 return NotFound(new { error = "File not found" });
+            var ownership = await FindOwnershipAsync(fullPath, cancellationToken);
+            if (ownership?.Mapping == null)
+                return Conflict(new { error = "Only indexed Allstarr files can be removed here" });
+            if (ownership.ReferenceCount.GetValueOrDefault() > 0)
+                return Conflict(new { error = "This file is still referenced by durable library state" });
 
             System.IO.File.Delete(fullPath);
             DeleteSidecar(fullPath);
             CleanEmptyDirectories(Path.GetDirectoryName(fullPath), root.Path);
+            if (_contextFactory != null)
+            {
+                await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+                await db.DownloadedSongMappings
+                    .Where(item => item.Id == ownership.Mapping.Id && item.Revision == ownership.Mapping.Revision)
+                    .ExecuteDeleteAsync(cancellationToken);
+            }
             return Ok(new { success = true, message = "File deleted successfully" });
         }
         catch (ArgumentException exception)
@@ -96,26 +125,48 @@ public class DownloadsController : ControllerBase
     }
 
     [HttpDelete("downloads/all")]
-    public IActionResult DeleteAllDownloads([FromQuery] string storage = "kept")
+    public async Task<IActionResult> DeleteAllDownloads(
+        [FromQuery] string storage = "kept",
+        CancellationToken cancellationToken = default)
     {
         try
         {
             var roots = ResolveListRoots(storage);
+            var paths = roots.SelectMany(root => EnumerateFiles(root.Path).Select(path => (root, path))).ToArray();
+            var ownership = await LoadOwnershipAsync(paths.Select(item => item.path), cancellationToken);
             var deleted = 0;
-            foreach (var root in roots)
+            var skipped = 0;
+            var skippedReferenced = 0;
+            var removedMappings = new List<(Guid Id, long Revision)>();
+            foreach (var (root, file) in paths)
             {
-                if (!Directory.Exists(root.Path)) continue;
-                foreach (var file in EnumerateFiles(root.Path))
+                var owned = ownership.GetValueOrDefault(Path.GetFullPath(file));
+                if (owned?.Mapping == null)
                 {
-                    System.IO.File.Delete(file);
-                    DeleteSidecar(file);
-                    deleted++;
+                    skipped++;
+                    continue;
                 }
-                foreach (var sidecar in Directory.GetFiles(root.Path, "*.lrc", SearchOption.AllDirectories))
-                    System.IO.File.Delete(sidecar);
-                CleanAllEmptyDirectories(root.Path);
+                if (owned.ReferenceCount.GetValueOrDefault() > 0)
+                {
+                    skippedReferenced++;
+                    continue;
+                }
+                System.IO.File.Delete(file);
+                DeleteSidecar(file);
+                deleted++;
+                removedMappings.Add((owned.Mapping.Id, owned.Mapping.Revision));
+                CleanEmptyDirectories(Path.GetDirectoryName(file), root.Path);
             }
-            return Ok(new { success = true, deletedCount = deleted, message = $"Deleted {deleted} download(s)" });
+            if (_contextFactory != null && removedMappings.Count > 0)
+            {
+                await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+                foreach (var (id, revision) in removedMappings)
+                    await db.DownloadedSongMappings
+                        .Where(item => item.Id == id && item.Revision == revision)
+                        .ExecuteDeleteAsync(cancellationToken);
+            }
+            return Ok(new { success = true, deletedCount = deleted, skippedUnknown = skipped, skippedReferenced,
+                message = $"Deleted {deleted} indexed download(s); skipped {skipped} diagnostic and {skippedReferenced} referenced file(s)" });
         }
         catch (ArgumentException exception)
         {
@@ -129,7 +180,9 @@ public class DownloadsController : ControllerBase
     }
 
     [HttpPost("downloads/promote")]
-    public IActionResult PromoteCachedDownload([FromQuery] string path)
+    public async Task<IActionResult> PromoteCachedDownload(
+        [FromQuery] string path,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -137,6 +190,11 @@ public class DownloadsController : ControllerBase
                 return BadRequest(new { error = string.IsNullOrWhiteSpace(path) ? "Path is required" : "Invalid path" });
             if (!TryResolveExistingFile("cache", path, out var cacheRoot, out var sourcePath))
                 return NotFound(new { error = "Cached file not found" });
+            var ownership = await FindOwnershipAsync(sourcePath, cancellationToken);
+            if (ownership?.Mapping == null)
+                return Conflict(new { error = "Only indexed Allstarr cache files can be kept" });
+            if (ownership.ReferenceCount.GetValueOrDefault() > 0)
+                return Conflict(new { error = "This cache file is still referenced and cannot be moved" });
 
             var permanentRoot = Root("permanent");
             var targetPath = Path.GetFullPath(Path.Combine(permanentRoot.Path, Path.GetRelativePath(cacheRoot.Path, sourcePath)));
@@ -153,6 +211,15 @@ public class DownloadsController : ControllerBase
                 System.IO.File.Move(sourceSidecar, targetSidecar, overwrite: false);
             }
             CleanEmptyDirectories(Path.GetDirectoryName(sourcePath), cacheRoot.Path);
+            if (_contextFactory != null)
+            {
+                await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+                var record = await db.DownloadedSongMappings.SingleAsync(item =>
+                    item.Id == ownership.Mapping.Id && item.Revision == ownership.Mapping.Revision, cancellationToken);
+                record.LocalPath = targetPath;
+                record.Revision++;
+                await db.SaveChangesAsync(cancellationToken);
+            }
             return Ok(new
             {
                 success = true,
@@ -275,7 +342,11 @@ public class DownloadsController : ControllerBase
             ? Directory.GetFiles(root, "*.*", SearchOption.AllDirectories).Where(IsSupportedAudioFile)
             : [];
 
-    private ManagedDownloadFile Describe(string filePath, StorageRoot root, bool qualifyPath = false)
+    private ManagedDownloadFile Describe(
+        string filePath,
+        StorageRoot root,
+        bool qualifyPath = false,
+        DownloadOwnership? ownership = null)
     {
         var info = new FileInfo(filePath);
         var relativePath = Path.GetRelativePath(root.Path, filePath);
@@ -352,8 +423,53 @@ public class DownloadsController : ControllerBase
             identity.Provider == null || identity.ExternalId == null
                 ? null
                 : $"/api/admin/downloads/artwork/{Uri.EscapeDataString(
-                    $"ext-{identity.Provider}-song-{identity.ExternalId}")}");
+                    $"ext-{identity.Provider}-song-{identity.ExternalId}")}",
+            info.LastAccessTimeUtc,
+            Expiry(root.Key, info.LastWriteTimeUtc),
+            ownership?.ReferenceCount > 0 ? "Referenced" : ownership?.Mapping != null ? "Indexed" : "Diagnostic",
+            ownership?.ReferenceCount,
+            ownership?.Mapping != null && ownership.ReferenceCount.GetValueOrDefault() == 0);
     }
+
+    private DateTime? Expiry(string root, DateTime lastModified) => root switch
+    {
+        "cache" => lastModified.AddHours(Math.Max(1, _configuration.GetValue("Library:CacheDurationHours", 24))),
+        "transcoded" => lastModified.AddMinutes(Math.Max(1, _configuration.GetValue("Cache:TranscodeCacheMinutes", 60))),
+        _ => null
+    };
+
+    private async Task<Dictionary<string, DownloadOwnership>> LoadOwnershipAsync(
+        IEnumerable<string> files,
+        CancellationToken cancellationToken)
+    {
+        var paths = files.Select(Path.GetFullPath).ToHashSet(PathComparer);
+        if (_contextFactory == null || paths.Count == 0) return [];
+        await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var mappings = await db.DownloadedSongMappings.AsNoTracking()
+            .Where(item => paths.Contains(item.LocalPath))
+            .ToListAsync(cancellationToken);
+        var managed = await db.ManagedFiles.AsNoTracking()
+            .Where(item => item.RemovedAt == null && paths.Contains(item.CanonicalPath))
+            .ToListAsync(cancellationToken);
+        return paths.ToDictionary(
+            path => path,
+            path => new DownloadOwnership(
+                mappings.FirstOrDefault(item => PathComparer.Equals(Path.GetFullPath(item.LocalPath), path)),
+                managed.FirstOrDefault(item => PathComparer.Equals(Path.GetFullPath(item.CanonicalPath), path))?.ReferenceCount),
+            PathComparer);
+    }
+
+    private async Task<DownloadOwnership?> FindOwnershipAsync(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        var canonical = Path.GetFullPath(path);
+        return (await LoadOwnershipAsync([canonical], cancellationToken)).GetValueOrDefault(canonical);
+    }
+
+    private static StringComparer PathComparer => OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase
+        : StringComparer.Ordinal;
 
     private (string? Provider, string? ExternalId) ParseProviderIdentity(string stem)
     {
@@ -524,6 +640,10 @@ public class DownloadsController : ControllerBase
 
     private sealed record StorageRoot(string Key, string Path);
 
+    private sealed record DownloadOwnership(
+        Core.Downloads.DownloadedSongMappingEntity? Mapping,
+        int? ReferenceCount);
+
     private sealed record ManagedDownloadFile(
         string Path,
         string Storage,
@@ -543,5 +663,10 @@ public class DownloadsController : ControllerBase
         string Quality,
         string? Provider,
         string? ExternalId,
-        string? ArtworkUrl);
+        string? ArtworkUrl,
+        DateTime LastAccessedAt,
+        DateTime? ExpiresAt,
+        string PublicationState,
+        int? ReferenceCount,
+        bool Removable);
 }

@@ -859,8 +859,9 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
                 AlbumArtist = "Lorde"
             }]);
 
-        Assert.NotEqual(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(TrackMatchReviewState.Unresolved, decision.State);
         Assert.True(Assert.Single(decision.Candidates).Components!["artist"] < 0.7);
+        Assert.Contains("weak_artist_evidence_review", decision.Warnings);
     }
 
     [Fact]

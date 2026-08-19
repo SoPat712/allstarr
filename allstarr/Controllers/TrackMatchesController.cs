@@ -267,6 +267,7 @@ public sealed class TrackMatchesController(
         if (!string.IsNullOrWhiteSpace(state) &&
             !state.Equals("attention", StringComparison.OrdinalIgnoreCase) &&
             !state.Equals("matched", StringComparison.OrdinalIgnoreCase) &&
+            !state.Equals("history", StringComparison.OrdinalIgnoreCase) &&
             !Enum.TryParse<TrackMatchState>(state, true, out _))
             return BadRequest(new { error = "State is not a valid match state" });
         if (sort is not (null or "" or "confidence_desc" or "confidence_asc"))
@@ -365,7 +366,7 @@ public sealed class TrackMatchesController(
                 review = allRows.Count(item => item.State is TrackMatchState.Suggested or TrackMatchState.Ambiguous),
                 rejected = allRows.Count(item => item.State == TrackMatchState.Rejected),
                 attention = allRows.Count(item => item.State is
-                    TrackMatchState.Suggested or TrackMatchState.Ambiguous or TrackMatchState.Rejected)
+                    TrackMatchState.Suggested or TrackMatchState.Ambiguous)
             },
             pagination = new { page, pageSize, total, totalPages = Math.Max(1, (int)Math.Ceiling(total / (double)pageSize)) }
         }
@@ -600,8 +601,10 @@ public sealed class TrackMatchesController(
     private static bool MatchesStateFilter(TrackMatchState state, string? filter) =>
         string.IsNullOrWhiteSpace(filter) ||
         (filter.Equals("attention", StringComparison.OrdinalIgnoreCase) && state is
-            TrackMatchState.Suggested or TrackMatchState.Ambiguous or TrackMatchState.Rejected) ||
+            TrackMatchState.Suggested or TrackMatchState.Ambiguous) ||
         (filter.Equals("matched", StringComparison.OrdinalIgnoreCase) && state is TrackMatchState.Accepted or TrackMatchState.Pinned) ||
+        (filter.Equals("history", StringComparison.OrdinalIgnoreCase) && state is
+            TrackMatchState.Accepted or TrackMatchState.Pinned or TrackMatchState.Rejected) ||
         state.ToString().Equals(filter, StringComparison.OrdinalIgnoreCase);
 
     private static bool MatchesSourceIdentity(
@@ -703,7 +706,7 @@ public sealed class TrackMatchesController(
             overrideId = manual?.Id,
             overrideRevision = manual?.Revision,
             title = metadata.Title,
-            searchQuery = FuzzyMatcher.SearchQuery(metadata.Title ?? string.Empty),
+            searchQuery = FuzzyMatcher.SearchQuery(metadata.Title ?? string.Empty, metadata.Artist),
             artist = metadata.Artist,
             album = metadata.Album,
             artworkUrl = sourceArtworkUrl ?? candidateArtworkUrl,
@@ -916,7 +919,9 @@ public sealed class TrackMatchesController(
         {
             using var document = JsonDocument.Parse(json ?? "[]");
             if (document.RootElement.ValueKind != JsonValueKind.Array) return [];
-            return document.RootElement.EnumerateArray().Select(item =>
+            return document.RootElement.EnumerateArray()
+                .Where(CredibleCandidate)
+                .Select(item =>
             {
                 var libraryTrackId = Text(item, "libraryTrackId") ?? Text(item, "LibraryTrackId");
                 var providerTrackIds = Element(item, "providerTrackIds", "ProviderTrackIds");
@@ -957,6 +962,15 @@ public sealed class TrackMatchesController(
                 .ToArray();
         }
         catch (JsonException) { return []; }
+    }
+
+    private static bool CredibleCandidate(JsonElement item)
+    {
+        var components = Element(item, "components", "Components");
+        if (components is not { ValueKind: JsonValueKind.Object }) return true;
+        var title = Number(components.Value, "title") ?? Number(components.Value, "Title");
+        var artist = Number(components.Value, "artist") ?? Number(components.Value, "Artist");
+        return (title == null || title >= 0.75) && (artist == null || artist >= 0.7);
     }
 
     private static JsonElement? Element(JsonElement root, string camelName, string pascalName) =>
