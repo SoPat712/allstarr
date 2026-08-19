@@ -20,5 +20,6 @@ tool="$(basename "$0")"
 [[ "${tool}" == pg_dump || "${tool}" == pg_restore ]] || exit 64
 docker run --rm --network host --user "$(id -u):$(id -g)" \
   --volume /tmp:/tmp --volume /etc/passwd:/etc/passwd:ro --volume /etc/group:/etc/group:ro \
-  --env PGPASSWORD --env HOME=/tmp \
+  --env PGHOST --env PGPORT --env PGDATABASE --env PGUSER --env PGPASSWORD --env PGSSLMODE \
+  --env HOME=/tmp \
   "${image}" "${tool}" "$@"
