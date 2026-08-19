@@ -16,7 +16,7 @@
   import SelectField from "$lib/components/SelectField.svelte";
   import { home, intelligence, playlistLinks, type IntelligenceScope, type IntelligenceState, type MediaTarget } from "$lib/api";
 
-  type IntelligenceSection = "overview" | "history" | "recommendations" | "imports" | "settings";
+  type IntelligenceSection = "overview" | "history" | "discover" | "automation";
 
   let { initialSection = "overview" }: { initialSection?: string } = $props();
   let protocol = $state("jellyfin");
@@ -39,10 +39,12 @@
   let loadedScope = $state<IntelligenceScope | null>(null);
 
   const activeSection = $derived<IntelligenceSection>(
-    initialSection === "history" || initialSection === "recommendations" || initialSection === "imports" || initialSection === "settings"
-      ? initialSection
-      : "overview",
+    initialSection === "history" || initialSection === "imports" ? "history"
+      : initialSection === "discover" || initialSection === "recommendations" ? "discover"
+        : initialSection === "automation" || initialSection === "settings" ? "automation"
+          : "overview",
   );
+  const historySection = $derived(initialSection === "imports" ? "imports" : activeSection === "overview" ? "overview" : "history");
   const scope = $derived<IntelligenceScope>({ protocol, backendInstanceId, libraryScopeId });
   const activeScope = $derived(loadedScope ?? scope);
   const visibleCandidates = $derived(data?.candidates.filter((item) => !item.exclusions.length) ?? []);
@@ -57,6 +59,8 @@
     .filter((item) => item.protocol === activeScope.protocol && item.backendInstanceId === activeScope.backendInstanceId &&
       (!item.libraryScopeId || item.libraryScopeId === activeScope.libraryScopeId) && item.credentialReferenceId)
     .map((item) => ({ value: item.credentialReferenceId!, label: item.displayName })));
+  const nextSchedule = $derived(data?.schedules.filter((item) => item.enabled && item.nextRunAt)
+    .sort((left, right) => new Date(left.nextRunAt!).getTime() - new Date(right.nextRunAt!).getTime())[0]);
 
   $effect(() => {
     if (!["pending", "running", "retry scheduled"].includes(runState ?? "")) return;
@@ -208,7 +212,7 @@
       <h2>Listen deeper, without exposing your history.</h2>
       <p>Recommendations, listening history, and generated playlists stay private to this account and music library.</p>
     </div>
-    {#if data?.actions.canRun && activeSection === "recommendations"}
+    {#if data?.actions.canRun && activeSection === "discover"}
       <div class="heading-actions">
         {#if runStatus}<Badge state={runState === "succeeded" ? "healthy" : "suggested"}>{runStatus}</Badge>{/if}
         <Button disabled={Boolean(action)}
@@ -262,7 +266,7 @@
     {#if data.state === "degraded"}
       <div class="degraded-banner" role="status"><span aria-hidden="true">!</span><p><strong>Some discovery sources need attention.</strong> Existing results remain available.</p></div>
     {/if}
-    {#if activeSection === "recommendations" && data.actions.progress}
+    {#if activeSection === "discover" && data.actions.progress}
       <section class="panel run-progress" role="status">
         <div><p class="eyebrow">Refreshing recommendations</p><strong>{data.actions.progress.message}</strong>
           {#if data.actions.progress.provider || data.actions.progress.playlist || data.actions.progress.track}<small>{[data.actions.progress.provider, data.actions.progress.playlist, data.actions.progress.track].filter(Boolean).join(" · ")}</small>{/if}
@@ -274,16 +278,24 @@
     {/if}
     <SegmentedNav items={[
       { id: "overview", label: "Overview", href: "#/intelligence?section=overview" },
-      { id: "history", label: "History", href: "#/intelligence?section=history" },
-      { id: "recommendations", label: "Recommendations", href: "#/intelligence?section=recommendations" },
-      { id: "imports", label: "Imports", href: "#/intelligence?section=imports" },
-      { id: "settings", label: "Settings", href: "#/intelligence?section=settings" },
+      { id: "history", label: "History & Imports", href: "#/intelligence?section=history" },
+      { id: "discover", label: "Discover", href: "#/intelligence?section=discover" },
+      { id: "automation", label: "Automation", href: "#/intelligence?section=automation" },
     ]} active={activeSection} label="Intelligence sections" class="intelligence-tabs" />
 
-    {#if activeSection === "overview" || activeSection === "history" || activeSection === "imports"}
-      <IntelligenceHistory scope={activeScope} section={activeSection} policyEnabled={Boolean(data.policy?.enabled)} retentionDays={data.policy?.retentionDays ?? 30} />
-    {:else if activeSection === "settings"}
+    {#if activeSection === "overview" || activeSection === "history"}
+      <IntelligenceHistory scope={activeScope} section={historySection} policyEnabled={Boolean(data.policy?.enabled)} retentionDays={data.policy?.retentionDays ?? 30} onChanged={refresh} />
+    {:else if activeSection === "automation"}
       <div class="settings-stack">
+        <section class="panel automation-summary">
+          <header><div><p class="eyebrow">Recommendation engine</p><h3>Automation</h3><p>Control saved listening, recommendation runs, generated playlists, and schedules in one place.</p></div>{#if runStatus}<Badge state={runState === "succeeded" ? "healthy" : "suggested"}>{runStatus}</Badge>{/if}</header>
+          <dl>
+            <div><dt>Last recommendation run</dt><dd>{runStatus ?? "Not run yet"}</dd></div>
+            <div><dt>Next scheduled playlist</dt><dd>{nextSchedule?.nextRunAt ? new Date(nextSchedule.nextRunAt).toLocaleString() : "No run scheduled"}</dd></div>
+            <div><dt>Generated playlists</dt><dd>{data.generatedSets.length}</dd></div>
+          </dl>
+          {#if data.actions.canRun}<Button disabled={Boolean(action)} onclick={() => void perform("run", () => intelligence.run(activeScope))}>{action === "run" ? "Starting…" : "Run recommendations now"}</Button>{/if}
+        </section>
         <section class="panel privacy-card">
           <header><div><p class="eyebrow">Control</p><h3>Privacy and sources</h3></div><Badge state={enabled ? "healthy" : "suggested"}>{enabled ? "Enabled" : "Off"}</Badge></header>
           <form onsubmit={(event) => {
@@ -339,13 +351,13 @@
                 </li>
               {/each}
             </ol>
-          {:else if !data.policy?.enabled}<div class="compact-empty"><strong>Recommendations are off</strong><p><a class="touch-link" href="#/intelligence?section=settings">Turn on automatic history</a>, then import retained history or complete a play.</p></div>
+          {:else if !data.policy?.enabled}<div class="compact-empty"><strong>Recommendations are off</strong><p><a class="touch-link" href="#/intelligence?section=automation">Turn on automatic history</a>, then import retained history or complete a play.</p></div>
           {:else if readyRecommendationSources}<div class="compact-empty"><strong>No recommendations yet</strong><p>Your sources are ready. Complete a play or import history inside the retention window, then refresh recommendations.</p></div>
           {:else}<div class="compact-empty"><strong>No recommendation sources are ready</strong><p><a class="touch-link" href="#/integrations/services">Connect or configure a source</a>, then refresh.</p></div>{/if}
         </section>
 
         <aside class="side-stack">
-          <section class="panel profile-card"><p class="eyebrow">Recent listening</p><h3>Your profile</h3>{#if data.visualization.length}<ul class="profile-list">{#each data.visualization as item}<li><span>{item.label}</span><meter aria-label={item.label} min="0" max="1" value={item.value}>{item.value}</meter></li>{/each}</ul>{:else}<p class="muted">Turn on automatic history in <a class="touch-link" href="#/intelligence?section=settings">Settings</a>, then play music or import a history file.</p>{/if}</section>
+          <section class="panel profile-card"><p class="eyebrow">Recent listening</p><h3>Your profile</h3>{#if data.visualization.length}<ul class="profile-list">{#each data.visualization as item}<li><span>{item.label}</span><meter aria-label={item.label} min="0" max="1" value={item.value}>{item.value}</meter></li>{/each}</ul>{:else}<p class="muted">Turn on automatic history in <a class="touch-link" href="#/intelligence?section=automation">Automation</a>, then play music or import a history file.</p>{/if}</section>
           <section class="panel generated-card"><p class="eyebrow">Saved output</p><h3>Generated playlists</h3><ul class="generated-list">{#each data.generatedSets as item}<li class="generated-row"><span><strong>{item.name}</strong><small>{item.trackCount} tracks</small></span><Badge state={item.materialized ? "healthy" : "suggested"}>{generatedStatus(item)}</Badge></li>{:else}<li class="muted">No generated playlists yet.</li>{/each}</ul>{#if data.actions.canGenerate && data.actions.latestRunId}<form class="generate-form" onsubmit={(event) => { event.preventDefault(); void perform("generate", () => intelligence.generate(activeScope, data!.actions.latestRunId!, generatedName)); }}><label class="field"><span>Playlist name</span><input bind:value={generatedName} maxlength="200" required /></label><Button type="submit" disabled={Boolean(action)}>{action === "generate" ? "Creating…" : "Create playlist"}</Button></form>{/if}</section>
         </aside>
       </div>
@@ -363,7 +375,7 @@
 />
 
 <style>
-  .intelligence-view{display:grid;min-width:0;grid-template-columns:minmax(0,1fr);gap:1.25rem}.route-heading{display:flex;align-items:end;justify-content:space-between;gap:1rem}.route-heading h2{margin:.25rem 0;font-family:var(--font-display);font-size:clamp(1.5rem,3vw,2.2rem)}.route-heading p:last-child{color:var(--color-ink-muted)}.heading-actions{display:flex;align-items:center;gap:.75rem}.scope-card{display:flex;align-items:center;justify-content:space-between;gap:1.25rem;padding:1rem}.scope-intro{min-width:0}.scope-intro p{margin:0}.scope-intro p:last-child{margin-top:.2rem;color:var(--color-ink-muted)}.library-choice{display:grid;min-width:min(22rem,45%);border-left:1px solid var(--color-edge);padding-left:1rem}.library-choice span,.scope-card-status span{color:var(--color-ink-muted);font-size:.8rem}.library-picker{width:min(24rem,45%)}.scope-card-status{display:flex;align-items:center;gap:.75rem}.scope-card-status strong,.scope-card-status span{display:block}.run-progress{display:grid;grid-template-columns:minmax(0,1fr) minmax(10rem,.5fr) auto;align-items:center;gap:1rem;padding:1rem}.run-progress p{margin:0}.run-progress small{display:block;color:var(--color-ink-muted)}.settings-stack{display:grid;gap:1rem}.settings-status-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.status-card{padding:1.15rem}.status-card h3,.status-card p{margin:.2rem 0}.status-list,.profile-list,.generated-list{margin:0;padding:0;list-style:none}.status-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.75rem 0}.status-row strong,.status-row small{display:block}.status-row small{color:var(--color-ink-muted)}.intelligence-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(18rem,.8fr);gap:1rem}.recommendations,.profile-card,.generated-card,.privacy-card{padding:1.15rem}.recommendations>header,.privacy-card>header{display:flex;align-items:center;justify-content:space-between}.recommendations h3,.profile-card h3,.generated-card h3,.privacy-card h3{margin:.2rem 0 1rem}.recommendation-list{display:grid;margin:0;padding:0;list-style:none}.recommendation-list>li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.85rem;align-items:center;border-top:1px solid var(--color-edge);padding:.9rem 0}.track-copy small,summary{color:var(--color-ink-muted);font-size:.75rem}.track-copy details{margin-top:.35rem}.track-copy ul{margin:.4rem 0 0;padding-left:1.1rem;color:var(--color-ink-muted);font-size:.78rem}.side-stack{display:grid;align-content:start;gap:1rem}.profile-list li,.generated-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.7rem 0}.profile-card meter{width:55%;accent-color:var(--color-signal)}.generated-row span:first-child strong,.generated-row span:first-child small{display:block}.generated-row small{color:var(--color-ink-muted)}.generate-form{display:grid;gap:.75rem;margin-top:1rem}.privacy-card form{display:grid;grid-template-columns:minmax(14rem,.6fr) 1fr 1fr;gap:1rem}.toggle-line,fieldset label{display:flex;align-items:flex-start;gap:.65rem;border:1px solid var(--color-edge);border-radius:var(--radius-md);background:var(--color-panel-raised);padding:.75rem;cursor:pointer}.toggle-line.selected,fieldset label.selected{border-color:color-mix(in srgb,var(--color-signal) 70%,var(--color-edge));background:color-mix(in srgb,var(--color-signal) 8%,var(--color-panel-raised))}.toggle-line span>*,fieldset label span>*{display:block}.toggle-line small,fieldset small{color:var(--color-ink-muted)}fieldset{display:grid;align-content:start;gap:.5rem;border:0;margin:0;padding:0}fieldset legend{margin-bottom:.55rem;font-weight:750}.signal-choices label{align-items:center;padding:.55rem .65rem}.signal-choices label span{font-weight:700}.provider-choices label.unavailable{cursor:not-allowed}.privacy-card footer{grid-column:1/-1;display:flex;justify-content:space-between;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}
-  @media(max-width:900px){.scope-card{align-items:stretch;flex-direction:column}.library-choice,.library-picker{width:100%;min-width:0;border-left:0;border-top:1px solid var(--color-edge);padding-top:1rem;padding-left:0}.run-progress{grid-template-columns:1fr}.settings-status-grid,.intelligence-grid{grid-template-columns:1fr}.privacy-card form{grid-template-columns:1fr 1fr}}
-  @media(max-width:620px){.route-heading{align-items:stretch;flex-direction:column}.scope-card-status{align-items:stretch;flex-direction:column}.privacy-card form,.run-progress{grid-template-columns:1fr}.recommendation-list>li{grid-template-columns:auto minmax(0,1fr)}.track-actions{grid-column:2;flex-wrap:wrap}.privacy-card footer{grid-column:auto;flex-direction:column-reverse}.privacy-card footer>:global([data-slot="button"]){width:100%}.touch-link{display:inline-flex;min-height:var(--control-md);align-items:center}}
+  .intelligence-view{display:grid;min-width:0;grid-template-columns:minmax(0,1fr);gap:1.25rem}.route-heading{display:flex;align-items:end;justify-content:space-between;gap:1rem}.route-heading h2{margin:.25rem 0;font-family:var(--font-display);font-size:clamp(1.5rem,3vw,2.2rem)}.route-heading p:last-child{color:var(--color-ink-muted)}.heading-actions{display:flex;align-items:center;gap:.75rem}.scope-card{display:flex;align-items:center;justify-content:space-between;gap:1.25rem;padding:1rem}.scope-intro{min-width:0}.scope-intro p{margin:0}.scope-intro p:last-child{margin-top:.2rem;color:var(--color-ink-muted)}.library-choice{display:grid;min-width:min(22rem,45%);border-left:1px solid var(--color-edge);padding-left:1rem}.library-choice span,.scope-card-status span{color:var(--color-ink-muted);font-size:.8rem}.library-picker{width:min(24rem,45%)}.scope-card-status{display:flex;align-items:center;gap:.75rem}.scope-card-status strong,.scope-card-status span{display:block}.run-progress{display:grid;grid-template-columns:minmax(0,1fr) minmax(10rem,.5fr) auto;align-items:center;gap:1rem;padding:1rem}.run-progress p{margin:0}.run-progress small{display:block;color:var(--color-ink-muted)}.settings-stack{display:grid;gap:1rem}.settings-status-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.status-card{padding:1.15rem}.status-card h3,.status-card p{margin:.2rem 0}.status-list,.profile-list,.generated-list{margin:0;padding:0;list-style:none}.status-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.75rem 0}.status-row strong,.status-row small{display:block}.status-row small{color:var(--color-ink-muted)}.intelligence-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(18rem,.8fr);gap:1rem}.recommendations,.profile-card,.generated-card,.privacy-card{padding:1.15rem}.recommendations>header,.privacy-card>header{display:flex;align-items:center;justify-content:space-between}.recommendations h3,.profile-card h3,.generated-card h3,.privacy-card h3{margin:.2rem 0 1rem}.recommendation-list{display:grid;margin:0;padding:0;list-style:none}.recommendation-list>li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.85rem;align-items:center;border-top:1px solid var(--color-edge);padding:.9rem 0}.track-copy small,summary{color:var(--color-ink-muted);font-size:.75rem}.track-copy details{margin-top:.35rem}.track-copy ul{margin:.4rem 0 0;padding-left:1.1rem;color:var(--color-ink-muted);font-size:.78rem}.side-stack{display:grid;align-content:start;gap:1rem}.profile-list li,.generated-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.7rem 0}.profile-card meter{width:55%;accent-color:var(--color-signal)}.generated-row span:first-child strong,.generated-row span:first-child small{display:block}.generated-row small{color:var(--color-ink-muted)}.generate-form{display:grid;gap:.75rem;margin-top:1rem}.automation-summary{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:1rem;padding:1.15rem}.automation-summary>header{grid-column:1/-1;display:flex;align-items:start;justify-content:space-between;gap:1rem}.automation-summary h3,.automation-summary p{margin:.2rem 0}.automation-summary header p:last-child{color:var(--color-ink-muted)}.automation-summary dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0;border:1px solid var(--color-edge);border-radius:var(--radius-md)}.automation-summary dl div{padding:.75rem}.automation-summary dl div+div{border-left:1px solid var(--color-edge)}.automation-summary dt{color:var(--color-ink-muted);font-size:var(--text-xs)}.automation-summary dd{margin:.2rem 0 0;font-weight:750}.privacy-card form{display:grid;grid-template-columns:minmax(14rem,.6fr) 1fr 1fr;gap:1rem}.toggle-line,fieldset label{display:flex;align-items:flex-start;gap:.65rem;border:1px solid var(--color-edge);border-radius:var(--radius-md);background:var(--color-panel-raised);padding:.75rem;cursor:pointer}.toggle-line.selected,fieldset label.selected{border-color:color-mix(in srgb,var(--color-signal) 70%,var(--color-edge));background:color-mix(in srgb,var(--color-signal) 8%,var(--color-panel-raised))}.toggle-line span>*,fieldset label span>*{display:block}.toggle-line small,fieldset small{color:var(--color-ink-muted)}fieldset{display:grid;align-content:start;gap:.5rem;border:0;margin:0;padding:0}fieldset legend{margin-bottom:.55rem;font-weight:750}.signal-choices label{align-items:center;padding:.55rem .65rem}.signal-choices label span{font-weight:700}.provider-choices label.unavailable{cursor:not-allowed}.privacy-card footer{grid-column:1/-1;display:flex;justify-content:space-between;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}
+  @media(max-width:900px){.scope-card{align-items:stretch;flex-direction:column}.library-choice,.library-picker{width:100%;min-width:0;border-left:0;border-top:1px solid var(--color-edge);padding-top:1rem;padding-left:0}.run-progress{grid-template-columns:1fr}.settings-status-grid,.intelligence-grid{grid-template-columns:1fr}.privacy-card form{grid-template-columns:1fr 1fr}.automation-summary{grid-template-columns:1fr}.automation-summary>:global([data-slot="button"]){justify-self:start}}
+  @media(max-width:620px){.route-heading{align-items:stretch;flex-direction:column}.scope-card-status{align-items:stretch;flex-direction:column}.privacy-card form,.run-progress{grid-template-columns:1fr}.recommendation-list>li{grid-template-columns:auto minmax(0,1fr)}.track-actions{grid-column:2;flex-wrap:wrap}.automation-summary dl{grid-template-columns:1fr}.automation-summary dl div+div{border-top:1px solid var(--color-edge);border-left:0}.automation-summary>:global([data-slot="button"]){width:100%}.privacy-card footer{grid-column:auto;flex-direction:column-reverse}.privacy-card footer>:global([data-slot="button"]){width:100%}.touch-link{display:inline-flex;min-height:var(--control-md);align-items:center}}
 </style>

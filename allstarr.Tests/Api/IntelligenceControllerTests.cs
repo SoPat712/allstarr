@@ -374,14 +374,19 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
             item.Album = "Album A";
             item.SourceKind = "import";
             item.ClientClass = "Koito";
+            item.ProviderId = "spotify";
         }
         firstA.DurationMilliseconds = 1_000;
         secondA.DurationMilliseconds = null;
         trackB.Artist = "Artist B";
         trackB.Album = "Album B";
+        trackB.ClientClass = "Feishin";
+        trackB.ProviderId = "deezer";
         trackB.DurationMilliseconds = 2_000;
         trackC.Artist = "Artist C";
         trackC.Album = "Album C";
+        trackC.ClientClass = "Finer";
+        trackC.ProviderId = "deezer";
         trackC.DurationMilliseconds = 3_000;
         var before = HistoryEvent("Before", from.AddMilliseconds(-1));
         var upperBound = HistoryEvent("Upper bound", to);
@@ -409,7 +414,7 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
             TimeZoneId = "America/New_York"
         }, default));
         elapsed.Stop();
-        Assert.InRange(_commands.Count, 6, 8);
+        Assert.InRange(_commands.Count, 7, 9);
         Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(2),
             $"History overview took {elapsed.Elapsed.TotalMilliseconds:F0} ms in {_commands.Count} queries.");
         var overview = JsonSerializer.SerializeToElement(overviewResult.Value);
@@ -423,6 +428,13 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
         Assert.Equal(from, selected.GetProperty("FirstListen").GetDateTimeOffset());
         Assert.True(overview.GetProperty("currentStreakDays").GetInt32() == 3, overview.GetRawText());
         Assert.True(overview.GetProperty("longestStreakDays").GetInt32() == 3, overview.GetRawText());
+        var breakdowns = overview.GetProperty("breakdowns");
+        Assert.Equal(["import", "protocol"], breakdowns.GetProperty("Sources").EnumerateArray()
+            .Select(item => item.GetProperty("Value").GetString()));
+        Assert.Equal(["deezer", "spotify"], breakdowns.GetProperty("Providers").EnumerateArray()
+            .Select(item => item.GetProperty("Value").GetString()));
+        Assert.Equal(["Koito", "Feishin", "Finer"], breakdowns.GetProperty("Clients").EnumerateArray()
+            .Select(item => item.GetProperty("Value").GetString()));
 
         var activityResult = Assert.IsType<OkObjectResult>(await Controller().GetHistoryActivity(new()
         {

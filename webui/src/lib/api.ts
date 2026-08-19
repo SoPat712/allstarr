@@ -1015,8 +1015,20 @@ export type ListeningHistoryOverview = {
   selected: ListeningHistoryStats;
   currentStreakDays: number;
   longestStreakDays: number;
+  breakdowns: {
+    sources: ListeningHistoryBreakdown[];
+    providers: ListeningHistoryBreakdown[];
+    clients: ListeningHistoryBreakdown[];
+  };
   nowPlaying?: ListeningHistoryItem | null;
   recent: ListeningHistoryItem[];
+};
+
+export type ListeningHistoryBreakdown = {
+  dimension: string;
+  value: string;
+  listenCount: number;
+  durationMilliseconds: number;
 };
 
 export type ListeningHistoryActivity = {

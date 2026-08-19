@@ -27,15 +27,17 @@ public sealed partial class IntelligenceController
 
         var completed = ScopedCompletedHistory(db, scope);
         var allTime = await StatsAsync(completed, cancellationToken);
-        var selected = await StatsAsync(completed.Where(item =>
-            item.ListenedAt >= period.From && item.ListenedAt < period.To), cancellationToken);
-        var recentRecords = await completed.Where(item => item.ListenedAt >= period.From && item.ListenedAt < period.To)
+        var selectedHistory = completed.Where(item =>
+            item.ListenedAt >= period.From && item.ListenedAt < period.To);
+        var selected = await StatsAsync(selectedHistory, cancellationToken);
+        var recentRecords = await selectedHistory
             .OrderByDescending(item => item.ListenedAt).ThenByDescending(item => item.Id)
             .Take(10).ToListAsync(cancellationToken);
         var nowPlaying = await ScopedHistory(db, scope).Where(item =>
                 item.State == ListeningEventState.Playing && item.UpdatedAt >= Now.AddHours(-8))
             .OrderByDescending(item => item.UpdatedAt).FirstOrDefaultAsync(cancellationToken);
         var activity = await ActivityAsync(db, scope, period, request.TimeZoneId, cancellationToken);
+        var breakdowns = await BreakdownsAsync(db, scope, period, cancellationToken);
         var recent = await HistoryItemsAsync(db, scope, recentRecords, cancellationToken);
 
         return Ok(new
@@ -45,6 +47,7 @@ public sealed partial class IntelligenceController
             selected,
             currentStreakDays = activity.CurrentStreakDays,
             longestStreakDays = activity.LongestStreakDays,
+            breakdowns,
             nowPlaying = nowPlaying == null ? null : HistoryItem(nowPlaying, null, []),
             recent
         });
@@ -582,6 +585,48 @@ public sealed partial class IntelligenceController
                 .ThenBy(item => item.Artist).ThenBy(item => item.Title).Take(limit).ToListAsync(cancellationToken)
         };
 
+    private static async Task<ListeningHistoryBreakdowns> BreakdownsAsync(
+        AllstarrDbContext db,
+        IntelligenceScope scope,
+        ListeningHistoryPeriod period,
+        CancellationToken cancellationToken)
+    {
+        var from = period.From.UtcTicks;
+        var to = period.To.UtcTicks;
+        var rows = await db.Database.SqlQuery<ListeningHistoryBreakdown>($$"""
+            WITH scoped AS (
+                SELECT "SourceKind", "ProviderId", "ClientClass", "DurationMilliseconds"
+                FROM listening_events
+                WHERE "TenantId" = {{scope.TenantId}} AND "OwnerUserId" = {{scope.OwnerUserId}}
+                  AND "Protocol" = {{scope.Protocol}} AND "BackendInstanceId" = {{scope.BackendInstanceId}}
+                  AND "LibraryScopeId" = {{scope.LibraryScopeId}} AND "State" = 'Completed'
+                  AND "ListenedAt" >= {{from}} AND "ListenedAt" < {{to}}
+            ), grouped AS (
+                SELECT 'source'::text AS "Dimension", coalesce(nullif("SourceKind", ''), 'unknown') AS "Value",
+                       count(*)::integer AS "ListenCount", coalesce(sum("DurationMilliseconds"), 0)::bigint AS "DurationMilliseconds"
+                FROM scoped GROUP BY 2
+                UNION ALL
+                SELECT 'provider'::text, coalesce(nullif("ProviderId", ''), 'unknown'),
+                       count(*)::integer, coalesce(sum("DurationMilliseconds"), 0)::bigint
+                FROM scoped GROUP BY 2
+                UNION ALL
+                SELECT 'client'::text, coalesce(nullif("ClientClass", ''), 'unknown'),
+                       count(*)::integer, coalesce(sum("DurationMilliseconds"), 0)::bigint
+                FROM scoped GROUP BY 2
+            ), ranked AS (
+                SELECT *, row_number() OVER (PARTITION BY "Dimension" ORDER BY "ListenCount" DESC, "Value") AS position
+                FROM grouped
+            )
+            SELECT "Dimension", "Value", "ListenCount", "DurationMilliseconds"
+            FROM ranked WHERE position <= 8
+            ORDER BY "Dimension", position
+            """).ToListAsync(cancellationToken);
+        return new(
+            rows.Where(item => item.Dimension == "source").ToArray(),
+            rows.Where(item => item.Dimension == "provider").ToArray(),
+            rows.Where(item => item.Dimension == "client").ToArray());
+    }
+
     private static async Task<IReadOnlyList<ListeningHistoryItem>> HistoryItemsAsync(
         AllstarrDbContext db,
         IntelligenceScope scope,
@@ -843,6 +888,19 @@ internal sealed class ListeningHistoryTopItem
     public long ListeningTimeMilliseconds { get; set; }
     public DateTimeOffset? LastListenedAt { get; set; }
 }
+
+internal sealed class ListeningHistoryBreakdown
+{
+    public string Dimension { get; set; } = "";
+    public string Value { get; set; } = "";
+    public int ListenCount { get; set; }
+    public long DurationMilliseconds { get; set; }
+}
+
+internal sealed record ListeningHistoryBreakdowns(
+    IReadOnlyList<ListeningHistoryBreakdown> Sources,
+    IReadOnlyList<ListeningHistoryBreakdown> Providers,
+    IReadOnlyList<ListeningHistoryBreakdown> Clients);
 
 internal sealed class ListeningHistoryItem
 {
