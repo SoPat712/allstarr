@@ -8,14 +8,15 @@ Turn the existing administrator WebUI into one coherent, data-rich music control
 
 This is a replacement and consolidation package. Do not create parallel matching, routing, scrobbling, caching, scheduling, or recommendation systems. Delete each old UI surface after its replacement passes.
 
-### Verified starting state
+### Verified delivery state
 
-- Branch, local HEAD, and `origin/dev` are all `07bc3c45124beebbe28b9b7131988fd75883e15c`.
-- That revision is already deployed and its last CI, release, protocol, and responsive gates are green.
+- Application revision `e42f38deaa2047b8e4f3e9850e1bf09aad715efb` is pushed and deployed to both Jellyfin and Subsonic stacks.
+- Both server checkouts are clean at that revision. Both app containers use image `sha256:dc0bb67a64d747009a0776c8ff242854cc38e4215c6a180894faf731568ba4fc` and are healthy.
+- GitHub Actions run `32286289552` is green across build/test, release-critical, Apple, WebUI, format, Compose, and release-manifest jobs.
 - Current WebUI baseline is 45.3 KiB initial JavaScript and 21.3 KiB CSS; unit is 46/46 and browser is 84/84.
 - Canvas UI remains blocked by MIT plus Commons Clause redistribution terms. A focused replacement review found no permissive renderer that would delete more code than it adds, so use Svelte 5, shadcn-svelte, Bits UI, Lucide, CSS, SVG, and native Web Animations.
 - Koito `a079fa693569d21e03c00df163f20ac5e137c490`, Explo `4fc75874de691ff1e26b10d88b859cfac8ee2992`, and Multi-Scrobbler `bc28de66b14db1c99eb79ad75d1cdf4c9dfff7cc` are MIT reference inputs. Adapt useful behavior and presentation into existing owners; do not import their application architectures.
-- LAN/VPN access to `192.168.1.116` is off. Complete every local gate first, then ask the user to enable it for exact-revision deployment and live qualification only.
+- LAN/VPN access was enabled only after the local release gates passed, then used for exact-revision deployment and qualification.
 
 ### Product rules
 
@@ -106,18 +107,27 @@ Acceptance: native objects remain exact, virtual objects satisfy the full client
 - [x] Use grouped queries, lazy routes/artwork, keyed row updates, and off-screen content visibility; add no charting/rendering/virtualization framework.
 - [x] Expand the Jellyfin kit to union-key native comparison, native artwork/count parity, dynamic external traversal, every ready playable provider, and checked Finer/Feishin/Musiver request shapes.
 - [x] Run focused owner tests, WebUI check/unit/build/budget/E2E, both PostgreSQL lanes, format, Apple gateway, Compose, shell, and deterministic protocol kits.
-- [ ] Ask the user to enable LAN/VPN only after the exact final SHA is locally green.
-- [ ] After exact-revision authorization, push, deploy, run bounded browser/provider/client qualification, and record the deployed SHA.
+- [x] Ask the user to enable LAN/VPN only after the exact final SHA is locally green.
+- [x] After exact-revision authorization, push, deploy, run bounded browser/provider/client qualification, and record the deployed SHA.
 
 Acceptance: local release evidence is complete before LAN access, no unrun gate is called passing, and live failures are separated into provider/configuration versus Allstarr defects.
 
 ### Local release evidence
 
 - WebUI: check clean, unit 46/46, build and budgets green at 46.2 KiB initial JavaScript and 22.7 KiB CSS, browser 92/92 without retries.
-- Backend: PostgreSQL fast lane 2,212/2,212 and release-critical lane 104/104; the slow release-critical tests remain protected migration, lineage, state-transfer, backup, clone-pool, and 10,000-track contracts.
+- Backend: PostgreSQL fast lane 2,213/2,213 and release-critical lane 104/104; the slow release-critical tests remain protected migration, lineage, state-transfer, backup, clone-pool, and 10,000-track contracts.
 - Supporting gates: format clean, Apple gateway 20/20, all three Compose profiles valid, deterministic Subsonic 5/5, release-manifest self-tests 2/2, shell syntax clean.
 - The live Jellyfin kit now exact-compares native music counts in addition to existing full native objects, artwork bytes, dynamic external traversal, playback, Finer, Feishin, Musiver, and WebSocket contracts.
 
+### Live release evidence
+
+- Jellyfin provider/client qualification: 181 checks, zero failures; Apple GAMDL, Deezer, and YouTube Music delivered bounded audio. Metadata/lyrics-only extensions are no longer advertised as playable tracks.
+- Actor-bound Jellyfin qualification: 194 checks, zero failures; the exact private throwaway playlist passed create, rename, add, reorder, remove, share, unshare, mix, delete, and direct 404 cleanup verification.
+- Jellyfin WebSocket qualification: 5/5 for header authentication, bidirectional frames, Sessions delivery, and invalid-token rejection.
+- OpenSubsonic/Navidrome qualification: 67 checks, zero failures across password/token auth, XML/JSON, playlists, browse/search, artwork, lyrics, exact range bytes, concurrency, cancellation, and direct-vs-Allstarr shape parity.
+- Browser-only responsive qualification: 27/27 route/viewport checks across desktop, tablet, and mobile with no overflow, crash state, missing main heading, or console error.
+- External sources without range support were retained as truthful bounded progressive delivery rather than falsely advertising seek support.
+
 ## Next action
 
-Ask the user to enable LAN/VPN for push, deployment, and bounded live qualification. The named disposable PostgreSQL container and its anonymous test-data volume have been removed.
+Package complete. The disposable PostgreSQL container and temporary live-report directories were removed; no unrelated service or provider playlist was mutated.
