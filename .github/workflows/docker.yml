@@ -69,28 +69,7 @@ jobs:
 
       - name: Install PostgreSQL 18 client
         shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ca-certificates curl
-          sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl --fail --silent --show-error \
-            --output /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
-            https://www.postgresql.org/media/keys/ACCC4CF8.asc
-          . /etc/os-release
-          printf '%s\n' \
-            'Types: deb' \
-            'URIs: https://apt.postgresql.org/pub/repos/apt' \
-            "Suites: ${VERSION_CODENAME}-pgdg" \
-            "Architectures: $(dpkg --print-architecture)" \
-            'Components: main' \
-            'Signed-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc' \
-            | sudo tee /etc/apt/sources.list.d/pgdg.sources >/dev/null
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends postgresql-client-18
-          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
-          export PATH="/usr/lib/postgresql/18/bin:$PATH"
-          pg_dump --version
-          pg_restore --version
+        run: bash tools/ci/postgres-client.sh install
 
       - name: Restore dependencies
         run: dotnet restore -p:NuGetAudit=true
