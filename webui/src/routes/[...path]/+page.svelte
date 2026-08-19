@@ -22,9 +22,16 @@
     { id: "cached", label: "Cached", href: "#/library/cached" },
     { id: "kept", label: "Kept", href: "#/library/kept" },
   ];
+  const bootMessages = [
+    "Checking your session",
+    "Loading account access",
+    "Preparing your music control center",
+  ];
 
   let session = $state<Session | null>(null);
   let loading = $state(true);
+  let bootstrapFailed = $state(false);
+  let bootMessageIndex = $state(0);
   let error = $state("");
   let username = $state("");
   let password = $state("");
@@ -173,25 +180,40 @@
     }
   });
 
+  $effect(() => {
+    if (!loading) return;
+    const timer = window.setInterval(() => {
+      bootMessageIndex = (bootMessageIndex + 1) % bootMessages.length;
+    }, 1_400);
+    return () => window.clearInterval(timer);
+  });
+
+  async function bootstrap() {
+    loading = true;
+    bootstrapFailed = false;
+    error = "";
+    bootMessageIndex = 0;
+    try {
+      session = await auth.session();
+      if (session.authenticated) {
+        await loadOnboarding(session);
+        liveUpdates.connect();
+      }
+    } catch (cause) {
+      bootstrapFailed = true;
+      error = cause instanceof Error ? cause.message : "Allstarr is unavailable.";
+    } finally {
+      loading = false;
+    }
+  }
+
   onMount(() => {
     const compactSidebar = matchMedia("(min-width: 761px) and (max-width: 900px)");
     const applySidebarBreakpoint = () => { sidebarSlim = compactSidebar.matches; };
     applySidebarBreakpoint();
     compactSidebar.addEventListener("change", applySidebarBreakpoint);
 
-    void (async () => {
-      try {
-        session = await auth.session();
-        if (session.authenticated) {
-          await loadOnboarding(session);
-          liveUpdates.connect();
-        }
-      } catch (cause) {
-        error = cause instanceof Error ? cause.message : "Allstarr is unavailable.";
-      } finally {
-        loading = false;
-      }
-    })();
+    void bootstrap();
 
     return () => {
       compactSidebar.removeEventListener("change", applySidebarBreakpoint);
@@ -230,12 +252,33 @@
 </svelte:head>
 
 {#if loading}
-  <main class="grid min-h-screen place-items-center p-6" aria-busy="true">
-    <div class="w-full max-w-sm space-y-3">
-      <div class="h-3 w-24 animate-pulse rounded-full bg-white/10"></div>
-      <div class="h-16 animate-pulse rounded-2xl bg-white/7"></div>
-      <p class="text-sm text-ink-muted">Connecting to Allstarr…</p>
+  <main class="signal-boot" aria-busy="true">
+    <div class="signal-boot-grid" aria-hidden="true"></div>
+    <div class="signal-boot-console">
+      <div class="signal-boot-mark" aria-hidden="true">
+        <span class="signal-boot-core">A</span>
+        <span class="signal-boot-orbit"></span>
+        <span class="signal-boot-pulse"></span>
+      </div>
+      <p class="signal-boot-eyebrow">Allstarr signal boot</p>
+      <h1>Bringing your music universe online</h1>
+      <div class="signal-boot-meter" aria-hidden="true">
+        {#each Array(9) as _}<span></span>{/each}
+      </div>
+      <p class="signal-boot-status" aria-hidden="true">{bootMessages[bootMessageIndex]}</p>
+      <small aria-hidden="true">Providers · Library · Playback</small>
+      <p class="sr-only" role="status">Loading Allstarr. Preparing your music control center.</p>
     </div>
+  </main>
+{:else if bootstrapFailed}
+  <main class="grid min-h-screen place-items-center p-6">
+    <section class="panel bootstrap-error w-full max-w-sm p-6 sm:p-8" aria-labelledby="bootstrap-error-title">
+      <div class="brand-mark mb-6" aria-hidden="true">A</div>
+      <p class="eyebrow">Connection interrupted</p>
+      <h1 id="bootstrap-error-title" class="mt-2 text-3xl font-semibold tracking-tight">Allstarr could not start.</h1>
+      <p class="notice-error mt-4" role="alert">{error}</p>
+      <button class="auth-submit mt-6 w-full" type="button" onclick={() => void bootstrap()}>Try again</button>
+    </section>
   </main>
 {:else if !session?.authenticated}
   <main class="grid min-h-screen place-items-center p-6">

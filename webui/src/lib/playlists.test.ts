@@ -53,6 +53,7 @@ describe("playlist presentation", () => {
     expect(providerColor("unmatched")).toBe("var(--color-ink-muted)");
     expect(providerColor("jellyfin")).toBe("#8b65fb");
     expect(providerColor("apple-download")).toBe("#fa243c");
+    expect(providerColor("deezer")).toBe("#ff0092");
   });
 
   it("filters and orders summaries by confirmed coverage", () => {

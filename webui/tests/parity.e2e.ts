@@ -1409,6 +1409,8 @@ test("Shared visual tokens meet typography, geometry, and contrast floors", asyn
         Number.parseFloat(root.getPropertyValue(token)) * 16),
       radii: ["--radius-sm", "--radius-md", "--radius-lg"].map((token) =>
         Number.parseFloat(root.getPropertyValue(token)) * 16),
+      dataGeometry: ["--data-row-height", "--data-artwork-size"].map((token) =>
+        Number.parseFloat(root.getPropertyValue(token)) * 16),
       fonts: [Number.parseFloat(primary.fontSize), Number.parseFloat(eyebrow.fontSize)],
       contrast: {
         body: contrast(getComputedStyle(document.body).color, canvas),
@@ -1425,6 +1427,7 @@ test("Shared visual tokens meet typography, geometry, and contrast floors", asyn
   expect(contract.controls).toEqual([36, 44, 48]);
   expect(contract.icons).toEqual([16, 18, 20, 24]);
   expect(contract.radii).toEqual([8, 12, 16]);
+  expect(contract.dataGeometry).toEqual([70.4, 44]);
   expect(contract.fonts[0]).toBeGreaterThanOrEqual(14);
   expect(contract.fonts[1]).toBeGreaterThanOrEqual(12);
   expect(contract.contrast.body).toBeGreaterThanOrEqual(4.5);
@@ -2512,7 +2515,9 @@ test("Durable onboarding controls first setup and targeted recovery", async ({ p
   });
 
   const navigation = page.goto("#/");
-  await expect(page.getByText("Connecting to Allstarr…")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Bringing your music universe online" })).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("Loading Allstarr. Preparing your music control center.");
+  await expect(page.locator("[role=progressbar]")).toHaveCount(0);
   releaseStatus();
   await navigation;
   const setup = page.getByRole("dialog", { name: "Set up Allstarr" });
@@ -2531,6 +2536,18 @@ test("Durable onboarding controls first setup and targeted recovery", async ({ p
   await expect(page.getByText("Media server connection needs attention.")).toBeVisible();
   await expect(page.getByText(/review the media server connection/i)).toBeVisible();
   await expect(setup).toBeHidden();
+});
+
+test("Signal boot exposes a retryable bootstrap failure", async ({ page }) => {
+  const failing = ["/api/admin/auth/me"];
+  await mockApi(page, { fail: failing });
+  await page.goto("#/");
+
+  await expect(page.getByRole("heading", { name: "Allstarr could not start." })).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("Fixture unavailable");
+  failing.length = 0;
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByRole("heading", { name: "Home", level: 1 })).toBeVisible();
 });
 
 test("Administrators can reopen durable setup from Maintenance", async ({ page }) => {
