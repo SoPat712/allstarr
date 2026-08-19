@@ -59,7 +59,6 @@ public partial class JellyfinController : ControllerBase
     private readonly JellyfinSessionManager _sessionManager;
     private readonly IProtocolLyricsResolver _protocolLyricsResolver;
     private readonly ScrobblingHelper? _scrobblingHelper;
-    private readonly OdesliService _odesliService;
     private readonly IApplicationCache _cache;
     private readonly IMediaAssetResolver _mediaAssets;
     private readonly IConfiguration _configuration;
@@ -90,7 +89,6 @@ public partial class JellyfinController : ControllerBase
         JellyfinModelMapper modelMapper,
         JellyfinProxyService proxyService,
         JellyfinSessionManager sessionManager,
-        OdesliService odesliService,
         IApplicationCache cache,
         IMediaAssetResolver mediaAssets,
         IProtocolLyricsResolver protocolLyricsResolver,
@@ -124,7 +122,6 @@ public partial class JellyfinController : ControllerBase
         _sessionManager = sessionManager;
         _protocolLyricsResolver = protocolLyricsResolver;
         _scrobblingHelper = scrobblingHelper;
-        _odesliService = odesliService;
         _cache = cache;
         _mediaAssets = mediaAssets;
         _configuration = configuration;
@@ -1963,13 +1960,4 @@ public partial class JellyfinController : ControllerBase
         return guid.ToString();
     }
 
-    private Task<string?> FindSpotifyIdForExternalTrackAsync(Song externalSong) =>
-        externalSong.ExternalProvider?.ToLowerInvariant() switch
-        {
-            "deezer" => _odesliService.ConvertUrlToSpotifyIdAsync(
-                $"https://www.deezer.com/track/{externalSong.ExternalId}", CancellationToken.None),
-            "qobuz" => _odesliService.ConvertUrlToSpotifyIdAsync(
-                $"https://www.qobuz.com/us-en/album/-/-/{externalSong.ExternalId}", CancellationToken.None),
-            _ => Task.FromResult<string?>(null)
-        };
 }

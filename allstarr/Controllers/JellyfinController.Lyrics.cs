@@ -1,7 +1,6 @@
 using System.Text.Json;
 using allstarr.Models.Domain;
 using allstarr.Core.Protocols;
-using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers;
@@ -67,34 +66,6 @@ public partial class JellyfinController
                 spotifyTrackId = song.SpotifyId;
                 _logger.LogInformation("Using Spotify ID {SpotifyId} from song metadata for {Provider}/{ExternalId}",
                     spotifyTrackId, provider, externalId);
-            }
-            // Fallback: Try to find Spotify ID from matched tracks cache
-            else if (song != null)
-            {
-                spotifyTrackId = await FindSpotifyIdForExternalTrackAsync(song);
-                if (!string.IsNullOrEmpty(spotifyTrackId))
-                {
-                    _logger.LogDebug(
-                        "Found Spotify ID {SpotifyId} for external track {Provider}/{ExternalId} from cache",
-                        spotifyTrackId, provider, externalId);
-                }
-                else
-                {
-                    // Last resort: Try to convert via Odesli/song.link
-                    var sourceUrl = OdesliService.BuildTrackUrl(provider!, externalId!);
-
-                    if (!string.IsNullOrEmpty(sourceUrl))
-                    {
-                        spotifyTrackId =
-                            await _odesliService.ConvertUrlToSpotifyIdAsync(sourceUrl, HttpContext.RequestAborted);
-                    }
-
-                    if (!string.IsNullOrEmpty(spotifyTrackId))
-                    {
-                        _logger.LogDebug("Converted {Provider}/{ExternalId} to Spotify ID {SpotifyId} via Odesli",
-                            provider, externalId, spotifyTrackId);
-                    }
-                }
             }
         }
         else

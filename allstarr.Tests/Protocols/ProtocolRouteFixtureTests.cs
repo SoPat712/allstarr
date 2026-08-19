@@ -2083,6 +2083,61 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task SubsonicExternalArtist_UsesTheSharedProviderGateway()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.GetArtistAsync(
+                It.IsAny<ProtocolExecutionContext>(), "spotiflac-amazon", "artist-1"))
+            .ReturnsAsync(new Artist
+            {
+                Id = "ext-spotiflac-amazon-artist-artist-1",
+                ExternalProvider = "spotiflac-amazon",
+                ExternalId = "artist-1",
+                Name = "NAS",
+                IsLocal = false
+            });
+        gateway.Setup(service => service.GetArtistAlbumsAsync(
+                It.IsAny<ProtocolExecutionContext>(), "spotiflac-amazon", "artist-1"))
+            .ReturnsAsync([
+                new Album
+                {
+                    Id = "ext-spotiflac-amazon-album-album-1",
+                    ExternalProvider = "spotiflac-amazon",
+                    ExternalId = "album-1",
+                    Title = "Illmatic",
+                    Artist = "NAS",
+                    ArtistId = "ext-spotiflac-amazon-artist-artist-1",
+                    IsLocal = false
+                }
+            ]);
+        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        using var factory = new ProtocolFactory(
+            "Subsonic",
+            request => request.RequestUri!.AbsolutePath == "/rest/ping.view"
+                ? Json(StatusCodes.Status200OK, """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""")
+                : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
+            services =>
+            {
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
+                services.RemoveAll<IMusicMetadataService>();
+                services.AddSingleton(metadata.Object);
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/rest/getArtist.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json&id=ext-spotiflac-amazon-artist-artist-1");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var artist = body.RootElement.GetProperty("subsonic-response").GetProperty("artist");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("ext-spotiflac-amazon-artist-artist-1", artist.GetProperty("id").GetString());
+        Assert.Equal("ext-spotiflac-amazon-album-album-1", artist.GetProperty("album")[0].GetProperty("id").GetString());
+        gateway.VerifyAll();
+        metadata.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task SubsonicAuthBoundary_RejectsBeforeBackendActionsAndPreservesVerificationResponse()
     {
         using var fixtures = ReadFixture("subsonic-auth-boundary.json");

@@ -153,6 +153,11 @@ public partial class SubsonicController : ControllerBase
         ? _providerGateway.GetArtistAsync(CurrentProtocolContext, provider, externalId)
         : _metadataService.GetArtistAsync(provider, externalId, HttpContext.RequestAborted);
 
+    private Task<List<Album>> GetProviderArtistAlbumsAsync(string provider, string externalId) =>
+        _providerGateway != null
+            ? _providerGateway.GetArtistAlbumsAsync(CurrentProtocolContext, provider, externalId)
+            : _metadataService.GetArtistAlbumsAsync(provider, externalId, HttpContext.RequestAborted);
+
     /// <summary>
     /// Merges local and external search results.
     /// </summary>
@@ -414,7 +419,7 @@ public partial class SubsonicController : ControllerBase
                 return _responseBuilder.CreateError(format, 70, "Artist not found");
             }
 
-            var albums = await _metadataService.GetArtistAlbumsAsync(provider!, externalId!);
+            var albums = await GetProviderArtistAlbumsAsync(provider!, externalId!);
 
             // Fill artist info for each album (Deezer API doesn't include it in artist/albums endpoint)
             foreach (var album in albums)

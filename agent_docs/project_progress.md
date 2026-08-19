@@ -91,12 +91,12 @@ Acceptance: automatic suggestions are credible, manual decisions remain authorit
 
 ## Phase 6 — external object, streaming, and lyrics parity
 
-- [ ] Use one provider-neutral external relationship projection for primary albums, credited tracks, and Appears On in Jellyfin and Subsonic.
-- [ ] Keep external IDs, artwork, relationships, pagination, and traversal stable and internally consistent.
-- [ ] Discover and qualify every ready streaming or download-backed implementation dynamically.
-- [ ] Verify metadata → PlaybackInfo → bounded audio → range/cancellation → artwork → lyrics while recording the selected implementation/account.
-- [ ] Preserve configured quality and return a truthful failure instead of silently substituting another track.
-- [ ] Run source-native lyrics first, then Odesli identity translation and distinct configured fallbacks without downloading media merely to find lyrics.
+- [x] Use one provider-neutral external relationship projection for primary albums, credited tracks, and Appears On in Jellyfin and Subsonic.
+- [x] Keep external IDs, artwork, relationships, pagination, and traversal stable and internally consistent.
+- [x] Discover and qualify every ready streaming or download-backed implementation dynamically.
+- [x] Verify metadata → PlaybackInfo → bounded audio → range/cancellation → artwork → lyrics while recording the selected implementation/account.
+- [x] Preserve configured quality and return a truthful failure instead of silently substituting another track.
+- [x] Run source-native lyrics first, then Odesli identity translation and distinct configured fallbacks without downloading media merely to find lyrics.
 
 Acceptance: native objects remain exact, virtual objects satisfy the full client contract, unrelated Appears On albums fail, and real external playback failures are classified.
 

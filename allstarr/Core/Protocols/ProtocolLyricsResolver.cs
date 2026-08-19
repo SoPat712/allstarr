@@ -3,6 +3,7 @@ using System.Text;
 using allstarr.Core.Capabilities;
 using allstarr.Models.Domain;
 using allstarr.Models.Lyrics;
+using allstarr.Services.Common;
 
 namespace allstarr.Core.Protocols;
 
@@ -19,7 +20,8 @@ public interface IProtocolLyricsResolver
 
 public sealed class ProtocolLyricsResolver(
     IProtocolProviderGateway providers,
-    ILogger<ProtocolLyricsResolver> logger) : IProtocolLyricsResolver
+    ILogger<ProtocolLyricsResolver> logger,
+    OdesliService? odesli = null) : IProtocolLyricsResolver
 {
     public async Task<LyricsInfo?> FindAsync(
         ProtocolExecutionContext protocol,
@@ -38,14 +40,20 @@ public sealed class ProtocolLyricsResolver(
         if (!string.IsNullOrWhiteSpace(sourceProvider) &&
             order.Contains(sourceProvider, StringComparer.OrdinalIgnoreCase))
             order = [sourceProvider, .. order];
+        var sourceUrl = !string.IsNullOrWhiteSpace(sourceProvider) && !string.IsNullOrWhiteSpace(sourceExternalId)
+            ? OdesliService.BuildTrackUrl(sourceProvider, sourceExternalId)
+            : null;
 
         foreach (var providerId in order.Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            var externalId = ResolveExternalId(
-                providerId, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId);
-            if (externalId == null) continue;
             try
             {
+                var externalId = ResolveExternalId(
+                    providerId, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId);
+                if (externalId == null && sourceUrl != null && odesli != null)
+                    externalId = await odesli.TranslateTrackUrlAsync(
+                        sourceUrl, providerId, protocol.CancellationToken);
+                if (externalId == null) continue;
                 var result = await providers.GetLyricsAsync(
                     protocol,
                     providerId,

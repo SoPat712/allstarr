@@ -8,6 +8,9 @@
 - Cached/Kept now distinguish indexed, referenced, and diagnostic files; expose access, expiry, quality, and reference facts; and only offer destructive/promote actions for unreferenced indexed ownership. Unknown files remain visible but untouched.
 - Home now includes indexed cache/kept totals and a completed-listen seven-day comparison from existing durable owners.
 - Current Phase 5 verification: focused .NET matching/storage lane 99/99, WebUI unit 46/46, Svelte check zero diagnostics, production build and budget pass at 46.2 KiB initial JavaScript and 22.7 KiB CSS, Impeccable detector empty, focused browser 4/4, full browser 92/92, and `git diff --check` clean.
+- Completed Phase 6 locally. The shared lyrics resolver now translates any supported source URL through Odesli for each distinct configured fallback, so Deezer/Qobuz/etc. can try Spotify and Apple identities before metadata-based LRCLib without downloading audio. The duplicate Jellyfin-only Odesli path was deleted.
+- Subsonic external artist details now use the same typed provider gateway as Jellyfin, restoring extension-backed album traversal instead of bypassing extensions through the legacy metadata service.
+- Phase 6 verification passes 91/91 provider/CTS/extension/stream/lyrics checks and 208/208 protocol route, object-shape, relationship, playback, and lyrics checks. The new Deezer fixture proves Spotify miss → Apple synced lyrics success; the new Subsonic fixture proves an Amazon extension artist returns its typed album relationship.
 
 - Established a truthful baseline: 2,354 discovered .NET tests; main PostgreSQL lane 2,282/2,282; state transfer 90/90; WebUI check/unit/build/budget and 130-case original browser matrix; Apple 19/19; all Compose profiles valid.
 - Added machine-readable Playwright timings and a 600-second configurable timing-wrapper watchdog. The self-test and a live one-case timing proof pass.

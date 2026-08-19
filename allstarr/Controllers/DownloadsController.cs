@@ -165,8 +165,14 @@ public class DownloadsController : ControllerBase
                         .Where(item => item.Id == id && item.Revision == revision)
                         .ExecuteDeleteAsync(cancellationToken);
             }
-            return Ok(new { success = true, deletedCount = deleted, skippedUnknown = skipped, skippedReferenced,
-                message = $"Deleted {deleted} indexed download(s); skipped {skipped} diagnostic and {skippedReferenced} referenced file(s)" });
+            return Ok(new
+            {
+                success = true,
+                deletedCount = deleted,
+                skippedUnknown = skipped,
+                skippedReferenced,
+                message = $"Deleted {deleted} indexed download(s); skipped {skipped} diagnostic and {skippedReferenced} referenced file(s)"
+            });
         }
         catch (ArgumentException exception)
         {
