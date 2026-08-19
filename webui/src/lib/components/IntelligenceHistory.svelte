@@ -397,12 +397,6 @@
 </script>
 
 <section class="history-workspace">
-  {#if section !== "overview"}
-    <SegmentedNav items={[
-      { id: "history", label: "Listening history", href: "#/intelligence?section=history" },
-      { id: "imports", label: "Import history", href: "#/intelligence?section=imports" },
-    ]} active={section} label="History and import sections" class="history-mode-tabs" />
-  {/if}
   {#if section !== "imports"}
     <header class="history-heading">
       <div><p class="eyebrow">Your listening</p><h3>{section === "overview" ? "Listening overview" : "Listening history"}</h3><p>Private activity for this account and library only.</p></div>
@@ -520,7 +514,7 @@
   {/if}
 
   {#if section === "imports"}<section class="panel import-card">
-    <header><div><p class="eyebrow">Bring your history</p><h3>Import listening history</h3><p>Preview a Spotify, Last.fm, ListenBrainz, Koito, or Maloja export before adding anything. Files stay private and expire automatically.</p></div></header>
+    <header><div><p class="eyebrow">Spotify and service exports</p><h3>Import listening history</h3><p><strong>Spotify:</strong> upload the JSON files from your Extended Streaming History download. Last.fm, ListenBrainz, Koito, and Maloja exports are also supported. Every file is previewed before anything is added.</p></div></header>
     {#if importError}<p class="notice-error" role="alert">{importError}</p>{/if}
     <div class:warning={!policyEnabled} class="import-readiness">
       <Badge state={policyEnabled ? "healthy" : "suggested"}>{policyEnabled ? "Saving on" : "Saving off"}</Badge>
@@ -531,7 +525,7 @@
       <label class="upload-zone" class:dragging={importDragging} ondragenter={(event) => { event.preventDefault(); importDragging = true; }} ondragover={(event) => event.preventDefault()} ondragleave={() => { importDragging = false; }} ondrop={dropImportFiles}>
         <input aria-label="History export files" type="file" accept="application/json,text/plain,application/zip,.json,.jsonl,.zip" multiple disabled={Boolean(action)} onchange={chooseImportFiles} />
         <span class="upload-symbol" aria-hidden="true"><FileUp size={22} /></span>
-        <span class="upload-copy"><strong>Drop history exports here</strong><small>Spotify, Last.fm, ListenBrainz, Koito, or Maloja · JSON, JSONL, or ZIP · 64 MB each</small></span>
+        <span class="upload-copy"><strong>Drop Spotify Extended Streaming History files here</strong><small>Spotify JSON, or Last.fm, ListenBrainz, Koito, and Maloja JSON, JSONL, or ZIP · 64 MB each</small></span>
         <span class="upload-browse" aria-hidden="true">Browse files</span>
       </label>
       {#if pendingImportItems.length}

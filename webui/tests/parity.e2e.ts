@@ -1008,7 +1008,7 @@ for (const viewport of viewports) {
         await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-recommendations.png`, fullPage: true });
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-      await page.getByRole("tab", { name: "History & Imports" }).click();
+      await page.getByRole("tab", { name: "History", exact: true }).click();
       await expect(page.getByRole("heading", { name: "Listening history", level: 3, exact: true })).toBeVisible();
       await expect(page.locator(".history-list").getByText("Moon Song", { exact: true })).toBeVisible();
       await expect(page.getByRole("heading", { name: "Import listening history" })).toHaveCount(0);
@@ -1016,8 +1016,10 @@ for (const viewport of viewports) {
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
         await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-history.png`, fullPage: true });
-      await page.getByRole("tab", { name: "Import history" }).click();
+      await page.getByRole("tab", { name: "Import", exact: true }).click();
       await expect(page.getByRole("heading", { name: "Import listening history" })).toBeVisible();
+      await expect(page.getByText(/upload the JSON files from your Extended Streaming History download/)).toBeVisible();
+      await expect(page.getByRole("tab", { name: "Automation", exact: true })).toBeInViewport();
       await expect(page.getByText("Imported listens older than 30 days are removed automatically.", { exact: true })).toBeVisible();
       await expect(page.locator(".history-list")).toHaveCount(0);
       const historyUpload = page.locator(".upload-zone");
@@ -1026,20 +1028,25 @@ for (const viewport of viewports) {
       await expect(page.getByLabel("History export files")).toHaveAttribute("multiple", "");
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      if (process.env.ALLSTARR_SCREENSHOT_DIR)
+        await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-imports.png`, fullPage: true });
       await page.getByRole("tab", { name: "Automation" }).click();
       await expect(page.getByText("Monday discoveries", { exact: true })).toBeVisible();
       await expect(page.getByText("Allstarr keeps private listening history and uses it for recommendations.", { exact: true })).toBeVisible();
       const automaticHistory = page.getByRole("checkbox", { name: /Save my listening automatically/ });
       await expect(automaticHistory).toBeChecked();
       await expect(automaticHistory.locator("..")).toHaveClass(/selected/);
+      expect((await automaticHistory.locator("..").boundingBox())?.height ?? 999).toBeLessThan(140);
       await expect(automaticHistory).toHaveAttribute("data-slot", "checkbox");
       await expect(page.getByText("Keep listening history for", { exact: true })).toBeVisible();
-      await expect(page.getByText("Use these actions for recommendations", { exact: true })).toBeVisible();
+      await expect(page.getByText("Recommendation actions", { exact: true })).toBeVisible();
+      await expect(page.getByText("Recommendation sources", { exact: true })).toBeVisible();
+      await expect(page.getByText("Connected services Allstarr may use to find candidates. This does not import history or change source accounts.", { exact: true })).toBeVisible();
       await expect(page.locator(".settings-stack")).not.toContainText(/\bsignals?\b/i);
       await expect(page.getByText("Allstarr sent the latest completed listen to Last.fm.", { exact: true })).toBeVisible();
       await expect(page.getByText("Allstarr will not send listens to ListenBrainz.", { exact: true })).toBeVisible();
       await expect(page.getByText("Allstarr is checking 2 saved listens for more song details.", { exact: true })).toBeVisible();
-      const intelligenceSource = page.getByText("Private similarity source.", { exact: true }).locator("..");
+      const intelligenceSource = page.locator(".provider-choices label").filter({ hasText: "Private similarity source." });
       await expect(intelligenceSource.locator('[data-slot="badge"]')).toHaveText("Ready");
       await expect(page.getByText("Where generated playlists are created", { exact: true })).toBeVisible();
       expect(await page.locator(".status-list").evaluate((element) => element.tagName)).toBe("UL");
@@ -1154,7 +1161,7 @@ test("Intelligence history imports, corrections, and schedules use the selected 
   await mockApi(page);
   const overviewRequest = page.waitForRequest((request) => request.url().includes("/api/admin/intelligence/history/overview"));
   await page.goto("#/intelligence?section=history");
-  await expect(page.getByRole("tab", { name: "History & Imports" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "History", exact: true })).toHaveAttribute("aria-selected", "true");
   expect(new URL((await overviewRequest).url()).searchParams.get("backendInstanceId")).toBe("main");
 
   await page.locator(".history-list").getByRole("button").click();
@@ -1170,7 +1177,7 @@ test("Intelligence history imports, corrections, and schedules use the selected 
   });
   await detail.getByRole("button", { name: "Close listen details" }).click();
 
-  await page.getByRole("tab", { name: "Import history" }).click();
+  await page.getByRole("tab", { name: "Import", exact: true }).click();
   await expect(page).toHaveURL(/#\/intelligence\?section=imports$/);
   const previews: string[] = [];
   page.on("request", (request) => {
@@ -1267,7 +1274,7 @@ test("Intelligence empty states explain how to get results", async ({ page }) =>
   await expect(page.getByText("No activity in this period. Play music or import a history file to begin.")).toBeVisible();
   await expect(page.getByText("Nothing to rank yet. Play music or import a history file to begin.")).toBeVisible();
 
-  await page.getByRole("tab", { name: "History & Imports" }).click();
+  await page.getByRole("tab", { name: "History", exact: true }).click();
   await expect(page.getByText("No completed listens yet")).toBeVisible();
   await expect(page.getByText("Turn on automatic history in Automation, then play music or import a history file.")).toBeVisible();
 });
@@ -1315,10 +1322,10 @@ test("Intelligence partial and section error states stay announced", async ({ pa
   await page.getByRole("tab", { name: "Discover" }).click();
   await expect(page.getByText("Future Song", { exact: true })).toBeVisible();
   failHistory = true;
-  await page.getByRole("tab", { name: "History & Imports" }).click();
+  await page.getByRole("tab", { name: "History", exact: true }).click();
   await expect(page.locator(".history-workspace").getByRole("alert")).toContainText("Fixture unavailable");
 
-  await page.getByRole("tab", { name: "Import history" }).click();
+  await page.getByRole("tab", { name: "Import", exact: true }).click();
   await page.getByLabel("History export files").setInputFiles({
     name: "Streaming_History.json", mimeType: "application/json", buffer: Buffer.from("[]"),
   });
