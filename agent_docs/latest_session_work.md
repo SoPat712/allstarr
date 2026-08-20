@@ -1,5 +1,13 @@
 # Latest Session Work
 
+## Verified local refinement — 2026-08-19
+
+- Local application revision is `c8c57ea909b60165fa665c35f3b9b97d4a0a67aa`; deployed revision remains `e42f38deaa2047b8e4f3e9850e1bf09aad715efb`.
+- The five post-delivery WebUI commits clarify Intelligence imports and controls, adopt the Material control-room system, streamline Home and mobile matching, align storage tables and filter labels, and keep nested segmented tabs from scrolling the page away from its heading.
+- Current exact-source evidence: Svelte diagnostics clean, unit 46/46, production build and budgets green at 47.2 KiB initial JavaScript and 23.5 KiB CSS, and browser 93/93 without retries.
+- Responsive light-theme screenshots were reviewed at 390×844 and 1280×800. The Integrations heading remains fully visible when the off-screen Extensions tab activates.
+- Reproducible dependencies, build output, and test artifacts are removed after verification to keep the checkout near 81 MiB.
+
 ## Completed delivery — 2026-08-19
 
 - Completed all phases of the rich-dashboard and provider-parity package and deployed application revision `e42f38deaa2047b8e4f3e9850e1bf09aad715efb` to both Jellyfin and Subsonic stacks.
@@ -21,4 +29,4 @@
 
 ## Next entry point
 
-No remaining action in this package.
+Ask for exact authorization to push and deploy the current branch tip containing application revision `c8c57ea909b60165fa665c35f3b9b97d4a0a67aa`; after deployment, run the bounded browser smoke only. Preserve the unrelated dirty files and do not stage ignored steering material.

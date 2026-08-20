@@ -128,6 +128,13 @@ Acceptance: local release evidence is complete before LAN access, no unrun gate 
 - Browser-only responsive qualification: 27/27 route/viewport checks across desktop, tablet, and mobile with no overflow, crash state, missing main heading, or console error.
 - External sources without range support were retained as truthful bounded progressive delivery rather than falsely advertising seek support.
 
+### Post-delivery WebUI refinement — local only
+
+- Local application revision `c8c57ea909b60165fa665c35f3b9b97d4a0a67aa` adds the Material control-room visual system, clearer Intelligence import controls, denser Home/review/storage workflows, truthful empty-value filter labels, and horizontal-only segmented-tab activation.
+- The segmented-tab fix prevents nested mobile tabs from moving the document vertically. The browser regression waits for mounted content and settled layout, then proves zero document scroll and a fully visible page heading.
+- Exact-revision WebUI evidence: Svelte diagnostics clean, unit 46/46, production build and budgets green at 47.2 KiB initial JavaScript and 23.5 KiB CSS, browser 93/93 without retries, design detector clean, and responsive light-theme screenshots reviewed at 390×844 and 1280×800.
+- Two proposed shared-control/artwork changes were measured and discarded before commit: loading a Bits UI checkbox into the root shell raised initial JavaScript to 69.6 KiB, and blank provider logos were traced to the test fixture's intentionally empty SVG rather than production assets.
+
 ## Next action
 
-Package complete. The disposable PostgreSQL container and temporary live-report directories were removed; no unrelated service or provider playlist was mutated.
+Obtain exact-revision authorization for the current branch tip containing application revision `c8c57ea909b60165fa665c35f3b9b97d4a0a67aa`, then push, deploy, and run the bounded browser smoke. The deployed application remains `e42f38deaa2047b8e4f3e9850e1bf09aad715efb` until that authorization is given.
