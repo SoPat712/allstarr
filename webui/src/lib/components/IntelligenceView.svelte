@@ -9,17 +9,34 @@
   import { Progress } from "$lib/components/ui/progress";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import AudioMuseDiscovery from "$lib/components/AudioMuseDiscovery.svelte";
+  import ConnectSourceDialog from "$lib/components/ConnectSourceDialog.svelte";
   import IntelligenceHistory from "$lib/components/IntelligenceHistory.svelte";
   import ListeningAppsCard from "$lib/components/ListeningAppsCard.svelte";
   import IntelligenceSchedules from "$lib/components/IntelligenceSchedules.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
-  import { home, intelligence, playlistLinks, type IntelligenceScope, type IntelligenceState, type MediaTarget } from "$lib/api";
+  import {
+    home,
+    intelligence,
+    playlistLinks,
+    sources,
+    type IntelligenceScope,
+    type IntelligenceState,
+    type MediaTarget,
+    type ProviderAccount,
+    type ProviderDefinition,
+  } from "$lib/api";
 
   type IntelligenceSection = "overview" | "history" | "imports" | "discover" | "automation";
 
-  let { initialSection = "overview" }: { initialSection?: string } = $props();
+  let {
+    initialSection = "overview",
+    administrator = false,
+  }: {
+    initialSection?: string;
+    administrator?: boolean;
+  } = $props();
   let protocol = $state("jellyfin");
   let backendInstanceId = $state("");
   let libraryScopeId = $state("");
@@ -38,6 +55,14 @@
   let selectedTargetId = $state("");
   let targetsLoading = $state(true);
   let loadedScope = $state<IntelligenceScope | null>(null);
+  let providerDefinitions = $state<ProviderDefinition[]>([]);
+  let providerAccounts = $state<ProviderAccount[]>([]);
+  let providerManagementMode = $state("AdminManaged");
+  let audioMuseConnectionOpen = $state(false);
+  let audioMuseAccount = $state<ProviderAccount | null>(null);
+  let providerSetupRequested = $state(false);
+  let audioMuseSetupLoading = $state(true);
+  let audioMuseSetupFeedback = $state("");
 
   const activeSection = $derived<IntelligenceSection>(
     initialSection === "history" || initialSection === "imports" ? initialSection
@@ -58,6 +83,9 @@
   const visibleCandidates = $derived(data?.candidates.filter((item) => !item.exclusions.length) ?? []);
   const audioMuseReady = $derived(data?.providers.some((item) => item.id === "audiomuse-ai" && item.enabled && item.available && item.state === "ready") ?? false);
   const audioMuseSource = $derived(data?.providers.find((item) => item.id === "audiomuse-ai"));
+  const audioMuseDefinition = $derived(providerDefinitions.find((item) => item.id === "audiomuse-ai"));
+  const audioMuseAccounts = $derived(providerAccounts.filter((item) => item.providerId === "audiomuse-ai"));
+  const canManageAudioMuse = $derived(providerManagementMode !== "AdminManaged" || administrator);
   const runState = $derived(data?.actions.latestRunState?.replace("retryscheduled", "retry scheduled"));
   const runStatus = $derived(runState === "succeeded" ? "Ready" : ["pending", "running", "retry scheduled"].includes(runState ?? "") ? "Refreshing" : runState);
   const readyRecommendationSources = $derived(data?.providers.filter((item) => item.enabled && item.available && item.state === "ready").length ?? 0);
@@ -77,7 +105,39 @@
     return () => clearTimeout(timer);
   });
 
+  $effect(() => {
+    if (activeSection !== "automation" || providerSetupRequested) return;
+    providerSetupRequested = true;
+    void loadProviderSetup();
+  });
+
   onMount(() => { void discoverTargets(); });
+
+  async function loadProviderSetup() {
+    audioMuseSetupLoading = true;
+    const [schemaResult, accountsResult] = await Promise.allSettled([
+      home.schema(),
+      sources.accounts(),
+    ]);
+    if (schemaResult.status === "fulfilled")
+      providerDefinitions = schemaResult.value.providers;
+    if (accountsResult.status === "fulfilled") {
+      providerAccounts = accountsResult.value.accounts;
+      providerManagementMode = accountsResult.value.managementMode;
+    }
+    audioMuseSetupLoading = false;
+  }
+
+  function openAudioMuseConnection(account: ProviderAccount | null = null) {
+    audioMuseAccount = account;
+    audioMuseConnectionOpen = true;
+  }
+
+  async function audioMuseSaved(message: string) {
+    audioMuseSetupFeedback = message;
+    await loadProviderSetup();
+    await refresh();
+  }
 
   function adopt(next: IntelligenceState) {
     data = next;
@@ -309,8 +369,39 @@
             <div class="policy-choices">
               <fieldset class="signal-choices"><legend>Recommendation actions</legend><p>Choose which listening actions teach Allstarr what you like.</p>{#each data.availableSignalTypes as item}<label class:selected={selectedSignals.includes(item.id)}><Checkbox checked={selectedSignals.includes(item.id)} onCheckedChange={(checked) => selectedSignals = toggle(selectedSignals, item.id, checked)} /> <span>{item.label}</span></label>{/each}</fieldset>
               <fieldset class="provider-choices"><legend>Recommendation sources</legend><p>Connected services Allstarr may use to find candidates. This does not import history or change source accounts.</p>{#each data.providers as provider}<label class:selected={selectedProviders.includes(provider.id)} class:unavailable={!provider.available}><Checkbox disabled={!provider.available} checked={selectedProviders.includes(provider.id)} onCheckedChange={(checked) => selectedProviders = toggle(selectedProviders, provider.id, checked)} /> <span><strong>{provider.label}</strong><small>{provider.description}</small></span><Badge state={provider.available ? "healthy" : "suggested"}>{providerStatus(provider.state)}</Badge></label>{/each}
-                {#if audioMuseSource && !audioMuseSource.available}<div class="provider-setup"><span><strong>Want AudioMuse-AI?</strong><small>Install its Intelligence extension first. After activation, connect its account under Services.</small></span><Button size="sm" variant="secondary" href="#/integrations/extensions">Open Extensions</Button></div>
-                {:else if audioMuseSource && audioMuseSource.state !== "ready"}<div class="provider-setup"><span><strong>Finish AudioMuse-AI setup</strong><small>The extension is installed; connect it to this library and test the account.</small></span><Button size="sm" variant="secondary" href="#/integrations/services?source=audiomuse-ai&section=configuration">Connect AudioMuse</Button></div>{/if}
+                {#if audioMuseSource}
+                  <div class="provider-setup">
+                    <span>
+                      <strong>AudioMuse connection</strong>
+                      {#if !audioMuseSource.available}
+                        <small>Install the AudioMuse extension first. Package updates and permissions stay under Extensions.</small>
+                      {:else if audioMuseSetupLoading}
+                        <small>Checking the connection for this library…</small>
+                      {:else if audioMuseAccounts.length}
+                        <small>{audioMuseAccounts.length} saved {audioMuseAccounts.length === 1 ? "connection" : "connections"}. Configure discovery access here; health details remain under Services.</small>
+                      {:else}
+                        <small>Connect AudioMuse here to enable sound maps, similar-song search, blends, and listening-based discovery.</small>
+                      {/if}
+                      {#if audioMuseSetupFeedback}<small class="setup-feedback" role="status">{audioMuseSetupFeedback}</small>{/if}
+                    </span>
+                    <div class="provider-setup-actions">
+                      {#if !audioMuseSource.available}
+                        <Button size="sm" variant="secondary" href="#/integrations/extensions">Install extension</Button>
+                      {:else if audioMuseDefinition && canManageAudioMuse}
+                        {#if audioMuseAccounts[0]}
+                          <Button size="sm" variant="secondary" onclick={() => openAudioMuseConnection(audioMuseAccounts[0])}>Manage AudioMuse</Button>
+                          <Button size="sm" variant="ghost" onclick={() => openAudioMuseConnection()}>Add connection</Button>
+                        {:else}
+                          <Button size="sm" variant="secondary" onclick={() => openAudioMuseConnection()}>Connect AudioMuse</Button>
+                        {/if}
+                      {:else if !canManageAudioMuse}
+                        <Badge state="suggested">Administrator setup required</Badge>
+                      {:else}
+                        <Button size="sm" variant="secondary" href="#/integrations/extensions">Review extension</Button>
+                      {/if}
+                    </div>
+                  </div>
+                {/if}
               </fieldset>
             </div>
             <footer><Button variant="destructive" onclick={() => purgeOpen = true}>Turn off and clear</Button><Button type="submit" disabled={Boolean(action)}>{action === "policy" ? "Saving…" : "Save settings"}</Button></footer>
@@ -361,6 +452,15 @@
   {/if}
 </section>
 
+<ConnectSourceDialog
+  bind:open={audioMuseConnectionOpen}
+  providers={providerDefinitions}
+  {administrator}
+  account={audioMuseAccount}
+  initialProviderId="audiomuse-ai"
+  onSaved={audioMuseSaved}
+/>
+
 <ConfirmDialog
   bind:open={purgeOpen}
   title="Clear private listening data for this library?"
@@ -371,8 +471,8 @@
 />
 
 <style>
-  .intelligence-view{display:grid;min-width:0;grid-template-columns:minmax(0,1fr);gap:1rem}.intelligence-header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:1.5rem;padding:.25rem 0}.route-heading-copy h2{margin:.25rem 0;font-family:var(--font-display);font-size:2rem;letter-spacing:-.03em}.route-heading-copy p{margin:0}.route-heading-copy p:last-child{max-width:70ch;color:var(--color-ink-muted)}.heading-tools{display:flex;align-items:center;justify-content:flex-end;gap:.75rem}.scope-value{display:grid;min-width:11rem;gap:.08rem;border-radius:var(--radius-md);background:var(--color-panel);padding:.6rem .8rem}.scope-value small,.scope-value span{color:var(--color-ink-muted);font-size:var(--text-xs)}.scope-value :global([data-slot="button"]){margin-top:.35rem}.library-picker{width:18rem}.intelligence-error{display:flex;align-items:center;justify-content:space-between;gap:1rem}.run-progress{display:grid;grid-template-columns:minmax(0,1fr) minmax(10rem,.5fr) auto;align-items:center;gap:1rem;padding:1rem}.run-progress p{margin:0}.run-progress small{display:block;color:var(--color-ink-muted)}.settings-stack{display:grid;gap:1rem}.settings-status-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.status-card{padding:1.15rem}.status-card h3,.status-card p{margin:.2rem 0}.status-list,.profile-list,.generated-list{margin:0;padding:0;list-style:none}.status-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.75rem 0}.status-row strong,.status-row small{display:block}.status-row small{color:var(--color-ink-muted)}.intelligence-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(18rem,.8fr);gap:1rem}.recommendations,.profile-card,.generated-card,.privacy-card{padding:1.15rem}.recommendations>header,.privacy-card>header{display:flex;align-items:center;justify-content:space-between}.recommendations h3,.profile-card h3,.generated-card h3,.privacy-card h3{margin:.2rem 0 1rem}.recommendation-list{display:grid;margin:0;padding:0;list-style:none}.recommendation-list>li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.85rem;align-items:center;border-top:1px solid var(--color-edge);padding:.9rem 0}.track-copy small,summary{color:var(--color-ink-muted);font-size:.75rem}.track-copy details{margin-top:.35rem}.track-copy ul{margin:.4rem 0 0;padding-left:1.1rem;color:var(--color-ink-muted);font-size:.78rem}.side-stack{display:grid;align-content:start;gap:1rem}.profile-list li,.generated-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.7rem 0}.profile-card meter{width:55%;accent-color:var(--color-signal)}.generated-row span:first-child strong,.generated-row span:first-child small{display:block}.generated-row small{color:var(--color-ink-muted)}.generate-form{display:grid;gap:.75rem;margin-top:1rem}.automation-summary{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:1rem;padding:1.15rem}.automation-summary>header{grid-column:1/-1;display:flex;align-items:start;justify-content:space-between;gap:1rem}.automation-summary h3,.automation-summary p{margin:.2rem 0}.automation-summary header p:last-child{color:var(--color-ink-muted)}.automation-summary dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0;border:1px solid var(--color-edge);border-radius:var(--radius-md)}.automation-summary dl div{padding:.75rem}.automation-summary dl div+div{border-left:1px solid var(--color-edge)}.automation-summary dt{color:var(--color-ink-muted);font-size:var(--text-xs)}.automation-summary dd{margin:.2rem 0 0;font-weight:750}.privacy-card form{display:grid;gap:1rem}.policy-basics{display:grid;grid-template-columns:minmax(16rem,1.25fr) minmax(12rem,.75fr) minmax(16rem,1fr);align-items:start;gap:1rem}.policy-choices{display:grid;grid-template-columns:minmax(16rem,.8fr) minmax(22rem,1.2fr);gap:1.5rem;border-top:1px solid var(--color-edge);padding-top:1rem}.toggle-line{display:flex;align-items:flex-start;gap:.65rem;padding:.25rem 0;cursor:pointer}.toggle-line span>*{display:block}.toggle-line small,fieldset small{color:var(--color-ink-muted)}fieldset{display:grid;grid-template-columns:1fr 1fr;align-content:start;gap:0 .85rem;border:0;margin:0;padding:0}fieldset legend{grid-column:1/-1;font-weight:750}fieldset>p{grid-column:1/-1;max-width:65ch;margin:.2rem 0 .45rem;color:var(--color-ink-muted);font-size:var(--text-sm)}fieldset label{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.65rem;min-height:2.75rem;border-top:1px solid var(--color-edge);padding:.55rem 0;cursor:pointer}.signal-choices label{grid-template-columns:auto minmax(0,1fr)}.signal-choices label span{font-weight:700}.provider-choices label span>*{display:block}.provider-choices label.unavailable{cursor:not-allowed}.provider-setup{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:.75rem;margin-top:.6rem;border:1px solid var(--color-edge);border-radius:var(--radius-md);background:var(--color-panel-raised);padding:.7rem}.provider-setup span{display:grid;gap:.08rem}.privacy-card footer{display:flex;justify-content:space-between;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}
+  .intelligence-view{display:grid;min-width:0;grid-template-columns:minmax(0,1fr);gap:1rem}.intelligence-header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:1.5rem;padding:.25rem 0}.route-heading-copy h2{margin:.25rem 0;font-family:var(--font-display);font-size:2rem;letter-spacing:-.03em}.route-heading-copy p{margin:0}.route-heading-copy p:last-child{max-width:70ch;color:var(--color-ink-muted)}.heading-tools{display:flex;align-items:center;justify-content:flex-end;gap:.75rem}.scope-value{display:grid;min-width:11rem;gap:.08rem;border-radius:var(--radius-md);background:var(--color-panel);padding:.6rem .8rem}.scope-value small,.scope-value span{color:var(--color-ink-muted);font-size:var(--text-xs)}.scope-value :global([data-slot="button"]){margin-top:.35rem}.library-picker{width:18rem}.intelligence-error{display:flex;align-items:center;justify-content:space-between;gap:1rem}.run-progress{display:grid;grid-template-columns:minmax(0,1fr) minmax(10rem,.5fr) auto;align-items:center;gap:1rem;padding:1rem}.run-progress p{margin:0}.run-progress small{display:block;color:var(--color-ink-muted)}.settings-stack{display:grid;gap:1rem}.settings-status-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.status-card{padding:1.15rem}.status-card h3,.status-card p{margin:.2rem 0}.status-list,.profile-list,.generated-list{margin:0;padding:0;list-style:none}.status-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.75rem 0}.status-row strong,.status-row small{display:block}.status-row small{color:var(--color-ink-muted)}.intelligence-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(18rem,.8fr);gap:1rem}.recommendations,.profile-card,.generated-card,.privacy-card{padding:1.15rem}.recommendations>header,.privacy-card>header{display:flex;align-items:center;justify-content:space-between}.recommendations h3,.profile-card h3,.generated-card h3,.privacy-card h3{margin:.2rem 0 1rem}.recommendation-list{display:grid;margin:0;padding:0;list-style:none}.recommendation-list>li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.85rem;align-items:center;border-top:1px solid var(--color-edge);padding:.9rem 0}.track-copy small,summary{color:var(--color-ink-muted);font-size:.75rem}.track-copy details{margin-top:.35rem}.track-copy ul{margin:.4rem 0 0;padding-left:1.1rem;color:var(--color-ink-muted);font-size:.78rem}.side-stack{display:grid;align-content:start;gap:1rem}.profile-list li,.generated-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.7rem 0}.profile-card meter{width:55%;accent-color:var(--color-signal)}.generated-row span:first-child strong,.generated-row span:first-child small{display:block}.generated-row small{color:var(--color-ink-muted)}.generate-form{display:grid;gap:.75rem;margin-top:1rem}.automation-summary{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:1rem;padding:1.15rem}.automation-summary>header{grid-column:1/-1;display:flex;align-items:start;justify-content:space-between;gap:1rem}.automation-summary h3,.automation-summary p{margin:.2rem 0}.automation-summary header p:last-child{color:var(--color-ink-muted)}.automation-summary dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0;border:1px solid var(--color-edge);border-radius:var(--radius-md)}.automation-summary dl div{padding:.75rem}.automation-summary dl div+div{border-left:1px solid var(--color-edge)}.automation-summary dt{color:var(--color-ink-muted);font-size:var(--text-xs)}.automation-summary dd{margin:.2rem 0 0;font-weight:750}.privacy-card form{display:grid;gap:1rem}.policy-basics{display:grid;grid-template-columns:minmax(16rem,1.25fr) minmax(12rem,.75fr) minmax(16rem,1fr);align-items:start;gap:1rem}.policy-choices{display:grid;grid-template-columns:minmax(16rem,.8fr) minmax(22rem,1.2fr);gap:1.5rem;border-top:1px solid var(--color-edge);padding-top:1rem}.toggle-line{display:flex;align-items:flex-start;gap:.65rem;padding:.25rem 0;cursor:pointer}.toggle-line span>*{display:block}.toggle-line small,fieldset small{color:var(--color-ink-muted)}fieldset{display:grid;grid-template-columns:1fr 1fr;align-content:start;gap:0 .85rem;border:0;margin:0;padding:0}fieldset legend{grid-column:1/-1;font-weight:750}fieldset>p{grid-column:1/-1;max-width:65ch;margin:.2rem 0 .45rem;color:var(--color-ink-muted);font-size:var(--text-sm)}fieldset label{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.65rem;min-height:2.75rem;border-top:1px solid var(--color-edge);padding:.55rem 0;cursor:pointer}.signal-choices label{grid-template-columns:auto minmax(0,1fr)}.signal-choices label span{font-weight:700}.provider-choices label span>*{display:block}.provider-choices label.unavailable{cursor:not-allowed}.provider-setup{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:.75rem;margin-top:.6rem;border:1px solid var(--color-edge);border-radius:var(--radius-md);background:var(--color-panel-raised);padding:.7rem}.provider-setup>span{display:grid;gap:.08rem}.provider-setup-actions{display:flex;align-items:center;justify-content:flex-end;gap:.45rem;flex-wrap:wrap}.setup-feedback{color:var(--color-success)}.privacy-card footer{display:flex;justify-content:space-between;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}
   @media(max-width:1050px){.policy-basics{grid-template-columns:1fr 1fr}.policy-choices{grid-template-columns:1fr}}
   @media(max-width:900px){.intelligence-header{grid-template-columns:1fr}.heading-tools{justify-content:flex-start;flex-wrap:wrap}.library-picker{width:min(24rem,100%)}.run-progress{grid-template-columns:1fr}.settings-status-grid,.intelligence-grid{grid-template-columns:1fr}.automation-summary{grid-template-columns:1fr}.automation-summary>:global([data-slot="button"]){justify-self:start}}
-  @media(max-width:620px){.intelligence-header{gap:.75rem}.route-heading-copy h2{margin-top:0;font-size:1.6rem}.heading-tools,.scope-value,.library-picker{width:100%}.scope-value{grid-template-columns:auto minmax(0,1fr);align-items:baseline;column-gap:.55rem;padding:.55rem .75rem}.scope-value small{grid-column:1}.scope-value strong,.scope-value span{grid-column:2}:global(.intelligence-tabs :is(a,button)){min-width:4.5rem;flex:1 0 4.5rem;padding-inline:var(--space-1);font-size:var(--text-xs)}.policy-basics,.run-progress{grid-template-columns:1fr}.policy-choices{gap:1rem}.provider-choices,.signal-choices{grid-template-columns:1fr}.provider-choices label,.signal-choices label,fieldset legend,fieldset>p{grid-column:1}.provider-setup{align-items:stretch;flex-direction:column}.provider-setup>:global([data-slot="button"]){width:100%}.recommendation-list>li{grid-template-columns:auto minmax(0,1fr)}.track-actions{grid-column:2;flex-wrap:wrap}.automation-summary dl{grid-template-columns:1fr}.automation-summary dl div+div{border-top:1px solid var(--color-edge);border-left:0}.automation-summary>:global([data-slot="button"]){width:100%}.privacy-card footer{flex-direction:column-reverse}.privacy-card footer>:global([data-slot="button"]){width:100%}.touch-link{display:inline-flex;min-height:var(--control-md);align-items:center}}
+  @media(max-width:620px){.intelligence-header{gap:.75rem}.route-heading-copy h2{margin-top:0;font-size:1.6rem}.heading-tools,.scope-value,.library-picker{width:100%}.scope-value{grid-template-columns:auto minmax(0,1fr);align-items:baseline;column-gap:.55rem;padding:.55rem .75rem}.scope-value small{grid-column:1}.scope-value strong,.scope-value span{grid-column:2}:global(.intelligence-tabs :is(a,button)){min-width:4.5rem;flex:1 0 4.5rem;padding-inline:var(--space-1);font-size:var(--text-xs)}.policy-basics,.run-progress{grid-template-columns:1fr}.policy-choices{gap:1rem}.provider-choices,.signal-choices{grid-template-columns:1fr}.provider-choices label,.signal-choices label,fieldset legend,fieldset>p{grid-column:1}.provider-setup{align-items:stretch;flex-direction:column}.provider-setup-actions{display:grid;width:100%;grid-template-columns:1fr}.provider-setup-actions>:global([data-slot="button"]){width:100%}.recommendation-list>li{grid-template-columns:auto minmax(0,1fr)}.track-actions{grid-column:2;flex-wrap:wrap}.automation-summary dl{grid-template-columns:1fr}.automation-summary dl div+div{border-top:1px solid var(--color-edge);border-left:0}.automation-summary>:global([data-slot="button"]){width:100%}.privacy-card footer{flex-direction:column-reverse}.privacy-card footer>:global([data-slot="button"]){width:100%}.touch-link{display:inline-flex;min-height:var(--control-md);align-items:center}}
 </style>

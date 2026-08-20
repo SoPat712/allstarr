@@ -1,5 +1,14 @@
 # Latest Session Work
 
+## AudioMuse setup moved into Intelligence — local, 2026-08-20
+
+- AudioMuse remains an optional extension implementation, but Intelligence → Automation now owns the user task of connecting or editing its encrypted account.
+- The existing manifest-driven `ConnectSourceDialog` is reused, so extension-declared fields, validation, encryption, connection testing, and account persistence retain one owner.
+- Extensions still owns install/update/permissions. Services still owns readiness and diagnostics; its AudioMuse Configuration tab now links directly to Intelligence instead of duplicating the form.
+- Provider schema and accounts are fetched only when Automation is opened, avoiding extra requests on Intelligence Overview, History, Import, and Discover.
+- Verification: Svelte diagnostics clean, unit 46/46, production build and budgets green at 47.3 KiB initial JavaScript and 23.8 KiB CSS, and focused mobile/desktop Intelligence plus Services browser flows 4/4.
+- Push and deployment remain pending exact-revision authorization.
+
 ## Exact import undo and Spotify video exclusion — 2026-08-20
 
 - Revision `e6e7a2dc59843732753af801ecf956fda63007c8` is pushed and deployed to both Allstarr stacks on `192.168.1.116`; both containers are healthy on image `sha256:d5603bf21c67fdfeab4c788952f0343a7448ec0b89dcf6a0b5f03964775ea030`.

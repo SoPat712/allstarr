@@ -94,7 +94,10 @@
             : route === "/library/kept"
               ? { storage: "kept" }
               : route === "/intelligence"
-                ? { initialSection: routeQuery.get("section") ?? "overview" }
+                ? {
+                    initialSection: routeQuery.get("section") ?? "overview",
+                    administrator: session?.user?.isAdministrator ?? false,
+                  }
                 : route.startsWith("/integrations")
                   ? {
                       section: route.split("/")[2] || "services",

@@ -137,6 +137,15 @@ Acceptance: local release evidence is complete before LAN access, no unrun gate 
 - Two proposed shared-control/artwork changes were measured and discarded before commit: loading a Bits UI checkbox into the root shell raised initial JavaScript to 69.6 KiB, and blank provider logos were traced to the test fixture's intentionally empty SVG rather than production assets.
 - Live browser qualification covered 12 desktop routes and 8 mobile routes with no document overflow, console error, or heading displacement. Home now reports `0 cached · 0 kept`, matching the live Cached and Kept inventories.
 
+### Post-delivery AudioMuse setup placement — local
+
+- [x] Keep AudioMuse as an extension-backed Intelligence implementation while moving its user connection task into Intelligence → Automation.
+- [x] Reuse the existing manifest-driven encrypted Source dialog; add no second account or settings owner.
+- [x] Keep Extensions responsible for package lifecycle and permissions, and keep Services responsible for health and diagnostics.
+- [x] Replace the duplicate AudioMuse Services form with a direct **Configure in Intelligence** handoff.
+- [x] Verify responsive connect/configure flows: Svelte diagnostics clean, unit 46/46, production build and budgets green, and focused mobile/desktop browser checks 4/4.
+- [ ] Commit, push, and deploy the exact revision after authorization.
+
 ## Next action
 
-No delivery action remains for this package. Begin a new scoped package only for newly observed behavior or an explicitly requested follow-up.
+Commit the locally verified AudioMuse setup placement. Push and deploy only after exact-revision authorization.

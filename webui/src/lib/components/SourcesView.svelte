@@ -556,77 +556,84 @@
                 <div><dt>Click to stream</dt><dd>{#if cts}<Badge state={cts.health === "healthy" ? "healthy" : "degraded"}>{ctsMeasurementLabel(cts)}</Badge> · {relativeTime(cts.testedAt)}{:else if supportsPlaybackDiagnostic(capabilities)}Awaiting first sample{:else}Not applicable{/if}</dd></div>
               </dl>
             {:else if detailTab === "configuration" && detailKind === "source" && selectedSource}
-              {@const settings = accountSettings(selectedSource)}
-              {@const sourceAccounts = providerAccounts(selectedSource.id)}
-              <p class="source-configuration-copy">{sourcePurpose(selectedSource)}</p>
-              <div class="source-detail-actions">
-                {#if administrator && !sourceNeedsAccount(selectedSource) && selectedSource.categories?.some((item) => ["streaming", "download"].includes(item.toLowerCase()))}
-                  <Button variant="secondary" disabled={Boolean(action)} onclick={() => void measureSource(selectedSource!)}>Measure CTS</Button>
-                {/if}
-                {#if selectedSource.id === "apple-download"}
-                  <Button onclick={() => { detailOpen = false; appleDownloadOpen = true; }}>Manage Apple Music – GAMDL</Button>
-                {/if}
-                {#if !settings.length && selectedSource.connectionKind !== "operator_managed"}
-                  <p>No account configuration is required for this extension capability.</p>
-                {/if}
-              </div>
-              {#if settings.length}
-                <div class="source-account-configurations">
-                  {#each sourceAccounts as account}
-                    <section class="source-account-configuration">
-                      <header>
-                        <span><strong>{account.sourceDisplayName || account.displayName}</strong><small>Encrypted account configuration</small></span>
-                        <Badge state={account.enabled ? "healthy" : "suggested"}>{account.enabled ? "Enabled" : "Disabled"}</Badge>
-                      </header>
-                      <dl class="source-detail-data">
-                        {#each settings as field}
-                          <div>
-                            <dt>{field.label}</dt>
-                            <dd>{accountSettingValue(account, field)}</dd>
-                            {#if field.helpText}<small>{field.helpText}</small>{/if}
-                          </div>
-                        {/each}
-                      </dl>
-                      <footer><Button onclick={() => configure(account)}>Edit configuration</Button></footer>
-                    </section>
-                  {:else}
-                    <p class="credential-safety">These settings are saved on an encrypted Source account. Connect one to configure them.</p>
-                  {/each}
-                </div>
+              {#if selectedSource.id === "audiomuse-ai"}
+                <p class="source-configuration-copy">AudioMuse powers sound-based discovery, so its connection is configured beside the feature that uses it. Services still shows health and diagnostics.</p>
                 <div class="source-detail-actions">
-                  <Button disabled={!canManage} onclick={() => { connectProviderId = selectedSource!.id; detailOpen = false; connectOpen = true; }}>{sourceAccounts.length ? "Connect another account" : "Connect account"}</Button>
+                  <Button href="#/intelligence?section=automation">Configure in Intelligence</Button>
                 </div>
-              {/if}
-              {#if selectedSource.connectionKind === "operator_managed" && selectedSource.configSchema?.length}
-                {#if administrator}
-                  <form class="settings-fields source-configuration-form" onsubmit={(event) => void saveSourceConfiguration(event)}>
-                    {#each selectedSource.configSchema as field}
-                      <label class="setting-field" class:read-only={field.readOnly || field.ownership === "deployment"}>
-                        <span><strong>{field.label}</strong>{#if field.ownership === "deployment"}<small>Deployment-owned</small>{/if}</span>
-                        {#if field.readOnly || field.ownership === "deployment"}
-                          <output>{field.sensitive ? "Stored" : String(fieldValue(config, field))}</output>
-                        {:else if field.type === "select"}
-                          <SelectField name={field.key} label={field.label} value={field.sensitive ? "" : String(fieldValue(config, field))} options={field.options ?? []} />
-                        {:else if field.type === "toggle"}
-                          <Checkbox name={field.key} checked={Boolean(fieldValue(config, field))} />
-                        {:else}
-                          <input
-                            name={field.key}
-                            type={field.sensitive ? "password" : field.type === "number" ? "number" : field.type === "url" ? "url" : "text"}
-                            value={field.sensitive ? "" : String(fieldValue(config, field))}
-                            min={field.min ?? undefined}
-                            max={field.max ?? undefined}
-                            required={field.required}
-                            autocomplete="off"
-                          />
-                        {/if}
-                        {#if field.helpText}<small>{field.helpText}</small>{/if}
-                      </label>
+              {:else}
+                {@const settings = accountSettings(selectedSource)}
+                {@const sourceAccounts = providerAccounts(selectedSource.id)}
+                <p class="source-configuration-copy">{sourcePurpose(selectedSource)}</p>
+                <div class="source-detail-actions">
+                  {#if administrator && !sourceNeedsAccount(selectedSource) && selectedSource.categories?.some((item) => ["streaming", "download"].includes(item.toLowerCase()))}
+                    <Button variant="secondary" disabled={Boolean(action)} onclick={() => void measureSource(selectedSource!)}>Measure CTS</Button>
+                  {/if}
+                  {#if selectedSource.id === "apple-download"}
+                    <Button onclick={() => { detailOpen = false; appleDownloadOpen = true; }}>Manage Apple Music – GAMDL</Button>
+                  {/if}
+                  {#if !settings.length && selectedSource.connectionKind !== "operator_managed"}
+                    <p>No account configuration is required for this extension capability.</p>
+                  {/if}
+                </div>
+                {#if settings.length}
+                  <div class="source-account-configurations">
+                    {#each sourceAccounts as account}
+                      <section class="source-account-configuration">
+                        <header>
+                          <span><strong>{account.sourceDisplayName || account.displayName}</strong><small>Encrypted account configuration</small></span>
+                          <Badge state={account.enabled ? "healthy" : "suggested"}>{account.enabled ? "Enabled" : "Disabled"}</Badge>
+                        </header>
+                        <dl class="source-detail-data">
+                          {#each settings as field}
+                            <div>
+                              <dt>{field.label}</dt>
+                              <dd>{accountSettingValue(account, field)}</dd>
+                              {#if field.helpText}<small>{field.helpText}</small>{/if}
+                            </div>
+                          {/each}
+                        </dl>
+                        <footer><Button onclick={() => configure(account)}>Edit configuration</Button></footer>
+                      </section>
+                    {:else}
+                      <p class="credential-safety">These settings are saved on an encrypted Source account. Connect one to configure them.</p>
                     {/each}
-                    <footer><Button type="submit" disabled={Boolean(action)}>{action === `configure:${selectedSource.id}` ? "Saving…" : "Save configuration"}</Button></footer>
-                  </form>
-                {:else}
-                  <p class="credential-safety">Only an administrator can change deployment-managed Source settings.</p>
+                  </div>
+                  <div class="source-detail-actions">
+                    <Button disabled={!canManage} onclick={() => { connectProviderId = selectedSource!.id; detailOpen = false; connectOpen = true; }}>{sourceAccounts.length ? "Connect another account" : "Connect account"}</Button>
+                  </div>
+                {/if}
+                {#if selectedSource.connectionKind === "operator_managed" && selectedSource.configSchema?.length}
+                  {#if administrator}
+                    <form class="settings-fields source-configuration-form" onsubmit={(event) => void saveSourceConfiguration(event)}>
+                      {#each selectedSource.configSchema as field}
+                        <label class="setting-field" class:read-only={field.readOnly || field.ownership === "deployment"}>
+                          <span><strong>{field.label}</strong>{#if field.ownership === "deployment"}<small>Deployment-owned</small>{/if}</span>
+                          {#if field.readOnly || field.ownership === "deployment"}
+                            <output>{field.sensitive ? "Stored" : String(fieldValue(config, field))}</output>
+                          {:else if field.type === "select"}
+                            <SelectField name={field.key} label={field.label} value={field.sensitive ? "" : String(fieldValue(config, field))} options={field.options ?? []} />
+                          {:else if field.type === "toggle"}
+                            <Checkbox name={field.key} checked={Boolean(fieldValue(config, field))} />
+                          {:else}
+                            <input
+                              name={field.key}
+                              type={field.sensitive ? "password" : field.type === "number" ? "number" : field.type === "url" ? "url" : "text"}
+                              value={field.sensitive ? "" : String(fieldValue(config, field))}
+                              min={field.min ?? undefined}
+                              max={field.max ?? undefined}
+                              required={field.required}
+                              autocomplete="off"
+                            />
+                          {/if}
+                          {#if field.helpText}<small>{field.helpText}</small>{/if}
+                        </label>
+                      {/each}
+                      <footer><Button type="submit" disabled={Boolean(action)}>{action === `configure:${selectedSource.id}` ? "Saving…" : "Save configuration"}</Button></footer>
+                    </form>
+                  {:else}
+                    <p class="credential-safety">Only an administrator can change deployment-managed Source settings.</p>
+                  {/if}
                 {/if}
               {/if}
             {:else if detailTab === "configuration" && selectedAccount}

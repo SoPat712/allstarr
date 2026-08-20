@@ -23,6 +23,13 @@ const schema = {
         { key: "region", label: "Region", type: "select", options: ["us", "ca"], defaultValueJson: '"us"' },
       ],
     },
+    {
+      id: "audiomuse-ai", name: "AudioMuse", categories: ["intelligence"],
+      accountSettings: [
+        { key: "baseUrl", label: "AudioMuse server URL", type: "url", required: true },
+        { key: "token", label: "AudioMuse access token", type: "password", sensitive: true, required: true },
+      ],
+    },
     { id: "listenbrainz", name: "ListenBrainz", categories: ["scrobbling"] },
     {
       id: "apple-download", name: "Apple Music – GAMDL", categories: ["metadata", "streaming", "download"],
@@ -1079,6 +1086,13 @@ for (const viewport of viewports) {
       await expect(page.getByText("Recommendation actions", { exact: true })).toBeVisible();
       await expect(page.getByText("Recommendation sources", { exact: true })).toBeVisible();
       await expect(page.getByText("Connected services Allstarr may use to find candidates. This does not import history or change source accounts.", { exact: true })).toBeVisible();
+      const audioMuseSetup = page.locator(".provider-setup").filter({ hasText: "AudioMuse connection" });
+      await expect(audioMuseSetup).toContainText("Connect AudioMuse here");
+      await audioMuseSetup.getByRole("button", { name: "Connect AudioMuse" }).click();
+      const audioMuseDialog = page.getByRole("dialog", { name: "Connect a Source" });
+      await expect(audioMuseDialog.getByLabel("AudioMuse server URL")).toBeVisible();
+      await expect(audioMuseDialog.getByLabel("AudioMuse access token")).toBeVisible();
+      await audioMuseDialog.getByRole("button", { name: "Close source connection dialog" }).click();
       await expect(page.locator(".settings-stack")).not.toContainText(/\bsignals?\b/i);
       await expect(page.getByText("Allstarr sent the latest completed listen to Last.fm.", { exact: true })).toBeVisible();
       await expect(page.getByText("Allstarr will not send listens to ListenBrainz.", { exact: true })).toBeVisible();
@@ -1126,6 +1140,10 @@ for (const viewport of viewports) {
       await expect(connect.getByText("Leave blank to send listens to ListenBrainz. To use Koito, paste its HTTPS listening address.")).toBeVisible();
       await expect(connect.getByRole("button", { name: "Save and test" })).toBeInViewport();
       await page.getByRole("button", { name: "Close source connection dialog" }).click();
+      await page.goto("#/integrations/services?source=audiomuse-ai&section=configuration");
+      const intelligenceLink = page.getByRole("link", { name: "Configure in Intelligence" });
+      await expect(intelligenceLink).toHaveAttribute("href", "#/intelligence?section=automation");
+      await expect(page.getByRole("dialog")).toContainText("AudioMuse powers sound-based discovery");
       await page.goto("#/integrations/accounts");
       await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();
       await page.getByRole("tab", { name: "Access" }).click();
