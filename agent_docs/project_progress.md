@@ -10,10 +10,10 @@ This is a replacement and consolidation package. Do not create parallel matching
 
 ### Verified delivery state
 
-- Application revision `e42f38deaa2047b8e4f3e9850e1bf09aad715efb` is pushed and deployed to both Jellyfin and Subsonic stacks.
-- Both server checkouts are clean at that revision. Both app containers use image `sha256:dc0bb67a64d747009a0776c8ff242854cc38e4215c6a180894faf731568ba4fc` and are healthy.
-- GitHub Actions run `32286289552` is green across build/test, release-critical, Apple, WebUI, format, Compose, and release-manifest jobs.
-- Current WebUI baseline is 45.3 KiB initial JavaScript and 21.3 KiB CSS; unit is 46/46 and browser is 84/84.
+- Application revision `f951adef2d45ca1d2582ccf1a0e3f8d1b9940649` is pushed and deployed to both Jellyfin and Subsonic stacks.
+- Both server checkouts are clean at that revision. Both app containers use image `sha256:ed0affbd62d1c177c3fbb5cfe9739a39602274aaff5cd8be211c19d56e1b208b` and are healthy.
+- GitHub Actions run `32323295754` is green across build/test, release-critical, Apple, WebUI, format, Compose, and release-manifest jobs.
+- Current WebUI baseline is 47.2 KiB initial JavaScript and 23.5 KiB CSS; unit is 46/46 and browser is 93/93.
 - Canvas UI remains blocked by MIT plus Commons Clause redistribution terms. A focused replacement review found no permissive renderer that would delete more code than it adds, so use Svelte 5, shadcn-svelte, Bits UI, Lucide, CSS, SVG, and native Web Animations.
 - Koito `a079fa693569d21e03c00df163f20ac5e137c490`, Explo `4fc75874de691ff1e26b10d88b859cfac8ee2992`, and Multi-Scrobbler `bc28de66b14db1c99eb79ad75d1cdf4c9dfff7cc` are MIT reference inputs. Adapt useful behavior and presentation into existing owners; do not import their application architectures.
 - LAN/VPN access was enabled only after the local release gates passed, then used for exact-revision deployment and qualification.
@@ -128,13 +128,14 @@ Acceptance: local release evidence is complete before LAN access, no unrun gate 
 - Browser-only responsive qualification: 27/27 route/viewport checks across desktop, tablet, and mobile with no overflow, crash state, missing main heading, or console error.
 - External sources without range support were retained as truthful bounded progressive delivery rather than falsely advertising seek support.
 
-### Post-delivery WebUI refinement — local only
+### Post-delivery WebUI refinement — delivered
 
-- Local application revision `c8c57ea909b60165fa665c35f3b9b97d4a0a67aa` adds the Material control-room visual system, clearer Intelligence import controls, denser Home/review/storage workflows, truthful empty-value filter labels, and horizontal-only segmented-tab activation.
+- Application revision `f951adef2d45ca1d2582ccf1a0e3f8d1b9940649` includes the Material control-room visual system, clearer Intelligence import controls, denser Home/review/storage workflows, truthful empty-value filter labels, horizontal-only segmented-tab activation, and truthful managed-audio totals that ignore missing mapped files.
 - The segmented-tab fix prevents nested mobile tabs from moving the document vertically. The browser regression waits for mounted content and settled layout, then proves zero document scroll and a fully visible page heading.
 - Exact-revision WebUI evidence: Svelte diagnostics clean, unit 46/46, production build and budgets green at 47.2 KiB initial JavaScript and 23.5 KiB CSS, browser 93/93 without retries, design detector clean, and responsive light-theme screenshots reviewed at 390×844 and 1280×800.
 - Two proposed shared-control/artwork changes were measured and discarded before commit: loading a Bits UI checkbox into the root shell raised initial JavaScript to 69.6 KiB, and blank provider logos were traced to the test fixture's intentionally empty SVG rather than production assets.
+- Live browser qualification covered 12 desktop routes and 8 mobile routes with no document overflow, console error, or heading displacement. Home now reports `0 cached · 0 kept`, matching the live Cached and Kept inventories.
 
 ## Next action
 
-Obtain exact-revision authorization for the current branch tip containing application revision `c8c57ea909b60165fa665c35f3b9b97d4a0a67aa`, then push, deploy, and run the bounded browser smoke. The deployed application remains `e42f38deaa2047b8e4f3e9850e1bf09aad715efb` until that authorization is given.
+No delivery action remains for this package. Begin a new scoped package only for newly observed behavior or an explicitly requested follow-up.

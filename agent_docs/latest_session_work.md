@@ -1,12 +1,15 @@
 # Latest Session Work
 
-## Verified local refinement — 2026-08-19
+## Delivered dashboard refinement — 2026-08-19
 
-- Local application revision is `c8c57ea909b60165fa665c35f3b9b97d4a0a67aa`; deployed revision remains `e42f38deaa2047b8e4f3e9850e1bf09aad715efb`.
+- Application revision `f951adef2d45ca1d2582ccf1a0e3f8d1b9940649` is pushed and deployed to both Allstarr stacks on `192.168.1.116`.
 - The five post-delivery WebUI commits clarify Intelligence imports and controls, adopt the Material control-room system, streamline Home and mobile matching, align storage tables and filter labels, and keep nested segmented tabs from scrolling the page away from its heading.
 - Current exact-source evidence: Svelte diagnostics clean, unit 46/46, production build and budgets green at 47.2 KiB initial JavaScript and 23.5 KiB CSS, and browser 93/93 without retries.
 - Responsive light-theme screenshots were reviewed at 390×844 and 1280×800. The Integrations heading remains fully visible when the off-screen Extensions tab activates.
-- Reproducible dependencies, build output, and test artifacts are removed after verification to keep the checkout near 81 MiB.
+- The live follow-up smoke covered 12 desktop routes and 8 mobile routes with no overflow or console errors. It exposed stale durable mappings in Home's managed-audio count; Home now counts only mapped files that still exist, and its `0 cached · 0 kept` result agrees with both storage inventories.
+- The focused storage regression lane passed 7/7. GitHub Actions run `32323295754` is green across WebUI, build/test, release-critical, format, Apple, Compose, and release-manifest jobs.
+- Both application containers are healthy on image `sha256:ed0affbd62d1c177c3fbb5cfe9739a39602274aaff5cd8be211c19d56e1b208b`; PostgreSQL and all provider sidecars were left running and Navidrome was not modified.
+- Reproducible dependencies, build output, and test artifacts are removed after verification to keep the checkout near 77 MiB.
 
 ## Completed delivery — 2026-08-19
 
@@ -29,4 +32,4 @@
 
 ## Next entry point
 
-Ask for exact authorization to push and deploy the current branch tip containing application revision `c8c57ea909b60165fa665c35f3b9b97d4a0a67aa`; after deployment, run the bounded browser smoke only. Preserve the unrelated dirty files and do not stage ignored steering material.
+This package is complete. Preserve the unrelated dirty files and begin a new scoped package for any newly observed behavior.
