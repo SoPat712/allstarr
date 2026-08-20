@@ -123,7 +123,7 @@ public partial class SubsonicController : ControllerBase
             HttpContext.RequestAborted);
     }
 
-    // Extract all parameters (query + body)
+    // Reuse the authenticated query and form projection when available.
     private async Task<SubsonicRequestParameters> ExtractAllParameters()
     {
         if (HttpContext.Items.TryGetValue(SubsonicAuthFilter.RequestParametersItemKey, out var value) &&

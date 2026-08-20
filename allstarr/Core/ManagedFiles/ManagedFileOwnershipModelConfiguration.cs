@@ -5,7 +5,7 @@ namespace allstarr.Core.ManagedFiles;
 
 public static class ManagedFileOwnershipModelConfiguration
 {
-    // Call from AllstarrDbContext.OnModelCreating during the consolidated Phase 6 migration.
+    // Called once from AllstarrDbContext.OnModelCreating.
     public static void ConfigureManagedFileOwnership(this ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<ManagedFileOwnershipEntity>(entity =>

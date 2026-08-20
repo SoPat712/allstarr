@@ -120,3 +120,11 @@ sampleMissingPlaylists/
 /webui/build/
 /webui/playwright-report/
 /webui/test-results/
+
+# Local design tooling
+/.agents/
+/.codex/
+/.impeccable/
+/webui/.impeccable/
+/PRODUCT.md
+/agent_docs/

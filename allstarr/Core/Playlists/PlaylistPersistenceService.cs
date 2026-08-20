@@ -117,6 +117,7 @@ public interface IPlaylistPersistenceService
     Task<PlaylistSyncRunRecord> RecordRunAsync(ProtocolExecutionContext context, Guid linkId, PlaylistRunInput input, IReadOnlyList<PlaylistRunEntryInput> results, CancellationToken cancellationToken = default);
 }
 
+/// <summary>Owns durable playlist links, source snapshots, previews, and sync-run evidence.</summary>
 public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
 {
     private static readonly JsonSerializerOptions PreviewJson = new() { PropertyNameCaseInsensitive = true };

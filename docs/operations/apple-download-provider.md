@@ -11,7 +11,8 @@ GAMDL search and download HTTP gateway by itself.
 ## Prepare wrapper-v2
 
 Obtain Apple Music for Android legally from a source you are permitted to use. Allstarr does not download or
-redistribute that package. Open Sources > Apple download in the WebUI, upload the APK/APKM, and run:
+redistribute that package. Open **Integrations > Services > Apple Music – GAMDL** in the dashboard, manage the
+Apple download setup, upload the APK/APKM, and run:
 
 ```bash
 ./allstarr.sh install-apple x86_64

@@ -9,8 +9,6 @@ namespace allstarr.Controllers;
 
 public partial class JellyfinController
 {
-    #region Helpers
-
     /// <summary>
     /// Helper to handle proxy responses with proper status code handling.
     /// </summary>
@@ -340,6 +338,4 @@ public partial class JellyfinController
             return (item, finalScore);
         }).ToList();
     }
-
-    #endregion
 }

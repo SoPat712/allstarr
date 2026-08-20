@@ -8,8 +8,7 @@ public sealed partial class AllstarrDbContext
     public DbSet<MetadataEnrichmentPlanRecord> MetadataEnrichmentPlans => Set<MetadataEnrichmentPlanRecord>();
     public DbSet<MetadataEnrichmentApplicationRecord> MetadataEnrichmentApplications => Set<MetadataEnrichmentApplicationRecord>();
 
-    // Called by the consolidated Phase 6 model hook. Kept separate so the Phase 6 migration can be generated once.
-    internal static void ConfigurePhase6Enrichment(ModelBuilder modelBuilder)
+    internal static void ConfigureMetadataEnrichment(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<MetadataEnrichmentPlanRecord>(entity =>
         {

@@ -21,7 +21,7 @@ public sealed class OperationalLogRegressionContractTests
     public void EndpointUsage_UsesRetentionBoundedAuditEventsWithoutCsvFiles()
     {
         var helper = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Controllers", "Helpers.cs"));
+            "allstarr", "Controllers", "JellyfinController.Helpers.cs"));
         var diagnostics = File.ReadAllText(FindRepositoryFile(
             "allstarr", "Controllers", "DiagnosticsController.cs"));
         var audit = File.ReadAllText(FindRepositoryFile(

@@ -148,7 +148,7 @@ public sealed class SubsonicProtocolAdapterTests
     public void ControllerRecordsEachRepeatedFavoriteTrackInsteadOfACommaJoinedId()
     {
         var controller = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Controllers", "SubSonicController.cs"));
+            "allstarr", "Controllers", "SubsonicController.cs"));
 
         Assert.Contains("parameters.GetAllValues(\"id\")", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("var itemId = parameters.GetValueOrDefault(\"id\", \"\");\n                if (!string.IsNullOrWhiteSpace(itemId))", controller, StringComparison.Ordinal);

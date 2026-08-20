@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Tests;
 
-public sealed class Phase4PersistenceServiceTests : IAsyncLifetime
+public sealed class PlaylistPersistenceServiceTests : IAsyncLifetime
 {
     private PostgresTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;

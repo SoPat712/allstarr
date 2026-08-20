@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Favorites;
 
-/// <summary>Phase 6 model slice. The consolidated Phase 6 migration wires this once all lanes land.</summary>
+/// <summary>Configures durable favorite state, policy, and delivery entities.</summary>
 public static class FavoriteModelConfiguration
 {
     public static void Configure(ModelBuilder modelBuilder)

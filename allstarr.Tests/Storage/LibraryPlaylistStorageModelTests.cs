@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Tests;
 
-public sealed class Phase4DurableModelTests
+public sealed class LibraryPlaylistStorageModelTests
 {
     [Fact]
     public async Task PostgresModel_PersistsScopedMatchAndOrderedPlaylistEvidence()

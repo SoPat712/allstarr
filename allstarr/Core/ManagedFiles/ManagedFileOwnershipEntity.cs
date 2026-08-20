@@ -1,7 +1,7 @@
 namespace allstarr.Core.ManagedFiles;
 
 // Persistence shape is intentionally separate from the immutable placement result.
-// Phase 6 migration wiring is consolidated by the storage owner.
+// Managed-file ownership remains part of the shared durable storage model.
 public sealed class ManagedFileOwnershipEntity
 {
     public Guid Id { get; set; }

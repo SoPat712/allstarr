@@ -425,7 +425,7 @@ public sealed class DurableStateTransferService
             providerRouteDecisions,
             providerRouteOutcomes);
         ValidateLegacyEnvImportsArchive(tenants, users, auditEvents, legacyEnvImports);
-        ValidatePhase6Archive(tenants, users, backendIdentities, jobs, secretReferences, favoriteEvents, favoriteActions, favoriteStates,
+        ValidateManagedMediaArchive(tenants, users, backendIdentities, jobs, secretReferences, favoriteEvents, favoriteActions, favoriteStates,
             favoritePolicies, managedFiles, managedFileReferences, enrichmentPlans, enrichmentApplications);
         ValidateDownloadArtifactArchive(tenants, users, jobs, providerAccounts, managedFiles, downloadWorkspaces, downloadArtifacts);
         ValidateIntelligenceArchive(tenants, users, backendIdentities, jobs, jobSchedules, secretReferences,
@@ -931,7 +931,7 @@ public sealed class DurableStateTransferService
         }
     }
 
-    private static void ValidatePhase6Archive(
+    private static void ValidateManagedMediaArchive(
         IReadOnlyCollection<TenantRecord> tenants,
         IReadOnlyCollection<PlatformUserRecord> users,
         IReadOnlyCollection<BackendIdentityRecord> backendIdentities,
@@ -978,7 +978,7 @@ public sealed class DurableStateTransferService
                 (!secretById.TryGetValue(eventCredential, out var eventSecret) || eventSecret.TenantId != favoriteEvent.TenantId || eventSecret.RevokedAt != null) ||
                 !IsRequiredText(favoriteEvent.EventKey, 64) || !IsRequiredText(favoriteEvent.CorrelationId, 100) ||
                 !IsJsonObject(favoriteEvent.PolicySnapshotJson, 64 * 1024))
-                RejectPhase6Archive("a favorite event is malformed or crosses its tenant, owner, or job boundary");
+                RejectManagedMediaArchive("a favorite event is malformed or crosses its tenant, owner, or job boundary");
         }
 
         foreach (var action in favoriteActions)
@@ -987,7 +987,7 @@ public sealed class DurableStateTransferService
                 favoriteEvent.TenantId != action.TenantId || favoriteEvent.OwnerUserId != action.OwnerUserId ||
                 !ValidOwner(action.TenantId, action.OwnerUserId) || !Enum.IsDefined(action.State) ||
                 !IsRequiredText(action.ActionType, 100) || !IsRequiredText(action.IdempotencyKey, 300) || action.AttemptCount < 0)
-                RejectPhase6Archive("a favorite action is malformed or crosses its event scope");
+                RejectManagedMediaArchive("a favorite action is malformed or crosses its event scope");
         }
 
         foreach (var state in favoriteStates)
@@ -996,7 +996,7 @@ public sealed class DurableStateTransferService
                 favoriteEvent.TenantId != state.TenantId || favoriteEvent.OwnerUserId != state.OwnerUserId ||
                 !ValidOwner(state.TenantId, state.OwnerUserId) || state.Protocol is not ("jellyfin" or "subsonic") ||
                 !IsRequiredText(state.BackendInstanceId, 200) || !IsRequiredText(state.ItemId, 500))
-                RejectPhase6Archive("a favorite state is malformed or crosses its last-event scope");
+                RejectManagedMediaArchive("a favorite state is malformed or crosses its last-event scope");
         }
 
         var policyKeys = new HashSet<(Guid, Guid?, FavoriteActionPolicyScope, string, string, string?)>();
@@ -1021,7 +1021,7 @@ public sealed class DurableStateTransferService
                 !IsOptionalText(policy.LibraryScopeId, 300) || policy.CreatedAt == default || policy.UpdatedAt < policy.CreatedAt ||
                 policy.Revision <= 0 || !policyKeys.Add((policy.TenantId, policy.OwnerUserId, policy.Scope,
                     policy.Protocol, policy.BackendInstanceId, policy.LibraryScopeId)))
-                RejectPhase6Archive("a favorite action policy is malformed, duplicated, or crosses its tenant, user, actor, or backend scope");
+                RejectManagedMediaArchive("a favorite action policy is malformed, duplicated, or crosses its tenant, user, actor, or backend scope");
         }
 
         foreach (var file in managedFiles)
@@ -1040,7 +1040,7 @@ public sealed class DurableStateTransferService
                 !IsRequiredText(file.ScopeKey, 1000) || !IsOptionalText(file.LibraryScopeId, 300) ||
                 !IsSafeManagedPath(file.TargetRootPath, file.CanonicalPath) ||
                 file.SourceJobId is { } jobId && !ValidJob(jobId, file.TenantId, file.OwnerUserId))
-                RejectPhase6Archive("a managed file is malformed, unsafe, or crosses its tenant, owner, or job boundary");
+                RejectManagedMediaArchive("a managed file is malformed, unsafe, or crosses its tenant, owner, or job boundary");
         }
 
         var referenceKeys = new HashSet<(Guid ManagedFileId, string ReferenceKey)>();
@@ -1055,7 +1055,7 @@ public sealed class DurableStateTransferService
                 reference.CreatedAt < file!.CreatedAt ||
                 (reference.ReleasedAt is { } releasedAt && releasedAt < reference.CreatedAt) || reference.Revision <= 0 ||
                 !referenceKeys.Add((reference.ManagedFileId, reference.ReferenceKey)))
-                RejectPhase6Archive("a managed file reference is malformed, repeated, or crosses its file ownership scope");
+                RejectManagedMediaArchive("a managed file reference is malformed, repeated, or crosses its file ownership scope");
             if (reference.ReleasedAt is null)
                 activeReferenceCounts[reference.ManagedFileId] =
                     activeReferenceCounts.GetValueOrDefault(reference.ManagedFileId) + 1;
@@ -1064,7 +1064,7 @@ public sealed class DurableStateTransferService
         foreach (var file in managedFiles)
         {
             if (file.ReferenceCount != activeReferenceCounts.GetValueOrDefault(file.Id))
-                RejectPhase6Archive("a managed file reference count does not match its durable active references");
+                RejectManagedMediaArchive("a managed file reference count does not match its durable active references");
         }
 
         foreach (var plan in enrichmentPlans)
@@ -1076,7 +1076,7 @@ public sealed class DurableStateTransferService
                 !IsNormalizedSha256(plan.Fingerprint) || !IsJsonArray(plan.SourceRevisionsJson, 1024 * 1024) ||
                 !IsJsonArray(plan.DecisionsJson, 1024 * 1024) || !IsJsonObject(plan.TagsJson, 1024 * 1024) ||
                 !IsJsonObject(plan.PathValuesJson, 1024 * 1024))
-                RejectPhase6Archive("a metadata enrichment plan is malformed or crosses its file, tenant, owner, or job boundary");
+                RejectManagedMediaArchive("a metadata enrichment plan is malformed or crosses its file, tenant, owner, or job boundary");
         }
 
         var applicationKeys = new HashSet<(Guid, Guid, Guid, string)>();
@@ -1091,7 +1091,7 @@ public sealed class DurableStateTransferService
                 (!IsRequiredText(application.ErrorCode, 100) || !IsRequiredText(application.SafeErrorMessage, 1000)) ||
                 application.State != MetadataEnrichmentApplicationState.Failed &&
                 (application.ErrorCode != null || application.SafeErrorMessage != null))
-                RejectPhase6Archive("a metadata enrichment application is malformed or crosses its plan scope");
+                RejectManagedMediaArchive("a metadata enrichment application is malformed or crosses its plan scope");
         }
     }
 
@@ -1515,7 +1515,7 @@ public sealed class DurableStateTransferService
                 workspace.CreatedAt == default || workspace.Revision < 0 ||
                 !publicWorkspaceIds.Add(workspace.WorkspaceId) ||
                 !workspaceKeys.Add((workspace.TenantId, workspace.DurableJobId, workspace.ProviderId, workspace.ProviderAccountId, workspace.IdempotencyKey)))
-                RejectPhase6Archive("a provider download workspace is malformed, repeated, or crosses its tenant, owner, job, provider-account, or library scope");
+                RejectManagedMediaArchive("a provider download workspace is malformed, repeated, or crosses its tenant, owner, job, provider-account, or library scope");
         }
 
         var artifactIdentities = new HashSet<(Guid, string)>();
@@ -1543,7 +1543,7 @@ public sealed class DurableStateTransferService
                 artifact.CreatedAt == default || artifact.VerifiedAt < artifact.CreatedAt || artifact.Revision < 0 ||
                 !artifactIdentities.Add((artifact.WorkspaceRecordId, artifact.ProviderArtifactId)) ||
                 !jobProviderKeys.Add((artifact.TenantId, artifact.DurableJobId, artifact.ProviderId)))
-                RejectPhase6Archive("a provider download artifact is malformed, repeated, unsafe, or crosses its workspace, tenant, owner, job, provider-account, or managed-file scope");
+                RejectManagedMediaArchive("a provider download artifact is malformed, repeated, unsafe, or crosses its workspace, tenant, owner, job, provider-account, or managed-file scope");
         }
     }
 
@@ -1580,8 +1580,8 @@ public sealed class DurableStateTransferService
         catch (JsonException) { return false; }
     }
 
-    private static void RejectPhase6Archive(string reason) => throw new BackupVerificationException(
-        $"State transfer Phase 6 data is invalid because {reason}.");
+    private static void RejectManagedMediaArchive(string reason) => throw new BackupVerificationException(
+        $"State transfer managed-media data is invalid because {reason}.");
 
     private static Dictionary<Guid, T> IndexUnique<T>(
         IEnumerable<T> values,

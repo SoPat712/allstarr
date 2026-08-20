@@ -1905,7 +1905,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
     [Theory]
     [InlineData("canonical_recordings")]
     [InlineData("provider_track_identities")]
-    public async Task Import_RejectsTargetContainingOnlyPhase2IdentityState(string table)
+    public async Task Import_RejectsTargetContainingOnlyIncompleteIdentityState(string table)
     {
         var artifact = await _service.ExportAsync(
             Path.Combine(_root, "transfers"),

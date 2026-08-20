@@ -83,13 +83,13 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         ConfigureJobs(modelBuilder);
         ConfigureProviderHealth(modelBuilder);
         ConfigureTrackIdentity(modelBuilder);
-        ConfigurePhase4LibraryAndPlaylists(modelBuilder);
+        ConfigureLibraryAndPlaylists(modelBuilder);
         ConfigureExtensions(modelBuilder);
         FavoriteModelConfiguration.Configure(modelBuilder);
         modelBuilder.ConfigureManagedFileOwnership();
         modelBuilder.ConfigureProviderDownloadArtifacts();
         modelBuilder.ConfigureDownloadedSongMappings();
-        ConfigurePhase6Enrichment(modelBuilder);
+        ConfigureMetadataEnrichment(modelBuilder);
         ConfigureFavoriteActionPolicies(modelBuilder);
         IntelligenceModelConfiguration.Configure(modelBuilder);
         modelBuilder.ConfigurePlaybackDeliveryCheckpoints();

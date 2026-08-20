@@ -4,7 +4,7 @@ namespace allstarr.Core.Storage;
 
 public sealed partial class AllstarrDbContext
 {
-    private static void ConfigurePhase4LibraryAndPlaylists(ModelBuilder modelBuilder)
+    private static void ConfigureLibraryAndPlaylists(ModelBuilder modelBuilder)
     {
         ConfigureLibraryAndMatching(modelBuilder);
         ConfigurePlaylistSchedules(modelBuilder);

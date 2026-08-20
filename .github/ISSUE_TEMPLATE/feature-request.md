@@ -32,7 +32,7 @@ Add any other context or screenshots about the feature request here.
 ## Safe diagnostics from Allstarr (optional)
 
 - Sensitive values stay redacted in this block.
-- Allstarr Version: [e.g. v3.0.0-beta.1]
+- Allstarr Version: [e.g. v3.1.0-beta.1]
 - Backend Type: [e.g. Jellyfin]
 - Capability and provider involved: [e.g. recommendations / Last.fm]
 - Provider account scope: [global / user / library / not applicable]

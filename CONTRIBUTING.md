@@ -24,7 +24,7 @@ dotnet test allstarr.sln
 
 ## Before You Change Code
 
-Read the [architecture overview](docs/architecture/overview.md) and the owning operations or SDK document for the area you are changing.
+Read the repository [agent guide](AGENTS.md), the [architecture overview](docs/architecture/overview.md), and the owning operation or SDK document for the area you are changing. The agent guide is intentionally tool-neutral so a contributor can point any coding agent at one file.
 
 In particular:
 
@@ -40,10 +40,11 @@ In particular:
 
 ## Tests And Fixtures
 
-Every behavior change, bug fix, contract change, and migration rule needs focused coverage. Run the smallest relevant tests while iterating, then run the full Release suite before asking for review:
+Every behavior change, bug fix, contract change, and migration rule needs focused coverage. Run the smallest relevant tests while iterating. PostgreSQL integration tests require an explicitly isolated database through `ALLSTARR_TEST_POSTGRES`. CI splits the Release matrix into two lanes, and both are required before release:
 
 ```bash
-dotnet test allstarr.sln -c Release
+dotnet test allstarr.sln -c Release --filter "Lane!=ReleaseCritical"
+dotnet test allstarr.sln -c Release --filter "Lane=ReleaseCritical"
 ```
 
 Useful focused examples:
@@ -58,7 +59,7 @@ Provider and external-gateway tests use local fixtures, fake providers, or mocke
 or live provider calls to the automated suite. Apple gateway tests must not assume wrapper-v2 itself implements the
 Allstarr search/download contract.
 
-Migration work must be checked against an explicitly isolated disposable PostgreSQL database.
+Migration work must be checked against an explicitly isolated disposable PostgreSQL database. WebUI changes must also pass `npm run check`, `npm test`, `npm run build`, `npm run check:budgets`, and the affected Playwright coverage from `webui/`.
 
 ## Provider Extensions
 
@@ -68,7 +69,9 @@ Do not bundle provider packages or auto-enroll users in an external registry.
 
 ## Documentation
 
-Update the owner document when behavior changes. Keep the root docs useful to operators and contributors; keep detailed invariants in the appropriate steering reference. Use the project's direct, normal voice. Prefer exact statements over promotional claims, and label planned behavior as planned.
+Update the owner document when behavior changes. Keep README and the user guide useful to operators; keep detailed invariants in architecture, operation, protocol, extension, or module documents. Use the project's direct, normal voice. Prefer exact statements over promotional claims, and do not put planned behavior in user documentation.
+
+Do not commit agent prompts, session handoffs, local design-tool state, generated test reports, private deployment details, or duplicate planning documents. `AGENTS.md` is the only public instruction entry point for coding agents.
 
 Check local Markdown links after renaming or removing files. Never paste real secrets, signed URLs, account names, or private library paths into examples.
 

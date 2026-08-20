@@ -32,13 +32,17 @@ PostgreSQL is mandatory. There is no SQLite, Redis, or Valkey runtime option.
 
 ## Durable settings
 
-Non-secret product behavior belongs in tenant-scoped PostgreSQL settings and is edited through **Settings**. Examples include provider routing priorities, cache policy, matching thresholds, playlist behavior, download quality, and diagnostics policy.
+Non-secret product behavior belongs in tenant-scoped PostgreSQL settings and is edited through the dashboard surface that owns it. General playback, cache, matching, playlist, and diagnostics policy lives under **Settings**. Provider priority lives under **Integrations > Routing**.
 
 `DurableRuntimeSettingsService` owns validation, typing, revisions, and optimistic concurrency. Controllers must not add a second environment or JSON owner for these settings.
 
 ## Provider accounts
 
-Provider credentials are encrypted and persisted as provider accounts with explicit tenant, user/shared scope, capability, and access policy. Accounts are managed under **Settings > Accounts**. Source availability and routing are shown under **Sources**.
+Provider credentials are encrypted and persisted as provider accounts with explicit tenant, user/shared scope, capability, and access policy. Services and their configuration are managed under **Integrations > Services**. Credentials and audience policy live under **Integrations > Accounts**; capability priority lives under **Integrations > Routing**.
+
+Extensions are package implementations, not a second account system. Their install, update, permission, rollback, and removal lifecycle lives under **Integrations > Extensions**. Once active, their Services and Accounts use the same Integrations surfaces as built-in providers.
+
+AudioMuse is a built-in Intelligence integration rather than an extension. Its self-hosted URL, optional token, and optional music-server selector live under **Intelligence > Automation**; shared health remains visible in Integrations.
 
 A shared account is not automatically available to every user. Administrators must set its access policy explicitly.
 

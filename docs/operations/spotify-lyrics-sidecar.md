@@ -20,7 +20,7 @@ The checked-in Compose file points at a pinned image from `akashrchandran/spotif
 ./allstarr.sh logs spotify-lyrics
 ```
 
-Provider readiness and lyrics routing are visible in the Sources and Settings surfaces. An unhealthy lyrics service degrades only the capability that depends on it; it must not make playlist discovery or the core proxy unavailable.
+Provider readiness and lyrics routing are visible in Integrations under Services and Routing. An unhealthy lyrics service degrades only the capability that depends on it; it must not make playlist discovery or the core proxy unavailable.
 
 ## Update or disable
 

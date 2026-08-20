@@ -117,7 +117,7 @@ prepare_apple() {
       fi
     done
   fi
-  [[ -n "$input" && ( -f "$input" || -d "$input" ) ]] || die "no staged Apple package found; upload an .apk/.apkm in Sources > Apple download first"
+  [[ -n "$input" && ( -f "$input" || -d "$input" ) ]] || die "no staged Apple package found; upload an .apk/.apkm in Integrations > Services > Apple Music – GAMDL first"
   case "$arch" in
     x86_64) ;;
     arm64-v8a) runtime=linux/arm64 ;;
