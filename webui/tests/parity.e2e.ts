@@ -39,7 +39,6 @@ const schema = {
       { key: "MATCHING_LOCAL_PREFERENCE_PERCENT", label: "Local track preference", type: "number", valuePath: "matching.localPreferencePercent", min: 0, max: 20, helpText: "Percentage points added to Jellyfin-local candidates. Default: 7%." },
       { key: "MATCHING_EXTENSION_PENALTY_PERCENT", label: "Extension match penalty", type: "number", valuePath: "matching.extensionPenaltyPercent", min: 0, max: 20, helpText: "Percentage points subtracted from extension candidates. Default: 3%." },
       { key: "STORAGE_MODE", label: "Storage mode", type: "select", valuePath: "library.storageMode", options: ["Permanent", "Cache"] },
-      { key: "Theme", label: "Theme", type: "select", valuePath: "general.theme", options: ["Dark"] },
       { key: "PublicUrl", label: "Public URL", type: "text", valuePath: "deployment.url", ownership: "deployment", readOnly: true },
       ],
     },
@@ -234,7 +233,7 @@ const responses: Record<string, unknown> = {
     wrapper_healthy: true, logged_in: true, login_state: "authenticated", api_version: "2",
   },
   "/api/admin/config": {
-    general: { theme: "Dark" }, deployment: { url: "https://music.example.test" },
+    deployment: { url: "https://music.example.test" },
     audio: { quality: "BestAvailable" },
     matching: { localPreferencePercent: 7, extensionPenaltyPercent: 3 },
     appleDownload: { baseUrl: "http://apple-download.test" },
@@ -740,12 +739,23 @@ for (const viewport of viewports) {
       test(`${route} has no document overflow`, async ({ page }) => {
         const errors: string[] = [];
         page.on("pageerror", (error) => errors.push(error.message));
+        const screenshotTheme = process.env.ALLSTARR_SCREENSHOT_THEME;
+        if (screenshotTheme === "light" || screenshotTheme === "dark") {
+          await page.addInitScript((theme) => localStorage.setItem("allstarr.theme", theme), screenshotTheme);
+        }
         await mockApi(page);
         await page.goto(route);
         await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
         await expect.poll(() => page.evaluate(() =>
           document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
         expect(errors).toEqual([]);
+        if (process.env.ALLSTARR_SCREENSHOT_DIR) {
+          const name = route.replace(/^#\/?/, "").replaceAll(/[^a-z0-9]+/gi, "-") || "home";
+          await page.screenshot({
+            path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/${screenshotTheme ?? "system"}-${viewport.width}-${name}.png`,
+            fullPage: true,
+          });
+        }
       });
     }
 
@@ -819,13 +829,16 @@ for (const viewport of viewports) {
       await mockApi(page);
       await page.goto("#/settings/general");
       await expect(page.getByText("Public URL", { exact: true }).locator("..").getByText("Deployment-owned")).toBeVisible();
-      await page.getByRole("button", { name: "Theme", exact: true }).click();
+      await page.getByLabel("Color theme").click();
       await expect(page.getByRole("option", { name: "Dark" })).toBeVisible();
+      await page.getByRole("option", { name: "Dark" }).click();
+      await expect(page.locator("html")).toHaveClass(/dark/);
       await page.keyboard.press("Escape");
       await page.goto("#/settings/accounts");
       await expect(page.getByRole("heading", { name: "Integrations", level: 1 })).toBeVisible();
       await expect(page.getByRole("tab", { name: "Accounts" })).toHaveAttribute("aria-selected", "true");
       await page.goto("#/sources?source=lumen-audio&section=configuration");
+      await expect(page.getByRole("heading", { name: "Integrations", level: 1 })).toBeVisible({ timeout: 15_000 });
       await expect(page.getByRole("tab", { name: "Services" })).toHaveAttribute("aria-selected", "true");
       await page.getByRole("button", { name: "Connect another account" }).click();
       const sourceDialog = page.getByRole("dialog", { name: "Connect a Source" });
@@ -881,8 +894,14 @@ for (const viewport of viewports) {
         getComputedStyle(element, "::after").animationName)).toBe("none");
       delayed.release();
       await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
-      await expect(page.locator(".library-choice")).toContainText("Music");
-      await expect(page.locator(".library-choice")).toContainText("Jellyfin · Jellyfin Music");
+      await expect(page.locator(".scope-value")).toContainText("Music");
+      await expect(page.locator(".scope-value")).toContainText("Jellyfin · Jellyfin Music");
+      const themeButton = page.getByRole("button", { name: /Theme:/ });
+      await themeButton.click();
+      await expect(page.locator("html")).not.toHaveClass(/dark/);
+      await themeButton.click();
+      await expect(page.locator("html")).toHaveClass(/dark/);
+      await themeButton.click();
       await expect(page.getByLabel("Server connection")).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Open library" })).toHaveCount(0);
       if (viewport.width <= 650) {
@@ -1427,12 +1446,9 @@ test("Shared visual tokens meet typography, geometry, and contrast floors", asyn
   await page.goto("#/");
   const contract = await page.evaluate(() => {
     const root = getComputedStyle(document.documentElement);
-    const primarySample = document.createElement("button");
-    primarySample.className = "button-primary";
     const eyebrowSample = document.createElement("p");
     eyebrowSample.className = "eyebrow";
-    document.body.append(primarySample, eyebrowSample);
-    const primary = getComputedStyle(primarySample);
+    document.body.append(eyebrowSample);
     const eyebrow = getComputedStyle(eyebrowSample);
     const resolveColor = (value: string) => {
       const sample = document.createElement("span");
@@ -1469,15 +1485,14 @@ test("Shared visual tokens meet typography, geometry, and contrast floors", asyn
         Number.parseFloat(root.getPropertyValue(token)) * 16),
       dataGeometry: ["--data-row-height", "--data-artwork-size"].map((token) =>
         Number.parseFloat(root.getPropertyValue(token)) * 16),
-      fonts: [Number.parseFloat(primary.fontSize), Number.parseFloat(eyebrow.fontSize)],
+      fonts: [Number.parseFloat(root.getPropertyValue("--text-sm")) * 16, Number.parseFloat(eyebrow.fontSize)],
       contrast: {
         body: contrast(getComputedStyle(document.body).color, canvas),
         metadata: contrast(eyebrow.color, canvas),
-        primary: contrast(primary.color, primary.backgroundColor),
+        primary: contrast(resolveColor("var(--color-on-signal)"), resolveColor("var(--color-signal)")),
         focus: contrast(resolveColor("var(--focus-ring)"), canvas),
       },
     };
-    primarySample.remove();
     eyebrowSample.remove();
     return result;
   });
@@ -1518,7 +1533,7 @@ test("Shared selects and settings tabs animate without remounting", async ({ pag
     getComputedStyle(element).backgroundColor);
   await selectedNav.hover();
   await expect(selectedNav).toHaveCSS("background-color", selectedNavBackground);
-  await page.getByRole("button", { name: "Theme", exact: true }).click();
+  await page.getByLabel("Color theme").click();
   await expect(page.locator(".select-content")).toHaveCSS("animation-name", "dropdown-in");
   await page.keyboard.press("Escape");
   await page.goto("#/integrations/services");
@@ -1526,11 +1541,19 @@ test("Shared selects and settings tabs animate without remounting", async ({ pag
   await tabs.evaluate((element) => element.setAttribute("data-instance", "stable"));
   const routing = page.getByRole("tab", { name: "Routing" });
   await routing.hover();
-  expect(await routing.evaluate((element) => getComputedStyle(element).borderTopLeftRadius))
-    .toBe(await tabs.evaluate((element) => getComputedStyle(element, "::before").borderTopLeftRadius));
+  await expect(routing).toHaveCSS("border-top-left-radius", "8px");
   await routing.click();
   await expect(tabs).toHaveAttribute("data-instance", "stable");
-  await expect(tabs).toHaveCSS("overflow", "hidden");
+  expect(await routing.evaluate((element) => getComputedStyle(element, "::after").height)).toBe("3px");
+  expect(await routing.evaluate((element) => getComputedStyle(element, "::after").backgroundColor))
+    .toBe(await page.evaluate(() => {
+      const sample = document.createElement("span");
+      sample.style.color = "var(--color-signal)";
+      document.body.append(sample);
+      const value = getComputedStyle(sample).color;
+      sample.remove();
+      return value;
+    }));
 });
 
 test("Legacy Library links open their current shared views", async ({ page }) => {
@@ -2286,7 +2309,15 @@ test("Integrations keep primary actions visible and report scoped degradation", 
   await expect(accountDetails.getByRole("button", { name: "Edit configuration" })).toBeVisible();
   const metadataCapability = accountDetails.locator(".source-detail-capabilities > span").filter({ hasText: "Metadata" });
   await expect(metadataCapability.locator('[data-slot="badge"]')).toHaveText("Ready");
-  await expect(metadataCapability.locator('[data-slot="badge"]')).toHaveCSS("color", "rgb(99, 221, 166)");
+  const successColor = await page.evaluate(() => {
+    const sample = document.createElement("span");
+    sample.style.color = "var(--color-success)";
+    document.body.append(sample);
+    const value = getComputedStyle(sample).color;
+    sample.remove();
+    return value;
+  });
+  await expect(metadataCapability.locator('[data-slot="badge"]')).toHaveCSS("color", successColor);
   await expect(metadataCapability.getByRole("button", { name: "Test" })).toHaveAttribute("data-slot", "button");
   await accountDetails.getByRole("button", { name: "Close Source details" }).click();
 
@@ -2446,15 +2477,16 @@ test("Settings preserves dirty drafts during live refresh and scrolls mobile tab
   expect(tabSizes.every(({ height, fontSize }) => height >= 44 && fontSize >= 14)).toBe(true);
   const generalTab = tabs.getByRole("tab", { name: "General" });
   const selectedBackground = await generalTab.evaluate((element) => getComputedStyle(element).backgroundColor);
+  const selectedUnderline = await generalTab.evaluate((element) => getComputedStyle(element, "::after").backgroundColor);
   await generalTab.hover();
   await expect.poll(() => generalTab.evaluate((element) => getComputedStyle(element).backgroundColor))
-    .toBe(selectedBackground);
+    .not.toBe(selectedBackground);
   await tabs.getByRole("tab", { name: "Maintenance" }).click();
   await expect(tabs.getByRole("tab", { name: "Maintenance" })).toHaveAttribute("aria-selected", "true");
   const maintenanceTab = tabs.getByRole("tab", { name: "Maintenance" });
   await maintenanceTab.hover();
-  await expect.poll(() => maintenanceTab.evaluate((element) => getComputedStyle(element).backgroundColor))
-    .toBe(selectedBackground);
+  await expect.poll(() => maintenanceTab.evaluate((element) => getComputedStyle(element, "::after").backgroundColor))
+    .toBe(selectedUnderline);
   await expect.poll(() => tabs.evaluate((element) => {
     const active = element.querySelector<HTMLElement>('[aria-selected="true"]');
     if (!active) return false;

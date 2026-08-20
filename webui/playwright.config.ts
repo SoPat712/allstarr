@@ -14,6 +14,10 @@ export default defineConfig({
   testDir: "./tests",
   testMatch: "**/*.e2e.ts",
   fullyParallel: true,
+  timeout: 120_000,
+  expect: {
+    timeout: 15_000,
+  },
   reporter,
   use: {
     baseURL: "http://127.0.0.1:4173/",

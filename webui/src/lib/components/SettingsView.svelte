@@ -20,6 +20,7 @@
   import { humanize } from "$lib/sources";
   import { fieldValue } from "$lib/settings";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
+  import { onThemeModeChange, readThemeMode, saveThemeMode, themeOptions, type ThemeMode } from "$lib/theme";
 
   let {
     section = "general",
@@ -47,6 +48,7 @@
     "MATCHING_LOCAL_PREFERENCE_PERCENT",
     "MATCHING_EXTENSION_PENALTY_PERCENT",
   ]);
+  const shellPreferenceKeys = new Set(["THEME"]);
 
   let schema = $state<UiSchema | null>(null);
   let config = $state<Record<string, unknown>>({});
@@ -64,6 +66,7 @@
   let dirtyOwners = $state<string[]>([]);
   let serverChanged = $state(false);
   let openSections = $state(["general"]);
+  let themeMode = $state<ThemeMode>("system");
 
   const active = $derived(section === "maintenance" ? "maintenance" : "general");
   const generalSections = $derived.by(() => {
@@ -72,7 +75,7 @@
       .map((item) => ({
         ...item,
         fields: item.fields.filter((field) =>
-          !contextualTrackCacheKeys.has(field.key) && !integrationRoutingKeys.has(field.key)),
+          !contextualTrackCacheKeys.has(field.key) && !integrationRoutingKeys.has(field.key) && !shellPreferenceKeys.has(field.key.toUpperCase())),
       }))
       .filter((item) => item.fields.length);
   });
@@ -194,12 +197,15 @@
   }
 
   onMount(() => {
+    themeMode = readThemeMode();
+    const unsubscribeTheme = onThemeModeChange((mode) => { themeMode = mode; });
     if (initialPanel && !openSections.includes(initialPanel))
       openSections = [...openSections, initialPanel];
     void refresh();
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
       unsubscribe();
+      unsubscribeTheme();
       refreshScheduler.cancel();
     };
   });
@@ -235,6 +241,10 @@
     {#if active === "general"}
       <div class="settings-stack">
         <header class="settings-intro"><p class="eyebrow">Runtime configuration</p><h2>General</h2><p>Durable settings apply immediately. Deployment-owned values are identified but cannot be edited here.</p></header>
+        <section class="panel appearance-settings">
+          <div><strong>Appearance</strong><small>Stored in this browser and applied immediately.</small></div>
+          <label class="field"><span>Color theme</span><SelectField bind:value={themeMode} label="Color theme" options={themeOptions} onchange={(value) => saveThemeMode(value as ThemeMode)} /></label>
+        </section>
         {#each generalSections as item}
           <details
             class="panel settings-disclosure"

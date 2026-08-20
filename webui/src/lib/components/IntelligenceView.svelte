@@ -44,6 +44,13 @@
         : initialSection === "automation" || initialSection === "settings" ? "automation"
           : "overview",
   );
+  const sectionIntro = $derived({
+    overview: { title: "Your listening, explained.", description: "See what you play, what Allstarr learned, and what is ready for discovery." },
+    history: { title: "Your listening history.", description: "Search, correct, and export the activity saved for this account and library." },
+    imports: { title: "Bring your history with you.", description: "Upload Spotify Extended Streaming History or exports from your other listening services." },
+    discover: { title: "Turn listening into discovery.", description: "Review recommendations and create playlists without sending your history to Allstarr." },
+    automation: { title: "Choose what Allstarr remembers.", description: "Control private history, recommendation inputs, listening services, and schedules." },
+  }[activeSection]);
   const historySection = $derived(activeSection === "imports" ? "imports" : activeSection === "history" ? "history" : "overview");
   const scope = $derived<IntelligenceScope>({ protocol, backendInstanceId, libraryScopeId });
   const activeScope = $derived(loadedScope ?? scope);
@@ -206,50 +213,38 @@
 </script>
 
 <section class="intelligence-view">
-  <header class="route-heading">
-    <div>
-      <p class="eyebrow">Private discovery</p>
-      <h2>Listen deeper, without exposing your history.</h2>
-      <p>Recommendations, listening history, and generated playlists stay private to this account and music library.</p>
+  <header class="intelligence-header">
+    <div class="route-heading-copy">
+      <p class="eyebrow">Intelligence</p>
+      <h2>{sectionIntro.title}</h2>
+      <p>{sectionIntro.description}</p>
     </div>
-    {#if data?.actions.canRun && activeSection === "discover"}
-      <div class="heading-actions">
+    <div class="heading-tools" aria-busy={targetsLoading || loading}>
+      {#if targetsLoading}
+        <span class="scope-value" role="status"><small>Library</small><strong>Finding your music…</strong></span>
+      {:else if selectedTarget && scopedTargets.length === 1}
+        <span class="scope-value"><small>Library</small><strong>{libraryLabel(selectedTarget.libraryScopeId ?? "Music")}</strong><span>{serverLabel(selectedTarget.protocol)} · {selectedTarget.displayName}</span></span>
+      {:else if scopedTargets.length > 1}
+        <label class="field library-picker"><span>Library</span><SelectField value={selectedTargetId} label="Music library" options={targetOptions} onchange={(value) => void openTarget(value)} /></label>
+      {:else}
+        <span class="scope-value"><small>Library needed</small><strong>{mediaTargets.length ? "Finish indexing" : "Connect a music server"}</strong><Button variant="secondary" size="sm" href="#/integrations/services">Open services</Button></span>
+      {/if}
+      {#if data?.actions.canRun && activeSection === "discover"}
         {#if runStatus}<Badge state={runState === "succeeded" ? "healthy" : "suggested"}>{runStatus}</Badge>{/if}
-        <Button disabled={Boolean(action)}
-          onclick={() => void perform("run", () => intelligence.run(activeScope))}>
-          {action === "run" ? "Starting…" : "Refresh recommendations"}
-        </Button>
-      </div>
-    {/if}
+        <Button disabled={Boolean(action)} onclick={() => void perform("run", () => intelligence.run(activeScope))}>{action === "run" ? "Starting…" : "Refresh recommendations"}</Button>
+      {/if}
+    </div>
   </header>
 
-  <section class="panel scope-card" aria-busy={targetsLoading || loading}>
-    <div class="scope-intro">
-      <p class="eyebrow">Music library</p>
-      <p>History, recommendations, and generated playlists stay scoped to one connected library.</p>
-    </div>
-    {#if targetsLoading}
-      <span class="scope-card-status" role="status">Finding your library…</span>
-    {:else if selectedTarget && scopedTargets.length === 1}
-      <div class="library-choice">
-        <strong>{libraryLabel(selectedTarget.libraryScopeId ?? "Music")}</strong>
-        <span>{serverLabel(selectedTarget.protocol)} · {selectedTarget.displayName}</span>
-      </div>
-    {:else if scopedTargets.length > 1}
-      <label class="field library-picker"><span>Use this library</span><SelectField value={selectedTargetId} label="Music library" options={targetOptions} onchange={(value) => void openTarget(value)} /></label>
-    {:else}
-      <div class="scope-card-status">
-        <strong>{mediaTargets.length ? "Finish indexing your music library" : "Connect a music server"}</strong>
-        <span>{mediaTargets.length ? "Allstarr found your server, but it has not indexed a music library yet." : "Connect Jellyfin or Subsonic before opening Intelligence."}</span>
-        <Button variant="secondary" href="#/integrations/services">Open Services</Button>
-      </div>
-    {/if}
-    {#if !targetsLoading && selectedTarget && error}
-      <Button variant="secondary" disabled={loading} onclick={() => void load()}>{loading ? "Trying again…" : "Try again"}</Button>
-    {/if}
-  </section>
+  <SegmentedNav items={[
+    { id: "overview", label: "Overview", href: "#/intelligence?section=overview" },
+    { id: "history", label: "History", href: "#/intelligence?section=history" },
+    { id: "imports", label: "Import", href: "#/intelligence?section=imports" },
+    { id: "discover", label: "Discover", href: "#/intelligence?section=discover" },
+    { id: "automation", label: "Automation", href: "#/intelligence?section=automation" },
+  ]} active={activeSection} label="Intelligence sections" class="intelligence-tabs" />
 
-  {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
+  {#if error}<div class="notice-error intelligence-error" role="alert"><span>{error}</span>{#if selectedTarget}<Button variant="outline" size="sm" disabled={loading} onclick={() => void load()}>{loading ? "Trying again…" : "Try again"}</Button>{/if}</div>{/if}
 
   {#if loading}
     <div class="intelligence-grid" role="status" aria-busy="true" aria-label="Loading Intelligence">
@@ -276,14 +271,6 @@
         {#if data.actions.canCancel && data.actions.latestJobId}<Button variant="secondary" disabled={Boolean(action)} onclick={() => void perform("cancel", () => home.cancelJob(data!.actions.latestJobId!))}>{action === "cancel" ? "Cancelling…" : "Cancel refresh"}</Button>{/if}
       </section>
     {/if}
-    <SegmentedNav items={[
-      { id: "overview", label: "Overview", href: "#/intelligence?section=overview" },
-      { id: "history", label: "History", href: "#/intelligence?section=history" },
-      { id: "imports", label: "Import", href: "#/intelligence?section=imports" },
-      { id: "discover", label: "Discover", href: "#/intelligence?section=discover" },
-      { id: "automation", label: "Automation", href: "#/intelligence?section=automation" },
-    ]} active={activeSection} label="Intelligence sections" class="intelligence-tabs" />
-
     {#if activeSection === "overview" || activeSection === "history" || activeSection === "imports"}
       <IntelligenceHistory scope={activeScope} section={historySection} policyEnabled={Boolean(data.policy?.enabled)} retentionDays={data.policy?.retentionDays ?? 30} onChanged={refresh} />
     {:else if activeSection === "automation"}
@@ -380,8 +367,8 @@
 />
 
 <style>
-  .intelligence-view{display:grid;min-width:0;grid-template-columns:minmax(0,1fr);gap:1.25rem}.route-heading{display:flex;align-items:end;justify-content:space-between;gap:1rem}.route-heading h2{margin:.25rem 0;font-family:var(--font-display);font-size:clamp(1.5rem,3vw,2.2rem)}.route-heading p:last-child{color:var(--color-ink-muted)}.heading-actions{display:flex;align-items:center;gap:.75rem}.scope-card{display:flex;align-items:center;justify-content:space-between;gap:1.25rem;padding:1rem}.scope-intro{min-width:0}.scope-intro p{margin:0}.scope-intro p:last-child{margin-top:.2rem;color:var(--color-ink-muted)}.library-choice{display:grid;min-width:min(22rem,45%);border-left:1px solid var(--color-edge);padding-left:1rem}.library-choice span,.scope-card-status span{color:var(--color-ink-muted);font-size:.8rem}.library-picker{width:min(24rem,45%)}.scope-card-status{display:flex;align-items:center;gap:.75rem}.scope-card-status strong,.scope-card-status span{display:block}.run-progress{display:grid;grid-template-columns:minmax(0,1fr) minmax(10rem,.5fr) auto;align-items:center;gap:1rem;padding:1rem}.run-progress p{margin:0}.run-progress small{display:block;color:var(--color-ink-muted)}.settings-stack{display:grid;gap:1rem}.settings-status-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.status-card{padding:1.15rem}.status-card h3,.status-card p{margin:.2rem 0}.status-list,.profile-list,.generated-list{margin:0;padding:0;list-style:none}.status-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.75rem 0}.status-row strong,.status-row small{display:block}.status-row small{color:var(--color-ink-muted)}.intelligence-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(18rem,.8fr);gap:1rem}.recommendations,.profile-card,.generated-card,.privacy-card{padding:1.15rem}.recommendations>header,.privacy-card>header{display:flex;align-items:center;justify-content:space-between}.recommendations h3,.profile-card h3,.generated-card h3,.privacy-card h3{margin:.2rem 0 1rem}.recommendation-list{display:grid;margin:0;padding:0;list-style:none}.recommendation-list>li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.85rem;align-items:center;border-top:1px solid var(--color-edge);padding:.9rem 0}.track-copy small,summary{color:var(--color-ink-muted);font-size:.75rem}.track-copy details{margin-top:.35rem}.track-copy ul{margin:.4rem 0 0;padding-left:1.1rem;color:var(--color-ink-muted);font-size:.78rem}.side-stack{display:grid;align-content:start;gap:1rem}.profile-list li,.generated-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.7rem 0}.profile-card meter{width:55%;accent-color:var(--color-signal)}.generated-row span:first-child strong,.generated-row span:first-child small{display:block}.generated-row small{color:var(--color-ink-muted)}.generate-form{display:grid;gap:.75rem;margin-top:1rem}.automation-summary{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:1rem;padding:1.15rem}.automation-summary>header{grid-column:1/-1;display:flex;align-items:start;justify-content:space-between;gap:1rem}.automation-summary h3,.automation-summary p{margin:.2rem 0}.automation-summary header p:last-child{color:var(--color-ink-muted)}.automation-summary dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0;border:1px solid var(--color-edge);border-radius:var(--radius-md)}.automation-summary dl div{padding:.75rem}.automation-summary dl div+div{border-left:1px solid var(--color-edge)}.automation-summary dt{color:var(--color-ink-muted);font-size:var(--text-xs)}.automation-summary dd{margin:.2rem 0 0;font-weight:750}.privacy-card form{display:grid;gap:1rem}.policy-basics{display:grid;grid-template-columns:minmax(16rem,1.25fr) minmax(12rem,.75fr) minmax(16rem,1fr);align-items:start;gap:1rem}.policy-choices{display:grid;grid-template-columns:minmax(16rem,.8fr) minmax(22rem,1.2fr);gap:1.5rem;border-top:1px solid var(--color-edge);padding-top:1rem}.toggle-line{display:flex;align-items:flex-start;gap:.65rem;padding:.25rem 0;cursor:pointer}.toggle-line span>*{display:block}.toggle-line small,fieldset small{color:var(--color-ink-muted)}fieldset{display:grid;grid-template-columns:1fr 1fr;align-content:start;gap:0 .85rem;border:0;margin:0;padding:0}fieldset legend{grid-column:1/-1;font-weight:750}fieldset>p{grid-column:1/-1;max-width:65ch;margin:.2rem 0 .45rem;color:var(--color-ink-muted);font-size:var(--text-sm)}fieldset label{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.65rem;min-height:2.75rem;border-top:1px solid var(--color-edge);padding:.55rem 0;cursor:pointer}.signal-choices label{grid-template-columns:auto minmax(0,1fr)}.signal-choices label span{font-weight:700}.provider-choices label span>*{display:block}.provider-choices label.unavailable{cursor:not-allowed}.privacy-card footer{display:flex;justify-content:space-between;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}
+  .intelligence-view{display:grid;min-width:0;grid-template-columns:minmax(0,1fr);gap:1rem}.intelligence-header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:1.5rem;padding:.25rem 0}.route-heading-copy h2{margin:.25rem 0;font-family:var(--font-display);font-size:2rem;letter-spacing:-.03em}.route-heading-copy p{margin:0}.route-heading-copy p:last-child{max-width:70ch;color:var(--color-ink-muted)}.heading-tools{display:flex;align-items:center;justify-content:flex-end;gap:.75rem}.scope-value{display:grid;min-width:11rem;gap:.08rem;border-radius:var(--radius-md);background:var(--color-panel);padding:.6rem .8rem}.scope-value small,.scope-value span{color:var(--color-ink-muted);font-size:var(--text-xs)}.scope-value :global([data-slot="button"]){margin-top:.35rem}.library-picker{width:18rem}.intelligence-error{display:flex;align-items:center;justify-content:space-between;gap:1rem}.run-progress{display:grid;grid-template-columns:minmax(0,1fr) minmax(10rem,.5fr) auto;align-items:center;gap:1rem;padding:1rem}.run-progress p{margin:0}.run-progress small{display:block;color:var(--color-ink-muted)}.settings-stack{display:grid;gap:1rem}.settings-status-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.status-card{padding:1.15rem}.status-card h3,.status-card p{margin:.2rem 0}.status-list,.profile-list,.generated-list{margin:0;padding:0;list-style:none}.status-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.75rem 0}.status-row strong,.status-row small{display:block}.status-row small{color:var(--color-ink-muted)}.intelligence-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(18rem,.8fr);gap:1rem}.recommendations,.profile-card,.generated-card,.privacy-card{padding:1.15rem}.recommendations>header,.privacy-card>header{display:flex;align-items:center;justify-content:space-between}.recommendations h3,.profile-card h3,.generated-card h3,.privacy-card h3{margin:.2rem 0 1rem}.recommendation-list{display:grid;margin:0;padding:0;list-style:none}.recommendation-list>li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.85rem;align-items:center;border-top:1px solid var(--color-edge);padding:.9rem 0}.track-copy small,summary{color:var(--color-ink-muted);font-size:.75rem}.track-copy details{margin-top:.35rem}.track-copy ul{margin:.4rem 0 0;padding-left:1.1rem;color:var(--color-ink-muted);font-size:.78rem}.side-stack{display:grid;align-content:start;gap:1rem}.profile-list li,.generated-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.7rem 0}.profile-card meter{width:55%;accent-color:var(--color-signal)}.generated-row span:first-child strong,.generated-row span:first-child small{display:block}.generated-row small{color:var(--color-ink-muted)}.generate-form{display:grid;gap:.75rem;margin-top:1rem}.automation-summary{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:1rem;padding:1.15rem}.automation-summary>header{grid-column:1/-1;display:flex;align-items:start;justify-content:space-between;gap:1rem}.automation-summary h3,.automation-summary p{margin:.2rem 0}.automation-summary header p:last-child{color:var(--color-ink-muted)}.automation-summary dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0;border:1px solid var(--color-edge);border-radius:var(--radius-md)}.automation-summary dl div{padding:.75rem}.automation-summary dl div+div{border-left:1px solid var(--color-edge)}.automation-summary dt{color:var(--color-ink-muted);font-size:var(--text-xs)}.automation-summary dd{margin:.2rem 0 0;font-weight:750}.privacy-card form{display:grid;gap:1rem}.policy-basics{display:grid;grid-template-columns:minmax(16rem,1.25fr) minmax(12rem,.75fr) minmax(16rem,1fr);align-items:start;gap:1rem}.policy-choices{display:grid;grid-template-columns:minmax(16rem,.8fr) minmax(22rem,1.2fr);gap:1.5rem;border-top:1px solid var(--color-edge);padding-top:1rem}.toggle-line{display:flex;align-items:flex-start;gap:.65rem;padding:.25rem 0;cursor:pointer}.toggle-line span>*{display:block}.toggle-line small,fieldset small{color:var(--color-ink-muted)}fieldset{display:grid;grid-template-columns:1fr 1fr;align-content:start;gap:0 .85rem;border:0;margin:0;padding:0}fieldset legend{grid-column:1/-1;font-weight:750}fieldset>p{grid-column:1/-1;max-width:65ch;margin:.2rem 0 .45rem;color:var(--color-ink-muted);font-size:var(--text-sm)}fieldset label{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.65rem;min-height:2.75rem;border-top:1px solid var(--color-edge);padding:.55rem 0;cursor:pointer}.signal-choices label{grid-template-columns:auto minmax(0,1fr)}.signal-choices label span{font-weight:700}.provider-choices label span>*{display:block}.provider-choices label.unavailable{cursor:not-allowed}.privacy-card footer{display:flex;justify-content:space-between;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}
   @media(max-width:1050px){.policy-basics{grid-template-columns:1fr 1fr}.policy-choices{grid-template-columns:1fr}}
-  @media(max-width:900px){.scope-card{align-items:stretch;flex-direction:column}.library-choice,.library-picker{width:100%;min-width:0;border-left:0;border-top:1px solid var(--color-edge);padding-top:1rem;padding-left:0}.run-progress{grid-template-columns:1fr}.settings-status-grid,.intelligence-grid{grid-template-columns:1fr}.automation-summary{grid-template-columns:1fr}.automation-summary>:global([data-slot="button"]){justify-self:start}}
-  @media(max-width:620px){.route-heading{align-items:stretch;flex-direction:column}.scope-card-status{align-items:stretch;flex-direction:column}:global(.intelligence-tabs :is(a,button)){min-width:4.5rem;flex:1 0 4.5rem;padding-inline:var(--space-1);font-size:var(--text-xs)}.policy-basics,.run-progress{grid-template-columns:1fr}.policy-choices{gap:1rem}.provider-choices,.signal-choices{grid-template-columns:1fr}.provider-choices label,.signal-choices label,fieldset legend,fieldset>p{grid-column:1}.recommendation-list>li{grid-template-columns:auto minmax(0,1fr)}.track-actions{grid-column:2;flex-wrap:wrap}.automation-summary dl{grid-template-columns:1fr}.automation-summary dl div+div{border-top:1px solid var(--color-edge);border-left:0}.automation-summary>:global([data-slot="button"]){width:100%}.privacy-card footer{flex-direction:column-reverse}.privacy-card footer>:global([data-slot="button"]){width:100%}.touch-link{display:inline-flex;min-height:var(--control-md);align-items:center}}
+  @media(max-width:900px){.intelligence-header{grid-template-columns:1fr}.heading-tools{justify-content:flex-start;flex-wrap:wrap}.library-picker{width:min(24rem,100%)}.run-progress{grid-template-columns:1fr}.settings-status-grid,.intelligence-grid{grid-template-columns:1fr}.automation-summary{grid-template-columns:1fr}.automation-summary>:global([data-slot="button"]){justify-self:start}}
+  @media(max-width:620px){.route-heading-copy h2{font-size:1.6rem}.heading-tools,.scope-value,.library-picker{width:100%}:global(.intelligence-tabs :is(a,button)){min-width:4.5rem;flex:1 0 4.5rem;padding-inline:var(--space-1);font-size:var(--text-xs)}.policy-basics,.run-progress{grid-template-columns:1fr}.policy-choices{gap:1rem}.provider-choices,.signal-choices{grid-template-columns:1fr}.provider-choices label,.signal-choices label,fieldset legend,fieldset>p{grid-column:1}.recommendation-list>li{grid-template-columns:auto minmax(0,1fr)}.track-actions{grid-column:2;flex-wrap:wrap}.automation-summary dl{grid-template-columns:1fr}.automation-summary dl div+div{border-top:1px solid var(--color-edge);border-left:0}.automation-summary>:global([data-slot="button"]){width:100%}.privacy-card footer{flex-direction:column-reverse}.privacy-card footer>:global([data-slot="button"]){width:100%}.touch-link{display:inline-flex;min-height:var(--control-md);align-items:center}}
 </style>

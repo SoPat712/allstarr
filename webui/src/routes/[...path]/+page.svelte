@@ -6,7 +6,8 @@
   import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import UiIcon from "$lib/components/UiIcon.svelte";
-  import { PanelLeftClose, PanelLeftOpen } from "@lucide/svelte";
+  import { applyThemeMode, onThemeModeChange, readThemeMode, saveThemeMode, type ThemeMode } from "$lib/theme";
+  import { Monitor, Moon, PanelLeftClose, PanelLeftOpen, Sun } from "@lucide/svelte";
 
   const destinations = [
     { href: "#/", label: "Home", icon: "home" },
@@ -42,6 +43,7 @@
   let onboardingError = $state("");
   let OnboardingDialog = $state<Component<any>>();
   let sidebarSlim = $state(false);
+  let themeMode = $state<ThemeMode>("system");
   let ActiveView = $state<Component<any>>();
   let loadedRoute = $state("");
   let loadedViewKey = $state("");
@@ -68,6 +70,7 @@
       item.href === "#/" ? route === "/" : route.startsWith(item.prefix ?? item.href.slice(1)),
     ) ?? destinations[0],
   );
+  const nextTheme = $derived<ThemeMode>(themeMode === "system" ? "light" : themeMode === "light" ? "dark" : "system");
   const initials = $derived(
     session?.user?.name
       ?.split(/\s+/)
@@ -130,6 +133,11 @@
     } catch (cause) {
       onboardingError = cause instanceof Error ? cause.message : "Setup could not be reopened.";
     }
+  }
+
+  function cycleTheme() {
+    themeMode = nextTheme;
+    saveThemeMode(themeMode);
   }
 
   function viewLoader(path: string) {
@@ -214,14 +222,22 @@
 
   onMount(() => {
     const compactSidebar = matchMedia("(min-width: 761px) and (max-width: 900px)");
+    const colorScheme = matchMedia("(prefers-color-scheme: dark)");
+    themeMode = readThemeMode();
     const applySidebarBreakpoint = () => { sidebarSlim = compactSidebar.matches; };
+    const applySystemTheme = () => { if (themeMode === "system") applyThemeMode(themeMode); };
+    const unsubscribeTheme = onThemeModeChange((mode) => { themeMode = mode; });
     applySidebarBreakpoint();
+    applyThemeMode(themeMode);
     compactSidebar.addEventListener("change", applySidebarBreakpoint);
+    colorScheme.addEventListener("change", applySystemTheme);
 
     void bootstrap();
 
     return () => {
       compactSidebar.removeEventListener("change", applySidebarBreakpoint);
+      colorScheme.removeEventListener("change", applySystemTheme);
+      unsubscribeTheme();
       liveUpdates.close();
     };
   });
@@ -334,7 +350,7 @@
         {:else}<PanelLeftClose class="menu-icon" size={20} aria-hidden="true" />{/if}
       </button>
 
-      <nav aria-label="Primary" data-active={destinations.indexOf(activeDestination)}>
+      <nav aria-label="Primary">
         {#each destinations as destination}
           <a
             href={destination.href}
@@ -382,9 +398,22 @@
             />
           {/if}
         </div>
-        <div class="live-state" data-state={liveUpdates.state.status}>
-          <span aria-hidden="true"></span>
-          {liveUpdates.state.status[0].toUpperCase() + liveUpdates.state.status.slice(1)}
+        <div class="flex items-center gap-2">
+          <button
+            class="icon-button"
+            type="button"
+            title={`Theme: ${themeMode}. Switch to ${nextTheme}.`}
+            aria-label={`Theme: ${themeMode}. Switch to ${nextTheme}.`}
+            onclick={cycleTheme}
+          >
+            {#if themeMode === "system"}<Monitor aria-hidden="true" />
+            {:else if themeMode === "light"}<Sun aria-hidden="true" />
+            {:else}<Moon aria-hidden="true" />{/if}
+          </button>
+          <div class="live-state" data-state={liveUpdates.state.status}>
+            <span aria-hidden="true"></span>
+            {liveUpdates.state.status[0].toUpperCase() + liveUpdates.state.status.slice(1)}
+          </div>
         </div>
       </header>
 

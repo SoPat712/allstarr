@@ -1,10 +1,19 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#080c12" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f8fafd" />
+    <script>
+      (() => {
+        const saved = localStorage.getItem("allstarr.theme") || "system";
+        const dark = saved === "dark" || (saved === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.classList.toggle("dark", dark);
+        document.documentElement.dataset.theme = saved;
+        document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#111318" : "#f8fafd");
+      })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     %sveltekit.head%
   </head>
