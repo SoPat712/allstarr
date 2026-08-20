@@ -748,6 +748,14 @@ for (const viewport of viewports) {
         await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
         await expect.poll(() => page.evaluate(() =>
           document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+        if (route === "#/activity") {
+          if (viewport.width <= 650) {
+            await expect(page.getByText("Filters", { exact: true })).toBeVisible();
+            await expect(page.getByLabel("Search")).toBeHidden();
+          } else {
+            await expect(page.getByLabel("Search")).toBeVisible();
+          }
+        }
         expect(errors).toEqual([]);
         if (process.env.ALLSTARR_SCREENSHOT_DIR) {
           const name = route.replace(/^#\/?/, "").replaceAll(/[^a-z0-9]+/gi, "-") || "home";
@@ -2065,6 +2073,30 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await expect(page.locator(".mapping-row")).toHaveCount(0);
 });
 
+test("Mappings keep mobile tabs, evidence, and actions readable", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+  await page.goto("#/library/mappings");
+
+  for (const label of ["Library sections", "Mapping views"]) {
+    const tabs = page.getByRole("navigation", { name: label }).getByRole("tab");
+    expect(await tabs.evaluateAll((items) => items.every((item) => item.scrollWidth <= item.clientWidth))).toBe(true);
+  }
+
+  const row = page.locator(".mapping-row").first();
+  await row.scrollIntoViewIfNeeded();
+  await expect(row.getByRole("button", { name: "Accept" })).toBeInViewport();
+  await expect(row.getByRole("button", { name: "Interactive search" })).toBeInViewport();
+  await expect(row.locator(".mapping-evidence-summary")).toContainText("title match");
+  expect(await row.locator(".mapping-evidence-summary").evaluate((item) => item.scrollWidth <= item.clientWidth)).toBe(true);
+
+  const more = row.getByRole("button", { name: "More actions for Test song - Remix" });
+  await expect(more).toBeInViewport();
+  await more.click();
+  await expect(page.getByRole("menuitem", { name: "Rematch" })).toBeVisible();
+  await page.keyboard.press("Escape");
+});
+
 test("Shared search fields reserve icon space", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
@@ -2076,6 +2108,7 @@ test("Shared search fields reserve icon space", async ({ page }) => {
     ["#/activity", "Search"],
   ] as const) {
     await page.goto(route);
+    if (route === "#/activity") await page.getByText("Filters", { exact: true }).click();
     const input = page.getByRole("searchbox", { name: label });
     await expect(input).toBeVisible();
     const spacing = await input.evaluate((element) => {
@@ -2136,6 +2169,11 @@ test("Event log groups matching work and preserves actionable history", async ({
   await expect(page.locator(".event-log-group summary .event-kind-icon svg")).toBeVisible();
   await expect.poll(() => page.evaluate(() =>
     document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  if (process.env.ALLSTARR_SCREENSHOT_DIR)
+    await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/activity-populated-390.png`, fullPage: true });
+  await expect(page.getByLabel("Search")).toBeHidden();
+  await page.getByText("Filters", { exact: true }).click();
+  await expect(page.getByLabel("Search")).toBeVisible();
   await page.getByLabel("Search").fill("missing event");
   await expect(page.getByText("No events match these filters")).toBeVisible();
   await page.getByRole("button", { name: "Reset filters" }).click();

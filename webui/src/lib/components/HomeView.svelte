@@ -142,9 +142,9 @@
 </script>
 
 {#if loading}
-  <section class="home-grid" aria-busy="true" aria-label="Loading Home">
-    {#each Array(8) as _}
-      <Skeleton class="metric-card skeleton-card" />
+  <section class="home-loading" aria-busy="true" aria-label="Loading Home">
+    {#each Array(4) as _}
+      <Skeleton class="skeleton-card" />
     {/each}
     <Skeleton class="panel skeleton-panel" />
   </section>
@@ -174,85 +174,6 @@
       <Button variant="secondary" size="sm" href={`#/integrations/services?source=${encodeURIComponent(sourceIssues[0].providerId)}&section=configuration`}>Open service</Button>
     </div>
   {/if}
-
-  <section class="home-grid" aria-label="Allstarr overview" aria-busy={refreshing}>
-    <article class="metric-card">
-      <span class="metric-icon backend" aria-hidden="true"><Server size={19} /></span>
-      <div>
-        <p>Media server</p>
-        <strong>{snapshot.status?.backendType ?? "Unknown"}</strong>
-      </div>
-      <Badge state={snapshot.status?.durableStorage?.readiness === "Ready" ? "healthy" : "degraded"}>
-        {snapshot.status?.durableStorage?.readiness ?? "Unavailable"}
-      </Badge>
-    </article>
-
-    <article class="metric-card">
-      <span class="metric-icon playlists" aria-hidden="true"><ListMusic size={19} /></span>
-      <div><p>Linked playlists</p><strong>{summary.managed}</strong></div>
-      <small><a href="#/library/playlists">Open playlist control</a></small>
-    </article>
-
-    <article class="metric-card">
-      <span class="metric-icon playable" aria-hidden="true"><Route size={19} /></span>
-      <div>
-        <p>Playable tracks</p>
-        <strong>{summary.playable.toLocaleString()}</strong>
-      </div>
-      <small class:attention={summary.unresolved > 0}>
-        {summary.unresolved
-          ? `${summary.unresolved.toLocaleString()} awaiting a match`
-          : "Every indexed track has a route"}
-      </small>
-    </article>
-
-    <article class="metric-card">
-      <span class="metric-icon jobs" aria-hidden="true"><Activity size={19} /></span>
-      <div>
-        <p>Active work</p>
-        <strong>{summary.activeJobs}</strong>
-      </div>
-      <small class:attention={summary.activeJobs > 0}>
-        {summary.activeJobs ? "Operations are running" : "Queue is clear"}
-      </small>
-    </article>
-
-    <article class="metric-card">
-      <span class="metric-icon listening" aria-hidden="true"><Headphones size={19} /></span>
-      <div>
-        <p>Completed listens · 24h</p>
-        <strong>{snapshot.stats?.completedListens.toLocaleString() ?? "—"}</strong>
-      </div>
-      <small>{snapshot.stats?.scrobbleDeliveries.toLocaleString() ?? 0} scrobble deliveries</small>
-    </article>
-
-    <article class="metric-card">
-      <span class="metric-icon artist" aria-hidden="true"><Mic2 size={19} /></span>
-      <div>
-        <p>Top artist · 30d</p>
-        <strong class="metric-name">{snapshot.stats?.topArtist?.name || "No history yet"}</strong>
-      </div>
-      <small>{snapshot.stats?.topArtist ? `${snapshot.stats.topArtist.listens.toLocaleString()} completed listens` : "Import or save listening history"}</small>
-    </article>
-
-    <article class="metric-card">
-      <span class="metric-icon cache" aria-hidden="true"><HardDrive size={19} /></span>
-      <div>
-        <p>Managed audio</p>
-        <strong>{snapshot.stats?.cacheTracks == null ? "—" : (snapshot.stats.cacheTracks + (snapshot.stats.keptTracks ?? 0)).toLocaleString()}</strong>
-      </div>
-      <small>{snapshot.stats?.cacheTracks == null ? "Administrator view only" : `${snapshot.stats.cacheTracks} cached · ${snapshot.stats.keptTracks ?? 0} kept`}</small>
-    </article>
-
-    <article class="metric-card">
-      <span class="metric-icon trend" aria-hidden="true"><TrendingUp size={19} /></span>
-      <div>
-        <p>Completed listens · 7d</p>
-        <strong>{snapshot.stats?.currentWeekListens.toLocaleString() ?? "—"}</strong>
-      </div>
-      <small>{listenTrend(snapshot.stats?.currentWeekListens, snapshot.stats?.previousWeekListens)}</small>
-    </article>
-  </section>
 
   {#if administrator}
     <section class="panel now-playing-panel" aria-label="Now playing">
@@ -344,6 +265,99 @@
       {/if}
     </section>
   {/if}
+
+  <section class="panel home-overview-panel" aria-label="Allstarr overview" aria-busy={refreshing}>
+    <header>
+      <div>
+        <h2>At a glance</h2>
+        <p>Library reach, current work, and recent listening.</p>
+      </div>
+    </header>
+
+    <div class="home-kpis">
+      <article class="home-stat">
+        <span class="metric-icon playlists" aria-hidden="true"><ListMusic size={19} /></span>
+        <div>
+          <p>Linked playlists</p>
+          <strong>{summary.managed}</strong>
+          <small><a href="#/library/playlists">Open playlist control</a></small>
+        </div>
+      </article>
+
+      <article class="home-stat">
+        <span class="metric-icon playable" aria-hidden="true"><Route size={19} /></span>
+        <div>
+          <p>Playable tracks</p>
+          <strong>{summary.playable.toLocaleString()}</strong>
+          <small class:attention={summary.unresolved > 0}>
+            {summary.unresolved
+              ? `${summary.unresolved.toLocaleString()} awaiting a match`
+              : "Every indexed track has a route"}
+          </small>
+        </div>
+      </article>
+
+      <article class="home-stat">
+        <span class="metric-icon jobs" aria-hidden="true"><Activity size={19} /></span>
+        <div>
+          <p>Active work</p>
+          <strong>{summary.activeJobs}</strong>
+          <small class:attention={summary.activeJobs > 0}>
+            {summary.activeJobs ? "Operations are running" : "Queue is clear"}
+          </small>
+        </div>
+      </article>
+
+      <article class="home-stat">
+        <span class="metric-icon listening" aria-hidden="true"><Headphones size={19} /></span>
+        <div>
+          <p>Completed listens · 24h</p>
+          <strong>{snapshot.stats?.completedListens.toLocaleString() ?? "—"}</strong>
+          <small>{snapshot.stats?.scrobbleDeliveries.toLocaleString() ?? 0} scrobble deliveries</small>
+        </div>
+      </article>
+    </div>
+
+    <div class="home-facts">
+      <article>
+        <span class="metric-icon backend" aria-hidden="true"><Server size={18} /></span>
+        <div>
+          <p>Media server</p>
+          <strong>{snapshot.status?.backendType ?? "Unknown"}</strong>
+          <Badge state={snapshot.status?.durableStorage?.readiness === "Ready" ? "healthy" : "degraded"}>
+            {snapshot.status?.durableStorage?.readiness ?? "Unavailable"}
+          </Badge>
+        </div>
+      </article>
+
+      <article>
+        <span class="metric-icon cache" aria-hidden="true"><HardDrive size={18} /></span>
+        <div>
+          <p>Managed audio</p>
+          <strong>{snapshot.stats?.cacheTracks == null ? "—" : (snapshot.stats.cacheTracks + (snapshot.stats.keptTracks ?? 0)).toLocaleString()}</strong>
+          <small>{snapshot.stats?.cacheTracks == null ? "Administrator view only" : `${snapshot.stats.cacheTracks} cached · ${snapshot.stats.keptTracks ?? 0} kept`}</small>
+        </div>
+      </article>
+
+      <article>
+        <span class="metric-icon artist" aria-hidden="true"><Mic2 size={18} /></span>
+        <div>
+          <p>Top artist · 30d</p>
+          <strong class="metric-name">{snapshot.stats?.topArtist?.name || "No history yet"}</strong>
+          <small>{snapshot.stats?.topArtist ? `${snapshot.stats.topArtist.listens.toLocaleString()} completed listens` : "Import or save listening history"}</small>
+        </div>
+      </article>
+
+      <article>
+        <span class="metric-icon trend" aria-hidden="true"><TrendingUp size={18} /></span>
+        <div>
+          <p>Completed listens · 7d</p>
+          <strong>{snapshot.stats?.currentWeekListens.toLocaleString() ?? "—"}</strong>
+          <small>{listenTrend(snapshot.stats?.currentWeekListens, snapshot.stats?.previousWeekListens)}</small>
+        </div>
+      </article>
+    </div>
+  </section>
 
   <section class="home-columns">
     <article class="panel home-panel">

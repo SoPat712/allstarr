@@ -415,9 +415,9 @@
                   <Button disabled={action === match.externalSnapshotId} onclick={() => void accept(match)}>Accept</Button>
                 {/if}
                 {#if !target}
-                  <Button variant="secondary" disabled={action === match.externalSnapshotId} onclick={() => void rematch(match)}>Rematch</Button>
+                  <Button class="mapping-rematch-action" variant="secondary" disabled={action === match.externalSnapshotId} onclick={() => void rematch(match)}>Rematch</Button>
                 {/if}
-                <Button onclick={() => openMatch(match)}>
+                <Button class="mapping-search-action" onclick={() => openMatch(match)}>
                   {target ? "Review match" : "Interactive search"}
                 </Button>
                 <DropdownMenu.Root>

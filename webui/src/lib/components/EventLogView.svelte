@@ -47,6 +47,7 @@
   let outcome = $state("");
   let providerFilter = $state("");
   let severity = $state("");
+  let filtersOpen = $state(false);
   let expanded = $state(new Set<string>());
 
   const filtered = $derived(filterActivity(items, {
@@ -62,6 +63,7 @@
   const eventProviders = $derived(unique(items.map((item) => item.providerId)));
   const severities = $derived(unique(items.map((item) => item.severity || "info")));
   const filtering = $derived(Boolean(query || kind || outcome || providerFilter || severity));
+  const activeFilterCount = $derived([query, kind, outcome, providerFilter, severity].filter(Boolean).length);
 
   function unique(values: Array<string | null | undefined>) {
     return [...new Set(values.filter((value): value is string => Boolean(value)))].toSorted();
@@ -153,10 +155,15 @@
   }
 
   onMount(() => {
+    const desktopFilters = window.matchMedia("(min-width: 651px)");
+    const syncFilters = (event: MediaQueryListEvent) => filtersOpen = event.matches;
+    filtersOpen = desktopFilters.matches;
+    desktopFilters.addEventListener("change", syncFilters);
     void loadProviders();
     void load("initial");
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
+      desktopFilters.removeEventListener("change", syncFilters);
       unsubscribe();
       refreshScheduler.cancel();
     };
@@ -191,21 +198,28 @@
       <Button variant="secondary" onclick={() => void load("refresh")}>Refresh</Button>
     </header>
 
-    <form class="playlist-filters event-log-filters" onsubmit={(event) => event.preventDefault()}>
-      <SearchField bind:value={query} label="Search" placeholder="Event, track, provider, or correlation" />
-      <div class="filter-field"><span>Category</span><SelectField bind:value={kind} label="Category" options={[
-        { value: "", label: "All categories" }, ...kinds.map((value) => ({ value, label: humanize(value) })),
-      ]} /></div>
-      <div class="filter-field"><span>Outcome</span><SelectField bind:value={outcome} label="Outcome" options={[
-        { value: "", label: "All outcomes" }, ...outcomes.map((value) => ({ value, label: humanize(value) })),
-      ]} /></div>
-      <div class="filter-field"><span>Provider</span><SelectField bind:value={providerFilter} label="Provider" options={[
-        { value: "", label: "All providers" }, ...eventProviders.map((value) => ({ value, label: providerName(value) })),
-      ]} /></div>
-      <div class="filter-field"><span>Severity</span><SelectField bind:value={severity} label="Severity" options={[
-        { value: "", label: "All severities" }, ...severities.map((value) => ({ value, label: humanize(value) })),
-      ]} /></div>
-    </form>
+    <details class="event-filter-disclosure" bind:open={filtersOpen}>
+      <summary>
+        <span>Filters</span>
+        <small>{activeFilterCount ? `${activeFilterCount} active` : "All events"}</small>
+        <ChevronRight class="event-filter-chevron" size={18} aria-hidden="true" />
+      </summary>
+      <form class="playlist-filters event-log-filters" onsubmit={(event) => event.preventDefault()}>
+        <SearchField bind:value={query} label="Search" placeholder="Event, track, provider, or correlation" />
+        <div class="filter-field"><span>Category</span><SelectField bind:value={kind} label="Category" options={[
+          { value: "", label: "All categories" }, ...kinds.map((value) => ({ value, label: humanize(value) })),
+        ]} /></div>
+        <div class="filter-field"><span>Outcome</span><SelectField bind:value={outcome} label="Outcome" options={[
+          { value: "", label: "All outcomes" }, ...outcomes.map((value) => ({ value, label: humanize(value) })),
+        ]} /></div>
+        <div class="filter-field"><span>Provider</span><SelectField bind:value={providerFilter} label="Provider" options={[
+          { value: "", label: "All providers" }, ...eventProviders.map((value) => ({ value, label: providerName(value) })),
+        ]} /></div>
+        <div class="filter-field"><span>Severity</span><SelectField bind:value={severity} label="Severity" options={[
+          { value: "", label: "All severities" }, ...severities.map((value) => ({ value, label: humanize(value) })),
+        ]} /></div>
+      </form>
+    </details>
 
     <div class="event-log-count">
       <span>{filtered.length} of {items.length} loaded events</span>
