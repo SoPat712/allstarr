@@ -912,13 +912,19 @@ for (const viewport of viewports) {
       const delayed = routeRelease();
       await page.emulateMedia({ reducedMotion: "reduce" });
       await mockApi(page, { releasePath: "/api/admin/intelligence", release: delayed.promise });
+      const initialHistoryOverview = page.waitForRequest((request) =>
+        new URL(request.url()).pathname === "/api/admin/intelligence/history/overview");
       await page.goto("#/intelligence");
       const loadingStatus = page.getByRole("status", { name: "Loading Intelligence" });
       await expect(loadingStatus).toBeVisible();
       expect(await loadingStatus.locator(".skeleton-panel").first().evaluate((element) =>
         getComputedStyle(element, "::after").animationName)).toBe("none");
       delayed.release();
+      const initialHistoryUrl = new URL((await initialHistoryOverview).url());
+      expect(initialHistoryUrl.searchParams.has("from")).toBe(false);
+      expect(initialHistoryUrl.searchParams.has("to")).toBe(false);
       await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+      await expect(page.getByRole("tab", { name: "All time" })).toHaveAttribute("aria-selected", "true");
       await expect(page.locator(".scope-value")).toContainText("Music");
       await expect(page.locator(".scope-value")).toContainText("Jellyfin · Jellyfin Music");
       const themeButton = page.getByRole("button", { name: /Theme:/ });

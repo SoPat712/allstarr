@@ -1289,11 +1289,11 @@ export const intelligence = {
       `/api/admin/intelligence/audiomuse/clusters?${intelligenceQuery(scope, { limit, cursor })}`),
   audioMuseMap: (scope: IntelligenceScope, limit = 50, cursor?: string) =>
     json<AudioMuseMapPage>(`/api/admin/intelligence/audiomuse/map?${intelligenceQuery(scope, { limit, cursor })}`),
-  historyOverview: (scope: IntelligenceScope, from: string, to: string, timeZoneId: string) =>
+  historyOverview: (scope: IntelligenceScope, from: string | undefined, to: string | undefined, timeZoneId: string) =>
     json<ListeningHistoryOverview>(`/api/admin/intelligence/history/overview?${intelligenceQuery(scope, { from, to, timeZoneId })}`),
   history: (scope: IntelligenceScope, input: {
-    from: string;
-    to: string;
+    from?: string;
+    to?: string;
     timeZoneId: string;
     limit?: number;
     cursor?: string;
@@ -1306,9 +1306,9 @@ export const intelligence = {
   }) => json<{ period: ListeningHistoryPeriod; items: ListeningHistoryItem[]; nextCursor?: string | null }>(
     `/api/admin/intelligence/history?${intelligenceQuery(scope, input)}`,
   ),
-  historyActivity: (scope: IntelligenceScope, from: string, to: string, timeZoneId: string) =>
+  historyActivity: (scope: IntelligenceScope, from: string | undefined, to: string | undefined, timeZoneId: string) =>
     json<ListeningHistoryActivity>(`/api/admin/intelligence/history/activity?${intelligenceQuery(scope, { from, to, timeZoneId })}`),
-  historyTop: (scope: IntelligenceScope, kind: "artist" | "album" | "track", from: string, to: string, timeZoneId: string) =>
+  historyTop: (scope: IntelligenceScope, kind: "artist" | "album" | "track", from: string | undefined, to: string | undefined, timeZoneId: string) =>
     json<{ period: ListeningHistoryPeriod; kind: string; items: ListeningHistoryTopItem[] }>(
       `/api/admin/intelligence/history/top/${kind}?${intelligenceQuery(scope, { from, to, timeZoneId, limit: 10 })}`,
     ),

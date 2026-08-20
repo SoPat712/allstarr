@@ -1,5 +1,13 @@
 # Latest Session Work
 
+## Unlimited history display and retention — local, 2026-08-20
+
+- Intelligence Overview and History now open on **All time** and omit `from`/`to` query bounds until the user chooses a finite or custom range.
+- The backend accepts valid history reporting windows longer than ten years, eliminating `listening_history_period_invalid` for legitimate old imports.
+- Retention remains separately controlled: `0` is still the default and means unlimited. Existing saved policies are not rewritten, and no history is deleted unless the user chooses a finite retention or explicitly clears/removes it.
+- Verification: focused .NET contract 2/2, Svelte diagnostics clean, unit 46/46, production build and budgets green at 47.3 KiB initial JavaScript and 23.8 KiB CSS, and focused mobile/desktop browser checks 2/2.
+- Push and deployment remain pending exact-revision authorization.
+
 ## AudioMuse setup moved into Intelligence — local, 2026-08-20
 
 - AudioMuse remains an optional extension implementation, but Intelligence → Automation now owns the user task of connecting or editing its encrypted account.

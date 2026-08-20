@@ -875,9 +875,9 @@ internal readonly record struct ListeningHistoryPeriod(DateTimeOffset From, Date
         out ListeningHistoryPeriod period)
     {
         var end = to ?? now;
-        var start = from ?? end.AddDays(-30);
+        var start = from ?? DateTimeOffset.MinValue;
         period = new(start, end);
-        return end > start && end - start <= TimeSpan.FromDays(3650);
+        return end > start;
     }
 }
 

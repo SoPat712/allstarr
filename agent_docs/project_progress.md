@@ -144,8 +144,19 @@ Acceptance: local release evidence is complete before LAN access, no unrun gate 
 - [x] Keep Extensions responsible for package lifecycle and permissions, and keep Services responsible for health and diagnostics.
 - [x] Replace the duplicate AudioMuse Services form with a direct **Configure in Intelligence** handoff.
 - [x] Verify responsive connect/configure flows: Svelte diagnostics clean, unit 46/46, production build and budgets green, and focused mobile/desktop browser checks 4/4.
-- [ ] Commit, push, and deploy the exact revision after authorization.
+- [x] Commit the local implementation as `18c84037`.
+- [ ] Push and deploy the exact revision after authorization.
+
+### Post-delivery unlimited history range — local
+
+- [x] Default Overview and History reporting to **All time**, with no `from`/`to` bounds sent until the user chooses a finite or custom range.
+- [x] Remove the artificial ten-year reporting-window rejection while retaining ordered-date validation.
+- [x] Keep listening retention defaulted to `0` (unlimited); do not migrate saved user choices or delete retained history.
+- [x] Preserve finite 30-day, 90-day, one-year, and custom reporting choices.
+- [x] Verify the default/unbounded contracts: focused .NET 2/2, Svelte diagnostics clean, unit 46/46, production build and budgets green, and focused responsive browser checks 2/2.
+- [x] Commit the local implementation.
+- [ ] Push and deploy the exact revision after authorization.
 
 ## Next action
 
-Commit the locally verified AudioMuse setup placement. Push and deploy only after exact-revision authorization.
+Push and deploy both pending revisions only after exact-revision authorization.

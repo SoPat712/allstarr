@@ -41,7 +41,7 @@
     onChanged?: () => void | Promise<void>;
   } = $props();
 
-  let period = $state("30");
+  let period = $state("all");
   let fromDate = $state(isoDate(new Date(Date.now() - 29 * 86_400_000)));
   let toDate = $state(isoDate(new Date()));
   let timeZoneId = $state(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
@@ -83,7 +83,7 @@
   const scopeKey = $derived(`${scope.protocol}\0${scope.backendInstanceId}\0${scope.libraryScopeId}`);
   const selectedTop = $derived(top[topKind]);
   const topTrack = $derived(top.track[0]);
-  const periodName = $derived(period === "365" ? "Last year" : period === "custom" ? "Selected dates" : `Last ${period} days`);
+  const periodName = $derived(period === "all" ? "All time" : period === "365" ? "Last year" : period === "custom" ? "Selected dates" : `Last ${period} days`);
   const exportUrl = $derived(intelligence.historyExportUrl(scope));
   const pendingImportItems = $derived(importItems.filter((item) => item.file && !item.result));
   const completedImportItems = $derived(importItems.filter((item) => item.result));
@@ -139,6 +139,7 @@
   }
 
   function bounds() {
+    if (period === "all") return { from: undefined, to: undefined, timeZoneId };
     const end = period === "custom" ? new Date(`${toDate}T00:00:00.000Z`) : new Date();
     if (period === "custom") end.setUTCDate(end.getUTCDate() + 1);
     const start = period === "custom"
@@ -462,7 +463,7 @@
     <form class="history-toolbar panel" onsubmit={(event) => { event.preventDefault(); void (section === "overview" ? loadAll() : loadHistory()); }}>
       {#if section === "history"}<SearchField bind:value={search} label="Search listening history" placeholder="Search songs, artists, or albums" />{/if}
       <SegmentedNav items={[
-        { id: "30", label: "30 days" }, { id: "90", label: "90 days" },
+        { id: "all", label: "All time" }, { id: "30", label: "30 days" }, { id: "90", label: "90 days" },
         { id: "365", label: "1 year" }, { id: "custom", label: "Custom" },
       ]} active={period} label="History period" class="period-tabs" onchange={(value) => period = value} />
       <Button type="submit" disabled={loading || historyLoading}>{loading || historyLoading ? "Updating…" : section === "overview" ? "Update overview" : "Apply filters"}</Button>
