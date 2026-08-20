@@ -2081,12 +2081,12 @@ test("Tentative mappings sort by confidence and deep links open review", async (
       .locator(".target-score").getByText("98%"),
   ).toBeVisible();
   await expect(dialog.getByText("rank #1")).toBeVisible();
-  await dialog.locator(".candidate-card").first().getByText("Full evidence").click();
+  await dialog.locator(".candidate-card").first().getByText("Full scoring evidence").click();
   await expect(dialog.locator(".candidate-card").first().getByText("Candidate ID")).toBeVisible();
   await expect(dialog.locator(".candidate-card").first().getByText("Artist overlap")).toBeVisible();
   await expect(dialog.locator(".candidate-card").first().getByText("Duration difference")).toBeVisible();
   await expect(dialog.locator(".candidate-card").first().getByText("Apple Music – GAMDL track ID")).toBeVisible();
-  await dialog.locator(".candidate-card").last().getByText("Full evidence").click();
+  await dialog.locator(".candidate-card").last().getByText("Full scoring evidence").click();
   await expect(dialog.locator(".candidate-card").last().getByText("preference score")).toBeVisible();
   await dialog.getByLabel("Search local library and playable providers").fill("No local copy");
   await dialog.getByRole("button", { name: "Search", exact: true }).click();
