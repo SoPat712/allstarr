@@ -23,6 +23,7 @@ public sealed class AudioMuseIntelligenceCapabilityAdapterTests
                 new AudioMuseHealthProbeCapabilityAdapter(endpoint)));
 
         Assert.Equal("audiomuse-ai", registration.Descriptor.Id);
+        Assert.Equal("AudioMuse-AI", registration.Descriptor.DisplayName);
         Assert.Equal(ProviderOrigin.BuiltIn, registration.Descriptor.Origin);
         Assert.Equal(["baseUrl", "apiToken", "server"],
             registration.Descriptor.Settings.Select(item => item.Key));

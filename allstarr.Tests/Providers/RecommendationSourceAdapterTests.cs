@@ -224,6 +224,13 @@ public sealed class RecommendationSourceAdapterTests
                 [ProviderAccountScope.User])],
             new ProviderPermissionDescriptor(), entryPoint: "index.js");
         var registry = new ProviderRegistry([new ProviderRegistration(descriptor, [capability])]);
+        var missingAccount = new AudioMuseRecommendationClient(
+            registry, new SecretAccessor("{}", configured: false), catalog);
+        var missingReadiness = await new AudioMuseRecommendationProvider(missingAccount)
+            .GetReadinessAsync(Query().Scope);
+        Assert.Equal(RecommendationProviderReadinessState.Unconfigured, missingReadiness.State);
+        Assert.Equal("audiomuse_scoped_account_missing", missingReadiness.SafeReasonCode);
+
         var configured = new AudioMuseRecommendationClient(registry, accounts, catalog);
         var item = Assert.Single(await configured.RecommendAsync(Query(), default));
         Assert.Equal("audio-333", item.Identity!.BackendItemId);
@@ -356,12 +363,15 @@ public sealed class RecommendationSourceAdapterTests
         }
     }
 
-    private sealed class SecretAccessor(string json) : IScopedRecommendationAccountAccessor
+    private sealed class SecretAccessor(string json, bool configured = true) : IScopedRecommendationAccountAccessor
     {
-        public Task<bool> HasAccountAsync(IntelligenceScope scope, string providerId, CancellationToken token) => Task.FromResult(true);
+        public Task<bool> HasAccountAsync(IntelligenceScope scope, string providerId, CancellationToken token) =>
+            Task.FromResult(configured);
         public Task<ProviderAccountContext?> FindAccountAsync(IntelligenceScope scope, string providerId, CancellationToken token) =>
-            Task.FromResult<ProviderAccountContext?>(new(Guid.CreateVersion7(), providerId,
-                ProviderAccountScope.User, 1, tenantId: scope.TenantId, ownerUserId: scope.OwnerUserId));
+            Task.FromResult<ProviderAccountContext?>(configured
+                ? new(Guid.CreateVersion7(), providerId, ProviderAccountScope.User, 1,
+                    tenantId: scope.TenantId, ownerUserId: scope.OwnerUserId)
+                : null);
         public async Task<T> UseAsync<T>(IntelligenceScope scope, string providerId, Func<JsonElement, CancellationToken, Task<T>> operation, CancellationToken token)
         { using var document = JsonDocument.Parse(json); return await operation(document.RootElement, token); }
     }

@@ -1405,7 +1405,7 @@ export const sources = {
       body: JSON.stringify({ enabled, expectedRevision: account.revision }),
     }),
   replaceSecret: (account: ProviderAccount, secret: Record<string, unknown>) =>
-    json<{ accountId: string }>(`/api/admin/provider-accounts/${account.id}/secret`, {
+    json<{ accountId: string; revision: number }>(`/api/admin/provider-accounts/${account.id}/secret`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ secret }),

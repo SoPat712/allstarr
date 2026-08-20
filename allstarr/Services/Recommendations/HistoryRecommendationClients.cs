@@ -21,13 +21,38 @@ public sealed class AudioMuseRecommendationClient(
         ProviderId, ProviderCapabilityKind.Intelligence, out _);
 
     public async Task<bool> CheckHealthAsync(IntelligenceScope scope, CancellationToken cancellationToken)
+        => (await GetReadinessAsync(scope, cancellationToken)).State ==
+           RecommendationProviderReadinessState.Ready;
+
+    public async Task<RecommendationProviderReadiness> GetReadinessAsync(
+        IntelligenceScope scope, CancellationToken cancellationToken)
     {
-        if (!IsAvailable) return false;
+        if (!IsAvailable)
+            return new(ProviderId, RecommendationProviderReadinessState.Unconfigured,
+                "audiomuse_unavailable");
         var context = await ContextAsync(scope, "intelligence-health", cancellationToken);
-        if (context == null || !providers.TryGetCapability<IProviderHealthProbeCapability>(
-                ProviderId, ProviderCapabilityKind.Health, out var health)) return false;
+        if (context == null)
+            return new(ProviderId, RecommendationProviderReadinessState.Unconfigured,
+                "audiomuse_scoped_account_missing");
+        if (!providers.TryGetCapability<IProviderHealthProbeCapability>(
+                ProviderId, ProviderCapabilityKind.Health, out var health))
+            return new(ProviderId, RecommendationProviderReadinessState.Unsupported,
+                "audiomuse_health_unavailable");
         var result = await health!.ProbeAsync(context, new(ProviderCapabilityKind.Intelligence));
-        return result.IsSuccess && result.Value?.Status == ProviderProbeStatus.Healthy;
+        if (result.IsSuccess && result.Value?.Status == ProviderProbeStatus.Healthy)
+            return new(ProviderId, RecommendationProviderReadinessState.Ready);
+        return result.Error?.Kind switch
+        {
+            ProviderErrorKind.AccountNeedsConfiguration =>
+                new(ProviderId, RecommendationProviderReadinessState.Unconfigured,
+                    "audiomuse_account_needs_configuration"),
+            ProviderErrorKind.AccountNeedsReauthentication or ProviderErrorKind.Unauthorized or
+                ProviderErrorKind.Forbidden =>
+                new(ProviderId, RecommendationProviderReadinessState.Unauthorized,
+                    "audiomuse_account_unauthorized"),
+            _ => new(ProviderId, RecommendationProviderReadinessState.Degraded,
+                "audiomuse_unhealthy")
+        };
     }
 
     public async Task<IReadOnlyList<RecommendationSourceItem>> RecommendAsync(ScopedRecommendationQuery query, CancellationToken cancellationToken)
@@ -165,7 +190,7 @@ public sealed class AudioMuseRecommendationClient(
     {
         if (!providers.TryGetCapability<IProviderIntelligenceCapability>(
                 ProviderId, ProviderCapabilityKind.Intelligence, out var capability))
-            throw new NotSupportedException("AudioMuse is not available in this Allstarr build.");
+            throw new NotSupportedException("AudioMuse-AI is not available in this Allstarr build.");
         var context = await ContextAsync(scope, operation, cancellationToken, idempotencyKey)
             ?? throw new NotSupportedException("AudioMuse-AI has no exact-scope account.");
         return (capability!, context);

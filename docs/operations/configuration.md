@@ -42,7 +42,7 @@ Provider credentials are encrypted and persisted as provider accounts with expli
 
 Extensions are package implementations, not a second account system. Their install, update, permission, rollback, and removal lifecycle lives under **Integrations > Extensions**. Once active, their Services and Accounts use the same Integrations surfaces as built-in providers.
 
-AudioMuse is a built-in Intelligence integration rather than an extension. Its self-hosted URL, optional token, and optional music-server selector live under **Intelligence > Automation**; shared health remains visible in Integrations.
+AudioMuse-AI is a built-in Intelligence integration rather than an extension. Its self-hosted URL, optional token, and optional music-server selector live under **Intelligence > Automation**; shared health remains visible in Integrations.
 
 A shared account is not automatically available to every user. Administrators must set its access policy explicitly.
 

@@ -85,6 +85,10 @@
   const audioMuseSource = $derived(data?.providers.find((item) => item.id === "audiomuse-ai"));
   const audioMuseDefinition = $derived(providerDefinitions.find((item) => item.id === "audiomuse-ai"));
   const audioMuseAccounts = $derived(providerAccounts.filter((item) => item.providerId === "audiomuse-ai"));
+  const activeAudioMuseAccounts = $derived(audioMuseAccounts.filter((item) =>
+    item.enabled && item.secret.configured && !item.secret.revoked));
+  const recoverableAudioMuseAccount = $derived(audioMuseAccounts.find((item) =>
+    !item.enabled || !item.secret.configured || item.secret.revoked));
   const canManageAudioMuse = $derived(providerManagementMode !== "AdminManaged" || administrator);
   const runState = $derived(data?.actions.latestRunState?.replace("retryscheduled", "retry scheduled"));
   const runStatus = $derived(runState === "succeeded" ? "Ready" : ["pending", "running", "retry scheduled"].includes(runState ?? "") ? "Refreshing" : runState);
@@ -242,6 +246,8 @@
 
   function providerStatus(state: string) {
     if (state === "ready") return "Ready";
+    if (state === "unconfigured") return "Not connected";
+    if (state === "disabled") return "Off";
     if (["unsupported", "unavailable"].includes(state)) return "Unavailable";
     if (["unauthorized", "degraded", "failed"].includes(state)) return "Needs attention";
     return state.replaceAll("_", " ");
@@ -372,23 +378,27 @@
                 {#if audioMuseSource || audioMuseDefinition}
                   <div class="provider-setup">
                     <span>
-                      <strong>AudioMuse connection</strong>
+                      <strong>AudioMuse-AI connection</strong>
                       {#if audioMuseSetupLoading}
                         <small>Checking the connection for this library…</small>
-                      {:else if audioMuseAccounts.length}
-                        <small>{audioMuseAccounts.length} saved {audioMuseAccounts.length === 1 ? "connection" : "connections"}. AudioMuse is built into Intelligence; this connection supplies its server and access token.</small>
+                      {:else if activeAudioMuseAccounts.length}
+                        <small>{activeAudioMuseAccounts.length} active {activeAudioMuseAccounts.length === 1 ? "connection" : "connections"}. AudioMuse-AI is built into Intelligence; this connection supplies its server and access token.</small>
+                      {:else if recoverableAudioMuseAccount}
+                        <small>The previous setup did not finish. Re-enter the AudioMuse-AI server URL and token to enable this connection.</small>
                       {:else}
-                        <small>Connect your self-hosted AudioMuse server here to enable sound maps, similar-song search, blends, and listening-based discovery.</small>
+                        <small>Connect your self-hosted AudioMuse-AI server here to enable sound maps, similar-song search, blends, and listening-based discovery.</small>
                       {/if}
                       {#if audioMuseSetupFeedback}<small class="setup-feedback" role="status">{audioMuseSetupFeedback}</small>{/if}
                     </span>
                     <div class="provider-setup-actions">
                       {#if audioMuseDefinition && canManageAudioMuse}
-                        {#if audioMuseAccounts[0]}
-                          <Button size="sm" variant="secondary" onclick={() => openAudioMuseConnection(audioMuseAccounts[0])}>Manage AudioMuse</Button>
+                        {#if activeAudioMuseAccounts[0]}
+                          <Button size="sm" variant="secondary" onclick={() => openAudioMuseConnection(activeAudioMuseAccounts[0])}>Manage AudioMuse-AI</Button>
                           <Button size="sm" variant="ghost" onclick={() => openAudioMuseConnection()}>Add connection</Button>
+                        {:else if recoverableAudioMuseAccount}
+                          <Button size="sm" variant="secondary" onclick={() => openAudioMuseConnection(recoverableAudioMuseAccount)}>Finish AudioMuse-AI setup</Button>
                         {:else}
-                          <Button size="sm" variant="secondary" onclick={() => openAudioMuseConnection()}>Connect AudioMuse</Button>
+                          <Button size="sm" variant="secondary" onclick={() => openAudioMuseConnection()}>Connect AudioMuse-AI</Button>
                         {/if}
                       {:else if !canManageAudioMuse}
                         <Badge state="suggested">Administrator setup required</Badge>

@@ -49,7 +49,14 @@
     const form = event.currentTarget as HTMLFormElement;
     const data = new FormData(form);
     try {
-      const saved = account ?? await sources.create({
+      let saved: ProviderAccount;
+      if (account) {
+        const replacement = await sources.replaceSecret(account, secretFromForm(selected, data));
+        saved = account.enabled
+          ? { ...account, revision: replacement.revision }
+          : await sources.setEnabled({ ...account, revision: replacement.revision }, true);
+      } else {
+        saved = await sources.create({
           providerId: selected.id,
           displayName: String(data.get("displayName") || "").trim() || `My ${selected.name} connection`,
           scope: String(data.get("scope") || "User"),
@@ -57,18 +64,19 @@
           enabled: true,
           secret: secretFromForm(selected, data),
         });
-      if (account) await sources.replaceSecret(account, secretFromForm(selected, data));
+      }
       if (selected.id === "lastfm")
         await sources.authenticateLastFm(
           saved.id,
           String(data.get("username") || ""),
           String(data.get("password") || ""),
         );
+      const savedState = !account ? "connected" : account.enabled ? "configuration saved" : "connection enabled";
       try {
         await sources.test(saved);
-        await onSaved(`${selected.name} ${account ? "configuration saved" : "connected"} and tested.`);
+        await onSaved(`${selected.name} ${savedState} and tested.`);
       } catch {
-        await onSaved(`${selected.name} ${account ? "configuration saved" : "connected"}. Its connection test needs attention.`);
+        await onSaved(`${selected.name} ${savedState}. Its connection test needs attention.`);
       }
       form.reset();
       open = false;

@@ -288,6 +288,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
         return Ok(new
         {
             accountId = account.Id,
+            account.Revision,
             secret = new
             {
                 configured = true,

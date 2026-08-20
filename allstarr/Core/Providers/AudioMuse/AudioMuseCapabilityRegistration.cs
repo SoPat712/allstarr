@@ -30,8 +30,8 @@ public static class AudioMuseCapabilityRegistration
         AudioMuseHealthProbeCapabilityAdapter health) => new(
         new ProviderDescriptor(
             AudioMuseIntelligenceCapabilityAdapter.StableProviderId,
-            "AudioMuse",
-            "Connect a self-hosted AudioMuse server for sound maps, similarity search, blends, and discovery.",
+            "AudioMuse-AI",
+            "Connect a self-hosted AudioMuse-AI server for sound maps, similarity search, blends, and discovery.",
             ProviderOrigin.BuiltIn,
             "1",
             "1.0",
@@ -49,14 +49,14 @@ public static class AudioMuseCapabilityRegistration
             new ProviderPermissionDescriptor(secretSettingKeys: ["apiToken"]),
             [
                 new("baseUrl", ProviderSettingValueKind.Text, ProviderSettingScope.ProviderAccount,
-                    "AudioMuse server URL", true,
-                    helpText: "The HTTP or HTTPS address of your self-hosted AudioMuse server."),
+                    "AudioMuse-AI server URL", true,
+                    helpText: "The HTTP or HTTPS address of your self-hosted AudioMuse-AI server."),
                 new("apiToken", ProviderSettingValueKind.Secret, ProviderSettingScope.ProviderAccount,
-                    "AudioMuse access token",
-                    helpText: "Optional. Use the API_TOKEN configured on the AudioMuse server."),
+                    "AudioMuse-AI access token",
+                    helpText: "Optional. Use the API_TOKEN configured on the AudioMuse-AI server."),
                 new("server", ProviderSettingValueKind.Text, ProviderSettingScope.ProviderAccount,
-                    "AudioMuse music server",
-                    helpText: "Optional server ID or name when AudioMuse indexes more than one music server.")
+                    "AudioMuse-AI music server",
+                    helpText: "Optional server ID or name when AudioMuse-AI indexes more than one music server.")
             ],
             healthProbe: true),
         [intelligence, health]);

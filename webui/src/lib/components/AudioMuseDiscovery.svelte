@@ -71,13 +71,13 @@
 
   function message(cause: unknown) {
     const code = cause instanceof Error ? cause.message : "";
-    if (code.includes("operation_unavailable")) return "AudioMuse does not support that choice yet.";
-    if (code.includes("reconnect_or_scope_required")) return "Reconnect AudioMuse to this library and try again.";
+    if (code.includes("operation_unavailable")) return "AudioMuse-AI does not support that choice yet.";
+    if (code.includes("reconnect_or_scope_required")) return "Reconnect AudioMuse-AI to this library and try again.";
     if (code.includes("preview_stale")) return "These songs changed. Find songs again before creating the playlist.";
-    if (code.includes("not_selected")) return "Turn on AudioMuse for this library before creating the playlist.";
+    if (code.includes("not_selected")) return "Turn on AudioMuse-AI for this library before creating the playlist.";
     if (code.includes("generated_playlist_invalid")) return "Check the playlist name and songs, then try again.";
     if (code.includes("request_invalid")) return "Check your song choices and try again.";
-    return "AudioMuse could not complete this search. Try again in a moment.";
+    return "AudioMuse-AI could not complete this search. Try again in a moment.";
   }
 
   function clearResults(title: string) {
@@ -200,7 +200,7 @@
 <section class="panel sound-discovery">
   <header>
     <div>
-      <p class="eyebrow">AudioMuse</p>
+      <p class="eyebrow">AudioMuse-AI</p>
       <h3>Explore by sound</h3>
       <p>Find songs already in this library. Allstarr will not create or change a {serverName} playlist unless you confirm below.</p>
     </div>

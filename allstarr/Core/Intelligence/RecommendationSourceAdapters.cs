@@ -60,6 +60,15 @@ public interface IAudioMuseRecommendationClient
 {
     bool IsAvailable { get; }
     Task<bool> CheckHealthAsync(IntelligenceScope scope, CancellationToken cancellationToken);
+    async Task<RecommendationProviderReadiness> GetReadinessAsync(
+        IntelligenceScope scope, CancellationToken cancellationToken) =>
+        !IsAvailable
+            ? new("audiomuse-ai", RecommendationProviderReadinessState.Unconfigured,
+                "audiomuse_unavailable")
+            : await CheckHealthAsync(scope, cancellationToken)
+                ? new("audiomuse-ai", RecommendationProviderReadinessState.Ready)
+                : new("audiomuse-ai", RecommendationProviderReadinessState.Degraded,
+                    "audiomuse_unhealthy");
     Task<IReadOnlyList<RecommendationSourceItem>> RecommendAsync(ScopedRecommendationQuery query, CancellationToken cancellationToken);
     Task<IReadOnlyList<RecommendationSourceItem>> FindSimilarAsync(IntelligenceScope scope,
         IReadOnlyList<string> seedTrackIds, int limit, CancellationToken cancellationToken);
@@ -190,7 +199,9 @@ public sealed class AudioMuseRecommendationProvider(IAudioMuseRecommendationClie
 {
     protected override bool Available => client.IsAvailable;
     protected override string UnavailableCode => "audiomuse_unavailable";
-    public override async Task<RecommendationProviderReadiness> GetReadinessAsync(IntelligenceScope scope, CancellationToken token = default) => !client.IsAvailable ? new(Id, RecommendationProviderReadinessState.Unconfigured, "audiomuse_unavailable") : await client.CheckHealthAsync(scope, token) ? new(Id, RecommendationProviderReadinessState.Ready) : new(Id, RecommendationProviderReadinessState.Degraded, "audiomuse_unhealthy");
+    public override async Task<RecommendationProviderReadiness> GetReadinessAsync(
+        IntelligenceScope scope, CancellationToken token = default) =>
+        (await client.GetReadinessAsync(scope, token)) with { ProviderId = Id };
     protected override Task<IReadOnlyList<RecommendationSourceItem>> FetchAsync(ScopedRecommendationQuery query, CancellationToken token) => client.RecommendAsync(query, token);
 }
 public sealed class LocalRuleRecommendationProvider(ILocalRecommendationCatalog catalog)

@@ -24,11 +24,11 @@ const schema = {
       ],
     },
     {
-      id: "audiomuse-ai", name: "AudioMuse", categories: ["intelligence"],
+      id: "audiomuse-ai", name: "AudioMuse-AI", categories: ["intelligence"],
       accountSettings: [
-        { key: "baseUrl", label: "AudioMuse server URL", type: "url", required: true },
-        { key: "apiToken", label: "AudioMuse access token", type: "password", sensitive: true, required: false },
-        { key: "server", label: "AudioMuse music server", type: "text", required: false },
+        { key: "baseUrl", label: "AudioMuse-AI server URL", type: "url", required: true },
+        { key: "apiToken", label: "AudioMuse-AI access token", type: "password", sensitive: true, required: false },
+        { key: "server", label: "AudioMuse-AI music server", type: "text", required: false },
       ],
     },
     { id: "listenbrainz", name: "ListenBrainz", categories: ["scrobbling"] },
@@ -312,7 +312,7 @@ const responses: Record<string, unknown> = {
       id: "lumen-audio", label: "Lumen Audio", description: "Private similarity source.",
       enabled: true, available: true, state: "ready",
     }, {
-      id: "audiomuse-ai", label: "AudioMuse", description: "Explore this library by sound.",
+      id: "audiomuse-ai", label: "AudioMuse-AI", description: "Explore this library by sound.",
       enabled: true, available: true, state: "ready",
     }],
     listeningServices: [
@@ -412,7 +412,13 @@ function routeRelease() {
   return { promise, release };
 }
 
-async function mockApi(page: Page, options: { releasePath?: string; release?: Promise<void>; fail?: string[]; audioMuseUnavailable?: boolean } = {}) {
+async function mockApi(page: Page, options: {
+  releasePath?: string;
+  release?: Promise<void>;
+  fail?: string[];
+  audioMuseUnavailable?: boolean;
+  audioMuseDisabledAccount?: boolean;
+} = {}) {
   await page.route("**/fonts/**", (route) => route.fulfill({ status: 204 }));
   await page.route("**/images/providers/**", (route) => route.fulfill({
     status: 200,
@@ -431,6 +437,24 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
       return;
     }
     let body = responses[`${url.pathname}${url.search}`] ?? responses[url.pathname];
+    if (url.pathname === "/api/admin/provider-accounts" && route.request().method() === "GET" &&
+        options.audioMuseDisabledAccount) {
+      const accountResponse = structuredClone(body) as typeof responses["/api/admin/provider-accounts"];
+      body = {
+        ...(accountResponse as Record<string, unknown>),
+        accounts: [
+          ...((accountResponse as { accounts: Array<Record<string, unknown>> }).accounts ?? []),
+          {
+            id: "audio-account", providerId: "audiomuse-ai", displayName: "My AudioMuse-AI connection",
+            sourceDisplayName: "AudioMuse-AI", scope: "User", enabled: false, revision: 2,
+            ownerUserId: "user", ownerDisplayName: "Tester", createdByUserId: "user",
+            creatorDisplayName: "Tester", configuration: {}, configuredFields: [],
+            secret: { configured: false, revoked: false },
+            createdAt: "2026-01-01", updatedAt: "2026-01-01",
+          },
+        ],
+      };
+    }
     if (url.pathname === "/api/admin/intelligence" && options.audioMuseUnavailable) {
       const intelligence = structuredClone(body) as typeof responses["/api/admin/intelligence"];
       body = {
@@ -621,6 +645,15 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
       const account = (responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[] }).accounts[0];
       body = { ...account, scope: input.scope, ownerUserId: input.ownerUserId, revision: 2 };
     }
+    if (url.pathname === "/api/admin/provider-accounts/audio-account/secret" &&
+        route.request().method() === "PUT")
+      body = { accountId: "audio-account", revision: 3 };
+    if (url.pathname === "/api/admin/provider-accounts/audio-account" &&
+        route.request().method() === "PATCH")
+      body = { enabled: true, revision: 4 };
+    if (url.pathname === "/api/admin/providers/test/audiomuse-ai" &&
+        route.request().method() === "POST")
+      body = { healthy: true };
     if (url.pathname === "/api/admin/config/migration/preview")
       body = {
         previewToken: "preview-token", revision: "revision", expiresAt: "2026-01-01",
@@ -1101,12 +1134,12 @@ for (const viewport of viewports) {
       await expect(page.getByText("Recommendation actions", { exact: true })).toBeVisible();
       await expect(page.getByText("Recommendation sources", { exact: true })).toBeVisible();
       await expect(page.getByText("Connected services Allstarr may use to find candidates. This does not import history or change source accounts.", { exact: true })).toBeVisible();
-      const audioMuseSetup = page.locator(".provider-setup").filter({ hasText: "AudioMuse connection" });
-      await expect(audioMuseSetup).toContainText("Connect your self-hosted AudioMuse server here");
-      await audioMuseSetup.getByRole("button", { name: "Connect AudioMuse" }).click();
+      const audioMuseSetup = page.locator(".provider-setup").filter({ hasText: "AudioMuse-AI connection" });
+      await expect(audioMuseSetup).toContainText("Connect your self-hosted AudioMuse-AI server here");
+      await audioMuseSetup.getByRole("button", { name: "Connect AudioMuse-AI" }).click();
       const audioMuseDialog = page.getByRole("dialog", { name: "Connect a Source" });
-      await expect(audioMuseDialog.getByLabel("AudioMuse server URL")).toBeVisible();
-      await expect(audioMuseDialog.getByLabel("AudioMuse access token")).toBeVisible();
+      await expect(audioMuseDialog.getByLabel("AudioMuse-AI server URL")).toBeVisible();
+      await expect(audioMuseDialog.getByLabel("AudioMuse-AI access token")).toBeVisible();
       await audioMuseDialog.getByRole("button", { name: "Close source connection dialog" }).click();
       await expect(page.locator(".settings-stack")).not.toContainText(/\bsignals?\b/i);
       await expect(page.getByText("Allstarr sent the latest completed listen to Last.fm.", { exact: true })).toBeVisible();
@@ -1158,7 +1191,7 @@ for (const viewport of viewports) {
       await page.goto("#/integrations/services?source=audiomuse-ai&section=configuration");
       const intelligenceLink = page.getByRole("link", { name: "Configure in Intelligence" });
       await expect(intelligenceLink).toHaveAttribute("href", "#/intelligence?section=automation");
-      await expect(page.getByRole("dialog")).toContainText("AudioMuse powers sound-based discovery");
+      await expect(page.getByRole("dialog")).toContainText("AudioMuse-AI powers sound-based discovery");
       await page.goto("#/integrations/accounts");
       await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();
       await page.getByRole("tab", { name: "Access" }).click();
@@ -1188,18 +1221,40 @@ for (const viewport of viewports) {
       await expect(page.getByRole("alertdialog", { name: "Share this connection with everyone?" })).toBeVisible();
     });
 
-    test("AudioMuse configuration stays in Intelligence before the connection is ready", async ({ page }) => {
+    test("AudioMuse-AI configuration stays in Intelligence before the connection is ready", async ({ page }) => {
       await mockApi(page, { audioMuseUnavailable: true });
       await page.goto("#/intelligence?section=automation");
 
-      const setup = page.locator(".provider-setup").filter({ hasText: "AudioMuse connection" });
-      await expect(setup).toContainText("Connect your self-hosted AudioMuse server here");
+      const setup = page.locator(".provider-setup").filter({ hasText: "AudioMuse-AI connection" });
+      await expect(setup).toContainText("Connect your self-hosted AudioMuse-AI server here");
       await expect(setup.getByRole("link", { name: /extension/i })).toHaveCount(0);
-      await setup.getByRole("button", { name: "Connect AudioMuse" }).click();
+      await setup.getByRole("button", { name: "Connect AudioMuse-AI" }).click();
       const dialog = page.getByRole("dialog", { name: "Connect a Source" });
-      await expect(dialog.getByLabel("AudioMuse server URL")).toBeVisible();
-      await expect(dialog.getByLabel("AudioMuse access token")).toBeVisible();
-      await expect(dialog.getByLabel("AudioMuse music server")).toBeVisible();
+      await expect(dialog.getByLabel("AudioMuse-AI server URL")).toBeVisible();
+      await expect(dialog.getByLabel("AudioMuse-AI access token")).toBeVisible();
+      await expect(dialog.getByLabel("AudioMuse-AI music server")).toBeVisible();
+    });
+
+    test("unfinished AudioMuse-AI setup is recoverable and does not look unhealthy", async ({ page }) => {
+      await mockApi(page, { audioMuseUnavailable: true, audioMuseDisabledAccount: true });
+      await page.goto("#/intelligence?section=automation");
+
+      const source = page.locator(".provider-choices label").filter({ hasText: "AudioMuse-AI" });
+      await expect(source.getByText("AudioMuse-AI", { exact: true })).toBeVisible();
+      await expect(source.locator('[data-slot="badge"]')).toHaveText("Not connected");
+      const setup = page.locator(".provider-setup").filter({ hasText: "AudioMuse-AI connection" });
+      await expect(setup).toContainText("The previous setup did not finish.");
+      await setup.getByRole("button", { name: "Finish AudioMuse-AI setup" }).click();
+
+      const dialog = page.getByRole("dialog", { name: "Configure AudioMuse-AI" });
+      await dialog.getByLabel("AudioMuse-AI server URL").fill("http://audiomuse.test");
+      const secretRequest = page.waitForRequest((request) =>
+        request.url().endsWith("/api/admin/provider-accounts/audio-account/secret") && request.method() === "PUT");
+      const enableRequest = page.waitForRequest((request) =>
+        request.url().endsWith("/api/admin/provider-accounts/audio-account") && request.method() === "PATCH");
+      await dialog.getByRole("button", { name: "Save and test" }).click();
+      await secretRequest;
+      expect((await enableRequest).postDataJSON()).toMatchObject({ enabled: true, expectedRevision: 3 });
     });
 
     test("Match and removal dialogs remain usable", async ({ page }) => {

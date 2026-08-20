@@ -66,7 +66,7 @@ Later source updates use `./allstarr.sh update`; the command requires a clean tr
 
 - **Home** shows current playback, listeners, health, storage, work, and recent activity.
 - **Library** owns provider playlists, match review, cached audio, and kept audio.
-- **Intelligence** owns listening history, imports, recommendations, automation, and the built-in AudioMuse connection.
+- **Intelligence** owns listening history, imports, recommendations, automation, and the built-in AudioMuse-AI connection.
 - **Integrations** owns Services, encrypted Accounts, extension packages, health, and provider Routing.
 - **Activity** explains completed and failed work with correlation details.
 - **Settings** owns deployment-level behavior, matching, playback, cache policy, maintenance, backup, and recovery.
@@ -80,7 +80,7 @@ Later source updates use `./allstarr.sh update`; the command requires a clean tr
 - Routes streaming, download, lyrics, and artwork through typed, account-aware capabilities.
 - Runs imports, matching, downloads, playlist changes, scrobbling, and other long work as durable inspectable jobs.
 - Supports opt-in listening history and imports from Spotify Extended Streaming History, Last.fm, ListenBrainz, Koito, and Maloja exports.
-- Builds explained recommendations from enabled sources and an optional self-hosted AudioMuse server configured inside Intelligence.
+- Builds explained recommendations from enabled sources and an optional self-hosted AudioMuse-AI server configured inside Intelligence.
 - Installs verified third-party provider extensions through an explicit registry, permission review, staged activation, and rollback boundary.
 
 Provider availability depends on connected accounts, optional sidecars, permissions, and health. Missing optional services reduce only the affected capability.

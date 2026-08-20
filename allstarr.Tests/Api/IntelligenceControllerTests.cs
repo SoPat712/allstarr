@@ -218,6 +218,7 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
         Assert.Contains("Last.fm", json, StringComparison.Ordinal);
         Assert.Contains("\"latestState\":\"delivered\"", json, StringComparison.Ordinal);
         Assert.Contains("ListenBrainz", json, StringComparison.Ordinal);
+        Assert.Contains("AudioMuse-AI", json, StringComparison.Ordinal);
         Assert.DoesNotContain("permanentfailure", json, StringComparison.Ordinal);
         Assert.Contains("\"pending\":1", json, StringComparison.Ordinal);
         Assert.Contains("\"resolved\":1", json, StringComparison.Ordinal);

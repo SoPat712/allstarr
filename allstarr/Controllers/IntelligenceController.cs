@@ -571,6 +571,7 @@ public sealed partial class IntelligenceController(
     private static object PublicScope(IntelligenceScope scope) => new { scope.Protocol, scope.BackendInstanceId, scope.LibraryScopeId };
     private static string Label(string value) => value switch
     {
+        "audiomuse-ai" => "AudioMuse-AI",
         "listenbrainz" => "ListenBrainz recommendations",
         "listenbrainz-weekly-exploration" => "ListenBrainz Weekly Exploration",
         "listenbrainz-weekly-jams" => "ListenBrainz Weekly Jams",

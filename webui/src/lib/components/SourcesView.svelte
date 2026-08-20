@@ -557,7 +557,7 @@
               </dl>
             {:else if detailTab === "configuration" && detailKind === "source" && selectedSource}
               {#if selectedSource.id === "audiomuse-ai"}
-                <p class="source-configuration-copy">AudioMuse powers sound-based discovery, so its connection is configured beside the feature that uses it. Services still shows health and diagnostics.</p>
+                <p class="source-configuration-copy">AudioMuse-AI powers sound-based discovery, so its connection is configured beside the feature that uses it. Services still shows health and diagnostics.</p>
                 <div class="source-detail-actions">
                   <Button href="#/intelligence?section=automation">Configure in Intelligence</Button>
                 </div>

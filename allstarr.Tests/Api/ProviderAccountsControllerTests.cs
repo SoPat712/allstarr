@@ -148,12 +148,14 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
 
         using var replacement = JsonDocument.Parse(
             """{"storefront":"jp","mediaUserToken":"","lyricsTranslationLanguage":"es"}""");
-        Assert.IsType<OkObjectResult>(await controller.ReplaceSecret(
+        var replaced = Assert.IsType<OkObjectResult>(await controller.ReplaceSecret(
             accountId,
             new ProviderAccountsController.ReplaceProviderSecretRequest
             {
                 Secret = replacement.RootElement.Clone()
             }));
+        using var replacedJson = JsonDocument.Parse(JsonSerializer.Serialize(replaced.Value));
+        Assert.Equal(2, replacedJson.RootElement.GetProperty("Revision").GetInt64());
 
         await using var context = await _factory.CreateDbContextAsync();
         var persisted = await context.ProviderAccounts.SingleAsync(item => item.Id == accountId);

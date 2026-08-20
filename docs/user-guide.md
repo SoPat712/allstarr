@@ -38,9 +38,9 @@ Home is the operational summary. It shows active listening sessions, the source 
 - **History** searches, filters, corrects, exports, or removes retained listening events.
 - **Import** previews listening-history exports before adding anything.
 - **Discover** explains recommendations and lets a permitted user create a playlist from a completed run.
-- **Automation** controls automatic history, retention, recommendation signals, schedules, listening-app keys, and the built-in AudioMuse connection.
+- **Automation** controls automatic history, retention, recommendation signals, schedules, listening-app keys, and the built-in AudioMuse-AI connection.
 
-AudioMuse is not an extension. Connect a self-hosted AudioMuse server directly in **Intelligence → Automation**. Integrations still reports its health because it participates in the shared capability system.
+AudioMuse-AI is not an extension. Connect a self-hosted AudioMuse-AI server directly in **Intelligence → Automation**. Integrations still reports its health because it participates in the shared capability system.
 
 ### Integrations
 
