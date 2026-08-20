@@ -1154,7 +1154,7 @@ public sealed class DurableStateTransferService
             if (!Owner(policy.TenantId, policy.OwnerUserId) || policy.Protocol is not ("jellyfin" or "subsonic") ||
                 !Backend(policy.TenantId, policy.OwnerUserId, policy.Protocol, policy.BackendInstanceId) ||
                 !IsRequiredText(policy.BackendInstanceId, 200) || !IsRequiredText(policy.LibraryScopeId, 300) ||
-                policy.RetentionDays is < 1 or > 3650 || policy.CreatedAt == default || policy.UpdatedAt < policy.CreatedAt ||
+                !IntelligencePolicyService.ValidRetentionDays(policy.RetentionDays) || policy.CreatedAt == default || policy.UpdatedAt < policy.CreatedAt ||
                 policy.Revision <= 0 || !TryCatalog(policy.AllowedSignalTypesJson, 32, out var signalCatalog) ||
                 signalCatalog.Any(x => x is not ("play" or "skip" or "complete" or "favorite" or "playlist")) ||
                 !TryCatalog(policy.EnabledProvidersJson, 100, out var providers) || policy.Enabled && providers.Length == 0 ||
@@ -1289,7 +1289,7 @@ public sealed class DurableStateTransferService
                 track.BackendInstanceId != signal.BackendInstanceId || track.LibraryScopeId != signal.LibraryScopeId ||
                 !TryCatalog(policy.AllowedSignalTypesJson, 32, out var allowed) || !allowed.Contains(signal.SignalType) ||
                 !double.IsFinite(signal.Value) || signal.ObservedAt == default || signal.ExpiresAt <= signal.ObservedAt ||
-                signal.ExpiresAt > signal.ObservedAt.AddDays(3650) || !IsOptionalText(signal.SignalKey, 64) ||
+                signal.ExpiresAt != DateTimeOffset.MaxValue && signal.ExpiresAt > signal.ObservedAt.AddDays(3650) || !IsOptionalText(signal.SignalKey, 64) ||
                 signal.SignalKey != null && (!jobById.TryGetValue(signal.SourceJobId ?? Guid.Empty, out var sourceJob) ||
                     sourceJob.TenantId != signal.TenantId || sourceJob.OwnerUserId != signal.OwnerUserId ||
                     sourceJob.LibraryScopeId != signal.LibraryScopeId || sourceJob.Type != "playback.signal"))
@@ -1349,7 +1349,7 @@ public sealed class DurableStateTransferService
                 job.OwnerUserId != run.OwnerUserId || job.Type != "recommendation.generate" || job.LibraryScopeId != run.LibraryScopeId ||
                 job.IdempotencyKey != run.IdempotencyKey || !ValidRecommendationPayload(job.PayloadJson, run.Id) ||
                 !IsRequiredText(run.IdempotencyKey, 300) || !runKeys.Add((run.TenantId, run.OwnerUserId, run.IdempotencyKey)) ||
-                snapshot == null || snapshot.Revision <= 0 || snapshot.RetentionDays is < 1 or > 3650 || snapshot.EnabledProviders.Count is < 1 or > 100 ||
+                snapshot == null || snapshot.Revision <= 0 || !IntelligencePolicyService.ValidRetentionDays(snapshot.RetentionDays) || snapshot.EnabledProviders.Count is < 1 or > 100 ||
                 snapshot.TargetCredentialReferenceId != run.TargetCredentialReferenceId ||
                 !validScheduleLineage || scheduled && !scheduledOccurrences.Add((run.ScheduleId!.Value, run.ScheduledFor!.Value)) ||
                 run.Protocol == "jellyfin" && run.TargetCredentialReferenceId.HasValue ||

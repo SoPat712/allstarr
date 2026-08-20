@@ -1,4 +1,5 @@
 <script lang="ts">
+  import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
   import { onMount } from "svelte";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
   import { Skeleton } from "$lib/components/ui/skeleton";
@@ -435,7 +436,7 @@
               </div>
 
               <details class="mapping-details">
-                <summary>Why this score?</summary>
+                <summary class="disclosure-summary compact"><DisclosureLabel title="Why this score?" description="See every matching signal" /></summary>
                 <p>
                   Base evidence uses available title, artist, album, duration, ISRC, artwork,
                   and verified provider identity. Missing evidence is omitted rather than

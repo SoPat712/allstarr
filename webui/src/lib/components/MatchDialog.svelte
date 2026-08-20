@@ -228,7 +228,7 @@
         </section>
 
         <details class="match-technical">
-          <summary>PostgreSQL and identity data</summary>
+          <summary class="disclosure-summary compact"><span class="disclosure-label"><strong>Database and identity details</strong></span></summary>
           <dl>
             <div><dt>Source snapshot</dt><dd>{match.externalSnapshotId}</dd></div>
             <div><dt>Source provider</dt><dd>{match.providerId}</dd></div>
@@ -304,7 +304,7 @@
                     {/each}
                   </div>
                   <details class="candidate-evidence">
-                    <summary>Full evidence</summary>
+                    <summary class="disclosure-summary compact"><span class="disclosure-label"><strong>Full scoring evidence</strong></span></summary>
                     <dl>
                       <div><dt>Candidate ID</dt><dd>{candidate.libraryTrackId || candidate.backendItemId || candidateExternalId(candidate) || "—"}</dd></div>
                       <div><dt>Raw confidence</dt><dd>{percent(candidate.confidence)}</dd></div>
@@ -409,7 +409,7 @@
               </span>
             </button>
             <details class="target-evidence">
-              <summary>Evidence for {target.title}</summary>
+              <summary class="disclosure-summary compact"><span class="disclosure-label"><strong>Evidence for {target.title}</strong></span></summary>
               <dl>
                 <div><dt>Rank</dt><dd>#{results.indexOf(target) + 1}</dd></div>
                 <div><dt>Candidate ID</dt><dd>{target.externalId || target.backendItemId || target.id}</dd></div>

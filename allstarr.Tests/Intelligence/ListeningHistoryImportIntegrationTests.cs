@@ -187,6 +187,83 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PreviewAndApplyCountOnlyRowsInsideRetentionAndListSavedImports()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IntelligencePolicies.Add(new IntelligencePolicyRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = _scope.TenantId,
+                OwnerUserId = _scope.OwnerUserId,
+                Protocol = _scope.Protocol,
+                BackendInstanceId = _scope.BackendInstanceId,
+                LibraryScopeId = _scope.LibraryScopeId,
+                Enabled = true,
+                RetentionDays = 30,
+                AllowedSignalTypesJson = "[]",
+                EnabledProvidersJson = "[]",
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow,
+                Revision = 1
+            });
+            await db.SaveChangesAsync();
+        }
+        var service = new ListeningHistoryImportService(
+            _factory, _importers, _artifacts, _importOptions, _clock, _jobs);
+        var source = JsonSerializer.SerializeToUtf8Bytes(new[]
+        {
+            Row("2026-07-20T12:00:00Z", "Recent", "1111111111111111111111", 180_000, "trackdone", false),
+            Row("2025-07-20T12:00:00Z", "Expired", "2222222222222222222222", 180_000, "trackdone", false)
+        });
+        await using var stream = new MemoryStream(source);
+        var preview = await service.PreviewAsync(
+            _scope, "mixed-history.json", stream, source.Length, CancellationToken.None);
+
+        Assert.Equal(1, preview.Preview.NewRows);
+        Assert.Equal(1, preview.Preview.OutsideRetentionRows);
+        var queued = await service.ApplyAsync(_scope, preview.ImportId, preview.Revision, CancellationToken.None);
+        var claim = await _jobs.ClaimNextAsync(
+            "history-retention-test", [ListeningHistoryImportJobHandler.JobTypeName], CancellationToken.None);
+        Assert.NotNull(claim);
+        var musicBrainz = new MusicBrainzListeningEnrichmentQueue(
+            _jobs, Options.Create(new MusicBrainzSettings { Enabled = false }));
+        var handler = new ListeningHistoryImportJobHandler(
+            _factory, _importers, _artifacts, _importOptions, _clock, musicBrainz);
+        using var services = new ServiceCollection().BuildServiceProvider();
+        var completion = await handler.ExecuteAsync(new(claim!, services), CancellationToken.None);
+        await _jobs.CompleteAsync(claim!, completion, CancellationToken.None);
+
+        var saved = await service.ListAsync(_scope, 50, CancellationToken.None);
+        var result = Assert.Single(saved);
+        Assert.Equal(queued!.ImportId, result.ImportId);
+        Assert.Equal(1, result.ImportedRows);
+        await using (var policyDb = await _factory.CreateDbContextAsync())
+        {
+            var policy = await policyDb.IntelligencePolicies.SingleAsync();
+            policy.RetentionDays = 0;
+            await policyDb.SaveChangesAsync();
+        }
+        await using var unlimitedStream = new MemoryStream(source);
+        var unlimitedPreview = await service.PreviewAsync(
+            _scope, "all-history.json", unlimitedStream, source.Length, CancellationToken.None);
+        Assert.Equal(1, unlimitedPreview.Preview.NewRows);
+        Assert.Equal(0, unlimitedPreview.Preview.OutsideRetentionRows);
+        await service.ApplyAsync(_scope, unlimitedPreview.ImportId, unlimitedPreview.Revision, CancellationToken.None);
+        var unlimitedClaim = await _jobs.ClaimNextAsync(
+            "history-unlimited-test", [ListeningHistoryImportJobHandler.JobTypeName], CancellationToken.None);
+        Assert.NotNull(unlimitedClaim);
+        var unlimitedCompletion = await handler.ExecuteAsync(new(unlimitedClaim!, services), CancellationToken.None);
+        await _jobs.CompleteAsync(unlimitedClaim!, unlimitedCompletion, CancellationToken.None);
+        await new ListeningHistoryRetentionSweeper(_factory, _clock).SweepAsync();
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        var history = await verify.ListeningEvents.OrderBy(item => item.ListenedAt).ToListAsync();
+        Assert.Equal(2, history.Count);
+        Assert.Equal(["Expired", "Recent"], history.Select(item => item.Title));
+    }
+
+    [Fact]
     public async Task FailedApplyPersistsSafeOperationalMetadataWithoutImportContent()
     {
         var service = new ListeningHistoryImportService(

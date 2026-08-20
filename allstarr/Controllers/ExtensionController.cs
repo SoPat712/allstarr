@@ -375,12 +375,13 @@ public class ExtensionController : ControllerBase
     public async Task<IActionResult> InstallExtension([FromBody] InstallRequest request, CancellationToken cancellationToken)
     {
         if (RequireAdministrator() is { } authError) return authError;
-        if (!_extensionManager.RemoteInstallEnabled)
+        var trustedAdminRequest = _extensionManager.IsTrustedInstallClient(HttpContext.Connection.RemoteIpAddress);
+        if (!_extensionManager.RemoteInstallEnabled && !trustedAdminRequest)
         {
             return StatusCode(StatusCodes.Status403Forbidden, new
             {
                 success = false,
-                message = "Remote extension installation is disabled. An operator must explicitly set Extensions:AllowRemoteInstall=true."
+                message = "Extension installation is available on this server and trusted admin networks. This request came from outside that boundary; an operator can explicitly set Extensions:AllowRemoteInstall=true to allow it."
             });
         }
 
@@ -412,7 +413,8 @@ public class ExtensionController : ControllerBase
                 if (!matchesRegistry)
                     return BadRequest(new { success = false, message = "The package URL and checksum do not match the selected registry." });
             }
-            var package = await _extensionManager.StageExtensionAsync(downloadUrl, sha256, registryId, cancellationToken);
+            var package = await _extensionManager.StageExtensionAsync(
+                downloadUrl, sha256, registryId, trustedAdminRequest, cancellationToken);
             return Accepted(new
             {
                 success = true,

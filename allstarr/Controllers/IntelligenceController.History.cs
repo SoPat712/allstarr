@@ -358,6 +358,42 @@ public sealed partial class IntelligenceController
         });
     }
 
+    [HttpGet("history/imports")]
+    public async Task<IActionResult> ListHistoryImports(
+        [FromQuery] IntelligenceScopeRequest request,
+        [FromServices] ListeningHistoryImportService imports,
+        CancellationToken cancellationToken)
+    {
+        Response.Headers.CacheControl = "no-store";
+        if (!TrySessionScope(request, out var scope, out var error)) return error!;
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        if (!await OwnsBackend(db, scope, cancellationToken)) return NotFound();
+        var results = await imports.ListAsync(scope, 50, cancellationToken);
+        return Ok(new
+        {
+            scope = PublicScope(scope),
+            items = results.Select(result => new
+            {
+                result.ImportId,
+                result.Revision,
+                result.DisplayFileName,
+                result.SizeBytes,
+                result.ExpiresAt,
+                state = result.State.ToString().ToLowerInvariant(),
+                result.JobId,
+                result.JobState,
+                result.LastErrorCode,
+                result.LastErrorMessage,
+                result.ImportedRows,
+                result.DuplicateRows,
+                result.ResolvedRows,
+                result.UnresolvedRows,
+                outboundReplay = false,
+                preview = result.Preview
+            })
+        });
+    }
+
     [HttpPost("history/imports/{importId:guid}/apply")]
     public Task<IActionResult> ApplyHistoryImport(
         Guid importId,

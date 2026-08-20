@@ -43,7 +43,7 @@ Allstarr selects the tenant, user, library, provider account, capability, deadli
 
 ## Accounts and settings
 
-Extension credentials live in provider accounts under **Settings > Accounts**. Account fields declared as secrets are encrypted before persistence. Source health, routing, and capability readiness remain under **Sources**; they are not duplicate credential stores.
+Extension credentials live in provider accounts under **Integrations > Services**. Account fields declared as secrets are encrypted before persistence. Source health, routing, and capability readiness live there too; they are not duplicate credential stores.
 
 An external intelligence service such as AudioMuse-AI is an ordinary extension provider: its
 manifest allowlists the service origin with `network`, declares authentication fields with

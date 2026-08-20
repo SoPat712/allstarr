@@ -395,6 +395,7 @@ const responses: Record<string, unknown> = {
     identity: { albumArtist: "The Comets", musicBrainzEnrichmentConfidence: .98 },
     provenance: { source: "playback", client: "Jellyfin Web", device: "browser", provider: "jellyfin", imported: false },
   },
+  "/api/admin/intelligence/history/imports": { items: [] },
 };
 
 function routeRelease() {
@@ -1226,7 +1227,7 @@ test("Intelligence history imports, corrections, and schedules use the selected 
   ]);
   await expect.poll(() => previews.length).toBe(2);
   await expect(page.getByText("9", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("It will not send them to Last.fm or ListenBrainz.", { exact: false }).first()).toBeVisible();
+  await expect(page.getByText("does not send them to Last.fm or ListenBrainz.", { exact: false }).first()).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "Streaming_History.json" })).toContainText("previewed");
   await expect(page.getByRole("status").filter({ hasText: "ListenBrainz.jsonl" })).toContainText("previewed");
   const applies: Array<{ url: string; body: unknown }> = [];
@@ -1268,6 +1269,40 @@ test("Intelligence history imports, corrections, and schedules use the selected 
     request.url().endsWith("/api/admin/intelligence/schedules/schedule-1"));
   await removal.getByRole("button", { name: "Remove schedule" }).click();
   await remove;
+});
+
+test("Intelligence keeps completed imports visible and explains retention", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+  await page.route("**/api/admin/intelligence/history/imports?*", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({ items: [{
+      importId: "77777777-7777-7777-7777-777777777777",
+      revision: "saved-revision",
+      displayFileName: "Streaming_History_Audio_2025.json",
+      sizeBytes: 4096,
+      expiresAt: "2026-08-20T00:00:00Z",
+      state: "completed",
+      importedRows: 18_240,
+      duplicateRows: 0,
+      resolvedRows: 12_000,
+      unresolvedRows: 6_240,
+      outboundReplay: false,
+      preview: {
+        format: "spotify-extended-history", fileRows: 18_240, musicRows: 18_240,
+        completed: 18_240, partial: 0, skipped: 0, episodes: 0, nonTrack: 0, malformed: 0,
+        duplicateInFile: 0, duplicateExisting: 0, newRows: 18_240, resolvedNewRows: 12_000,
+        unresolvedNewRows: 6_240, rowsWithoutProviderIdentity: 0, sourceUserCount: 1,
+        estimatedMusicBrainzLookups: 6_240, earliest: "2025-01-01T00:00:00Z",
+        latest: "2020-12-31T00:00:00Z", reasonCounts: {}, outsideRetentionRows: 0,
+      },
+    }] }),
+  }));
+
+  await page.goto("#/intelligence?section=imports");
+  await expect(page.getByText("Streaming_History_Audio_2025.json", { exact: true })).toBeVisible();
+  await expect(page.getByText("18,240 added", { exact: false })).toBeVisible();
+  await expect(page.getByText(/no longer appear in Overview or History/)).toBeVisible();
 });
 
 test("Intelligence empty states explain how to get results", async ({ page }) => {
@@ -1673,8 +1708,7 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
   await expect(review.getByText("New access", { exact: false })).toBeVisible();
   await expect(review.getByText("Removed access", { exact: false })).toBeVisible();
   await expect(review.getByRole("button", { name: "Save review" })).toBeInViewport();
-  for (const button of await review.getByRole("button", { name: "Allow" }).all())
-    await button.click();
+  await review.getByRole("button", { name: "Allow all" }).click();
   await review.getByRole("checkbox").check();
   await review.getByRole("button", { name: "Save review" }).click();
   const activation = page.getByRole("alertdialog", { name: "Activate Lumen Audio?" });
@@ -2447,7 +2481,7 @@ test("Audio quality supports keyboard changes, provider outcomes, save, and relo
   await expect(slider).toHaveAttribute("aria-valuetext", /High lossy/);
   await expect(page.getByText(/Smaller files and streams with high sound quality/)).toBeVisible();
 
-  await page.getByText("What each music source will use").click();
+  await page.getByText("Music source quality details", { exact: true }).click();
   await expect(page.getByText("Apple Music: AAC 320 kbps")).toBeVisible();
   await expect(page.getByText("Deezer: MP3 320 kbps")).toBeVisible();
   await expect(page.getByLabel("Local track preference")).toHaveValue("7");

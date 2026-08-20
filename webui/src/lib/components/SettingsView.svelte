@@ -12,6 +12,7 @@
     type UiSchema,
   } from "$lib/api";
   import EnvMigrationCard from "$lib/components/EnvMigrationCard.svelte";
+  import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SelectiveTransferCard from "$lib/components/SelectiveTransferCard.svelte";
   import CacheDiagnosticsCard from "$lib/components/CacheDiagnosticsCard.svelte";
@@ -251,7 +252,7 @@
             open={openSections.includes(item.id)}
             ontoggle={(event) => disclosureToggled(event, item.id)}
           >
-            <summary><span><strong>{item.label}</strong><small>{item.fields.filter((field) => !field.readOnly).length} editable</small></span></summary>
+            <summary><DisclosureLabel title={item.label} description={`${item.fields.filter((field) => !field.readOnly).length} editable settings`} /></summary>
             <form class="settings-fields" oninput={() => markDirty(item.id)} onsubmit={(event) => void saveSection(event, item)}>
               {#each item.fields as field}
                 <label class="setting-field" class:read-only={field.readOnly || field.ownership === "deployment"}>

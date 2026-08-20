@@ -327,6 +327,8 @@ public sealed class ListeningHistoryImportJobHandler(
     {
         private readonly List<ListeningHistoryImportRow> _rows = new(500);
         private long _nextSequence = -1;
+        private DateTimeOffset? _retentionCutoff;
+        private bool _retentionLoaded;
 
         public async ValueTask AddAsync(ListeningHistoryImportRow row, CancellationToken cancellationToken)
         {
@@ -350,12 +352,25 @@ public sealed class ListeningHistoryImportJobHandler(
             if (import.State == ListeningHistoryImportState.Cancelled)
                 throw new OperationCanceledException(cancellationToken);
 
-            var occurrenceKeys = _rows.Select(row => ListeningHistoryImportService.OccurrenceKey(payload.Scope, row)).ToArray();
+            if (!_retentionLoaded)
+            {
+                var retentionDays = await IntelligencePolicyService.Query(db, payload.Scope).AsNoTracking()
+                    .Select(item => (int?)item.RetentionDays)
+                    .SingleOrDefaultAsync(cancellationToken);
+                _retentionCutoff = retentionDays == null
+                    ? null
+                    : IntelligencePolicyService.RetentionCutoff(clock.UtcNow, retentionDays.Value);
+                _retentionLoaded = true;
+            }
+            var retainedRows = _retentionCutoff is { } cutoff
+                ? _rows.Where(row => row.ListenedAt >= cutoff).ToArray()
+                : _rows.ToArray();
+            var occurrenceKeys = retainedRows.Select(row => ListeningHistoryImportService.OccurrenceKey(payload.Scope, row)).ToArray();
             var existing = await db.ListeningEvents.AsNoTracking().Where(item =>
                     item.TenantId == payload.Scope.TenantId && item.OwnerUserId == payload.Scope.OwnerUserId &&
                     occurrenceKeys.Contains(item.OccurrenceKey))
                 .Select(item => item.OccurrenceKey).ToHashSetAsync(cancellationToken);
-            var externalHashes = _rows.Select(ListeningHistoryImportService.ProviderIdentityHash)
+            var externalHashes = retainedRows.Select(ListeningHistoryImportService.ProviderIdentityHash)
                 .OfType<string>().Distinct().ToArray();
             var identities = externalHashes.Length == 0
                 ? []
@@ -368,7 +383,7 @@ public sealed class ListeningHistoryImportJobHandler(
             var identityByHash = identities.GroupBy(item => item.ExternalIdHash)
                 .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
             var canonicalIds = identities.Select(item => item.CanonicalRecordingId).Distinct().ToArray();
-            var recordingMbids = _rows.Select(item => item.RecordingMusicBrainzId).OfType<string>().Distinct().ToArray();
+            var recordingMbids = retainedRows.Select(item => item.RecordingMusicBrainzId).OfType<string>().Distinct().ToArray();
             var canonicals = canonicalIds.Length == 0 && recordingMbids.Length == 0
                 ? []
                 : await db.CanonicalRecordings.AsNoTracking().Where(item =>
@@ -393,7 +408,7 @@ public sealed class ListeningHistoryImportJobHandler(
                 .ToDictionary(group => group.Key, group => group.First());
 
             long imported = 0, duplicates = 0, resolved = 0, unresolved = 0;
-            foreach (var row in _rows)
+            foreach (var row in retainedRows)
             {
                 var occurrenceKey = ListeningHistoryImportService.OccurrenceKey(payload.Scope, row);
                 if (existing.Contains(occurrenceKey))

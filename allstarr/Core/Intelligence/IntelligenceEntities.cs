@@ -12,7 +12,7 @@ public sealed class IntelligencePolicyRecord
     public string Protocol { get; set; } = ""; public string BackendInstanceId { get; set; } = "";
     public string LibraryScopeId { get; set; } = ""; public bool Enabled { get; set; }
     public Guid? TargetCredentialReferenceId { get; set; }
-    public int RetentionDays { get; set; } = 30; public string AllowedSignalTypesJson { get; set; } = "[]";
+    public int RetentionDays { get; set; } = 0; public string AllowedSignalTypesJson { get; set; } = "[]";
     public string EnabledProvidersJson { get; set; } = "[]"; public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public long Revision { get; set; }

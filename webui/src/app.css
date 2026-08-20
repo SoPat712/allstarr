@@ -2826,6 +2826,74 @@
 }
 
 @layer components {
+  .disclosure-summary {
+    display: block;
+    min-height: var(--control-md);
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--color-panel-raised) 72%, transparent);
+    padding: 0.65rem 0.8rem;
+    cursor: pointer;
+    list-style: none;
+    transition: background-color 160ms ease, border-color 160ms ease;
+  }
+
+  .disclosure-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .disclosure-summary:hover {
+    border-color: var(--color-edge-strong);
+    background: var(--color-panel-raised);
+  }
+
+  .disclosure-summary:focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--color-signal) 35%, transparent);
+    outline-offset: 2px;
+  }
+
+  .disclosure-summary.compact {
+    display: inline-block;
+    min-height: 2.25rem;
+    border-color: transparent;
+    background: transparent;
+    padding: 0.4rem 0.55rem;
+  }
+
+  .disclosure-label {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    color: var(--color-signal-text);
+  }
+
+  .disclosure-label > span {
+    display: grid;
+    min-width: 0;
+    gap: 0.08rem;
+  }
+
+  .disclosure-label strong {
+    font-size: var(--text-sm);
+  }
+
+  .disclosure-label small {
+    color: var(--color-ink-muted);
+    font-size: var(--text-xs);
+    font-weight: 500;
+  }
+
+  .disclosure-chevron {
+    flex: none;
+    transition: transform 160ms ease;
+  }
+
+  details[open] > summary .disclosure-chevron {
+    transform: rotate(180deg);
+  }
+
   .segmented-tabs {
     position: relative;
     display: grid;
@@ -2841,11 +2909,13 @@
     grid-auto-flow: column;
     gap: 0.4rem;
     min-height: 2.4rem;
+    min-width: max-content;
     place-items: center;
     border: 0;
     border-radius: var(--radius-sm) var(--radius-sm) 0 0;
     background: transparent;
     color: var(--color-ink-muted);
+    padding-inline: var(--space-3);
     font-size: var(--text-xs);
     font-weight: 750;
     text-decoration: none;
@@ -4936,6 +5006,10 @@
     list-style: none;
   }
 
+  .track-cache-controls > summary > .disclosure-chevron {
+    flex: none;
+  }
+
   .track-cache-controls > summary::-webkit-details-marker {
     display: none;
   }
@@ -6915,11 +6989,16 @@
 
   .extension-activity summary {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
     align-items: center;
     gap: 0.7rem;
     padding: 0.8rem 0;
     cursor: pointer;
+    list-style: none;
+  }
+
+  .extension-activity summary::-webkit-details-marker {
+    display: none;
   }
 
   .extension-activity summary span:nth-child(2) {
@@ -6942,6 +7021,12 @@
     width: min(44rem, calc(100vw - 2rem));
   }
 
+  .extension-review-dialog {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    overflow: hidden;
+  }
+
   .extension-install-dialog .settings-fields {
     grid-template-columns: 1fr;
   }
@@ -6950,10 +7035,24 @@
     display: grid;
     min-height: 0;
     gap: var(--space-3);
+    overflow-y: auto;
     padding: var(--space-4);
   }
 
   .extension-review-body > :is(p, footer) {
+    margin: 0;
+  }
+
+  .extension-review-footer {
+    display: grid;
+    gap: var(--space-3);
+    border-top: 1px solid var(--border);
+    background: var(--color-panel);
+    padding: var(--space-3) var(--space-4) var(--space-4);
+  }
+
+  .extension-review-footer .dialog-actions,
+  .extension-review-footer .permission-confirm {
     margin: 0;
   }
 
@@ -6963,6 +7062,39 @@
     overflow: auto;
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
+  }
+
+  .permission-bulk {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  .permission-bulk > span {
+    display: grid;
+    gap: 0.08rem;
+  }
+
+  .permission-bulk small {
+    color: var(--color-ink-muted);
+    font-size: var(--text-xs);
+  }
+
+  .permission-bulk > div {
+    display: flex;
+    gap: var(--space-2);
+  }
+
+  @media (max-width: 620px) {
+    .permission-bulk {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .permission-bulk > div > * {
+      flex: 1;
+    }
   }
 
   .extension-permissions article {

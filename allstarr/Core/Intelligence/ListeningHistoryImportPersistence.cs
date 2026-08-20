@@ -115,7 +115,8 @@ public sealed record ListeningHistoryImportPreview(
     int EstimatedMusicBrainzLookups,
     DateTimeOffset? Earliest,
     DateTimeOffset? Latest,
-    IReadOnlyDictionary<string, long> ReasonCounts);
+    IReadOnlyDictionary<string, long> ReasonCounts,
+    long OutsideRetentionRows = 0);
 
 public sealed record ListeningHistoryImportPreviewResult(
     Guid ImportId,
@@ -287,7 +288,14 @@ public sealed class ListeningHistoryImportService(
         try
         {
             var artifact = await artifacts.StageAsync(importId, content, sizeBytes, cancellationToken);
-            var accumulator = new PreviewAccumulator(factory, scope);
+            await using var policyDb = await factory.CreateDbContextAsync(cancellationToken);
+            var retentionDays = await IntelligencePolicyService.Query(policyDb, scope).AsNoTracking()
+                .Select(item => (int?)item.RetentionDays)
+                .SingleOrDefaultAsync(cancellationToken);
+            var retentionCutoff = retentionDays == null
+                ? (DateTimeOffset?)null
+                : IntelligencePolicyService.RetentionCutoff(previewedAt, retentionDays.Value);
+            var accumulator = new PreviewAccumulator(factory, scope, retentionCutoff);
             var scan = await importers.ScanAsync(
                 () => artifacts.OpenRead(importId),
                 new(previewedAt, options.MaximumRows),
@@ -314,7 +322,8 @@ public sealed class ListeningHistoryImportService(
                 Math.Min(scan.EstimatedMusicBrainzLookups, (int)Math.Min(int.MaxValue, accumulator.UnresolvedRows)),
                 scan.Earliest,
                 scan.Latest,
-                scan.ReasonCounts);
+                scan.ReasonCounts,
+                accumulator.OutsideRetentionRows);
             var previewJson = JsonSerializer.Serialize(preview);
             var revision = Revision(scope, scan.Format, importers.RevisionFor(scan.Format), artifact.ContentSha256, previewJson);
             var expiresAt = previewedAt.AddHours(options.PreviewLifetimeHours);
@@ -421,6 +430,35 @@ public sealed class ListeningHistoryImportService(
             record.State, record.JobId, job?.State.ToString().ToLowerInvariant(), job?.LastErrorCode,
             job?.LastErrorMessage, record.ImportedRows, record.DuplicateRows, record.ResolvedRows,
             record.UnresolvedRows, preview);
+    }
+
+    public async Task<IReadOnlyList<ListeningHistoryImportPreviewResult>> ListAsync(
+        IntelligenceScope scope,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        var records = await ScopedImports(db, scope).AsNoTracking()
+            .OrderByDescending(item => item.CreatedAt)
+            .Take(Math.Clamp(limit, 1, 50))
+            .ToListAsync(cancellationToken);
+        var jobIds = records.Select(item => item.JobId).OfType<Guid>().Distinct().ToArray();
+        var jobsById = jobIds.Length == 0
+            ? []
+            : await db.Jobs.AsNoTracking().Where(item => jobIds.Contains(item.Id))
+                .ToDictionaryAsync(item => item.Id, cancellationToken);
+
+        return records.Select(record =>
+        {
+            var preview = JsonSerializer.Deserialize<ListeningHistoryImportPreview>(record.PreviewJson)
+                          ?? throw new InvalidDataException("The saved listening-history preview is invalid.");
+            var job = record.JobId is { } jobId ? jobsById.GetValueOrDefault(jobId) : null;
+            return new ListeningHistoryImportPreviewResult(
+                record.Id, record.PreviewRevision, record.DisplayFileName, record.SizeBytes, record.ExpiresAt,
+                record.State, record.JobId, job?.State.ToString().ToLowerInvariant(), job?.LastErrorCode,
+                job?.LastErrorMessage, record.ImportedRows, record.DuplicateRows, record.ResolvedRows,
+                record.UnresolvedRows, preview);
+        }).ToArray();
     }
 
     public Task<ListeningHistoryImportPreviewResult?> ApplyAsync(
@@ -572,7 +610,12 @@ public sealed class ListeningHistoryImportService(
         AllstarrDbContext db,
         IntelligenceScope scope,
         Guid importId) =>
-        db.ListeningHistoryImports.Where(item => item.Id == importId &&
+        ScopedImports(db, scope).Where(item => item.Id == importId);
+
+    private static IQueryable<ListeningHistoryImportRecord> ScopedImports(
+        AllstarrDbContext db,
+        IntelligenceScope scope) =>
+        db.ListeningHistoryImports.Where(item =>
             item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
             item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
             item.LibraryScopeId == scope.LibraryScopeId);
@@ -621,16 +664,23 @@ public sealed class ListeningHistoryImportService(
 
     private sealed class PreviewAccumulator(
         IDbContextFactory<AllstarrDbContext> factory,
-        IntelligenceScope scope)
+        IntelligenceScope scope,
+        DateTimeOffset? retentionCutoff)
     {
         private readonly List<(string OccurrenceKey, string? ExternalIdHash, string? RecordingMbid)> _rows = new(500);
         public long DuplicateRows { get; private set; }
         public long NewRows { get; private set; }
         public long ResolvedRows { get; private set; }
         public long UnresolvedRows { get; private set; }
+        public long OutsideRetentionRows { get; private set; }
 
         public async ValueTask AddAsync(ListeningHistoryImportRow row, CancellationToken cancellationToken)
         {
+            if (retentionCutoff is { } cutoff && row.ListenedAt < cutoff)
+            {
+                OutsideRetentionRows++;
+                return;
+            }
             _rows.Add((OccurrenceKey(scope, row), ProviderIdentityHash(row), row.RecordingMusicBrainzId));
             if (_rows.Count == 500) await FlushAsync(cancellationToken);
         }

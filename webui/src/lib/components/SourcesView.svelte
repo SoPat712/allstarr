@@ -5,6 +5,7 @@
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { MoreHorizontal, X } from "@lucide/svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
@@ -400,7 +401,7 @@
                   </button>
                   <Badge class="operational-mobile-state" state={state}>{state === "needs_config" ? "Needs setup" : humanize(state)}</Badge>
                   <details class="operational-mobile-detail">
-                    <summary>More details</summary>
+                    <summary class="disclosure-summary compact"><DisclosureLabel title="More details" description="Capabilities and timing" /></summary>
                     <dl>
                       <div><dt>Capabilities</dt><dd>{(item.categories ?? []).map(humanize).join(", ") || "Pending"}</dd></div>
                       <div><dt>Latency</dt><dd>{timing}{#if cts}{#if timing} · {/if}<Badge state={cts.health === "healthy" ? "healthy" : "degraded"}>CTS {ctsMeasurementLabel(cts)}</Badge>{/if}</dd></div>
@@ -443,7 +444,7 @@
                   </button>
                   <Badge class="operational-mobile-state" state={account.enabled ? "healthy" : "disabled"}>{account.enabled ? "Enabled" : "Disabled"}</Badge>
                   <details class="operational-mobile-detail">
-                    <summary>More details</summary>
+                    <summary class="disclosure-summary compact"><DisclosureLabel title="More details" description="Owner, audience, and health" /></summary>
                     <dl>
                       <div><dt>Owner</dt><dd>{account.creatorDisplayName || account.ownerDisplayName || "Unknown"}</dd></div>
                       <div><dt>Audience</dt><dd>{audienceLabel(account)}</dd></div>

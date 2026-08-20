@@ -4,6 +4,7 @@
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
+  import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
 
   let status = $state<Awaited<ReturnType<typeof settings.migrationStatus>> | null>(null);
   let preview = $state<EnvMigrationPreview | null>(null);
@@ -98,7 +99,7 @@
     {#each preview.conflicts as item}<p class="notice-error">{item}</p>{/each}
     {#each preview.warnings as item}<p class="credential-safety">{item}</p>{/each}
     <details>
-      <summary>Review {preview.items.length} parsed settings</summary>
+      <summary class="disclosure-summary"><DisclosureLabel title={`Review ${preview.items.length} parsed settings`} description="Inspect every detected value before importing" /></summary>
       <ul class="migration-items">
         {#each preview.items as item}
           <li><strong>{item.key}</strong><small>Line {item.sourceLine} · {item.action}</small><span>{item.reason}</span></li>

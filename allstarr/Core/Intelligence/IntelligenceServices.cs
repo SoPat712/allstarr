@@ -36,7 +36,7 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
     { ValidateScope(scope); await using var db = await factory.CreateDbContextAsync(cancellationToken); return await Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken); }
     public async Task<IntelligencePolicyRecord> SetAsync(IntelligenceScope scope, IntelligencePolicyInput input, CancellationToken cancellationToken = default)
     {
-        ValidateScope(scope); if (input.RetentionDays is < 1 or > 3650) throw new ArgumentOutOfRangeException(nameof(input));
+        ValidateScope(scope); if (!ValidRetentionDays(input.RetentionDays)) throw new ArgumentOutOfRangeException(nameof(input));
         var signals = input.AllowedSignalTypes.Select(Normalize).Distinct().Order().ToArray();
         if (signals.Any(value => !Signals.Contains(value))) throw new ArgumentException("The intelligence signal type is unsupported.", nameof(input));
         var providers = input.EnabledProviders.Select(Normalize).Distinct().Order().ToArray();
@@ -213,6 +213,9 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
         try { return JsonSerializer.Deserialize<MusicBrainzListeningEnrichmentPayload>(payloadJson)?.Scope == scope; }
         catch (JsonException) { return false; }
     }
+    internal static bool ValidRetentionDays(int days) => days is >= 0 and <= 3650;
+    internal static DateTimeOffset? RetentionCutoff(DateTimeOffset now, int days) =>
+        days == 0 ? null : now.AddDays(-days);
     internal static string Normalize(string value) { value = value?.Trim().ToLowerInvariant() ?? ""; if (value.Length is < 1 or > 100 || value.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '-' and not '_')) throw new ArgumentException("An intelligence catalog value is invalid."); return value; }
 }
 
@@ -242,7 +245,8 @@ public sealed class RecommendationSignalWriter(IDbContextFactory<AllstarrDbConte
         var track = tracks.SingleOrDefault(x => x.BackendItemId == trackKey || x.Id.ToString("D") == trackKey) ??
             tracks.FirstOrDefault(x => ProviderValueMatches(x.ProviderIdsJson, trackKey));
         if (track == null) return false;
-        var expires = observedAt.AddDays(policy.RetentionDays); if (expires <= clock.UtcNow) return false;
+        var expires = policy.RetentionDays == 0 ? DateTimeOffset.MaxValue : observedAt.AddDays(policy.RetentionDays);
+        if (expires <= clock.UtcNow) return false;
         if (signalKey != null && await db.ListeningSignals.AsNoTracking().AnyAsync(x => x.TenantId == scope.TenantId && x.OwnerUserId == scope.OwnerUserId && x.SignalKey == signalKey, cancellationToken)) return true;
         db.ListeningSignals.Add(new()
         {
@@ -269,6 +273,7 @@ public sealed class RecommendationSignalWriter(IDbContextFactory<AllstarrDbConte
             throw;
         }
     }
+
     private static bool ProviderValueMatches(string json, string key)
     { try { var values = JsonSerializer.Deserialize<Dictionary<string, string>>(json); return values?.Any(x => x.Value == key || $"{x.Key}:{x.Value}" == key) == true; } catch (JsonException) { return false; } }
 }

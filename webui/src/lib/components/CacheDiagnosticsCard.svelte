@@ -3,6 +3,7 @@
   import { humanize } from "$lib/sources";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
+  import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
 
   let {
     snapshot,
@@ -77,7 +78,7 @@
   </div>
 
   <details class="cache-details">
-    <summary><span><strong>Category budgets</strong><small>{snapshot?.categories.length ?? 0} policy-owned categories</small></span></summary>
+    <summary class="disclosure-summary"><DisclosureLabel title="Category budgets" description={`${snapshot?.categories.length ?? 0} policy-owned categories`} /></summary>
     <div class="cache-category-list">
       {#each snapshot?.categories ?? [] as category}
         <article>
@@ -99,7 +100,7 @@
   </details>
 
   <details class="cache-details">
-    <summary><span><strong>Limits and cleanup preview</strong><small>Dry-run facts before deletion</small></span></summary>
+    <summary class="disclosure-summary"><DisclosureLabel title="Limits and cleanup preview" description="Dry-run facts before deletion" /></summary>
     <dl class="cache-preview-grid">
       <div><dt>Artwork entry limit</dt><dd>{bytes(snapshot?.artworkLimits.maximumEntryBytes)}</dd></div>
       <div><dt>Decoded artwork limit</dt><dd>{(snapshot?.artworkLimits.maximumDecodedPixels ?? 0).toLocaleString()} pixels</dd></div>

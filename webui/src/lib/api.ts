@@ -1129,6 +1129,7 @@ export type ListeningHistoryImportPreview = {
   earliest?: string | null;
   latest?: string | null;
   reasonCounts: Record<string, number>;
+  outsideRetentionRows?: number;
 };
 
 export type ListeningHistoryImport = {
@@ -1336,6 +1337,8 @@ export const intelligence = {
   },
   historyImport: (scope: IntelligenceScope, id: string) =>
     json<ListeningHistoryImport>(`/api/admin/intelligence/history/imports/${encodeURIComponent(id)}?${intelligenceQuery(scope)}`),
+  historyImports: (scope: IntelligenceScope) =>
+    json<{ items: ListeningHistoryImport[] }>(`/api/admin/intelligence/history/imports?${intelligenceQuery(scope)}`),
   changeHistoryImport: (scope: IntelligenceScope, item: ListeningHistoryImport, operation: "apply" | "resume" | "cancel") =>
     json<ListeningHistoryImport>(`/api/admin/intelligence/history/imports/${encodeURIComponent(item.importId)}/${operation}`,
       intelligenceBody({ ...scope, revision: item.revision })),

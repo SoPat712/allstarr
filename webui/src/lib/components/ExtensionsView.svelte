@@ -5,7 +5,7 @@
   import { Dialog } from "$lib/components/ui/dialog";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
   import { Skeleton } from "$lib/components/ui/skeleton";
-  import { X } from "@lucide/svelte";
+  import { ChevronDown, X } from "@lucide/svelte";
   import {
     extensions,
     type ExtensionLog,
@@ -171,6 +171,10 @@
     if (kind.toLowerCase() === "network") return ["↗", "Can contact only this approved HTTPS origin."];
     if (kind.toLowerCase() === "secret") return ["◆", "Can read this named encrypted account setting."];
     return ["▣", "Can use this named, quota-limited extension cache."];
+  }
+
+  function decideAll(approved: boolean) {
+    decisions = Object.fromEntries(permissions.map((item) => [item.id, approved]));
   }
 
   async function approve() {
@@ -368,7 +372,7 @@
       <section class="panel extension-activity">
         <header><strong>Extension activity</strong><small>Install, permission, runtime, and lifecycle events.</small></header>
         {#each logs as item}
-          <details><summary><span class={`activity-dot level-${item.level.toLowerCase()}`}></span><span><strong>{item.summary}</strong><small>{item.extensionId || "Extension runtime"}</small></span><time>{new Date(item.createdAt).toLocaleString()}</time></summary><p>{item.message || "No additional details were recorded."}</p></details>
+          <details><summary><span class={`activity-dot level-${item.level.toLowerCase()}`}></span><span><strong>{item.summary}</strong><small>{item.extensionId || "Extension runtime"}</small></span><time>{new Date(item.createdAt).toLocaleString()}</time><ChevronDown class="disclosure-chevron" size={16} aria-hidden="true" /></summary><p>{item.message || "No additional details were recorded."}</p></details>
         {:else}<div class="compact-empty"><strong>No extension activity recorded</strong></div>{/each}
       </section>
     {/if}
@@ -396,6 +400,12 @@
             {#each capabilityChanges as item}<span class:ready={item.change === "added"}>{item.change === "added" ? "+" : item.change === "removed" ? "−" : "="} {humanize(item.value)}</span>{/each}
           </div>
         {/if}
+        {#if permissions.length}
+          <div class="permission-bulk">
+            <span><strong>Choose access</strong><small>Apply one decision to every requested permission, then change individual rows if needed.</small></span>
+            <div><Button size="sm" variant="secondary" onclick={() => decideAll(true)}>Allow all</Button><Button size="sm" variant="outline" onclick={() => decideAll(false)}>Deny all</Button></div>
+          </div>
+        {/if}
         <div class="extension-permissions">
           {#each permissions as item}
             {@const help = permissionHelp(item.permissionKind)}
@@ -406,6 +416,8 @@
             <article><span><strong>− Removed access</strong><small>{item.value.replace(":", " · ")}</small><em>No longer requested</em></span></article>
           {/each}
         </div>
+      </div>
+      <div class="extension-review-footer">
         <label class="permission-confirm"><Checkbox bind:checked={permissionConfirmed} /><span>I understand the access requested by this extension.</span></label>
         <footer class="dialog-actions"><Button variant="secondary" disabled={Boolean(action)} onclick={() => void cancelReview()}>{reviewingExisting ? "Close review" : action.startsWith("cancel:") ? "Cancelling…" : "Cancel installation"}</Button><Button disabled={!permissionConfirmed || permissions.some((item) => decisions[item.id] === undefined) || Boolean(action)} onclick={() => void approve()}>{action.startsWith("review:") ? "Saving…" : "Save review"}</Button></footer>
       </div>

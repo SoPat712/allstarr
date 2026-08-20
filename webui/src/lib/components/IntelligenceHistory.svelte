@@ -5,6 +5,7 @@
   import { Badge } from "$lib/components/ui/badge";
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { FileUp, X } from "@lucide/svelte";
+  import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -32,7 +33,7 @@
     selected: boolean;
   };
 
-  let { scope, section, policyEnabled = false, retentionDays = 30, onChanged = () => {} }: {
+  let { scope, section, policyEnabled = false, retentionDays = 0, onChanged = () => {} }: {
     scope: IntelligenceScope;
     section: HistorySection;
     policyEnabled?: boolean;
@@ -105,9 +106,10 @@
       summary.newRows += preview.newRows;
       summary.duplicates += preview.duplicateExisting + preview.duplicateInFile;
       summary.skipped += preview.skipped;
+      summary.outsideRetention += preview.outsideRetentionRows ?? 0;
     }
     return summary;
-  }, { newRows: 0, duplicates: 0, skipped: 0 }));
+  }, { newRows: 0, duplicates: 0, skipped: 0, outsideRetention: 0 }));
 
   $effect(() => {
     if (scopeKey !== previousScopeKey) {
@@ -119,7 +121,8 @@
     const key = `${scopeKey}\0${section}\0${period}\0${fromDate}\0${toDate}\0${timeZoneId}`;
     if (key === loadedKey) return;
     loadedKey = key;
-    if (section !== "imports") void loadAll();
+    if (section === "imports") void loadImports();
+    else void loadAll();
   });
 
   $effect(() => {
@@ -186,6 +189,25 @@
       error = cause instanceof Error ? cause.message : "Listening history could not be loaded.";
     } finally {
       historyLoading = false;
+    }
+  }
+
+  async function loadImports() {
+    importError = "";
+    try {
+      const response = await intelligence.historyImports(scope);
+      importItems = response.items.map((result) => ({
+        id: `saved-history-import-${result.importId}`,
+        file: null,
+        fileKey: `saved:${result.importId}`,
+        fileName: result.displayFileName ?? "History import",
+        sizeBytes: result.sizeBytes ?? 0,
+        error: "",
+        result,
+        selected: result.state === "previewed" && (result.preview?.newRows ?? 0) > 0,
+      }));
+    } catch (cause) {
+      importError = cause instanceof Error ? cause.message : "Saved history imports could not be loaded.";
     }
   }
 
@@ -390,9 +412,17 @@
   }
 
   function retentionLabel(days: number) {
+    if (days === 0) return "all history";
     if (days === 3650) return "10 years";
     if (days === 365) return "1 year";
     return `${days} days`;
+  }
+
+  function outsideCurrentRetention(item: ListeningHistoryImport) {
+    if (retentionDays === 0) return false;
+    const latest = item.preview?.latest ? new Date(item.preview.latest).getTime() : 0;
+    return item.state === "completed" && Boolean(item.importedRows) && latest > 0 &&
+      latest < Date.now() - retentionDays * 86_400_000;
   }
 </script>
 
@@ -410,8 +440,8 @@
         { id: "365", label: "1 year" }, { id: "custom", label: "Custom" },
       ]} active={period} label="History period" class="period-tabs" onchange={(value) => period = value} />
       <Button type="submit" disabled={loading || historyLoading}>{loading || historyLoading ? "Updating…" : section === "overview" ? "Update overview" : "Apply filters"}</Button>
-      <details>
-        <summary>{section === "overview" ? "Dates and time zone" : "More filters"}</summary>
+      <details class="filter-disclosure">
+        <summary class="disclosure-summary"><DisclosureLabel title={section === "overview" ? "Dates and time zone" : "More filters"} description={section === "overview" ? "Choose an exact reporting window" : "Filter by artist, album, song, source, or client"} /></summary>
         <div class="advanced-filters">
           {#if period === "custom"}<label class="field"><span>From</span><input bind:value={fromDate} type="date" required /></label><label class="field"><span>Through</span><input bind:value={toDate} type="date" required /></label>{/if}
           {#if section === "history"}
@@ -537,12 +567,12 @@
     </div>
     <div class:warning={!policyEnabled} class="import-readiness">
       <Badge state={policyEnabled ? "healthy" : "suggested"}>{policyEnabled ? "Saving on" : "Saving off"}</Badge>
-      <span><strong>{policyEnabled ? `Keeping ${retentionLabel(retentionDays)}` : "Recommendations are off"}</strong><small>{policyEnabled ? `Imported listens older than ${retentionLabel(retentionDays)} are removed automatically.` : `You can preview files, but turn on automatic history and choose retention before adding them.`}</small></span>
+      <span><strong>{policyEnabled ? `Keeping ${retentionLabel(retentionDays)}` : "Recommendations are off"}</strong><small>{policyEnabled ? retentionDays === 0 ? "Imported listens are kept until you remove them or choose a limit." : `Imported listens older than ${retentionLabel(retentionDays)} are removed automatically.` : `You can preview files, but turn on automatic history and choose retention before adding them.`}</small></span>
       <Button variant="secondary" href="#/intelligence?section=automation">Review automation</Button>
     </div>
     {#if completedImportItems.length}
       {#if previewedImportItems.length}
-        <dl class="import-batch-summary"><div><dd>{importBatch.newRows.toLocaleString()}</dd><dt>new listens</dt></div><div><dd>{importBatch.duplicates.toLocaleString()}</dd><dt>already present</dt></div><div><dd>{importBatch.skipped.toLocaleString()}</dd><dt>skipped</dt></div></dl>
+        <dl class="import-batch-summary"><div><dd>{importBatch.newRows.toLocaleString()}</dd><dt>will be kept</dt></div><div><dd>{importBatch.outsideRetention.toLocaleString()}</dd><dt>outside retention</dt></div><div><dd>{importBatch.duplicates.toLocaleString()}</dd><dt>already present</dt></div><div><dd>{importBatch.skipped.toLocaleString()}</dd><dt>skipped</dt></div></dl>
         <div class="import-batch-actions"><span><strong>{selectedPreviewItems.length} of {previewedImportItems.length} ready files selected</strong><small>Files with new listens are selected automatically. Clear any file you do not want to add.</small></span><Button disabled={Boolean(action) || !selectedPreviewItems.length} onclick={() => void applyAllPreviews()}>{action === "apply-all" ? "Starting imports…" : `Add all ${selectedPreviewItems.length} ready ${selectedPreviewItems.length === 1 ? "file" : "files"}`}</Button></div>
       {/if}
       <ul class="import-results" aria-label="History import previews">
@@ -552,11 +582,13 @@
           <li class="import-result">
             <header><label class="import-result-select"><Checkbox aria-label={`Include ${result.displayFileName ?? item.fileName}`} disabled={result.state !== "previewed"} checked={item.selected} onCheckedChange={(checked) => updateImportItem(item.id, { selected: checked })} /><span role="status" aria-atomic="true"><strong>{result.displayFileName ?? item.fileName}</strong><small>{fileSize(result.sizeBytes ?? item.sizeBytes)} · {words(result.state)}{result.importedRows !== undefined ? ` · ${result.importedRows.toLocaleString()} added` : ""}</small></span></label><Badge state={result.state === "completed" ? "healthy" : result.state === "failed" || result.state === "cancelled" ? "rejected" : "suggested"}>{words(result.state)}</Badge></header>
             {#if result.preview}
-              <dl class="import-preview"><div><dd>{result.preview.newRows.toLocaleString()}</dd><dt>new listens</dt></div><div><dd>{(result.preview.duplicateExisting + result.preview.duplicateInFile).toLocaleString()}</dd><dt>already present</dt></div><div><dd>{result.preview.skipped.toLocaleString()}</dd><dt>skipped</dt></div><div><dd>{result.preview.estimatedMusicBrainzLookups.toLocaleString()}</dd><dt>songs to identify</dt></div></dl>
-              <p class="credential-safety">Allstarr will add these past listens to your private history. It will not send them to Last.fm or ListenBrainz.</p>
+              <dl class="import-preview"><div><dd>{result.preview.newRows.toLocaleString()}</dd><dt>will be kept</dt></div><div><dd>{(result.preview.outsideRetentionRows ?? 0).toLocaleString()}</dd><dt>outside retention</dt></div><div><dd>{(result.preview.duplicateExisting + result.preview.duplicateInFile).toLocaleString()}</dd><dt>already present</dt></div><div><dd>{result.preview.skipped.toLocaleString()}</dd><dt>skipped</dt></div></dl>
+              {#if result.state === "previewed" && (result.preview.outsideRetentionRows ?? 0) > 0}<p class="credential-safety">Only listens inside your current {retentionLabel(retentionDays)} window will be saved. Change retention in Automation, then preview the files again if you want to keep older history.</p>
+              {:else if outsideCurrentRetention(result)}<p class="credential-safety">These imported listens are now outside your {retentionLabel(retentionDays)} retention window, so they no longer appear in Overview or History.</p>
+              {:else}<p class="credential-safety">Allstarr keeps these listens private and does not send them to Last.fm or ListenBrainz.</p>{/if}
             {/if}
             <footer>
-              {#if result.state === "previewed"}<Button disabled={Boolean(action)} onclick={() => void changeImport(item, "apply")}>{action === `apply:${item.id}` ? "Starting…" : "Add to my history"}</Button>{/if}
+              {#if result.state === "previewed"}<Button disabled={Boolean(action) || (result.preview?.newRows ?? 0) === 0} onclick={() => void changeImport(item, "apply")}>{action === `apply:${item.id}` ? "Starting…" : (result.preview?.newRows ?? 0) === 0 ? "Nothing inside retention" : "Add to my history"}</Button>{/if}
               {#if activeImport}<Button variant="secondary" disabled={Boolean(action)} onclick={() => void changeImport(item, "cancel")}>{action === `cancel:${item.id}` ? "Cancelling…" : "Cancel import"}</Button>{/if}
               {#if result.state === "failed" || result.state === "cancelled"}<Button disabled={Boolean(action)} onclick={() => void changeImport(item, "resume")}>{action === `resume:${item.id}` ? "Resuming…" : "Resume import"}</Button>{/if}
             </footer>

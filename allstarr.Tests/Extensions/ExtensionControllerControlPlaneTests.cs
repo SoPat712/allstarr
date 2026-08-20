@@ -34,7 +34,8 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
         await using var db = await factory.CreateDbContextAsync();
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["Extensions:Directory"] = Path.Combine(_root, "extensions")
+            ["Extensions:Directory"] = Path.Combine(_root, "extensions"),
+            ["Admin:TrustedSubnets"] = "192.168.1.0/24"
         }).Build();
         _service = new ExtensionControlPlaneService(factory, new Clock(), configuration);
         var clientFactory = new Mock<IHttpClientFactory>();
@@ -135,9 +136,23 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
             Guid.CreateVersion7(), new RevisionRequest(), default));
     }
 
-    private ExtensionController Controller(AdminAuthSession? session = null)
+    [Fact]
+    public async Task Install_AllowsTrustedLanAndRejectsUntrustedRemoteClientByDefault()
+    {
+        var lan = Controller(Session(administrator: true), "192.168.1.25");
+        Assert.IsType<BadRequestObjectResult>(await lan.InstallExtension(new InstallRequest(), default));
+
+        var remote = Controller(Session(administrator: true), "203.0.113.25");
+        var denied = Assert.IsType<ObjectResult>(await remote.InstallExtension(new InstallRequest(), default));
+        Assert.Equal(StatusCodes.Status403Forbidden, denied.StatusCode);
+        Assert.Contains("outside that boundary", System.Text.Json.JsonSerializer.Serialize(denied.Value),
+            StringComparison.Ordinal);
+    }
+
+    private ExtensionController Controller(AdminAuthSession? session = null, string? remoteIp = null)
     {
         var context = new DefaultHttpContext();
+        if (remoteIp != null) context.Connection.RemoteIpAddress = IPAddress.Parse(remoteIp);
         if (session != null)
             context.Items[AdminAuthSessionService.HttpContextSessionItemKey] = session;
         return new ExtensionController(_manager, _service, null, NullLogger<ExtensionController>.Instance)

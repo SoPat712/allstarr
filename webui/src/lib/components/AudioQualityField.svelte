@@ -1,4 +1,5 @@
 <script lang="ts">
+  import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
   const steps = [
     {
       value: "DataSaver",
@@ -64,7 +65,7 @@
   </div>
   <p aria-live="polite"><strong>{current.label}</strong><span>{current.summary}</span></p>
   <details>
-    <summary>What each music source will use</summary>
+    <summary class="disclosure-summary compact"><DisclosureLabel title="Music source quality details" description="See the exact quality requested from each provider" /></summary>
     <ul>{#each current.providers as provider}<li>{provider}</li>{/each}</ul>
   </details>
 </div>

@@ -66,6 +66,14 @@ public class ExtensionManager : IDisposable
     public bool RemoteInstallEnabled =>
         _configuration.GetValue("Extensions:AllowRemoteInstall", false);
 
+    public bool IsTrustedInstallClient(IPAddress? remoteIp)
+    {
+        var normalized = remoteIp == null ? null : AdminNetworkBindingPolicy.NormalizeAddress(remoteIp);
+        return AdminNetworkBindingPolicy.IsRemoteIpAllowed(
+                   remoteIp, AdminNetworkBindingPolicy.ParseTrustedSubnets(_configuration)) ||
+               normalized != null && AdminNetworkBindingPolicy.ResolveContainerGateways(_configuration).Contains(normalized);
+    }
+
     public ExtensionSandbox? GetExtension(string id)
     {
         return TryValidateExtensionId(id, out var validId) &&
@@ -261,12 +269,13 @@ public class ExtensionManager : IDisposable
         string downloadUrl,
         string expectedSha256,
         Guid? registryId = null,
+        bool trustedAdminRequest = false,
         CancellationToken cancellationToken = default)
     {
-        if (!RemoteInstallEnabled)
+        if (!RemoteInstallEnabled && !trustedAdminRequest)
         {
             throw new UnauthorizedAccessException(
-                "Remote extension installation requires Extensions:AllowRemoteInstall=true.");
+                "Package installation is limited to this server and trusted admin networks unless Extensions:AllowRemoteInstall=true.");
         }
         if (_controlPlane == null) throw new InvalidOperationException("The extension control plane is unavailable.");
         if (!OutboundRequestGuard.TryCreateSafeHttpUri(downloadUrl, out var packageUri, out _) ||

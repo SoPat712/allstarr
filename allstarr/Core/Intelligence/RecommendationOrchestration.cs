@@ -17,7 +17,8 @@ public sealed class ListeningProfileService(IDbContextFactory<AllstarrDbContext>
         var policy = await IntelligencePolicyService.Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken);
         if (policy?.Enabled != true) throw new InvalidOperationException("Intelligence is not enabled for this scope.");
         await IntelligencePolicyService.ScopedSignals(db, scope).Where(x => x.ExpiresAt <= clock.UtcNow).ExecuteDeleteAsync(cancellationToken);
-        await IntelligencePolicyService.ScopedProfiles(db, scope).Where(x => x.CreatedAt < clock.UtcNow.AddDays(-policy.RetentionDays)).ExecuteDeleteAsync(cancellationToken);
+        if (IntelligencePolicyService.RetentionCutoff(clock.UtcNow, policy.RetentionDays) is { } profileCutoff)
+            await IntelligencePolicyService.ScopedProfiles(db, scope).Where(x => x.CreatedAt < profileCutoff).ExecuteDeleteAsync(cancellationToken);
         var signals = await IntelligencePolicyService.ScopedSignals(db, scope).AsNoTracking().Where(x => x.ExpiresAt > clock.UtcNow).ToListAsync(cancellationToken);
         var start = signals.Count == 0 ? clock.UtcNow : signals.Min(x => x.ObservedAt);
         var weighted = signals.GroupBy(x => x.TrackReference).Select(group => new
@@ -190,8 +191,9 @@ public sealed class RecommendationRunService(IDbContextFactory<AllstarrDbContext
         if (policy?.Enabled != true) throw new InvalidOperationException("Intelligence is not enabled for this exact scope.");
         var enabledProviders = JsonSerializer.Deserialize<string[]>(policy.EnabledProvidersJson) ?? [];
         if (enabledProviders.Length == 0) throw new InvalidOperationException("No recommendation provider is enabled for this scope.");
-        var expiredRuns = await IntelligencePolicyService.ScopedRuns(db, scope).Where(x => x.CompletedAt != null &&
-            x.CompletedAt < clock.UtcNow.AddDays(-policy.RetentionDays)).ToListAsync(cancellationToken);
+        var runCutoff = IntelligencePolicyService.RetentionCutoff(clock.UtcNow, policy.RetentionDays);
+        var expiredRuns = runCutoff == null ? [] : await IntelligencePolicyService.ScopedRuns(db, scope)
+            .Where(x => x.CompletedAt != null && x.CompletedAt < runCutoff.Value).ToListAsync(cancellationToken);
         if (expiredRuns.Count > 0) { db.RecommendationRuns.RemoveRange(expiredRuns); await db.SaveChangesAsync(cancellationToken); }
         var existing = await IntelligencePolicyService.ScopedRuns(db, scope).AsNoTracking().SingleOrDefaultAsync(x => x.IdempotencyKey == idempotencyKey, cancellationToken);
         if (existing != null) return new(existing.Id, existing.JobId, false, existing.State);

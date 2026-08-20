@@ -77,6 +77,25 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task UnlimitedHistoryGivesRecommendationSignalsNoExpiry()
+    {
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            var policy = await db.IntelligencePolicies.SingleAsync();
+            policy.RetentionDays = 0;
+            policy.AllowedSignalTypesJson = "[\"play\"]";
+            await db.SaveChangesAsync();
+        }
+        var scope = new IntelligenceScope(tenant, user, "jellyfin", "backend", "music");
+
+        Assert.True(await new RecommendationSignalWriter(factory, clock)
+            .WriteAsync(scope, "play", "track-1", 1, clock.UtcNow));
+
+        await using var verify = await factory.CreateDbContextAsync();
+        Assert.Equal(DateTimeOffset.MaxValue, (await verify.ListeningSignals.SingleAsync()).ExpiresAt);
+    }
+
+    [Fact]
     public async Task AuthorizedSyntheticProtocolSmoke_RecordsLocalExternalSignalsAndTargetCheckpoints()
     {
         await using (var db = await factory.CreateDbContextAsync())

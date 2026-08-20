@@ -1110,7 +1110,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData("intelligence-policies.json", "retentionDays", 0)]
+    [InlineData("intelligence-policies.json", "retentionDays", -1)]
     [InlineData("intelligence-policies.json", "allowedSignalTypesJson", "[\"Play\"]")]
     [InlineData("intelligence-policies.json", "targetCredentialReferenceId", "00000000-0000-0000-0000-000000000001")]
     [InlineData("listening-events.json", "occurrenceKey", "short")]

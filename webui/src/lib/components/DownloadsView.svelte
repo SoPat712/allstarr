@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { ChevronDown } from "@lucide/svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { Badge } from "$lib/components/ui/badge";
@@ -300,6 +301,7 @@
             <small>Playback storage and retention, next to the files they control.</small>
           </span>
           <Badge state={storageMode === "Cache" ? "healthy" : "suggested"}>{storageMode} mode</Badge>
+          <ChevronDown class="disclosure-chevron" size={16} aria-hidden="true" />
         </summary>
         {#if controlsReady}
           <form class="settings-fields track-cache-settings" onsubmit={(event) => void saveCacheControls(event)}>
