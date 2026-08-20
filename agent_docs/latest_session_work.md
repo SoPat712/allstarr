@@ -1,5 +1,14 @@
 # Latest Session Work
 
+## Unlimited listening history and truthful imports — 2026-08-19
+
+- Revision `9336e6c7c9e62d2cb10312a20c2b2587b127d243` is pushed and deployed to both Allstarr stacks on `192.168.1.116`; both containers are healthy on image `sha256:2b7a5d3a827acd0ccaffd6291497457c4f0e87c8070230868fe410331863a20a`.
+- Listening-history retention now supports `0` as unlimited. New policy defaults are unlimited, while existing saved policies are preserved until the user changes them.
+- Import previews and apply jobs use the exact saved retention policy. Finite policies show rows outside retention before apply, and completed imports are loaded from durable storage after navigation or restart.
+- Live verification showed the existing `joshp / Music` policy remains `10 years`, the new `Unlimited` option is available, and all prior completed Spotify import records are visible under Intelligence → Import.
+- Shared disclosures now have explicit labels and consistent affordances; the mobile extension-permission dialog keeps confirmation and actions visible; trusted LAN extension installation no longer requires the remote-install switch.
+- Verification: focused .NET/PostgreSQL 49/49, Svelte diagnostics clean, unit 46/46, production build and budgets green at 47.3 KiB initial JavaScript and 23.8 KiB CSS, and focused browser 5/5. The exact disposable PostgreSQL container was removed.
+
 ## Delivered dashboard refinement — 2026-08-19
 
 - Application revision `f951adef2d45ca1d2582ccf1a0e3f8d1b9940649` is pushed and deployed to both Allstarr stacks on `192.168.1.116`.

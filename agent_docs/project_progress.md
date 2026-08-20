@@ -10,10 +10,10 @@ This is a replacement and consolidation package. Do not create parallel matching
 
 ### Verified delivery state
 
-- Application revision `f951adef2d45ca1d2582ccf1a0e3f8d1b9940649` is pushed and deployed to both Jellyfin and Subsonic stacks.
-- Both server checkouts are clean at that revision. Both app containers use image `sha256:ed0affbd62d1c177c3fbb5cfe9739a39602274aaff5cd8be211c19d56e1b208b` and are healthy.
+- Application revision `9336e6c7c9e62d2cb10312a20c2b2587b127d243` is pushed and deployed to both Jellyfin and Subsonic stacks.
+- Both server checkouts are clean at that revision. Both app containers use image `sha256:2b7a5d3a827acd0ccaffd6291497457c4f0e87c8070230868fe410331863a20a` and are healthy.
 - GitHub Actions run `32323295754` is green across build/test, release-critical, Apple, WebUI, format, Compose, and release-manifest jobs.
-- Current WebUI baseline is 47.2 KiB initial JavaScript and 23.5 KiB CSS; unit is 46/46 and browser is 93/93.
+- Current WebUI baseline is 47.3 KiB initial JavaScript and 23.8 KiB CSS; unit is 46/46. The import, retention, disclosure, audio-quality, and extension-permission browser slice is 5/5.
 - Canvas UI remains blocked by MIT plus Commons Clause redistribution terms. A focused replacement review found no permissive renderer that would delete more code than it adds, so use Svelte 5, shadcn-svelte, Bits UI, Lucide, CSS, SVG, and native Web Animations.
 - Koito `a079fa693569d21e03c00df163f20ac5e137c490`, Explo `4fc75874de691ff1e26b10d88b859cfac8ee2992`, and Multi-Scrobbler `bc28de66b14db1c99eb79ad75d1cdf4c9dfff7cc` are MIT reference inputs. Adapt useful behavior and presentation into existing owners; do not import their application architectures.
 - LAN/VPN access was enabled only after the local release gates passed, then used for exact-revision deployment and qualification.
