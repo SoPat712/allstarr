@@ -8,7 +8,7 @@ public sealed class IntelligenceThirdPartyNoticeContractTests
         var root = FindRepositoryRoot();
         var sdk = File.ReadAllText(Path.Combine(root, "docs", "extensions", "sdk-v1.md"));
 
-        Assert.Contains("service implementation remain outside the Allstarr package", sdk,
+        Assert.Contains("External intelligence service implementations remain outside the Allstarr package.", sdk,
             StringComparison.Ordinal);
         Assert.Contains("not a bundled registry or third-party extension packages", sdk,
             StringComparison.Ordinal);

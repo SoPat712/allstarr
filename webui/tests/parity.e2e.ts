@@ -1102,7 +1102,7 @@ for (const viewport of viewports) {
       await expect(page.getByText("Recommendation sources", { exact: true })).toBeVisible();
       await expect(page.getByText("Connected services Allstarr may use to find candidates. This does not import history or change source accounts.", { exact: true })).toBeVisible();
       const audioMuseSetup = page.locator(".provider-setup").filter({ hasText: "AudioMuse connection" });
-      await expect(audioMuseSetup).toContainText("Connect AudioMuse here");
+      await expect(audioMuseSetup).toContainText("Connect your self-hosted AudioMuse server here");
       await audioMuseSetup.getByRole("button", { name: "Connect AudioMuse" }).click();
       const audioMuseDialog = page.getByRole("dialog", { name: "Connect a Source" });
       await expect(audioMuseDialog.getByLabel("AudioMuse server URL")).toBeVisible();

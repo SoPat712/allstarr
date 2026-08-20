@@ -49,6 +49,7 @@ Extensions may expose the intelligence contract. AudioMuse is different: its All
 built in and its self-hosted server URL and optional token are configured from Intelligence.
 Allstarr stores the encrypted connection metadata and normalized results; models, workers,
 indexes, and the AudioMuse service remain outside Allstarr.
+External intelligence service implementations remain outside the Allstarr package.
 
 The intelligence capability requires `recommend`; the remaining hooks are optional:
 
