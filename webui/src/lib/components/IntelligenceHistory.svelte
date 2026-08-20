@@ -760,7 +760,7 @@
   @media(max-width:760px){
     .history-column-head{display:none}
     .history-list-card>header{border-bottom:1px solid var(--color-edge)}
-    .history-list>li>button{grid-template-columns:2.5rem minmax(0,1fr);align-items:start;min-height:0;padding-block:.65rem}
+    .history-list>li>button{grid-template-columns:2.5rem minmax(0,1fr);align-items:start;min-height:0;column-gap:.75rem;row-gap:.2rem;padding-block:.55rem}
     .history-list :global(.track-art){grid-row:1/3}
     .history-meta{grid-column:2;display:flex;flex-wrap:wrap;justify-content:space-between;gap:.2rem .75rem}
     .history-route,.history-time{grid-column:auto;display:flex;align-items:baseline;gap:.35rem}
