@@ -376,6 +376,7 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
             item.SourceKind = "import";
             item.ClientClass = "Koito";
             item.ProviderId = "spotify";
+            item.ProviderTrackReference = "spotify:track:track-a";
         }
         firstA.DurationMilliseconds = 1_000;
         secondA.DurationMilliseconds = null;
@@ -485,6 +486,9 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
             .EnumerateArray().ToArray();
         Assert.Equal(2, filtered.Length);
         Assert.All(filtered, item => Assert.Equal("Track A", item.GetProperty("Title").GetString()));
+        Assert.All(filtered, item => Assert.Equal(
+            "/api/admin/downloads/artwork/ext-spotify-song-track-a",
+            item.GetProperty("ArtworkUrl").GetString()));
 
         Assert.IsType<OkObjectResult>(await Controller().CorrectHistory(trackC.Id, new()
         {

@@ -387,21 +387,21 @@ const responses: Record<string, unknown> = {
     period: { from: "2025-12-01T00:00:00Z", to: "2026-01-01T00:00:00Z", timeZoneId: "UTC" },
     items: [{
       id: "44444444-4444-4444-4444-444444444444", title: "Moon Song", artist: "The Comets", album: "Night Drive",
-      listenedAt: "2025-12-31T18:00:00Z", durationMilliseconds: 180_000, client: "Jellyfin Web",
-      source: "playback", provider: "jellyfin", state: "completed", enrichmentState: "resolved",
-      targetStatuses: [{ target: "lastfm", state: "delivered", requiresReauthentication: false, updatedAt: "2025-12-31T18:05:00Z" }], revision: 2,
+      listenedAt: "2025-12-31T18:00:00Z", durationMilliseconds: 180_000, client: "ios",
+      source: "import", provider: "spotify", state: "completed", enrichmentState: "notrequested",
+      artworkUrl: "/api/admin/downloads/artwork/ext-spotify-song-track-a", targetStatuses: [], revision: 2,
     }],
     nextCursor: null,
   },
   "/api/admin/intelligence/history/44444444-4444-4444-4444-444444444444": {
     item: {
       id: "44444444-4444-4444-4444-444444444444", title: "Moon Song", artist: "The Comets", album: "Night Drive",
-      listenedAt: "2025-12-31T18:00:00Z", durationMilliseconds: 180_000, client: "Jellyfin Web",
-      source: "playback", provider: "jellyfin", state: "completed", enrichmentState: "resolved",
-      targetStatuses: [{ target: "lastfm", state: "delivered", requiresReauthentication: false, updatedAt: "2025-12-31T18:05:00Z" }], revision: 2,
+      listenedAt: "2025-12-31T18:00:00Z", durationMilliseconds: 180_000, client: "ios",
+      source: "import", provider: "spotify", state: "completed", enrichmentState: "notrequested",
+      artworkUrl: "/api/admin/downloads/artwork/ext-spotify-song-track-a", targetStatuses: [], revision: 2,
     },
-    identity: { albumArtist: "The Comets", musicBrainzEnrichmentConfidence: .98 },
-    provenance: { source: "playback", client: "Jellyfin Web", device: "browser", provider: "jellyfin", imported: false },
+    identity: { albumArtist: "The Comets", musicBrainzEnrichmentConfidence: null },
+    provenance: { source: "import", client: "ios", device: null, provider: "spotify", imported: true },
   },
   "/api/admin/intelligence/history/imports": { items: [] },
 };
@@ -427,6 +427,14 @@ async function mockApi(page: Page, options: {
   }));
   await page.route("**/api/admin/**", async (route) => {
     const url = new URL(route.request().url());
+    if (url.pathname === "/api/admin/downloads/artwork/ext-spotify-song-track-a") {
+      await route.fulfill({
+        status: 200,
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path fill="#4285f4" d="M0 0h1v1H0z"/></svg>',
+      });
+      return;
+    }
     if (url.pathname === options.releasePath) await options.release;
     if (options.fail?.includes(url.pathname)) {
       await route.fulfill({
@@ -987,7 +995,14 @@ for (const viewport of viewports) {
       await expect(recap).toContainText("Your most-played song was Moon Song by The Comets");
       await expect(recap).toContainText("Your first recorded listen was");
       await expect(page.getByRole("heading", { name: "Recently played", level: 3 })).toBeVisible();
-      await expect(page.locator(".history-list").getByText("Moon Song", { exact: true })).toBeVisible();
+      const historyList = page.locator(".history-list");
+      await expect(historyList.getByText("Moon Song", { exact: true })).toBeVisible();
+      await expect(historyList).not.toContainText(/not\s?requested/i);
+      await expect(historyList.locator(".track-art img")).toBeVisible();
+      const historyRow = historyList.getByRole("button").first();
+      expect((await historyRow.boundingBox())!.height).toBeLessThan(viewport.width <= 620 ? 112 : 72);
+      if (viewport.width > 760) await expect(page.locator(".history-column-head")).toBeVisible();
+      else await expect(page.locator(".history-column-head")).toBeHidden();
       expect(await page.locator(".history-list").evaluate((element) => element.tagName)).toBe("UL");
       const activityCard = page.locator(".activity-card");
       await expect(activityCard.getByText(viewport.width <= 620
@@ -1306,6 +1321,8 @@ test("Intelligence history imports, corrections, and schedules use the selected 
   await page.locator(".history-list").getByRole("button").click();
   const detail = page.getByRole("dialog", { name: "Edit listen" });
   await expect(detail).toBeVisible();
+  await expect(detail.getByText("MusicBrainz details", { exact: true })).toBeVisible();
+  await expect(detail.getByText("No lookup queued", { exact: true })).toBeVisible();
   await detail.getByLabel("Song").fill("Moon Song (live)");
   const correction = page.waitForRequest((request) => request.method() === "PUT" &&
     request.url().includes("/api/admin/intelligence/history/44444444-4444-4444-4444-444444444444"));

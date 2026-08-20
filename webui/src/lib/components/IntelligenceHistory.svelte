@@ -7,6 +7,7 @@
   import { FileUp, X } from "@lucide/svelte";
   import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import {
@@ -437,7 +438,48 @@
   }
 
   function words(value?: string | null) {
-    return value ? value.replaceAll("_", " ").replaceAll("-", " ") : "Unknown";
+    if (!value) return "Unknown";
+    if (value.toLowerCase() === "notrequested") return "Not requested";
+    return value.replaceAll("_", " ").replaceAll("-", " ");
+  }
+
+  function sourceLabel(value?: string | null) {
+    if (!value) return "Unknown source";
+    return ({
+      jellyfin: "Jellyfin",
+      lastfm: "Last.fm",
+      listenbrainz: "ListenBrainz",
+      spotify: "Spotify",
+      subsonic: "Subsonic",
+    } as Record<string, string>)[value.toLowerCase()] ?? words(value);
+  }
+
+  function clientLabel(value?: string | null) {
+    if (!value) return "Unknown client";
+    return ({ ios: "iOS", macos: "macOS", tvos: "tvOS" } as Record<string, string>)[value.toLowerCase()] ?? words(value);
+  }
+
+  function listenDate(value?: string | null) {
+    return value
+      ? new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+      : "Date unavailable";
+  }
+
+  function listenTime(value?: string | null, durationMilliseconds?: number | null) {
+    const time = value
+      ? new Date(value).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+      : "Time unavailable";
+    return durationMilliseconds ? `${time} · ${formatDuration(durationMilliseconds)}` : time;
+  }
+
+  function musicBrainzState(value?: string | null) {
+    return ({
+      notrequested: "No lookup queued",
+      pending: "Lookup queued",
+      resolved: "Details found",
+      unresolved: "No match found",
+      failed: "Lookup failed",
+    } as Record<string, string>)[value?.toLowerCase() ?? ""] ?? words(value);
   }
 
   function fileSize(bytes: number) {
@@ -561,14 +603,17 @@
   {#if (section === "overview" || section === "history") && !loading}
     {@const shownItems = section === "overview" ? items.slice(0, 5) : items}
     <section class="panel history-list-card">
-      <header><div><p class="eyebrow">Recent listens</p><h3>{section === "overview" ? "Recently played" : "History"}</h3></div><span>{shownItems.length} shown</span></header>
+      <header><div><h3>{section === "overview" ? "Recently played" : "Recent listens"}</h3><p>{section === "overview" ? "Your latest completed listens." : "Open a listen to review or correct its song details."}</p></div><span class="history-count">{shownItems.length} {shownItems.length === 1 ? "listen" : "listens"}</span></header>
+      {#if shownItems.length}<div class="history-column-head" aria-hidden="true"><span></span><span>Track</span><span>Source</span><span>Listened</span></div>{/if}
       <ul class="history-list">
         {#each shownItems as item}
           <li><button type="button" onclick={() => void openDetail(item)}>
-            <span class="track-art">{#if item.artworkUrl}<img src={item.artworkUrl} alt="" loading="lazy" />{:else}<span aria-hidden="true">♪</span>{/if}</span>
-            <span class="history-copy"><strong>{item.title ?? "Unknown song"}</strong><small>{item.artist ?? "Unknown artist"}{item.album ? ` · ${item.album}` : ""}</small><small>{item.listenedAt ? new Date(item.listenedAt).toLocaleString() : "Time unavailable"} · {formatDuration(item.durationMilliseconds)}</small></span>
-            <span class="history-route"><strong>{item.provider ?? words(item.source)}</strong><small>{item.client ?? "Unknown client"}</small>{#if item.targetStatuses.length}<small>{item.targetStatuses.map((status) => `${words(status.target)}: ${words(status.state)}`).join(" · ")}</small>{/if}</span>
-            <Badge state={item.enrichmentState === "resolved" ? "healthy" : "suggested"}>{words(item.enrichmentState)}</Badge>
+            <MediaArtwork class="track-art" url={item.artworkUrl} />
+            <span class="history-copy"><strong>{item.title ?? "Unknown song"}</strong><small>{item.artist ?? "Unknown artist"}{item.album ? ` · ${item.album}` : ""}</small></span>
+            <span class="history-meta">
+              <span class="history-route"><strong>{sourceLabel(item.provider ?? item.source)}</strong><small>{clientLabel(item.client)}</small>{#if item.targetStatuses.length}<small>{item.targetStatuses.map((status) => `${sourceLabel(status.target)}: ${words(status.state)}`).join(" · ")}</small>{/if}</span>
+              <span class="history-time"><time datetime={item.listenedAt ?? undefined}>{listenDate(item.listenedAt)}</time><small>{listenTime(item.listenedAt, item.durationMilliseconds)}</small></span>
+            </span>
           </button></li>
         {:else}
           <li>{#if section === "history" && hasHistoryFilters}<div class="compact-empty"><strong>No listens match these filters</strong><p>Try a wider period or clear a filter.</p></div>
@@ -662,7 +707,7 @@
           <label class="field"><span>Artist</span><input bind:value={editArtist} maxlength="500" required /></label>
           <label class="field"><span>Album</span><input bind:value={editAlbum} maxlength="500" /></label>
           <label class="field"><span>Album artist</span><input bind:value={editAlbumArtist} maxlength="500" /></label>
-          <dl><div><dt>Listened</dt><dd>{detail.item.listenedAt ? new Date(detail.item.listenedAt).toLocaleString() : "Unknown"}</dd></div><div><dt>Duration</dt><dd>{formatDuration(detail.item.durationMilliseconds)}</dd></div><div><dt>Source</dt><dd>{words(detail.provenance.source)}</dd></div><div><dt>Client</dt><dd>{detail.provenance.client ?? "Unknown"}</dd></div><div><dt>Imported</dt><dd>{detail.provenance.imported ? "Yes" : "No"}</dd></div><div><dt>MusicBrainz</dt><dd>{words(detail.item.enrichmentState)}{detail.identity.musicBrainzEnrichmentConfidence != null ? ` · ${Math.round(detail.identity.musicBrainzEnrichmentConfidence * 100)}%` : ""}</dd></div></dl>
+          <dl><div><dt>Listened</dt><dd>{detail.item.listenedAt ? new Date(detail.item.listenedAt).toLocaleString() : "Unknown"}</dd></div><div><dt>Duration</dt><dd>{formatDuration(detail.item.durationMilliseconds)}</dd></div><div><dt>Source</dt><dd>{sourceLabel(detail.provenance.source)}</dd></div><div><dt>Client</dt><dd>{clientLabel(detail.provenance.client)}</dd></div><div><dt>Imported</dt><dd>{detail.provenance.imported ? "Yes" : "No"}</dd></div><div><dt>MusicBrainz details</dt><dd>{musicBrainzState(detail.item.enrichmentState)}{detail.identity.musicBrainzEnrichmentConfidence != null ? ` · ${Math.round(detail.identity.musicBrainzEnrichmentConfidence * 100)}%` : ""}</dd></div></dl>
           {#if detail.item.targetStatuses.length}<section class="target-statuses"><strong>Listening services</strong><ul>{#each detail.item.targetStatuses as status}<li><span>{words(status.target)} · {words(status.state)}</span>{#if status.message}<small>{status.message}</small>{/if}</li>{/each}</ul></section>{/if}
           <footer><Button variant="destructive" onclick={() => deleteOpen = true}>Delete listen</Button><span><Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close><Button type="submit" disabled={Boolean(action)}>{action === "save-detail" ? "Saving…" : "Save changes"}</Button></span></footer>
         </form>
@@ -690,4 +735,39 @@
   :global(.history-detail-dialog){display:grid;grid-template-rows:auto minmax(0,1fr);width:min(44rem,calc(100vw - 2rem));max-height:min(48rem,calc(100dvh - 2rem));overflow:hidden}.history-detail-form{display:grid;grid-template-columns:1fr 1fr;gap:1rem;overflow:auto;padding:1rem}.history-detail-form dl,.target-statuses,.history-detail-form footer{grid-column:1/-1}.history-detail-form dl{display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem;margin:0}.history-detail-form dl div{border:1px solid var(--color-edge);border-radius:var(--radius-md);padding:.7rem}.history-detail-form dt{color:var(--color-ink-muted);font-size:.72rem}.history-detail-form dd{margin:.2rem 0 0}.target-statuses ul{margin:0;padding:0;list-style:none}.target-statuses li{display:flex;justify-content:space-between;gap:1rem}.target-statuses small{color:var(--color-ink-muted)}.history-detail-form footer{display:flex;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.history-detail-form footer>span{display:flex;gap:.5rem}
   @media(max-width:900px){.history-toolbar{grid-template-columns:1fr auto}.history-toolbar>:global(nav[aria-label="History period"]){grid-column:1/-1;grid-row:2}.history-stats{grid-template-columns:repeat(3,1fr)}.history-breakdowns{grid-template-columns:1fr 1fr}.advanced-filters{grid-template-columns:1fr 1fr}.history-list>li>button{grid-template-columns:auto minmax(0,1fr) auto}.history-route{grid-column:2;text-align:left}.import-preview{grid-template-columns:1fr 1fr}}
   @media(max-width:620px){.history-heading{flex-direction:column}.history-actions,.history-actions>:global([data-slot="button"]){width:100%}.history-toolbar{grid-template-columns:1fr}.history-toolbar>:global(nav[aria-label="History period"]){grid-column:auto;grid-row:auto}.history-toolbar :global(.period-tabs){width:100%}.history-toolbar details{grid-column:auto}.advanced-filters,.history-insights,.history-breakdowns,.history-detail-form,.history-detail-form dl{grid-template-columns:1fr}.history-stats{grid-template-columns:1fr 1fr}.history-stats article:last-child{grid-column:1/-1}.history-list>li>button{grid-template-columns:auto minmax(0,1fr)}.history-list>li>button>:global(.badge){grid-column:2;justify-self:start}.history-route{grid-column:2}.activity-card>header,.top-card>header,.history-detail-form footer{align-items:stretch;flex-direction:column}.activity-range-wide,.activity-grid span:nth-last-child(n+31){display:none}.activity-range-mobile{display:inline}.top-card>header{display:grid}.monthly-activity li{grid-template-columns:minmax(0,1fr) auto}.monthly-activity meter{grid-column:1/-1;grid-row:2}.import-card{gap:1rem;padding:1rem}.upload-zone{grid-template-columns:auto minmax(0,1fr);min-height:6rem}.import-readiness,.import-batch-actions{grid-template-columns:auto minmax(0,1fr)}.import-readiness>:global([data-slot="button"]),.import-batch-actions>:global([data-slot="button"]),.upload-browse{grid-column:1/-1;width:100%;text-align:center}.import-batch-summary{grid-template-columns:1fr}.import-batch-summary div+div{border-top:1px solid var(--color-edge);border-left:0}.import-result>footer,.import-result>footer>:global([data-slot="button"]){width:100%}.import-preview{grid-template-columns:1fr 1fr}.import-preview div:nth-child(3){border-left:0}.import-preview div:nth-child(n+3){border-top:1px solid var(--color-edge)}.import-result>header{align-items:start}.import-result>footer{display:grid}.history-detail-form dl,.target-statuses,.history-detail-form footer{grid-column:auto}.history-detail-form footer>span{display:grid}.history-detail-form footer :global(button){width:100%}}
+
+  .history-list-card{overflow:hidden;padding:0}
+  .history-list-card>header{align-items:center;padding:1rem 1.1rem .8rem}
+  .history-list-card>header h3{margin:0}
+  .history-list-card>header p{margin:.2rem 0 0;color:var(--color-ink-muted);font-size:var(--text-sm)}
+  .history-count{flex:none;border-radius:999px;background:var(--color-panel-raised);padding:.3rem .6rem;color:var(--color-ink-muted);font-size:var(--text-xs);font-weight:700}
+  .history-column-head{display:grid;grid-template-columns:2.5rem minmax(0,1fr) minmax(7rem,.32fr) minmax(9rem,.4fr);align-items:center;gap:.75rem}
+  .history-list>li>button{display:grid;grid-template-columns:2.5rem minmax(0,1fr) minmax(17rem,.72fr);align-items:center;gap:.75rem}
+  .history-column-head{border-block:1px solid var(--color-edge);background:var(--color-panel-raised);padding:.42rem 1.1rem;color:var(--color-ink-muted);font-size:.7rem;font-weight:700}
+  .history-list{margin:0}
+  .history-list>li>button{min-height:3.75rem;border-top:1px solid var(--color-edge);padding:.5rem 1.1rem}
+  .history-list>li:first-child>button{border-top:0}
+  .history-list>li>button:hover{background:color-mix(in srgb,var(--color-signal) 5%,transparent)}
+  .history-list :global(.track-art){width:2.5rem;height:2.5rem}
+  .history-copy,.history-meta,.history-route,.history-time{min-width:0}
+  .history-meta{display:grid;grid-template-columns:minmax(7rem,.8fr) minmax(9rem,1fr);gap:.75rem}
+  .history-copy strong,.history-copy small,.history-route strong,.history-route small,.history-time time,.history-time small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .history-copy strong{font-size:var(--text-sm)}
+  .history-copy small,.history-route small,.history-time small{color:var(--color-ink-muted);font-size:var(--text-xs)}
+  .history-route,.history-time{grid-column:auto;text-align:left}
+  .history-route strong,.history-time time{font-size:var(--text-sm);font-weight:700}
+
+  @media(max-width:760px){
+    .history-column-head{display:none}
+    .history-list-card>header{border-bottom:1px solid var(--color-edge)}
+    .history-list>li>button{grid-template-columns:2.5rem minmax(0,1fr);align-items:start;min-height:0;padding-block:.65rem}
+    .history-list :global(.track-art){grid-row:1/3}
+    .history-meta{grid-column:2;display:flex;flex-wrap:wrap;justify-content:space-between;gap:.2rem .75rem}
+    .history-route,.history-time{grid-column:auto;display:flex;align-items:baseline;gap:.35rem}
+    .history-route strong,.history-route small,.history-time time,.history-time small{display:inline}
+  }
+  @media(max-width:420px){
+    .history-list-card>header{align-items:flex-start}
+    .history-list-card>header p{display:none}
+  }
 </style>

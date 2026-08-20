@@ -707,12 +707,37 @@ public sealed partial class IntelligenceController
                     item.LibraryScopeId == scope.LibraryScopeId && trackIds.Contains(item.Id))
                 .ToDictionaryAsync(item => item.Id, item => item.BackendItemId, cancellationToken);
         var statuses = await TargetStatusesAsync(db, scope, records.Select(item => item.OccurrenceKey).ToArray(), cancellationToken);
-        return records.Select(item => HistoryItem(
-            item,
-            item.LibraryTrackId is { } id && artwork.TryGetValue(id, out var backendItemId)
-                ? $"/api/admin/downloads/artwork/{Uri.EscapeDataString(backendItemId)}"
-                : null,
-            statuses.GetValueOrDefault(item.OccurrenceKey, []))).ToArray();
+        return records.Select(item =>
+        {
+            var artworkItemId = HistoryArtworkItemId(item, artwork);
+            return HistoryItem(
+                item,
+                artworkItemId == null
+                    ? null
+                    : $"/api/admin/downloads/artwork/{Uri.EscapeDataString(artworkItemId)}",
+                statuses.GetValueOrDefault(item.OccurrenceKey, []));
+        }).ToArray();
+    }
+
+    private static string? HistoryArtworkItemId(
+        ListeningEventRecord record,
+        IReadOnlyDictionary<Guid, string> localArtwork)
+    {
+        if (record.LibraryTrackId is { } libraryTrackId &&
+            localArtwork.TryGetValue(libraryTrackId, out var backendItemId))
+            return backendItemId;
+
+        var provider = record.ProviderId?.Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(provider) || provider.Any(character =>
+                !char.IsAsciiLetterOrDigit(character) && character is not '-' and not '_'))
+            return null;
+        var prefix = $"{provider}:track:";
+        if (record.ProviderTrackReference?.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) != true)
+            return null;
+        var externalId = record.ProviderTrackReference[prefix.Length..].Trim();
+        return externalId.Length is > 0 and <= 500
+            ? $"ext-{provider}-song-{externalId}"
+            : null;
     }
 
     private static ListeningHistoryItem HistoryItem(
