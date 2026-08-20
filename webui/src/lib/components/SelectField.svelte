@@ -29,6 +29,9 @@
   const items = $derived(options.map((option) => typeof option === "string"
     ? { value: option, label: option }
     : option));
+  const visiblePlaceholder = $derived(value === ""
+    ? items.find((item) => item.value === "")?.label ?? placeholder
+    : placeholder);
 </script>
 
 <div class="select-root">
@@ -42,7 +45,7 @@
     onValueChange={(next) => onchange?.(next)}
   >
     <Select.Trigger class={`select-trigger ${className}`.trim()} aria-label={label}>
-      <Select.Value {placeholder} />
+      <Select.Value placeholder={visiblePlaceholder} />
       <ChevronDown class="select-chevron" size={16} aria-hidden="true" />
     </Select.Trigger>
     <Select.Portal>

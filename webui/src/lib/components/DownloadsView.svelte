@@ -229,10 +229,9 @@
         <div class="download-head" role="row">
           <span role="columnheader">Track</span>
           <span role="columnheader">Provider</span>
-          <span role="columnheader">Format</span>
+          <span role="columnheader">Quality</span>
           <span role="columnheader">Lifecycle</span>
-          <span role="columnheader">Size</span>
-          <span role="columnheader">Updated</span>
+          <span role="columnheader">File</span>
           <span role="columnheader">Actions</span>
         </div>
         <div class="download-rows">
@@ -265,9 +264,9 @@
                 {#if file.expiresAt}<small>Expires {relativeTime(file.expiresAt)}</small>{/if}
                 {#if file.referenceCount != null}<small>{file.referenceCount} reference{file.referenceCount === 1 ? "" : "s"}</small>{/if}
               </span>
-              <span role="cell" aria-label={`Size ${file.sizeFormatted}`}>{file.sizeFormatted}</span>
-              <span role="cell" aria-label={`Updated ${relativeTime(file.lastModified)}`}>
-                <time datetime={file.lastModified}>{relativeTime(file.lastModified)}</time>
+              <span class="download-file" role="cell" aria-label={`Size ${file.sizeFormatted}. Updated ${relativeTime(file.lastModified)}`}>
+                <strong>{file.sizeFormatted}</strong>
+                <small>Updated <time datetime={file.lastModified}>{relativeTime(file.lastModified)}</time></small>
               </span>
               <span class="download-actions" role="cell">
                 <Button variant="secondary" href={downloads.fileUrl(file.path, storage)}>Download</Button>

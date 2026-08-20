@@ -2200,11 +2200,13 @@ test("Cached and Kept keep media facts and actions readable on mobile", async ({
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
   await page.goto("#/library/cached");
+  await expect(page.getByRole("button", { name: "Provider" })).toContainText("All providers");
   const cached = page.locator(".download-row");
   await expect(cached.locator(".download-art .provider-mark")).toBeVisible();
   await expect(cached.getByText("FLAC · 900 kbps · 16-bit · 44.1 kHz · 2 ch")).toBeVisible();
-  await expect(cached.getByRole("cell", { name: "Size 1000 KiB" })).toBeVisible();
-  await expect(cached.getByRole("cell", { name: /^Updated / })).toBeVisible();
+  const fileFacts = cached.locator(".download-file");
+  await expect(fileFacts).toHaveAttribute("aria-label", /Size 1000 KiB\. Updated /);
+  await expect(fileFacts.getByText("1000 KiB", { exact: true })).toBeVisible();
   await expect(cached.getByRole("link", { name: "Download" })).toBeVisible();
   await expect(cached.getByRole("button", { name: "Keep" })).toBeVisible();
   await expect(cached.getByRole("button", { name: "Remove" })).toBeVisible();
