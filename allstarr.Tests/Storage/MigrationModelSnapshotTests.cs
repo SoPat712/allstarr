@@ -14,6 +14,6 @@ public sealed class MigrationModelSnapshotTests
         using var context = new AllstarrDbContext(options);
 
         Assert.False(context.Database.HasPendingModelChanges());
-        Assert.Equal("20260804080000_BackfillV3CompatibilityState", context.Database.GetMigrations().Last());
+        Assert.Equal("20260820173000_RepairProviderAccountCreatorIdentity", context.Database.GetMigrations().Last());
     }
 }
