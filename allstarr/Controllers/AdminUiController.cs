@@ -275,10 +275,7 @@ public class AdminUiController : ControllerBase
             var paths = await context.DownloadedSongMappings.AsNoTracking()
                 .Select(item => item.LocalPath)
                 .ToArrayAsync(cancellationToken);
-            cacheTracks = paths.Count(path => IsStoredUnder(path, Path.Combine(downloadRoot, "cache")) ||
-                                              IsStoredUnder(path, Path.Combine(downloadRoot, "transcoded")));
-            keptTracks = paths.Count(path => IsStoredUnder(path, Path.Combine(downloadRoot, "permanent")) ||
-                                             IsStoredUnder(path, Path.Combine(downloadRoot, "kept")));
+            (cacheTracks, keptTracks) = CountExistingStorageMappings(paths, downloadRoot);
         }
         var storage = services.GetService<DurableStorageState>()?.GetSnapshot();
         var providerHealth = session.IsAdministrator
@@ -334,6 +331,29 @@ public class AdminUiController : ControllerBase
         {
             return false;
         }
+    }
+
+    internal static (int CacheTracks, int KeptTracks) CountExistingStorageMappings(
+        IEnumerable<string> paths,
+        string downloadRoot)
+    {
+        var cacheTracks = 0;
+        var keptTracks = 0;
+        foreach (var path in paths)
+        {
+            if (!System.IO.File.Exists(path)) continue;
+            if (IsStoredUnder(path, Path.Combine(downloadRoot, "cache")) ||
+                IsStoredUnder(path, Path.Combine(downloadRoot, "transcoded")))
+            {
+                cacheTracks++;
+            }
+            else if (IsStoredUnder(path, Path.Combine(downloadRoot, "permanent")) ||
+                     IsStoredUnder(path, Path.Combine(downloadRoot, "kept")))
+            {
+                keptTracks++;
+            }
+        }
+        return (cacheTracks, keptTracks);
     }
 
     [HttpGet("activity")]
