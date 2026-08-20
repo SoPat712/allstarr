@@ -19,9 +19,15 @@
   $effect(() => {
     active;
     if (typeof document === "undefined") return;
-    queueMicrotask(() => tablist
-      ?.querySelector<HTMLElement>('[aria-selected="true"]')
-      ?.scrollIntoView({ block: "nearest", inline: "nearest" }));
+    queueMicrotask(() => {
+      const selected = tablist?.querySelector<HTMLElement>('[aria-selected="true"]');
+      if (!tablist || !selected) return;
+      const start = selected.offsetLeft;
+      const end = start + selected.offsetWidth;
+      if (start < tablist.scrollLeft) tablist.scrollTo({ left: start });
+      else if (end > tablist.scrollLeft + tablist.clientWidth)
+        tablist.scrollTo({ left: end - tablist.clientWidth });
+    });
   });
 
   function navigate(event: KeyboardEvent) {

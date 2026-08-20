@@ -745,7 +745,16 @@ for (const viewport of viewports) {
         }
         await mockApi(page);
         await page.goto(route);
-        await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
+        const pageHeading = page.getByRole("heading", { name: heading, level: 1 });
+        await expect(pageHeading).toBeVisible();
+        if (route === "#/integrations/extensions") {
+          await expect(page.getByText("Extension manager", { exact: true })).toBeVisible();
+        }
+        await page.evaluate(() => new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ));
+        expect(await page.evaluate(() => window.scrollY)).toBe(0);
+        expect((await pageHeading.boundingBox())?.y).toBeGreaterThanOrEqual(0);
         await expect.poll(() => page.evaluate(() =>
           document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
         if (route === "#/activity") {
