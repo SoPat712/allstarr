@@ -84,6 +84,7 @@
   let matchOpen = $state(false);
   let selectedMatch = $state<MatchReviewItem | null>(null);
   let matchLoading = $state("");
+  let trackMenuOpen = $state<number | null>(null);
   const trackColumnOptions = [
     { id: "position", label: "Playlist number" },
     { id: "artist", label: "Artist" },
@@ -857,8 +858,11 @@
                       <td class="track-duration">{formatDuration(track.durationMs)}</td>
                     {/if}
                     <td class="track-menu">
-                      <Popover.Root>
-                        <Popover.Trigger class="track-menu-trigger" aria-label={`Technical details for ${track.title}`}><MoreHorizontal size={18} aria-hidden="true" /></Popover.Trigger>
+                      <Popover.Root
+                        open={trackMenuOpen === track.sourcePosition}
+                        onOpenChange={(open) => trackMenuOpen = open ? track.sourcePosition : null}
+                      >
+                        <Popover.Trigger id={`track-details-${track.sourcePosition}`} class="track-menu-trigger" aria-label={`Technical details for ${track.title}`}><MoreHorizontal size={18} aria-hidden="true" /></Popover.Trigger>
                         <Popover.Portal>
                           <Popover.Content class="bits-menu track-details-menu" sideOffset={4} align="end">
                             <div class="track-technical">
@@ -872,7 +876,14 @@
                               {#if track.externalSnapshotId}
                                 <Button
                                   variant="secondary"
-                                  onclick={(event) => void openTrackMatch(track.externalSnapshotId, event.currentTarget)}
+                                  size="sm"
+                                  onclick={() => {
+                                    trackMenuOpen = null;
+                                    void openTrackMatch(
+                                      track.externalSnapshotId,
+                                      document.getElementById(`track-details-${track.sourcePosition}`) ?? undefined,
+                                    );
+                                  }}
                                 >Review match</Button>
                               {/if}
                             </div>

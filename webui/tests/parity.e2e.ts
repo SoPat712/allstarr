@@ -3018,12 +3018,19 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await dialog.getByRole("button", { name: "Technical details for Test song" }).click();
   await expect(page).toHaveURL(/#\/library\/playlists$/);
   const trackDetails = page.locator(".track-details-menu");
-  await expect(trackDetails.getByRole("button", { name: "Review match" })).toBeVisible();
+  const reviewMatch = trackDetails.getByRole("button", { name: "Review match" });
+  await expect(reviewMatch).toBeVisible();
   await expect.poll(() => trackDetails.evaluate((panel) => {
     const bounds = panel.getBoundingClientRect();
     return panel.contains(document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + 8));
   })).toBe(true);
+  await reviewMatch.click();
+  await expect(trackDetails).toBeHidden();
+  const reviewedMatch = page.getByRole("dialog", { name: "Test song" });
+  await expect(reviewedMatch).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(reviewedMatch).toBeHidden();
+  await expect(dialog.getByRole("button", { name: "Technical details for Test song" })).toBeFocused();
   await dialog.getByRole("button", { name: "Open mapping details for Test song" }).focus();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/#\/library\/playlists$/);

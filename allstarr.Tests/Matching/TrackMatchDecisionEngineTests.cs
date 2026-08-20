@@ -637,6 +637,94 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void AcceptanceQualifiedLocalCandidateWinsOverHigherProviderRoute()
+    {
+        var scope = Scope();
+        var source = Source() with { Isrc = "USAAA2600001" };
+        var local = Candidate(scope) with
+        {
+            CanonicalRecordingId = null,
+            Album = null,
+            AlbumArtist = null,
+            DurationMilliseconds = 230_000,
+            IsLocal = true
+        };
+        var provider = Candidate(scope) with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "provider-route",
+            CanonicalRecordingId = null,
+            Isrc = source.Isrc,
+            IsLocal = false,
+            ProviderOrigin = ProviderOrigin.BuiltIn
+        };
+        var engine = new TrackMatchDecisionEngine();
+
+        var scores = engine.ScoreCandidates(source, [provider, local]);
+        var localScore = scores.Single(score => score.LibraryTrackId == local.LibraryTrackId);
+        var providerScore = scores.Single(score => score.LibraryTrackId == provider.LibraryTrackId);
+        var decision = engine.Decide(scope, source, [provider, local]);
+
+        Assert.True(providerScore.Confidence > localScore.Components!["preferenceScore"]);
+        Assert.True(localScore.Components["preferenceScore"] >= decision.AcceptThreshold);
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(local.LibraryTrackId, decision.SelectedLibraryTrackId);
+        Assert.Equal(local.LibraryTrackId, decision.Candidates[0].LibraryTrackId);
+        Assert.Equal(localScore.Components["preferenceScore"], decision.Confidence);
+    }
+
+    [Fact]
+    public void AcceptanceQualifiedLocalCandidateIsRetainedAheadOfTwentyProviderRoutes()
+    {
+        var scope = Scope();
+        var source = Source() with { Isrc = "USAAA2600002" };
+        var local = Candidate(scope) with
+        {
+            CanonicalRecordingId = null,
+            Album = null,
+            AlbumArtist = null,
+            DurationMilliseconds = 230_000
+        };
+        var providers = Enumerable.Range(0, 20).Select(index => Candidate(scope) with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = $"provider-{index}",
+            CanonicalRecordingId = null,
+            Isrc = source.Isrc,
+            IsLocal = false,
+            ProviderOrigin = ProviderOrigin.BuiltIn
+        });
+
+        var decision = new TrackMatchDecisionEngine().Decide(
+            scope, source, [.. providers, local]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(local.LibraryTrackId, decision.SelectedLibraryTrackId);
+        Assert.Equal(local.LibraryTrackId, decision.Candidates[0].LibraryTrackId);
+        Assert.Equal(20, decision.Candidates.Count);
+    }
+
+    [Fact]
+    public void MultipleAcceptanceQualifiedLocalRecordingsRemainAmbiguous()
+    {
+        var scope = Scope();
+        var first = Candidate(scope);
+        var second = first with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "local-2",
+            CanonicalRecordingId = Guid.CreateVersion7(),
+            DurationMilliseconds = 240_000
+        };
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, Source(), [first, second]);
+
+        Assert.Equal(TrackMatchReviewState.Ambiguous, decision.State);
+        Assert.Null(decision.SelectedLibraryTrackId);
+        Assert.Contains("ambiguous_top_candidates", decision.Warnings);
+    }
+
+    [Fact]
     public void ExtensionPreferencePenaltyFavorsAnOtherwiseEqualBuiltInCandidate()
     {
         var scope = Scope();

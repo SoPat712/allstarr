@@ -138,7 +138,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "normalized-v13";
+    public const string AlgorithmVersion = "normalized-v14";
 
     private readonly TrackMatchPolicy _policy;
 
@@ -277,10 +277,8 @@ public sealed class TrackMatchDecisionEngine
                     scope);
         }
 
-        var scores = ScoreCandidates(source, visible)
-            .Take(20)
-            .ToList();
-        if (scores.Count == 0)
+        var rankedScores = ScoreCandidates(source, visible);
+        if (rankedScores.Count == 0)
         {
             return Result(
                 scopedCandidates.Count > 0 && manualOverride?.RejectedLibraryTrackIds?.Count > 0
@@ -294,9 +292,27 @@ public sealed class TrackMatchDecisionEngine
                 scope);
         }
 
+        // A backend-local candidate that independently clears the automatic
+        // acceptance bar is the useful library answer. Provider routes remain
+        // fallbacks and must not displace it merely by scoring a few points
+        // higher.
+        var acceptedLocal = rankedScores.FirstOrDefault(score =>
+            score.IsLocal &&
+            PreferenceScore(score) >= _policy.AcceptThreshold &&
+            HasStrongArtistEvidence(score));
+        var scores = (acceptedLocal == null
+                ? rankedScores
+                : [acceptedLocal, .. rankedScores.Where(score =>
+                    score.LibraryTrackId != acceptedLocal.LibraryTrackId)])
+            .Take(20)
+            .ToList();
         var best = scores[0];
         var selected = visible.Single(candidate => candidate.LibraryTrackId == best.LibraryTrackId);
-        var runnerUp = scores.Skip(1).FirstOrDefault(score =>
+        var competingScores = acceptedLocal == null
+            ? rankedScores
+            : rankedScores.Where(score => score.IsLocal);
+        var runnerUp = competingScores.FirstOrDefault(score =>
+            score.LibraryTrackId != best.LibraryTrackId &&
             !SameRecordingIdentity(
                 selected,
                 visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId)));
@@ -322,9 +338,7 @@ public sealed class TrackMatchDecisionEngine
         }
 
         var decisionScore = PreferenceScore(best);
-        var strongArtistEvidence = best.Components == null ||
-                                   !best.Components.TryGetValue("artist", out var artistScore) ||
-                                   artistScore >= 0.7;
+        var strongArtistEvidence = HasStrongArtistEvidence(best);
         var state = decisionScore >= _policy.AcceptThreshold && strongArtistEvidence
             ? TrackMatchReviewState.Accepted
             : decisionScore >= _policy.SuggestThreshold && strongArtistEvidence
@@ -348,6 +362,11 @@ public sealed class TrackMatchDecisionEngine
             },
             scope);
     }
+
+    private static bool HasStrongArtistEvidence(TrackMatchCandidateScore score) =>
+        score.Components == null ||
+        !score.Components.TryGetValue("artist", out var artistScore) ||
+        artistScore >= 0.7;
 
     private TrackMatchCandidateScore ScoreCandidate(
         ExternalTrackMatchSnapshot source,
