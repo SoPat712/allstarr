@@ -707,6 +707,85 @@ public sealed class PostgresStorageIntegrationTests
     [Fact]
     [Trait("Category", "Postgres")]
     [Trait("Lane", "ReleaseCritical")]
+    public async Task ProviderAccountCreatorRepair_ConvertsLegacyTextColumnAndPreservesCreator()
+    {
+        const string previous = "20260804080000_BackfillV3CompatibilityState";
+        const string current = "20260820173000_RepairProviderAccountCreatorIdentity";
+        await using var database = await PostgresTestDatabase.CreateAsync(useTemplate: false);
+        await using var context = new AllstarrDbContext(database.Options);
+        var migrator = context.GetService<IMigrator>();
+        await migrator.MigrateAsync(previous);
+
+        var now = DateTimeOffset.UtcNow;
+        var tenantId = Guid.CreateVersion7();
+        var userId = Guid.CreateVersion7();
+        var accountId = Guid.CreateVersion7();
+        context.Tenants.Add(new TenantRecord
+        {
+            Id = tenantId,
+            Slug = "provider-creator-repair",
+            Name = "Provider creator repair",
+            CreatedAt = now
+        });
+        context.Users.Add(new PlatformUserRecord
+        {
+            Id = userId,
+            TenantId = tenantId,
+            DisplayName = "Creator",
+            Status = PlatformUserStatus.Active,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        context.ProviderAccounts.Add(new ProviderAccountRecord
+        {
+            Id = accountId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            CreatedByUserId = userId,
+            ProviderId = "audiomuse-ai",
+            DisplayName = "AudioMuse",
+            Scope = ProviderAccountScope.User,
+            Enabled = false,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        await context.SaveChangesAsync();
+
+        await context.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE provider_accounts DROP CONSTRAINT IF EXISTS "FK_provider_account_creator";
+            DROP INDEX IF EXISTS "IX_provider_accounts_CreatedByUserId";
+            ALTER TABLE provider_accounts
+                ALTER COLUMN "CreatedByUserId" TYPE text
+                USING "CreatedByUserId"::text;
+            """);
+        Assert.Equal("text", await ColumnType(context, "provider_accounts", "CreatedByUserId"));
+
+        await migrator.MigrateAsync(current);
+        context.ChangeTracker.Clear();
+
+        Assert.Equal("uuid", await ColumnType(context, "provider_accounts", "CreatedByUserId"));
+        Assert.Equal(userId, (await context.ProviderAccounts.AsNoTracking()
+            .SingleAsync(item => item.Id == accountId)).CreatedByUserId);
+        await using (var command = context.Database.GetDbConnection().CreateCommand())
+        {
+            command.CommandText = "SELECT count(*) FROM pg_constraint " +
+                                  "WHERE conrelid = 'provider_accounts'::regclass " +
+                                  "AND conname = 'FK_provider_account_creator'";
+            Assert.Equal(1L, Convert.ToInt64(await command.ExecuteScalarAsync()));
+            command.CommandText = "SELECT count(*) FROM pg_indexes " +
+                                  "WHERE schemaname = 'public' AND tablename = 'provider_accounts' " +
+                                  "AND indexname = 'IX_provider_accounts_CreatedByUserId'";
+            Assert.Equal(1L, Convert.ToInt64(await command.ExecuteScalarAsync()));
+        }
+
+        await migrator.MigrateAsync(previous);
+        await migrator.MigrateAsync(current);
+        Assert.Equal("uuid", await ColumnType(context, "provider_accounts", "CreatedByUserId"));
+    }
+
+    [Fact]
+    [Trait("Category", "Postgres")]
+    [Trait("Lane", "ReleaseCritical")]
     public async Task NativePostgresMigrationLockAndDurableQueue_WorkAgainstSelectedDatabase()
     {
         await using var database = await PostgresTestDatabase.CreateAsync(useTemplate: false);
