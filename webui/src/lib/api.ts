@@ -1342,6 +1342,11 @@ export const intelligence = {
   changeHistoryImport: (scope: IntelligenceScope, item: ListeningHistoryImport, operation: "apply" | "resume" | "cancel") =>
     json<ListeningHistoryImport>(`/api/admin/intelligence/history/imports/${encodeURIComponent(item.importId)}/${operation}`,
       intelligenceBody({ ...scope, revision: item.revision })),
+  removeHistoryImport: (scope: IntelligenceScope, item: ListeningHistoryImport) =>
+    json<{ removedImport: true; removedListens: number }>(
+      `/api/admin/intelligence/history/imports/${encodeURIComponent(item.importId)}`,
+      intelligenceBody({ ...scope, revision: item.revision, confirmed: true }, "DELETE"),
+    ),
   createSchedule: (scope: IntelligenceScope, input: Omit<IntelligenceSchedule, "id" | "revision" | "nextRunAt">) =>
     json<IntelligenceSchedule>("/api/admin/intelligence/schedules", intelligenceBody({ ...scope, ...input })),
   updateSchedule: (scope: IntelligenceScope, schedule: IntelligenceSchedule, input: Omit<IntelligenceSchedule, "id" | "revision" | "nextRunAt">) =>

@@ -1298,11 +1298,29 @@ test("Intelligence keeps completed imports visible and explains retention", asyn
       },
     }] }),
   }));
+  await page.route("**/api/admin/intelligence/history/imports/77777777-7777-7777-7777-777777777777", (route) => {
+    if (route.request().method() !== "DELETE") return route.fallback();
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ removedImport: true, removedListens: 18_240 }),
+    });
+  });
 
   await page.goto("#/intelligence?section=imports");
   await expect(page.getByText("Streaming_History_Audio_2025.json", { exact: true })).toBeVisible();
   await expect(page.getByText("18,240 added", { exact: false })).toBeVisible();
   await expect(page.getByText(/no longer appear in Overview or History/)).toBeVisible();
+  await page.getByRole("button", { name: "Undo import" }).click();
+  const dialog = page.getByRole("alertdialog", { name: "Undo this history import?" });
+  await expect(dialog).toContainText("18,240 were added");
+  const removal = page.waitForRequest((request) => request.method() === "DELETE" &&
+    request.url().endsWith("/api/admin/intelligence/history/imports/77777777-7777-7777-7777-777777777777"));
+  await dialog.getByRole("button", { name: "Undo import" }).click();
+  expect((await removal).postDataJSON()).toMatchObject({
+    protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music",
+    revision: "saved-revision", confirmed: true,
+  });
+  await expect(page.getByText("Streaming_History_Audio_2025.json", { exact: true })).toHaveCount(0);
 });
 
 test("Intelligence empty states explain how to get results", async ({ page }) => {

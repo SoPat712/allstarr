@@ -418,6 +418,34 @@ public sealed partial class IntelligenceController
         CancellationToken cancellationToken) =>
         ChangeHistoryImport(importId, request, imports, "cancel", cancellationToken);
 
+    [HttpDelete("history/imports/{importId:guid}")]
+    public async Task<IActionResult> RemoveHistoryImport(
+        Guid importId,
+        [FromBody] IntelligenceHistoryImportDeleteRequest request,
+        [FromServices] ListeningHistoryImportService imports,
+        CancellationToken cancellationToken)
+    {
+        Response.Headers.CacheControl = "no-store";
+        if (!TrySessionScope(request, out var scope, out var error)) return error!;
+        if (!request.Confirmed)
+            return BadRequest(new { error = "history_import_confirmation_required" });
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        if (!await OwnsBackend(db, scope, cancellationToken)) return NotFound();
+        try
+        {
+            var result = await imports.RemoveAsync(scope, importId, request.Revision, cancellationToken);
+            return result == null ? NotFound() : Ok(new { removedImport = true, result.RemovedListens });
+        }
+        catch (ListeningHistoryImportException exception) when (exception.Code.EndsWith("_conflict", StringComparison.Ordinal))
+        {
+            return Conflict(new { error = exception.Code, message = exception.Message });
+        }
+        catch (ListeningHistoryImportException exception)
+        {
+            return BadRequest(new { error = exception.Code, message = exception.Message });
+        }
+    }
+
     private async Task<IActionResult> ChangeHistoryImport(
         Guid importId,
         IntelligenceHistoryImportCommandRequest request,
@@ -830,6 +858,12 @@ public sealed class IntelligenceHistoryImportPreviewRequest : IntelligenceScopeR
 public sealed class IntelligenceHistoryImportCommandRequest : IntelligenceScopeRequest
 {
     public string Revision { get; set; } = "";
+}
+
+public sealed class IntelligenceHistoryImportDeleteRequest : IntelligenceScopeRequest
+{
+    public string Revision { get; set; } = "";
+    public bool Confirmed { get; set; }
 }
 
 internal readonly record struct ListeningHistoryPeriod(DateTimeOffset From, DateTimeOffset To)

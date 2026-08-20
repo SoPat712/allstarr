@@ -5,6 +5,7 @@ using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
+using allstarr.Core.Playback;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
@@ -134,6 +135,8 @@ public sealed record ListeningHistoryImportPreviewResult(
     long ResolvedRows,
     long UnresolvedRows,
     ListeningHistoryImportPreview Preview);
+
+public sealed record ListeningHistoryImportRemovalResult(long RemovedListens);
 
 public sealed class ListeningHistoryImportOptions
 {
@@ -279,6 +282,11 @@ public sealed class ListeningHistoryImportService(
         displayFileName = Path.GetFileName(displayFileName).Trim();
         if (displayFileName.Length is < 1 or > 255 || displayFileName.Any(char.IsControl))
             throw new ListeningHistoryImportException("history_import_filename_invalid", "The selected filename is invalid.");
+        if (displayFileName.StartsWith("Streaming_History_Video_", StringComparison.OrdinalIgnoreCase) ||
+            displayFileName.Equals("Streaming_History_Video.json", StringComparison.OrdinalIgnoreCase))
+            throw new ListeningHistoryImportException(
+                "history_import_video_unsupported",
+                "Spotify video viewing history is not music listening history. Choose the Streaming_History_Audio JSON files instead.");
         if (sizeBytes is < 1 || sizeBytes > options.MaximumUploadBytes)
             throw new ListeningHistoryImportException(
                 "history_import_file_invalid",
@@ -512,6 +520,42 @@ public sealed class ListeningHistoryImportService(
         return await GetAsync(scope, importId, cancellationToken);
     }
 
+    public async Task<ListeningHistoryImportRemovalResult?> RemoveAsync(
+        IntelligenceScope scope,
+        Guid importId,
+        string expectedRevision,
+        CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var record = await ScopedImport(db, scope, importId).SingleOrDefaultAsync(cancellationToken);
+        if (record == null) return null;
+        RequireRevision(record, expectedRevision);
+        if (record.State is ListeningHistoryImportState.Pending or ListeningHistoryImportState.Running)
+            throw new ListeningHistoryImportException(
+                "history_import_state_conflict",
+                "Cancel this active history import before removing it.");
+
+        var provenance = $"history-import:{importId:N}:";
+        var importedEvents = ScopedListeningEvents(db, scope).Where(item =>
+            item.SourceKind == "import" && item.ImportProvenance != null &&
+            item.ImportProvenance.StartsWith(provenance));
+        var occurrenceKeys = importedEvents.Select(item => item.OccurrenceKey);
+        await db.Set<PlaybackDeliveryCheckpointEntity>().Where(item =>
+                item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+                item.OccurrenceKey != null && occurrenceKeys.Contains(item.OccurrenceKey))
+            .ExecuteDeleteAsync(cancellationToken);
+        var removedListens = await importedEvents.ExecuteDeleteAsync(cancellationToken);
+
+        var now = clock.UtcNow;
+        db.AuditEvents.Add(Audit(record, "removed", "success", now));
+        db.ListeningHistoryImports.Remove(record);
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        artifacts.Delete(importId);
+        return new(removedListens);
+    }
+
     private async Task<ListeningHistoryImportPreviewResult?> QueueAsync(
         IntelligenceScope scope,
         Guid importId,
@@ -616,6 +660,14 @@ public sealed class ListeningHistoryImportService(
         AllstarrDbContext db,
         IntelligenceScope scope) =>
         db.ListeningHistoryImports.Where(item =>
+            item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+            item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
+            item.LibraryScopeId == scope.LibraryScopeId);
+
+    private static IQueryable<ListeningEventRecord> ScopedListeningEvents(
+        AllstarrDbContext db,
+        IntelligenceScope scope) =>
+        db.ListeningEvents.Where(item =>
             item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
             item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
             item.LibraryScopeId == scope.LibraryScopeId);

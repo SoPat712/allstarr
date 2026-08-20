@@ -70,6 +70,8 @@
   let editAlbum = $state("");
   let editAlbumArtist = $state("");
   let deleteOpen = $state(false);
+  let importDeleteOpen = $state(false);
+  let importDeleteItem = $state<ImportQueueItem | null>(null);
   let importItems = $state<ImportQueueItem[]>([]);
   let readingImportId = $state("");
   let importError = $state("");
@@ -359,6 +361,30 @@
     }
   }
 
+  function confirmRemoveImport(item: ImportQueueItem) {
+    importDeleteItem = item;
+    importDeleteOpen = true;
+  }
+
+  async function removeSavedImport() {
+    const item = importDeleteItem;
+    if (!item?.result) return;
+    action = `remove:${item.id}`;
+    importError = "";
+    try {
+      const result = await intelligence.removeHistoryImport(scope, item.result);
+      removeImportItem(item.id);
+      importDeleteOpen = false;
+      importDeleteItem = null;
+      if (result.removedListens > 0) await onChanged();
+    } catch (cause) {
+      importError = cause instanceof Error ? cause.message : "This history import could not be removed.";
+      importDeleteOpen = false;
+    } finally {
+      action = "";
+    }
+  }
+
   async function applyAllPreviews() {
     const items = selectedPreviewItems.map((item) => ({ ...item }));
     if (!items.length || action) return;
@@ -591,6 +617,7 @@
               {#if result.state === "previewed"}<Button disabled={Boolean(action) || (result.preview?.newRows ?? 0) === 0} onclick={() => void changeImport(item, "apply")}>{action === `apply:${item.id}` ? "Starting…" : (result.preview?.newRows ?? 0) === 0 ? "Nothing inside retention" : "Add to my history"}</Button>{/if}
               {#if activeImport}<Button variant="secondary" disabled={Boolean(action)} onclick={() => void changeImport(item, "cancel")}>{action === `cancel:${item.id}` ? "Cancelling…" : "Cancel import"}</Button>{/if}
               {#if result.state === "failed" || result.state === "cancelled"}<Button disabled={Boolean(action)} onclick={() => void changeImport(item, "resume")}>{action === `resume:${item.id}` ? "Resuming…" : "Resume import"}</Button>{/if}
+              {#if !activeImport}<Button variant="destructive" disabled={Boolean(action)} onclick={() => confirmRemoveImport(item)}>{result.state === "completed" && (result.importedRows ?? 0) > 0 ? "Undo import" : result.state === "previewed" ? "Discard preview" : "Remove import"}</Button>{/if}
             </footer>
             {#if result.lastErrorMessage}<p class="notice-error" role="alert">{result.lastErrorMessage}</p>{/if}
           </li>
@@ -622,6 +649,17 @@
 </Dialog.Root>
 
 <ConfirmDialog bind:open={deleteOpen} title="Delete this listen?" description="This removes the listen and its delivery status from this library. This cannot be undone." confirmLabel={action === "delete-detail" ? "Deleting…" : "Delete listen"} cancelLabel="Keep listen" disabled={Boolean(action)} onConfirm={removeDetail} />
+<ConfirmDialog
+  bind:open={importDeleteOpen}
+  title={importDeleteItem?.result?.state === "completed" ? "Undo this history import?" : "Remove this history import?"}
+  description={(importDeleteItem?.result?.importedRows ?? 0) > 0
+    ? `This removes any listens still stored from ${importDeleteItem?.fileName ?? "this file"} (${(importDeleteItem?.result?.importedRows ?? 0).toLocaleString()} were added), its saved import record, and any temporary upload. Other history is not affected.`
+    : `This removes ${importDeleteItem?.fileName ?? "this file"} from saved imports and deletes any temporary upload. No listening history will be removed.`}
+  confirmLabel={action.startsWith("remove:") ? "Removing…" : (importDeleteItem?.result?.importedRows ?? 0) > 0 ? "Undo import" : "Remove import"}
+  cancelLabel="Keep import"
+  disabled={Boolean(action)}
+  onConfirm={removeSavedImport}
+/>
 
 <style>
   .history-workspace{min-width:0}

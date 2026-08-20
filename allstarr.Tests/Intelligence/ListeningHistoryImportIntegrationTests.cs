@@ -2,6 +2,7 @@ using System.Text.Json;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
+using allstarr.Core.Playback;
 using allstarr.Core.Storage;
 using allstarr.Models.Settings;
 using Microsoft.EntityFrameworkCore;
@@ -264,6 +265,69 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PreviewRejectsSpotifyVideoHistoryBeforeSavingAnImport()
+    {
+        var service = new ListeningHistoryImportService(
+            _factory, _importers, _artifacts, _importOptions, _clock, _jobs);
+        var source = JsonSerializer.SerializeToUtf8Bytes(new[]
+        {
+            Row("2026-07-20T12:00:00Z", "Video play", "1111111111111111111111", 180_000, "trackdone", false)
+        });
+        await using var stream = new MemoryStream(source);
+
+        var exception = await Assert.ThrowsAsync<ListeningHistoryImportException>(() =>
+            service.PreviewAsync(
+                _scope,
+                "Streaming_History_Video_2017-2024.json",
+                stream,
+                source.Length,
+                CancellationToken.None));
+
+        Assert.Equal("history_import_video_unsupported", exception.Code);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Empty(await db.ListeningHistoryImports.ToListAsync());
+        Assert.False(Directory.Exists(_root));
+    }
+
+    [Fact]
+    public async Task RemoveImportDeletesOnlyItsExactImportedListensAndSavedArtifact()
+    {
+        var service = new ListeningHistoryImportService(
+            _factory, _importers, _artifacts, _importOptions, _clock, _jobs);
+        var preview = await PreviewAsync(service, "Remove me", "7777777777777777777777");
+        var removedOccurrence = new string('a', 64);
+        var keptOccurrence = new string('b', 64);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var import = await db.ListeningHistoryImports.SingleAsync(item => item.Id == preview.ImportId);
+            import.State = ListeningHistoryImportState.Completed;
+            import.ImportedRows = 1;
+            import.CompletedAt = _clock.UtcNow;
+            import.Revision++;
+            db.ListeningEvents.AddRange(
+                ImportedEvent(preview.ImportId, removedOccurrence),
+                ImportedEvent(Guid.NewGuid(), keptOccurrence));
+            db.PlaybackDeliveryCheckpoints.AddRange(
+                Checkpoint(removedOccurrence, new string('c', 64)),
+                Checkpoint(keptOccurrence, new string('d', 64)));
+            await db.SaveChangesAsync();
+        }
+
+        var removed = await service.RemoveAsync(
+            _scope, preview.ImportId, preview.Revision, CancellationToken.None);
+
+        Assert.Equal(1, removed!.RemovedListens);
+        Assert.Null(await service.GetAsync(_scope, preview.ImportId, CancellationToken.None));
+        Assert.False(File.Exists(Path.Combine(_root, $"{preview.ImportId:N}.json")));
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(keptOccurrence, Assert.Single(await verify.ListeningEvents.ToListAsync()).OccurrenceKey);
+        Assert.Equal(keptOccurrence, Assert.Single(await verify.PlaybackDeliveryCheckpoints.ToListAsync()).OccurrenceKey);
+        Assert.Single(await verify.AuditEvents.Where(item =>
+            item.Category == "listening-history-import" && item.Action == "removed" &&
+            item.CorrelationId == preview.ImportId.ToString("N")).ToListAsync());
+    }
+
+    [Fact]
     public async Task FailedApplyPersistsSafeOperationalMetadataWithoutImportContent()
     {
         var service = new ListeningHistoryImportService(
@@ -386,6 +450,40 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
             ["offline"] = false,
             ["incognito_mode"] = false
         };
+
+    private ListeningEventRecord ImportedEvent(Guid importId, string occurrenceKey) => new()
+    {
+        Id = Guid.CreateVersion7(),
+        TenantId = _scope.TenantId,
+        OwnerUserId = _scope.OwnerUserId,
+        Protocol = _scope.Protocol,
+        BackendInstanceId = _scope.BackendInstanceId,
+        LibraryScopeId = _scope.LibraryScopeId,
+        OccurrenceKey = occurrenceKey,
+        State = ListeningEventState.Completed,
+        StartedAt = _clock.UtcNow.AddMinutes(-3),
+        ListenedAt = _clock.UtcNow,
+        UpdatedAt = _clock.UtcNow,
+        SourceKind = "import",
+        ImportProvenance = $"history-import:{importId:N}:spotify:1:track_finished:online:standard",
+        TrackReference = $"spotify:{occurrenceKey}",
+        Title = "Imported song",
+        Artist = "Imported artist",
+        MusicBrainzEnrichmentState = MusicBrainzEnrichmentState.NotRequested,
+        Revision = 1
+    };
+
+    private PlaybackDeliveryCheckpointEntity Checkpoint(string occurrenceKey, string signalKey) => new()
+    {
+        Id = Guid.CreateVersion7(),
+        TenantId = _scope.TenantId,
+        OwnerUserId = _scope.OwnerUserId,
+        OccurrenceKey = occurrenceKey,
+        SignalKey = signalKey,
+        TargetId = "fixture-target",
+        DetailsJson = "{}",
+        UpdatedAt = _clock.UtcNow
+    };
 
     private sealed class TestDbContextFactory(DbContextOptions<AllstarrDbContext> options)
         : IDbContextFactory<AllstarrDbContext>
