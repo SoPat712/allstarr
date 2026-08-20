@@ -1,5 +1,12 @@
 # Latest Session Work
 
+## Exact import undo and Spotify video exclusion — 2026-08-20
+
+- Revision `e6e7a2dc59843732753af801ecf956fda63007c8` is pushed and deployed to both Allstarr stacks on `192.168.1.116`; both containers are healthy on image `sha256:d5603bf21c67fdfeab4c788952f0343a7448ec0b89dcf6a0b5f03964775ea030`.
+- Completed imports now expose a confirmed **Undo import** action. Removal is scoped by tenant, user, backend, library, and exact import provenance, and deletes only that import's stored listens, delivery checkpoints, durable import record, and temporary artifact. Active imports must be cancelled first.
+- Spotify `Streaming_History_Video_*` files are rejected before staging with guidance to choose `Streaming_History_Audio` JSON files.
+- Verification: focused .NET/PostgreSQL 8/8, Svelte diagnostics clean, unit 46/46, production build and budgets green, and focused browser interaction 1/1. The disposable local PostgreSQL container was removed. Both live readiness endpoints are green, deployed UI assets contain the undo action, and startup logs contain no failure-level entries.
+
 ## Unlimited listening history and truthful imports — 2026-08-19
 
 - Revision `9336e6c7c9e62d2cb10312a20c2b2587b127d243` is pushed and deployed to both Allstarr stacks on `192.168.1.116`; both containers are healthy on image `sha256:2b7a5d3a827acd0ccaffd6291497457c4f0e87c8070230868fe410331863a20a`.
