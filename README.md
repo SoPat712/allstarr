@@ -68,7 +68,7 @@ The complete install, backup, restore, and rollback instructions live in [the st
 - Imports provider playlists as virtual views or materializes exact local matches into Jellyfin or Navidrome/Subsonic. Materialization preserves order, reuses existing tracks, supports reconcile or explicit recreate mode, and does not download unmatched entries.
 - Runs long work as durable, inspectable jobs with retries, leases, cancellation, idempotency, and visible failure state.
 - Supports opt-in favorite workflows for download, tagging, managed placement, and backend refresh. Unfavorite does not delete music.
-- Collects opt-in listening signals and can build explained playlists from Jellyfin InstantMix, Last.fm similarity, ListenBrainz collaborative filtering, MusicBrainz-enriched local relationships, local rules, and an optional AudioMuse-AI extension service.
+- Collects opt-in listening signals and can build explained playlists from Jellyfin InstantMix, Last.fm similarity, ListenBrainz collaborative filtering, MusicBrainz-enriched local relationships, local rules, and an optional self-hosted AudioMuse connection configured in Intelligence.
 - Scrobbles to Last.fm and ListenBrainz through durable delivery checkpoints.
 - Installs verified provider extensions through the provider SDK permission and lifecycle boundary. No third-party registry is added automatically.
 

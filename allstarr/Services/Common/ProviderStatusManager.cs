@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -9,6 +10,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using allstarr.Core.Health;
 using allstarr.Services.AppleMusic;
+using allstarr.Core.Providers.AudioMuse;
 
 namespace allstarr.Services.Common;
 
@@ -44,7 +46,8 @@ public class ProviderStatusManager
         ("qobuz", ProviderCapabilities.Playlist, ProviderAccountRequirement.Required),
         ("lrclib", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("lastfm", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
-        ("listenbrainz", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required)
+        ("listenbrainz", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
+        ("audiomuse-ai", ProviderCapabilities.Intelligence, ProviderAccountRequirement.Required)
     ];
 
     private readonly IConfiguration _configuration;
@@ -691,6 +694,8 @@ public class ProviderStatusManager
                 IsConfiguredValue(SecretValue(secrets, "sessionkey")),
             ("listenbrainz", ProviderCapabilities.Scrobbling) =>
                 IsConfiguredValue(SecretValue(secrets, "token", "usertoken")),
+            ("audiomuse-ai", ProviderCapabilities.Intelligence) =>
+                AudioMuseCredential.TryBaseUri(SecretValue(secrets, "baseurl"), out _),
             _ => null
         };
 
@@ -726,6 +731,7 @@ public class ProviderStatusManager
             ("lrclib", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
             ("listenbrainz", ProviderCapabilities.Scrobbling) => true,
+            ("audiomuse-ai", ProviderCapabilities.Intelligence) => true,
             _ => false
         };
     }
@@ -743,6 +749,7 @@ public class ProviderStatusManager
             ("lrclib", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
             ("listenbrainz", ProviderCapabilities.Scrobbling) => true,
+            ("audiomuse-ai", ProviderCapabilities.Intelligence) => true,
             _ => false
         };
     }
@@ -776,8 +783,38 @@ public class ProviderStatusManager
             ("lrclib", ProviderCapabilities.Lyrics) => await AsOutcome(TestLrclibAsync(cancellationToken)),
             ("lastfm", ProviderCapabilities.Scrobbling) => await AsOutcome(TestLastFmAsync(accountSecrets, cancellationToken)),
             ("listenbrainz", ProviderCapabilities.Scrobbling) => await AsOutcome(TestListenBrainzAsync(accountSecrets, cancellationToken)),
+            ("audiomuse-ai", ProviderCapabilities.Intelligence) => await TestAudioMuseAsync(accountSecrets, cancellationToken),
             _ => new ProbeOutcome(false, "probe_not_available")
         };
+    }
+
+    private async Task<ProbeOutcome> TestAudioMuseAsync(
+        IReadOnlyDictionary<string, string>? accountSecrets,
+        CancellationToken cancellationToken)
+    {
+        if (!AudioMuseCredential.TryBaseUri(SecretValue(accountSecrets, "baseurl"), out var baseUri))
+            return new(false, "missing_audiomuse_url");
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(baseUri!, "api/health"));
+        var token = SecretValue(accountSecrets, "apitoken", "token");
+        if (!string.IsNullOrWhiteSpace(token))
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        try
+        {
+            using var response = await _httpClientFactory
+                .CreateClient(AudioMuseIntelligenceCapabilityAdapter.HttpClientName)
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            return response.StatusCode switch
+            {
+                HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => new(false, "audiomuse_auth_rejected"),
+                >= HttpStatusCode.InternalServerError => new(false, "audiomuse_unavailable"),
+                _ => new(response.IsSuccessStatusCode,
+                    response.IsSuccessStatusCode ? null : "audiomuse_probe_failed")
+            };
+        }
+        catch (HttpRequestException)
+        {
+            return new(false, "audiomuse_unreachable");
+        }
     }
 
     private static async Task<ProbeOutcome> AsOutcome(Task<bool> probe) => new(await probe);

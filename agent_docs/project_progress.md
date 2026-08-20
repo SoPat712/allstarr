@@ -137,15 +137,15 @@ Acceptance: local release evidence is complete before LAN access, no unrun gate 
 - Two proposed shared-control/artwork changes were measured and discarded before commit: loading a Bits UI checkbox into the root shell raised initial JavaScript to 69.6 KiB, and blank provider logos were traced to the test fixture's intentionally empty SVG rather than production assets.
 - Live browser qualification covered 12 desktop routes and 8 mobile routes with no document overflow, console error, or heading displacement. Home now reports `0 cached · 0 kept`, matching the live Cached and Kept inventories.
 
-### Post-delivery AudioMuse setup placement — deployed
+### Post-delivery AudioMuse setup placement — built-in correction verified locally
 
-- [x] Keep AudioMuse as an extension-backed Intelligence implementation while moving its user connection task into Intelligence → Automation.
-- [x] Reuse the existing manifest-driven encrypted Source dialog; add no second account or settings owner.
-- [x] Keep Extensions responsible for package lifecycle and permissions, and keep Services responsible for health and diagnostics.
-- [x] Replace the duplicate AudioMuse Services form with a direct **Configure in Intelligence** handoff.
-- [x] Verify responsive connect/configure flows: Svelte diagnostics clean, unit 46/46, production build and budgets green, and focused mobile/desktop browser checks 4/4.
-- [x] Commit the local implementation as `18c84037`.
-- [x] Push and deploy the exact revision after authorization as part of `218a703f`.
+- [x] Register AudioMuse as a built-in Intelligence and health capability; it is not an extension package.
+- [x] Keep its self-hosted server URL, optional API token, and optional multi-server selector in Intelligence → Automation.
+- [x] Reuse the encrypted Source account dialog and durable account store; add no second credential store.
+- [x] Perform real account-bound `/api/health` checks and route recommendation, search, path, blend, map, clustering-playlist, and analysis calls through the typed built-in adapter.
+- [x] Keep Services available for shared account audience and diagnostics without making Extensions a prerequisite.
+- [x] Verify the correction locally: affected non-database .NET 68/68, Svelte diagnostics clean, WebUI unit 46/46, production build and budgets green, and focused mobile/desktop browser checks 3/3.
+- [ ] Commit, push, deploy, and verify the exact revision on both Allstarr stacks.
 
 ### Post-delivery unlimited history range — deployed
 
@@ -159,4 +159,4 @@ Acceptance: local release evidence is complete before LAN access, no unrun gate 
 
 ## Next action
 
-No deployment action remains for the AudioMuse placement or unlimited-history correction. Await user verification of the deployed Intelligence flows.
+Commit and deploy the verified built-in AudioMuse correction and truthful import receipts, then verify the live Intelligence form and retained-history state.

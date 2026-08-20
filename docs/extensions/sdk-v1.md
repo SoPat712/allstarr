@@ -45,11 +45,10 @@ Allstarr selects the tenant, user, library, provider account, capability, deadli
 
 Extension credentials live in provider accounts under **Integrations > Services**. Account fields declared as secrets are encrypted before persistence. Source health, routing, and capability readiness live there too; they are not duplicate credential stores.
 
-An external intelligence service such as AudioMuse-AI is an ordinary extension provider: its
-manifest allowlists the service origin with `network`, declares authentication fields with
-`secret`, implements the `intelligence` hooks it supports, and declares `probeIntelligence` under
-`health`. Allstarr stores only the reviewed connection/account metadata and normalized results;
-models, workers, indexes, and service implementation remain outside the Allstarr package.
+Extensions may expose the intelligence contract. AudioMuse is different: its Allstarr adapter is
+built in and its self-hosted server URL and optional token are configured from Intelligence.
+Allstarr stores the encrypted connection metadata and normalized results; models, workers,
+indexes, and the AudioMuse service remain outside Allstarr.
 
 The intelligence capability requires `recommend`; the remaining hooks are optional:
 

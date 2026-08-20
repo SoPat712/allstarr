@@ -369,25 +369,21 @@
             <div class="policy-choices">
               <fieldset class="signal-choices"><legend>Recommendation actions</legend><p>Choose which listening actions teach Allstarr what you like.</p>{#each data.availableSignalTypes as item}<label class:selected={selectedSignals.includes(item.id)}><Checkbox checked={selectedSignals.includes(item.id)} onCheckedChange={(checked) => selectedSignals = toggle(selectedSignals, item.id, checked)} /> <span>{item.label}</span></label>{/each}</fieldset>
               <fieldset class="provider-choices"><legend>Recommendation sources</legend><p>Connected services Allstarr may use to find candidates. This does not import history or change source accounts.</p>{#each data.providers as provider}<label class:selected={selectedProviders.includes(provider.id)} class:unavailable={!provider.available}><Checkbox disabled={!provider.available} checked={selectedProviders.includes(provider.id)} onCheckedChange={(checked) => selectedProviders = toggle(selectedProviders, provider.id, checked)} /> <span><strong>{provider.label}</strong><small>{provider.description}</small></span><Badge state={provider.available ? "healthy" : "suggested"}>{providerStatus(provider.state)}</Badge></label>{/each}
-                {#if audioMuseSource}
+                {#if audioMuseSource || audioMuseDefinition}
                   <div class="provider-setup">
                     <span>
                       <strong>AudioMuse connection</strong>
-                      {#if !audioMuseSource.available}
-                        <small>Install the AudioMuse extension first. Package updates and permissions stay under Extensions.</small>
-                      {:else if audioMuseSetupLoading}
+                      {#if audioMuseSetupLoading}
                         <small>Checking the connection for this library…</small>
                       {:else if audioMuseAccounts.length}
-                        <small>{audioMuseAccounts.length} saved {audioMuseAccounts.length === 1 ? "connection" : "connections"}. Configure discovery access here; health details remain under Services.</small>
+                        <small>{audioMuseAccounts.length} saved {audioMuseAccounts.length === 1 ? "connection" : "connections"}. AudioMuse is built into Intelligence; this connection supplies its server and access token.</small>
                       {:else}
-                        <small>Connect AudioMuse here to enable sound maps, similar-song search, blends, and listening-based discovery.</small>
+                        <small>Connect your self-hosted AudioMuse server here to enable sound maps, similar-song search, blends, and listening-based discovery.</small>
                       {/if}
                       {#if audioMuseSetupFeedback}<small class="setup-feedback" role="status">{audioMuseSetupFeedback}</small>{/if}
                     </span>
                     <div class="provider-setup-actions">
-                      {#if !audioMuseSource.available}
-                        <Button size="sm" variant="secondary" href="#/integrations/extensions">Install extension</Button>
-                      {:else if audioMuseDefinition && canManageAudioMuse}
+                      {#if audioMuseDefinition && canManageAudioMuse}
                         {#if audioMuseAccounts[0]}
                           <Button size="sm" variant="secondary" onclick={() => openAudioMuseConnection(audioMuseAccounts[0])}>Manage AudioMuse</Button>
                           <Button size="sm" variant="ghost" onclick={() => openAudioMuseConnection()}>Add connection</Button>
@@ -397,7 +393,7 @@
                       {:else if !canManageAudioMuse}
                         <Badge state="suggested">Administrator setup required</Badge>
                       {:else}
-                        <Button size="sm" variant="secondary" href="#/integrations/extensions">Review extension</Button>
+                        <Badge state="suggested">Unavailable in this build</Badge>
                       {/if}
                     </div>
                   </div>

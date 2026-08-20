@@ -27,7 +27,8 @@ const schema = {
       id: "audiomuse-ai", name: "AudioMuse", categories: ["intelligence"],
       accountSettings: [
         { key: "baseUrl", label: "AudioMuse server URL", type: "url", required: true },
-        { key: "token", label: "AudioMuse access token", type: "password", sensitive: true, required: true },
+        { key: "apiToken", label: "AudioMuse access token", type: "password", sensitive: true, required: false },
+        { key: "server", label: "AudioMuse music server", type: "text", required: false },
       ],
     },
     { id: "listenbrainz", name: "ListenBrainz", categories: ["scrobbling"] },
@@ -411,7 +412,7 @@ function routeRelease() {
   return { promise, release };
 }
 
-async function mockApi(page: Page, options: { releasePath?: string; release?: Promise<void>; fail?: string[] } = {}) {
+async function mockApi(page: Page, options: { releasePath?: string; release?: Promise<void>; fail?: string[]; audioMuseUnavailable?: boolean } = {}) {
   await page.route("**/fonts/**", (route) => route.fulfill({ status: 204 }));
   await page.route("**/images/providers/**", (route) => route.fulfill({
     status: 200,
@@ -430,6 +431,14 @@ async function mockApi(page: Page, options: { releasePath?: string; release?: Pr
       return;
     }
     let body = responses[`${url.pathname}${url.search}`] ?? responses[url.pathname];
+    if (url.pathname === "/api/admin/intelligence" && options.audioMuseUnavailable) {
+      const intelligence = structuredClone(body) as typeof responses["/api/admin/intelligence"];
+      body = {
+        ...(intelligence as Record<string, unknown>),
+        providers: ((intelligence as { providers: Array<Record<string, unknown>> }).providers ?? []).map((provider) =>
+          provider.id === "audiomuse-ai" ? { ...provider, available: false, state: "unconfigured" } : provider),
+      };
+    }
     if (url.pathname === "/api/admin/ui/activity" && url.searchParams.get("limit") !== "8")
       body = { items: [], hasMore: false };
     if (url.pathname === "/api/admin/downloads")
@@ -1179,6 +1188,20 @@ for (const viewport of viewports) {
       await expect(page.getByRole("alertdialog", { name: "Share this connection with everyone?" })).toBeVisible();
     });
 
+    test("AudioMuse configuration stays in Intelligence before the connection is ready", async ({ page }) => {
+      await mockApi(page, { audioMuseUnavailable: true });
+      await page.goto("#/intelligence?section=automation");
+
+      const setup = page.locator(".provider-setup").filter({ hasText: "AudioMuse connection" });
+      await expect(setup).toContainText("Connect your self-hosted AudioMuse server here");
+      await expect(setup.getByRole("link", { name: /extension/i })).toHaveCount(0);
+      await setup.getByRole("button", { name: "Connect AudioMuse" }).click();
+      const dialog = page.getByRole("dialog", { name: "Connect a Source" });
+      await expect(dialog.getByLabel("AudioMuse server URL")).toBeVisible();
+      await expect(dialog.getByLabel("AudioMuse access token")).toBeVisible();
+      await expect(dialog.getByLabel("AudioMuse music server")).toBeVisible();
+    });
+
     test("Match and removal dialogs remain usable", async ({ page }) => {
       await mockApi(page);
       await page.goto("#/library/mappings");
@@ -1333,6 +1356,7 @@ test("Intelligence keeps completed imports visible and explains retention", asyn
   await page.goto("#/intelligence?section=imports");
   await expect(page.getByText("Streaming_History_Audio_2025.json", { exact: true })).toBeVisible();
   await expect(page.getByText("18,240 added", { exact: false })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Include Streaming_History_Audio_2025.json" })).toHaveCount(0);
   await expect(page.getByText(/no longer appear in Overview or History/)).toBeVisible();
   await page.getByRole("button", { name: "Undo import" }).click();
   const dialog = page.getByRole("alertdialog", { name: "Undo this history import?" });

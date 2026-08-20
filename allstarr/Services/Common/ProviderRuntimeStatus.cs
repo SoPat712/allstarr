@@ -31,6 +31,7 @@ public static class ProviderCapabilities
     public const string Download = "download";
     public const string Playlist = "playlist";
     public const string Lyrics = "lyrics";
+    public const string Intelligence = "intelligence";
     public const string Scrobbling = "scrobbling";
 }
 

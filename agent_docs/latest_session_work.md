@@ -1,5 +1,13 @@
 # Latest Session Work
 
+## AudioMuse built-in correction and truthful import receipts — verified locally, 2026-08-20
+
+- AudioMuse is a built-in Allstarr Intelligence integration, not an extension. Intelligence → Automation owns its self-hosted server URL, optional API token, and optional AudioMuse server selector.
+- The new typed adapter covers health, recommendations, similarity, text/lyrics search, paths, blends, map pages, clustering playlists, and analysis jobs while retaining exact user/library provider-account scope.
+- The configuration action no longer depends on provider readiness: an unconfigured or unhealthy AudioMuse connection can always be created or edited directly in Intelligence.
+- Completed history imports are now non-interactive receipts instead of disabled selection rows. Overview shows the effective retention, and a completed receipt with zero currently retained listens explains that the original files must be re-imported.
+- Local verification: affected non-database .NET 68/68, Svelte diagnostics clean, WebUI unit 46/46, production build and budgets green, and focused responsive browser checks 3/3. The six PostgreSQL import tests were not run because `ALLSTARR_TEST_POSTGRES` was not configured; no storage code changed. Deployment remains pending.
+
 ## Unlimited history display and retention — deployed, 2026-08-20
 
 - Revision `218a703fe74180d835c7c2398b554891edcc13e4` is pushed and deployed to both Allstarr stacks on `192.168.1.116`; both clean checkouts and both application containers use that revision.
@@ -9,11 +17,11 @@
 - Verification: focused .NET contract 2/2, Svelte diagnostics clean, unit 46/46, production build and budgets green at 47.3 KiB initial JavaScript and 23.8 KiB CSS, and focused mobile/desktop browser checks 2/2.
 - Live verification: both application containers are healthy on image `sha256:d717f94c2a15c97befff49f4c4d2ba46162bde1ba0945b4ef64d3915edbea127`; both internal readiness responses report PostgreSQL ready, both trusted-LAN WebUIs return HTTP 200, and neither startup log contains an error- or critical-level entry.
 
-## AudioMuse setup moved into Intelligence — deployed, 2026-08-20
+## Superseded AudioMuse extension placement — deployed, 2026-08-20
 
-- AudioMuse remains an optional extension implementation, but Intelligence → Automation now owns the user task of connecting or editing its encrypted account.
-- The existing manifest-driven `ConnectSourceDialog` is reused, so extension-declared fields, validation, encryption, connection testing, and account persistence retain one owner.
-- Extensions still owns install/update/permissions. Services still owns readiness and diagnostics; its AudioMuse Configuration tab now links directly to Intelligence instead of duplicating the form.
+- Revision `218a703f` first moved the AudioMuse connection task into Intelligence but incorrectly retained an extension prerequisite. The current local correction replaces that model with a built-in typed provider.
+- The existing schema-driven `ConnectSourceDialog` remains the single encrypted account editor.
+- Services still owns shared audience and diagnostics; Extensions no longer owns AudioMuse installation or permissions.
 - Provider schema and accounts are fetched only when Automation is opened, avoiding extra requests on Intelligence Overview, History, Import, and Discover.
 - Verification: Svelte diagnostics clean, unit 46/46, production build and budgets green at 47.3 KiB initial JavaScript and 23.8 KiB CSS, and focused mobile/desktop Intelligence plus Services browser flows 4/4.
 - The implementation from `18c84037` is included in deployed revision `218a703f`.

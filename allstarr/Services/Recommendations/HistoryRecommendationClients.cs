@@ -165,7 +165,7 @@ public sealed class AudioMuseRecommendationClient(
     {
         if (!providers.TryGetCapability<IProviderIntelligenceCapability>(
                 ProviderId, ProviderCapabilityKind.Intelligence, out var capability))
-            throw new NotSupportedException("AudioMuse-AI extension is not installed.");
+            throw new NotSupportedException("AudioMuse is not available in this Allstarr build.");
         var context = await ContextAsync(scope, operation, cancellationToken, idempotencyKey)
             ?? throw new NotSupportedException("AudioMuse-AI has no exact-scope account.");
         return (capability!, context);

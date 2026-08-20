@@ -189,8 +189,8 @@ public sealed class AudioMuseRecommendationProvider(IAudioMuseRecommendationClie
     : BoundedRecommendationProvider("audiomuse-ai")
 {
     protected override bool Available => client.IsAvailable;
-    protected override string UnavailableCode => "audiomuse_ai_extension_unavailable";
-    public override async Task<RecommendationProviderReadiness> GetReadinessAsync(IntelligenceScope scope, CancellationToken token = default) => !client.IsAvailable ? new(Id, RecommendationProviderReadinessState.Unconfigured, "audiomuse_ai_extension_unavailable") : await client.CheckHealthAsync(scope, token) ? new(Id, RecommendationProviderReadinessState.Ready) : new(Id, RecommendationProviderReadinessState.Degraded, "audiomuse_ai_unhealthy");
+    protected override string UnavailableCode => "audiomuse_unavailable";
+    public override async Task<RecommendationProviderReadiness> GetReadinessAsync(IntelligenceScope scope, CancellationToken token = default) => !client.IsAvailable ? new(Id, RecommendationProviderReadinessState.Unconfigured, "audiomuse_unavailable") : await client.CheckHealthAsync(scope, token) ? new(Id, RecommendationProviderReadinessState.Ready) : new(Id, RecommendationProviderReadinessState.Degraded, "audiomuse_unhealthy");
     protected override Task<IReadOnlyList<RecommendationSourceItem>> FetchAsync(ScopedRecommendationQuery query, CancellationToken token) => client.RecommendAsync(query, token);
 }
 public sealed class LocalRuleRecommendationProvider(ILocalRecommendationCatalog catalog)

@@ -61,7 +61,7 @@ public sealed class RecommendationSourceAdapterTests
         Assert.Equal(RecommendationProviderState.Unsupported, listenBrainz.State);
         Assert.Equal("listenbrainz_recommendations_not_configured", listenBrainz.SafeErrorCode);
         Assert.Equal(RecommendationProviderState.Unsupported, audioMuse.State);
-        Assert.Equal("audiomuse_ai_extension_unavailable", audioMuse.SafeErrorCode);
+        Assert.Equal("audiomuse_unavailable", audioMuse.SafeErrorCode);
     }
 
     [Fact]
@@ -198,7 +198,7 @@ public sealed class RecommendationSourceAdapterTests
     }
 
     [Fact]
-    public async Task AudioMuseConcreteClientUsesInstalledExtensionCapabilityAndPreservesIdentity()
+    public async Task AudioMuseConcreteClientUsesTypedCapabilityAndPreservesIdentity()
     {
         var accounts = new SecretAccessor("""{"token":"protected"}""");
         var catalog = new FakeClient
