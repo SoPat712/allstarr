@@ -1,21 +1,22 @@
 # Latest Session Work
 
-## Unlimited history display and retention — local, 2026-08-20
+## Unlimited history display and retention — deployed, 2026-08-20
 
+- Revision `218a703fe74180d835c7c2398b554891edcc13e4` is pushed and deployed to both Allstarr stacks on `192.168.1.116`; both clean checkouts and both application containers use that revision.
 - Intelligence Overview and History now open on **All time** and omit `from`/`to` query bounds until the user chooses a finite or custom range.
 - The backend accepts valid history reporting windows longer than ten years, eliminating `listening_history_period_invalid` for legitimate old imports.
 - Retention remains separately controlled: `0` is still the default and means unlimited. Existing saved policies are not rewritten, and no history is deleted unless the user chooses a finite retention or explicitly clears/removes it.
 - Verification: focused .NET contract 2/2, Svelte diagnostics clean, unit 46/46, production build and budgets green at 47.3 KiB initial JavaScript and 23.8 KiB CSS, and focused mobile/desktop browser checks 2/2.
-- Push and deployment remain pending exact-revision authorization.
+- Live verification: both application containers are healthy on image `sha256:d717f94c2a15c97befff49f4c4d2ba46162bde1ba0945b4ef64d3915edbea127`; both internal readiness responses report PostgreSQL ready, both trusted-LAN WebUIs return HTTP 200, and neither startup log contains an error- or critical-level entry.
 
-## AudioMuse setup moved into Intelligence — local, 2026-08-20
+## AudioMuse setup moved into Intelligence — deployed, 2026-08-20
 
 - AudioMuse remains an optional extension implementation, but Intelligence → Automation now owns the user task of connecting or editing its encrypted account.
 - The existing manifest-driven `ConnectSourceDialog` is reused, so extension-declared fields, validation, encryption, connection testing, and account persistence retain one owner.
 - Extensions still owns install/update/permissions. Services still owns readiness and diagnostics; its AudioMuse Configuration tab now links directly to Intelligence instead of duplicating the form.
 - Provider schema and accounts are fetched only when Automation is opened, avoiding extra requests on Intelligence Overview, History, Import, and Discover.
 - Verification: Svelte diagnostics clean, unit 46/46, production build and budgets green at 47.3 KiB initial JavaScript and 23.8 KiB CSS, and focused mobile/desktop Intelligence plus Services browser flows 4/4.
-- Push and deployment remain pending exact-revision authorization.
+- The implementation from `18c84037` is included in deployed revision `218a703f`.
 
 ## Exact import undo and Spotify video exclusion — 2026-08-20
 

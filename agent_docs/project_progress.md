@@ -10,8 +10,8 @@ This is a replacement and consolidation package. Do not create parallel matching
 
 ### Verified delivery state
 
-- Application revision `e6e7a2dc59843732753af801ecf956fda63007c8` is pushed and deployed to both Jellyfin and Subsonic stacks.
-- Both server checkouts are clean at that revision. Both app containers use image `sha256:d5603bf21c67fdfeab4c788952f0343a7448ec0b89dcf6a0b5f03964775ea030` and are healthy.
+- Application revision `218a703fe74180d835c7c2398b554891edcc13e4` is pushed and deployed to both Jellyfin and Subsonic stacks.
+- Both server checkouts are clean at that revision. Both app containers use image `sha256:d717f94c2a15c97befff49f4c4d2ba46162bde1ba0945b4ef64d3915edbea127` and are healthy; both readiness responses report PostgreSQL ready, both trusted-LAN WebUIs return HTTP 200, and startup logs contain no error- or critical-level entries.
 - GitHub Actions run `32323295754` is green across build/test, release-critical, Apple, WebUI, format, Compose, and release-manifest jobs.
 - Current WebUI baseline is 47.3 KiB initial JavaScript and 23.8 KiB CSS; unit is 46/46. The import, retention, disclosure, audio-quality, and extension-permission browser slice is 5/5.
 - Completed listening-history imports can be undone by exact import provenance; this removes only their stored listens, checkpoints, saved record, and temporary artifact. Spotify `Streaming_History_Video_*` exports are rejected before staging.
@@ -137,7 +137,7 @@ Acceptance: local release evidence is complete before LAN access, no unrun gate 
 - Two proposed shared-control/artwork changes were measured and discarded before commit: loading a Bits UI checkbox into the root shell raised initial JavaScript to 69.6 KiB, and blank provider logos were traced to the test fixture's intentionally empty SVG rather than production assets.
 - Live browser qualification covered 12 desktop routes and 8 mobile routes with no document overflow, console error, or heading displacement. Home now reports `0 cached · 0 kept`, matching the live Cached and Kept inventories.
 
-### Post-delivery AudioMuse setup placement — local
+### Post-delivery AudioMuse setup placement — deployed
 
 - [x] Keep AudioMuse as an extension-backed Intelligence implementation while moving its user connection task into Intelligence → Automation.
 - [x] Reuse the existing manifest-driven encrypted Source dialog; add no second account or settings owner.
@@ -145,18 +145,18 @@ Acceptance: local release evidence is complete before LAN access, no unrun gate 
 - [x] Replace the duplicate AudioMuse Services form with a direct **Configure in Intelligence** handoff.
 - [x] Verify responsive connect/configure flows: Svelte diagnostics clean, unit 46/46, production build and budgets green, and focused mobile/desktop browser checks 4/4.
 - [x] Commit the local implementation as `18c84037`.
-- [ ] Push and deploy the exact revision after authorization.
+- [x] Push and deploy the exact revision after authorization as part of `218a703f`.
 
-### Post-delivery unlimited history range — local
+### Post-delivery unlimited history range — deployed
 
 - [x] Default Overview and History reporting to **All time**, with no `from`/`to` bounds sent until the user chooses a finite or custom range.
 - [x] Remove the artificial ten-year reporting-window rejection while retaining ordered-date validation.
 - [x] Keep listening retention defaulted to `0` (unlimited); do not migrate saved user choices or delete retained history.
 - [x] Preserve finite 30-day, 90-day, one-year, and custom reporting choices.
 - [x] Verify the default/unbounded contracts: focused .NET 2/2, Svelte diagnostics clean, unit 46/46, production build and budgets green, and focused responsive browser checks 2/2.
-- [x] Commit the local implementation.
-- [ ] Push and deploy the exact revision after authorization.
+- [x] Commit the implementation as `218a703f`.
+- [x] Push and deploy the exact revision after authorization.
 
 ## Next action
 
-Push and deploy both pending revisions only after exact-revision authorization.
+No deployment action remains for the AudioMuse placement or unlimited-history correction. Await user verification of the deployed Intelligence flows.
