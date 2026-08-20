@@ -1,12 +1,14 @@
 # Latest Session Work
 
-## AudioMuse built-in correction and truthful import receipts — verified locally, 2026-08-20
+## AudioMuse built-in correction and truthful import receipts — deployed, 2026-08-20
 
 - AudioMuse is a built-in Allstarr Intelligence integration, not an extension. Intelligence → Automation owns its self-hosted server URL, optional API token, and optional AudioMuse server selector.
 - The new typed adapter covers health, recommendations, similarity, text/lyrics search, paths, blends, map pages, clustering playlists, and analysis jobs while retaining exact user/library provider-account scope.
 - The configuration action no longer depends on provider readiness: an unconfigured or unhealthy AudioMuse connection can always be created or edited directly in Intelligence.
 - Completed history imports are now non-interactive receipts instead of disabled selection rows. Overview shows the effective retention, and a completed receipt with zero currently retained listens explains that the original files must be re-imported.
-- Local verification: affected non-database .NET 68/68, Svelte diagnostics clean, WebUI unit 46/46, production build and budgets green, and focused responsive browser checks 3/3. The six PostgreSQL import tests were not run because `ALLSTARR_TEST_POSTGRES` was not configured; no storage code changed. Deployment remains pending.
+- Revision `1edd625e6ae20c3eff5e29175a6a870b67fa731f` is pushed and deployed to both Allstarr stacks on `192.168.1.116`; both application containers are healthy on image `sha256:dfa13b6d908101fb7e0325ebd8c5f3b299948fa8d7898f4aad07def3f47a45ac`.
+- Local verification: affected non-database .NET 68/68, Svelte diagnostics clean, WebUI unit 46/46, production build and budgets green, and focused responsive browser checks 3/3. The six PostgreSQL import tests were not run because `ALLSTARR_TEST_POSTGRES` was not configured; no storage code changed.
+- Live browser verification: Intelligence → Automation exposes the built-in AudioMuse connection and its server URL, optional token, and optional music-server fields without an extension prerequisite. Intelligence → Import shows 20 completed receipts, no unusable include checkboxes, and a truthful re-import warning because no imported listens are currently retained. The browser console contains no errors.
 
 ## Unlimited history display and retention — deployed, 2026-08-20
 

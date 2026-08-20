@@ -137,7 +137,7 @@ Acceptance: local release evidence is complete before LAN access, no unrun gate 
 - Two proposed shared-control/artwork changes were measured and discarded before commit: loading a Bits UI checkbox into the root shell raised initial JavaScript to 69.6 KiB, and blank provider logos were traced to the test fixture's intentionally empty SVG rather than production assets.
 - Live browser qualification covered 12 desktop routes and 8 mobile routes with no document overflow, console error, or heading displacement. Home now reports `0 cached · 0 kept`, matching the live Cached and Kept inventories.
 
-### Post-delivery AudioMuse setup placement — built-in correction verified locally
+### Post-delivery AudioMuse setup placement — built-in correction deployed
 
 - [x] Register AudioMuse as a built-in Intelligence and health capability; it is not an extension package.
 - [x] Keep its self-hosted server URL, optional API token, and optional multi-server selector in Intelligence → Automation.
@@ -145,7 +145,9 @@ Acceptance: local release evidence is complete before LAN access, no unrun gate 
 - [x] Perform real account-bound `/api/health` checks and route recommendation, search, path, blend, map, clustering-playlist, and analysis calls through the typed built-in adapter.
 - [x] Keep Services available for shared account audience and diagnostics without making Extensions a prerequisite.
 - [x] Verify the correction locally: affected non-database .NET 68/68, Svelte diagnostics clean, WebUI unit 46/46, production build and budgets green, and focused mobile/desktop browser checks 3/3.
-- [ ] Commit, push, deploy, and verify the exact revision on both Allstarr stacks.
+- [x] Commit and push revision `1edd625e6ae20c3eff5e29175a6a870b67fa731f`, deploy it to both Allstarr stacks, and verify both application containers healthy on image `sha256:dfa13b6d908101fb7e0325ebd8c5f3b299948fa8d7898f4aad07def3f47a45ac`.
+- [x] Verify live in the signed-in browser that Intelligence → Automation exposes **Connect AudioMuse**, its form contains the server URL, optional token, and optional music-server selector, and no extension prerequisite or link remains.
+- [x] Verify live import truthfulness: 20 completed receipts use “added when imported,” no disabled include checkboxes remain, and the zero-retained state directs the user to re-import the original files. The browser console contains no errors.
 
 ### Post-delivery unlimited history range — deployed
 
@@ -159,4 +161,4 @@ Acceptance: local release evidence is complete before LAN access, no unrun gate 
 
 ## Next action
 
-Commit and deploy the verified built-in AudioMuse correction and truthful import receipts, then verify the live Intelligence form and retained-history state.
+Continue the remaining active checklist from the next open implementation gate; the AudioMuse placement and truthful import-receipt correction are deployed and live-verified.
