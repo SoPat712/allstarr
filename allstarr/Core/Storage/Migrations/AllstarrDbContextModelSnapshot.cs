@@ -3303,6 +3303,13 @@ namespace allstarr.Core.Storage.Migrations
                         .HasColumnType("boolean")
                         .HasDefaultValue(true);
 
+                    b.Property<string>("ImportMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("Linked");
+
                     b.Property<string>("LibraryScopeId")
                         .IsRequired()
                         .HasMaxLength(300)
@@ -3395,6 +3402,13 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
 
+                    b.Property<string>("TrackRetention")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("OnDemand");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid");
 
@@ -3413,7 +3427,13 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.ToTable("playlist_links", null, t =>
                         {
+                            t.HasCheckConstraint("CK_playlist_links_import_mode", "\"ImportMode\" IN ('Linked', 'OneTime')");
+
+                            t.HasCheckConstraint("CK_playlist_links_one_time_schedule", "\"ImportMode\" <> 'OneTime' OR \"ScheduleId\" IS NULL");
+
                             t.HasCheckConstraint("CK_playlist_links_source_hash", "length(\"SourcePlaylistIdHash\") = 64");
+
+                            t.HasCheckConstraint("CK_playlist_links_track_retention", "\"TrackRetention\" IN ('OnDemand', 'KeepAll')");
                         });
                 });
 

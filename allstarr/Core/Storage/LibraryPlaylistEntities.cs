@@ -5,6 +5,8 @@ public enum ManualOverrideDecision { Pin, Reject }
 public enum PlaylistLinkMode { Virtual, Materialized, Hybrid }
 public enum PlaylistProjectionMode { Resolved, Source, Target }
 public enum PlaylistMaterializationMode { Reconcile, Recreate }
+public enum PlaylistImportMode { Linked, OneTime }
+public enum PlaylistTrackRetention { OnDemand, KeepAll }
 public enum PlaylistSyncState { Pending, Running, Succeeded, PartiallySucceeded, Conflicted, Failed, Cancelled }
 public enum PlaylistEntryOutcome { Matched, Reused, Added, Reordered, Skipped, Rejected, Unsupported, Failed }
 public enum ScheduleOverlapPolicy { Skip, Queue }
@@ -147,6 +149,8 @@ public sealed class PlaylistLinkRecord
     public PlaylistLinkMode Mode { get; set; }
     public PlaylistProjectionMode ProjectionMode { get; set; } = PlaylistProjectionMode.Resolved;
     public PlaylistMaterializationMode MaterializationMode { get; set; }
+    public PlaylistImportMode ImportMode { get; set; } = PlaylistImportMode.Linked;
+    public PlaylistTrackRetention TrackRetention { get; set; } = PlaylistTrackRetention.OnDemand;
     public bool MirrorStaleEntries { get; set; }
     public bool PreserveManualEntries { get; set; } = true;
     public bool SyncName { get; set; } = true;

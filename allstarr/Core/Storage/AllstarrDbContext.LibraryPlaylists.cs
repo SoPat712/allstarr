@@ -160,7 +160,13 @@ public sealed partial class AllstarrDbContext
 
         modelBuilder.Entity<PlaylistLinkRecord>(entity =>
         {
-            entity.ToTable("playlist_links", table => table.HasCheckConstraint("CK_playlist_links_source_hash", "length(\"SourcePlaylistIdHash\") = 64"));
+            entity.ToTable("playlist_links", table =>
+            {
+                table.HasCheckConstraint("CK_playlist_links_source_hash", "length(\"SourcePlaylistIdHash\") = 64");
+                table.HasCheckConstraint("CK_playlist_links_import_mode", "\"ImportMode\" IN ('Linked', 'OneTime')");
+                table.HasCheckConstraint("CK_playlist_links_track_retention", "\"TrackRetention\" IN ('OnDemand', 'KeepAll')");
+                table.HasCheckConstraint("CK_playlist_links_one_time_schedule", "\"ImportMode\" <> 'OneTime' OR \"ScheduleId\" IS NULL");
+            });
             entity.HasKey(item => item.Id);
             entity.HasAlternateKey(item => new { item.TenantId, item.Id });
             entity.Property(item => item.Id).ValueGeneratedNever();
@@ -176,6 +182,10 @@ public sealed partial class AllstarrDbContext
             entity.Property(item => item.ProjectionMode).HasConversion<string>().HasMaxLength(32)
                 .HasDefaultValue(PlaylistProjectionMode.Resolved);
             entity.Property(item => item.MaterializationMode).HasConversion<string>().HasMaxLength(32);
+            entity.Property(item => item.ImportMode).HasConversion<string>().HasMaxLength(32)
+                .HasDefaultValue(PlaylistImportMode.Linked);
+            entity.Property(item => item.TrackRetention).HasConversion<string>().HasMaxLength(32)
+                .HasDefaultValue(PlaylistTrackRetention.OnDemand);
             Required(entity.Property(item => item.RuleVersion), 100);
             Required(entity.Property(item => item.PolicyVersion), 100);
             entity.Property(item => item.Revision).IsConcurrencyToken();
