@@ -2,42 +2,13 @@ using allstarr.Core.Capabilities;
 
 namespace allstarr.Services.Common;
 
-/// <summary>
-/// Represents the quality tier requested by a client for streaming.
-/// Used to map client transcoding parameters to provider-specific quality levels.
-/// The shared audio-quality setting is the maximum; client requests can only go lower.
-/// </summary>
 public enum StreamQuality
 {
-    /// <summary>
-    /// Use the quality configured in Settings (default behavior).
-    /// This is the "Lossless" / "no transcoding" selection in a client.
-    /// </summary>
     Original,
-
-    /// <summary>
-    /// High quality lossy (e.g., 320kbps AAC/MP3).
-    /// Covers client selections: 320K, 256K, 192K.
-    /// Maps to: Deezer MP3_320, Qobuz MP3_320.
-    /// </summary>
     High,
-
-    /// <summary>
-    /// Low quality lossy (e.g., 96-128kbps AAC/MP3).
-    /// Covers client selections: 128K, 64K.
-    /// Maps to: Deezer MP3_128, Qobuz MP3_320 (lowest available).
-    /// </summary>
     Low
 }
 
-/// <summary>
-/// Parses Jellyfin client transcoding query parameters to determine
-/// the requested stream quality tier for external tracks.
-/// 
-/// Typical client quality options: Lossless, 320K, 256K, 192K, 128K, 64K
-/// These are mapped to StreamQuality tiers which providers then translate
-/// to their own quality levels, capped at the shared setting.
-/// </summary>
 public static class StreamQualityHelper
 {
     public static ProviderAudioQuality FromSubsonicMaxBitRate(string? kilobitsPerSecond) =>
@@ -45,74 +16,39 @@ public static class StreamQualityHelper
             ? value < 192 ? ProviderAudioQuality.DataSaver : ProviderAudioQuality.Lossy
             : ProviderAudioQuality.Any;
 
-    /// <summary>
-    /// Parses the request query string to determine what quality the client wants.
-    /// Jellyfin clients send parameters like AudioBitRate, MaxStreamingBitrate,
-    /// AudioCodec, TranscodingContainer when requesting transcoded streams.
-    /// </summary>
     public static StreamQuality ParseFromQueryString(IQueryCollection query)
     {
-        // Check for explicit audio bitrate (e.g., AudioBitRate=128000)
-        if (query.TryGetValue("AudioBitRate", out var audioBitRateVal) &&
-            int.TryParse(audioBitRateVal.FirstOrDefault(), out var audioBitRate))
-        {
+        if (TryReadBitRate(query, "AudioBitRate", out var audioBitRate) ||
+            TryReadBitRate(query, "audioBitRate", out audioBitRate))
             return MapBitRateToQuality(audioBitRate);
-        }
 
-        // Check for MaxStreamingBitrate (e.g., MaxStreamingBitrate=140000000 for lossless)
+        if (RequestsLossyAudio(query, "AudioCodec") ||
+            RequestsLossyAudio(query, "TranscodingContainer"))
+            return StreamQuality.High;
+
         if (query.TryGetValue("MaxStreamingBitrate", out var maxBitrateVal) &&
             long.TryParse(maxBitrateVal.FirstOrDefault(), out var maxBitrate))
-        {
-            // Very high values (>= 10Mbps) indicate lossless / no transcoding
-            if (maxBitrate >= 10_000_000)
-            {
-                return StreamQuality.Original;
-            }
+            return maxBitrate >= 10_000_000
+                ? StreamQuality.Original
+                : MapBitRateToQuality((int)maxBitrate);
 
-            // MaxStreamingBitrate is reported in bits per second.
-            return MapBitRateToQuality((int)maxBitrate);
-        }
-
-        // Check for audioBitRate (lowercase variant used by some clients)
-        if (query.TryGetValue("audioBitRate", out var audioBitRateLower) &&
-            int.TryParse(audioBitRateLower.FirstOrDefault(), out var audioBitRateLowerVal))
-        {
-            return MapBitRateToQuality(audioBitRateLowerVal);
-        }
-
-        // Check TranscodingContainer — if client requests mp3/aac, they want lossy
-        if (query.TryGetValue("TranscodingContainer", out var container))
-        {
-            var containerStr = container.FirstOrDefault()?.ToLowerInvariant();
-            if (containerStr is "mp3" or "aac" or "m4a")
-            {
-                // Container specified but no bitrate — default to High (320kbps)
-                return StreamQuality.High;
-            }
-        }
-
-        // No transcoding parameters — use the quality selected in Settings.
         return StreamQuality.Original;
     }
 
-    /// <summary>
-    /// Maps a bitrate value (in bps) to a StreamQuality tier.
-    /// Client options are typically: Lossless, 320K, 256K, 192K, 128K, 64K
-    /// 
-    /// >= 192kbps → High (covers 320K, 256K, 192K selections)
-    /// &lt; 192kbps → Low (covers 128K, 64K selections)
-    /// </summary>
-    internal static StreamQuality MapBitRateToQuality(int bitRate)
-    {
-        // >= 192kbps → High (320kbps tier)
-        // Covers client selections: 320K, 256K, 192K
-        if (bitRate >= 192_000)
-        {
-            return StreamQuality.High;
-        }
+    private static bool RequestsLossyAudio(IQueryCollection query, string key) =>
+        query.TryGetValue(key, out var values) &&
+        values.SelectMany(value => value?.Split(
+                ',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [])
+            .Any(value => value.Equals("mp3", StringComparison.OrdinalIgnoreCase) ||
+                          value.Equals("aac", StringComparison.OrdinalIgnoreCase) ||
+                          value.Equals("m4a", StringComparison.OrdinalIgnoreCase));
 
-        // < 192kbps → Low (96-128kbps tier)
-        // Covers client selections: 128K, 64K
-        return StreamQuality.Low;
+    private static bool TryReadBitRate(IQueryCollection query, string key, out int bitRate)
+    {
+        bitRate = 0;
+        return query.TryGetValue(key, out var value) && int.TryParse(value.FirstOrDefault(), out bitRate);
     }
+
+    internal static StreamQuality MapBitRateToQuality(int bitRate) =>
+        bitRate >= 192_000 ? StreamQuality.High : StreamQuality.Low;
 }

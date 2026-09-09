@@ -1,5 +1,6 @@
 using allstarr.Core.Capabilities;
 using allstarr.Services.Common;
+using Microsoft.AspNetCore.Http;
 
 namespace allstarr.Tests;
 
@@ -28,4 +29,24 @@ public sealed class AudioQualityPolicyTests
     public void SubsonicBandwidthCap_CanOnlyLowerPlaybackQuality(
         string? maxBitRate, ProviderAudioQuality expected) =>
         Assert.Equal(expected, StreamQualityHelper.FromSubsonicMaxBitRate(maxBitRate));
+
+    [Theory]
+    [InlineData("AudioCodec", "aac")]
+    [InlineData("AudioCodec", "flac,aac")]
+    [InlineData("TranscodingContainer", "m4a")]
+    public void JellyfinLossyRequest_OutranksBroadDeviceBandwidth(
+        string key,
+        string value)
+    {
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = QueryString.Create(
+            new KeyValuePair<string, string?>[]
+            {
+                new("MaxStreamingBitrate", "140000000"),
+                new(key, value)
+            });
+
+        Assert.Equal(StreamQuality.High,
+            StreamQualityHelper.ParseFromQueryString(context.Request.Query));
+    }
 }
