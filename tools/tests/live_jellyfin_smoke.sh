@@ -14,6 +14,9 @@ TEST_PLAYLIST_WRITES="${TEST_PLAYLIST_WRITES:-0}"
 PLAYLIST_WRITE_CONFIRM="${PLAYLIST_WRITE_CONFIRM:-}"
 INJECTED_PLAYLIST_ID="${INJECTED_PLAYLIST_ID:-}"
 INJECTED_PLAYLIST_EXPECTED_COUNT="${INJECTED_PLAYLIST_EXPECTED_COUNT:-}"
+NATIVE_PLAYLIST_ID="${NATIVE_PLAYLIST_ID:-}"
+NATIVE_PLAYLIST_EXPECTED_NAME="${NATIVE_PLAYLIST_EXPECTED_NAME:-}"
+NATIVE_PLAYLIST_REQUIRE_ARTWORK="${NATIVE_PLAYLIST_REQUIRE_ARTWORK:-0}"
 EXTERNAL_SONG_ID="${EXTERNAL_SONG_ID:-}"
 EXTERNAL_PROVIDER_CASES="${EXTERNAL_PROVIDER_CASES:-[]}" # [{"provider":"extension-id","songId":"ext-extension-id-song-123"}]
 EXPECTED_EXTERNAL_PROVIDERS="${EXPECTED_EXTERNAL_PROVIDERS:-}"
@@ -75,6 +78,14 @@ if [[ -n "$INJECTED_PLAYLIST_ID" || -n "$INJECTED_PLAYLIST_EXPECTED_COUNT" ]]; t
     [[ "$INJECTED_PLAYLIST_EXPECTED_COUNT" =~ ^[1-9][0-9]*$ ]] ||
         { echo "INJECTED_PLAYLIST_EXPECTED_COUNT must be a positive integer" >&2; exit 1; }
 fi
+if [[ -n "$NATIVE_PLAYLIST_ID" || -n "$NATIVE_PLAYLIST_EXPECTED_NAME" ]]; then
+    [[ "$NATIVE_PLAYLIST_ID" =~ ^[[:alnum:]_-]{1,128}$ ]] ||
+        { echo "NATIVE_PLAYLIST_ID must be a stable playlist ID" >&2; exit 1; }
+    [[ -n "$NATIVE_PLAYLIST_EXPECTED_NAME" ]] ||
+        { echo "NATIVE_PLAYLIST_EXPECTED_NAME is required with NATIVE_PLAYLIST_ID" >&2; exit 1; }
+fi
+[[ "$NATIVE_PLAYLIST_REQUIRE_ARTWORK" == 0 || "$NATIVE_PLAYLIST_REQUIRE_ARTWORK" == 1 ]] ||
+    { echo "NATIVE_PLAYLIST_REQUIRE_ARTWORK must be 0 or 1" >&2; exit 1; }
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_id="${started_at//[:T-]/}"
@@ -116,7 +127,7 @@ cleanup() {
         if playlist_identity_matches "$stateful_playlist_id" "$stateful_playlist_name" ||
            playlist_identity_matches "$stateful_playlist_id" "$stateful_playlist_original_name"; then
             cleanup_delete_code="$(curl -sS -X DELETE --max-time "$TIMEOUT_SECONDS" \
-                -H "X-Emby-Token: $JELLYFIN_TOKEN" \
+                -H "Authorization: MediaBrowser Token=\"$JELLYFIN_TOKEN\"" \
                 "$DIRECT_BASE/Items/$stateful_playlist_id" -o /dev/null -w '%{http_code}' 2>/dev/null || true)"
             cleanup_probe_code="$(curl -sS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
                 "$DIRECT_BASE/Items/$stateful_playlist_id?UserId=$best_user_id" \
@@ -140,7 +151,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-auth=(-H "X-Emby-Token: $JELLYFIN_TOKEN" -H "User-Agent: AllstarrLiveSmoke/$run_id")
+auth=(-H "Authorization: MediaBrowser Token=\"$JELLYFIN_TOKEN\"" \
+      -H "User-Agent: AllstarrLiveSmoke/$run_id")
 echo "live-smoke-start=$started_at samples=$SAMPLES range_bytes=65536 external_stream=$TEST_EXTERNAL_STREAM playlist_writes=$TEST_PLAYLIST_WRITES"
 
 curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" "$DIRECT_BASE/Users" -o "$users_file"
@@ -180,7 +192,7 @@ while IFS= read -r user_id; do
 done <<<"$user_candidates"
 [[ -n "$best_user_id" && "$best_audio_count" -gt 0 ]] ||
     { echo "No Jellyfin user with audio visible to Allstarr was found" >&2; exit 1; }
-auth=(-H "X-Emby-Authorization: MediaBrowser Client=\"AllstarrLiveSmoke\", Device=\"Qualification\", DeviceId=\"$run_id\", Version=\"1\", UserId=\"$best_user_id\", Token=\"$JELLYFIN_TOKEN\"" \
+auth=(-H "Authorization: MediaBrowser Client=\"AllstarrLiveSmoke\", Device=\"Qualification\", DeviceId=\"$run_id\", Version=\"1\", UserId=\"$best_user_id\", Token=\"$JELLYFIN_TOKEN\"" \
       -H "User-Agent: AllstarrLiveSmoke/$run_id")
 actor_bound=0
 if curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
@@ -1230,7 +1242,7 @@ check_json "music library root" "$ALLSTARR_BASE/Items/Root?UserId=$best_user_id"
      (.ChildCount | type == "number")'
 music_root_id="$(jq -r '.Id // empty' "$response_file")"
 compare_projection "music library root stable object" \
-    "$DIRECT_BASE/Items/$music_root_id" \
+    "$DIRECT_BASE/Items/$music_root_id?UserId=$best_user_id" \
     "$ALLSTARR_BASE/Items/Root?UserId=$best_user_id" \
     'del(.ChildCount)'
 echo "declared-diff music library ChildCount=Jellyfin returns a volatile value across identical reads"
@@ -1644,6 +1656,7 @@ if [[ -s "$direct_playlists_file" && -s "$allstarr_playlists_file" ]]; then
                 (.ChildCount // 0) == ($direct.ChildCount // 0))) |
             $direct.Id) // empty' "$direct_playlists_file")"
 fi
+[[ -z "$NATIVE_PLAYLIST_ID" ]] || playlist_id="$NATIVE_PLAYLIST_ID"
 if { [[ -z "$virtual_playlist_id" ]] || [[ -z "$external_playlist_id" ]]; } &&
    (( allstarr_playlists > direct_playlists )) &&
    curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
@@ -1662,6 +1675,28 @@ fi
 echo "playlist-counts direct=$direct_playlists allstarr=$allstarr_playlists"
 check_json "playlist browse shape" "$ALLSTARR_BASE/Users/$best_user_id/Items?$playlist_query" \
     '(.Items | type == "array") and all(.Items[]; .Type == "Playlist")'
+if [[ -n "$NATIVE_PLAYLIST_ID" ]]; then
+    encoded_playlist_name="$(jq -rn --arg value "$NATIVE_PLAYLIST_EXPECTED_NAME" '$value | @uri')"
+    check_json "configured native playlist name" \
+        "$ALLSTARR_BASE/Users/$best_user_id/Items/$NATIVE_PLAYLIST_ID" \
+        '.Id == $id and .Name == $name and .Type == "Playlist"' \
+        --arg id "$NATIVE_PLAYLIST_ID" --arg name "$NATIVE_PLAYLIST_EXPECTED_NAME"
+    check_json "configured playlist name search" \
+        "$ALLSTARR_BASE/Users/$best_user_id/Items?Recursive=true&IncludeItemTypes=Playlist&SearchTerm=$encoded_playlist_name&Limit=100" \
+        'any(.Items[]; .Id == $id and .Name == $name and .Type == "Playlist")' \
+        --arg id "$NATIVE_PLAYLIST_ID" --arg name "$NATIVE_PLAYLIST_EXPECTED_NAME"
+    compare_projection "configured playlist name parity" \
+        "$DIRECT_BASE/Users/$best_user_id/Items/$NATIVE_PLAYLIST_ID" \
+        "$ALLSTARR_BASE/Users/$best_user_id/Items/$NATIVE_PLAYLIST_ID" \
+        '{Id,Name,Type,ImageTags,ProviderIds}'
+    if [[ "$NATIVE_PLAYLIST_REQUIRE_ARTWORK" == 1 ]]; then
+        check_image "configured playlist artwork" \
+            "$ALLSTARR_BASE/Items/$NATIVE_PLAYLIST_ID/Images/Primary?UserId=$best_user_id"
+    fi
+    compare_binary "configured playlist art parity" \
+        "$DIRECT_BASE/Items/$NATIVE_PLAYLIST_ID/Images/Primary?UserId=$best_user_id" \
+        "$ALLSTARR_BASE/Items/$NATIVE_PLAYLIST_ID/Images/Primary?UserId=$best_user_id"
+fi
 if [[ -n "$INJECTED_PLAYLIST_ID" ]]; then
     direct_injected_count="$(curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
         "$DIRECT_BASE/Playlists/$INJECTED_PLAYLIST_ID/Items?UserId=$best_user_id&Limit=200" |
