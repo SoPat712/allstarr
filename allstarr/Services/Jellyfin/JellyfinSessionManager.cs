@@ -10,11 +10,6 @@ using allstarr.Services.Common;
 
 namespace allstarr.Services.Jellyfin;
 
-/// <summary>
-/// Manages Jellyfin sessions for connected clients.
-/// Creates sessions on first playback and keeps them alive with periodic pings.
-/// Also maintains server-side WebSocket connections to Jellyfin on behalf of clients.
-/// </summary>
 public class JellyfinSessionManager : IDisposable
 {
     private readonly JellyfinProxyService _proxyService;
@@ -35,16 +30,12 @@ public class JellyfinSessionManager : IDisposable
         _settings = settings.Value;
         _logger = logger;
 
-        // Keep sessions alive every 10 seconds (Jellyfin considers sessions stale after ~15 seconds of inactivity)
+        // Jellyfin considers inactive sessions stale after roughly 15 seconds.
         _keepAliveTimer = new Timer(KeepSessionsAlive, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
 
         _logger.LogInformation("🔧 SESSION: JellyfinSessionManager initialized with 10-second keep-alive and WebSocket support");
     }
 
-    /// <summary>
-    /// Ensures a session exists for the given device. Creates one if needed.
-    /// Returns false if token is expired (401), indicating client needs to re-authenticate.
-    /// </summary>
     public async Task<bool> EnsureSessionAsync(string deviceId, string client, string device, string version, IHeaderDictionary headers)
         => await EnsureSessionAsync(deviceId, client, device, version, headers, null);
 
@@ -68,7 +59,6 @@ public class JellyfinSessionManager : IDisposable
         {
             var hasProxiedWebSocket = HasProxiedWebSocket(deviceId);
 
-            // Check if we already have this session tracked
             if (_sessions.TryGetValue(deviceId, out var existingSession))
             {
                 existingSession.LastActivity = DateTime.UtcNow;
@@ -81,13 +71,10 @@ public class JellyfinSessionManager : IDisposable
 
                 if (!hasProxiedWebSocket)
                 {
-                    // Refresh capabilities to keep session alive only for sessions that Allstarr
-                    // is synthesizing itself. Native proxied websocket sessions should be left
-                    // entirely under Jellyfin's control.
+                    // Native proxied websocket sessions remain entirely under Jellyfin's control.
                     var refreshResult = await PostCapabilitiesAsync(headers);
                     if (refreshResult == CapabilitiesPostResult.Unauthorized)
                     {
-                        // Token expired - remove the stale session
                         _logger.LogWarning("Token expired for device {DeviceId} - removing session", deviceId);
                         await RemoveSessionAsync(deviceId);
                         return false;
@@ -106,9 +93,7 @@ public class JellyfinSessionManager : IDisposable
 
             if (!hasProxiedWebSocket)
             {
-                // Post session capabilities to Jellyfin only when Allstarr is creating a
-                // synthetic session. If the real client already has a proxied websocket,
-                // re-posting capabilities can overwrite its remote-control state.
+                // Re-posting capabilities can overwrite a native client's remote-control state.
                 var createResult = await PostCapabilitiesAsync(headers);
                 if (createResult != CapabilitiesPostResult.Success)
                 {
@@ -124,7 +109,6 @@ public class JellyfinSessionManager : IDisposable
                     deviceId);
             }
 
-            // Track this session
             var clientIp = headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim()
                           ?? headers["X-Real-IP"].FirstOrDefault()
                           ?? "Unknown";
@@ -145,8 +129,6 @@ public class JellyfinSessionManager : IDisposable
                 UserName = principal?.DisplayName
             };
 
-            // Start a synthetic WebSocket connection only when the client itself does not
-            // already have a proxied Jellyfin socket through Allstarr.
             if (!hasProxiedWebSocket)
             {
                 _ = Task.Run(() => MaintainWebSocketForSessionAsync(deviceId, headers));
@@ -203,10 +185,6 @@ public class JellyfinSessionManager : IDisposable
         return !string.IsNullOrWhiteSpace(deviceId) && _proxiedWebSocketConnections.ContainsKey(deviceId);
     }
 
-    /// <summary>
-    /// Posts session capabilities to Jellyfin.
-    /// Distinguishes an expired token from a transient upstream failure.
-    /// </summary>
     private async Task<CapabilitiesPostResult> PostCapabilitiesAsync(IHeaderDictionary headers)
     {
         var capabilities = new
@@ -233,7 +211,6 @@ public class JellyfinSessionManager : IDisposable
         }
         else if (statusCode == 401)
         {
-            // Token expired - this is expected, client needs to re-authenticate
             _logger.LogWarning("Capabilities returned 401 (token expired) - client should re-authenticate");
             return CapabilitiesPostResult.Unauthorized;
         }
@@ -244,9 +221,6 @@ public class JellyfinSessionManager : IDisposable
         }
     }
 
-    /// <summary>
-    /// Updates session activity timestamp.
-    /// </summary>
     public void UpdateActivity(string deviceId)
     {
         if (_sessions.TryGetValue(deviceId, out var session))
@@ -260,9 +234,6 @@ public class JellyfinSessionManager : IDisposable
         }
     }
 
-    /// <summary>
-    /// Updates the currently playing item for a session (for scrobbling on cleanup).
-    /// </summary>
     public void UpdatePlayingItem(string deviceId, string? itemId, long? positionTicks)
     {
         if (_sessions.TryGetValue(deviceId, out var session))
@@ -275,10 +246,7 @@ public class JellyfinSessionManager : IDisposable
         }
     }
 
-    /// <summary>
-    /// Marks that an explicit playback stop was received for this device+item.
-    /// Used to suppress duplicate inferred stop forwarding from progress transitions.
-    /// </summary>
+    // Explicit stops suppress duplicate stops inferred from progress transitions.
     public void MarkExplicitStop(string deviceId, string itemId)
     {
         if (_sessions.TryGetValue(deviceId, out var session))
@@ -291,9 +259,6 @@ public class JellyfinSessionManager : IDisposable
         }
     }
 
-    /// <summary>
-    /// Returns true when an explicit stop for this device+item was recorded within the given time window.
-    /// </summary>
     public bool WasRecentlyExplicitlyStopped(string deviceId, string itemId, TimeSpan within)
     {
         if (_sessions.TryGetValue(deviceId, out var session))
@@ -317,9 +282,6 @@ public class JellyfinSessionManager : IDisposable
         return false;
     }
 
-    /// <summary>
-    /// Returns true if a local played-signal was already sent for this device+item.
-    /// </summary>
     public bool HasSentLocalPlayedSignal(string deviceId, string itemId)
     {
         if (_sessions.TryGetValue(deviceId, out var session))
@@ -333,9 +295,6 @@ public class JellyfinSessionManager : IDisposable
         return false;
     }
 
-    /// <summary>
-    /// Marks that a local played-signal was sent for this device+item.
-    /// </summary>
     public void MarkLocalPlayedSignalSent(string deviceId, string itemId)
     {
         if (_sessions.TryGetValue(deviceId, out var session))
@@ -347,17 +306,11 @@ public class JellyfinSessionManager : IDisposable
         }
     }
 
-    /// <summary>
-    /// Returns true when a tracked session exists for this device.
-    /// </summary>
     public bool HasSession(string deviceId)
     {
         return !string.IsNullOrWhiteSpace(deviceId) && _sessions.ContainsKey(deviceId);
     }
 
-    /// <summary>
-    /// Gets the last playing item id for a tracked session, if present.
-    /// </summary>
     public string? GetLastPlayingItemId(string deviceId)
     {
         if (_sessions.TryGetValue(deviceId, out var session))
@@ -368,9 +321,6 @@ public class JellyfinSessionManager : IDisposable
         return null;
     }
 
-    /// <summary>
-    /// Gets last tracked playing item and position for a device, if present.
-    /// </summary>
     public (string? ItemId, long? PositionTicks) GetLastPlayingState(string deviceId)
     {
         if (_sessions.TryGetValue(deviceId, out var session))
@@ -381,9 +331,6 @@ public class JellyfinSessionManager : IDisposable
         return (null, null);
     }
 
-    /// <summary>
-    /// Returns current active playback states for tracked sessions.
-    /// </summary>
     public IReadOnlyList<ActivePlaybackState> GetActivePlaybackStates(TimeSpan maxAge)
     {
         var cutoff = DateTime.UtcNow - maxAge;
@@ -406,10 +353,7 @@ public class JellyfinSessionManager : IDisposable
             .ToList();
     }
 
-    /// <summary>
-    /// Marks a session as potentially ended (e.g., after playback stops).
-    /// Jellyfin should decide when the upstream playback session expires.
-    /// </summary>
+    // Jellyfin, not local playback cleanup, owns the upstream session lifetime.
     public void MarkSessionPotentiallyEnded(string deviceId, TimeSpan timeout)
     {
         if (_sessions.TryGetValue(deviceId, out _))
@@ -421,9 +365,6 @@ public class JellyfinSessionManager : IDisposable
         }
     }
 
-    /// <summary>
-    /// Gets information about current active sessions for debugging.
-    /// </summary>
     public object GetSessionsInfo()
     {
         var now = DateTime.UtcNow;
@@ -451,9 +392,6 @@ public class JellyfinSessionManager : IDisposable
         };
     }
 
-    /// <summary>
-    /// Removes a session when the client disconnects.
-    /// </summary>
     public async Task RemoveSessionAsync(string deviceId)
     {
         _proxiedWebSocketConnections.TryRemove(deviceId, out _);
@@ -462,7 +400,6 @@ public class JellyfinSessionManager : IDisposable
         {
             _logger.LogDebug("🗑️ SESSION: Removing session for device {DeviceId}", deviceId);
 
-            // Close WebSocket if it exists
             if (session.WebSocket != null && session.WebSocket.State == WebSocketState.Open)
             {
                 try
@@ -482,7 +419,6 @@ public class JellyfinSessionManager : IDisposable
 
             try
             {
-                // Report playback stopped to Jellyfin if we have a playing item (for scrobbling)
                 if (!string.IsNullOrEmpty(session.LastPlayingItemId))
                 {
                     var stopPayload = new
@@ -496,7 +432,7 @@ public class JellyfinSessionManager : IDisposable
                         deviceId, session.LastPlayingItemId, session.LastPlayingPositionTicks);
                 }
 
-                // Let Jellyfin retire the session naturally; internal cleanup must not revoke the user's token.
+                // Internal cleanup must never revoke the user's token.
             }
             catch (Exception ex)
             {
@@ -505,10 +441,6 @@ public class JellyfinSessionManager : IDisposable
         }
     }
 
-    /// <summary>
-    /// Maintains a WebSocket connection to Jellyfin on behalf of a client session.
-    /// This allows the session to appear in Jellyfin's dashboard.
-    /// </summary>
     private async Task MaintainWebSocketForSessionAsync(string deviceId, IHeaderDictionary headers)
     {
         if (!_sessions.TryGetValue(deviceId, out var session))
@@ -527,64 +459,50 @@ public class JellyfinSessionManager : IDisposable
 
         try
         {
-            // Build Jellyfin WebSocket URL
             var jellyfinUrl = _settings.Url?.TrimEnd('/') ?? "";
             var wsScheme = jellyfinUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? "wss://" : "ws://";
             var jellyfinHost = jellyfinUrl.Replace("https://", "").Replace("http://", "");
             var jellyfinWsUrl = $"{wsScheme}{jellyfinHost}/socket";
 
-            // IMPORTANT: Do NOT add api_key to URL - we want to authenticate as the CLIENT, not the server
-            // The client's token is passed via X-Emby-Authorization header
-            // Using api_key would create a session for the server/admin, not the actual user's client
+            // Server credentials here would attribute the session to the server/admin, not the client.
 
             webSocket = new ClientWebSocket();
             session.WebSocket = webSocket;
 
-            // Use stored session headers instead of parameter (parameter might be disposed)
+            // The request-scoped header collection may already be disposed.
             var sessionHeaders = session.Headers;
 
-            // Log available headers for debugging
             _logger.LogDebug("🔍 WEBSOCKET: Available headers for {DeviceId}: {Headers}",
                 deviceId, string.Join(", ", sessionHeaders.Keys));
 
-            // Forward authentication headers from the CLIENT - this is critical for session to appear under the right user
             bool authFound = false;
-            if (sessionHeaders.TryGetValue("X-Emby-Authorization", out var embyAuth))
+            if (sessionHeaders.TryGetValue("Authorization", out var auth))
             {
-                webSocket.Options.SetRequestHeader("X-Emby-Authorization", embyAuth.ToString());
-                _logger.LogDebug("🔑 WEBSOCKET: Using X-Emby-Authorization for {DeviceId}", deviceId);
+                webSocket.Options.SetRequestHeader("Authorization", auth.ToString());
+                _logger.LogDebug("🔑 WEBSOCKET: Using Authorization for {DeviceId}", deviceId);
+                authFound = true;
+            }
+            else if (sessionHeaders.TryGetValue("X-Emby-Authorization", out var embyAuth))
+            {
+                webSocket.Options.SetRequestHeader("Authorization", embyAuth.ToString());
+                _logger.LogDebug("🔑 WEBSOCKET: Upgraded legacy authorization for {DeviceId}", deviceId);
                 authFound = true;
             }
             else if (sessionHeaders.TryGetValue("X-Emby-Token", out var token))
             {
-                webSocket.Options.SetRequestHeader("X-Emby-Token", token.ToString());
-                _logger.LogDebug("🔑 WEBSOCKET: Using X-Emby-Token for {DeviceId}", deviceId);
+                webSocket.Options.SetRequestHeader(
+                    "Authorization",
+                    AuthHeaderHelper.CreateAuthHeader(
+                        token.ToString(), session.Client, session.Device, deviceId, session.Version));
+                _logger.LogDebug("🔑 WEBSOCKET: Upgraded legacy token for {DeviceId}", deviceId);
                 authFound = true;
-            }
-            else if (sessionHeaders.TryGetValue("Authorization", out var auth))
-            {
-                var authValue = auth.ToString();
-                if (authValue.Contains("MediaBrowser", StringComparison.OrdinalIgnoreCase))
-                {
-                    webSocket.Options.SetRequestHeader("X-Emby-Authorization", authValue);
-                    _logger.LogDebug("🔑 WEBSOCKET: Converted Authorization to X-Emby-Authorization for {DeviceId}",
-                        deviceId);
-                    authFound = true;
-                }
-                else
-                {
-                    webSocket.Options.SetRequestHeader("Authorization", authValue);
-                    _logger.LogDebug("🔑 WEBSOCKET: Using Authorization for {DeviceId}", deviceId);
-                    authFound = true;
-                }
             }
 
             if (!authFound)
             {
-                // No client auth found - fall back to server API key as last resort
                 if (!string.IsNullOrEmpty(_settings.ApiKey))
                 {
-                    jellyfinWsUrl += $"?api_key={_settings.ApiKey}";
+                    jellyfinWsUrl += $"?ApiKey={Uri.EscapeDataString(_settings.ApiKey)}";
                     _logger.LogWarning("WEBSOCKET: No client auth found in headers, falling back to server API key for {DeviceId}", deviceId);
                 }
                 else
@@ -596,28 +514,22 @@ public class JellyfinSessionManager : IDisposable
             _logger.LogDebug("🔗 WEBSOCKET: Connecting to Jellyfin for device {DeviceId}: {Url}", deviceId,
                 jellyfinWsUrl.Split('?')[0]);
 
-            // Set user agent
             webSocket.Options.SetRequestHeader("User-Agent", $"Allstarr-Proxy/{session.Client}");
 
-            // Connect to Jellyfin
             await webSocket.ConnectAsync(new Uri(jellyfinWsUrl), CancellationToken.None);
             _logger.LogInformation("✓ WEBSOCKET: Connected to Jellyfin for device {DeviceId}", deviceId);
 
-            // CRITICAL: Send ForceKeepAlive message to initialize session in Jellyfin
-            // This tells Jellyfin to create/show the session in the dashboard
-            // Without this message, the WebSocket is connected but no session appears
+            // Jellyfin does not expose the connected session until ForceKeepAlive arrives.
             var forceKeepAliveMessage = "{\"MessageType\":\"ForceKeepAlive\",\"Data\":100}";
             var messageBytes = Encoding.UTF8.GetBytes(forceKeepAliveMessage);
             await webSocket.SendAsync(new ArraySegment<byte>(messageBytes), WebSocketMessageType.Text, true, CancellationToken.None);
             _logger.LogInformation("📤 WEBSOCKET: Sent ForceKeepAlive to initialize session for {DeviceId}", deviceId);
 
-            // Also send SessionsStart to subscribe to session updates
             var sessionsStartMessage = "{\"MessageType\":\"SessionsStart\",\"Data\":\"0,1500\"}";
             messageBytes = Encoding.UTF8.GetBytes(sessionsStartMessage);
             await webSocket.SendAsync(new ArraySegment<byte>(messageBytes), WebSocketMessageType.Text, true, CancellationToken.None);
             _logger.LogDebug("📤 WEBSOCKET: Sent SessionsStart for {DeviceId}", deviceId);
 
-            // Keep the WebSocket alive by reading messages and sending periodic keep-alive
             var buffer = new byte[1024 * 4];
             var lastKeepAlive = DateTime.UtcNow;
             using var cts = new CancellationTokenSource();
@@ -633,7 +545,7 @@ public class JellyfinSessionManager : IDisposable
                         break;
                     }
 
-                    // Use a timeout so we can send keep-alive messages periodically
+                    // Bound the receive so an idle socket cannot starve outbound keep-alives.
                     using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
                     timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
 
@@ -647,24 +559,20 @@ public class JellyfinSessionManager : IDisposable
                             break;
                         }
 
-                        // Log received messages for debugging (only non-routine messages)
                         if (result.MessageType == WebSocketMessageType.Text)
                         {
                             var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
 
-                            // Respond to KeepAlive requests from Jellyfin
                             if (message.Contains("\"MessageType\":\"KeepAlive\""))
                             {
                                 _logger.LogDebug("💓 WEBSOCKET: Received KeepAlive from Jellyfin for {DeviceId}", deviceId);
                             }
                             else if (message.Contains("\"MessageType\":\"Sessions\""))
                             {
-                                // Session updates are routine, log at debug level
                                 _logger.LogDebug("📥 WEBSOCKET: Session update for {DeviceId}", deviceId);
                             }
                             else
                             {
-                                // Log other message types at trace level
                                 _logger.LogTrace("📥 WEBSOCKET: {DeviceId}: {Message}",
                                     deviceId, message.Length > 100 ? message[..100] + "..." : message);
                             }
@@ -672,10 +580,8 @@ public class JellyfinSessionManager : IDisposable
                     }
                     catch (OperationCanceledException) when (!cts.IsCancellationRequested)
                     {
-                        // Timeout - this is expected, send keep-alive if needed
                     }
 
-                    // Send periodic keep-alive every 30 seconds
                     if (DateTime.UtcNow - lastKeepAlive > TimeSpan.FromSeconds(30))
                     {
                         var keepAliveMsg = "{\"MessageType\":\"KeepAlive\"}";
@@ -712,7 +618,6 @@ public class JellyfinSessionManager : IDisposable
                 _logger.LogDebug("🧹 WEBSOCKET: Cleaned up WebSocket for device {DeviceId}", deviceId);
             }
 
-            // Clear WebSocket reference from session
             if (_sessions.TryGetValue(deviceId, out var sess))
             {
                 sess.WebSocket = null;
@@ -720,11 +625,7 @@ public class JellyfinSessionManager : IDisposable
         }
     }
 
-    /// <summary>
-    /// Periodically pings Jellyfin to keep sessions alive.
-    /// Note: This is a backup mechanism. The WebSocket connection is the primary keep-alive.
-    /// Removes sessions with expired tokens (401 responses).
-    /// </summary>
+    // Capabilities are a fallback keep-alive; native or synthetic WebSockets are primary.
     private void KeepSessionsAlive(object? state) => _ = RunKeepAlivePassAsync();
 
     internal async Task RunKeepAlivePassAsync()
@@ -781,7 +682,7 @@ public class JellyfinSessionManager : IDisposable
                 await RemoveSessionAsync(deviceId);
             }
 
-            // This balances cleaning up finished sessions with allowing brief pauses/network issues.
+            // Three minutes tolerates brief pauses and network interruptions before cleanup.
             var staleSessions = _sessions.Where(kvp => now - kvp.Value.LastActivity > TimeSpan.FromMinutes(3)).ToList();
             foreach (var stale in staleSessions)
             {
@@ -861,7 +762,6 @@ public class JellyfinSessionManager : IDisposable
             initLock.Dispose();
         }
 
-        // Close all WebSocket connections
         foreach (var session in _sessions.Values)
         {
             if (session.WebSocket != null && session.WebSocket.State == WebSocketState.Open)

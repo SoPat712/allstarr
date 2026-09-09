@@ -10,17 +10,8 @@ using System.Text.Json;
 
 namespace allstarr.Services.Jellyfin;
 
-/// <summary>
-/// Handles proxying requests to the Jellyfin server and authentication.
-/// Uses a named HttpClient ("JellyfinBackend") with SocketsHttpHandler for
-/// TCP connection pooling across scoped instances.
-/// </summary>
 public class JellyfinProxyService
 {
-    /// <summary>
-    /// The IHttpClientFactory registration name for the Jellyfin backend client.
-    /// Configured with SocketsHttpHandler for connection pooling in Program.cs.
-    /// </summary>
     public const string HttpClientName = "JellyfinBackend";
 
     private readonly HttpClient _httpClient;
@@ -33,7 +24,6 @@ public class JellyfinProxyService
     private string? _cachedMusicLibraryId;
     private bool _libraryIdDetected = false;
 
-    // Expose HttpClient for direct streaming scenarios
     public HttpClient HttpClient => _httpClient;
 
     public JellyfinProxyService(
@@ -54,24 +44,18 @@ public class JellyfinProxyService
         _configuration = configuration;
     }
 
-    /// <summary>
-    /// Gets the music library ID, auto-detecting it if not configured.
-    /// </summary>
     private async Task<string?> GetMusicLibraryIdAsync()
     {
-        // Return configured library ID if set
         if (!string.IsNullOrEmpty(_settings.LibraryId))
         {
             return _settings.LibraryId;
         }
 
-        // Return cached value if already detected
         if (_libraryIdDetected)
         {
             return _cachedMusicLibraryId;
         }
 
-        // Auto-detect music library ID
         try
         {
             _logger.LogInformation("Auto-detecting music library ID...");
@@ -92,22 +76,28 @@ public class JellyfinProxyService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to auto-detect music library ID");
-            _libraryIdDetected = true; // Don't keep trying
+            _libraryIdDetected = true;
             return null;
         }
     }
 
-    /// <summary>
-    /// Public method for controllers to get the music library ID for filtering.
-    /// </summary>
-    public async Task<string?> GetMusicLibraryIdForFilteringAsync()
+    public async Task<string?> GetMusicLibraryIdForFilteringAsync(
+        string? callerQuery = null,
+        IHeaderDictionary? clientHeaders = null)
     {
+        if (!string.IsNullOrWhiteSpace(callerQuery))
+        {
+            var (views, _) = await GetJsonAsync($"UserViews{callerQuery}", null, clientHeaders);
+            using (views)
+            {
+                var visibleLibraryId = FindMusicLibraryId(views);
+                if (!string.IsNullOrWhiteSpace(visibleLibraryId)) return visibleLibraryId;
+            }
+        }
+
         return await GetMusicLibraryIdAsync();
     }
 
-    /// <summary>
-    /// Gets the authorization header value for Jellyfin API requests.
-    /// </summary>
     private string GetAuthorizationHeader()
     {
         return $"MediaBrowser Client=\"{_settings.ClientName}\", " +
@@ -117,14 +107,8 @@ public class JellyfinProxyService
                $"Token=\"{_settings.ApiKey}\"";
     }
 
-    /// <summary>
-    /// Sends a GET request to the Jellyfin server.
-    /// If endpoint already contains query parameters, they will be preserved and merged with queryParams.
-    /// Returns the response body and HTTP status code.
-    /// </summary>
     public async Task<(JsonDocument? Body, int StatusCode)> GetJsonAsync(string endpoint, Dictionary<string, string>? queryParams = null, IHeaderDictionary? clientHeaders = null)
     {
-        // If endpoint contains query string, parse and merge with queryParams
         if (endpoint.Contains('?'))
         {
             var parts = endpoint.Split('?', 2);
@@ -160,7 +144,7 @@ public class JellyfinProxyService
             var mergedQuery = string.Join("&", preservedParams.Concat(explicitParams));
             var url = string.IsNullOrEmpty(mergedQuery)
                 ? BuildUrl(baseEndpoint)
-                : $"{BuildUrl(baseEndpoint)}?{mergedQuery}";
+                : NormalizeQueryCredentials($"{BuildUrl(baseEndpoint)}?{mergedQuery}");
 
             return await GetJsonAsyncInternal(url, clientHeaders);
         }
@@ -169,9 +153,7 @@ public class JellyfinProxyService
         return await GetJsonAsyncInternal(finalUrl, clientHeaders);
     }
 
-    /// <summary>
-    /// Relays an unhandled client request without assuming a JSON body or replacing client authentication.
-    /// </summary>
+    // Catch-all relays must preserve arbitrary bodies and client-owned authentication.
     public async Task<HttpResponseMessage> SendPassthroughResponseAsync(
         HttpRequest incoming,
         string endpoint,
@@ -238,8 +220,7 @@ public class JellyfinProxyService
 
         var statusCode = (int)response.StatusCode;
 
-        // Always parse the response, even for errors
-        // The caller needs to see 401s so the client can re-authenticate
+        // Preserve JSON error bodies so clients can respond to authentication failures.
         var content = await response.Content.ReadAsStringAsync();
 
         if (!response.IsSuccessStatusCode)
@@ -249,7 +230,6 @@ public class JellyfinProxyService
                 LogUpstreamFailure(HttpMethod.Get, response.StatusCode, url);
             }
 
-            // Try to parse error response to pass through to client
             if (!string.IsNullOrWhiteSpace(content))
             {
                 try
@@ -259,7 +239,6 @@ public class JellyfinProxyService
                 }
                 catch
                 {
-                    // Not valid JSON, return null
                 }
             }
 
@@ -277,7 +256,6 @@ public class JellyfinProxyService
     {
         var request = new HttpRequestMessage(HttpMethod.Get, url);
 
-        // Forward client IP address to Jellyfin so it can identify the real client
         if (_httpContextAccessor.HttpContext != null)
         {
             var clientIp = _httpContextAccessor.HttpContext.Connection.RemoteIpAddress?.ToString();
@@ -288,7 +266,6 @@ public class JellyfinProxyService
             }
         }
 
-        // Check if this is a browser request for static assets (favicon, etc.)
         isBrowserStaticRequest = url.Contains("/favicon.ico", StringComparison.OrdinalIgnoreCase) ||
                                  url.Contains("/web/", StringComparison.OrdinalIgnoreCase) ||
                                  (clientHeaders?.Any(h => h.Key.Equals("User-Agent", StringComparison.OrdinalIgnoreCase) &&
@@ -297,14 +274,12 @@ public class JellyfinProxyService
                                                          (h.Value.ToString().Contains("image", StringComparison.OrdinalIgnoreCase) ||
                                                           h.Value.ToString().Contains("document", StringComparison.OrdinalIgnoreCase))) == true);
 
-        // Check if this is a public endpoint that doesn't require authentication
         isPublicEndpoint = url.Contains("/System/Info/Public", StringComparison.OrdinalIgnoreCase) ||
                            url.Contains("/Branding/", StringComparison.OrdinalIgnoreCase) ||
                            url.Contains("/Startup/", StringComparison.OrdinalIgnoreCase);
 
         var authHeaderAdded = false;
 
-        // Forward authentication headers from client if provided
         if (clientHeaders != null && clientHeaders.Count > 0)
         {
             authHeaderAdded = AuthHeaderHelper.ForwardAuthHeaders(clientHeaders, request);
@@ -314,15 +289,14 @@ public class JellyfinProxyService
                 _logger.LogTrace("Forwarded authentication headers");
             }
 
-            // Check for api_key query parameter (some clients use this)
+            // Some Jellyfin clients authenticate through the query string.
             if (!authHeaderAdded && url.Contains("api_key=", StringComparison.OrdinalIgnoreCase))
             {
-                authHeaderAdded = true; // It's in the URL, no need to add header
+                authHeaderAdded = true;
                 _logger.LogTrace("Using api_key from query string");
             }
         }
 
-        // Only log warnings for non-public, non-browser requests without auth
         if (!authHeaderAdded && !isBrowserStaticRequest && !isPublicEndpoint)
         {
             _logger.LogDebug(
@@ -371,11 +345,6 @@ public class JellyfinProxyService
         method != HttpMethod.Get &&
         method != HttpMethod.Head;
 
-    /// <summary>
-    /// Sends a POST request to the Jellyfin server with JSON body.
-    /// Forwards client headers for authentication passthrough.
-    /// Returns the response body and HTTP status code.
-    /// </summary>
     public async Task<(JsonDocument? Body, int StatusCode)> PostJsonAsync(string endpoint, string body, IHeaderDictionary clientHeaders)
     {
         var bodyToSend = body;
@@ -388,10 +357,6 @@ public class JellyfinProxyService
         return await SendAsync(HttpMethod.Post, endpoint, bodyToSend, clientHeaders, "application/json");
     }
 
-    /// <summary>
-    /// Sends an arbitrary HTTP request to Jellyfin while preserving the caller's method and body semantics.
-    /// Intended for transparent proxy scenarios such as session control routes.
-    /// </summary>
     public async Task<(JsonDocument? Body, int StatusCode)> SendAsync(
         HttpMethod method,
         string endpoint,
@@ -404,7 +369,6 @@ public class JellyfinProxyService
 
         using var request = new HttpRequestMessage(method, url);
 
-        // Forward client IP address to Jellyfin so it can identify the real client
         if (_httpContextAccessor.HttpContext != null)
         {
             var clientIp = _httpContextAccessor.HttpContext.Connection.RemoteIpAddress?.ToString();
@@ -482,7 +446,6 @@ public class JellyfinProxyService
                 }
                 catch
                 {
-                    // Not valid JSON, return null
                 }
             }
 
@@ -508,10 +471,7 @@ public class JellyfinProxyService
         return (JsonDocument.Parse(responseContent), statusCode);
     }
 
-    /// <summary>
-    /// Sends a GET request and returns raw bytes (for images, audio streams).
-    /// WARNING: This loads the entire response into memory and is intended only for bounded assets.
-    /// </summary>
+    // Buffers the full response; callers must restrict this to bounded assets.
     public async Task<(byte[] Body, string? ContentType)> GetBytesAsync(string endpoint, Dictionary<string, string>? queryParams = null)
     {
         var url = BuildUrl(endpoint, queryParams);
@@ -530,19 +490,11 @@ public class JellyfinProxyService
         return (body, contentType);
     }
 
-    /// <summary>
-    /// Sends a DELETE request to the Jellyfin server.
-    /// Forwards client headers for authentication passthrough.
-    /// Returns the response body and HTTP status code.
-    /// </summary>
     public async Task<(JsonDocument? Body, int StatusCode)> DeleteAsync(string endpoint, IHeaderDictionary clientHeaders)
     {
         return await SendAsync(HttpMethod.Delete, endpoint, null, clientHeaders);
     }
 
-    /// <summary>
-    /// Safely sends a GET request to the Jellyfin server, returning null on failure.
-    /// </summary>
     public async Task<(byte[]? Body, string? ContentType, bool Success)> GetBytesSafeAsync(
         string endpoint,
         Dictionary<string, string>? queryParams = null,
@@ -568,16 +520,12 @@ public class JellyfinProxyService
         }
         catch (Exception ex)
         {
-            // Actual errors should still be logged
             _logger.LogError(ex, "Failed to get bytes from {Endpoint}", endpoint);
             return (null, null, false);
         }
     }
 
-    /// <summary>
-    /// Reads only the first bounded range of a media stream. Diagnostics use this to
-    /// prove that an authenticated player can receive audio without downloading a song.
-    /// </summary>
+    // Diagnostics prove authenticated playback with a bounded range, not a full download.
     public async Task<(int StatusCode, int BytesRead, string? ContentType, bool Success)> ProbeAudioStreamAsync(
         string itemId,
         IHeaderDictionary clientHeaders,
@@ -625,10 +573,6 @@ public class JellyfinProxyService
         }
     }
 
-    /// <summary>
-    /// Searches for items in Jellyfin.
-    /// Does not force any library filtering - clients can specify parentId if they want.
-    /// </summary>
     public async Task<(JsonDocument? Body, int StatusCode)> SearchAsync(
         string searchTerm,
         string[]? includeItemTypes = null,
@@ -645,8 +589,7 @@ public class JellyfinProxyService
         };
         AddEffectiveUserId(queryParams, clientHeaders);
 
-        // Note: We don't force parentId here - let clients specify which library to search
-        // The controller will detect music library searches and add external results
+        // The controller, not this transparent backend query, decides when to merge providers.
 
         if (includeItemTypes != null && includeItemTypes.Length > 0)
         {
@@ -672,9 +615,6 @@ public class JellyfinProxyService
         return (body, statusCode);
     }
 
-    /// <summary>
-    /// Gets items from a specific parent (album, artist, playlist).
-    /// </summary>
     public async Task<(JsonDocument? Body, int StatusCode)> GetItemsAsync(
         string? parentId = null,
         string[]? includeItemTypes = null,
@@ -724,9 +664,6 @@ public class JellyfinProxyService
         return await GetJsonAsync("Items", queryParams, clientHeaders);
     }
 
-    /// <summary>
-    /// Gets a single item by ID.
-    /// </summary>
     public async Task<(JsonDocument? Body, int StatusCode)> GetItemAsync(string itemId, IHeaderDictionary? clientHeaders = null)
     {
         var queryParams = new Dictionary<string, string>
@@ -760,9 +697,6 @@ public class JellyfinProxyService
         }
     }
 
-    /// <summary>
-    /// Gets artists from the library.
-    /// </summary>
     public async Task<(JsonDocument? Body, int StatusCode)> GetArtistsAsync(
         string? searchTerm = null,
         int? limit = null,
@@ -793,21 +727,16 @@ public class JellyfinProxyService
         return await GetJsonAsync("Artists", queryParams, clientHeaders);
     }
 
-    /// <summary>
-    /// Gets an artist by name or ID.
-    /// </summary>
     public async Task<(JsonDocument? Body, int StatusCode)> GetArtistAsync(string artistIdOrName, IHeaderDictionary? clientHeaders = null)
     {
         var queryParams = new Dictionary<string, string>();
         AddEffectiveUserId(queryParams, clientHeaders);
 
-        // Try to get by ID first
         if (Guid.TryParse(artistIdOrName, out _))
         {
             return await GetJsonAsync($"Items/{artistIdOrName}", queryParams, clientHeaders);
         }
 
-        // Otherwise search by name
         return await GetJsonAsync($"Artists/{Uri.EscapeDataString(artistIdOrName)}", queryParams, clientHeaders);
     }
 
@@ -829,9 +758,6 @@ public class JellyfinProxyService
         }
     }
 
-    /// <summary>
-    /// Streams audio from Jellyfin with range support.
-    /// </summary>
     public async Task<IActionResult> StreamAudioAsync(
         string itemId,
         CancellationToken cancellationToken)
@@ -850,7 +776,6 @@ public class JellyfinProxyService
             var incomingRequest = httpContext.Request;
             var outgoingResponse = httpContext.Response;
 
-            // Build the stream URL - use static streaming for simplicity
             var queryParams = new Dictionary<string, string>
             {
                 ["static"] = "true",
@@ -864,7 +789,6 @@ public class JellyfinProxyService
 
             LogOutboundRequest(HttpMethod.Get, url);
 
-            // Forward Range headers for progressive streaming
             if (incomingRequest.Headers.TryGetValue("Range", out var range))
             {
                 request.Headers.TryAddWithoutValidation("Range", range.ToArray());
@@ -885,10 +809,8 @@ public class JellyfinProxyService
                 return new StatusCodeResult((int)response.StatusCode);
             }
 
-            // Forward HTTP status code
             outgoingResponse.StatusCode = (int)response.StatusCode;
 
-            // Forward streaming headers
             var streamingHeaders = new[] { "Accept-Ranges", "Content-Range", "Content-Length", "ETag", "Last-Modified" };
             foreach (var header in streamingHeaders)
             {
@@ -917,9 +839,6 @@ public class JellyfinProxyService
         }
     }
 
-    /// <summary>
-    /// Gets the image for an item.
-    /// </summary>
     public async Task<(byte[]? Body, string? ContentType)> GetImageAsync(
         string itemId,
         string imageType = "Primary",
@@ -972,9 +891,6 @@ public class JellyfinProxyService
         return (asset?.Bytes, asset?.ContentType);
     }
 
-    /// <summary>
-    /// Tests connection to the Jellyfin server.
-    /// </summary>
     public async Task<(bool Success, string? ServerName, string? Version)> TestConnectionAsync()
     {
         try
@@ -1001,9 +917,6 @@ public class JellyfinProxyService
         }
     }
 
-    /// <summary>
-    /// Gets the music library ID from Jellyfin by querying media folders.
-    /// </summary>
     private async Task<string?> GetMusicLibraryIdInternalAsync()
     {
         try
@@ -1020,30 +933,31 @@ public class JellyfinProxyService
                 return null;
             }
 
-            if (result.RootElement.TryGetProperty("Items", out var items))
-            {
-                foreach (var item in items.EnumerateArray())
-                {
-                    var collectionType = item.TryGetProperty("CollectionType", out var ct)
-                        ? ct.GetString()
-                        : null;
-
-                    if (collectionType == "music")
-                    {
-                        return item.TryGetProperty("Id", out var id)
-                            ? id.GetString()
-                            : null;
-                    }
-                }
-            }
-
-            return null;
+            using (result) return FindMusicLibraryId(result);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get music library ID");
             return null;
         }
+    }
+
+    private static string? FindMusicLibraryId(JsonDocument? document)
+    {
+        if (document == null ||
+            !document.RootElement.TryGetProperty("Items", out var items) ||
+            items.ValueKind != JsonValueKind.Array)
+            return null;
+
+        foreach (var item in items.EnumerateArray())
+        {
+            if (item.TryGetProperty("CollectionType", out var collectionType) &&
+                string.Equals(collectionType.GetString(), "music", StringComparison.OrdinalIgnoreCase) &&
+                item.TryGetProperty("Id", out var id))
+                return id.GetString();
+        }
+
+        return null;
     }
 
     private string BuildUrl(string endpoint, Dictionary<string, string>? queryParams = null)
@@ -1058,7 +972,55 @@ public class JellyfinProxyService
             url = $"{url}?{query}";
         }
 
-        return url;
+        return NormalizeQueryCredentials(url);
+    }
+
+    internal static string NormalizeQueryCredentials(string url)
+    {
+        var queryStart = url.IndexOf('?');
+        if (queryStart < 0) return url;
+
+        var fragmentStart = url.IndexOf('#', queryStart);
+        var queryEnd = fragmentStart >= 0 ? fragmentStart : url.Length;
+        var query = url[(queryStart + 1)..queryEnd];
+        var parameters = query.Split('&', StringSplitOptions.RemoveEmptyEntries);
+        var selectedCredentialIndex = Array.FindIndex(parameters, parameter =>
+            Uri.UnescapeDataString(parameter.Split('=', 2)[0]).Equals("ApiKey", StringComparison.Ordinal));
+        if (selectedCredentialIndex < 0)
+        {
+            selectedCredentialIndex = Array.FindIndex(parameters, parameter =>
+            {
+                var key = Uri.UnescapeDataString(parameter.Split('=', 2)[0]);
+                return key.Equals("api_key", StringComparison.OrdinalIgnoreCase) ||
+                       key.Equals("access_token", StringComparison.OrdinalIgnoreCase);
+            });
+        }
+        var preserved = new List<string>(parameters.Length);
+
+        for (var index = 0; index < parameters.Length; index++)
+        {
+            var parameter = parameters[index];
+            var keyValue = parameter.Split('=', 2);
+            var key = Uri.UnescapeDataString(keyValue[0]);
+            if (key.Equals("ApiKey", StringComparison.Ordinal) ||
+                key.Equals("api_key", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("access_token", StringComparison.OrdinalIgnoreCase))
+            {
+                if (index == selectedCredentialIndex)
+                {
+                    preserved.Add($"ApiKey={(keyValue.Length == 2 ? keyValue[1] : string.Empty)}");
+                }
+                continue;
+            }
+
+            preserved.Add(parameter);
+        }
+
+        var normalizedQuery = string.Join('&', preserved);
+        var fragment = fragmentStart >= 0 ? url[fragmentStart..] : string.Empty;
+        return normalizedQuery.Length == 0
+            ? $"{url[..queryStart]}{fragment}"
+            : $"{url[..queryStart]}?{normalizedQuery}{fragment}";
     }
 
     private void LogOutboundRequest(HttpMethod method, string url)
@@ -1103,7 +1065,8 @@ public class JellyfinProxyService
 
     private static bool IsSensitiveQueryKey(string key)
     {
-        return string.Equals(key, "api_key", StringComparison.OrdinalIgnoreCase) ||
+        return string.Equals(key, "ApiKey", StringComparison.Ordinal) ||
+               string.Equals(key, "api_key", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(key, "token", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(key, "auth", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(key, "authorization", StringComparison.OrdinalIgnoreCase) ||
@@ -1150,19 +1113,15 @@ public class JellyfinProxyService
             method.Method, statusCode, url);
     }
 
-    /// <summary>
-    /// Sends a GET request to the Jellyfin server using the server's API key for internal operations.
-    /// This should only be used for server-side operations, not for proxying client requests.
-    /// </summary>
+    // The server API key is restricted to internal operations; client proxying retains client auth.
     public async Task<(JsonDocument? Body, int StatusCode)> GetJsonAsyncInternal(string endpoint, Dictionary<string, string>? queryParams = null)
     {
         var url = BuildUrl(endpoint, queryParams);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
 
-        // Use server's API key for authentication
         var authHeader = GetAuthorizationHeader();
-        request.Headers.TryAddWithoutValidation("X-Emby-Authorization", authHeader);
+        request.Headers.TryAddWithoutValidation("Authorization", authHeader);
 
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 

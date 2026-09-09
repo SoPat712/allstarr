@@ -18,7 +18,7 @@ public sealed class JellyfinPlaybackMetadataResolverTests
         var resolver = CreateResolver(request =>
         {
             requestCount++;
-            Assert.Equal("server-api-key", request.Headers.GetValues("X-Emby-Token").Single());
+            Assert.Contains("Token=\"server-api-key\"", request.Headers.GetValues("Authorization").Single());
             Assert.Equal("user-1", ParseQuery(request.RequestUri!).GetValueOrDefault("userId"));
             return Json("""
                 {
@@ -72,7 +72,7 @@ public sealed class JellyfinPlaybackMetadataResolverTests
     {
         var resolver = CreateResolver(request =>
         {
-            Assert.Equal("server-api-key", request.Headers.GetValues("X-Emby-Token").Single());
+            Assert.Contains("Token=\"server-api-key\"", request.Headers.GetValues("Authorization").Single());
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new ByteArrayContent([1, 2, 3, 4])

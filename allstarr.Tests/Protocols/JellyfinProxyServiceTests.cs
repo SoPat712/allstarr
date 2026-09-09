@@ -68,14 +68,11 @@ public class JellyfinProxyServiceTests
     [Fact]
     public async Task GetJsonAsync_ValidResponse_ReturnsJsonDocument()
     {
-        // Arrange
         var jsonResponse = "{\"Items\":[{\"Id\":\"123\",\"Name\":\"Test Song\"}],\"TotalRecordCount\":1}";
         SetupMockResponse(HttpStatusCode.OK, jsonResponse, "application/json");
 
-        // Act
         var (body, statusCode) = await _service.GetJsonAsync("Items");
 
-        // Assert
         Assert.NotNull(body);
         Assert.Equal(200, statusCode);
         Assert.True(body.RootElement.TryGetProperty("Items", out var items));
@@ -85,13 +82,10 @@ public class JellyfinProxyServiceTests
     [Fact]
     public async Task GetJsonAsync_ServerError_ReturnsNull()
     {
-        // Arrange
         SetupMockResponse(HttpStatusCode.InternalServerError, "", "text/plain");
 
-        // Act
         var (body, statusCode) = await _service.GetJsonAsync("Items");
 
-        // Assert
         Assert.Null(body);
         Assert.Equal(500, statusCode);
     }
@@ -132,7 +126,6 @@ public class JellyfinProxyServiceTests
     [Fact]
     public async Task GetJsonAsync_WithoutClientHeaders_SendsNoAuth()
     {
-        // Arrange
         HttpRequestMessage? captured = null;
         _mockHandler.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
@@ -144,19 +137,16 @@ public class JellyfinProxyServiceTests
                 Content = new StringContent("{}")
             });
 
-        // Act
         await _service.GetJsonAsync("Items");
 
-        // Assert - Should NOT include auth when no client headers provided
         Assert.NotNull(captured);
         Assert.False(captured!.Headers.Contains("Authorization"));
         Assert.False(captured.Headers.Contains("X-Emby-Authorization"));
     }
 
     [Fact]
-    public async Task GetJsonAsync_WithXEmbyToken_ForwardsTokenHeader()
+    public async Task GetJsonAsync_WithXEmbyToken_UsesModernAuthorization()
     {
-        // Arrange
         HttpRequestMessage? captured = null;
         _mockHandler.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
@@ -173,19 +163,17 @@ public class JellyfinProxyServiceTests
             ["X-Emby-Token"] = "token-123"
         };
 
-        // Act
         await _service.GetJsonAsync("Items", null, headers);
 
-        // Assert
         Assert.NotNull(captured);
-        Assert.True(captured!.Headers.TryGetValues("X-Emby-Token", out var values));
-        Assert.Contains("token-123", values);
+        Assert.True(captured!.Headers.TryGetValues("Authorization", out var values));
+        Assert.Contains(values, value => value.Contains("Token=\"token-123\"", StringComparison.Ordinal));
+        Assert.False(captured.Headers.Contains("X-Emby-Token"));
     }
 
     [Fact]
     public async Task GetBytesAsync_ReturnsBodyAndContentType()
     {
-        // Arrange
         var imageBytes = new byte[] { 0x89, 0x50, 0x4E, 0x47 }; // PNG magic bytes
         var response = new HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -199,10 +187,8 @@ public class JellyfinProxyServiceTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(response);
 
-        // Act
         var (body, contentType) = await _service.GetBytesAsync("Items/123/Images/Primary");
 
-        // Assert
         Assert.Equal(imageBytes, body);
         Assert.Equal("image/png", contentType);
     }
@@ -210,17 +196,14 @@ public class JellyfinProxyServiceTests
     [Fact]
     public async Task GetBytesSafeAsync_OnError_ReturnsSuccessFalse()
     {
-        // Arrange
         _mockHandler.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
                 ItExpr.IsAny<HttpRequestMessage>(),
                 ItExpr.IsAny<CancellationToken>())
             .ThrowsAsync(new HttpRequestException("Connection refused"));
 
-        // Act
         var (body, contentType, success) = await _service.GetBytesSafeAsync("Items/123/Images/Primary");
 
-        // Assert
         Assert.False(success);
         Assert.Null(body);
         Assert.Null(contentType);
@@ -229,7 +212,6 @@ public class JellyfinProxyServiceTests
     [Fact]
     public async Task SearchAsync_BuildsCorrectQueryParams()
     {
-        // Arrange
         HttpRequestMessage? captured = null;
         _mockHandler.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
@@ -241,10 +223,8 @@ public class JellyfinProxyServiceTests
                 Content = new StringContent("{\"Items\":[],\"TotalRecordCount\":0}")
             });
 
-        // Act
         await _service.SearchAsync("test query", new[] { "Audio", "MusicAlbum" }, 25);
 
-        // Assert
         Assert.NotNull(captured);
         var url = captured!.RequestUri!.ToString();
 
@@ -267,7 +247,6 @@ public class JellyfinProxyServiceTests
     [Fact]
     public async Task GetItemAsync_RequestsCorrectEndpoint()
     {
-        // Arrange
         HttpRequestMessage? captured = null;
         var itemJson = "{\"Items\":[{\"Id\":\"abc-123\",\"Name\":\"My Song\",\"Type\":\"Audio\"}],\"TotalRecordCount\":1}";
         _mockHandler.Protected()
@@ -280,16 +259,14 @@ public class JellyfinProxyServiceTests
                 Content = new StringContent(itemJson)
             });
 
-        // Act
         var (body, statusCode) = await _service.GetItemAsync("abc-123");
 
-        // Assert
         Assert.NotNull(captured);
         Assert.Contains("/Items?", captured!.RequestUri!.ToString());
         Assert.Contains("ids=abc-123", captured.RequestUri.ToString());
         Assert.Contains("limit=1", captured.RequestUri.ToString());
         Assert.Contains("userId=user-guid-here", captured.RequestUri.ToString());
-        Assert.Equal("test-api-key-12345", captured.Headers.GetValues("X-Emby-Token").Single());
+        Assert.Contains("Token=\"test-api-key-12345\"", captured.Headers.GetValues("Authorization").Single());
         Assert.NotNull(body);
         Assert.Equal("abc-123", body.RootElement.GetProperty("Id").GetString());
         Assert.Equal(200, statusCode);
@@ -320,7 +297,7 @@ public class JellyfinProxyServiceTests
         Assert.NotNull(body);
         Assert.NotNull(captured);
         Assert.DoesNotContain("userId=", captured!.RequestUri!.Query);
-        Assert.Equal("caller-token", captured.Headers.GetValues("X-Emby-Token").Single());
+        Assert.Contains("Token=\"caller-token\"", captured.Headers.GetValues("Authorization").Single());
     }
 
     [Fact]
@@ -342,13 +319,12 @@ public class JellyfinProxyServiceTests
 
         Assert.NotNull(captured);
         Assert.DoesNotContain("userId=", captured!.RequestUri!.Query);
-        Assert.Equal("caller-token", captured.Headers.GetValues("X-Emby-Token").Single());
+        Assert.Contains("Token=\"caller-token\"", captured.Headers.GetValues("Authorization").Single());
     }
 
     [Fact]
     public async Task GetJsonAsync_WithEndpointQuery_PreservesCallerParameters()
     {
-        // Arrange
         HttpRequestMessage? captured = null;
         _mockHandler.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
@@ -360,24 +336,22 @@ public class JellyfinProxyServiceTests
                 Content = new StringContent("{\"Id\":\"abc-123\"}")
             });
 
-        // Act
         await _service.GetJsonAsync(
             "Users/user-abc/Items/abc-123?api_key=query-token&Fields=DateCreated,PremiereDate,ProductionYear");
 
-        // Assert
         Assert.NotNull(captured);
         var requestUri = captured!.RequestUri!;
         Assert.Contains("/Users/user-abc/Items/abc-123", requestUri.ToString());
 
         var query = System.Web.HttpUtility.ParseQueryString(requestUri.Query);
-        Assert.Equal("query-token", query.Get("api_key"));
+        Assert.Equal("query-token", query.Get("ApiKey"));
+        Assert.DoesNotContain("api_key=", requestUri.Query, StringComparison.Ordinal);
         Assert.Equal("DateCreated,PremiereDate,ProductionYear", query.Get("Fields"));
     }
 
     [Fact]
     public async Task GetJsonAsync_WithRepeatedFields_PreservesAllFieldParameters()
     {
-        // Arrange
         HttpRequestMessage? captured = null;
         _mockHandler.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
@@ -389,11 +363,9 @@ public class JellyfinProxyServiceTests
                 Content = new StringContent("{\"Items\":[]}")
             });
 
-        // Act
         await _service.GetJsonAsync(
             "Playlists/playlist-123/Items?Fields=Genres&Fields=DateCreated&Fields=MediaSources&UserId=user-abc");
 
-        // Assert
         Assert.NotNull(captured);
         var query = captured!.RequestUri!.Query;
         Assert.Contains("Fields=Genres", query);
@@ -405,7 +377,6 @@ public class JellyfinProxyServiceTests
     [Fact]
     public async Task SendAsync_WithNoBody_PreservesEmptyRequestBody()
     {
-        // Arrange
         HttpRequestMessage? captured = null;
         _mockHandler.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
@@ -419,14 +390,12 @@ public class JellyfinProxyServiceTests
             ["X-Emby-Authorization"] = "MediaBrowser Token=\"abc\""
         };
 
-        // Act
         var (_, statusCode) = await _service.SendAsync(
             HttpMethod.Post,
             "Sessions/session-123/Playing/Pause?controllingUserId=user-123",
             null,
             headers);
 
-        // Assert
         Assert.Equal(204, statusCode);
         Assert.NotNull(captured);
         Assert.Equal(HttpMethod.Post, captured!.Method);
@@ -436,7 +405,6 @@ public class JellyfinProxyServiceTests
     [Fact]
     public async Task SendAsync_WithCustomContentType_PreservesOriginalType()
     {
-        // Arrange
         HttpRequestMessage? captured = null;
         _mockHandler.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
@@ -450,7 +418,6 @@ public class JellyfinProxyServiceTests
             ["X-Emby-Authorization"] = "MediaBrowser Token=\"abc\""
         };
 
-        // Act
         await _service.SendAsync(
             HttpMethod.Put,
             "Sessions/session-123/Command/DisplayMessage",
@@ -458,7 +425,6 @@ public class JellyfinProxyServiceTests
             headers,
             "application/json; charset=utf-8");
 
-        // Assert
         Assert.NotNull(captured);
         Assert.Equal(HttpMethod.Put, captured!.Method);
         Assert.NotNull(captured.Content);
@@ -468,7 +434,6 @@ public class JellyfinProxyServiceTests
     [Fact]
     public async Task GetJsonAsync_WithEndpointAndExplicitQuery_MergesWithExplicitPrecedence()
     {
-        // Arrange
         HttpRequestMessage? captured = null;
         _mockHandler.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
@@ -480,7 +445,6 @@ public class JellyfinProxyServiceTests
                 Content = new StringContent("{\"Items\":[]}")
             });
 
-        // Act
         await _service.GetJsonAsync(
             "Items/abc-123?api_key=endpoint-token&Fields=DateCreated",
             new Dictionary<string, string>
@@ -489,10 +453,10 @@ public class JellyfinProxyServiceTests
                 ["UserId"] = "route-user"
             });
 
-        // Assert
         Assert.NotNull(captured);
         var query = System.Web.HttpUtility.ParseQueryString(captured!.RequestUri!.Query);
-        Assert.Equal("explicit-token", query.Get("api_key"));
+        Assert.Equal("explicit-token", query.Get("ApiKey"));
+        Assert.DoesNotContain("api_key=", captured.RequestUri.Query, StringComparison.Ordinal);
         Assert.Equal("DateCreated", query.Get("Fields"));
         Assert.Equal("route-user", query.Get("UserId"));
     }
@@ -500,7 +464,6 @@ public class JellyfinProxyServiceTests
     [Fact]
     public async Task GetArtistsAsync_WithSearchTerm_IncludesInQuery()
     {
-        // Arrange
         HttpRequestMessage? captured = null;
         _mockHandler.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
@@ -512,10 +475,8 @@ public class JellyfinProxyServiceTests
                 Content = new StringContent("{\"Items\":[],\"TotalRecordCount\":0}")
             });
 
-        // Act
         await _service.GetArtistsAsync("Beatles", 10);
 
-        // Assert
         Assert.NotNull(captured);
         var url = captured!.RequestUri!.ToString();
         Assert.Contains("/Artists", url);
@@ -526,7 +487,6 @@ public class JellyfinProxyServiceTests
     [Fact]
     public async Task GetImageAsync_WithDimensions_IncludesMaxWidthHeight()
     {
-        // Arrange
         HttpRequestMessage? captured = null;
         _mockHandler.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
@@ -538,10 +498,8 @@ public class JellyfinProxyServiceTests
                 Content = new ByteArrayContent(new byte[] { 1, 2, 3 })
             });
 
-        // Act
         await _service.GetImageAsync("item-123", "Primary", maxWidth: 300, maxHeight: 300);
 
-        // Assert
         Assert.NotNull(captured);
         var url = captured!.RequestUri!.ToString();
         Assert.Contains("/Items/item-123/Images/Primary", url);
@@ -552,7 +510,6 @@ public class JellyfinProxyServiceTests
     [Fact]
     public async Task GetImageAsync_WithTag_IncludesTagInQuery()
     {
-        // Arrange
         HttpRequestMessage? captured = null;
         _mockHandler.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
@@ -564,10 +521,8 @@ public class JellyfinProxyServiceTests
                 Content = new ByteArrayContent(new byte[] { 1, 2, 3 })
             });
 
-        // Act
         await _service.GetImageAsync("item-123", "Primary", imageTag: "playlist-art-v2");
 
-        // Assert
         Assert.NotNull(captured);
         var query = System.Web.HttpUtility.ParseQueryString(captured!.RequestUri!.Query);
         Assert.Equal("playlist-art-v2", query.Get("tag"));
@@ -578,14 +533,11 @@ public class JellyfinProxyServiceTests
     [Fact]
     public async Task TestConnectionAsync_ValidServer_ReturnsSuccess()
     {
-        // Arrange
         var serverInfo = "{\"ServerName\":\"My Jellyfin\",\"Version\":\"10.8.0\"}";
         SetupMockResponse(HttpStatusCode.OK, serverInfo, "application/json");
 
-        // Act
         var (success, serverName, version) = await _service.TestConnectionAsync();
 
-        // Assert
         Assert.True(success);
         Assert.Equal("My Jellyfin", serverName);
         Assert.Equal("10.8.0", version);
@@ -594,17 +546,14 @@ public class JellyfinProxyServiceTests
     [Fact]
     public async Task TestConnectionAsync_ServerDown_ReturnsFalse()
     {
-        // Arrange
         _mockHandler.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
                 ItExpr.IsAny<HttpRequestMessage>(),
                 ItExpr.IsAny<CancellationToken>())
             .ThrowsAsync(new HttpRequestException("Connection refused"));
 
-        // Act
         var (success, serverName, version) = await _service.TestConnectionAsync();
 
-        // Assert
         Assert.False(success);
         Assert.Null(serverName);
         Assert.Null(version);
@@ -615,7 +564,6 @@ public class JellyfinProxyServiceTests
     [Fact]
     public async Task StreamAudioAsync_NullContext_ReturnsError()
     {
-        // Arrange
         var httpContextAccessor = new HttpContextAccessor { HttpContext = null };
         var mockLogger = new Mock<ILogger<JellyfinProxyService>>();
         var cache = new DisabledApplicationCache();
@@ -631,10 +579,8 @@ public class JellyfinProxyServiceTests
                 new Mock<ILogger<MediaAssetResolver>>().Object),
             new ConfigurationBuilder().Build());
 
-        // Act
         var result = await service.StreamAudioAsync("song-123", CancellationToken.None);
 
-        // Assert
         var objectResult = Assert.IsType<ObjectResult>(result);
         Assert.Equal(500, objectResult.StatusCode);
     }
@@ -660,7 +606,7 @@ public class JellyfinProxyServiceTests
                 observedBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
                 observedContentType = request.Content.Headers.ContentType?.ToString();
                 observedIfMatch = request.Headers.GetValues("If-Match").ToArray();
-                observedAuth = request.Headers.GetValues("X-Emby-Authorization").ToArray();
+                observedAuth = request.Headers.GetValues("Authorization").ToArray();
                 observedClientHeader = request.Headers.GetValues("X-Jellyfin-Client-Capability").ToArray();
             })
             .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.Accepted)
@@ -683,13 +629,22 @@ public class JellyfinProxyServiceTests
             "Items/item-1?api_key=client-token&Fields=Name");
 
         Assert.Equal("PATCH", observedMethod);
-        Assert.Equal("/Items/item-1?api_key=client-token&Fields=Name", observedPathAndQuery);
+        Assert.Equal("/Items/item-1?ApiKey=client-token&Fields=Name", observedPathAndQuery);
         Assert.Equal("{\"Name\":\"Updated\"}", observedBody);
         Assert.Equal("application/merge-patch+json", observedContentType);
         Assert.Equal(["\"one\"", "\"two\""], observedIfMatch);
         Assert.Equal(["MediaBrowser Token=\"client-token\""], observedAuth);
         Assert.Equal(["gapless"], observedClientHeader);
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("http://jellyfin/Items/1?api_key=legacy&Fields=Name", "http://jellyfin/Items/1?ApiKey=legacy&Fields=Name")]
+    [InlineData("http://jellyfin/Items/1?access_token=legacy", "http://jellyfin/Items/1?ApiKey=legacy")]
+    [InlineData("http://jellyfin/Items/1?api_key=old&ApiKey=modern", "http://jellyfin/Items/1?ApiKey=modern")]
+    public void NormalizeQueryCredentials_UpgradesLegacyJellyfinTokens(string input, string expected)
+    {
+        Assert.Equal(expected, JellyfinProxyService.NormalizeQueryCredentials(input));
     }
 
     [Fact]

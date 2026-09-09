@@ -3,6 +3,7 @@ using allstarr.Core.Protocols;
 using Microsoft.AspNetCore.Mvc;
 using System.Net;
 using allstarr.Core.Capabilities;
+using allstarr.Services.Jellyfin;
 
 namespace allstarr.Controllers;
 
@@ -10,9 +11,6 @@ public partial class JellyfinController
 {
     #region Audio Streaming
 
-    /// <summary>
-    /// Downloads/streams audio. Works with local and external content.
-    /// </summary>
     [HttpGet("Items/{itemId}/Download")]
     [HttpGet("Items/{itemId}/File")]
     [HttpHead("Items/{itemId}/Download")]
@@ -28,7 +26,6 @@ public partial class JellyfinController
 
         if (!isExternal)
         {
-            // Build path for Jellyfin download/file endpoint
             var endpoint = Request.Path.Value?.Contains("/File", StringComparison.OrdinalIgnoreCase) == true
                 ? "File"
                 : "Download";
@@ -41,13 +38,9 @@ public partial class JellyfinController
             return await ProxyJellyfinStream(fullPath, itemId);
         }
 
-        // Handle external content
         return await StreamExternalContent(provider!, externalId!, asDownload: true);
     }
 
-    /// <summary>
-    /// Streams audio for a given item. Downloads on-demand for external content.
-    /// </summary>
     [HttpGet("Audio/{itemId}/stream")]
     [HttpGet("Audio/{itemId}/stream.{container}")]
     [HttpHead("Audio/{itemId}/stream")]
@@ -63,7 +56,6 @@ public partial class JellyfinController
 
         if (!isExternal)
         {
-            // Build path for Jellyfin stream
             var fullPath = string.IsNullOrEmpty(container)
                 ? $"Audio/{itemId}/stream"
                 : $"Audio/{itemId}/stream.{container}";
@@ -76,17 +68,14 @@ public partial class JellyfinController
             return await ProxyJellyfinStream(fullPath, itemId);
         }
 
-        // Handle external content with quality override from client transcoding params
         var quality = StreamQualityHelper.ParseFromQueryString(Request.Query);
         return await StreamExternalContent(provider!, externalId!, quality);
     }
 
-    /// <summary>
-    /// Proxies a stream from Jellyfin with proper header forwarding.
-    /// </summary>
     private async Task<IActionResult> ProxyJellyfinStream(string path, string itemId)
     {
-        var jellyfinUrl = $"{_settings.Url?.TrimEnd('/')}/{path}";
+        var jellyfinUrl = JellyfinProxyService.NormalizeQueryCredentials(
+            $"{_settings.Url?.TrimEnd('/')}/{path}");
 
         try
         {
@@ -94,7 +83,6 @@ public partial class JellyfinController
                 HttpMethods.IsHead(Request.Method) ? HttpMethod.Head : HttpMethod.Get,
                 jellyfinUrl);
 
-            // Forward auth headers
             AuthHeaderHelper.ForwardAuthHeaders(Request.Headers, request);
 
             _streamingResponseAdapter.ForwardRangeRequestHeaders(Request.Headers, request);
@@ -127,10 +115,6 @@ public partial class JellyfinController
         }
     }
 
-    /// <summary>
-    /// Streams external content, using cache if available or downloading on-demand.
-    /// Supports quality override for client-requested "transcoding" of external tracks.
-    /// </summary>
     private async Task<IActionResult> StreamExternalContent(
         string provider,
         string externalId,
@@ -144,7 +128,7 @@ public partial class JellyfinController
 
         if (localPath != null && System.IO.File.Exists(localPath))
         {
-            // Update last write time for cache cleanup (extends cache lifetime)
+            // A cache hit renews the artifact's cleanup lease.
             try
             {
                 System.IO.File.SetLastWriteTimeUtc(localPath, DateTime.UtcNow);
@@ -210,7 +194,6 @@ public partial class JellyfinController
             }
         }
 
-        // Download and stream on-demand
         try
         {
             var downloadStream = await _downloadService.DownloadAndStreamAsync(
@@ -315,10 +298,7 @@ public partial class JellyfinController
         return (StatusCodes.Status502BadGateway, "External stream failed");
     }
 
-    /// <summary>
-    /// Universal audio endpoint - handles transcoding, format negotiation, and adaptive streaming.
-    /// This is the primary endpoint used by Jellyfin Web and most clients.
-    /// </summary>
+    // Jellyfin Web and most clients negotiate adaptive playback through this route.
     [HttpGet("Audio/{itemId}/universal")]
     [HttpHead("Audio/{itemId}/universal")]
     public async Task<IActionResult> UniversalAudio(string itemId)
@@ -332,7 +312,6 @@ public partial class JellyfinController
 
         if (!isExternal)
         {
-            // For local content, proxy the universal endpoint with all query parameters
             var fullPath = $"Audio/{itemId}/universal";
             if (Request.QueryString.HasValue)
             {
@@ -342,7 +321,6 @@ public partial class JellyfinController
             return await ProxyJellyfinStream(fullPath, itemId);
         }
 
-        // For external content, parse quality override from client transcoding params
         var quality = StreamQualityHelper.ParseFromQueryString(Request.Query);
         return await StreamExternalContent(provider!, externalId!, quality);
     }

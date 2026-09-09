@@ -8,6 +8,7 @@ using allstarr.Services.Common;
 using allstarr.Models.Search;
 using allstarr.Models.Domain;
 using allstarr.Models.Subsonic;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols.Subsonic;
 using allstarr.Core.Protocols;
 using allstarr.Core.Protocols.Jellyfin;
@@ -162,7 +163,7 @@ public sealed class ProtocolRouteFixtureTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(
-            ["/Users/Me?api_key=fixture-key", "/System/Info?api_key=fixture-key"],
+            ["/Users/Me?ApiKey=fixture-key", "/System/Info?ApiKey=fixture-key"],
             observedRequests);
         Assert.Equal(
             JsonDocument.Parse(systemInfo).RootElement.GetRawText(),
@@ -200,7 +201,7 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.True(JsonNode.DeepEquals(JsonNode.Parse(artist), JsonNode.Parse(body)));
         Assert.Equal(2, observedRequests.Count);
-        Assert.Equal("/Users/Me?api_key=fixture-key", observedRequests[0]);
+        Assert.Equal("/Users/Me?ApiKey=fixture-key", observedRequests[0]);
         Assert.Equal($"/Items/{artistId}", observedRequests[1]);
     }
 
@@ -420,7 +421,7 @@ public sealed class ProtocolRouteFixtureTests
                 expected.GetProperty("body").GetRawText(),
                 JsonDocument.Parse(body).RootElement.GetRawText());
             Assert.Equal(
-                [verification.GetProperty("pathAndQuery").GetString()!],
+                [ModernJellyfinPath(verification.GetProperty("pathAndQuery").GetString()!)],
                 observedRequests);
             metadata.VerifyNoOtherCalls();
             downloads.VerifyNoOtherCalls();
@@ -448,8 +449,8 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(
             [
-                "/Users/Me?api_key=fixture-valid-key",
-                "/Items?IncludeItemTypes=Audio&api_key=fixture-valid-key&Fields=MediaSources"
+                "/Users/Me?ApiKey=fixture-valid-key",
+                "/Items?IncludeItemTypes=Audio&ApiKey=fixture-valid-key&Fields=MediaSources"
             ],
             observedRequests);
     }
@@ -472,9 +473,9 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(
             [
-                "/Users/Me?api_key=fixture-key",
-                "/Users/user-1?api_key=fixture-key",
-                "/Users/user-1?api_key=fixture-key"
+                "/Users/Me?ApiKey=fixture-key",
+                "/Users/user-1?ApiKey=fixture-key",
+                "/Users/user-1?ApiKey=fixture-key"
             ],
             observedRequests);
     }
@@ -527,8 +528,48 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("full-object", body.RootElement.GetProperty("Etag").GetString());
         Assert.Equal(
-            ["/Users/Me?api_key=fixture-key", "/Items/music-1?api_key=fixture-key&UserId=user-1"],
+            [
+                "/Users/Me?ApiKey=fixture-key",
+                "/UserViews?ApiKey=fixture-key&UserId=user-1",
+                "/Items/music-1?ApiKey=fixture-key&UserId=user-1"
+            ],
             observedRequests);
+    }
+
+    [Fact]
+    public async Task JellyfinMusicRoot_UsesLibraryVisibleToCaller()
+    {
+        var observedRequests = new List<string>();
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request =>
+            {
+                observedRequests.Add(request.RequestUri!.PathAndQuery);
+                return request.RequestUri.AbsolutePath switch
+                {
+                    "/Users/Me" => Json(StatusCodes.Status200OK, """{"Id":"user-1"}"""),
+                    "/UserViews" => Json(StatusCodes.Status200OK,
+                        """{"Items":[{"Id":"visible-music","CollectionType":"music"}]}"""),
+                    "/Items/visible-music" => Json(StatusCodes.Status200OK,
+                        """{"Id":"visible-music","Type":"CollectionFolder","CollectionType":"music"}"""),
+                    _ => throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}")
+                };
+            },
+            configuration: new Dictionary<string, string?>
+            {
+                ["Jellyfin:LibraryId"] = "global-music",
+                ["Jellyfin:UserId"] = "admin-user"
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/Items/Root?api_key=fixture-key&UserId=user-1");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("visible-music", body.RootElement.GetProperty("Id").GetString());
+        Assert.Contains("/UserViews?ApiKey=fixture-key&UserId=user-1", observedRequests);
+        Assert.Contains("/Items/visible-music?ApiKey=fixture-key&UserId=user-1", observedRequests);
+        Assert.DoesNotContain(observedRequests, request => request.Contains("global-music", StringComparison.Ordinal));
     }
 
     [Theory]
@@ -770,8 +811,40 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal("image/jpeg", response.Content.Headers.ContentType?.MediaType);
         Assert.Equal(artworkBytes, await response.Content.ReadAsByteArrayAsync());
         Assert.NotNull(response.Headers.ETag);
-        Assert.Contains(observedPaths, path => path == "/Users/Me?api_key=fixture-key");
+        Assert.Contains(observedPaths, path => path == "/Users/Me?ApiKey=fixture-key");
         Assert.Contains(observedPaths, path => path == "/image/thumb/library/1024x1024bb.jpg");
+        gateway.VerifyAll();
+    }
+
+    [Fact]
+    public async Task JellyfinSpotifyPlaylistImage_UsesAccountScopedTypedArtwork()
+    {
+        var artworkBytes = new byte[] { 0xFF, 0xD8, 0xFF, 0xD9 };
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.ResolvePlaylistArtworkAsync(
+                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin),
+                "spotify",
+                "playlist-1",
+                10 * 1024 * 1024))
+            .ReturnsAsync(new ProviderPlaylistArtwork(artworkBytes, "image/jpeg"));
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request => request.RequestUri!.AbsolutePath == "/Users/Me"
+                ? Json(StatusCodes.Status200OK, """{"Id":"verified-user"}""")
+                : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
+            services =>
+            {
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/Items/ext-spotify-playlist-playlist-1/Images/Primary?api_key=fixture-key");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("image/jpeg", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(artworkBytes, await response.Content.ReadAsByteArrayAsync());
         gateway.VerifyAll();
     }
 
@@ -1019,8 +1092,9 @@ public sealed class ProtocolRouteFixtureTests
         var playerTokenReachedArtwork = false;
         using var factory = new ProtocolFactory("Jellyfin", request =>
         {
-            var hasPlayerToken = request.Headers.TryGetValues("X-Emby-Token", out var values) &&
-                                 values.Contains("fixture-player-token", StringComparer.Ordinal);
+            var hasPlayerToken = request.Headers.TryGetValues("Authorization", out var values) &&
+                                 values.Any(value => value.Contains(
+                                     "Token=\"fixture-player-token\"", StringComparison.Ordinal));
             if (request.RequestUri!.AbsolutePath == "/Users/Me")
             {
                 playerTokenReachedVerification = hasPlayerToken;
@@ -1327,8 +1401,8 @@ public sealed class ProtocolRouteFixtureTests
                 CanonicalJson(fixture.GetProperty("body")),
                 CanonicalJson(JsonDocument.Parse(body).RootElement));
             var expectedPaths = path.Equals("/Items/item-1/InstantMix", StringComparison.Ordinal)
-                ? new[] { "/Items?ids=item-1&limit=1", "/Users/Me?api_key=fixture-key", requestPath }
-                : new[] { "/Users/Me?api_key=fixture-key", requestPath };
+                ? new[] { "/Items?ids=item-1&limit=1", "/Users/Me?ApiKey=fixture-key", ModernJellyfinPath(requestPath) }
+                : new[] { "/Users/Me?ApiKey=fixture-key", ModernJellyfinPath(requestPath) };
             Assert.Equal(expectedPaths, observedPaths);
         }
 
@@ -2138,6 +2212,49 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task SubsonicSpotifyPlaylistCover_UsesAccountScopedTypedArtwork()
+    {
+        var artworkBytes = new byte[] { 0xFF, 0xD8, 0xFF, 0xD9 };
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.GetPlaylistAsync(
+                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Subsonic),
+                "spotify",
+                "playlist-1"))
+            .ReturnsAsync(new ExternalPlaylist
+            {
+                Id = "ext-spotify-playlist-playlist-1",
+                Provider = "spotify",
+                ExternalId = "playlist-1",
+                Name = "Road mix"
+            });
+        gateway.Setup(service => service.ResolvePlaylistArtworkAsync(
+                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Subsonic),
+                "spotify",
+                "playlist-1",
+                10 * 1024 * 1024))
+            .ReturnsAsync(new ProviderPlaylistArtwork(artworkBytes, "image/jpeg"));
+        using var factory = new ProtocolFactory(
+            "Subsonic",
+            request => request.RequestUri!.AbsolutePath == "/rest/ping.view"
+                ? Json(StatusCodes.Status200OK, """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""")
+                : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
+            services =>
+            {
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/rest/getCoverArt.view?u=fixture&p=secret&v=1.16.1&c=fixture&id=ext-spotify-playlist-playlist-1");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("image/jpeg", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(artworkBytes, await response.Content.ReadAsByteArrayAsync());
+        gateway.VerifyAll();
+    }
+
+    [Fact]
     public async Task SubsonicAuthBoundary_RejectsBeforeBackendActionsAndPreservesVerificationResponse()
     {
         using var fixtures = ReadFixture("subsonic-auth-boundary.json");
@@ -2684,13 +2801,13 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal("None", stale.GetProperty("PlayAccess").GetString());
         Assert.False(stale.GetProperty("CanDownload").GetBoolean());
         Assert.Empty(stale.GetProperty("MediaSources").EnumerateArray());
-        Assert.Equal(3, observed.Count(path => path == "/Users/Me?api_key=fixture-key"));
+        Assert.Equal(3, observed.Count(path => path == "/Users/Me?ApiKey=fixture-key"));
         var hydration = Assert.Single(observed, path =>
             path.StartsWith("/Items?", StringComparison.Ordinal));
         Assert.Contains("Ids=local-song-a", hydration, StringComparison.Ordinal);
         Assert.Contains("stale-local-song", hydration, StringComparison.Ordinal);
         Assert.Contains("UserId=user-1", hydration, StringComparison.Ordinal);
-        Assert.Contains("api_key=fixture-key", hydration, StringComparison.Ordinal);
+        Assert.Contains("ApiKey=fixture-key", hydration, StringComparison.Ordinal);
         Assert.Contains("MediaSources", Uri.UnescapeDataString(hydration), StringComparison.Ordinal);
         virtualization.VerifyAll();
     }
@@ -2747,7 +2864,7 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         Assert.Equal(2, observed.Count);
         Assert.Equal(method, observed[1].Method);
-        Assert.Equal(expectedPath, observed[1].PathAndQuery);
+        Assert.Equal(ModernJellyfinPath(expectedPath), observed[1].PathAndQuery);
         Assert.Equal(body ?? (method is "GET" or "HEAD" ? null : string.Empty), observed[1].Body);
     }
 
@@ -2780,7 +2897,7 @@ public sealed class ProtocolRouteFixtureTests
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         Assert.Single(observed);
-        Assert.Equal("/Users/Me?api_key=fixture-key", observed[0].PathAndQuery);
+        Assert.Equal("/Users/Me?ApiKey=fixture-key", observed[0].PathAndQuery);
     }
 
     [Theory]
@@ -2828,9 +2945,9 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal($"/Items?ids={itemId}&limit=1", observed[0].PathAndQuery);
         if (itemType == "Playlist")
         {
-            Assert.Equal("/Users/Me?api_key=fixture-key", observed[1].PathAndQuery);
+            Assert.Equal("/Users/Me?ApiKey=fixture-key", observed[1].PathAndQuery);
             Assert.Equal(method, observed[2].Method);
-            Assert.Equal($"/Items/{itemId}?api_key=fixture-key", observed[2].PathAndQuery);
+            Assert.Equal($"/Items/{itemId}?ApiKey=fixture-key", observed[2].PathAndQuery);
             if (method == "POST")
                 Assert.Equal(
                     $$"""{"Id":"{{itemId}}","Name":"Playlist","Type":"Playlist"}""",
@@ -2848,7 +2965,7 @@ public sealed class ProtocolRouteFixtureTests
             if (request.RequestUri!.AbsolutePath == "/Items")
             {
                 var hasClientToken = request.Headers.TryGetValues(
-                        "X-Emby-Authorization", out var values) &&
+                        "Authorization", out var values) &&
                     values.Any(value => value.Contains("caller-token", StringComparison.Ordinal));
                 return Json(StatusCodes.Status200OK, hasClientToken
                     ? """{"Items":[{"Id":"user-playlist","Type":"Playlist"}],"TotalRecordCount":1}"""
@@ -3507,15 +3624,15 @@ public sealed class ProtocolRouteFixtureTests
             if (streamIndex == 3)
             {
                 Assert.Equal("/Items?ids=local-song&limit=1", observedRequests[0].PathAndQuery);
-                Assert.Equal(fixture.GetProperty("verificationPath").GetString(), observedRequests[1].PathAndQuery);
+                Assert.Equal(ModernJellyfinPath(fixture.GetProperty("verificationPath").GetString()!), observedRequests[1].PathAndQuery);
                 Assert.Equal(
-                    fixture.GetProperty("verificationFallbackPath").GetString(),
+                    ModernJellyfinPath(fixture.GetProperty("verificationFallbackPath").GetString()!),
                     observedRequests[2].PathAndQuery);
             }
             else
             {
                 Assert.Equal(
-                    fixture.GetProperty("verificationPath").GetString(),
+                    ModernJellyfinPath(fixture.GetProperty("verificationPath").GetString()!),
                     observedRequests[streamIndex - 1].PathAndQuery);
             }
             Assert.Equal(
@@ -3523,7 +3640,7 @@ public sealed class ProtocolRouteFixtureTests
                     ? upstreamMethod.GetString()
                     : fixture.GetProperty("method").GetString(),
                 observedRequests[streamIndex].Method);
-            Assert.Equal(fixture.GetProperty("streamPath").GetString(), observedRequests[streamIndex].PathAndQuery);
+            Assert.Equal(ModernJellyfinPath(fixture.GetProperty("streamPath").GetString()!), observedRequests[streamIndex].PathAndQuery);
             Assert.Equal(fixture.GetProperty("range").GetString(), observedRequests[streamIndex].Range);
             Assert.Equal(fixture.GetProperty("ifRange").GetString(), observedRequests[streamIndex].IfRange);
         }
@@ -3616,11 +3733,11 @@ public sealed class ProtocolRouteFixtureTests
                 response.Content.Headers.ContentType?.MediaType);
             Assert.Equal(fixture.GetProperty("expectedBody").GetString(), body);
             Assert.Equal(2, observed.Count);
-            Assert.Equal(fixture.GetProperty("verificationPath").GetString(), observed[0].PathAndQuery);
+            Assert.Equal(ModernJellyfinPath(fixture.GetProperty("verificationPath").GetString()!), observed[0].PathAndQuery);
             Assert.Equal(
                 fixture.GetProperty("request").GetProperty("method").GetString(),
                 observed[1].Method);
-            Assert.Equal(fixture.GetProperty("upstreamPath").GetString(), observed[1].PathAndQuery);
+            Assert.Equal(ModernJellyfinPath(fixture.GetProperty("upstreamPath").GetString()!), observed[1].PathAndQuery);
             var requestFixture = fixture.GetProperty("request");
             var requestMethod = requestFixture.GetProperty("method").GetString();
             Assert.Equal(
@@ -3787,7 +3904,7 @@ public sealed class ProtocolRouteFixtureTests
     private static void AssertObservedRequest(JsonElement expected, ObservedRequest actual)
     {
         Assert.Equal(expected.GetProperty("method").GetString(), actual.Method);
-        Assert.Equal(expected.GetProperty("pathAndQuery").GetString(), actual.PathAndQuery);
+        Assert.Equal(ModernJellyfinPath(expected.GetProperty("pathAndQuery").GetString()!), actual.PathAndQuery);
         Assert.Equal(
             expected.TryGetProperty("body", out var body)
                 ? body.GetString()
@@ -3796,6 +3913,10 @@ public sealed class ProtocolRouteFixtureTests
                     : null,
             actual.Body);
     }
+
+    private static string ModernJellyfinPath(string path) =>
+        path.Replace("api_key=", "ApiKey=", StringComparison.Ordinal)
+            .Replace("access_token=", "ApiKey=", StringComparison.Ordinal);
 
     private static HttpResponseMessage FixtureResponse(JsonElement fixture)
     {

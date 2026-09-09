@@ -9,14 +9,12 @@ using Microsoft.Extensions.Options;
 
 namespace allstarr.Services.Deezer;
 
-/// <summary>
-/// Metadata service implementation using the Deezer API (free, no key required)
-/// </summary>
 public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
 {
+    public string ProviderId => "deezer";
+
     private readonly HttpClient _httpClient;
     private readonly SubsonicSettings _settings;
-    private readonly GenreEnrichmentService? _genreEnrichment;
     private readonly SemaphoreSlim _requestLock = new(1, 1);
     private readonly int _minRequestIntervalMs;
     private DateTime _lastRequestTime = DateTime.MinValue;
@@ -27,12 +25,10 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
     public DeezerMetadataService(
         IHttpClientFactory httpClientFactory,
         IOptions<SubsonicSettings> settings,
-        GenreEnrichmentService? genreEnrichment = null,
         IOptions<DeezerSettings>? deezerSettings = null)
     {
         _httpClient = httpClientFactory.CreateClient();
         _settings = settings.Value;
-        _genreEnrichment = genreEnrichment;
         _minRequestIntervalMs = Math.Max(
             0,
             deezerSettings?.Value.MinRequestIntervalMs ?? new DeezerSettings().MinRequestIntervalMs);
@@ -397,23 +393,6 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
             {
                 // If we can't get the album, continue with track info only
             }
-        }
-
-        // Enrich with MusicBrainz genres if missing
-        if (_genreEnrichment != null && string.IsNullOrEmpty(song.Genre))
-        {
-            // Fire-and-forget: don't block the response waiting for genre enrichment
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await _genreEnrichment.EnrichSongGenreAsync(song);
-                }
-                catch
-                {
-                    // Silently ignore genre enrichment failures
-                }
-            });
         }
 
         return song;

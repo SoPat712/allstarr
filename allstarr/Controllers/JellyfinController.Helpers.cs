@@ -9,17 +9,12 @@ namespace allstarr.Controllers;
 
 public partial class JellyfinController
 {
-    /// <summary>
-    /// Helper to handle proxy responses with proper status code handling.
-    /// </summary>
     private IActionResult HandleProxyResponse(JsonDocument? result, int statusCode, object? fallbackValue = null)
     {
         return ProxyResponseResultFactory.Create(result, statusCode, fallbackValue);
     }
 
-    /// <summary>
-    /// Records retention-bounded endpoint usage without query strings.
-    /// </summary>
+    // Persist bounded route usage only; query strings may contain secrets.
     private async Task LogEndpointUsageAsync(string path, string method)
     {
         if (HttpContext.RequestServices.GetRequiredService<IHostEnvironment>()
@@ -39,7 +34,7 @@ public partial class JellyfinController
         }
         catch (Exception ex)
         {
-            // Don't let logging failures break the request
+            // Observability must not break the protocol request.
             _logger.LogWarning(ex, "Failed to record endpoint usage");
         }
     }
@@ -59,7 +54,8 @@ public partial class JellyfinController
         {
             var key = kv.Key;
             var value = kv.Value.ToString();
-            if (string.Equals(key, "api_key", StringComparison.OrdinalIgnoreCase) ||
+            if (string.Equals(key, "ApiKey", StringComparison.Ordinal) ||
+                string.Equals(key, "api_key", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(key, "token", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(key, "auth", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(key, "authorization", StringComparison.OrdinalIgnoreCase) ||
@@ -139,11 +135,7 @@ public partial class JellyfinController
         return null;
     }
 
-    /// <summary>
-    /// Determines whether Spotify playlist count enrichment should run for a response.
-    /// We only run enrichment for playlist-oriented payloads to avoid mutating unrelated item lists
-    /// (for example, album browse responses requested by clients like Finer).
-    /// </summary>
+    // Finer requests unrelated item lists through this path; mutate playlist payloads only.
     private bool ShouldProcessSpotifyPlaylistCounts(JsonDocument response, string? includeItemTypes)
     {
         if (!_spotifySettings.Enabled)
@@ -164,7 +156,6 @@ public partial class JellyfinController
             return requestedTypes.Contains("Playlist", StringComparer.OrdinalIgnoreCase);
         }
 
-        // If the request did not explicitly constrain types, inspect payload types.
         foreach (var item in items.EnumerateArray())
         {
             if (!item.TryGetProperty("Type", out var typeProp))
@@ -181,10 +172,7 @@ public partial class JellyfinController
         return false;
     }
 
-    /// <summary>
-    /// Recovers SearchTerm directly from raw query string.
-    /// Handles malformed clients that do not URL-encode '&' inside SearchTerm.
-    /// </summary>
+    // Some clients leave '&' unescaped inside SearchTerm, defeating model binding.
     internal static string? RecoverSearchTermFromRawQuery(string? rawQueryString)
     {
         if (string.IsNullOrWhiteSpace(rawQueryString))
@@ -240,9 +228,6 @@ public partial class JellyfinController
         return Uri.UnescapeDataString(plusAsSpace);
     }
 
-    /// <summary>
-    /// Uses model-bound SearchTerm when valid; falls back to raw query recovery when needed.
-    /// </summary>
     internal static string? GetEffectiveSearchTerm(string? boundSearchTerm, string? rawQueryString)
     {
         var recovered = RecoverSearchTermFromRawQuery(rawQueryString);
@@ -256,7 +241,6 @@ public partial class JellyfinController
             return recovered;
         }
 
-        // Prefer recovered when it is meaningfully longer (common malformed '&' case).
         var boundTrimmed = boundSearchTerm.Trim();
         var recoveredTrimmed = recovered.Trim();
         return recoveredTrimmed.Length > boundTrimmed.Length
@@ -279,11 +263,6 @@ public partial class JellyfinController
         };
     }
 
-    /// <summary>
-    /// Scores search results based on fuzzy matching against the query.
-    /// Returns items with their relevance scores.
-    /// External results get a small boost to prioritize the larger catalog.
-    /// </summary>
     private static List<(T Item, int Score)> ScoreSearchResults<T>(
         string query,
         List<T> items,
@@ -298,7 +277,6 @@ public partial class JellyfinController
             var artist = artistField(item) ?? "";
             var album = albumField(item) ?? "";
 
-            // Token-based fuzzy matching: split query and fields into words
             var queryTokens = query.ToLower()
                 .Split(new[] { ' ', '-', '_' }, StringSplitOptions.RemoveEmptyEntries)
                 .ToList();
@@ -310,29 +288,23 @@ public partial class JellyfinController
 
             if (queryTokens.Count == 0) return (item, 0);
 
-            // Count how many query tokens match field tokens (with fuzzy tolerance)
             var matchedTokens = 0;
             foreach (var queryToken in queryTokens)
             {
-                // Check if any field token matches this query token
                 var hasMatch = fieldTokens.Any(fieldToken =>
                 {
-                    // Exact match or substring match
                     if (fieldToken.Contains(queryToken) || queryToken.Contains(fieldToken))
                         return true;
 
-                    // Fuzzy match with Levenshtein distance
                     var similarity = FuzzyMatcher.CalculateSimilarity(queryToken, fieldToken);
-                    return similarity >= 70; // 70% similarity threshold for individual words
+                    return similarity >= 70;
                 });
 
                 if (hasMatch) matchedTokens++;
             }
 
-            // Score = percentage of query tokens that matched
             var baseScore = (matchedTokens * 100) / queryTokens.Count;
 
-            // Give external results a small boost (+5 points) to prioritize the larger catalog
             var finalScore = isExternal ? Math.Min(100, baseScore + 5) : baseScore;
 
             return (item, finalScore);

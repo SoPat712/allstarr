@@ -244,7 +244,14 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
     private HttpRequestMessage CreateRequest(Uri uri, string accept)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, uri);
-        request.Headers.TryAddWithoutValidation("X-Emby-Token", _settings.ApiKey);
+        request.Headers.TryAddWithoutValidation(
+            "Authorization",
+            AuthHeaderHelper.CreateAuthHeader(
+                _settings.ApiKey!,
+                _settings.ClientName,
+                _settings.DeviceName,
+                _settings.DeviceId,
+                _settings.ClientVersion));
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(accept));
         return request;
     }

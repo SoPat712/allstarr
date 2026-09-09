@@ -7,7 +7,7 @@ namespace allstarr.Tests;
 public class AuthHeaderHelperTests
 {
     [Fact]
-    public void ForwardAuthHeaders_ShouldPreferXEmbyAuthorization()
+    public void ForwardAuthHeaders_ShouldPreferModernAuthorization()
     {
         var headers = new HeaderDictionary
         {
@@ -19,13 +19,13 @@ public class AuthHeaderHelperTests
         var forwarded = AuthHeaderHelper.ForwardAuthHeaders(headers, request);
 
         Assert.True(forwarded);
-        Assert.True(request.Headers.TryGetValues("X-Emby-Authorization", out var values));
-        Assert.Contains("MediaBrowser Token=\"abc\"", values);
-        Assert.False(request.Headers.Contains("Authorization"));
+        Assert.True(request.Headers.TryGetValues("Authorization", out var values));
+        Assert.Contains("Bearer xyz", values);
+        Assert.False(request.Headers.Contains("X-Emby-Authorization"));
     }
 
     [Fact]
-    public void ForwardAuthHeaders_ShouldMapMediaBrowserAuthorizationToXEmby()
+    public void ForwardAuthHeaders_ShouldPreserveMediaBrowserAuthorization()
     {
         var headers = new HeaderDictionary
         {
@@ -36,9 +36,10 @@ public class AuthHeaderHelperTests
         var forwarded = AuthHeaderHelper.ForwardAuthHeaders(headers, request);
 
         Assert.True(forwarded);
-        Assert.True(request.Headers.Contains("X-Emby-Authorization"));
-        Assert.True(request.Headers.TryGetValues("X-Emby-Token", out var tokens));
-        Assert.Contains("abc", tokens);
+        Assert.True(request.Headers.TryGetValues("Authorization", out var values));
+        Assert.Contains("MediaBrowser Client=\"Feishin\", Token=\"abc\"", values);
+        Assert.False(request.Headers.Contains("X-Emby-Authorization"));
+        Assert.False(request.Headers.Contains("X-Emby-Token"));
     }
 
     [Fact]
@@ -53,7 +54,7 @@ public class AuthHeaderHelperTests
     }
 
     [Fact]
-    public void ForwardAuthHeaders_ShouldForwardXEmbyToken()
+    public void ForwardAuthHeaders_ShouldUpgradeXEmbyToken()
     {
         var headers = new HeaderDictionary
         {
@@ -64,8 +65,9 @@ public class AuthHeaderHelperTests
         var forwarded = AuthHeaderHelper.ForwardAuthHeaders(headers, request);
 
         Assert.True(forwarded);
-        Assert.True(request.Headers.TryGetValues("X-Emby-Token", out var values));
-        Assert.Contains("abc", values);
+        Assert.True(request.Headers.TryGetValues("Authorization", out var values));
+        Assert.Contains(values, value => value.Contains("Token=\"abc\"", StringComparison.Ordinal));
+        Assert.False(request.Headers.Contains("X-Emby-Token"));
     }
 
     [Fact]
