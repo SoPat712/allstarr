@@ -65,23 +65,23 @@ public partial class JellyfinController
     [HttpGet("Items/Root", Order = 1)]
     public async Task<IActionResult> GetMusicLibraryRoot()
     {
-        var musicLibraryId = await _proxyService.GetMusicLibraryIdForFilteringAsync();
-        if (string.IsNullOrWhiteSpace(musicLibraryId))
-        {
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
-            {
-                error = "A Jellyfin music library could not be identified."
-            });
-        }
-
         var credentialQuery = Request.Query
             .Where(item => item.Key.Equals("api_key", StringComparison.OrdinalIgnoreCase) ||
                            item.Key.Equals("access_token", StringComparison.OrdinalIgnoreCase) ||
                            item.Key.Equals("ApiKey", StringComparison.OrdinalIgnoreCase) ||
                            item.Key.Equals("UserId", StringComparison.OrdinalIgnoreCase))
             .SelectMany(item => item.Value.Select(value =>
-                new KeyValuePair<string, string?>(item.Key, value)));
-        var endpoint = $"Items/{Uri.EscapeDataString(musicLibraryId)}{QueryString.Create(credentialQuery)}";
+                new KeyValuePair<string, string?>(item.Key, value)))
+            .ToArray();
+        var queryString = QueryString.Create(credentialQuery);
+        var musicLibraryId = await _proxyService.GetMusicLibraryIdForFilteringAsync(
+            queryString.Value,
+            Request.Headers);
+        if (string.IsNullOrWhiteSpace(musicLibraryId))
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new { error = "A Jellyfin music library could not be identified." });
+
+        var endpoint = $"Items/{Uri.EscapeDataString(musicLibraryId)}{queryString}";
         var (body, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
         return HandleProxyResponse(body, statusCode);
     }
@@ -129,9 +129,7 @@ public partial class JellyfinController
         var song = await GetProviderSongAsync(provider, externalId, HttpContext.RequestAborted);
         if (song == null) return NotFound(new { error = "Track metadata was not found." });
 
-        // PlaybackInfo must describe the same synthesized item that the client
-        // requested. Provider metadata adapters may return a canonical/alternate
-        // identifier; using it here would build stream URLs for a different item.
+        // A provider's canonical ID could build stream URLs for a different synthetic item.
         song.Id = itemId;
         song.ExternalProvider = provider;
         song.ExternalId = externalId;
