@@ -366,11 +366,29 @@ def create_app(
     async def lyrics_song(song_id: str) -> dict[str, str]:
         try:
             song_url(config.storefront, song_id)
+            canonical_url = await catalog_client.song_url(song_id)
+            if canonical_url is None:
+                raise HTTPException(status_code=404, detail="song_not_found")
+            url, _ = safe_apple_url(canonical_url)
         except ValueError:
             raise HTTPException(status_code=400, detail="invalid_song_id") from None
+        except httpx.HTTPError:
+            raise HTTPException(status_code=502, detail="catalog_unavailable") from None
         cached = config.data_root / "lyrics" / f"{song_id}.lrc"
         if not cached.is_file():
-            await prepare_song(song_id, "alac-16-44")
+            root = config.data_root / "artifacts" / uuid.uuid4().hex
+            try:
+                lyrics = await process_runner.download_lyrics(
+                    url, root / "output", root / "temporary")
+                cached.parent.mkdir(exist_ok=True, mode=0o750)
+                partial = cached.with_suffix(".lrc.partial")
+                shutil.copyfile(lyrics[0], partial)
+                partial.replace(cached)
+            except ProcessFailure as exc:
+                status = 504 if exc.code == "process_timeout" else 404
+                raise HTTPException(status_code=status, detail=exc.code) from None
+            finally:
+                shutil.rmtree(root, ignore_errors=True)
         if not cached.is_file():
             raise HTTPException(status_code=404, detail="lyrics_not_found")
         try:

@@ -62,6 +62,19 @@ class BoundedProcessRunner:
         return retained.decode("utf-8", errors="replace")
 
     async def download(self, url: str, quality: str, output: Path, temporary: Path) -> list[Path]:
+        return await self._download(url, quality, output, temporary, lyrics_only=False)
+
+    async def download_lyrics(self, url: str, output: Path, temporary: Path) -> list[Path]:
+        return await self._download(url, "aac-he", output, temporary, lyrics_only=True)
+
+    async def _download(
+        self,
+        url: str,
+        quality: str,
+        output: Path,
+        temporary: Path,
+        lyrics_only: bool,
+    ) -> list[Path]:
         output.mkdir(parents=True, exist_ok=False, mode=0o750)
         temporary.mkdir(parents=True, exist_ok=False, mode=0o750)
         argv = [
@@ -79,11 +92,15 @@ class BoundedProcessRunner:
         ]
         if self._settings.cookies_path:
             argv.extend(["--cookies-path", str(self._settings.cookies_path)])
+        if lyrics_only:
+            argv.append("--synced-lyrics-only")
         argv.append(url)
         result = await self.execute(argv, temporary)
         if result.return_code != 0:
             raise ProcessFailure("gamdl_failed")
-        artifacts = safe_files(output, {".m4a", ".flac", ".mp4", ".m4v", ".lrc", ".srt", ".ttml", ".jpg", ".png"})
+        artifacts = safe_files(output, {".lrc"} if lyrics_only else {
+            ".m4a", ".flac", ".mp4", ".m4v", ".lrc", ".srt", ".ttml", ".jpg", ".png"
+        })
         if not artifacts:
             raise ProcessFailure("artifact_missing")
         return artifacts

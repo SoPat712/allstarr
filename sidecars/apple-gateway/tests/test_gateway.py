@@ -102,6 +102,14 @@ class FakeRunner:
         lyrics.write_text("[00:01.00]Fixture lyrics\n", encoding="utf-8")
         return [artifact, lyrics]
 
+    async def download_lyrics(self, url: str, output: Path, temporary: Path) -> list[Path]:
+        self.calls.append((url, "lyrics"))
+        output.mkdir(parents=True, exist_ok=False)
+        temporary.mkdir(parents=True, exist_ok=False)
+        lyrics = output / "fixture.lrc"
+        lyrics.write_text("[00:01.00]Fixture lyrics\n", encoding="utf-8")
+        return [lyrics]
+
     async def to_flac(self, source: Path, target: Path) -> Path:
         self.transcodes.append("file")
         target.write_bytes(b"fLaCfixture")
@@ -330,6 +338,7 @@ def test_song_lyrics_use_gamdl_artifact_and_cache(client):
     calls = len(client[2].calls)
     assert client[0].get("/api/lyrics/103").status_code == 200
     assert len(client[2].calls) == calls
+    assert client[2].calls == [("https://music.apple.com/us/album/fixture/1?i=103", "lyrics")]
 
 
 @pytest.mark.asyncio
