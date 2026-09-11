@@ -285,6 +285,40 @@ def test_song_stream_falls_back_to_web_aac_when_lossless_is_unavailable(settings
     assert [quality for _, quality in runner.calls] == ["alac", "aac-web"]
 
 
+def test_song_stream_reuses_prepared_source(settings):
+    runner = FakeRunner()
+    app = create_app(settings, FakeWrapper(), FakeCatalog(), runner)
+    with TestClient(app) as test_client:
+        first = test_client.get("/api/stream/102", params={"quality": "aac-320"})
+        second = test_client.get("/api/stream/102", params={"quality": "aac-320"})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert len(runner.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_simultaneous_song_streams_share_preparation(settings):
+    class BlockingRunner(FakeRunner):
+        async def download(self, url: str, quality: str, output: Path, temporary: Path) -> list[Path]:
+            await asyncio.sleep(0.01)
+            return await super().download(url, quality, output, temporary)
+
+    runner = BlockingRunner()
+    app = create_app(settings, FakeWrapper(), FakeCatalog(), runner)
+    route = next(route for route in app.routes if getattr(route, "path", None) == "/api/stream/{song_id}")
+    responses = await asyncio.gather(
+        route.endpoint("102", "aac-320"),
+        route.endpoint("102", "aac-320"),
+    )
+    await asyncio.gather(*(
+        anext(response.body_iterator)
+        for response in responses
+    ))
+
+    assert len(runner.calls) == 1
+
+
 def test_song_lyrics_use_gamdl_artifact_and_cache(client):
     response = client[0].get("/api/lyrics/103")
     assert response.status_code == 200

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import importlib.metadata
 import shutil
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -34,6 +37,8 @@ CAPABILITIES = (
     "codec-alac",
     "codec-aac",
 )
+PREPARED_CACHE_TTL_SECONDS = 6 * 60 * 60
+PREPARED_CACHE_MAX_TRACKS = 32
 
 
 def _version(distribution: str) -> str:
@@ -89,6 +94,8 @@ def create_app(
     catalog_client = catalog or CatalogClient(config.storefront)
     process_runner = runner or BoundedProcessRunner(config)
     jobs = DownloadJobManager(process_runner, config.data_root)
+    preparation_tasks: dict[str, asyncio.Task[Path]] = {}
+    preparation_lock = asyncio.Lock()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -204,7 +211,7 @@ def create_app(
         except (httpx.HTTPError, ValueError):
             raise HTTPException(status_code=502, detail="catalog_unavailable") from None
 
-    async def prepare_song(
+    async def download_song_source(
         song_id: str,
         quality: str,
         fallback_quality: str | None = None,
@@ -253,9 +260,61 @@ def create_app(
             shutil.rmtree(root, ignore_errors=True)
             raise HTTPException(status_code=502, detail="download_failed") from None
 
+    def cached_source(key: str) -> Path | None:
+        cache_root = config.data_root / "prepared"
+        now = time.time()
+        candidates = sorted(
+            (path for path in cache_root.glob("*") if path.is_file() and not path.name.endswith(".partial")),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        ) if cache_root.exists() else []
+        for stale in candidates[PREPARED_CACHE_MAX_TRACKS:]:
+            stale.unlink(missing_ok=True)
+        for candidate in candidates[:PREPARED_CACHE_MAX_TRACKS]:
+            if now - candidate.stat().st_mtime > PREPARED_CACHE_TTL_SECONDS:
+                candidate.unlink(missing_ok=True)
+            elif candidate.stem == key:
+                candidate.touch()
+                return candidate
+        return None
+
+    async def prepare_song(song_id: str, quality: str, fallback_quality: str | None = None) -> Path:
+        key = hashlib.sha256(f"{song_id}\n{quality}".encode()).hexdigest()
+        if cached := cached_source(key):
+            return cached
+
+        async def prepare_and_cache() -> Path:
+            root, source = await download_song_source(song_id, quality, fallback_quality)
+            try:
+                cache_root = config.data_root / "prepared"
+                cache_root.mkdir(exist_ok=True, mode=0o750)
+                target = cache_root / f"{key}{source.suffix.lower()}"
+                if not target.exists():
+                    partial = target.with_name(f"{target.name}.{uuid.uuid4().hex}.partial")
+                    shutil.copyfile(source, partial)
+                    partial.replace(target)
+                target.touch()
+                return target
+            finally:
+                shutil.rmtree(root, ignore_errors=True)
+
+        async with preparation_lock:
+            task = preparation_tasks.get(key)
+            if task is None:
+                task = asyncio.create_task(prepare_and_cache())
+                preparation_tasks[key] = task
+        try:
+            return await asyncio.shield(task)
+        finally:
+            if task.done():
+                async with preparation_lock:
+                    preparation_tasks.pop(key, None)
+
     @application.get("/api/download/{song_id}")
     async def download_song(song_id: str, quality: str = "alac-16-44") -> FileResponse:
-        root, source = await prepare_song(song_id, quality)
+        source = await prepare_song(song_id, quality)
+        root = config.data_root / "artifacts" / uuid.uuid4().hex
+        root.mkdir(parents=True, exist_ok=False, mode=0o750)
         try:
             artifact = await process_runner.to_flac(source, root / f"{song_id}.flac")
         except ProcessFailure as exc:
@@ -275,14 +334,9 @@ def create_app(
     @application.get("/api/stream/{song_id}")
     async def stream_song(song_id: str, quality: str = "alac-16-44") -> StreamingResponse:
         async def content() -> AsyncIterator[bytes]:
-            root: Path | None = None
-            try:
-                root, source = await prepare_song(song_id, quality, "aac-web")
-                async for chunk in process_runner.stream_flac(source):
-                    yield chunk
-            finally:
-                if root is not None:
-                    shutil.rmtree(root, ignore_errors=True)
+            source = await prepare_song(song_id, quality, "aac-web")
+            async for chunk in process_runner.stream_flac(source):
+                yield chunk
 
         return StreamingResponse(
             content(),
@@ -316,8 +370,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="invalid_song_id") from None
         cached = config.data_root / "lyrics" / f"{song_id}.lrc"
         if not cached.is_file():
-            root, _ = await prepare_song(song_id, "alac-16-44")
-            shutil.rmtree(root, ignore_errors=True)
+            await prepare_song(song_id, "alac-16-44")
         if not cached.is_file():
             raise HTTPException(status_code=404, detail="lyrics_not_found")
         try:
