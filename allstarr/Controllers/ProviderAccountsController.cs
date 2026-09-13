@@ -103,7 +103,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
                     : null,
                 account.OwnerUserId.HasValue ? users.GetValueOrDefault(account.OwnerUserId.Value) : null,
                 account.CreatedByUserId.HasValue ? users.GetValueOrDefault(account.CreatedByUserId.Value) : null,
-                configurations.GetValueOrDefault(account.Id)))
+                configurations.GetValueOrDefault(account.Id),
+                CanChangeAudience(account, session)))
         });
     }
 
@@ -204,7 +205,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
                             RevokedAt = storedSecret.Revoked ? storedSecret.UpdatedAt : null
                         },
                     normalized.OwnerUserId == session.AllstarrUserId ? session.UserName : null,
-                    session.UserName));
+                    session.UserName,
+                    canChangeAudience: CanChangeAudience(persisted, session)));
         }
         catch
         {
@@ -216,7 +218,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
                         storedSecret.Id,
                         new SecretAccessContext(
                             storedSecret.TenantId,
-                            session.IsAdministrator && storedSecret.TenantId == null),
+                            storedSecret.TenantId == null),
                         CancellationToken.None);
                 }
                 catch
@@ -330,7 +332,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
         {
             await _secretStore.RevokeAsync(
                 account.SecretReferenceId.Value,
-                new SecretAccessContext(account.TenantId, session.IsAdministrator && account.TenantId == null),
+                SecretAccess(account),
                 cancellationToken);
         }
 
@@ -375,7 +377,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             "succeeded", new { accountId = account.Id, account.ProviderId });
         await context.SaveChangesAsync(cancellationToken);
         await InvalidateAccountCacheAsync(account.Id);
-        return Ok(AccountResponse(account, null));
+        return Ok(AccountResponse(account, null, canChangeAudience: CanChangeAudience(account, session)));
     }
 
     [HttpPut("{accountId:guid}/audience")]
@@ -385,9 +387,13 @@ public sealed partial class ProviderAccountsController : ControllerBase
         CancellationToken cancellationToken = default)
     {
         if (!TryGetSession(out var session, out var error)) return error!;
-        if (!CanManageAllAccounts(session)) return ManagementForbidden();
+        if (GetManagementAccessError(session) is { } accessError) return accessError;
         if (!Enum.TryParse<ProviderAccountScope>(request.Scope, true, out var scope) || !Enum.IsDefined(scope))
-            return BadRequest(new { error = "Audience must be Only me, Everyone, or One library." });
+            return BadRequest(new { error = "Audience must be Private, Global, or One library." });
+        if (!CanManageAllAccounts(session) &&
+            (scope == ProviderAccountScope.Library ||
+             request.OwnerUserId.HasValue && request.OwnerUserId != session.AllstarrUserId))
+            return BadRequest(new { error = "Choose Private or Global for your own connection." });
         var libraryScopeId = string.IsNullOrWhiteSpace(request.LibraryScopeId) ? null : request.LibraryScopeId.Trim();
         if (scope == ProviderAccountScope.Library && libraryScopeId == null)
             return BadRequest(new { error = "Choose a library for this audience." });
@@ -396,6 +402,11 @@ public sealed partial class ProviderAccountsController : ControllerBase
         var account = await ApplyManagementScope(context.ProviderAccounts, session)
             .SingleOrDefaultAsync(item => item.Id == accountId, cancellationToken);
         if (account == null) return NotFound();
+        if (!CanChangeAudience(account, session))
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                error = "An administrator must change access for a connection assigned to you."
+            });
         if (request.ExpectedRevision.HasValue && request.ExpectedRevision.Value != account.Revision)
             return Conflict(new { error = "The provider account changed. Reload and try again." });
 
@@ -444,7 +455,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
         await context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         await InvalidateAccountCacheAsync(account.Id);
-        return Ok(AccountResponse(account, null, owner?.DisplayName));
+        return Ok(AccountResponse(account, null, owner?.DisplayName,
+            canChangeAudience: CanChangeAudience(account, session)));
     }
 
     private async Task<int> InvalidateAccountCacheAsync(Guid accountId) =>
@@ -493,7 +505,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             return false;
         }
 
-        if (!Enum.TryParse<ProviderAccountScope>(request.Scope, ignoreCase: true, out var scope))
+        if (!Enum.TryParse<ProviderAccountScope>(request.Scope, ignoreCase: true, out var scope) || !Enum.IsDefined(scope))
         {
             error = "Scope must be Global, User, or Library";
             return false;
@@ -509,16 +521,16 @@ public sealed partial class ProviderAccountsController : ControllerBase
         }
         else
         {
-            if (scope != ProviderAccountScope.User ||
+            if (scope is not (ProviderAccountScope.User or ProviderAccountScope.Global) ||
                 !session.TenantId.HasValue ||
                 !session.AllstarrUserId.HasValue)
             {
-                error = "Users may create only their own user-scoped accounts";
+                error = "Users may create Private or Global connections under their own identity";
                 return false;
             }
 
-            tenantId = session.TenantId;
-            ownerUserId = session.AllstarrUserId;
+            tenantId = scope == ProviderAccountScope.Global ? null : session.TenantId;
+            ownerUserId = scope == ProviderAccountScope.Global ? null : session.AllstarrUserId;
             libraryScopeId = null;
         }
 
@@ -606,6 +618,10 @@ public sealed partial class ProviderAccountsController : ControllerBase
         session.IsAdministrator &&
         _managementMode is ProviderAccountManagementMode.AdminManaged or ProviderAccountManagementMode.Hybrid;
 
+    private bool CanChangeAudience(ProviderAccountRecord account, AdminAuthSession session) =>
+        CanManageAllAccounts(session) ||
+        session.AllstarrUserId.HasValue && account.CreatedByUserId == session.AllstarrUserId;
+
     private IActionResult? GetManagementAccessError(AdminAuthSession session)
     {
         if (!CanAccessManagement(session))
@@ -629,10 +645,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
         IQueryable<ProviderAccountRecord> query,
         AdminAuthSession session) => CanManageAllAccounts(session)
             ? query
-            : query.Where(item =>
-                item.Scope == ProviderAccountScope.User &&
-                item.TenantId == session.TenantId &&
-                item.OwnerUserId == session.AllstarrUserId);
+            : query.OwnedBy(session.TenantId, session.AllstarrUserId);
 
     private IActionResult ManagementForbidden() =>
         StatusCode(StatusCodes.Status403Forbidden, new
@@ -668,7 +681,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
         SecretReferenceRecord? secret,
         string? ownerDisplayName = null,
         string? creatorDisplayName = null,
-        AccountConfigurationSummary? configuration = null) => new
+        AccountConfigurationSummary? configuration = null,
+        bool canChangeAudience = false) => new
         {
             account.Id,
             account.ProviderId,
@@ -683,6 +697,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             account.LibraryScopeId,
             account.Enabled,
             account.Revision,
+            canChangeAudience,
             configuration = configuration?.Values ?? new Dictionary<string, JsonElement>(),
             configuredFields = configuration?.ConfiguredFields ?? [],
             secret = new

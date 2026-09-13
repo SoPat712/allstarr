@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 
 namespace allstarr.Services.Common;
 
-public class MultiProviderDownloadService : IDownloadService
+public sealed class MultiProviderDownloadService : IDownloadService
 {
     private readonly IEnumerable<IConcreteDownloadService> _allServices;
     private readonly IMusicMetadataService _metadataService;
@@ -68,7 +68,7 @@ public class MultiProviderDownloadService : IDownloadService
     public async Task<Stream> DownloadAndStreamAsync(string externalProvider, string externalId, Common.StreamQuality? qualityOverride = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var savedProvider = CanonicalProviderId(externalProvider);
+        var savedProvider = ConcreteProviderId.Normalize(externalProvider);
         if (!_statusManager.GetEnabledPlaybackProviders().Contains(
                 savedProvider,
                 StringComparer.OrdinalIgnoreCase))
@@ -96,25 +96,8 @@ public class MultiProviderDownloadService : IDownloadService
     }
 
     private static bool ProviderIdsEquivalent(string left, string right) =>
-        CanonicalProviderId(left).Equals(CanonicalProviderId(right), StringComparison.OrdinalIgnoreCase);
-
-    private static string CanonicalProviderId(string provider) => provider.Trim().ToLowerInvariant() switch
-    {
-        "applemusic" => "apple-download",
-        _ => provider.Trim().ToLowerInvariant()
-    };
-
-    public void DownloadRemainingAlbumTracksInBackground(string externalProvider, string albumExternalId, string excludeTrackExternalId)
-    {
-        var providers = GetPrioritizedDownloadProviders();
-        if (providers.Count == 0) return;
-
-        var service = GetDownloadServiceByName(providers[0]);
-        if (service != null)
-        {
-            service.DownloadRemainingAlbumTracksInBackground(externalProvider, albumExternalId, excludeTrackExternalId);
-        }
-    }
+        ConcreteProviderId.Normalize(left).Equals(
+            ConcreteProviderId.Normalize(right), StringComparison.Ordinal);
 
     public DownloadInfo? GetDownloadStatus(string songId)
     {
@@ -126,47 +109,26 @@ public class MultiProviderDownloadService : IDownloadService
         return null;
     }
 
-    public IReadOnlyList<DownloadInfo> GetActiveDownloads()
-    {
-        return _allServices.SelectMany(s => s.GetActiveDownloads()).ToList();
-    }
+    public IReadOnlyList<DownloadInfo> GetActiveDownloads() =>
+        _allServices.SelectMany(service => service.GetActiveDownloads()).ToList();
 
     public async Task<string?> GetLocalPathIfExistsAsync(string externalProvider, string externalId)
     {
         var service = GetDownloadServiceByName(externalProvider);
-        if (service != null)
-        {
-            var path = await service.GetLocalPathIfExistsAsync(externalProvider, externalId);
-            if (path != null) return path;
-        }
-
-        foreach (var s in _allServices)
-        {
-            var path = await s.GetLocalPathIfExistsAsync(externalProvider, externalId);
-            if (path != null) return path;
-        }
-
-        return null;
+        return service == null
+            ? null
+            : await service.GetLocalPathIfExistsAsync(service.ProviderId, externalId);
     }
 
-    public async Task<bool> IsAvailableAsync()
-    {
-        return GetPrioritizedDownloadProviders().Count > 0;
-    }
+    public Task<bool> IsAvailableAsync() =>
+        Task.FromResult(GetPrioritizedDownloadProviders().Count > 0);
 
-    private IReadOnlyList<string> GetPrioritizedDownloadProviders()
-    {
-        return _statusManager.GetEnabledDownloadProviders();
-    }
+    private IReadOnlyList<string> GetPrioritizedDownloadProviders() =>
+        _statusManager.GetEnabledDownloadProviders();
 
-    private IDownloadService? GetDownloadServiceByName(string name)
-    {
-        var normalizedName = name.ToLowerInvariant();
-        return _allServices.FirstOrDefault(s =>
-            s.GetType().Name.StartsWith(normalizedName, StringComparison.OrdinalIgnoreCase) ||
-            (normalizedName is "apple-download" or "applemusic" && s.GetType().Name.StartsWith("AppleMusic", StringComparison.OrdinalIgnoreCase))
-        );
-    }
+    private IConcreteDownloadService? GetDownloadServiceByName(string name) =>
+        _allServices.FirstOrDefault(service => service.ProviderId.Equals(
+            ConcreteProviderId.Normalize(name), StringComparison.Ordinal));
 
     public MultiProviderDownloadService(
         IEnumerable<IConcreteDownloadService> services,
@@ -184,14 +146,9 @@ public class MultiProviderDownloadService : IDownloadService
         _logger = logger;
     }
 
-    private IMusicMetadataService? GetConcreteMetadataServiceByName(string name)
-    {
-        var normalizedName = name.ToLowerInvariant();
-        return _allMetadataServices.FirstOrDefault(s =>
-            s.GetType().Name.StartsWith(normalizedName, StringComparison.OrdinalIgnoreCase) ||
-            (normalizedName is "apple-download" or "applemusic" && s.GetType().Name.StartsWith("AppleMusic", StringComparison.OrdinalIgnoreCase))
-        );
-    }
+    private IConcreteMetadataService? GetConcreteMetadataServiceByName(string name) =>
+        _allMetadataServices.FirstOrDefault(service => service.ProviderId.Equals(
+            ConcreteProviderId.Normalize(name), StringComparison.Ordinal));
 
     private async Task<string?> TranslateIdAsync(string sourceProvider, string sourceId, string targetProvider, CancellationToken cancellationToken)
     {

@@ -298,6 +298,8 @@ public sealed class PerProviderTrackWalkerTests
 
     private abstract class SearchFakeBase : IConcreteMetadataService
     {
+        public abstract string ProviderId { get; }
+
         protected abstract IReadOnlyList<Song> SelectResults(string query);
 
         public virtual Task<Song?> FindSongByIsrcAsync(string isrc, CancellationToken cancellationToken = default) =>
@@ -342,6 +344,8 @@ public sealed class PerProviderTrackWalkerTests
 
     private sealed class DeezerFake : SearchFakeBase
     {
+        public override string ProviderId => "deezer";
+
         private readonly IReadOnlyList<Song> _fuzzyResults;
         private readonly IReadOnlyList<Song> _titleOnlyResults;
         private readonly Song? _isrcResult;
@@ -373,6 +377,8 @@ public sealed class PerProviderTrackWalkerTests
 
     private sealed class QobuzFake : SearchFakeBase
     {
+        public override string ProviderId => "qobuz";
+
         private readonly IReadOnlyList<Song> _fuzzyResults;
         private readonly Song? _isrcResult;
 
@@ -390,6 +396,8 @@ public sealed class PerProviderTrackWalkerTests
 
     private sealed class AmazonFake : SearchFakeBase
     {
+        public override string ProviderId => "amazon";
+
         protected override IReadOnlyList<Song> SelectResults(string query) =>
             throw new InvalidOperationException("Provider unavailable");
     }

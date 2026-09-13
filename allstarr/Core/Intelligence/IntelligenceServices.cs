@@ -275,5 +275,20 @@ public sealed class RecommendationSignalWriter(IDbContextFactory<AllstarrDbConte
     }
 
     private static bool ProviderValueMatches(string json, string key)
-    { try { var values = JsonSerializer.Deserialize<Dictionary<string, string>>(json); return values?.Any(x => x.Value == key || $"{x.Key}:{x.Value}" == key) == true; } catch (JsonException) { return false; } }
+    {
+        try
+        {
+            var values = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+            return values?.Any(item =>
+                item.Value.Equals(key, StringComparison.Ordinal) ||
+                $"{item.Key}:{item.Value}".Equals(key, StringComparison.OrdinalIgnoreCase) ||
+                $"external:{item.Key}:{item.Value}".Equals(key, StringComparison.OrdinalIgnoreCase) ||
+                $"ext-{item.Key}-song-{item.Value}".Equals(key, StringComparison.OrdinalIgnoreCase) ||
+                $"ext-{item.Key}-{item.Value}".Equals(key, StringComparison.OrdinalIgnoreCase)) == true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
 }

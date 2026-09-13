@@ -57,11 +57,10 @@ public class CacheKeyBuilderTests
     }
 
     [Fact]
-    public void LyricsAndGenreKeys_ShouldMatchExpectedFormats()
+    public void LyricsAndMetadataKeys_ShouldMatchExpectedFormats()
     {
         Assert.StartsWith("lyrics:v2:", CacheKeyBuilder.BuildLyricsKey("Artist", "Title", "Album", 240));
         Assert.Equal("lyrics:id:v2:42", CacheKeyBuilder.BuildLyricsByIdKey(42));
-        Assert.StartsWith("genre:v2:", CacheKeyBuilder.BuildGenreEnrichmentKey("Track:Artist"));
         Assert.Equal(
             ApplicationCacheCategory.CanonicalMetadata,
             ApplicationCachePolicyRegistry.Classify(CacheKeyBuilder.BuildAlbumKey("qobuz", "42")));

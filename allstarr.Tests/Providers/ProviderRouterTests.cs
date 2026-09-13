@@ -194,6 +194,31 @@ public sealed class ProviderRouterTests
         Assert.Contains(plan.Decision.Candidates, item => item.ReasonCode == "sidecar-not-ready");
     }
 
+    [Theory]
+    [InlineData(ProviderRouteHealthState.Degraded, "health-degraded")]
+    [InlineData(ProviderRouteHealthState.Unavailable, "health-unavailable")]
+    [InlineData(ProviderRouteHealthState.Unauthorized, "health-unauthorized")]
+    public async Task Plan_RejectsUnhealthyAccountFreeCapability(
+        ProviderRouteHealthState state,
+        string reason)
+    {
+        var health = new FakeHealthSource(new Dictionary<string, ProviderRouteHealthSnapshot>
+        {
+            ["unhealthy"] = new(state, CircuitOpen: false)
+        });
+        var router = Router([Metadata("unhealthy"), Metadata("ready")], health: health);
+
+        var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(
+            ProviderCapabilityKind.Metadata,
+            ["unhealthy", "ready"]));
+
+        Assert.Equal("ready", Assert.Single(plan.Candidates).Provider.Id);
+        Assert.Contains(plan.Decision.Candidates, item =>
+            item.ProviderId == "unhealthy" &&
+            item.ProviderAccountId == null &&
+            item.ReasonCode == reason);
+    }
+
     [Fact]
     public async Task DecisionRecord_IsExplainableAndDoesNotContainOpaqueIdsOrAccountDetails()
     {
@@ -321,6 +346,35 @@ public sealed class ProviderRouterTests
         await Assert.ThrowsAsync<TimeoutException>(() =>
             router.PlanAsync<IProviderMetadataCapability>(request));
         Assert.Equal(0, accounts.CallCount);
+    }
+
+    [Fact]
+    public async Task Plan_ManualSourcePinPreventsAutomaticProviderSwitching()
+    {
+        var router = Router([Streaming("deezer"), Streaming("qobuz")],
+            identity: new FakeIdentityService(ProviderIdentityVerification.Verified, ProviderIdentityVerification.Pinned));
+        var plan = await router.PlanAsync<IProviderStreamingCapability>(Request(ProviderCapabilityKind.Streaming,
+            ["qobuz", "deezer"], source: Track("deezer", "pinned-track"),
+            states: [new ProviderRouteProviderState("deezer", availableQualities: [ProviderAudioQuality.Lossless]),
+                new ProviderRouteProviderState("qobuz", availableQualities: [ProviderAudioQuality.Lossless])]));
+        Assert.Equal("deezer", Assert.Single(plan.Candidates).Provider.Id);
+        Assert.Contains(plan.Decision.Candidates, candidate => candidate.ProviderId == "qobuz" &&
+            candidate.ReasonCode == "manual-source-pinned");
+    }
+
+    [Theory]
+    [InlineData("automatic-suggestion")]
+    [InlineData("manual-released")]
+    [InlineData("manual-replaced")]
+    public async Task Plan_DoesNotReviveTentativeOrReleasedAlternatives(string method)
+    {
+        var router = Router([Metadata("deezer"), Metadata("qobuz")],
+            identity: new FakeIdentityService(ProviderIdentityVerification.Verified, targetMethod: method));
+        var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(ProviderCapabilityKind.Metadata,
+            ["deezer", "qobuz"], source: Track("deezer", "track")));
+        Assert.Equal("deezer", Assert.Single(plan.Candidates).Provider.Id);
+        Assert.Contains(plan.Decision.Candidates, candidate => candidate.ProviderId == "qobuz" &&
+            candidate.ReasonCode == "verified-identity-required");
     }
 
     private static ProviderRouter Router(
@@ -468,7 +522,7 @@ public sealed class ProviderRouterTests
 
         public ProviderRouteHealthSnapshot Get(
             string providerId,
-            Guid providerAccountId,
+            Guid? providerAccountId,
             ProviderCapabilityKind capability) =>
             _snapshots.GetValueOrDefault(providerId) ??
             new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Unknown, CircuitOpen: false);
@@ -481,7 +535,8 @@ public sealed class ProviderRouterTests
         public bool IsReady(string dependencyId) => _ready.Contains(dependencyId);
     }
 
-    private sealed class FakeIdentityService(ProviderIdentityVerification verification) : ITrackIdentityService
+    private sealed class FakeIdentityService(ProviderIdentityVerification verification,
+        ProviderIdentityVerification? sourceVerification = null, string targetMethod = "test-fixture") : ITrackIdentityService
     {
         public List<(string Source, string Target)> Translations { get; } = [];
 
@@ -518,12 +573,12 @@ public sealed class ProviderRouterTests
                 ProviderIdentityScope.Catalog,
                 null,
                 verification,
-                "test-fixture",
+                targetMethod,
                 1);
             return Task.FromResult(new TrackIdentityTranslationResult(
                 TrackIdentityTranslationStatus.Translated,
                 resolution.CanonicalRecordingId,
-                null,
+                sourceVerification == null ? null : resolution with { ExternalId = sourceId, Verification = sourceVerification.Value },
                 resolution));
         }
     }

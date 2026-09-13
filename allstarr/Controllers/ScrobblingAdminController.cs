@@ -6,6 +6,7 @@ using System.Text;
 using System.Xml.Linq;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Identity;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Storage;
 using allstarr.Core.Secrets;
@@ -18,21 +19,20 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Controllers;
 
-/// <summary>
-/// Admin controller for scrobbling configuration and authentication.
-/// Note: Does not require API key auth - users authenticate with Last.fm directly.
-/// </summary>
 [ApiController]
 [Route("api/admin/scrobbling")]
 [ServiceFilter(typeof(AdminPortFilter))]
-public class ScrobblingAdminController : ControllerBase
+public sealed class ScrobblingAdminController : ControllerBase
 {
+    private static readonly Uri ListenBrainzTokenValidationUri =
+        new("https://api.listenbrainz.org/1/validate-token");
     private readonly ScrobblingSettings _settings;
     private readonly ILogger<ScrobblingAdminController> _logger;
     private readonly HttpClient _httpClient;
     private readonly IDbContextFactory<AllstarrDbContext>? _contextFactory;
     private readonly IProviderAccountSecretAccessor? _accountSecrets;
     private readonly EncryptedSecretStore? _secretStore;
+    private readonly ProviderAccountManagementOptions _accountManagement;
 
     public ScrobblingAdminController(
         IOptions<ScrobblingSettings> settings,
@@ -40,7 +40,8 @@ public class ScrobblingAdminController : ControllerBase
         ILogger<ScrobblingAdminController> logger,
         IDbContextFactory<AllstarrDbContext>? contextFactory = null,
         IProviderAccountSecretAccessor? accountSecrets = null,
-        EncryptedSecretStore? secretStore = null)
+        EncryptedSecretStore? secretStore = null,
+        ProviderAccountManagementOptions? accountManagement = null)
     {
         _settings = settings.Value;
         _logger = logger;
@@ -48,11 +49,9 @@ public class ScrobblingAdminController : ControllerBase
         _contextFactory = contextFactory;
         _accountSecrets = accountSecrets;
         _secretStore = secretStore;
+        _accountManagement = accountManagement ?? new ProviderAccountManagementOptions();
     }
 
-    /// <summary>
-    /// Gets current scrobbling configuration status.
-    /// </summary>
     [HttpGet("status")]
     public async Task<IActionResult> GetStatus(CancellationToken cancellationToken = default)
     {
@@ -90,14 +89,14 @@ public class ScrobblingAdminController : ControllerBase
         });
     }
 
-    /// <summary>
-    /// Authenticate a managed Last.fm provider account.
-    /// </summary>
     [HttpPost("lastfm/authenticate")]
     public async Task<IActionResult> AuthenticateLastFm(
         [FromBody] LastFmAuthenticationRequest? request = null,
         CancellationToken cancellationToken = default)
     {
+        if (_accountManagement.ParseManagementMode() == ProviderAccountManagementMode.AdminManaged &&
+            HttpContext?.Items[AdminAuthSessionService.HttpContextSessionItemKey] is not AdminAuthSession { IsAdministrator: true })
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Provider accounts are managed by administrators." });
         var managed = request?.AccountId is { } accountId
             ? await ReadOwnedLastFmAccountAsync(accountId, cancellationToken)
             : null;
@@ -134,7 +133,6 @@ public class ScrobblingAdminController : ControllerBase
 
         try
         {
-            // Build parameters for auth.getMobileSession
             var parameters = new Dictionary<string, string>
             {
                 ["api_key"] = apiKey,
@@ -143,18 +141,15 @@ public class ScrobblingAdminController : ControllerBase
                 ["password"] = password
             };
 
-            // Generate signature
             var signature = GenerateSignature(parameters, sharedSecret);
             parameters["api_sig"] = signature;
 
-            // Send POST request over HTTPS
             var content = new FormUrlEncodedContent(parameters);
             using var response = await _httpClient.PostAsync("https://ws.audioscrobbler.com/2.0/", content);
             var responseBody = await response.Content.ReadAsStringAsync();
 
             _logger.LogInformation("Last.fm authentication response status: {StatusCode}", response.StatusCode);
 
-            // Parse response
             var doc = XDocument.Parse(responseBody);
             var root = doc.Root;
 
@@ -172,7 +167,6 @@ public class ScrobblingAdminController : ControllerBase
                 return BadRequest(new { error = $"Last.fm error: {errorMessage}" });
             }
 
-            // Extract session info
             var sessionElement = root?.Element("session");
             var sessionKey = sessionElement?.Element("key")?.Value;
             var authenticatedUsername = sessionElement?.Element("name")?.Value;
@@ -226,9 +220,6 @@ public class ScrobblingAdminController : ControllerBase
         public string? Password { get; set; }
     }
 
-    /// <summary>
-    /// Test Last.fm connection with current configuration.
-    /// </summary>
     [HttpPost("lastfm/test")]
     public async Task<IActionResult> TestLastFmConnection(CancellationToken cancellationToken = default)
     {
@@ -248,7 +239,6 @@ public class ScrobblingAdminController : ControllerBase
 
         try
         {
-            // Try to get user info to test the session key
             var parameters = new Dictionary<string, string>
             {
                 ["api_key"] = apiKey,
@@ -307,9 +297,6 @@ public class ScrobblingAdminController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Update local tracks scrobbling setting.
-    /// </summary>
     [HttpPost("local-tracks/update")]
     public async Task<IActionResult> UpdateLocalTracksEnabled([FromBody] UpdateLocalTracksRequest request)
     {
@@ -351,62 +338,30 @@ public class ScrobblingAdminController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Validate ListenBrainz user token.
-    /// </summary>
     [HttpPost("listenbrainz/validate")]
-    public async Task<IActionResult> ValidateListenBrainzToken([FromBody] ValidateTokenRequest request)
+    public async Task<IActionResult> ValidateListenBrainzToken(
+        [FromBody] ValidateTokenRequest request,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(request.UserToken))
         {
             return BadRequest(new { error = "User token is required" });
         }
 
-        try
-        {
-            using var httpRequest = new HttpRequestMessage(HttpMethod.Get,
-                "https://api.listenbrainz.org/1/validate-token");
-            httpRequest.Headers.Add("Authorization", $"Token {request.UserToken}");
-
-            using var response = await _httpClient.SendAsync(httpRequest);
-            var responseBody = await response.Content.ReadAsStringAsync();
-
-            if (!response.IsSuccessStatusCode)
-            {
-                return BuildProviderConnectionError(
-                    "ListenBrainz",
-                    response.StatusCode,
-                    "Check the user token and save a replacement if needed.");
-            }
-
-            using var jsonDoc = System.Text.Json.JsonDocument.Parse(responseBody);
-            var valid = jsonDoc.RootElement.GetProperty("valid").GetBoolean();
-
-            if (!valid)
-            {
-                return BadRequest(new { error = "Invalid user token" });
-            }
-
-            var username = jsonDoc.RootElement.GetProperty("user_name").GetString();
-
-            return Ok(new
+        return await ValidateListenBrainzAsync(
+            request.UserToken,
+            ListenBrainzTokenValidationUri,
+            username => Ok(new
             {
                 Success = true,
                 Valid = true,
                 Username = username,
                 Message = "Token validated. Save it through a ListenBrainz provider account."
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error validating ListenBrainz token");
-            return StatusCode(500, new { error = "Failed to validate ListenBrainz token" });
-        }
+            }),
+            "token validation",
+            cancellationToken);
     }
 
-    /// <summary>
-    /// Test ListenBrainz connection with current configuration.
-    /// </summary>
     [HttpPost("listenbrainz/test")]
     public async Task<IActionResult> TestListenBrainzConnection(CancellationToken cancellationToken = default)
     {
@@ -422,45 +377,80 @@ public class ScrobblingAdminController : ControllerBase
             return BadRequest(new { error = "ListenBrainz user token is not configured" });
         }
 
+        Uri endpoint;
         try
         {
-            var baseUri = ListenBrainzServiceEndpoint.FromSecret(account);
-            using var httpRequest = new HttpRequestMessage(HttpMethod.Get,
-                ListenBrainzServiceEndpoint.Route(baseUri, "validate-token"));
-            httpRequest.Headers.Add("Authorization", $"Token {token}");
+            endpoint = ListenBrainzServiceEndpoint.Route(
+                ListenBrainzServiceEndpoint.FromSecret(account), "validate-token");
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { error = exception.Message });
+        }
 
-            using var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
-            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                return BuildProviderConnectionError(
-                    "ListenBrainz",
-                    response.StatusCode,
-                    "Check the user token and save a replacement if needed.");
-            }
-
-            using var jsonDoc = System.Text.Json.JsonDocument.Parse(responseBody);
-            var valid = jsonDoc.RootElement.GetProperty("valid").GetBoolean();
-
-            if (!valid)
-            {
-                return BadRequest(new { error = "Invalid user token" });
-            }
-
-            var username = jsonDoc.RootElement.GetProperty("user_name").GetString();
-
-            return Ok(new
+        return await ValidateListenBrainzAsync(
+            token,
+            endpoint,
+            username => Ok(new
             {
                 Success = true,
                 Message = "ListenBrainz connection successful!",
                 Username = username
+            }),
+            "connection test",
+            cancellationToken);
+    }
+
+    private async Task<IActionResult> ValidateListenBrainzAsync(
+        string token,
+        Uri endpoint,
+        Func<string?, IActionResult> success,
+        string operation,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
+            request.Headers.Add("Authorization", $"Token {token}");
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return BuildProviderConnectionError(
+                    "ListenBrainz",
+                    response.StatusCode,
+                    "Check the user token and save a replacement if needed.");
+
+            using var document = await JsonDocument.ParseAsync(
+                await response.Content.ReadAsStreamAsync(cancellationToken),
+                cancellationToken: cancellationToken);
+            if (!document.RootElement.GetProperty("valid").GetBoolean())
+                return BadRequest(new { error = "Invalid user token" });
+
+            return success(document.RootElement.GetProperty("user_name").GetString());
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return new StatusCodeResult(499);
+        }
+        catch (Exception exception) when (exception is JsonException or KeyNotFoundException or InvalidOperationException)
+        {
+            _logger.LogWarning(exception, "ListenBrainz {Operation} returned an invalid response", operation);
+            return StatusCode(StatusCodes.Status502BadGateway, new
+            {
+                error = "ListenBrainz returned an invalid token validation response."
             });
         }
-        catch (Exception ex)
+        catch (HttpRequestException exception)
         {
-            _logger.LogError(ex, "Error testing ListenBrainz connection");
-            return StatusCode(500, new { error = "Failed to test ListenBrainz connection" });
+            _logger.LogWarning(exception, "ListenBrainz {Operation} request failed", operation);
+            return StatusCode(StatusCodes.Status502BadGateway, new
+            {
+                error = "ListenBrainz could not be reached. Try again later."
+            });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "ListenBrainz {Operation} failed", operation);
+            return StatusCode(500, new { error = $"Failed to complete the ListenBrainz {operation}." });
         }
     }
 
@@ -477,10 +467,10 @@ public class ScrobblingAdminController : ControllerBase
         }
 
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        var account = await db.ProviderAccounts.AsNoTracking()
-            .Where(item => item.ProviderId == providerId && item.Enabled && item.SecretReferenceId != null &&
-                item.Scope == ProviderAccountScope.User && item.TenantId == tenant && item.OwnerUserId == user)
-            .OrderBy(item => item.UpdatedAt)
+        var account = await db.ProviderAccounts.AsNoTracking().OwnedBy(tenant, user)
+            .Where(item => item.ProviderId == providerId && item.Enabled && item.SecretReferenceId != null)
+            .OrderByDescending(item => item.Scope == ProviderAccountScope.User)
+            .ThenBy(item => item.UpdatedAt)
             .FirstOrDefaultAsync(cancellationToken);
         if (account == null)
         {
@@ -498,21 +488,10 @@ public class ScrobblingAdminController : ControllerBase
             account.LibraryScopeId,
             "scrobbling-admin",
             account.SecretReferenceId);
-        return await _accountSecrets.UseAsync(context, bytes =>
-        {
-            using var document = JsonDocument.Parse(bytes);
-            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var property in document.RootElement.EnumerateObject())
-            {
-                var key = new string(property.Name.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
-                if (!string.IsNullOrWhiteSpace(key) && property.Value.ValueKind == JsonValueKind.String &&
-                    !string.IsNullOrWhiteSpace(property.Value.GetString()))
-                {
-                    values[key] = property.Value.GetString()!;
-                }
-            }
-            return Task.FromResult<IReadOnlyDictionary<string, string>>(values);
-        }, cancellationToken);
+        return await _accountSecrets.UseAsync(
+            context,
+            bytes => Task.FromResult(ParseSecrets(bytes)),
+            cancellationToken);
     }
 
     private sealed record ManagedLastFmAccount(
@@ -532,10 +511,9 @@ public class ScrobblingAdminController : ControllerBase
         }
 
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        var account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item =>
+        var account = await db.ProviderAccounts.AsNoTracking().OwnedBy(tenant, user).SingleOrDefaultAsync(item =>
             item.Id == accountId && item.ProviderId == "lastfm" &&
-            item.Scope == ProviderAccountScope.User && item.TenantId == tenant &&
-            item.OwnerUserId == user && item.SecretReferenceId != null,
+            item.SecretReferenceId != null,
             cancellationToken);
         if (account == null) return null;
 
@@ -550,21 +528,10 @@ public class ScrobblingAdminController : ControllerBase
             account.LibraryScopeId,
             "lastfm-authentication",
             account.SecretReferenceId);
-        var secrets = await _accountSecrets.UseAsync(accountContext, bytes =>
-        {
-            using var document = JsonDocument.Parse(bytes);
-            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var property in document.RootElement.EnumerateObject())
-            {
-                var key = new string(property.Name.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
-                if (property.Value.ValueKind == JsonValueKind.String &&
-                    !string.IsNullOrWhiteSpace(property.Value.GetString()))
-                {
-                    values[key] = property.Value.GetString()!;
-                }
-            }
-            return Task.FromResult<IReadOnlyDictionary<string, string>>(values);
-        }, cancellationToken);
+        var secrets = await _accountSecrets.UseAsync(
+            accountContext,
+            bytes => Task.FromResult(ParseSecrets(bytes)),
+            cancellationToken);
         return new ManagedLastFmAccount(account, secrets);
     }
 
@@ -617,6 +584,22 @@ public class ScrobblingAdminController : ControllerBase
         return null;
     }
 
+    private static IReadOnlyDictionary<string, string> ParseSecrets(ReadOnlyMemory<byte> bytes)
+    {
+        using var document = JsonDocument.Parse(bytes);
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in document.RootElement.EnumerateObject())
+        {
+            var key = new string(property.Name.Where(char.IsLetterOrDigit)
+                .Select(char.ToLowerInvariant).ToArray());
+            if (!string.IsNullOrEmpty(key) &&
+                property.Value.ValueKind == JsonValueKind.String &&
+                property.Value.GetString() is { Length: > 0 } value)
+                values[key] = value;
+        }
+        return values;
+    }
+
     private IActionResult BuildProviderConnectionError(
         string provider,
         HttpStatusCode upstreamStatus,
@@ -645,37 +628,24 @@ public class ScrobblingAdminController : ControllerBase
         });
     }
 
-    private string GenerateSignature(Dictionary<string, string> parameters, string sharedSecret)
+    private static string GenerateSignature(Dictionary<string, string> parameters, string sharedSecret)
     {
-        var sorted = parameters.OrderBy(kvp => kvp.Key);
         var signatureString = new StringBuilder();
-
-        foreach (var kvp in sorted)
+        foreach (var (key, value) in parameters.OrderBy(item => item.Key))
         {
-            signatureString.Append(kvp.Key);
-            signatureString.Append(kvp.Value);
+            signatureString.Append(key);
+            signatureString.Append(value);
         }
-
         signatureString.Append(sharedSecret);
-
-        var bytes = Encoding.UTF8.GetBytes(signatureString.ToString());
-        var hash = MD5.HashData(bytes);
-
-        // Convert to UPPERCASE hex string (Last.fm requires uppercase)
-        var sb = new StringBuilder();
-        foreach (byte b in hash)
-        {
-            sb.Append(b.ToString("X2"));
-        }
-        return sb.ToString();
+        return Convert.ToHexString(MD5.HashData(Encoding.UTF8.GetBytes(signatureString.ToString())));
     }
 
-    public class ValidateTokenRequest
+    public sealed class ValidateTokenRequest
     {
         public required string UserToken { get; set; }
     }
 
-    public class UpdateLocalTracksRequest
+    public sealed class UpdateLocalTracksRequest
     {
         public required bool Enabled { get; set; }
     }

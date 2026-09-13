@@ -101,20 +101,17 @@ builder.Services.AddSingleton<ProviderCtsDiagnosticRunner>();
 builder.Services.AddSingleton<EndpointUsageAudit>();
 builder.Services.AddHostedService<AuditEventRetentionService>();
 
-// Configure forwarded headers for reverse proxy support (nginx, etc.)
-// Trust should be explicit: set ForwardedHeaders__KnownProxies and/or
-// ForwardedHeaders__KnownNetworks (comma-separated) in deployment config.
+// Trust forwarded headers only from proxies or networks named in deployment config.
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
                              | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
                              | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedHost;
 
-    // Keep a bounded chain by default; configurable for multi-hop proxy setups.
+    // Bound the chain unless a multi-hop deployment explicitly raises the limit.
     options.ForwardLimit = builder.Configuration.GetValue<int?>("ForwardedHeaders:ForwardLimit") ?? 2;
 
-    // Framework defaults already trust loopback. If explicit trusted proxy/network
-    // config is provided, replace defaults with those values.
+    // Explicit trust lists replace the framework's loopback defaults.
     var configuredProxies = ParseCsv(builder.Configuration.GetValue<string>("ForwardedHeaders:KnownProxies"));
     var configuredNetworks = ParseCsv(builder.Configuration.GetValue<string>("ForwardedHeaders:KnownNetworks"));
 
@@ -179,28 +176,23 @@ static string? GetConfiguredValue(IConfiguration configuration, params string[] 
     return null;
 }
 
-// Backend identity is deployment-owned and must never fall through to the enum's
-// zero value (Subsonic). Production requires an explicit deployment value.
+// Require deployment-owned backend identity; enum zero would silently select Subsonic.
 var backendSelection = RuntimeEnvConfiguration.ResolveBackendSelection(
     builder.Configuration,
     builder.Environment);
 var backendType = backendSelection.Type;
 builder.Services.AddSingleton(backendSelection);
 
-// Configure Kestrel for large responses over VPN/Tailscale
-// Also configure admin port on 5275 (internal only, not exposed)
 var listenAdminAnyIp = AdminNetworkBindingPolicy.ShouldListenAdminAnyIp(builder.Configuration);
 builder.WebHost.ConfigureKestrel(serverOptions =>
 {
-    serverOptions.Limits.MaxResponseBufferSize = null; // Disable response buffering limit
-    serverOptions.Limits.MaxRequestBodySize = null; // Let nginx enforce body limits
-    serverOptions.Limits.MinResponseDataRate = null; // Disable minimum data rate for slow connections
+    serverOptions.Limits.MaxResponseBufferSize = null;
+    serverOptions.Limits.MaxRequestBodySize = null; // The deployment proxy enforces body limits.
+    serverOptions.Limits.MinResponseDataRate = null;
 
-    // Main proxy port (exposed)
     serverOptions.ListenAnyIP(8080);
 
-    // Admin UI port defaults to localhost-only.
-    // Override with Admin:BindAnyIp=true if required by your deployment.
+    // Remote admin binding requires the explicit Admin:BindAnyIp opt-in.
     if (listenAdminAnyIp)
     {
         serverOptions.ListenAnyIP(5275);
@@ -211,24 +203,22 @@ builder.WebHost.ConfigureKestrel(serverOptions =>
     }
 });
 
-// Add response compression for large JSON responses (helps with Tailscale/VPN MTU issues)
+// Compress large JSON responses for constrained VPN links.
 builder.Services.AddResponseCompression(options =>
 {
     options.EnableForHttps = true;
     options.MimeTypes = new[] { "application/json", "text/json" };
 });
 
-// Add services to the container - conditionally register controllers
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
-        // Use original property names (PascalCase) to match Jellyfin API
+        // Jellyfin clients require the protocol's original PascalCase names.
         options.JsonSerializerOptions.PropertyNamingPolicy = null;
         options.JsonSerializerOptions.DictionaryKeyPolicy = null;
     })
     .ConfigureApplicationPartManager(manager =>
     {
-        // Remove the default controller feature provider
         var defaultProvider = manager.FeatureProviders
             .OfType<Microsoft.AspNetCore.Mvc.Controllers.ControllerFeatureProvider>()
             .FirstOrDefault();
@@ -236,7 +226,6 @@ builder.Services.AddControllers()
         {
             manager.FeatureProviders.Remove(defaultProvider);
         }
-        // Add our custom provider that filters by backend type
         manager.FeatureProviders.Add(new BackendControllerFeatureProvider(backendType));
     });
 
@@ -282,26 +271,17 @@ builder.Services.ConfigureAll<HttpClientFactoryOptions>(options =>
         };
     });
 
-    // Suppress verbose HTTP logging - these are logged at Debug level by default
-    // but we want to reduce noise in production logs
     options.SuppressHandlerScope = true;
 });
 
-// Register a dedicated named HttpClient for Jellyfin backend with connection pooling.
-// SocketsHttpHandler reuses TCP connections across the scoped JellyfinProxyService
-// instances, eliminating per-request TCP/TLS handshake overhead.
+// Preserve pooled connections across scoped Jellyfin proxy instances.
 builder.Services.AddHttpClient(JellyfinProxyService.HttpClientName)
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {
-        // Keep up to 20 idle connections to Jellyfin alive at any time
         MaxConnectionsPerServer = 20,
-        // Recycle pooled connections every 5 minutes to pick up DNS changes
         PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-        // Close idle connections after 90 seconds to avoid stale sockets
         PooledConnectionIdleTimeout = TimeSpan.FromSeconds(90),
-        // Allow HTTP/2 multiplexing when Jellyfin supports it
         EnableMultipleHttp2Connections = true,
-        // Follow redirects within Jellyfin
         AllowAutoRedirect = true,
         MaxAutomaticRedirections = 5
     });
@@ -317,21 +297,17 @@ builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(dataProtectionKeysDirectory)
     .SetApplicationName("allstarr-admin");
 
-// Exception handling
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
-// Admin port filter (restricts admin API to port 5275)
 builder.Services.AddScoped<allstarr.Filters.AdminPortFilter>();
 
-// Admin helper service (shared utilities for admin controllers)
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminHelperService>();
 builder.Services.AddSingleton<allstarr.Services.Admin.IAdminAuthSessionStore, allstarr.Services.Admin.EfAdminAuthSessionStore>();
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminAuthSessionService>();
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminProtocolExecutionContextFactory>();
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminUpdateFeed>();
 
-// Configuration - register both settings, active one determined by backend type
 builder.Services.Configure<SubsonicSettings>(
     builder.Configuration.GetSection("Subsonic"));
 builder.Services.Configure<JellyfinSettings>(
@@ -354,7 +330,6 @@ builder.Services.Configure<SpotifyImportSettings>(options =>
     }
 });
 
-// Business services - shared across backends
 builder.Services.AddSingleton<DatabaseApplicationCache>();
 builder.Services.AddSingleton<BoundedHotApplicationCache>();
 builder.Services.AddSingleton<FileMediaApplicationCache>();
@@ -376,10 +351,8 @@ builder.Services.AddSingleton<ManagedTrackCacheService>();
 builder.Services.AddSingleton<IProtocolLyricsResolver, ProtocolLyricsResolver>();
 builder.Services.AddSingleton<JellyfinProxyService>();
 
-// Register backend-specific services
 if (backendType == BackendType.Jellyfin)
 {
-    // Jellyfin services
     builder.Services.AddSingleton<JellyfinResponseBuilder>();
     builder.Services.AddSingleton<IJellyfinSearchProtocolAdapter, JellyfinSearchProtocolAdapter>();
     builder.Services.AddSingleton<IJellyfinItemProtocolAdapter, JellyfinItemProtocolAdapter>();
@@ -392,12 +365,10 @@ if (backendType == BackendType.Jellyfin)
     builder.Services.AddSingleton<IPlaybackMetadataResolver, JellyfinPlaybackMetadataResolver>();
     builder.Services.AddScoped<JellyfinAuthFilter>();
 
-    // Register JellyfinController as a service for dependency injection
     builder.Services.AddScoped<allstarr.Controllers.JellyfinController>();
 }
 else if (backendType == BackendType.Subsonic)
 {
-    // Subsonic services
     builder.Services.AddSingleton<SubsonicRequestParser>();
     builder.Services.AddSingleton<SubsonicResponseBuilder>();
     builder.Services.AddSingleton<SubsonicModelMapper>();
@@ -415,12 +386,8 @@ else
     throw new InvalidOperationException($"Unsupported backend type '{backendType}'.");
 }
 
-// ----------------------------------------------------
-// Multi-Provider & Concrete Service Registrations
-// ----------------------------------------------------
 builder.Services.AddSingleton<QobuzBundleService>();
 
-// 1. Concrete Metadata Services
 builder.Services.AddSingleton<DeezerMetadataService>();
 builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
     provider.GetRequiredService<DeezerMetadataService>());
@@ -438,14 +405,12 @@ builder.Services.AddAppleMusicKitPlaylistCapability();
 builder.Services.AddAppleDownloadCapability();
 builder.Services.AddBuiltInLyricsCapabilities();
 
-// 2. Concrete Download Services
 builder.Services.AddSingleton<IConcreteDownloadService>(provider =>
     provider.GetRequiredService<DeezerDownloadService>());
 builder.Services.AddSingleton<IConcreteDownloadService>(provider =>
     provider.GetRequiredService<QobuzDownloadService>());
 builder.Services.AddSingleton<IConcreteDownloadService, AppleMusicDownloadService>();
 
-// 3. Status Manager & Multi-Provider Orchestrators
 builder.Services.AddSingleton<ExtensionManager>();
 builder.Services.AddSingleton<ProviderStatusManager>();
 builder.Services.AddSingleton<IMusicMetadataService, MultiProviderMetadataService>();
@@ -453,10 +418,8 @@ builder.Services.AddSingleton<IPlaybackMetadataResolver, ExternalPlaybackMetadat
 builder.Services.AddSingleton<IDownloadService, MultiProviderDownloadService>();
 builder.Services.AddSingleton<IProtocolProviderGateway, ProtocolProviderGateway>();
 
-// 4. Playlist Sync Service
 builder.Services.AddSingleton<PlaylistSyncService>();
 
-// Startup validation - register validators based on backend
 if (backendType == BackendType.Jellyfin)
 {
     builder.Services.AddSingleton<IStartupValidator, JellyfinStartupValidator>();
@@ -481,100 +444,18 @@ if (!builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<StartupValidationOrchestrator>();
 }
 
-// Clean retained cache-mode downloads and temporary transcoded audio.
 builder.Services.AddHostedService<CacheCleanupService>();
 
-// Register Spotify API client, lyrics service, and settings for direct API access
-// Configure from environment variables with SPOTIFY_API_ prefix
-builder.Services.Configure<allstarr.Models.Settings.SpotifyApiSettings>(options =>
-{
-    builder.Configuration.GetSection("SpotifyApi").Bind(options);
-
-    // Override from environment variables
-    var enabled = builder.Configuration.GetValue<string>("SpotifyApi:Enabled");
-    if (!string.IsNullOrEmpty(enabled))
-    {
-        options.Enabled = enabled.Equals("true", StringComparison.OrdinalIgnoreCase);
-    }
-
-    var sessionCookie = builder.Configuration.GetValue<string>("SpotifyApi:SessionCookie");
-    if (!string.IsNullOrEmpty(sessionCookie))
-    {
-        options.SessionCookie = sessionCookie;
-    }
-
-    var sessionCookieSetDate = builder.Configuration.GetValue<string>("SpotifyApi:SessionCookieSetDate");
-    if (!string.IsNullOrEmpty(sessionCookieSetDate))
-    {
-        options.SessionCookieSetDate = sessionCookieSetDate;
-    }
-
-    var cacheDuration = builder.Configuration.GetValue<int?>("SpotifyApi:CacheDurationMinutes");
-    if (cacheDuration.HasValue)
-    {
-        options.CacheDurationMinutes = cacheDuration.Value;
-    }
-
-    var preferIsrc = builder.Configuration.GetValue<string>("SpotifyApi:PreferIsrcMatching");
-    if (!string.IsNullOrEmpty(preferIsrc))
-    {
-        options.PreferIsrcMatching = preferIsrc.Equals("true", StringComparison.OrdinalIgnoreCase);
-    }
-
-});
+builder.Services.Configure<SpotifyApiSettings>(builder.Configuration.GetSection("SpotifyApi"));
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifySessionCookieService>();
 
-// Register Spotify lyrics service (uses Spotify's color-lyrics API)
 builder.Services.AddSingleton<allstarr.Services.Lyrics.SpotifyLyricsService>();
-
-
-// Register Lyrics Orchestrator (manages priority-based lyrics fetching)
 builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsOrchestrator>();
 builder.Services.AddSingleton<allstarr.Services.Lyrics.IKeptLyricsSidecarService, allstarr.Services.Lyrics.KeptLyricsSidecarService>();
 
-// Register Spotify playlist fetcher (uses direct Spotify API when SpotifyApi is enabled)
+builder.Services.Configure<ScrobblingSettings>(builder.Configuration.GetSection("Scrobbling"));
 
-// Register lyrics prefetch service (prefetches lyrics for all playlist tracks)
-// DISABLED - No need to prefetch since Jellyfin and Spotify lyrics are fast
-
-// Register scrobbling services (Last.fm, ListenBrainz, etc.)
-builder.Services.Configure<allstarr.Models.Settings.ScrobblingSettings>(options =>
-{
-    // Last.fm settings
-    var lastFmEnabled = builder.Configuration.GetValue<bool>("Scrobbling:LastFm:Enabled");
-    var lastFmApiKey = builder.Configuration.GetValue<string>("Scrobbling:LastFm:ApiKey");
-    var lastFmSharedSecret = builder.Configuration.GetValue<string>("Scrobbling:LastFm:SharedSecret");
-    var lastFmSessionKey = builder.Configuration.GetValue<string>("Scrobbling:LastFm:SessionKey");
-    var lastFmUsername = builder.Configuration.GetValue<string>("Scrobbling:LastFm:Username");
-    var lastFmPassword = builder.Configuration.GetValue<string>("Scrobbling:LastFm:Password");
-
-    options.Enabled = builder.Configuration.GetValue<bool>("Scrobbling:Enabled");
-    options.LocalTracksEnabled = builder.Configuration.GetValue<bool>("Scrobbling:LocalTracksEnabled");
-    options.SyntheticLocalPlayedSignalEnabled =
-        builder.Configuration.GetValue<bool>("Scrobbling:SyntheticLocalPlayedSignalEnabled");
-    options.LastFm.Enabled = lastFmEnabled;
-
-    // Only override hardcoded API credentials if explicitly set in config
-    if (!string.IsNullOrEmpty(lastFmApiKey))
-        options.LastFm.ApiKey = lastFmApiKey;
-    if (!string.IsNullOrEmpty(lastFmSharedSecret))
-        options.LastFm.SharedSecret = lastFmSharedSecret;
-
-    // These don't have defaults, so set them normally
-    options.LastFm.SessionKey = lastFmSessionKey ?? string.Empty;
-    options.LastFm.Username = lastFmUsername;
-    options.LastFm.Password = lastFmPassword;
-
-    // ListenBrainz settings
-    var listenBrainzEnabled = builder.Configuration.GetValue<bool>("Scrobbling:ListenBrainz:Enabled");
-    var listenBrainzUserToken = builder.Configuration.GetValue<string>("Scrobbling:ListenBrainz:UserToken") ?? string.Empty;
-
-    options.ListenBrainz.Enabled = listenBrainzEnabled;
-    options.ListenBrainz.UserToken = listenBrainzUserToken;
-
-});
-
-// Register Last.fm HTTP client with proper User-Agent
+// Last.fm requires an identifying User-Agent.
 builder.Services.AddHttpClient("LastFm", client =>
 {
     client.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0 (https://github.com/sopat712/allstarr)");
@@ -583,23 +464,8 @@ builder.Services.AddHttpClient("LastFm", client =>
 
 builder.Services.AddSingleton<ScrobblingHelper>();
 
-// Register the capability unconditionally. MusicBrainzSettings.Enabled gates every
-// outbound lookup, which lets the durable runtime setting change without rebuilding DI.
-builder.Services.Configure<allstarr.Models.Settings.MusicBrainzSettings>(options =>
-{
-    builder.Configuration.GetSection("MusicBrainz").Bind(options);
-
-    var enabled = builder.Configuration.GetValue<string>("MusicBrainz:Enabled");
-    if (!string.IsNullOrEmpty(enabled))
-    {
-        options.Enabled = enabled.Equals("true", StringComparison.OrdinalIgnoreCase);
-    }
-
-    var username = builder.Configuration.GetValue<string>("MusicBrainz:Username");
-    if (!string.IsNullOrEmpty(username)) options.Username = username;
-    var password = builder.Configuration.GetValue<string>("MusicBrainz:Password");
-    if (!string.IsNullOrEmpty(password)) options.Password = password;
-});
+// Registration stays unconditional so durable settings can enable lookups without rebuilding DI.
+builder.Services.Configure<MusicBrainzSettings>(builder.Configuration.GetSection("MusicBrainz"));
 builder.Services.AddHttpClient(allstarr.Services.MusicBrainz.MusicBrainzService.HttpClientName, client =>
 {
     client.DefaultRequestHeaders.UserAgent.ParseAdd(
@@ -609,7 +475,6 @@ builder.Services.AddHttpClient(allstarr.Services.MusicBrainz.MusicBrainzService.
     client.Timeout = TimeSpan.FromSeconds(15);
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<allstarr.Services.MusicBrainz.MusicBrainzService>();
-builder.Services.AddSingleton<allstarr.Services.Common.GenreEnrichmentService>();
 
 builder.Services.AddCors(options =>
 {
@@ -674,32 +539,25 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Initialize cache settings for static access
 CacheExtensions.InitializeCacheSettings(app.Services);
 
-// Configure the HTTP request pipeline.
-
-// IMPORTANT: UseForwardedHeaders must be called BEFORE other middleware
-// This processes X-Forwarded-For, X-Real-IP, etc. from nginx
+// Downstream policies must see only the forwarded identity accepted by the trust policy.
 app.UseForwardedHeaders();
 
 // Drop high-confidence scanner paths before they hit the proxy or request logging.
 app.UseMiddleware<BotProbeBlockMiddleware>();
 
-// Request logging middleware (when DEBUG_LOG_ALL_REQUESTS=true)
 app.UseMiddleware<RequestLoggingMiddleware>();
 
-app.UseExceptionHandler(); // Use registered GlobalExceptionHandler
+app.UseExceptionHandler();
 
 app.UseMiddleware<CorrelationMiddleware>();
 
 // Never mutate against a fallback store when the selected durable database is unavailable.
 app.UseMiddleware<DurableMutationGuardMiddleware>();
 
-// Enable response compression EARLY in the pipeline
 app.UseResponseCompression();
 
-// Enable WebSocket support
 app.UseWebSockets(new WebSocketOptions
 {
     KeepAliveInterval = TimeSpan.FromSeconds(120)
@@ -711,14 +569,13 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-// LAN installs and reverse proxies commonly terminate HTTP outside this process.
-// Enable redirection only when an operator has configured an HTTPS endpoint here.
+// Redirect only when this process owns HTTPS; proxies often terminate it upstream.
 if (builder.Configuration.GetValue<bool>("HttpsRedirection:Enabled"))
 {
     app.UseHttpsRedirection();
 }
 
-// Serve static files only on admin port (5275)
+// Keep admin assets and authentication on the admin listener.
 app.UseMiddleware<allstarr.Middleware.AdminNetworkAllowlistMiddleware>();
 app.UseMiddleware<allstarr.Middleware.AdminStaticFilesMiddleware>();
 app.UseMiddleware<allstarr.Middleware.AdminAuthenticationMiddleware>();
@@ -728,8 +585,7 @@ if (backendType == BackendType.Jellyfin)
     app.UseMiddleware<JellyfinMusicEndpointPolicyMiddleware>();
 }
 
-// Proxy authenticated Jellyfin client sockets only after the public API policy
-// has classified the request as part of the supported music-client surface.
+// Proxy Jellyfin sockets only after the public API policy classifies them as supported.
 app.UseMiddleware<WebSocketProxyMiddleware>();
 
 app.UseAuthorization();
@@ -777,10 +633,7 @@ public partial class Program
 {
 }
 
-/// <summary>
-/// Controller feature provider that conditionally registers controllers based on backend type.
-/// This prevents route conflicts between JellyfinController and SubsonicController catch-all routes.
-/// </summary>
+// Only one protocol catch-all can be registered; Jellyfin and Subsonic routes conflict.
 class BackendControllerFeatureProvider : Microsoft.AspNetCore.Mvc.Controllers.ControllerFeatureProvider
 {
     private readonly BackendType _backendType;
@@ -795,10 +648,8 @@ class BackendControllerFeatureProvider : Microsoft.AspNetCore.Mvc.Controllers.Co
         var isController = base.IsController(typeInfo);
         if (!isController) return false;
 
-        // Only the protocol catch-all controllers and their backend-specific admin
-        // surfaces are conditional. Every other controller is backend-neutral and
-        // must remain registered; an allowlist here silently sends new admin routes
-        // into the selected protocol catch-all.
+        // Only protocol catch-alls and their admin surfaces are conditional; an
+        // allowlist would send future admin routes into the selected catch-all.
         if (typeInfo.Name == "JellyfinAdminController")
         {
             return _backendType == BackendType.Jellyfin;
@@ -809,7 +660,6 @@ class BackendControllerFeatureProvider : Microsoft.AspNetCore.Mvc.Controllers.Co
             return true;
         }
 
-        // Only register the controller matching the configured backend type
         return _backendType switch
         {
             BackendType.Jellyfin => typeInfo.Name == "JellyfinController",

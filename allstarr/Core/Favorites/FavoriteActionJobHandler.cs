@@ -1,4 +1,5 @@
 using allstarr.Core.Jobs;
+using allstarr.Core.Intelligence;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -9,7 +10,9 @@ namespace allstarr.Core.Favorites;
 public sealed class FavoriteActionJobHandler(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     IEnumerable<IFavoriteActionExecutor> actionExecutors,
-    IPlatformClock clock) : IDurableJobHandler
+    IPlatformClock clock,
+    IRecommendationSignalWriter? recommendationSignals = null,
+    ILogger<FavoriteActionJobHandler>? logger = null) : IDurableJobHandler
 {
     private readonly IReadOnlyDictionary<string, IFavoriteActionExecutor> _executors = actionExecutors.ToDictionary(
         executor => executor.ActionType.Trim().ToLowerInvariant(), StringComparer.Ordinal);
@@ -121,6 +124,8 @@ public sealed class FavoriteActionJobHandler(
             await database.SaveChangesAsync(cancellationToken);
         }
 
+        await RecordRecommendationSignalAsync(favoriteEvent, cancellationToken);
+
         favoriteEvent.State = FavoriteEventState.Succeeded;
         favoriteEvent.CompletedAt = clock.UtcNow;
         favoriteEvent.UpdatedAt = clock.UtcNow;
@@ -138,6 +143,42 @@ public sealed class FavoriteActionJobHandler(
         });
         await database.SaveChangesAsync(cancellationToken);
         return DurableJobCompletion.Success();
+    }
+
+    private async Task RecordRecommendationSignalAsync(
+        FavoriteEventRecord favoriteEvent,
+        CancellationToken cancellationToken)
+    {
+        if (recommendationSignals == null || string.IsNullOrWhiteSpace(favoriteEvent.LibraryScopeId)) return;
+        var scope = new IntelligenceScope(
+            favoriteEvent.TenantId,
+            favoriteEvent.OwnerUserId,
+            favoriteEvent.Protocol,
+            favoriteEvent.BackendInstanceId,
+            favoriteEvent.LibraryScopeId);
+        var value = favoriteEvent.Operation == FavoriteOperation.Favorite ? 1d : -1d;
+        try
+        {
+            if (recommendationSignals is IIdempotentRecommendationSignalWriter idempotent)
+            {
+                await idempotent.WriteIdempotentAsync(scope, "favorite", favoriteEvent.ItemId, value,
+                    clock.UtcNow, favoriteEvent.EventKey, favoriteEvent.JobId, cancellationToken);
+            }
+            else
+            {
+                await recommendationSignals.WriteAsync(scope, "favorite", favoriteEvent.ItemId, value,
+                    clock.UtcNow, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            logger?.LogWarning(exception,
+                "Favorite state was saved, but its optional recommendation signal could not be recorded");
+        }
     }
 
     private async Task<FavoriteActionExecutionResult> ApplyVirtualLikedStateAsync(
@@ -202,10 +243,9 @@ public static class FavoriteActionRegistration
         services.AddSingleton<FavoriteActionPipeline>();
         services.AddSingleton<IFavoriteActionPipeline>(provider => provider.GetRequiredService<FavoriteActionPipeline>());
         services.AddSingleton<IFavoriteActionExecutor, FavoriteMatchActionExecutor>();
-        services.AddSingleton<IFavoriteActionExecutor, FavoriteDownloadActionExecutor>();
-        var placement = new FavoritePlacementOptions();
-        configuration.GetSection("FavoriteActions:Placement").Bind(placement);
-        services.AddSingleton(placement);
+        services.AddSingleton<FavoriteDownloadActionExecutor>();
+        services.AddSingleton<IFavoriteActionExecutor>(provider =>
+            provider.GetRequiredService<FavoriteDownloadActionExecutor>());
         services.AddSingleton<FavoriteTrackMetadataResolver>();
         services.AddSingleton<IFavoriteActionExecutor, FavoritePlaceActionExecutor>();
         services.AddSingleton<IFavoriteActionExecutor, FavoriteEnrichActionExecutor>();

@@ -1,5 +1,8 @@
 <script lang="ts">
-  type Item = { id: string; label: string; href?: string; count?: number };
+  import { tick } from "svelte";
+  import type { Component } from "svelte";
+
+  type Item = { id: string; label: string; href?: string; count?: number; icon?: Component<any> };
 
   let {
     items,
@@ -17,17 +20,34 @@
   let tablist = $state<HTMLElement>();
 
   $effect(() => {
-    active;
+    const selectedId = active;
     if (typeof document === "undefined") return;
-    queueMicrotask(() => {
-      const selected = tablist?.querySelector<HTMLElement>('[aria-selected="true"]');
-      if (!tablist || !selected) return;
-      const start = selected.offsetLeft;
-      const end = start + selected.offsetWidth;
-      if (start < tablist.scrollLeft) tablist.scrollTo({ left: start });
-      else if (end > tablist.scrollLeft + tablist.clientWidth)
-        tablist.scrollTo({ left: end - tablist.clientWidth });
+
+    let cancelled = false;
+    let frame = 0;
+    void tick().then(() => {
+      if (cancelled || active !== selectedId) return;
+      frame = requestAnimationFrame(() => {
+        const selected = tablist?.querySelector<HTMLElement>('[aria-selected="true"]');
+        if (!tablist || !selected) return;
+        const bounds = tablist.getBoundingClientRect();
+        const selectedBounds = selected.getBoundingClientRect();
+        const next = selected.nextElementSibling as HTMLElement | null;
+        const nextBounds = next?.getBoundingClientRect();
+        const end = nextBounds && nextBounds.right - selectedBounds.left <= bounds.width
+          ? nextBounds.right
+          : selectedBounds.right;
+        if (selectedBounds.left < bounds.left)
+          tablist.scrollTo({ left: tablist.scrollLeft - (bounds.left - selectedBounds.left) });
+        else if (end > bounds.right)
+          tablist.scrollTo({ left: tablist.scrollLeft + end - bounds.right });
+      });
     });
+
+    return () => {
+      cancelled = true;
+      if (frame) cancelAnimationFrame(frame);
+    };
   });
 
   function navigate(event: KeyboardEvent) {
@@ -46,7 +66,14 @@
   }
 </script>
 
-<nav aria-label={label}>
+{#snippet tabContent(item: Item)}
+  {@const Icon = item.icon}
+  {#if Icon}<Icon class="segmented-tab-icon" size={16} aria-hidden="true" />{/if}
+  <span class="segmented-tab-label">{item.label}</span>
+  {#if item.count !== undefined}<span class="segmented-tab-count">{item.count}</span>{/if}
+{/snippet}
+
+<nav class="segmented-nav" aria-label={label}>
   <div
     bind:this={tablist}
     class={`segmented-tabs ${className}`}
@@ -62,7 +89,7 @@
           role="tab"
           aria-selected={active === item.id}
           tabindex={active === item.id ? 0 : -1}
-        >{item.label}{#if item.count !== undefined}<span class="segmented-tab-count">{item.count}</span>{/if}</a>
+        >{@render tabContent(item)}</a>
       {:else}
         <button
           type="button"
@@ -70,7 +97,7 @@
           aria-selected={active === item.id}
           tabindex={active === item.id ? 0 : -1}
           onclick={() => onchange?.(item.id)}
-        >{item.label}{#if item.count !== undefined}<span class="segmented-tab-count">{item.count}</span>{/if}</button>
+        >{@render tabContent(item)}</button>
       {/if}
     {/each}
   </div>

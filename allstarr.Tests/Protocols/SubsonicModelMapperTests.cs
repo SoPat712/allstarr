@@ -26,7 +26,6 @@ public class SubsonicModelMapperTests
     [Fact]
     public void ParseSearchResponse_JsonWithSongs_ParsesCorrectly()
     {
-        // Arrange
         var jsonResponse = @"{
             ""subsonic-response"": {
                 ""status"": ""ok"",
@@ -45,10 +44,8 @@ public class SubsonicModelMapperTests
         }";
         var responseBody = Encoding.UTF8.GetBytes(jsonResponse);
 
-        // Act
         var (songs, albums, artists) = _mapper.ParseSearchResponse(responseBody, "application/json");
 
-        // Assert
         Assert.Single(songs);
         Assert.Empty(albums);
         Assert.Empty(artists);
@@ -57,7 +54,6 @@ public class SubsonicModelMapperTests
     [Fact]
     public void ParseSearchResponse_XmlWithSongs_ParsesCorrectly()
     {
-        // Arrange
         var xmlResponse = @"<?xml version=""1.0"" encoding=""UTF-8""?>
 <subsonic-response xmlns=""http://subsonic.org/restapi"" status=""ok"" version=""1.16.1"">
     <searchResult3>
@@ -66,10 +62,8 @@ public class SubsonicModelMapperTests
 </subsonic-response>";
         var responseBody = Encoding.UTF8.GetBytes(xmlResponse);
 
-        // Act
         var (songs, albums, artists) = _mapper.ParseSearchResponse(responseBody, "application/xml");
 
-        // Assert
         Assert.Single(songs);
         Assert.Empty(albums);
         Assert.Empty(artists);
@@ -78,7 +72,6 @@ public class SubsonicModelMapperTests
     [Fact]
     public void ParseSearchResponse_JsonWithAllTypes_ParsesAllCorrectly()
     {
-        // Arrange
         var jsonResponse = @"{
             ""subsonic-response"": {
                 ""status"": ""ok"",
@@ -98,10 +91,8 @@ public class SubsonicModelMapperTests
         }";
         var responseBody = Encoding.UTF8.GetBytes(jsonResponse);
 
-        // Act
         var (songs, albums, artists) = _mapper.ParseSearchResponse(responseBody, "application/json");
 
-        // Assert
         Assert.Single(songs);
         Assert.Single(albums);
         Assert.Single(artists);
@@ -110,7 +101,6 @@ public class SubsonicModelMapperTests
     [Fact]
     public void ParseSearchResponse_XmlWithAllTypes_ParsesAllCorrectly()
     {
-        // Arrange
         var xmlResponse = @"<?xml version=""1.0"" encoding=""UTF-8""?>
 <subsonic-response xmlns=""http://subsonic.org/restapi"" status=""ok"" version=""1.16.1"">
     <searchResult3>
@@ -121,10 +111,8 @@ public class SubsonicModelMapperTests
 </subsonic-response>";
         var responseBody = Encoding.UTF8.GetBytes(xmlResponse);
 
-        // Act
         var (songs, albums, artists) = _mapper.ParseSearchResponse(responseBody, "application/xml");
 
-        // Assert
         Assert.Single(songs);
         Assert.Single(albums);
         Assert.Single(artists);
@@ -133,14 +121,11 @@ public class SubsonicModelMapperTests
     [Fact]
     public void ParseSearchResponse_InvalidJson_ReturnsEmpty()
     {
-        // Arrange
         var invalidJson = "{invalid json}";
         var responseBody = Encoding.UTF8.GetBytes(invalidJson);
 
-        // Act
         var (songs, albums, artists) = _mapper.ParseSearchResponse(responseBody, "application/json");
 
-        // Assert
         Assert.Empty(songs);
         Assert.Empty(albums);
         Assert.Empty(artists);
@@ -149,7 +134,6 @@ public class SubsonicModelMapperTests
     [Fact]
     public void ParseSearchResponse_EmptySearchResult_ReturnsEmpty()
     {
-        // Arrange
         var jsonResponse = @"{
             ""subsonic-response"": {
                 ""status"": ""ok"",
@@ -159,10 +143,8 @@ public class SubsonicModelMapperTests
         }";
         var responseBody = Encoding.UTF8.GetBytes(jsonResponse);
 
-        // Act
         var (songs, albums, artists) = _mapper.ParseSearchResponse(responseBody, "application/json");
 
-        // Assert
         Assert.Empty(songs);
         Assert.Empty(albums);
         Assert.Empty(artists);
@@ -171,7 +153,6 @@ public class SubsonicModelMapperTests
     [Fact]
     public void MergeSearchResults_Json_MergesSongsCorrectly()
     {
-        // Arrange
         var localSongs = new List<object>
         {
             new Dictionary<string, object> { ["id"] = "local1", ["title"] = "Local Song" }
@@ -186,18 +167,15 @@ public class SubsonicModelMapperTests
             Artists = new List<Artist>()
         };
 
-        // Act
         var (mergedSongs, mergedAlbums, mergedArtists) = _mapper.MergeSearchResults(
             localSongs, new List<object>(), new List<object>(), externalResult, new List<ExternalPlaylist>(), true);
 
-        // Assert
         Assert.Equal(2, mergedSongs.Count);
     }
 
     [Fact]
     public void MergeSearchResults_Json_CaseInsensitiveDeduplication()
     {
-        // Arrange
         var localArtists = new List<object>
         {
             new Dictionary<string, object> { ["id"] = "local1", ["name"] = "Test Artist" }
@@ -212,18 +190,15 @@ public class SubsonicModelMapperTests
             }
         };
 
-        // Act
         var (mergedSongs, mergedAlbums, mergedArtists) = _mapper.MergeSearchResults(
             new List<object>(), new List<object>(), localArtists, externalResult, new List<ExternalPlaylist>(), true);
 
-        // Assert
         Assert.Single(mergedArtists); // Only the local artist
     }
 
     [Fact]
     public void MergeSearchResults_Xml_MergesSongsCorrectly()
     {
-        // Arrange
         var ns = XNamespace.Get("http://subsonic.org/restapi");
         var localSongs = new List<object>
         {
@@ -239,18 +214,15 @@ public class SubsonicModelMapperTests
             Artists = new List<Artist>()
         };
 
-        // Act
         var (mergedSongs, mergedAlbums, mergedArtists) = _mapper.MergeSearchResults(
             localSongs, new List<object>(), new List<object>(), externalResult, new List<ExternalPlaylist>(), false);
 
-        // Assert
         Assert.Equal(2, mergedSongs.Count);
     }
 
     [Fact]
     public void MergeSearchResults_Xml_DeduplicatesArtists()
     {
-        // Arrange
         var localArtists = new List<object>
         {
             new XElement("artist", new XAttribute("id", "local1"), new XAttribute("name", "Test Artist"))
@@ -266,18 +238,15 @@ public class SubsonicModelMapperTests
             }
         };
 
-        // Act
         var (mergedSongs, mergedAlbums, mergedArtists) = _mapper.MergeSearchResults(
             new List<object>(), new List<object>(), localArtists, externalResult, new List<ExternalPlaylist>(), false);
 
-        // Assert
         Assert.Equal(2, mergedArtists.Count); // 1 local + 1 external (duplicate filtered)
     }
 
     [Fact]
     public void MergeSearchResults_EmptyLocalResults_ReturnsOnlyExternal()
     {
-        // Arrange
         var externalResult = new SearchResult
         {
             Songs = new List<Song> { new Song { Id = "ext1" } },
@@ -285,11 +254,9 @@ public class SubsonicModelMapperTests
             Artists = new List<Artist> { new Artist { Id = "ext3", Name = "Artist" } }
         };
 
-        // Act
         var (mergedSongs, mergedAlbums, mergedArtists) = _mapper.MergeSearchResults(
             new List<object>(), new List<object>(), new List<object>(), externalResult, new List<ExternalPlaylist>(), true);
 
-        // Assert
         Assert.Single(mergedSongs);
         Assert.Single(mergedAlbums);
         Assert.Single(mergedArtists);
@@ -298,7 +265,6 @@ public class SubsonicModelMapperTests
     [Fact]
     public void MergeSearchResults_EmptyExternalResults_ReturnsOnlyLocal()
     {
-        // Arrange
         var localSongs = new List<object> { new Dictionary<string, object> { ["id"] = "local1" } };
         var localAlbums = new List<object> { new Dictionary<string, object> { ["id"] = "local2" } };
         var localArtists = new List<object> { new Dictionary<string, object> { ["id"] = "local3", ["name"] = "Local" } };
@@ -309,11 +275,9 @@ public class SubsonicModelMapperTests
             Artists = new List<Artist>()
         };
 
-        // Act
         var (mergedSongs, mergedAlbums, mergedArtists) = _mapper.MergeSearchResults(
             localSongs, localAlbums, localArtists, externalResult, new List<ExternalPlaylist>(), true);
 
-        // Assert
         Assert.Single(mergedSongs);
         Assert.Single(mergedAlbums);
         Assert.Single(mergedArtists);

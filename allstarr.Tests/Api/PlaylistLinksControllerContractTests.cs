@@ -99,6 +99,8 @@ public sealed class PlaylistLinksControllerContractTests
         var create = typeof(CreatePlaylistLinkRequest).GetProperties().Select(item => item.Name).ToArray();
         Assert.Contains("TargetCredentialReferenceId", create);
         Assert.Contains("ProjectionMode", create);
+        Assert.Contains("ImportMode", create);
+        Assert.Contains("TrackRetention", create);
         Assert.Equal(
             "resolved",
             typeof(CreatePlaylistLinkRequest).GetConstructors().Single().GetParameters()
@@ -106,6 +108,10 @@ public sealed class PlaylistLinksControllerContractTests
         Assert.Equal(
             new[] { PlaylistProjectionMode.Resolved, PlaylistProjectionMode.Source, PlaylistProjectionMode.Target },
             Enum.GetValues<PlaylistProjectionMode>());
+        Assert.Equal("linked", typeof(CreatePlaylistLinkRequest).GetConstructors().Single().GetParameters()
+            .Single(item => item.Name == "ImportMode").DefaultValue);
+        Assert.Equal("onDemand", typeof(CreatePlaylistLinkRequest).GetConstructors().Single().GetParameters()
+            .Single(item => item.Name == "TrackRetention").DefaultValue);
         var controllerSource = File.ReadAllText(FindRepositoryFile(
             "allstarr", "Controllers", "PlaylistLinksController.cs"));
         Assert.Contains("ProjectionMode target requires TargetPlaylistId", controllerSource, StringComparison.Ordinal);
@@ -208,6 +214,7 @@ public sealed class PlaylistLinksControllerContractTests
 
         Assert.Contains("includeNonOperational: false", source, StringComparison.Ordinal);
         Assert.Contains("providerPolicy.AllowGlobalPersonalAccounts", source, StringComparison.Ordinal);
+        Assert.Contains("providerPolicy.AllowsGlobalAccount(item.CreatedByUserId", source, StringComparison.Ordinal);
         Assert.Contains("session.IsAdministrator", source, StringComparison.Ordinal);
         Assert.Contains("Response.Headers.RetryAfter", source, StringComparison.Ordinal);
         Assert.Contains("retryAfterSeconds", source, StringComparison.Ordinal);
@@ -241,7 +248,7 @@ public sealed class PlaylistLinksControllerContractTests
     private static PlaylistLinksController Controller()
     {
         var controller = new PlaylistLinksController(
-            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
+            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
     }

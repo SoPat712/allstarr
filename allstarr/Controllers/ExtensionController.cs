@@ -13,24 +13,16 @@ namespace allstarr.Controllers;
 [ApiController]
 [Route("api/admin/extensions")]
 [ServiceFilter(typeof(AdminPortFilter))]
-public class ExtensionController : ControllerBase
+public sealed class ExtensionController(
+    ExtensionManager extensionManager,
+    ExtensionControlPlaneService controlPlane,
+    ExtensionRuntimeCoordinator? runtime,
+    ILogger<ExtensionController> logger) : ControllerBase
 {
-    private readonly ExtensionManager _extensionManager;
-    private readonly ExtensionControlPlaneService _controlPlane;
-    private readonly ExtensionRuntimeCoordinator? _runtime;
-    private readonly ILogger<ExtensionController> _logger;
-
-    public ExtensionController(
-        ExtensionManager extensionManager,
-        ExtensionControlPlaneService controlPlane,
-        ExtensionRuntimeCoordinator? runtime,
-        ILogger<ExtensionController> logger)
-    {
-        _extensionManager = extensionManager;
-        _controlPlane = controlPlane;
-        _runtime = runtime;
-        _logger = logger;
-    }
+    private readonly ExtensionManager _extensionManager = extensionManager;
+    private readonly ExtensionControlPlaneService _controlPlane = controlPlane;
+    private readonly ExtensionRuntimeCoordinator? _runtime = runtime;
+    private readonly ILogger<ExtensionController> _logger = logger;
 
     [HttpGet("registries")]
     public async Task<IActionResult> ListRegistries(CancellationToken cancellationToken)
@@ -78,13 +70,9 @@ public class ExtensionController : ControllerBase
         CancellationToken cancellationToken)
     {
         if (RequireAdministrator() is { } error) return error;
-        try
-        {
-            var registry = await _controlPlane.SetRegistryEnabledAsync(
-                registryId, request.Enabled, request.ExpectedRevision, cancellationToken);
-            return Ok(RegistryResponse(registry));
-        }
-        catch (Exception exception) { return ControlPlaneError(exception); }
+        return await ControlPlaneAsync(async () => Ok(RegistryResponse(
+            await _controlPlane.SetRegistryEnabledAsync(
+                registryId, request.Enabled, request.ExpectedRevision, cancellationToken))));
     }
 
     [HttpDelete("registries/{registryId:guid}")]
@@ -94,12 +82,11 @@ public class ExtensionController : ControllerBase
         CancellationToken cancellationToken)
     {
         if (RequireAdministrator() is { } error) return error;
-        try
+        return await ControlPlaneAsync(async () =>
         {
             await _controlPlane.RemoveRegistryAsync(registryId, expectedRevision, cancellationToken);
             return Ok(new { success = true, message = "Extension registry removed." });
-        }
-        catch (Exception exception) { return ControlPlaneError(exception); }
+        });
     }
 
     [HttpGet("packages")]
@@ -114,7 +101,7 @@ public class ExtensionController : ControllerBase
     public async Task<IActionResult> ListPermissions(Guid packageId, CancellationToken cancellationToken)
     {
         if (RequireAdministrator() is { } error) return error;
-        try
+        return await ControlPlaneAsync(async () =>
         {
             var reviews = await _controlPlane.ListPermissionReviewsAsync(packageId, cancellationToken);
             return Ok(reviews.Select(item => new
@@ -130,8 +117,7 @@ public class ExtensionController : ControllerBase
                 item.ReviewedAt,
                 item.Revision
             }));
-        }
-        catch (Exception exception) { return ControlPlaneError(exception); }
+        });
     }
 
     [HttpGet("packages/{packageId:guid}/icon")]
@@ -193,7 +179,7 @@ public class ExtensionController : ControllerBase
         if (!TryGetAdministrator(out var session, out var error)) return error!;
         if (!session.AllstarrUserId.HasValue)
             return Conflict(new { error = "The administrator session is not linked to an Allstarr user." });
-        try
+        return await ControlPlaneAsync(async () =>
         {
             var package = await _controlPlane.ReviewAsync(
                 packageId,
@@ -203,21 +189,16 @@ public class ExtensionController : ControllerBase
                     item.Kind ?? string.Empty, item.Value ?? string.Empty, item.Approved)).ToList(),
                 cancellationToken);
             return Ok(PackageResponse(package));
-        }
-        catch (Exception exception) { return ControlPlaneError(exception); }
+        });
     }
 
     [HttpPost("packages/{packageId:guid}/activate")]
     public async Task<IActionResult> Activate(Guid packageId, [FromBody] RevisionRequest request, CancellationToken cancellationToken)
     {
         if (RequireAdministrator() is { } error) return error;
-        try
-        {
-            return Ok(PackageResponse(_runtime == null
+        return await ControlPlaneAsync(async () => Ok(PackageResponse(_runtime == null
             ? await _controlPlane.ActivateAsync(packageId, request.ExpectedRevision, cancellationToken)
-            : await _runtime.ActivateAsync(packageId, request.ExpectedRevision, cancellationToken)));
-        }
-        catch (Exception exception) { return ControlPlaneError(exception); }
+            : await _runtime.ActivateAsync(packageId, request.ExpectedRevision, cancellationToken))));
     }
 
     [HttpPost("packages/{packageId:guid}/permissions/revoke")]
@@ -227,16 +208,11 @@ public class ExtensionController : ControllerBase
         CancellationToken cancellationToken)
     {
         if (RequireAdministrator() is { } error) return error;
-        try
-        {
-            var package = _runtime == null
+        return await ControlPlaneAsync(async () => Ok(PackageResponse(_runtime == null
                 ? await _controlPlane.ResetPermissionsForReviewAsync(
                     packageId, request.ExpectedRevision, cancellationToken)
                 : await _runtime.ResetPermissionsForReviewAsync(
-                    packageId, request.ExpectedRevision, cancellationToken);
-            return Ok(PackageResponse(package));
-        }
-        catch (Exception exception) { return ControlPlaneError(exception); }
+                    packageId, request.ExpectedRevision, cancellationToken))));
     }
 
     [HttpPost("packages/{packageId:guid}/staging/cancel")]
@@ -246,16 +222,11 @@ public class ExtensionController : ControllerBase
         CancellationToken cancellationToken)
     {
         if (RequireAdministrator() is { } error) return error;
-        try
-        {
-            var package = _runtime == null
+        return await ControlPlaneAsync(async () => Ok(PackageResponse(_runtime == null
                 ? await _controlPlane.CancelStagingAsync(
                     packageId, request.ExpectedRevision, cancellationToken)
                 : await _runtime.CancelStagingAsync(
-                    packageId, request.ExpectedRevision, cancellationToken);
-            return Ok(PackageResponse(package));
-        }
-        catch (Exception exception) { return ControlPlaneError(exception); }
+                    packageId, request.ExpectedRevision, cancellationToken))));
     }
 
     [HttpGet("packages/{packageId:guid}/session")]
@@ -264,7 +235,7 @@ public class ExtensionController : ControllerBase
         if (RequireAdministrator() is { } error) return error;
         if (_runtime == null) return Conflict(new { error = "The extension runtime is unavailable." });
         try { return Ok(_runtime.SignedSessionStatus(packageId)); }
-        catch (Exception exception) { return ControlPlaneError(exception); }
+        catch (Exception exception) when (IsControlPlaneException(exception)) { return ControlPlaneError(exception); }
     }
 
     [HttpPost("packages/{packageId:guid}/session/start")]
@@ -273,7 +244,7 @@ public class ExtensionController : ControllerBase
         if (RequireAdministrator() is { } error) return error;
         if (_runtime == null) return Conflict(new { error = "The extension runtime is unavailable." });
         try { return Ok(_runtime.StartSignedSessionVerification(packageId)); }
-        catch (Exception exception) { return ControlPlaneError(exception); }
+        catch (Exception exception) when (IsControlPlaneException(exception)) { return ControlPlaneError(exception); }
     }
 
     [HttpPost("packages/{packageId:guid}/session/grant")]
@@ -283,7 +254,7 @@ public class ExtensionController : ControllerBase
         if (_runtime == null) return Conflict(new { error = "The extension runtime is unavailable." });
         if (string.IsNullOrWhiteSpace(request.Grant)) return BadRequest(new { error = "A session grant is required." });
         try { return Ok(_runtime.CompleteSignedSessionGrant(packageId, request.Grant)); }
-        catch (Exception exception) { return ControlPlaneError(exception); }
+        catch (Exception exception) when (IsControlPlaneException(exception)) { return ControlPlaneError(exception); }
     }
 
     [HttpDelete("packages/{packageId:guid}/session")]
@@ -292,33 +263,30 @@ public class ExtensionController : ControllerBase
         if (RequireAdministrator() is { } error) return error;
         if (_runtime == null) return Conflict(new { error = "The extension runtime is unavailable." });
         try { return Ok(_runtime.ClearSignedSession(packageId)); }
-        catch (Exception exception) { return ControlPlaneError(exception); }
+        catch (Exception exception) when (IsControlPlaneException(exception)) { return ControlPlaneError(exception); }
     }
 
     [HttpPost("packages/{packageId:guid}/rollback")]
     public async Task<IActionResult> Rollback(Guid packageId, [FromBody] RevisionRequest request, CancellationToken cancellationToken)
     {
         if (RequireAdministrator() is { } error) return error;
-        try
-        {
-            return Ok(PackageResponse(_runtime == null
+        return await ControlPlaneAsync(async () => Ok(PackageResponse(_runtime == null
             ? await _controlPlane.RollbackAsync(packageId, request.ExpectedRevision, cancellationToken)
-            : await _runtime.RollbackAsync(packageId, request.ExpectedRevision, cancellationToken)));
-        }
-        catch (Exception exception) { return ControlPlaneError(exception); }
+            : await _runtime.RollbackAsync(packageId, request.ExpectedRevision, cancellationToken))));
     }
 
     [HttpPost("packages/{packageId:guid}/disable")]
     public async Task<IActionResult> DisablePackage(Guid packageId, [FromBody] RevisionRequest request, CancellationToken cancellationToken)
     {
         if (RequireAdministrator() is { } error) return error;
-        try
+        return await ControlPlaneAsync(async () =>
         {
-            if (_runtime == null) await _controlPlane.DisableAsync(packageId, request.ExpectedRevision, cancellationToken);
-            else await _runtime.DisableAsync(packageId, request.ExpectedRevision, cancellationToken);
+            if (_runtime == null)
+                await _controlPlane.DisableAsync(packageId, request.ExpectedRevision, cancellationToken);
+            else
+                await _runtime.DisableAsync(packageId, request.ExpectedRevision, cancellationToken);
             return NoContent();
-        }
-        catch (Exception exception) { return ControlPlaneError(exception); }
+        });
     }
 
     [HttpDelete("packages/{packageId:guid}")]
@@ -327,12 +295,8 @@ public class ExtensionController : ControllerBase
     {
         if (RequireAdministrator() is { } error) return error;
         if (_runtime == null) return Conflict(new { error = "The extension runtime is unavailable." });
-        try
-        {
-            return Ok(PackageResponse(await _runtime.UninstallAsync(
-                packageId, request.ExpectedRevision, cancellationToken)));
-        }
-        catch (Exception exception) { return ControlPlaneError(exception); }
+        return await ControlPlaneAsync(async () => Ok(PackageResponse(await _runtime.UninstallAsync(
+            packageId, request.ExpectedRevision, cancellationToken))));
     }
 
     [HttpGet("logs")]
@@ -343,7 +307,7 @@ public class ExtensionController : ControllerBase
         CancellationToken cancellationToken = default)
     {
         if (RequireAdministrator() is { } error) return error;
-        try
+        return await ControlPlaneAsync(async () =>
         {
             var logs = await _controlPlane.ListLogsAsync(packageId, extensionId, limit, cancellationToken);
             return Ok(logs.Select(item => new
@@ -359,8 +323,7 @@ public class ExtensionController : ControllerBase
                 item.CorrelationId,
                 item.CreatedAt
             }));
-        }
-        catch (Exception exception) { return ControlPlaneError(exception); }
+        });
     }
 
     [HttpGet("store")]
@@ -436,6 +399,27 @@ public class ExtensionController : ControllerBase
 
     private IActionResult? RequireAdministrator() =>
         TryGetAdministrator(out _, out var error) ? null : error;
+
+    private async Task<IActionResult> ControlPlaneAsync(Func<Task<IActionResult>> operation)
+    {
+        try
+        {
+            return await operation();
+        }
+        catch (Exception exception) when (IsControlPlaneException(exception))
+        {
+            return ControlPlaneError(exception);
+        }
+    }
+
+    private static bool IsControlPlaneException(Exception exception) => exception is
+        KeyNotFoundException or
+        DbUpdateConcurrencyException or
+        ExtensionRegistryInUseException or
+        UnauthorizedAccessException or
+        ArgumentException or
+        InvalidOperationException or
+        ExtensionSdkValidationException;
 
     private bool TryGetAdministrator(out AdminAuthSession session, out IActionResult? error)
     {

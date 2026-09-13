@@ -710,7 +710,7 @@ public sealed class PostgresStorageIntegrationTests
     public async Task ProviderAccountCreatorRepair_ConvertsLegacyTextColumnAndPreservesCreator()
     {
         const string previous = "20260804080000_BackfillV3CompatibilityState";
-        const string current = "20260820173000_RepairProviderAccountCreatorIdentity";
+        const string current = "20260825010000_AddPlaylistImportPolicies";
         await using var database = await PostgresTestDatabase.CreateAsync(useTemplate: false);
         await using var context = new AllstarrDbContext(database.Options);
         var migrator = context.GetService<IMigrator>();

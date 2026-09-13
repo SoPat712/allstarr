@@ -7,7 +7,6 @@ using allstarr.Services.Jellyfin;
 using allstarr.Services.Common;
 using allstarr.Services.Admin;
 using allstarr.Services.Spotify;
-using System.Runtime;
 using Microsoft.EntityFrameworkCore;
 using allstarr.Core.Storage;
 using allstarr.Core.Operations;
@@ -68,8 +67,7 @@ public class DiagnosticsController : ControllerBase
     [HttpGet("status")]
     public async Task<IActionResult> GetStatus()
     {
-        // Determine Spotify auth status based on configuration only
-        // DO NOT call Spotify API here - this endpoint is polled frequently
+        // This frequently polled endpoint must not call Spotify.
         var spotifyAuthStatus = "not_configured";
         string? spotifyUser = null;
         var sessionUserId = GetAuthenticatedUserId();
@@ -86,8 +84,6 @@ public class DiagnosticsController : ControllerBase
 
         if (_spotifyApiSettings.Enabled && cookieStatus.HasCookie)
         {
-            // If cookie is set, assume it's working until proven otherwise
-            // Actual validation happens when playlists are fetched
             spotifyAuthStatus = "configured";
             spotifyUser = cookieStatus.UsingGlobalFallback ? "(global fallback cookie set)" : "(user cookie set)";
         }
@@ -415,120 +411,6 @@ public class DiagnosticsController : ControllerBase
         });
     }
 
-    /// <summary>
-    /// Get current configuration including cache settings
-    /// </summary>
-
-    /// <summary>
-    /// Get list of configured playlists with their current data
-    /// </summary>
-    [HttpGet("memory-stats")]
-    public IActionResult GetMemoryStats()
-    {
-        try
-        {
-            // Get memory stats BEFORE GC
-            var memoryBeforeGC = GC.GetTotalMemory(false);
-            var gen0Before = GC.CollectionCount(0);
-            var gen1Before = GC.CollectionCount(1);
-            var gen2Before = GC.CollectionCount(2);
-
-            // Force garbage collection to get accurate numbers
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
-
-            var memoryAfterGC = GC.GetTotalMemory(false);
-            var gen0After = GC.CollectionCount(0);
-            var gen1After = GC.CollectionCount(1);
-            var gen2After = GC.CollectionCount(2);
-
-            // Get process memory info
-            var process = System.Diagnostics.Process.GetCurrentProcess();
-
-            return Ok(new
-            {
-                Timestamp = DateTime.UtcNow,
-                BeforeGC = new
-                {
-                    GCMemoryBytes = memoryBeforeGC,
-                    GCMemoryMB = Math.Round(memoryBeforeGC / (1024.0 * 1024.0), 2)
-                },
-                AfterGC = new
-                {
-                    GCMemoryBytes = memoryAfterGC,
-                    GCMemoryMB = Math.Round(memoryAfterGC / (1024.0 * 1024.0), 2)
-                },
-                MemoryFreedMB = Math.Round((memoryBeforeGC - memoryAfterGC) / (1024.0 * 1024.0), 2),
-                ProcessWorkingSetBytes = process.WorkingSet64,
-                ProcessWorkingSetMB = Math.Round(process.WorkingSet64 / (1024.0 * 1024.0), 2),
-                ProcessPrivateMemoryBytes = process.PrivateMemorySize64,
-                ProcessPrivateMemoryMB = Math.Round(process.PrivateMemorySize64 / (1024.0 * 1024.0), 2),
-                ProcessVirtualMemoryBytes = process.VirtualMemorySize64,
-                ProcessVirtualMemoryMB = Math.Round(process.VirtualMemorySize64 / (1024.0 * 1024.0), 2),
-                GCCollections = new
-                {
-                    Gen0Before = gen0Before,
-                    Gen0After = gen0After,
-                    Gen0Triggered = gen0After - gen0Before,
-                    Gen1Before = gen1Before,
-                    Gen1After = gen1After,
-                    Gen1Triggered = gen1After - gen1Before,
-                    Gen2Before = gen2Before,
-                    Gen2After = gen2After,
-                    Gen2Triggered = gen2After - gen2Before
-                },
-                GCMode = GCSettings.IsServerGC ? "Server" : "Workstation",
-                GCLatencyMode = GCSettings.LatencyMode.ToString()
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to collect memory statistics");
-            return BadRequest(new { error = "Failed to collect memory statistics" });
-        }
-    }
-
-    /// <summary>
-    /// Forces garbage collection to free up memory (emergency use only).
-    /// </summary>
-    [HttpPost("force-gc")]
-    public IActionResult ForceGarbageCollection()
-    {
-        try
-        {
-            var memoryBefore = GC.GetTotalMemory(false);
-            var processBefore = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64;
-
-            // Force full garbage collection
-            GC.Collect(2, GCCollectionMode.Forced);
-            GC.WaitForPendingFinalizers();
-            GC.Collect(2, GCCollectionMode.Forced);
-
-            var memoryAfter = GC.GetTotalMemory(false);
-            var processAfter = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64;
-
-            return Ok(new
-            {
-                Timestamp = DateTime.UtcNow,
-                MemoryFreedMB = Math.Round((memoryBefore - memoryAfter) / (1024.0 * 1024.0), 2),
-                ProcessMemoryFreedMB = Math.Round((processBefore - processAfter) / (1024.0 * 1024.0), 2),
-                BeforeGCMB = Math.Round(memoryBefore / (1024.0 * 1024.0), 2),
-                AfterGCMB = Math.Round(memoryAfter / (1024.0 * 1024.0), 2),
-                BeforeProcessMB = Math.Round(processBefore / (1024.0 * 1024.0), 2),
-                AfterProcessMB = Math.Round(processAfter / (1024.0 * 1024.0), 2)
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to force garbage collection");
-            return BadRequest(new { error = "Failed to force garbage collection" });
-        }
-    }
-
-    /// <summary>
-    /// Gets current active sessions for debugging.
-    /// </summary>
     [HttpGet("sessions")]
     public IActionResult GetActiveSessions()
     {
@@ -550,9 +432,6 @@ public class DiagnosticsController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Gets current active scrobbling sessions for debugging.
-    /// </summary>
     [HttpGet("scrobbling-sessions")]
     public async Task<IActionResult> GetScrobblingSessions(CancellationToken cancellationToken)
     {
@@ -597,9 +476,6 @@ public class DiagnosticsController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Helper method to trigger GC after large file operations to prevent memory leaks.
-    /// </summary>
     [HttpGet("debug/endpoint-usage")]
     public async Task<IActionResult> GetEndpointUsage(
         [FromQuery] int top = 100,
@@ -634,9 +510,6 @@ public class DiagnosticsController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Clears endpoint usage audit events.
-    /// </summary>
     [HttpDelete("debug/endpoint-usage")]
     public async Task<IActionResult> ClearEndpointUsage()
     {

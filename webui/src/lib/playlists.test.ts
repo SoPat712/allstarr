@@ -29,6 +29,8 @@ const playlist = (values: Partial<PlaylistLink>): PlaylistLink => ({
   mode: "hybrid",
   projectionMode: "resolved",
   materializationMode: "reconcile",
+  importMode: "linked",
+  trackRetention: "onDemand",
   mirrorStaleEntries: false,
   preserveManualEntries: true,
   syncName: true,
@@ -129,6 +131,14 @@ describe("playlist presentation", () => {
     expect(playlistBehaviorSummary(
       "materialized", "reconcile", "Morning mix", "Jellyfin", "Road trip",
     )).toContain("only when you run an update");
+    expect(playlistBehaviorSummary(
+      "virtual", "reconcile", "Morning mix", "Jellyfin", "Road trip", undefined,
+      "oneTime", "keepAll",
+    )).toContain("import Morning mix once");
+    expect(playlistBehaviorSummary(
+      "virtual", "reconcile", "Morning mix", "Jellyfin", "Road trip", undefined,
+      "oneTime", "keepAll",
+    )).toContain("permanent managed copy");
     expect(playlistBehaviorSummary(
       "virtual", "reconcile", "Morning mix", "Jellyfin", "Road trip", "every hour",
     )).toContain("will not create or change a playlist in Jellyfin");

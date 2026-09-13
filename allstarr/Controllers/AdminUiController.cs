@@ -7,10 +7,12 @@ using allstarr.Core.Jobs;
 using allstarr.Core.Matching;
 using allstarr.Core.Playback;
 using allstarr.Core.Playlists;
+using allstarr.Core.Protocols;
 using allstarr.Models.Admin;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
 using allstarr.Services.Admin;
+using allstarr.Services.Spotify;
 using allstarr.Core.Storage;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -33,6 +35,7 @@ public class AdminUiController : ControllerBase
     private readonly ProviderStatusManager _providerStatusManager;
     private readonly ProviderAccountManagementMode _providerAccountManagementMode;
     private readonly IProviderRegistry? _providerRegistry;
+    private readonly IProtocolProviderGateway? _providerGateway;
     private readonly ITrackMatchRepository _trackMatches;
 
     public AdminUiController(
@@ -46,7 +49,8 @@ public class AdminUiController : ControllerBase
         ProviderStatusManager providerStatusManager,
         ProviderAccountManagementOptions providerAccountManagementOptions,
         ITrackMatchRepository trackMatches,
-        IProviderRegistry? providerRegistry = null)
+        IProviderRegistry? providerRegistry = null,
+        IProtocolProviderGateway? providerGateway = null)
     {
         _configuration = configuration;
         _spotifyApiSettings = spotifyApiSettings.Value;
@@ -59,6 +63,7 @@ public class AdminUiController : ControllerBase
         _providerAccountManagementMode = providerAccountManagementOptions.ParseManagementMode();
         _trackMatches = trackMatches;
         _providerRegistry = providerRegistry;
+        _providerGateway = providerGateway;
     }
 
     [HttpGet("schema")]
@@ -420,8 +425,15 @@ public class AdminUiController : ControllerBase
             cancellationToken);
         var matches = matchActivity.Decisions;
         var externalSnapshots = matchActivity.Snapshots.ToDictionary(item => item.Id);
-        var providerIdentities = matchActivity.ProviderIdentities.ToDictionary(item => item.Id);
-        var libraryTracks = matchActivity.LibraryTracks.ToDictionary(item => item.Id);
+        var providerIdentities = matchActivity.ProviderIdentities;
+        var providerIdentityById = providerIdentities.ToDictionary(item => item.Id);
+        var providerIdentitiesByHash = providerIdentities
+            .GroupBy(item => item.ExternalIdHash, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+        var providerIdentitiesByCanonical = providerIdentities
+            .GroupBy(item => item.CanonicalRecordingId)
+            .ToDictionary(group => group.Key, group => group.ToArray());
+        var libraryTracks = matchActivity.LibraryTracks;
         var audits = await context.AuditEvents.AsNoTracking()
             .Where(item => item.TenantId == tenantId && (!before.HasValue || item.CreatedAt < before.Value ||
                 (item.CreatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
@@ -491,57 +503,37 @@ public class AdminUiController : ControllerBase
                     ? null
                     : PlaylistArtworkUrl(link.ProviderAccountId, link.SourcePlaylistId));
         }));
+        var routeProviderPriority = _providerGateway == null
+            ? null
+            : _providerGateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
+                .Concat(_providerGateway.GetProviderOrder(ProviderCapabilityKind.Download))
+                .Select(ExternalTrackPlaybackPolicy.Normalize)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
         activity.AddRange(matches.Select(item =>
         {
             externalSnapshots.TryGetValue(item.ExternalSnapshotId, out var snapshot);
             var identity = snapshot?.ProviderTrackIdentityId is { } identityId
-                ? providerIdentities.GetValueOrDefault(identityId)
+                ? providerIdentityById.GetValueOrDefault(identityId)
                 : null;
-            var libraryTrack = libraryTracks.GetValueOrDefault(item.LibraryTrackId ?? Guid.Empty);
-            var providerId = identity?.ProviderId ?? snapshot?.ProviderId ?? "matching";
-            var sourceTitle = snapshot == null ? null : AuditDetail(snapshot.PayloadJson, "title");
-            var sourceArtist = snapshot == null ? null : AuditDetail(snapshot.PayloadJson, "artist");
-            var sourceAlbum = snapshot == null ? null : AuditDetail(snapshot.PayloadJson, "album");
-            var artworkUrl = identity != null
-                ? ExternalArtworkUrl(providerId, identity.ExternalId)
-                : libraryTrack?.CoverArtReference == null
-                    ? null
-                    : LocalArtworkUrl(libraryTrack.BackendItemId);
-            var technicalDetails = new Dictionary<string, string>
-            {
-                ["decisionId"] = item.Id.ToString("N"),
-                ["decisionVersion"] = item.DecisionVersion.ToString(),
-                ["policyVersion"] = item.PolicyVersion
-            };
-            foreach (var component in MatchScoreComponents(item.CandidateResultsJson, item.LibraryTrackId))
-                technicalDetails[$"score.{component.Key}"] = component.Value.ToString("0.###",
-                    System.Globalization.CultureInfo.InvariantCulture);
-            return new AdminUiActivityItem(
-                item.Id.ToString("N"),
-                "matching",
-                providerId,
-                MatchActivityLabel(item.State),
-                item.State.ToString().ToLowerInvariant(),
-                MatchActivityDetail(item, snapshot, identity, libraryTrack),
-                item.DecidedAt,
-                item.CorrelationId,
-                SeverityForState(item.State.ToString()),
-                ProviderId: providerId,
-                ArtworkUrl: artworkUrl,
-                SourceTitle: sourceTitle,
-                SourceArtist: sourceArtist,
-                SourceAlbum: sourceAlbum,
-                TargetProviderId: libraryTrack == null ? null : "library",
-                TargetTitle: libraryTrack?.Title,
-                TargetArtist: libraryTrack?.Artist,
-                ConfidenceLabel: $"{Math.Round(item.Confidence * 100, 1)}%",
-                DurationMilliseconds: libraryTrack?.DurationMilliseconds ??
-                    (snapshot == null ? null : AuditDurationMilliseconds(snapshot.PayloadJson)),
-                Isrc: snapshot == null ? libraryTrack?.Isrc : AuditDetail(snapshot.PayloadJson, "isrc") ?? libraryTrack?.Isrc,
-                SourceProviderTrackId: identity?.ExternalId,
-                BackendItemId: libraryTrack?.BackendItemId,
-                Action: "track-match.evaluate",
-                TechnicalDetails: technicalDetails);
+            identity ??= snapshot == null
+                ? null
+                : providerIdentitiesByHash.GetValueOrDefault(snapshot.ExternalIdHash)?
+                    .FirstOrDefault(candidate => MatchesActivitySourceIdentity(snapshot, candidate));
+            var routeCanonicalId = item.CanonicalRecordingId ?? identity?.CanonicalRecordingId;
+            var routeIdentities = routeCanonicalId.HasValue &&
+                                  providerIdentitiesByCanonical.TryGetValue(
+                                      routeCanonicalId.Value,
+                                      out var canonicalIdentities)
+                ? canonicalIdentities
+                : [];
+            return MatchActivityItem(
+                item,
+                snapshot,
+                identity,
+                routeIdentities,
+                libraryTracks,
+                routeProviderPriority);
         }));
         activity.AddRange(audits.Select(AuditActivity));
         activity.AddRange(extensionLogs.Select(item => new AdminUiActivityItem(
@@ -616,6 +608,89 @@ public class AdminUiController : ControllerBase
         return $"{length} B";
     }
 
+    internal static AdminUiActivityItem MatchActivityItem(
+        TrackMatchRecord match,
+        ExternalMetadataSnapshotRecord? snapshot,
+        ProviderTrackIdentityRecord? sourceIdentity,
+        IReadOnlyCollection<ProviderTrackIdentityRecord> providerIdentities,
+        IReadOnlyCollection<LibraryTrackRecord> libraryTracks,
+        IReadOnlyCollection<string>? providerPriority = null)
+    {
+        var route = snapshot == null
+            ? null
+            : TrackRouteProjector.Project(
+                snapshot,
+                match,
+                manual: null,
+                sourceIdentity,
+                libraryTracks,
+                providerIdentities,
+                providerPriority);
+        var libraryTrack = route?.LibraryTrack;
+        var providerRoute = route?.PrimaryProviderRoute;
+        var providerCandidate = providerRoute == null
+            ? null
+            : MatchCandidateForRoute(match.CandidateResultsJson, providerRoute);
+        var providerId = sourceIdentity?.ProviderId ?? snapshot?.ProviderId ?? "matching";
+        var sourceTitle = snapshot == null ? null : AuditDetail(snapshot.PayloadJson, "title");
+        var sourceArtist = snapshot == null ? null : AuditDetail(snapshot.PayloadJson, "artist");
+        var sourceAlbum = snapshot == null ? null : AuditDetail(snapshot.PayloadJson, "album");
+        var targetTitle = libraryTrack?.Title ?? providerCandidate?.Title ??
+            (providerRoute == null ? null : sourceTitle);
+        var targetArtist = libraryTrack?.Artist ?? providerCandidate?.Artist ??
+            (providerRoute == null ? null : sourceArtist);
+        var artworkUrl = sourceIdentity != null
+            ? ExternalArtworkUrl(providerId, sourceIdentity.ExternalId)
+            : libraryTrack?.CoverArtReference == null
+                ? null
+                : LocalArtworkUrl(libraryTrack.BackendItemId);
+        var technicalDetails = new Dictionary<string, string>
+        {
+            ["decisionId"] = match.Id.ToString("N"),
+            ["decisionVersion"] = match.DecisionVersion.ToString(),
+            ["policyVersion"] = match.PolicyVersion
+        };
+        foreach (var component in MatchScoreComponents(match.CandidateResultsJson, match.LibraryTrackId))
+            technicalDetails[$"score.{component.Key}"] = component.Value.ToString(
+                "0.###",
+                System.Globalization.CultureInfo.InvariantCulture);
+        return new AdminUiActivityItem(
+            match.Id.ToString("N"),
+            "matching",
+            providerId,
+            MatchActivityLabel(match.State),
+            match.State.ToString().ToLowerInvariant(),
+            MatchActivityDetail(
+                match,
+                snapshot,
+                sourceIdentity,
+                targetTitle,
+                targetArtist,
+                libraryTrack?.BackendItemId ?? providerRoute?.ExternalId),
+            match.DecidedAt,
+            match.CorrelationId,
+            SeverityForState(match.State.ToString()),
+            ProviderId: providerId,
+            ArtworkUrl: artworkUrl,
+            SourceTitle: sourceTitle,
+            SourceArtist: sourceArtist,
+            SourceAlbum: sourceAlbum,
+            TargetProviderId: libraryTrack != null ? "library" : providerRoute?.ProviderId,
+            TargetTitle: targetTitle,
+            TargetArtist: targetArtist,
+            ConfidenceLabel: $"{Math.Round(match.Confidence * 100, 1)}%",
+            DurationMilliseconds: libraryTrack?.DurationMilliseconds ??
+                (snapshot == null ? null : AuditDurationMilliseconds(snapshot.PayloadJson)),
+            Isrc: snapshot == null
+                ? libraryTrack?.Isrc
+                : AuditDetail(snapshot.PayloadJson, "isrc") ?? libraryTrack?.Isrc,
+            SourceProviderTrackId: sourceIdentity?.ExternalId,
+            TargetProviderTrackId: providerRoute?.ExternalId,
+            BackendItemId: libraryTrack?.BackendItemId,
+            Action: "track-match.evaluate",
+            TechnicalDetails: technicalDetails);
+    }
+
     private static IReadOnlyDictionary<string, double> MatchScoreComponents(
         string json,
         Guid? selectedLibraryTrackId)
@@ -633,6 +708,34 @@ public class AdminUiController : ControllerBase
             return new Dictionary<string, double>();
         }
     }
+
+    private static TrackMatchCandidateScore? MatchCandidateForRoute(
+        string json,
+        DurableProviderRoute route)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<TrackMatchCandidateScore[]>(json)?
+                .FirstOrDefault(candidate => candidate.ProviderTrackIds?.Any(item =>
+                    ExternalTrackPlaybackPolicy.Normalize(item.Key) ==
+                        ExternalTrackPlaybackPolicy.Normalize(route.ProviderId) &&
+                    item.Value == route.ExternalId) == true);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool MatchesActivitySourceIdentity(
+        ExternalMetadataSnapshotRecord snapshot,
+        ProviderTrackIdentityRecord identity) =>
+        identity.TenantId == snapshot.TenantId &&
+        identity.ProviderId.Equals(snapshot.ProviderId, StringComparison.OrdinalIgnoreCase) &&
+        (identity.ProviderAccountId == snapshot.ProviderAccountId ||
+         identity.Scope == ProviderIdentityScope.Catalog && !identity.ProviderAccountId.HasValue) &&
+        identity.ResourceKind == ProviderResourceKind.Track &&
+        identity.ExternalIdHash == snapshot.ExternalIdHash;
 
     private static AdminUiActivityItem AuditActivity(AuditEventRecord item)
     {
@@ -780,15 +883,17 @@ public class AdminUiController : ControllerBase
         TrackMatchRecord match,
         ExternalMetadataSnapshotRecord? snapshot,
         ProviderTrackIdentityRecord? identity,
-        LibraryTrackRecord? libraryTrack)
+        string? targetTitle,
+        string? targetArtist,
+        string? targetId)
     {
         var sourceTitle = snapshot == null ? null : AuditDetail(snapshot.PayloadJson, "title");
         var sourceArtist = snapshot == null ? null : AuditDetail(snapshot.PayloadJson, "artist");
         var source = TrackLabel(sourceTitle, sourceArtist)
             ?? (identity == null ? null : $"{identity.ProviderId}:{identity.ExternalId}")
             ?? "External track";
-        var target = libraryTrack == null ? "no local track" : TrackLabel(libraryTrack.Title, libraryTrack.Artist) ?? libraryTrack.BackendItemId;
-        var isrc = snapshot == null ? libraryTrack?.Isrc : AuditDetail(snapshot.PayloadJson, "isrc") ?? libraryTrack?.Isrc;
+        var target = TrackLabel(targetTitle, targetArtist) ?? targetId ?? "no playable match";
+        var isrc = snapshot == null ? null : AuditDetail(snapshot.PayloadJson, "isrc");
         var parts = new List<string> { $"{source} matched to {target}" };
         if (!string.IsNullOrWhiteSpace(isrc)) parts.Add($"ISRC {isrc}");
         parts.Add($"{Math.Round(match.Confidence * 100, 1)}% confidence");
@@ -1316,18 +1421,10 @@ public class AdminUiController : ControllerBase
             Field("EXPLICIT_FILTER", "Explicit filter", "select", "explicitFilter", ["All", "ExplicitOnly", "CleanOnly"]),
             Field(
                 "MATCHING_LOCAL_PREFERENCE_PERCENT",
-                "Local track preference",
+                "Local match window",
                 "number",
                 "matching.localPreferencePercent",
-                helpText: "Percentage points added to Jellyfin-local candidates. Default: 7%.",
-                min: 0,
-                max: 20),
-            Field(
-                "MATCHING_EXTENSION_PENALTY_PERCENT",
-                "Extension match penalty",
-                "number",
-                "matching.extensionPenaltyPercent",
-                helpText: "Percentage points subtracted from extension candidates so equally strong built-in matches rank first. Default: 3%.",
+                helpText: "A local candidate wins when it is no more than this many confidence points behind the strongest result. Default: 7%.",
                 min: 0,
                 max: 20)
         ]),

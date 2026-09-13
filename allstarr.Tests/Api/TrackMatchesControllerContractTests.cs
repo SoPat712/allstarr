@@ -80,4 +80,20 @@ public sealed class TrackMatchesControllerContractTests
         Assert.True(Filter(TrackMatchState.Pinned, "history"));
         Assert.True(Filter(TrackMatchState.Rejected, "history"));
     }
+
+    [Fact]
+    public void Automatic_filter_excludes_every_manual_authority_and_pinned_state()
+    {
+        var matches = typeof(TrackMatchesController).GetMethod(
+            "IsAutomaticDecision",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+        bool Filter(TrackMatchState state, bool manualMatch = false, bool manualRejection = false) =>
+            (bool)matches.Invoke(null, [state, manualMatch, manualRejection])!;
+
+        Assert.True(Filter(TrackMatchState.Accepted));
+        Assert.False(Filter(TrackMatchState.Accepted, manualMatch: true));
+        Assert.False(Filter(TrackMatchState.Accepted, manualRejection: true));
+        Assert.False(Filter(TrackMatchState.Pinned));
+        Assert.False(Filter(TrackMatchState.Suggested));
+    }
 }

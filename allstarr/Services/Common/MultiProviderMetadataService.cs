@@ -561,13 +561,8 @@ public class MultiProviderMetadataService : IMusicMetadataService
     }
 
     private IMusicMetadataService? GetMetadataServiceByName(string name)
-    {
-        var normalizedName = name.ToLowerInvariant();
-        return _allServices.FirstOrDefault(s =>
-            s.GetType().Name.StartsWith(normalizedName, StringComparison.OrdinalIgnoreCase) ||
-            (normalizedName is "apple-download" or "applemusic" && s.GetType().Name.StartsWith("AppleMusic", StringComparison.OrdinalIgnoreCase))
-        );
-    }
+        => _allServices.FirstOrDefault(service => service.ProviderId.Equals(
+            ConcreteProviderId.Normalize(name), StringComparison.Ordinal));
 
     private List<T> InterleaveLists<T>(List<List<T>> lists)
     {

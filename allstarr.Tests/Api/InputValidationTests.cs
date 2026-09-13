@@ -25,10 +25,8 @@ public class InputValidationTests
     [InlineData("user&name", false)]       // Ampersand suspicious
     public void IsValidUsername_VariousInputs_ValidatesCorrectly(string username, bool expected)
     {
-        // Act
         var result = AdminHelperService.IsValidUsername(username);
 
-        // Assert
         Assert.Equal(expected, result);
     }
 
@@ -43,10 +41,8 @@ public class InputValidationTests
     [InlineData("pass\0word", false)]     // Null byte not allowed
     public void IsValidPassword_VariousInputs_ValidatesCorrectly(string password, bool expected)
     {
-        // Act
         var result = AdminHelperService.IsValidPassword(password);
 
-        // Assert
         Assert.Equal(expected, result);
     }
 
@@ -62,10 +58,8 @@ public class InputValidationTests
     [InlineData("ftp://example.com", false)]
     public void IsValidUrl_VariousInputs_ValidatesCorrectly(string url, bool expected)
     {
-        // Act
         var result = AdminHelperService.IsValidUrl(url);
 
-        // Assert
         Assert.Equal(expected, result);
     }
 
@@ -82,10 +76,8 @@ public class InputValidationTests
     [InlineData("/path&background", false)]
     public void IsValidPath_VariousInputs_ValidatesCorrectly(string path, bool expected)
     {
-        // Act
         var result = AdminHelperService.IsValidPath(path);
 
-        // Assert
         Assert.Equal(expected, result);
     }
 
@@ -98,10 +90,8 @@ public class InputValidationTests
     [InlineData("Text 'quoted'", "Text &#39;quoted&#39;")]
     public void SanitizeHtml_VariousInputs_EscapesCorrectly(string input, string expected)
     {
-        // Act
         var result = AdminHelperService.SanitizeHtml(input);
 
-        // Assert
         Assert.Equal(expected, result);
     }
 
@@ -113,10 +103,8 @@ public class InputValidationTests
     [InlineData("string\rwith\rcarriage", "stringwithcarriage")]
     public void RemoveControlCharacters_VariousInputs_RemovesCorrectly(string input, string expected)
     {
-        // Act
         var result = AdminHelperService.RemoveControlCharacters(input);
 
-        // Assert
         Assert.Equal(expected, result);
     }
 
@@ -127,10 +115,8 @@ public class InputValidationTests
     [InlineData("", 8, "")]
     public void TruncateForLogging_VariousInputs_TruncatesCorrectly(string input, int maxLength, string expected)
     {
-        // Act
         var result = AdminHelperService.TruncateForLogging(input, maxLength);
 
-        // Assert
         Assert.Equal(expected, result);
     }
 }

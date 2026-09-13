@@ -145,7 +145,7 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
         var controller = new PlaylistLinksController(_factory, null!, null!, null!, null!, null!, null!, null!,
-            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
+            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
         controller.ControllerContext = new() { HttpContext = new DefaultHttpContext() };
         controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = Session(administrator: true);
 
@@ -454,6 +454,10 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
         Assert.Equal([1, 1, 2], buckets.Select(item => item.GetProperty("Count").GetInt32()));
         Assert.Equal([1_000L, 0L, 5_000L],
             buckets.Select(item => item.GetProperty("DurationMilliseconds").GetInt64()));
+        Assert.Equal([1, 1, 0],
+            buckets.Select(item => item.GetProperty("ImportedCount").GetInt32()));
+        Assert.Equal([0, 0, 2],
+            buckets.Select(item => item.GetProperty("PlaybackCount").GetInt32()));
 
         var topResult = Assert.IsType<OkObjectResult>(await Controller().GetHistoryTopItems("track", new()
         {

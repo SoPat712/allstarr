@@ -9,6 +9,7 @@
   let created = $state<ListeningAppCreated | null>(null);
   let sendToConnectedServices = $state(false);
   let busy = $state(false);
+  let copied = $state(false);
   let error = $state("");
   let loadedScope = "";
   const address = browser ? `${location.origin}/apis/listenbrainz` : "/apis/listenbrainz";
@@ -35,6 +36,7 @@
     error = "";
     try {
       created = await intelligence.createListeningApp(scope, sendToConnectedServices);
+      copied = false;
       await load();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "The private key could not be created.";
@@ -44,8 +46,10 @@
   }
 
   async function copy(value: string) {
+    error = "";
     try {
       await navigator.clipboard.writeText(value);
+      copied = true;
     } catch {
       error = "Copying failed. Select the private key and copy it manually.";
     }
@@ -78,7 +82,7 @@
     <div class="new-key" aria-live="polite">
       <strong>Copy this private key now</strong>
       <p>Allstarr will not show it again.</p>
-      <div><input aria-label="New listening app private key" readonly value={created.token} /><Button variant="secondary" onclick={() => void copy(created!.token)}>Copy</Button></div>
+      <div><input aria-label="New listening app private key" readonly value={created.token} /><Button variant="secondary" onclick={() => void copy(created!.token)}>{copied ? "Copied" : "Copy"}</Button></div>
       <p><small>Listening address: <code>{address}</code></small></p>
     </div>
   {/if}

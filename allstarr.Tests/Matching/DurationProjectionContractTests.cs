@@ -29,7 +29,6 @@ public sealed class DurationProjectionContractTests
             null,
             null,
             emptyLibrary,
-            emptyLibrary,
             new Dictionary<Guid, ProviderTrackIdentityRecord[]>(),
             new HashSet<string>()
         ])!);
@@ -58,7 +57,6 @@ public sealed class DurationProjectionContractTests
             null,
             null,
             new Dictionary<Guid, LibraryTrackRecord> { [localId] = local },
-            emptyLibrary,
             new Dictionary<Guid, ProviderTrackIdentityRecord[]>(),
             new HashSet<string>()
         ])!);
@@ -102,7 +100,6 @@ public sealed class DurationProjectionContractTests
             null,
             null,
             new Dictionary<Guid, LibraryTrackRecord> { [candidateId] = new() { Id = candidateId } },
-            new Dictionary<Guid, LibraryTrackRecord>(),
             new Dictionary<Guid, ProviderTrackIdentityRecord[]>(),
             new HashSet<string>()
         ])!;

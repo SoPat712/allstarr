@@ -45,6 +45,28 @@ public sealed class SpotifyLyricsServiceTests
             observed?.RequestUri?.AbsoluteUri);
     }
 
+    [Fact]
+    public async Task MalformedTimestamps_DoNotDiscardOtherwiseValidLyrics()
+    {
+        var handler = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                """{"error":false,"lines":[{"startTimeMs":"invalid","words":"Hello","endTimeMs":2000}]}""",
+                Encoding.UTF8,
+                "application/json")
+        });
+        var service = new SpotifyLyricsService(
+            NullLogger<SpotifyLyricsService>.Instance,
+            Options.Create(new SpotifyApiSettings { LyricsApiUrl = "http://lyrics-sidecar:8080" }),
+            new StubFactory(handler));
+
+        var result = await service.GetLyricsByTrackIdAsync("3yII7UwgLF6K5zW3xad3MP");
+
+        var line = Assert.Single(Assert.IsType<SpotifyLyricsResult>(result).Lines);
+        Assert.Equal(0, line.StartTimeMs);
+        Assert.Equal(2000, line.EndTimeMs);
+    }
+
     private sealed class StubFactory(HttpMessageHandler handler) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);

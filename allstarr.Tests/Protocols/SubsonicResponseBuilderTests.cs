@@ -82,10 +82,8 @@ public class SubsonicResponseBuilderTests
     [Fact]
     public void CreateResponse_JsonFormat_ReturnsJsonWithOkStatus()
     {
-        // Act
         var result = _builder.CreateResponse("json", "testElement", new { });
 
-        // Assert
         var jsonResult = Assert.IsType<JsonResult>(result);
         Assert.NotNull(jsonResult.Value);
 
@@ -99,10 +97,8 @@ public class SubsonicResponseBuilderTests
     [Fact]
     public void CreateResponse_XmlFormat_ReturnsXmlWithOkStatus()
     {
-        // Act
         var result = _builder.CreateResponse("xml", "testElement", new { });
 
-        // Assert
         var contentResult = Assert.IsType<ContentResult>(result);
         Assert.Equal("application/xml", contentResult.ContentType);
 
@@ -116,10 +112,8 @@ public class SubsonicResponseBuilderTests
     [Fact]
     public void CreateError_JsonFormat_ReturnsJsonWithError()
     {
-        // Act
         var result = _builder.CreateError("json", 70, "Test error message");
 
-        // Assert
         var jsonResult = Assert.IsType<JsonResult>(result);
         var json = JsonSerializer.Serialize(jsonResult.Value);
         var doc = JsonDocument.Parse(json);
@@ -133,10 +127,8 @@ public class SubsonicResponseBuilderTests
     [Fact]
     public void CreateError_XmlFormat_ReturnsXmlWithError()
     {
-        // Act
         var result = _builder.CreateError("xml", 70, "Test error message");
 
-        // Assert
         var contentResult = Assert.IsType<ContentResult>(result);
         Assert.Equal("application/xml", contentResult.ContentType);
 
@@ -154,7 +146,6 @@ public class SubsonicResponseBuilderTests
     [Fact]
     public void CreateSongResponse_JsonFormat_ReturnsSongData()
     {
-        // Arrange
         var song = new Song
         {
             Id = "song123",
@@ -168,17 +159,15 @@ public class SubsonicResponseBuilderTests
             LocalPath = "/music/test.mp3"
         };
 
-        // Act
         var result = _builder.CreateSongResponse("json", song);
 
-        // Assert
         var jsonResult = Assert.IsType<JsonResult>(result);
         var json = JsonSerializer.Serialize(jsonResult.Value);
         var doc = JsonDocument.Parse(json);
         var songData = doc.RootElement.GetProperty("subsonic-response").GetProperty("song");
 
         Assert.Equal("song123", songData.GetProperty("id").GetString());
-        Assert.Equal("Test Song", songData.GetProperty("title").GetString());
+        Assert.Equal("Test Song [A]", songData.GetProperty("title").GetString());
         Assert.Equal("Test Artist", songData.GetProperty("artist").GetString());
         Assert.Equal("Test Album", songData.GetProperty("album").GetString());
         Assert.Equal(180, songData.GetProperty("duration").GetInt32());
@@ -191,7 +180,6 @@ public class SubsonicResponseBuilderTests
     [Fact]
     public void CreateSongResponse_XmlFormat_ReturnsSongData()
     {
-        // Arrange
         var song = new Song
         {
             Id = "song123",
@@ -201,10 +189,8 @@ public class SubsonicResponseBuilderTests
             Duration = 180
         };
 
-        // Act
         var result = _builder.CreateSongResponse("xml", song);
 
-        // Assert
         var contentResult = Assert.IsType<ContentResult>(result);
         Assert.Equal("application/xml", contentResult.ContentType);
 
@@ -213,7 +199,7 @@ public class SubsonicResponseBuilderTests
         var songElement = doc.Root!.Element(ns + "song");
         Assert.NotNull(songElement);
         Assert.Equal("song123", songElement.Attribute("id")?.Value);
-        Assert.Equal("Test Song", songElement.Attribute("title")?.Value);
+        Assert.Equal("Test Song [A]", songElement.Attribute("title")?.Value);
         Assert.Equal("false", songElement.Attribute("isDir")?.Value);
         Assert.Equal("music", songElement.Attribute("type")?.Value);
         Assert.Equal("false", songElement.Attribute("isVideo")?.Value);
@@ -305,7 +291,6 @@ public class SubsonicResponseBuilderTests
     [Fact]
     public void CreateAlbumResponse_JsonFormat_ReturnsAlbumWithSongs()
     {
-        // Arrange
         var album = new Album
         {
             Id = "album123",
@@ -319,10 +304,8 @@ public class SubsonicResponseBuilderTests
             }
         };
 
-        // Act
         var result = _builder.CreateAlbumResponse("json", album);
 
-        // Assert
         var jsonResult = Assert.IsType<JsonResult>(result);
         var json = JsonSerializer.Serialize(jsonResult.Value);
         var doc = JsonDocument.Parse(json);
@@ -337,7 +320,6 @@ public class SubsonicResponseBuilderTests
     [Fact]
     public void CreateAlbumResponse_XmlFormat_ReturnsAlbumWithSongs()
     {
-        // Arrange
         var album = new Album
         {
             Id = "album123",
@@ -351,10 +333,8 @@ public class SubsonicResponseBuilderTests
             }
         };
 
-        // Act
         var result = _builder.CreateAlbumResponse("xml", album);
 
-        // Assert
         var contentResult = Assert.IsType<ContentResult>(result);
         Assert.Equal("application/xml", contentResult.ContentType);
 
@@ -369,7 +349,6 @@ public class SubsonicResponseBuilderTests
     [Fact]
     public void CreateArtistResponse_JsonFormat_ReturnsArtistData()
     {
-        // Arrange
         var artist = new Artist
         {
             Id = "artist123",
@@ -381,10 +360,8 @@ public class SubsonicResponseBuilderTests
             new Album { Id = "album2", Title = "Album 2" }
         };
 
-        // Act
         var result = _builder.CreateArtistResponse("json", artist, albums);
 
-        // Assert
         var jsonResult = Assert.IsType<JsonResult>(result);
         var json = JsonSerializer.Serialize(jsonResult.Value);
         var doc = JsonDocument.Parse(json);
@@ -398,7 +375,6 @@ public class SubsonicResponseBuilderTests
     [Fact]
     public void CreateArtistResponse_XmlFormat_ReturnsArtistData()
     {
-        // Arrange
         var artist = new Artist
         {
             Id = "artist123",
@@ -410,10 +386,8 @@ public class SubsonicResponseBuilderTests
             new Album { Id = "album2", Title = "Album 2" }
         };
 
-        // Act
         var result = _builder.CreateArtistResponse("xml", artist, albums);
 
-        // Assert
         var contentResult = Assert.IsType<ContentResult>(result);
         Assert.Equal("application/xml", contentResult.ContentType);
 
@@ -429,7 +403,6 @@ public class SubsonicResponseBuilderTests
     [Fact]
     public void CreateSongResponse_SongWithNullValues_HandlesGracefully()
     {
-        // Arrange
         var song = new Song
         {
             Id = "song123",
@@ -437,17 +410,15 @@ public class SubsonicResponseBuilderTests
             // Other fields are null
         };
 
-        // Act
         var result = _builder.CreateSongResponse("json", song);
 
-        // Assert
         var jsonResult = Assert.IsType<JsonResult>(result);
         var json = JsonSerializer.Serialize(jsonResult.Value);
         var doc = JsonDocument.Parse(json);
         var songData = doc.RootElement.GetProperty("subsonic-response").GetProperty("song");
 
         Assert.Equal("song123", songData.GetProperty("id").GetString());
-        Assert.Equal("Test Song", songData.GetProperty("title").GetString());
+        Assert.Equal("Test Song [A]", songData.GetProperty("title").GetString());
         foreach (var field in new[]
                  {
                      "parent", "album", "artist", "albumId", "artistId", "duration",
@@ -461,7 +432,6 @@ public class SubsonicResponseBuilderTests
     [Fact]
     public void CreateAlbumResponse_UnknownSongFacts_OmitsCountsAndDuration()
     {
-        // Arrange
         var album = new Album
         {
             Id = "album123",
@@ -470,10 +440,8 @@ public class SubsonicResponseBuilderTests
             Songs = new List<Song>()
         };
 
-        // Act
         var result = _builder.CreateAlbumResponse("json", album);
 
-        // Assert
         var jsonResult = Assert.IsType<JsonResult>(result);
         var json = JsonSerializer.Serialize(jsonResult.Value);
         var doc = JsonDocument.Parse(json);

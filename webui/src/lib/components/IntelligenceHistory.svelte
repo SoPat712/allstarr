@@ -10,6 +10,7 @@
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
+  import ListeningActivityHeatmap from "$lib/components/ListeningActivityHeatmap.svelte";
   import {
     intelligence,
     type IntelligenceScope,
@@ -81,6 +82,11 @@
   let importSequence = 0;
   let loadedKey = "";
   let previousScopeKey = "";
+  let historyRequestId = 0;
+  let liveRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  let liveRefreshInFlight = false;
+  let liveRefreshGeneration = 0;
+  let liveRefreshError = $state(false);
 
   const scopeKey = $derived(`${scope.protocol}\0${scope.backendInstanceId}\0${scope.libraryScopeId}`);
   const selectedTop = $derived(top[topKind]);
@@ -95,17 +101,6 @@
   const hasStaleImportReceipts = $derived(retainedListenCount === 0 && completedImportItems.some((item) =>
     item.result?.state === "completed" && (item.result.importedRows ?? 0) > 0));
   const hasHistoryFilters = $derived(Boolean(search.trim() || source.trim() || client.trim() || artist.trim() || album.trim() || track.trim()));
-  const monthlyActivity = $derived.by(() => {
-    const months = new Map<string, { date: string; count: number; durationMilliseconds: number }>();
-    for (const bucket of activity?.buckets ?? []) {
-      const date = bucket.date.slice(0, 7);
-      const current = months.get(date) ?? { date, count: 0, durationMilliseconds: 0 };
-      current.count += bucket.count;
-      current.durationMilliseconds += bucket.durationMilliseconds;
-      months.set(date, current);
-    }
-    return [...months.values()].slice(-12);
-  });
   const importBatch = $derived(previewedImportItems.reduce((summary, item) => {
     const preview = item.result?.preview;
     if (preview) {
@@ -124,7 +119,7 @@
       detail = null;
       importItems = [];
     }
-    const key = `${scopeKey}\0${section}\0${period}\0${fromDate}\0${toDate}\0${timeZoneId}`;
+    const key = currentHistoryKey();
     if (key === loadedKey) return;
     loadedKey = key;
     if (section === "imports") void loadImports();
@@ -136,6 +131,22 @@
     const imports = activeImportItems.map((item) => ({ queueId: item.id, importId: item.result!.importId }));
     const timer = setTimeout(() => imports.forEach((item) => void refreshImport(item.queueId, item.importId)), 1500);
     return () => clearTimeout(timer);
+  });
+
+  $effect(() => {
+    const key = currentHistoryKey();
+    void key;
+    if (typeof document === "undefined" || section !== "overview") return;
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") startLiveRefresh();
+      else stopLiveRefresh();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    onVisibilityChange();
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      stopLiveRefresh();
+    };
   });
 
   function isoDate(value: Date) {
@@ -152,6 +163,10 @@
     return { from: start.toISOString(), to: end.toISOString(), timeZoneId };
   }
 
+  function currentHistoryKey() {
+    return `${scopeKey}\0${section}\0${period}\0${fromDate}\0${toDate}\0${timeZoneId}`;
+  }
+
   function historyQuery(cursor?: string) {
     return {
       ...bounds(), limit: 50, cursor,
@@ -161,6 +176,8 @@
   }
 
   async function loadAll() {
+    const requestId = ++historyRequestId;
+    const requestKey = currentHistoryKey();
     loading = true;
     error = "";
     const range = bounds();
@@ -173,15 +190,59 @@
         intelligence.historyTop(scope, "track", range.from, range.to, range.timeZoneId),
         intelligence.history(scope, historyQuery()),
       ]);
+      if (requestId !== historyRequestId || requestKey !== currentHistoryKey()) return;
       overview = nextOverview;
       activity = nextActivity;
       top = { artist: artists.items, album: albums.items, track: tracks.items };
       items = history.items;
       nextCursor = history.nextCursor ?? null;
+      liveRefreshError = false;
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : "Listening history could not be loaded.";
+      if (requestId === historyRequestId && requestKey === currentHistoryKey()) {
+        error = cause instanceof Error ? cause.message : "Listening history could not be loaded.";
+      }
     } finally {
-      loading = false;
+      if (requestId === historyRequestId) loading = false;
+    }
+  }
+
+  function stopLiveRefresh() {
+    if (liveRefreshTimer) {
+      clearInterval(liveRefreshTimer);
+      liveRefreshTimer = null;
+    }
+    liveRefreshGeneration += 1;
+  }
+
+  function startLiveRefresh() {
+    if (liveRefreshTimer || typeof document === "undefined" || document.visibilityState !== "visible" || section !== "overview") return;
+    const generation = ++liveRefreshGeneration;
+    liveRefreshTimer = setInterval(() => void refreshOverview(generation), 5_000);
+  }
+
+  async function refreshOverview(generation: number) {
+    if (liveRefreshInFlight || generation !== liveRefreshGeneration || section !== "overview" ||
+      typeof document === "undefined" || document.visibilityState !== "visible" || loading) return;
+    const requestKey = currentHistoryKey();
+    const range = bounds();
+    liveRefreshInFlight = true;
+    try {
+      const [nextOverview, nextActivity, history] = await Promise.all([
+        intelligence.historyOverview(scope, range.from, range.to, range.timeZoneId),
+        intelligence.historyActivity(scope, range.from, range.to, range.timeZoneId),
+        intelligence.history(scope, historyQuery()),
+      ]);
+      if (generation !== liveRefreshGeneration || requestKey !== currentHistoryKey() || section !== "overview" ||
+        typeof document === "undefined" || document.visibilityState !== "visible") return;
+      overview = nextOverview;
+      activity = nextActivity;
+      items = history.items;
+      nextCursor = history.nextCursor ?? null;
+      liveRefreshError = false;
+    } catch {
+      liveRefreshError = true;
+    } finally {
+      liveRefreshInFlight = false;
     }
   }
 
@@ -507,7 +568,7 @@
   {#if section !== "imports"}
     <header class="history-heading">
       <div><p class="eyebrow">Your listening</p><h3>{section === "overview" ? "Listening overview" : "Listening history"}</h3><p>Private activity for this account and library only.</p></div>
-      {#if section === "overview"}<div class="history-actions"><Badge state={policyEnabled ? "healthy" : "suggested"}>{policyEnabled ? retentionDays === 0 ? "Retention: Unlimited" : `Retention: ${retentionLabel(retentionDays)}` : "Saving off"}</Badge></div>
+      {#if section === "overview"}<div class="history-actions">{#if liveRefreshError}<Badge state="degraded">Live update paused</Badge>{/if}<Badge state={policyEnabled ? "healthy" : "suggested"}>{policyEnabled ? retentionDays === 0 ? "Retention: Unlimited" : `Retention: ${retentionLabel(retentionDays)}` : "Saving off"}</Badge></div>
       {:else}<div class="history-actions"><Button variant="secondary" href={exportUrl} download>Download my history</Button></div>{/if}
     </header>
 
@@ -516,7 +577,7 @@
       <SegmentedNav items={[
         { id: "all", label: "All time" }, { id: "30", label: "30 days" }, { id: "90", label: "90 days" },
         { id: "365", label: "1 year" }, { id: "custom", label: "Custom" },
-      ]} active={period} label="History period" class="period-tabs" onchange={(value) => period = value} />
+      ]} active={period} label="History period" class="route-tabs period-tabs" onchange={(value) => period = value} />
       <Button type="submit" disabled={loading || historyLoading}>{loading || historyLoading ? "Updating…" : section === "overview" ? "Update overview" : "Apply filters"}</Button>
       <details class="filter-disclosure">
         <summary class="disclosure-summary"><DisclosureLabel title={section === "overview" ? "Dates and time zone" : "More filters"} description={section === "overview" ? "Choose an exact reporting window" : "Filter by artist, album, song, source, or client"} /></summary>
@@ -555,7 +616,7 @@
     <section class="panel recap-card">
       <div><p class="eyebrow">Listening recap</p><h3>{periodName}</h3></div>
       {#if overview.selected.completedListens}
-        <p>You listened {overview.selected.completedListens.toLocaleString()} times across {overview.selected.distinctTracks.toLocaleString()} songs and {overview.selected.distinctArtists.toLocaleString()} artists, for {listeningTime(overview.selected.listeningTimeMilliseconds)}.{#if topTrack} Your most-played song was <strong>{topTrack.title ?? "Unknown song"}</strong>{topTrack.artist ? ` by ${topTrack.artist}` : ""}.{/if}</p>
+        <p>You listened {overview.selected.completedListens.toLocaleString()} times across {overview.selected.distinctTracks.toLocaleString()} songs and {overview.selected.distinctArtists.toLocaleString()} artists, for {listeningTime(overview.selected.listeningTimeMilliseconds)}.{#if topTrack}{" "}Your most-played song was <strong>{topTrack.title ?? "Unknown song"}</strong>{topTrack.artist ? ` by ${topTrack.artist}` : ""}.{/if}</p>
       {:else}<p>No completed listens were recorded for this period. Play music or import a history file to build this recap.</p>{/if}
       {#if overview.allTime.firstListen}<p class="muted">Your first recorded listen was <time datetime={overview.allTime.firstListen}>{new Date(overview.allTime.firstListen).toLocaleDateString()}</time>.</p>{/if}
     </section>
@@ -563,23 +624,8 @@
     <div class="history-insights">
       <section class="panel activity-card">
         <header><div><p class="eyebrow">Activity</p><h3>Listening rhythm</h3></div><SegmentedNav items={[{ id: "daily", label: "Daily" }, { id: "monthly", label: "Monthly" }]} active={activityGranularity} label="Listening activity period" onchange={(value) => activityGranularity = value as typeof activityGranularity} /></header>
-        {#if activityGranularity === "daily" && activity?.buckets.length}
-          {@const displayedActivity = activity.buckets.slice(-90)}
-          {@const mobileActivity = displayedActivity.slice(-30)}
-          <p class="activity-range">
-            <span class="activity-range-wide">Showing {displayedActivity[0].date} through {displayedActivity.at(-1)!.date}</span>
-            <span class="activity-range-mobile">Showing {mobileActivity[0].date} through {mobileActivity.at(-1)!.date}</span>
-          </p>
-          <div class="activity-grid" aria-label="Listening activity by day">
-            {#each displayedActivity as bucket}
-              <span style={`--activity:${Math.min(1, .18 + bucket.count / 20)}`} title={`${bucket.date}: ${bucket.count} listens`} aria-label={`${bucket.date}: ${bucket.count} listens`}></span>
-            {/each}
-          </div>
-        {:else if activityGranularity === "monthly" && monthlyActivity.length}
-          {@const largestMonth = Math.max(...monthlyActivity.map((item) => item.count), 1)}
-          <ol class="monthly-activity">
-            {#each monthlyActivity as bucket}<li><span><strong>{new Date(`${bucket.date}-01T00:00:00`).toLocaleDateString(undefined, { month: "short", year: "numeric" })}</strong><small>{listeningTime(bucket.durationMilliseconds)}</small></span><meter min="0" max={largestMonth} value={bucket.count}>{bucket.count}</meter><span>{bucket.count} listens</span></li>{/each}
-          </ol>
+        {#if activity}
+          <ListeningActivityHeatmap buckets={activity.buckets} granularity={activityGranularity} timeZoneId={activity.period.timeZoneId} from={activity.period.from} through={activity.period.to} />
         {:else}<p class="muted">No activity in this period. Play music or import a history file to begin.</p>{/if}
       </section>
 
@@ -731,18 +777,22 @@
 
 <style>
   .history-workspace{min-width:0}
-  .history-workspace{display:grid;gap:1rem}.history-heading,.history-list-card>header,.activity-card>header,.top-card>header,.import-card>header{display:flex;align-items:start;justify-content:space-between;gap:1rem}.history-heading h3,.history-list-card h3,.activity-card h3,.top-card h3,.import-card h3{margin:.2rem 0}.history-heading p:last-child,.import-card>header p:last-child{max-width:70ch;margin:0;color:var(--color-ink-muted)}.history-toolbar{display:grid;grid-template-columns:minmax(16rem,1fr) auto auto;align-items:end;gap:.75rem;padding:1rem}.history-toolbar :global(.period-tabs){width:22rem}.history-toolbar details{grid-column:1/-1}.history-toolbar summary{cursor:pointer}.advanced-filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem;margin-top:.75rem}.history-stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:.75rem}.history-stats article{display:grid;gap:.2rem;padding:1rem}.history-stats strong{font-family:var(--font-display);font-size:1.35rem}.history-stats span{color:var(--color-ink-muted);font-size:.78rem}.now-playing{display:flex;align-items:center;gap:.8rem;width:100%;padding:1rem;text-align:left}.now-playing>span:first-child{display:grid;place-items:center;width:2.5rem;height:2.5rem;border-radius:50%;background:var(--color-signal);color:var(--color-on-signal)}.now-playing small,.now-playing strong{display:block}.recap-card{display:grid;gap:.65rem;padding:1.15rem}.recap-card h3,.recap-card p{margin:0}.history-insights{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.activity-card,.top-card,.history-list-card,.import-card{padding:1.15rem}.activity-range{margin:.75rem 0 0;color:var(--color-ink-muted);font-size:.78rem}.activity-range-mobile{display:none}.activity-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(13px,1fr));gap:.3rem;margin-top:.5rem}.activity-grid span{aspect-ratio:1;border-radius:3px;background:color-mix(in srgb,var(--color-signal) calc(var(--activity) * 100%),var(--color-panel-raised))}.monthly-activity{display:grid;margin:.75rem 0 0;padding:0;list-style:none}.monthly-activity li{display:grid;grid-template-columns:minmax(7rem,.5fr) minmax(8rem,1fr) auto;align-items:center;gap:.75rem;border-top:1px solid var(--color-edge);padding:.65rem 0}.monthly-activity strong,.monthly-activity small{display:block}.monthly-activity small,.monthly-activity li>span:last-child{color:var(--color-ink-muted)}.monthly-activity meter{width:100%;accent-color:var(--color-signal)}.top-card ol,.breakdown-card ol{margin:.75rem 0 0;padding:0;list-style:none}.top-card li,.breakdown-card li{display:flex;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.65rem 0}.top-card li span:first-child strong,.top-card li span:first-child small,.breakdown-card li span:first-child strong,.breakdown-card li span:first-child small{display:block}.top-card li small,.top-card li>span:last-child,.breakdown-card li small,.breakdown-card li>span:last-child{color:var(--color-ink-muted)}.history-breakdowns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem}.breakdown-card{padding:1.15rem}.breakdown-card h3{margin:.2rem 0}.history-list{display:grid;margin:.6rem 0 0;padding:0;list-style:none}.history-list>li>button{display:grid;grid-template-columns:auto minmax(0,1fr) minmax(10rem,.45fr) auto;align-items:center;gap:.85rem;width:100%;border-top:1px solid var(--color-edge);padding:.8rem 0;text-align:left}.history-copy strong,.history-copy small,.history-route strong,.history-route small{display:block}.history-copy small,.history-route small{color:var(--color-ink-muted)}.history-route{text-align:right}:global(.load-more){display:block;margin:1rem auto 0}.import-card{display:grid;gap:1.25rem}.import-readiness,.import-batch-actions{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.8rem;border:1px solid var(--color-edge);border-radius:var(--radius-md);background:var(--color-panel-raised);padding:.8rem}.import-readiness.warning{border-color:color-mix(in srgb,var(--color-warning) 40%,var(--color-edge))}.import-readiness>span:nth-child(2),.import-batch-actions>span{display:grid;gap:.15rem}.import-readiness small,.import-batch-actions small{color:var(--color-ink-muted)}.import-picker{display:grid;gap:.75rem}.upload-zone{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:1rem;min-height:7rem;border:1px dashed color-mix(in srgb,var(--color-signal) 55%,var(--color-edge));border-radius:var(--radius-lg);background:color-mix(in srgb,var(--color-signal) 4%,var(--color-panel-raised));padding:1rem;cursor:pointer}.upload-zone:hover,.upload-zone.dragging{border-color:var(--color-signal);background:color-mix(in srgb,var(--color-signal) 9%,var(--color-panel-raised))}.upload-zone:focus-within{outline:2px solid var(--focus-ring);outline-offset:2px}.upload-zone input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}.upload-symbol,.file-marker{display:grid;place-items:center;border-radius:var(--radius-md);background:color-mix(in srgb,var(--color-signal) 12%,transparent);color:var(--color-signal-text)}.upload-symbol{width:3rem;height:3rem}.upload-copy,.file-copy{display:grid;min-width:0;gap:.2rem}.upload-copy strong{font-family:var(--font-display);font-size:1rem}.upload-copy small,.file-copy small,.import-result header small{color:var(--color-ink-muted)}.upload-browse{border:1px solid var(--color-edge);border-radius:var(--radius-md);background:var(--color-panel-raised);padding:.65rem .9rem;font-size:var(--text-sm);font-weight:700}.upload-queue,.import-results{display:grid;margin:0;padding:0;list-style:none}.upload-queue{gap:.4rem}.upload-queue li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.75rem;min-height:3.5rem;border-radius:var(--radius-md);background:var(--color-panel-raised);padding:.55rem .65rem}.upload-queue li.error{background:rgb(255 107 122 / 8%)}.file-marker{width:2rem;height:2rem}.file-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.upload-queue .icon-button{width:var(--control-sm);height:var(--control-sm)}.import-batch-summary{display:grid;grid-template-columns:repeat(4,1fr);margin:0;border:1px solid var(--color-edge);border-radius:var(--radius-md)}.import-batch-summary div{display:flex;flex-direction:column-reverse;padding:.75rem}.import-batch-summary div+div{border-left:1px solid var(--color-edge)}.import-batch-summary dd{margin:0;font-family:var(--font-display);font-size:1.2rem;font-weight:750}.import-batch-summary dt{color:var(--color-ink-muted);font-size:.76rem}.import-results{gap:1.25rem}.import-result{display:grid;gap:.85rem;border-top:1px solid var(--color-edge);padding-top:1.25rem}.import-result>header{display:flex;align-items:start;justify-content:space-between;gap:1rem}.import-result-select{display:flex;align-items:start;gap:.65rem}.import-result-select span>*{display:block}.import-preview{display:grid;grid-template-columns:repeat(4,1fr);margin:0;border-block:1px solid var(--color-edge)}.import-preview div{display:flex;flex-direction:column-reverse;gap:.15rem;padding:.75rem}.import-preview div+div{border-left:1px solid var(--color-edge)}.import-preview dd{margin:0;font-family:var(--font-display);font-size:1.2rem;font-weight:750}.import-preview dt{color:var(--color-ink-muted);font-size:.76rem}.credential-safety{margin:0;color:var(--color-ink-muted);font-size:var(--text-sm)}.import-result>footer{display:flex;justify-content:flex-end;gap:.5rem}
-  :global(.history-detail-dialog){display:grid;grid-template-rows:auto minmax(0,1fr);width:min(44rem,calc(100vw - 2rem));max-height:min(48rem,calc(100dvh - 2rem));overflow:hidden}.history-detail-form{display:grid;grid-template-columns:1fr 1fr;gap:1rem;overflow:auto;padding:1rem}.history-detail-form dl,.target-statuses,.history-detail-form footer{grid-column:1/-1}.history-detail-form dl{display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem;margin:0}.history-detail-form dl div{border:1px solid var(--color-edge);border-radius:var(--radius-md);padding:.7rem}.history-detail-form dt{color:var(--color-ink-muted);font-size:.72rem}.history-detail-form dd{margin:.2rem 0 0}.target-statuses ul{margin:0;padding:0;list-style:none}.target-statuses li{display:flex;justify-content:space-between;gap:1rem}.target-statuses small{color:var(--color-ink-muted)}.history-detail-form footer{display:flex;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.history-detail-form footer>span{display:flex;gap:.5rem}
-  @media(max-width:900px){.history-toolbar{grid-template-columns:1fr auto}.history-toolbar>:global(nav[aria-label="History period"]){grid-column:1/-1;grid-row:2}.history-stats{grid-template-columns:repeat(3,1fr)}.history-breakdowns{grid-template-columns:1fr 1fr}.advanced-filters{grid-template-columns:1fr 1fr}.history-list>li>button{grid-template-columns:auto minmax(0,1fr) auto}.history-route{grid-column:2;text-align:left}.import-preview{grid-template-columns:1fr 1fr}}
-  @media(max-width:620px){.history-heading{flex-direction:column}.history-actions,.history-actions>:global([data-slot="button"]){width:100%}.history-toolbar{grid-template-columns:1fr}.history-toolbar>:global(nav[aria-label="History period"]){grid-column:auto;grid-row:auto}.history-toolbar :global(.period-tabs){width:100%}.history-toolbar details{grid-column:auto}.advanced-filters,.history-insights,.history-breakdowns,.history-detail-form,.history-detail-form dl{grid-template-columns:1fr}.history-stats{grid-template-columns:1fr 1fr}.history-stats article:last-child{grid-column:1/-1}.history-list>li>button{grid-template-columns:auto minmax(0,1fr)}.history-list>li>button>:global(.badge){grid-column:2;justify-self:start}.history-route{grid-column:2}.activity-card>header,.top-card>header,.history-detail-form footer{align-items:stretch;flex-direction:column}.activity-range-wide,.activity-grid span:nth-last-child(n+31){display:none}.activity-range-mobile{display:inline}.top-card>header{display:grid}.monthly-activity li{grid-template-columns:minmax(0,1fr) auto}.monthly-activity meter{grid-column:1/-1;grid-row:2}.import-card{gap:1rem;padding:1rem}.upload-zone{grid-template-columns:auto minmax(0,1fr);min-height:6rem}.import-readiness,.import-batch-actions{grid-template-columns:auto minmax(0,1fr)}.import-readiness>:global([data-slot="button"]),.import-batch-actions>:global([data-slot="button"]),.upload-browse{grid-column:1/-1;width:100%;text-align:center}.import-batch-summary{grid-template-columns:1fr}.import-batch-summary div+div{border-top:1px solid var(--color-edge);border-left:0}.import-result>footer,.import-result>footer>:global([data-slot="button"]){width:100%}.import-preview{grid-template-columns:1fr 1fr}.import-preview div:nth-child(3){border-left:0}.import-preview div:nth-child(n+3){border-top:1px solid var(--color-edge)}.import-result>header{align-items:start}.import-result>footer{display:grid}.history-detail-form dl,.target-statuses,.history-detail-form footer{grid-column:auto}.history-detail-form footer>span{display:grid}.history-detail-form footer :global(button){width:100%}}
+  .history-workspace{display:grid;gap:1rem}.history-heading,.history-list-card>header,.activity-card>header,.top-card>header,.import-card>header{display:flex;align-items:start;justify-content:space-between;gap:1rem}.history-heading h3,.history-list-card h3,.activity-card h3,.top-card h3,.import-card h3{margin:.2rem 0}.history-heading p:last-child,.import-card>header p:last-child{max-width:70ch;margin:0;color:var(--color-ink-muted)}.history-toolbar{display:grid;grid-template-columns:minmax(16rem,1fr) auto auto;align-items:end;gap:.75rem;padding:1rem}.history-toolbar :global(.period-tabs){width:22rem}.history-toolbar details{grid-column:1/-1}.history-toolbar summary{cursor:pointer}.advanced-filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem;margin-top:.75rem}.history-stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:.75rem}.history-stats article{display:grid;gap:.2rem;padding:1rem}.history-stats strong{font-family:var(--font-display);font-size:1.35rem}.history-stats span{color:var(--color-ink-muted);font-size:.78rem}.now-playing{display:flex;align-items:center;gap:.8rem;width:100%;padding:1rem;text-align:left}.now-playing>span:first-child{display:grid;place-items:center;width:2.5rem;height:2.5rem;border-radius:50%;background:var(--color-signal);color:var(--color-on-signal)}.now-playing small,.now-playing strong{display:block}.recap-card{display:grid;gap:.65rem;padding:1.15rem}.recap-card h3,.recap-card p{margin:0}.history-insights{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.activity-card,.top-card,.history-list-card,.import-card{padding:1.15rem}.top-card ol,.breakdown-card ol{margin:.75rem 0 0;padding:0;list-style:none}.top-card li,.breakdown-card li{display:flex;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.65rem 0}.top-card li span:first-child strong,.top-card li span:first-child small,.breakdown-card li span:first-child strong,.breakdown-card li span:first-child small{display:block}.top-card li small,.top-card li>span:last-child,.breakdown-card li small,.breakdown-card li>span:last-child{color:var(--color-ink-muted)}.history-breakdowns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem}.breakdown-card{padding:1.15rem}.breakdown-card h3{margin:.2rem 0}.history-list{display:grid;margin:.6rem 0 0;padding:0;list-style:none}.history-list>li>button{display:grid;grid-template-columns:auto minmax(0,1fr) minmax(10rem,.45fr) auto;align-items:center;gap:.85rem;width:100%;border-top:1px solid var(--color-edge);padding:.8rem 0;text-align:left}.history-copy strong,.history-copy small,.history-route strong,.history-route small{display:block}.history-copy small,.history-route small{color:var(--color-ink-muted)}.history-route{text-align:right}:global(.load-more){display:block;margin:1rem auto 0}.import-card{display:grid;gap:1.25rem}.import-readiness,.import-batch-actions{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.8rem;border:1px solid var(--color-edge);border-radius:var(--radius-md);background:var(--color-panel-raised);padding:.8rem}.import-readiness.warning{border-color:color-mix(in srgb,var(--color-warning) 40%,var(--color-edge))}.import-readiness>span:nth-child(2),.import-batch-actions>span{display:grid;gap:.15rem}.import-readiness small,.import-batch-actions small{color:var(--color-ink-muted)}.import-picker{display:grid;gap:.75rem}.upload-zone{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:1rem;min-height:7rem;border:1px dashed color-mix(in srgb,var(--color-signal) 55%,var(--color-edge));border-radius:var(--radius-lg);background:color-mix(in srgb,var(--color-signal) 4%,var(--color-panel-raised));padding:1rem;cursor:pointer}.upload-zone:hover,.upload-zone.dragging{border-color:var(--color-signal);background:color-mix(in srgb,var(--color-signal) 9%,var(--color-panel-raised))}.upload-zone:focus-within{outline:2px solid var(--focus-ring);outline-offset:2px}.upload-zone input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}.upload-symbol,.file-marker{display:grid;place-items:center;border-radius:var(--radius-md);background:color-mix(in srgb,var(--color-signal) 12%,transparent);color:var(--color-signal-text)}.upload-symbol{width:3rem;height:3rem}.upload-copy,.file-copy{display:grid;min-width:0;gap:.2rem}.upload-copy strong{font-family:var(--font-display);font-size:1rem}.upload-copy small,.file-copy small,.import-result header small{color:var(--color-ink-muted)}.upload-browse{border:1px solid var(--color-edge);border-radius:var(--radius-md);background:var(--color-panel-raised);padding:.65rem .9rem;font-size:var(--text-sm);font-weight:700}.upload-queue,.import-results{display:grid;margin:0;padding:0;list-style:none}.upload-queue{gap:.4rem}.upload-queue li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.75rem;min-height:3.5rem;border-radius:var(--radius-md);background:var(--color-panel-raised);padding:.55rem .65rem}.upload-queue li.error{background:rgb(255 107 122 / 8%)}.file-marker{width:2rem;height:2rem}.file-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.upload-queue .icon-button{width:var(--control-sm);height:var(--control-sm)}.import-batch-summary{display:grid;grid-template-columns:repeat(4,1fr);margin:0;border:1px solid var(--color-edge);border-radius:var(--radius-md)}.import-batch-summary div{display:flex;flex-direction:column-reverse;padding:.75rem}.import-batch-summary div+div{border-left:1px solid var(--color-edge)}.import-batch-summary dd{margin:0;font-family:var(--font-display);font-size:1.2rem;font-weight:750}.import-batch-summary dt{color:var(--color-ink-muted);font-size:.76rem}.import-results{gap:1.25rem}.import-result{display:grid;gap:.85rem;border-top:1px solid var(--color-edge);padding-top:1.25rem}.import-result>header{display:flex;align-items:start;justify-content:space-between;gap:1rem}.import-result-select{display:flex;align-items:start;gap:.65rem}.import-result-select span>*{display:block}.import-preview{display:grid;grid-template-columns:repeat(4,1fr);margin:0;border-block:1px solid var(--color-edge)}.import-preview div{display:flex;flex-direction:column-reverse;gap:.15rem;padding:.75rem}.import-preview div+div{border-left:1px solid var(--color-edge)}.import-preview dd{margin:0;font-family:var(--font-display);font-size:1.2rem;font-weight:750}.import-preview dt{color:var(--color-ink-muted);font-size:.76rem}.credential-safety{margin:0;color:var(--color-ink-muted);font-size:var(--text-sm)}.import-result>footer{display:flex;justify-content:flex-end;gap:.5rem}
 
-  .history-list-card{overflow:hidden;padding:0}
+  :global(.history-detail-dialog){--dialog-width:44rem;--dialog-max-height:48rem;display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden}.history-detail-form{display:grid;grid-template-columns:1fr 1fr;gap:1rem;overflow:auto;padding:1rem}.history-detail-form dl,.target-statuses,.history-detail-form footer{grid-column:1/-1}.history-detail-form dl{display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem;margin:0}.history-detail-form dl div{border:1px solid var(--color-edge);border-radius:var(--radius-md);padding:.7rem}.history-detail-form dt{color:var(--color-ink-muted);font-size:.72rem}.history-detail-form dd{margin:.2rem 0 0}.target-statuses ul{margin:0;padding:0;list-style:none}.target-statuses li{display:flex;justify-content:space-between;gap:1rem}.target-statuses small{color:var(--color-ink-muted)}.history-detail-form footer{display:flex;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding-top:1rem}.history-detail-form footer>span{display:flex;gap:.5rem}
+  @media(max-width:900px){.history-toolbar{grid-template-columns:1fr auto}.history-toolbar>:global(nav[aria-label="History period"]){grid-column:1/-1;grid-row:2}.advanced-filters{grid-template-columns:1fr 1fr}.import-preview{grid-template-columns:1fr 1fr}}
+  @media(max-width:620px){.history-heading{flex-direction:column}.history-actions,.history-actions>:global([data-slot="button"]){width:100%}.history-toolbar{grid-template-columns:1fr}.history-toolbar>:global(nav[aria-label="History period"]){grid-column:auto;grid-row:auto}.history-toolbar :global(.period-tabs){width:100%}.history-toolbar details{grid-column:auto}.advanced-filters,.history-insights,.history-breakdowns,.history-detail-form,.history-detail-form dl{grid-template-columns:1fr}.history-stats{grid-template-columns:1fr 1fr}.history-stats article:last-child{grid-column:1/-1}.history-list>li>button{grid-template-columns:auto minmax(0,1fr)}.history-list>li>button>:global(.badge){grid-column:2;justify-self:start}.history-route{grid-column:2}.activity-card>header,.top-card>header,.history-detail-form footer{align-items:stretch;flex-direction:column}.top-card>header{display:grid}.import-card{gap:1rem;padding:1rem}.upload-zone{grid-template-columns:auto minmax(0,1fr);min-height:6rem}.import-readiness,.import-batch-actions{grid-template-columns:auto minmax(0,1fr)}.import-readiness>:global([data-slot="button"]),.import-batch-actions>:global([data-slot="button"]),.upload-browse{grid-column:1/-1;width:100%;text-align:center}.import-batch-summary{grid-template-columns:1fr}.import-batch-summary div+div{border-top:1px solid var(--color-edge);border-left:0}.import-result>footer,.import-result>footer>:global([data-slot="button"]){width:100%}.import-preview{grid-template-columns:1fr 1fr}.import-preview div:nth-child(3){border-left:0}.import-preview div:nth-child(n+3){border-top:1px solid var(--color-edge)}.import-result>header{align-items:start}.import-result>footer{display:grid}.history-detail-form dl,.target-statuses,.history-detail-form footer{grid-column:auto}.history-detail-form footer>span{display:grid}.history-detail-form footer :global(button){width:100%}}
+
+  .import-result>header,.import-result-select,.import-result-select>span{min-width:0}
+  .import-result-select{flex:1}
+  .import-result-select strong{overflow-wrap:anywhere}
+  .history-list-card{--history-columns:2.5rem minmax(0,1fr) minmax(7rem,.32fr) minmax(9rem,.4fr);overflow:hidden;padding:0}
   .history-list-card>header{align-items:center;padding:1rem 1.1rem .8rem}
   .history-list-card>header h3{margin:0}
   .history-list-card>header p{margin:.2rem 0 0;color:var(--color-ink-muted);font-size:var(--text-sm)}
   .history-count{flex:none;border-radius:999px;background:var(--color-panel-raised);padding:.3rem .6rem;color:var(--color-ink-muted);font-size:var(--text-xs);font-weight:700}
-  .history-column-head{display:grid;grid-template-columns:2.5rem minmax(0,1fr) minmax(7rem,.32fr) minmax(9rem,.4fr);align-items:center;gap:.75rem}
-  .history-list>li>button{display:grid;grid-template-columns:2.5rem minmax(0,1fr) minmax(17rem,.72fr);align-items:center;gap:.75rem}
+  .history-column-head{display:grid;grid-template-columns:var(--history-columns);align-items:center;gap:.75rem}
+  .history-list>li>button{display:grid;grid-template-columns:var(--history-columns);align-items:center;gap:.75rem}
   .history-column-head{border-block:1px solid var(--color-edge);background:var(--color-panel-raised);padding:.42rem 1.1rem;color:var(--color-ink-muted);font-size:.7rem;font-weight:700}
   .history-list{margin:0}
   .history-list>li>button{min-height:3.75rem;border-top:1px solid var(--color-edge);padding:.5rem 1.1rem}
@@ -750,7 +800,7 @@
   .history-list>li>button:hover{background:color-mix(in srgb,var(--color-signal) 5%,transparent)}
   .history-list :global(.track-art){width:2.5rem;height:2.5rem}
   .history-copy,.history-meta,.history-route,.history-time{min-width:0}
-  .history-meta{display:grid;grid-template-columns:minmax(7rem,.8fr) minmax(9rem,1fr);gap:.75rem}
+  .history-meta{display:contents}
   .history-copy strong,.history-copy small,.history-route strong,.history-route small,.history-time time,.history-time small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .history-copy strong{font-size:var(--text-sm)}
   .history-copy small,.history-route small,.history-time small{color:var(--color-ink-muted);font-size:var(--text-xs)}

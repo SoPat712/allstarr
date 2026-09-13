@@ -82,6 +82,24 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RegistryMutationErrors_MapToStableControlPlaneResponses()
+    {
+        var administrator = Controller(Session(administrator: true));
+        var missing = await administrator.SetRegistryEnabled(
+            Guid.CreateVersion7(), new RegistryStateRequest { Enabled = true }, default);
+        Assert.IsType<NotFoundObjectResult>(missing);
+
+        var registry = await _service.AddRegistryAsync(
+            new("Revisioned", "https://extensions.example.test/revisioned.json"));
+        var conflict = Assert.IsType<ConflictObjectResult>(await administrator.SetRegistryEnabled(
+            registry.Id,
+            new RegistryStateRequest { Enabled = false, ExpectedRevision = registry.Revision + 1 },
+            default));
+        Assert.Contains("changed before this update", System.Text.Json.JsonSerializer.Serialize(conflict.Value),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Controller_HasSingleDependencyInjectionConstructor()
     {
         Assert.Single(typeof(ExtensionController).GetConstructors());

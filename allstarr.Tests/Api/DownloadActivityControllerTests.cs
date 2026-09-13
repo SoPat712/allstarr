@@ -1,11 +1,17 @@
 using System.Text.Json;
 using allstarr.Controllers;
+using allstarr.Core.Intelligence;
+using allstarr.Core.Storage;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Identity;
+using allstarr.Core.Protocols;
 using allstarr.Models.Download;
 using allstarr.Services;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace allstarr.Tests;
@@ -103,8 +109,10 @@ public sealed class DownloadActivityControllerTests
         Assert.True(entry.GetProperty("IsPlaying").GetBoolean());
     }
 
-    [Fact]
-    public async Task NowPlaying_ProjectsUserClientSourceProgressAndScrobbleState()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NowPlaying_ProjectsUserClientSourceProgressAndScrobbleState(bool confirmed)
     {
         var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
@@ -123,6 +131,18 @@ public sealed class DownloadActivityControllerTests
             new PlaybackTrackMetadata("Rocket", "Artist", "Album", "/art", DurationSeconds: 120));
         var deliveries = new PlaybackDeliveryActivityStore();
         deliveries.MarkDelivered("ext-deezer-song-123", "device-1");
+        using var streamResponse = new HttpResponseMessage(System.Net.HttpStatusCode.OK);
+        if (confirmed)
+        {
+            var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "principal",
+                new AllstarrPrincipal(tenantId, userId, "jellyfin", "backend", "principal", "User", false),
+                "stream", DateTimeOffset.UtcNow.AddMinutes(1), default, new ProtocolClientDescriptor("client", "device-1"));
+            var lease = new ProviderStreamLease("lease", new Uri("https://media.example.test/track"),
+                DateTimeOffset.UtcNow.AddMinutes(1), true, true, new ProviderMediaFormat("audio/flac", "flac", "flac"),
+                ProviderStreamRetryBehavior.DoNotRetry);
+            deliveries.StreamOpened(context, "ext-deezer-song-123", ProviderAudioQuality.Any,
+                new ProtocolProviderStream(streamResponse, lease, "qobuz", "actual-track"));
+        }
         var controller = CreateController([], [source], [resolver], deliveries);
         controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = AdministratorSession(tenantId);
 
@@ -134,13 +154,83 @@ public sealed class DownloadActivityControllerTests
         Assert.Equal(userId, item.GetProperty("UserId").GetGuid());
         Assert.Equal("Josh", item.GetProperty("UserName").GetString());
         Assert.Equal("Feishin", item.GetProperty("Client").GetString());
-        Assert.Equal("deezer", item.GetProperty("ProviderId").GetString());
+        Assert.Equal(confirmed ? "qobuz" : "deezer", item.GetProperty("ProviderId").GetString());
+        Assert.Equal("deezer", item.GetProperty("CatalogProviderId").GetString());
+        Assert.Equal(confirmed, item.GetProperty("SourceConfirmed").GetBoolean());
         Assert.Equal(0.25, item.GetProperty("Progress").GetDouble());
         Assert.True(item.GetProperty("Scrobbled").GetBoolean());
         Assert.Equal(60, item.GetProperty("ScrobbleThresholdSeconds").GetDouble());
         Assert.False(item.GetProperty("ScrobbleEligible").GetBoolean());
         Assert.Empty(item.GetProperty("ScrobbleDeliveries").EnumerateArray());
         Assert.Equal("/api/admin/ui/users/backend-user-1/avatar", item.GetProperty("AvatarUrl").GetString());
+    }
+
+    [Fact]
+    [Trait("Category", "Postgres")]
+    public async Task NowPlaying_QueriesPortableTimestampColumnsWithConvertedParameters()
+    {
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        var factory = new TestDbContextFactory(database.Options);
+        var tenantId = Guid.CreateVersion7();
+        var userId = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.Tenants.Add(new TenantRecord
+            {
+                Id = tenantId,
+                Slug = "now-playing",
+                Name = "Now playing",
+                CreatedAt = now
+            });
+            db.Set<PlatformUserRecord>().Add(new PlatformUserRecord
+            {
+                Id = userId,
+                TenantId = tenantId,
+                DisplayName = "Listener",
+                Status = PlatformUserStatus.Active,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            db.ListeningEvents.Add(new ListeningEventRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = tenantId,
+                OwnerUserId = userId,
+                Protocol = "jellyfin",
+                BackendInstanceId = "primary",
+                LibraryScopeId = "music",
+                OccurrenceKey = new string('a', 64),
+                State = ListeningEventState.Playing,
+                StartedAt = now.AddMinutes(-1),
+                UpdatedAt = now,
+                SourceKind = "protocol",
+                TrackReference = "ext-deezer-song-123",
+                ProviderId = "deezer",
+                Revision = 1
+            });
+            await db.SaveChangesAsync();
+        }
+        var source = new StubPlaybackSource(new PlaybackActivityState(
+            "device-1",
+            "ext-deezer-song-123",
+            TimeSpan.FromSeconds(30).Ticks,
+            now.UtcDateTime,
+            userId,
+            "backend-user-1",
+            "Listener",
+            "Client",
+            "Device",
+            tenantId));
+        var controller = CreateController([], [source], [], contextFactory: factory);
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = AdministratorSession(tenantId);
+
+        var result = await controller.GetNowPlaying(CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var item = Assert.Single(document.RootElement.GetProperty("items").EnumerateArray());
+        Assert.Equal("deezer", item.GetProperty("ProviderId").GetString());
     }
 
     [Fact]
@@ -162,7 +252,8 @@ public sealed class DownloadActivityControllerTests
         IEnumerable<IDownloadService> downloads,
         IEnumerable<IPlaybackActivitySource> playbackSources,
         IEnumerable<IPlaybackMetadataResolver> metadataResolvers,
-        IPlaybackDeliveryActivitySource? playbackDeliveries = null)
+        IPlaybackDeliveryActivitySource? playbackDeliveries = null,
+        IDbContextFactory<AllstarrDbContext>? contextFactory = null)
     {
         var controller = new DownloadActivityController(
             downloads,
@@ -172,7 +263,8 @@ public sealed class DownloadActivityControllerTests
                 new TestMemoryApplicationCache(),
                 NullLogger<MediaAssetResolver>.Instance),
             NullLogger<DownloadActivityController>.Instance,
-            playbackDeliveries)
+            playbackDeliveries,
+            contextFactory)
         {
             ControllerContext = new ControllerContext
             {
@@ -211,5 +303,14 @@ public sealed class DownloadActivityControllerTests
         public Task<PlaybackArtwork?> ResolveArtworkAsync(
             string itemId,
             CancellationToken cancellationToken) => Task.FromResult(artwork);
+    }
+
+    private sealed class TestDbContextFactory(DbContextOptions<AllstarrDbContext> options)
+        : IDbContextFactory<AllstarrDbContext>
+    {
+        public AllstarrDbContext CreateDbContext() => new(options);
+
+        public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(CreateDbContext());
     }
 }

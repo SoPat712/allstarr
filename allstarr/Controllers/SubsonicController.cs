@@ -158,9 +158,6 @@ public partial class SubsonicController : ControllerBase
             ? _providerGateway.GetArtistAlbumsAsync(CurrentProtocolContext, provider, externalId)
             : _metadataService.GetArtistAlbumsAsync(provider, externalId, HttpContext.RequestAborted);
 
-    /// <summary>
-    /// Merges local and external search results.
-    /// </summary>
     [HttpGet, HttpPost]
     [Route("rest/search3")]
     [Route("rest/search3.view")]
@@ -195,7 +192,6 @@ public partial class SubsonicController : ControllerBase
                 window.ArtistFetchCount,
                 HttpContext.RequestAborted);
 
-        // Search playlists if enabled
         Task<List<ExternalPlaylist>> playlistTask = _subsonicSettings.EnableExternalPlaylists
             ? _providerGateway != null
                 ? _providerGateway.SearchPlaylistsAsync(
@@ -217,9 +213,6 @@ public partial class SubsonicController : ControllerBase
         return MergeSearchResults(subsonicResult, externalResult, playlistResult, format);
     }
 
-    /// <summary>
-    /// Downloads on-the-fly if needed.
-    /// </summary>
     [AcceptVerbs("GET", "POST", "HEAD")]
     [Route("rest/stream")]
     [Route("rest/stream.view")]
@@ -246,28 +239,6 @@ public partial class SubsonicController : ControllerBase
 
         var requestedQuality = StreamQualityHelper.FromSubsonicMaxBitRate(
             parameters.GetValueOrDefault("maxBitRate"));
-        var localPath = requestedQuality == ProviderAudioQuality.Any
-            ? await _localLibraryService.GetLocalPathForExternalSongAsync(provider!, externalId!)
-            : null;
-
-        if (localPath != null && System.IO.File.Exists(localPath))
-        {
-            // Update last write time for cache cleanup (extends cache lifetime)
-            try
-            {
-                System.IO.File.SetLastWriteTimeUtc(localPath, DateTime.UtcNow);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(
-                    "Failed to refresh cached Subsonic stream age ({ExceptionType})",
-                    ex.GetType().Name);
-            }
-
-            var stream = System.IO.File.OpenRead(localPath);
-            return File(stream, GetContentType(localPath), enableRangeProcessing: true);
-        }
-
         if (_providerGateway != null && _streamingResponseAdapter != null)
         {
             try
@@ -291,19 +262,22 @@ public partial class SubsonicController : ControllerBase
                     {
                         await _managedTrackCache.WrapAsync(
                             routed,
-                            provider!,
-                            externalId!,
+                            routed.ServingProviderId,
+                            routed.ServingExternalId ?? externalId!,
                             requestedQuality,
                             HttpMethods.IsHead(Request.Method),
-                            () => _providerGateway.GetSongAsync(CurrentProtocolContext, provider!, externalId!),
+                            () => _providerGateway.GetSongAsync(CurrentProtocolContext, routed.ServingProviderId,
+                                routed.ServingExternalId ?? externalId!),
                             HttpContext.RequestAborted);
                     }
                     return await _streamingResponseAdapter.CreateAsync(
                         HttpContext,
                         routed.Response,
                         HttpContext.RequestAborted,
-                        enableRangeProcessing: false);
+                        enableRangeProcessing: routed.IsCached);
                 }
+                if (CurrentProtocolContext.Actor != null) return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                    new { error = "No verified playback source is available." });
             }
             catch (Exception ex)
             {
@@ -352,9 +326,6 @@ public partial class SubsonicController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Returns external song info if needed.
-    /// </summary>
     [HttpGet, HttpPost]
     [Route("rest/getSong")]
     [Route("rest/getSong.view")]
@@ -392,9 +363,6 @@ public partial class SubsonicController : ControllerBase
         return _responseBuilder.CreateSongResponse(format, song);
     }
 
-    /// <summary>
-    /// Returns provider-backed artists and relays native artists unchanged.
-    /// </summary>
     [HttpGet, HttpPost]
     [Route("rest/getArtist")]
     [Route("rest/getArtist.view")]
@@ -421,7 +389,7 @@ public partial class SubsonicController : ControllerBase
 
             var albums = await GetProviderArtistAlbumsAsync(provider!, externalId!);
 
-            // Fill artist info for each album (Deezer API doesn't include it in artist/albums endpoint)
+            // Deezer's artist-albums payload omits artist identity.
             foreach (var album in albums)
             {
                 if (string.IsNullOrEmpty(album.Artist))
@@ -445,9 +413,6 @@ public partial class SubsonicController : ControllerBase
         return _relayProtocolAdapter.CreateResult(nativeResult, $"application/{format}");
     }
 
-    /// <summary>
-    /// Returns provider-backed albums and relays native albums unchanged.
-    /// </summary>
     [HttpGet, HttpPost]
     [Route("rest/getAlbum")]
     [Route("rest/getAlbum.view")]
@@ -469,12 +434,10 @@ public partial class SubsonicController : ControllerBase
                    ?? _responseBuilder.CreateError(format, 70, "Playlist not found");
         }
 
-        // Check if this is an external playlist
         if (PlaylistIdHelper.IsExternalPlaylist(id))
         {
             var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(id);
 
-            // Get playlist metadata
             var playlist = _providerGateway != null
                 ? await _providerGateway.GetPlaylistAsync(CurrentProtocolContext, provider, externalId)
                 : await _metadataService.GetPlaylistAsync(provider, externalId);
@@ -483,12 +446,11 @@ public partial class SubsonicController : ControllerBase
                 return _responseBuilder.CreateError(format, 70, "Playlist not found");
             }
 
-            // Get playlist tracks
             var tracks = _providerGateway != null
                 ? await _providerGateway.GetPlaylistTracksAsync(CurrentProtocolContext, provider, externalId)
                 : await _metadataService.GetPlaylistTracksAsync(provider, externalId);
 
-            // Convert to album response (playlist as album)
+            // Subsonic clients consume external playlists through the album shape.
             return _responseBuilder.CreatePlaylistAsAlbumResponse(format, playlist, tracks);
         }
 
@@ -514,10 +476,7 @@ public partial class SubsonicController : ControllerBase
         return _relayProtocolAdapter.CreateResult(nativeResult, $"application/{format}");
     }
 
-    /// <summary>
-    /// Reads an Allstarr virtual or hybrid playlist without writing it to the backend.
-    /// Native backend playlist IDs remain transparent relay requests.
-    /// </summary>
+    // Virtual playlists are read-only projections; native IDs remain transparent relays.
     [HttpGet, HttpPost]
     [Route("rest/getPlaylist")]
     [Route("rest/getPlaylist.view")]
@@ -557,10 +516,7 @@ public partial class SubsonicController : ControllerBase
         return _relayProtocolAdapter.CreateResult(merged, $"application/{format}");
     }
 
-    /// <summary>
-    /// Proxies external covers. Uses type from ID to determine which API to call.
-    /// Format: ext-{provider}-{type}-{id} (e.g., ext-deezer-artist-259, ext-deezer-album-96126)
-    /// </summary>
+    // Synthetic cover IDs encode provider and type as ext-{provider}-{type}-{id}.
     [HttpGet, HttpPost]
     [Route("rest/getCoverArt")]
     [Route("rest/getCoverArt.view")]
@@ -578,7 +534,6 @@ public partial class SubsonicController : ControllerBase
             return result;
         }
 
-        // Check if this is a playlist cover art request
         if (PlaylistIdHelper.IsExternalPlaylist(id))
         {
             try
@@ -588,13 +543,8 @@ public partial class SubsonicController : ControllerBase
                     ? await _providerGateway.GetPlaylistAsync(CurrentProtocolContext, provider, externalId)
                     : await _metadataService.GetPlaylistAsync(provider, externalId);
 
-                if (playlist == null || string.IsNullOrEmpty(playlist.CoverUrl))
-                {
-                    return NotFound();
-                }
-
                 var asset = await ResolveExternalImageAsync(
-                    provider, "playlist", externalId, playlist.CoverUrl);
+                    provider, "playlist", externalId, playlist?.CoverUrl);
                 return asset == null ? NotFound() : File(asset.Bytes, asset.ContentType);
             }
             catch (Exception ex)
@@ -637,7 +587,6 @@ public partial class SubsonicController : ControllerBase
 
         string? coverUrl = null;
 
-        // Use type to determine which API to call first
         switch (type)
         {
             case "artist":
@@ -658,7 +607,6 @@ public partial class SubsonicController : ControllerBase
 
             case "song":
             default:
-                // For songs, try to get from song first, then album
                 var song = await GetProviderSongAsync(coverProvider!, coverExternalId!);
                 if (song?.CoverArtUrl != null)
                 {
@@ -666,7 +614,7 @@ public partial class SubsonicController : ControllerBase
                 }
                 else
                 {
-                    // Fallback: try album with same ID (legacy behavior)
+                    // Legacy cover IDs may refer to an album with the same external ID.
                     var albumFallback = await GetProviderAlbumAsync(coverProvider!, coverExternalId!);
                     if (albumFallback?.CoverArtUrl != null)
                     {
@@ -691,17 +639,8 @@ public partial class SubsonicController : ControllerBase
         string provider,
         string resourceKind,
         string resourceId,
-        string coverUrl)
+        string? coverUrl)
     {
-        if (!OutboundRequestGuard.TryCreateSafeHttpUri(
-                coverUrl, out var coverUri, out var validationReason) || coverUri == null)
-        {
-            _logger.LogWarning(
-                "Blocked external image URL for {Provider}/{ResourceId}: {Reason}",
-                provider, resourceId, validationReason);
-            return null;
-        }
-
         var actor = CurrentProtocolContext.Actor;
         return await _mediaAssets.ResolveAsync(
             new MediaAssetIdentity(
@@ -713,6 +652,23 @@ public partial class SubsonicController : ControllerBase
                 resourceId),
             async token =>
             {
+                if (resourceKind == "playlist" && _providerGateway != null)
+                {
+                    var artwork = await _providerGateway.ResolvePlaylistArtworkAsync(
+                        CurrentProtocolContext, provider, resourceId, MaximumArtworkBytes);
+                    if (artwork != null)
+                        return new MediaAssetSource(artwork.Bytes, artwork.ContentType);
+                }
+
+                if (!OutboundRequestGuard.TryCreateSafeHttpUri(
+                        coverUrl, out var coverUri, out var validationReason) || coverUri == null)
+                {
+                    _logger.LogWarning(
+                        "Blocked external image URL for {Provider}/{ResourceId}: {Reason}",
+                        provider, resourceId, validationReason);
+                    return null;
+                }
+
                 using var response = await _proxyService.HttpClient.GetAsync(coverUri, token);
                 var contentType = response.Content.Headers.ContentType?.MediaType;
                 if (!response.IsSuccessStatusCode ||
@@ -813,9 +769,6 @@ public partial class SubsonicController : ControllerBase
 
     #endregion
 
-    /// <summary>
-    /// Stars (favorites) an item. For playlists, this triggers a full download.
-    /// </summary>
     [HttpGet, HttpPost]
     [Route("rest/star")]
     [Route("rest/star.view")]
@@ -824,7 +777,6 @@ public partial class SubsonicController : ControllerBase
         var parameters = await ExtractAllParameters();
         var format = parameters.GetValueOrDefault("f", "xml");
 
-        // Check if this is a playlist
         var playlistId = parameters.GetValueOrDefault("id", "");
 
         if (!string.IsNullOrEmpty(playlistId) && PlaylistIdHelper.IsExternalPlaylist(playlistId))
@@ -839,11 +791,9 @@ public partial class SubsonicController : ControllerBase
 
             await RecordFavoriteEventSafelyAsync(playlistId, FavoriteOperation.Favorite);
 
-            // Return success response immediately
             return _responseBuilder.CreateResponse(format, "starred", new { });
         }
 
-        // For non-playlist items, relay to real Subsonic server
         try
         {
             var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? "rest/star";
@@ -1042,7 +992,7 @@ public partial class SubsonicController : ControllerBase
         }
     }
 
-    // Generic endpoint to handle all subsonic API calls
+    // Lowest-priority catch-all relays unhandled Subsonic methods unchanged.
     [HttpGet, HttpPost]
     [Route("{**endpoint}")]
     public async Task<IActionResult> GenericEndpoint(string endpoint)
@@ -1061,7 +1011,6 @@ public partial class SubsonicController : ControllerBase
         }
         catch (HttpRequestException ex)
         {
-            // Return Subsonic-compatible error response
             _logger.LogError(
                 "Error connecting to Subsonic server for endpoint {Endpoint} ({ExceptionType})",
                 endpoint,

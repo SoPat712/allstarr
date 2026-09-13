@@ -817,6 +817,38 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task JellyfinSpotifyPlaylistImage_UsesAccountScopedTypedArtwork()
+    {
+        var artworkBytes = new byte[] { 0xFF, 0xD8, 0xFF, 0xD9 };
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.ResolvePlaylistArtworkAsync(
+                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin),
+                "spotify",
+                "playlist-1",
+                10 * 1024 * 1024))
+            .ReturnsAsync(new ProviderPlaylistArtwork(artworkBytes, "image/jpeg"));
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request => request.RequestUri!.AbsolutePath == "/Users/Me"
+                ? Json(StatusCodes.Status200OK, """{"Id":"verified-user"}""")
+                : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
+            services =>
+            {
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/Items/ext-spotify-playlist-playlist-1/Images/Primary?api_key=fixture-key");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("image/jpeg", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(artworkBytes, await response.Content.ReadAsByteArrayAsync());
+        gateway.VerifyAll();
+    }
+
+    [Fact]
     public async Task JellyfinSynthesizedLongImageRoute_HonorsSizeAndFormat()
     {
         using var bitmap = new SKBitmap(new SKImageInfo(
@@ -2177,6 +2209,49 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal("ext-spotiflac-amazon-album-album-1", artist.GetProperty("album")[0].GetProperty("id").GetString());
         gateway.VerifyAll();
         metadata.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task SubsonicSpotifyPlaylistCover_UsesAccountScopedTypedArtwork()
+    {
+        var artworkBytes = new byte[] { 0xFF, 0xD8, 0xFF, 0xD9 };
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.GetPlaylistAsync(
+                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Subsonic),
+                "spotify",
+                "playlist-1"))
+            .ReturnsAsync(new ExternalPlaylist
+            {
+                Id = "ext-spotify-playlist-playlist-1",
+                Provider = "spotify",
+                ExternalId = "playlist-1",
+                Name = "Road mix"
+            });
+        gateway.Setup(service => service.ResolvePlaylistArtworkAsync(
+                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Subsonic),
+                "spotify",
+                "playlist-1",
+                10 * 1024 * 1024))
+            .ReturnsAsync(new ProviderPlaylistArtwork(artworkBytes, "image/jpeg"));
+        using var factory = new ProtocolFactory(
+            "Subsonic",
+            request => request.RequestUri!.AbsolutePath == "/rest/ping.view"
+                ? Json(StatusCodes.Status200OK, """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""")
+                : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
+            services =>
+            {
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/rest/getCoverArt.view?u=fixture&p=secret&v=1.16.1&c=fixture&id=ext-spotify-playlist-playlist-1");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("image/jpeg", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(artworkBytes, await response.Content.ReadAsByteArrayAsync());
+        gateway.VerifyAll();
     }
 
     [Fact]

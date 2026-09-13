@@ -85,9 +85,7 @@ public class AppleMusicDownloadService : BaseDownloadService
         string? temporaryPath = null;
         try
         {
-            // Metadata is useful when the completed cache artifact is published, but
-            // it must not sit on the cold playback path. Start it alongside the media
-            // request and begin relaying the sidecar's FLAC bytes immediately.
+            // Fetch metadata concurrently so cold playback can relay audio immediately.
             var metadataTask = publishCache
                 ? MetadataService.GetSongAsync(MetadataProviderName, externalId, cancellationToken)
                 : null;
@@ -224,8 +222,7 @@ public class AppleMusicDownloadService : BaseDownloadService
         }
         catch
         {
-            // Playback has already succeeded. Preserve a usable cache mapping even
-            // when the optional metadata refresh failed independently.
+            // Playback already succeeded; cache publication can use a minimal identity.
         }
 
         return new Song
@@ -248,7 +245,7 @@ public class AppleMusicDownloadService : BaseDownloadService
         }
         catch
         {
-            // Cache cleanup will remove an abandoned partial artifact.
+            // Scheduled cache cleanup owns any partial file that cannot be deleted here.
         }
     }
 
@@ -263,8 +260,7 @@ public class AppleMusicDownloadService : BaseDownloadService
     protected override async Task<string> DownloadTrackWithQualityAsync(
         string trackId, Song song, StreamQuality quality, CancellationToken cancellationToken)
     {
-        // Original playback uses the configured quality. Jellyfin bandwidth requests
-        // are translated to an appropriate lower Apple tier when needed.
+        // Translate Jellyfin bandwidth tiers without exceeding configured Apple quality.
         var qualityStr = quality switch
         {
             StreamQuality.High => AppleDownloadCapabilityAdapter.Quality(
@@ -333,7 +329,6 @@ public class AppleMusicDownloadService : BaseDownloadService
         await outputFile.DisposeAsync();
         SetDownloadProgress(songId, 1.0);
 
-        // Write tags and cover art
         await WriteMetadataAsync(outputPath, song, cancellationToken);
         Logger.LogInformation("Successfully saved and tagged Apple Music track {TrackId} -> {Path}", trackId, outputPath);
 
@@ -342,7 +337,6 @@ public class AppleMusicDownloadService : BaseDownloadService
 
     protected override Task ConvertToSpotifyIdAsync(string externalProvider, string externalId)
     {
-        // No conversion needed for Spotify mapping in base downloader
         return Task.CompletedTask;
     }
 }

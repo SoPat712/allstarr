@@ -1,10 +1,5 @@
 namespace allstarr.Services.Common;
 
-/// <summary>
-/// Static configuration needed before a current provider capability can be attempted.
-/// This is intentionally separate from observed health: a configured credential has
-/// not necessarily been tested successfully.
-/// </summary>
 public enum ProviderConfigurationState
 {
     NotRequired,
@@ -12,10 +7,6 @@ public enum ProviderConfigurationState
     Configured
 }
 
-/// <summary>
-/// The most recent observation for one provider capability and account. The
-/// manager can hydrate this projection from durable samples and circuit state.
-/// </summary>
 public enum ProviderHealthState
 {
     Unknown,
@@ -86,20 +77,13 @@ public sealed record ProviderRuntimeStatus
 
     public string? ReasonCode { get; init; }
 
-    /// <summary>
-    /// Healthy is the only state that proves readiness. Configured or unknown
-    /// capabilities may still be attempted by the compatibility router.
-    /// </summary>
+    // Readiness requires evidence; best-effort routing below also permits untested capabilities.
     public bool IsReady =>
         IsSupported &&
         IsEnabled &&
         Configuration != ProviderConfigurationState.NeedsConfiguration &&
         Health == ProviderHealthState.Healthy;
 
-    /// <summary>
-    /// Phase 0 compatibility decision. It preserves current best-effort routing
-    /// without mislabeling an untested capability as healthy.
-    /// </summary>
     public bool CanAttempt =>
         IsSupported &&
         IsEnabled &&

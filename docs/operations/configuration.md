@@ -40,6 +40,10 @@ Non-secret product behavior belongs in tenant-scoped PostgreSQL settings and is 
 
 Provider credentials are encrypted and persisted as provider accounts with explicit tenant, user/shared scope, capability, and access policy. Services and their configuration are managed under **Integrations > Services**. Credentials and audience policy live under **Integrations > Accounts**; capability priority lives under **Integrations > Routing**.
 
+`ProviderAccounts:ManagementMode` defaults to `Hybrid`: listeners manage their own private or self-shared global connections, and administrators may manage all connections. `UserManaged` removes cross-user administrator management; `AdminManaged` disables listener account mutations. In self-service modes, sharing never transfers control to other listeners. User/library reassignment remains an administrator operation. See the [account workflow](../user-guide.md#integrations).
+
+`ProviderPolicy:AllowGlobalAccounts` controls whether routing may use global accounts (default `true`). `ProviderPolicy:AllowGlobalPersonalAccounts` defaults to `false`: sharing an account does not implicitly share its personal playlists, favorites, personal library, or scrobbling identity. Its creator retains personal access; administrators can explicitly select a global personal account under the existing policy. These are ASP.NET configuration keys, not new WebUI toggles or automatically added Compose variables. A permitted audience is not a guarantee of a provider's concurrent-use allowance.
+
 Extensions are package implementations, not a second account system. Their install, update, permission, rollback, and removal lifecycle lives under **Integrations > Extensions**. Once active, their Services and Accounts use the same Integrations surfaces as built-in providers.
 
 AudioMuse-AI is a built-in Intelligence integration rather than an extension. Its self-hosted URL, optional token, and optional music-server selector live under **Intelligence > Automation**; shared health remains visible in Integrations.

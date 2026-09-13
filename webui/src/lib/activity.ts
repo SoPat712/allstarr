@@ -64,29 +64,30 @@ export function mergeActivity(current: ActivityItem[], incoming: ActivityItem[])
 
 export function groupActivity(items: ActivityItem[]) {
   const groups: ActivityGroup[] = [];
-  const occurrences = new Map<string, number>();
+  const operations = new Map<string, ActivityGroup>();
   for (const item of items) {
-    const key = item.correlationId && item.action
+    const correlated = Boolean(item.correlationId && item.action);
+    const operationKey = correlated
       ? `${item.correlationId}|${item.action}`
-      : [item.kind, item.source, item.label, item.state].join("|");
-    const previous = groups.at(-1);
-    if (previous?.operationKey === key) {
-      const duplicate = previous.entries.some((entry) =>
+      : item.id;
+    const group = correlated ? operations.get(operationKey) : undefined;
+    if (group) {
+      const duplicate = group.entries.some((entry) =>
         entry.label === item.label &&
         entry.state === item.state &&
         entry.detail === item.detail &&
         entry.action === item.action);
-      if (!duplicate) previous.entries.push(item);
-      previous.title = groupTitle(previous.entries);
+      if (!duplicate) group.entries.push(item);
+      group.title = groupTitle(group.entries);
     } else {
-      const occurrence = (occurrences.get(key) ?? 0) + 1;
-      occurrences.set(key, occurrence);
-      groups.push({
-        key: `${key}|${occurrence}`,
-        operationKey: key,
+      const created = {
+        key: operationKey,
+        operationKey,
         entries: [item],
         title: humanize(item.label),
-      });
+      };
+      groups.push(created);
+      if (correlated) operations.set(operationKey, created);
     }
   }
   return groups;
@@ -147,7 +148,8 @@ export function activityLink(item: ActivityItem) {
     const search = item.sourceTitle || item.sourceProviderTrackId || item.detail;
     return `#/library/mappings?search=${encodeURIComponent(search)}`;
   }
-  if (item.providerId) return "#/integrations/services";
+  if (item.providerId && item.providerId !== "library")
+    return `#/integrations/services?source=${encodeURIComponent(item.providerId)}`;
   return null;
 }
 

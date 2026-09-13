@@ -49,7 +49,7 @@ describe("mapping review presentation", () => {
     expect(providerResultCounts([])).toEqual([{ providerId: "local", count: 0 }]);
   });
 
-  it("orders unified results by match confidence", () => {
+  it("orders manual-search results by raw match confidence", () => {
     expect(rankedTargets([
       { id: "1", title: "Weak", confidence: 0.45 },
       { id: "2", title: "Best", externalProvider: "deezer", confidence: 0.98 },
@@ -57,12 +57,12 @@ describe("mapping review presentation", () => {
         id: "4",
         title: "Preferred local",
         confidence: 0.93,
-        components: { localPreference: 0.07, preferenceScore: 1 },
+        components: { priorityWindow: 0.07 },
       },
       { id: "3", title: "Unknown" },
     ]).map((target) => target.title)).toEqual([
-      "Preferred local",
       "Best",
+      "Preferred local",
       "Weak",
       "Unknown",
     ]);

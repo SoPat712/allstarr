@@ -3,6 +3,9 @@ using allstarr.Core.Health;
 using allstarr.Core.Identity;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
+using allstarr.Services.Common;
+using DurableHealthState = allstarr.Core.Storage.ProviderHealthState;
+using RuntimeHealthState = allstarr.Services.Common.ProviderHealthState;
 
 namespace allstarr.Core.Routing;
 
@@ -62,18 +65,31 @@ public sealed class DurableProviderRouteAccountResolver(
 }
 
 public sealed class DurableProviderRouteHealthSource(
-    DurableProviderHealthStore healthStore) : IProviderRouteHealthSource
+    DurableProviderHealthStore healthStore,
+    ProviderStatusManager runtimeStatus) : IProviderRouteHealthSource
 {
     public ProviderRouteHealthSnapshot Get(
         string providerId,
-        Guid providerAccountId,
+        Guid? providerAccountId,
         ProviderCapabilityKind capability)
     {
         var capabilityName = capability.ToString().ToLowerInvariant();
-        var circuitOpen = healthStore.IsCircuitOpen(providerAccountId, capabilityName);
+        if (!providerAccountId.HasValue)
+        {
+            var status = runtimeStatus.GetAccountFreeStatus(providerId, capabilityName);
+            return new ProviderRouteHealthSnapshot(status.Health switch
+            {
+                RuntimeHealthState.Healthy => ProviderRouteHealthState.Healthy,
+                RuntimeHealthState.Degraded => ProviderRouteHealthState.Degraded,
+                _ => ProviderRouteHealthState.Unknown
+            }, CircuitOpen: false);
+        }
+
+        var accountId = providerAccountId.Value;
+        var circuitOpen = healthStore.IsCircuitOpen(accountId, capabilityName);
         if (!healthStore.TryGetLatest(
                 providerId,
-                providerAccountId,
+                accountId,
                 capabilityName,
                 out var latest))
         {
@@ -82,10 +98,10 @@ public sealed class DurableProviderRouteHealthSource(
 
         var state = latest.State switch
         {
-            ProviderHealthState.Healthy => ProviderRouteHealthState.Healthy,
-            ProviderHealthState.Degraded => ProviderRouteHealthState.Degraded,
-            ProviderHealthState.Unavailable => ProviderRouteHealthState.Unavailable,
-            ProviderHealthState.Unauthorized => ProviderRouteHealthState.Unauthorized,
+            DurableHealthState.Healthy => ProviderRouteHealthState.Healthy,
+            DurableHealthState.Degraded => ProviderRouteHealthState.Degraded,
+            DurableHealthState.Unavailable => ProviderRouteHealthState.Unavailable,
+            DurableHealthState.Unauthorized => ProviderRouteHealthState.Unauthorized,
             _ => ProviderRouteHealthState.Unknown
         };
         return new ProviderRouteHealthSnapshot(state, circuitOpen);

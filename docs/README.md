@@ -1,6 +1,6 @@
 # Allstarr documentation
 
-These documents describe the code that is currently shipped. Start with one audience and follow links to the owning document instead of reading the whole tree.
+User and operator guides describe shipped behavior. Contributor assessments explicitly distinguish current implementation from proposed work. Start with one audience and follow links to the owning document instead of reading the whole tree.
 
 ## Start here
 
@@ -26,6 +26,7 @@ These documents describe the code that is currently shipped. Start with one audi
 - [WebUI design system](../DESIGN.md)
 - [Test and qualification tools](../tools/tests/README.md)
 - [Provider capability module](../allstarr/Core/Capabilities/README.md)
+- [Release readiness assessment](release-readiness.md): dated feature inventory, code-churn evidence, and proposed first-release gates; not a shipped-support contract.
 
 ## Documentation rules
 

@@ -51,9 +51,6 @@ public partial class JellyfinController
         return HandleProxyResponse(result, statusCode);
     }
 
-    /// <summary>
-    /// Gets playlist tracks displayed as an album.
-    /// </summary>
     private async Task<IActionResult> GetPlaylistAsAlbum(string playlistId)
     {
         try
@@ -82,9 +79,6 @@ public partial class JellyfinController
         }
     }
 
-    /// <summary>
-    /// Gets playlist tracks as child items.
-    /// </summary>
     private async Task<IActionResult> GetPlaylistTracks(string playlistId)
     {
         try
@@ -119,7 +113,6 @@ public partial class JellyfinController
                     playlistId);
             }
 
-            // Check if this is an external playlist (Deezer/Qobuz) first
             if (PlaylistIdHelper.IsExternalPlaylist(playlistId))
             {
                 var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
@@ -128,12 +121,10 @@ public partial class JellyfinController
                         HttpContext.RequireProtocolExecutionContext(), provider, externalId)
                     : await _metadataService.GetPlaylistTracksAsync(provider, externalId);
 
-                // Convert tracks to Jellyfin items and override ParentId/AlbumId to be the playlist
+                // Jellyfin must see every playlist track under one synthetic album parent.
                 var items = tracks.Select(track =>
                 {
                     var item = _responseBuilder.ConvertSongToJellyfinItem(track);
-                    // Override ParentId and AlbumId to be the playlist ID
-                    // This makes all tracks appear to be from the same "album" (the playlist)
                     item["ParentId"] = playlistId;
                     item["AlbumId"] = playlistId;
                     item["AlbumPrimaryImageTag"] = playlistId;
@@ -151,7 +142,6 @@ public partial class JellyfinController
                 });
             }
 
-            // Regular Jellyfin playlist - proxy through
             var endpoint = $"Playlists/{playlistId}/Items";
             if (Request.QueryString.HasValue)
             {
@@ -170,9 +160,6 @@ public partial class JellyfinController
         }
     }
 
-    /// <summary>
-    /// Gets a playlist cover image.
-    /// </summary>
     private async Task<IActionResult> GetPlaylistImage(
         string playlistId,
         int? width = null,

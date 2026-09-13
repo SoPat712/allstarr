@@ -3,20 +3,15 @@ using System.Xml.Linq;
 using System.Text.Json;
 using allstarr.Models.Domain;
 using allstarr.Models.Subsonic;
+using allstarr.Core.Protocols;
 
 namespace allstarr.Services.Subsonic;
 
-/// <summary>
-/// Handles building Subsonic API responses in both XML and JSON formats.
-/// </summary>
 public class SubsonicResponseBuilder
 {
     private const string SubsonicNamespace = "http://subsonic.org/restapi";
     private const string SubsonicVersion = "1.16.1";
 
-    /// <summary>
-    /// Creates a generic Subsonic response with status "ok".
-    /// </summary>
     public IActionResult CreateResponse(string format, string elementName, object data)
     {
         if (format == "json")
@@ -35,9 +30,6 @@ public class SubsonicResponseBuilder
         return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
     }
 
-    /// <summary>
-    /// Creates a Subsonic error response.
-    /// </summary>
     public IActionResult CreateError(string format, int code, string message)
     {
         if (format == "json")
@@ -64,9 +56,6 @@ public class SubsonicResponseBuilder
         return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
     }
 
-    /// <summary>
-    /// Creates a Subsonic response containing a single song.
-    /// </summary>
     public IActionResult CreateSongResponse(string format, Song song)
     {
         if (format == "json")
@@ -160,9 +149,6 @@ public class SubsonicResponseBuilder
         };
     }
 
-    /// <summary>
-    /// Creates a Subsonic response containing an album with songs.
-    /// </summary>
     public IActionResult CreateAlbumResponse(string format, Album album)
     {
         if (format == "json")
@@ -194,13 +180,9 @@ public class SubsonicResponseBuilder
         return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
     }
 
-    /// <summary>
-    /// Creates a Subsonic response for a playlist represented as an album.
-    /// Playlists appear as albums with genre "Playlist".
-    /// </summary>
+    // Subsonic has no equivalent discovery surface, so external playlists project as albums.
     public IActionResult CreatePlaylistAsAlbumResponse(string format, ExternalPlaylist playlist, List<Song> tracks)
     {
-        // Build artist name with emoji and curator
         var artistName = $"🎵 {char.ToUpper(playlist.Provider[0])}{playlist.Provider.Substring(1)}";
         if (!string.IsNullOrEmpty(playlist.CuratorName))
         {
@@ -209,7 +191,6 @@ public class SubsonicResponseBuilder
 
         var artistId = $"curator-{playlist.Provider}-{playlist.CuratorName?.ToLowerInvariant().Replace(" ", "-") ?? "unknown"}";
 
-        // Aggregate unique genres from all tracks
         var genres = tracks
             .Where(s => !string.IsNullOrEmpty(s.Genre))
             .Select(s => s.Genre!)
@@ -267,7 +248,6 @@ public class SubsonicResponseBuilder
             albumElement.Add(new XAttribute("created", playlist.CreatedDate.Value.ToString("yyyy-MM-ddTHH:mm:ss")));
         }
 
-        // Add songs
         foreach (var song in tracks)
         {
             albumElement.Add(ConvertSongToXml(song, ns));
@@ -283,9 +263,6 @@ public class SubsonicResponseBuilder
         return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
     }
 
-    /// <summary>
-    /// Creates a Subsonic response containing an artist with albums.
-    /// </summary>
     public IActionResult CreateArtistResponse(string format, Artist artist, List<Album> albums)
     {
         if (format == "json")
@@ -323,9 +300,7 @@ public class SubsonicResponseBuilder
         return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
     }
 
-    /// <summary>
-    /// Creates a JSON Subsonic response with "subsonic-response" key (with hyphen).
-    /// </summary>
+    // The protocol requires the hyphenated top-level key.
     public IActionResult CreateJsonResponse(object responseContent)
     {
         var response = new Dictionary<string, object>
@@ -335,16 +310,13 @@ public class SubsonicResponseBuilder
         return new JsonResult(response);
     }
 
-    /// <summary>
-    /// Converts a Song domain model to Subsonic JSON format.
-    /// </summary>
     public Dictionary<string, object> ConvertSongToJson(Song song)
     {
         var result = new Dictionary<string, object>
         {
             ["id"] = song.Id,
             ["isDir"] = false,
-            ["title"] = song.Title,
+            ["title"] = ExternalTrackPresentation.Title(song),
             ["type"] = "music",
             ["mediaType"] = "song",
             ["isVideo"] = false,
@@ -398,9 +370,6 @@ public class SubsonicResponseBuilder
         return result;
     }
 
-    /// <summary>
-    /// Converts an Album domain model to Subsonic JSON format.
-    /// </summary>
     public Dictionary<string, object?> ConvertAlbumToJson(Album album)
     {
         var result = new Dictionary<string, object?>
@@ -432,9 +401,6 @@ public class SubsonicResponseBuilder
         return result;
     }
 
-    /// <summary>
-    /// Converts an Artist domain model to Subsonic JSON format.
-    /// </summary>
     public object ConvertArtistToJson(Artist artist)
     {
         var result = new Dictionary<string, object>
@@ -452,15 +418,12 @@ public class SubsonicResponseBuilder
         return result;
     }
 
-    /// <summary>
-    /// Converts a Song domain model to Subsonic XML format.
-    /// </summary>
     public XElement ConvertSongToXml(Song song, XNamespace ns)
     {
         var element = new XElement(ns + "song",
             new XAttribute("id", song.Id),
             new XAttribute("isDir", "false"),
-            new XAttribute("title", song.Title),
+            new XAttribute("title", ExternalTrackPresentation.Title(song)),
             new XAttribute("type", "music"),
             new XAttribute("mediaType", "song"),
             new XAttribute("isVideo", "false"),
@@ -549,9 +512,6 @@ public class SubsonicResponseBuilder
         _ => string.Empty
     };
 
-    /// <summary>
-    /// Converts an Album domain model to Subsonic XML format.
-    /// </summary>
     public XElement ConvertAlbumToXml(Album album, XNamespace ns)
     {
         var element = new XElement(ns + "album",
@@ -585,9 +545,6 @@ public class SubsonicResponseBuilder
         return element;
     }
 
-    /// <summary>
-    /// Converts an Artist domain model to Subsonic XML format.
-    /// </summary>
     public XElement ConvertArtistToXml(Artist artist, XNamespace ns)
     {
         var element = new XElement(ns + "artist",
@@ -604,9 +561,6 @@ public class SubsonicResponseBuilder
         return element;
     }
 
-    /// <summary>
-    /// Converts a Subsonic JSON element to a dictionary.
-    /// </summary>
     public object ConvertSubsonicJsonElement(JsonElement element, bool isLocal)
     {
         var dict = new Dictionary<string, object>();
@@ -618,9 +572,6 @@ public class SubsonicResponseBuilder
         return dict;
     }
 
-    /// <summary>
-    /// Converts a Subsonic XML element.
-    /// </summary>
     public XElement ConvertSubsonicXmlElement(XElement element, string type)
     {
         var newElement = new XElement(element);

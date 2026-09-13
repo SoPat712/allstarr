@@ -188,7 +188,7 @@
         {/if}
       </div>
 
-      <footer>
+      <footer class="dialog-actions">
         <Dialog.Close class={buttonVariants({ variant: "secondary" })}>{preview?.canApply ? "Cancel" : "Close"}</Dialog.Close>
         {#if preview?.canApply}
           <Button disabled={applying} onclick={() => void applyUpdate()}>

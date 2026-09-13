@@ -20,6 +20,12 @@ public sealed class ListeningProfileService(IDbContextFactory<AllstarrDbContext>
         if (IntelligencePolicyService.RetentionCutoff(clock.UtcNow, policy.RetentionDays) is { } profileCutoff)
             await IntelligencePolicyService.ScopedProfiles(db, scope).Where(x => x.CreatedAt < profileCutoff).ExecuteDeleteAsync(cancellationToken);
         var signals = await IntelligencePolicyService.ScopedSignals(db, scope).AsNoTracking().Where(x => x.ExpiresAt > clock.UtcNow).ToListAsync(cancellationToken);
+        var likedTracks = await db.RecommendationFeedback.AsNoTracking().Where(item =>
+                item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+                item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
+                item.LibraryScopeId == scope.LibraryScopeId && item.Kind == "like")
+            .OrderByDescending(item => item.UpdatedAt).Select(item => item.TrackKey).Take(100)
+            .ToListAsync(cancellationToken);
         var start = signals.Count == 0 ? clock.UtcNow : signals.Min(x => x.ObservedAt);
         var weighted = signals.GroupBy(x => x.TrackReference).Select(group => new
         {
@@ -29,8 +35,12 @@ public sealed class ListeningProfileService(IDbContextFactory<AllstarrDbContext>
         }).Where(x => x.Weight > 0).OrderByDescending(x => x.Weight).ThenBy(x => x.Track, StringComparer.Ordinal).Take(100).ToArray();
         var profile = new ListeningProfile(scope.TenantId, scope.OwnerUserId, scope.BackendInstanceId,
             scope.LibraryScopeId, signals.Count(x => x.SignalType is "play" or "complete"), signals.Count(x => x.SignalType == "skip"),
-            signals.Count(x => x.SignalType == "favorite"), new Dictionary<string, double>(), start, clock.UtcNow)
-        { TopTrackKeys = weighted.Select(x => x.Track).ToArray() };
+            Math.Max(0, (int)Math.Round(signals.Where(x => x.SignalType == "favorite").Sum(x => x.Value))),
+            new Dictionary<string, double>(), start, clock.UtcNow)
+        {
+            TopTrackKeys = likedTracks.Concat(weighted.Select(x => x.Track))
+                .Distinct(StringComparer.Ordinal).Take(100).ToArray()
+        };
         db.ListeningProfiles.Add(new()
         {
             Id = Guid.CreateVersion7(),

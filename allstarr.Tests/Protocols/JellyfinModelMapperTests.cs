@@ -24,7 +24,6 @@ public class JellyfinModelMapperTests
     [Fact]
     public void ParseItemsResponse_AudioItems_ReturnsSongs()
     {
-        // Arrange
         var json = @"{
             ""Items"": [
                 {
@@ -45,10 +44,8 @@ public class JellyfinModelMapperTests
         }";
         var doc = JsonDocument.Parse(json);
 
-        // Act
         var (songs, albums, artists) = _mapper.ParseItemsResponse(doc);
 
-        // Assert
         Assert.Single(songs);
         Assert.Empty(albums);
         Assert.Empty(artists);
@@ -68,7 +65,6 @@ public class JellyfinModelMapperTests
     [Fact]
     public void ParseItemsResponse_AlbumItems_ReturnsAlbums()
     {
-        // Arrange
         var json = @"{
             ""Items"": [
                 {
@@ -85,10 +81,8 @@ public class JellyfinModelMapperTests
         }";
         var doc = JsonDocument.Parse(json);
 
-        // Act
         var (songs, albums, artists) = _mapper.ParseItemsResponse(doc);
 
-        // Assert
         Assert.Empty(songs);
         Assert.Single(albums);
         Assert.Empty(artists);
@@ -105,7 +99,6 @@ public class JellyfinModelMapperTests
     [Fact]
     public void ParseItemsResponse_ArtistItems_ReturnsArtists()
     {
-        // Arrange
         var json = @"{
             ""Items"": [
                 {
@@ -118,10 +111,8 @@ public class JellyfinModelMapperTests
         }";
         var doc = JsonDocument.Parse(json);
 
-        // Act
         var (songs, albums, artists) = _mapper.ParseItemsResponse(doc);
 
-        // Assert
         Assert.Empty(songs);
         Assert.Empty(albums);
         Assert.Single(artists);
@@ -135,7 +126,6 @@ public class JellyfinModelMapperTests
     [Fact]
     public void ParseItemsResponse_MixedTypes_SortsCorrectly()
     {
-        // Arrange
         var json = @"{
             ""Items"": [
                 {""Id"": ""1"", ""Name"": ""Song"", ""Type"": ""Audio""},
@@ -146,10 +136,8 @@ public class JellyfinModelMapperTests
         }";
         var doc = JsonDocument.Parse(json);
 
-        // Act
         var (songs, albums, artists) = _mapper.ParseItemsResponse(doc);
 
-        // Assert
         Assert.Equal(2, songs.Count);
         Assert.Single(albums);
         Assert.Single(artists);
@@ -158,10 +146,8 @@ public class JellyfinModelMapperTests
     [Fact]
     public void ParseItemsResponse_NullResponse_ReturnsEmptyLists()
     {
-        // Act
         var (songs, albums, artists) = _mapper.ParseItemsResponse(null);
 
-        // Assert
         Assert.Empty(songs);
         Assert.Empty(albums);
         Assert.Empty(artists);
@@ -170,14 +156,11 @@ public class JellyfinModelMapperTests
     [Fact]
     public void ParseItemsResponse_EmptyItems_ReturnsEmptyLists()
     {
-        // Arrange
         var json = @"{""Items"": [], ""TotalRecordCount"": 0}";
         var doc = JsonDocument.Parse(json);
 
-        // Act
         var (songs, albums, artists) = _mapper.ParseItemsResponse(doc);
 
-        // Assert
         Assert.Empty(songs);
         Assert.Empty(albums);
         Assert.Empty(artists);
@@ -186,7 +169,6 @@ public class JellyfinModelMapperTests
     [Fact]
     public void ParseSong_ExtractsArtistFromAlbumArtist_WhenNoArtistsArray()
     {
-        // Arrange
         var json = @"{
             ""Id"": ""s1"",
             ""Name"": ""Track"",
@@ -194,17 +176,14 @@ public class JellyfinModelMapperTests
         }";
         var element = JsonDocument.Parse(json).RootElement;
 
-        // Act
         var song = _mapper.ParseSong(element);
 
-        // Assert
         Assert.Equal("Fallback Artist", song.Artist);
     }
 
     [Fact]
     public void ParseSong_ExtractsArtistId_FromArtistItems()
     {
-        // Arrange
         var json = @"{
             ""Id"": ""s1"",
             ""Name"": ""Track"",
@@ -213,10 +192,8 @@ public class JellyfinModelMapperTests
         }";
         var element = JsonDocument.Parse(json).RootElement;
 
-        // Act
         var song = _mapper.ParseSong(element);
 
-        // Assert
         Assert.Equal("art-id-123", song.ArtistId);
         Assert.Equal("Main Artist", song.Artist);
     }
@@ -253,7 +230,6 @@ public class JellyfinModelMapperTests
     [Fact]
     public void ParseAlbum_ExtractsArtistId_FromAlbumArtists()
     {
-        // Arrange
         var json = @"{
             ""Id"": ""alb-1"",
             ""Name"": ""The Album"",
@@ -262,17 +238,14 @@ public class JellyfinModelMapperTests
         }";
         var element = JsonDocument.Parse(json).RootElement;
 
-        // Act
         var album = _mapper.ParseAlbum(element);
 
-        // Assert
         Assert.Equal("band-id", album.ArtistId);
     }
 
     [Fact]
     public void MergeSearchResults_DeduplicatesArtistsByName()
     {
-        // Arrange
         var localArtists = new List<Artist>
         {
             new() { Id = "local-1", Name = "The Beatles", IsLocal = true }
@@ -291,11 +264,9 @@ public class JellyfinModelMapperTests
 
         var playlists = new List<ExternalPlaylist>();
 
-        // Act
         var (songs, albums, artists) = _mapper.MergeSearchResults(
             new List<Song>(), new List<Album>(), localArtists, externalResult, playlists);
 
-        // Assert - Beatles should not be duplicated, Pink Floyd should be added
         Assert.Equal(2, artists.Count);
         Assert.Contains(artists, a => a["Id"]!.ToString() == "local-1");
         Assert.Contains(artists, a => a["Id"]!.ToString() == "ext-deezer-artist-2");
@@ -304,7 +275,6 @@ public class JellyfinModelMapperTests
     [Fact]
     public void MergeSearchResults_IncludesPlaylistsAsAlbums()
     {
-        // Arrange
         var playlists = new List<ExternalPlaylist>
         {
             new() { Id = "ext-deezer-playlist-123", Name = "Summer Mix", Provider = "deezer", ExternalId = "123" }
@@ -317,11 +287,9 @@ public class JellyfinModelMapperTests
             Artists = new List<Artist>()
         };
 
-        // Act
         var (songs, albums, artists) = _mapper.MergeSearchResults(
             new List<Song>(), new List<Album>(), new List<Artist>(), externalResult, playlists);
 
-        // Assert
         Assert.Single(albums);
         Assert.Equal("ext-deezer-playlist-123", albums[0]["Id"]);
     }
@@ -329,7 +297,6 @@ public class JellyfinModelMapperTests
     [Fact]
     public void ParseAlbumWithTracks_CombinesAlbumAndTracks()
     {
-        // Arrange
         var albumJson = @"{
             ""Id"": ""album-1"",
             ""Name"": ""Test Album"",
@@ -346,10 +313,8 @@ public class JellyfinModelMapperTests
         var albumDoc = JsonDocument.Parse(albumJson);
         var tracksDoc = JsonDocument.Parse(tracksJson);
 
-        // Act
         var album = _mapper.ParseAlbumWithTracks(albumDoc, tracksDoc);
 
-        // Assert
         Assert.NotNull(album);
         Assert.Equal("album-1", album.Id);
         Assert.Equal(2, album.Songs.Count);
@@ -358,17 +323,14 @@ public class JellyfinModelMapperTests
     [Fact]
     public void ParseAlbumWithTracks_NullAlbum_ReturnsNull()
     {
-        // Act
         var album = _mapper.ParseAlbumWithTracks(null, null);
 
-        // Assert
         Assert.Null(album);
     }
 
     [Fact]
     public void ParseArtistWithAlbums_SetsAlbumCount()
     {
-        // Arrange
         var artistJson = @"{
             ""Id"": ""art-1"",
             ""Name"": ""Test Artist"",
@@ -385,10 +347,8 @@ public class JellyfinModelMapperTests
         var artistDoc = JsonDocument.Parse(artistJson);
         var albumsDoc = JsonDocument.Parse(albumsJson);
 
-        // Act
         var artist = _mapper.ParseArtistWithAlbums(artistDoc, albumsDoc);
 
-        // Assert
         Assert.NotNull(artist);
         Assert.Equal("art-1", artist.Id);
         Assert.Equal(3, artist.AlbumCount);
@@ -397,7 +357,6 @@ public class JellyfinModelMapperTests
     [Fact]
     public void ParseSearchHintsResponse_HandlesSearchHintsFormat()
     {
-        // Arrange
         var json = @"{
             ""SearchHints"": [
                 {""Id"": ""s1"", ""Name"": ""Song"", ""Type"": ""Audio"", ""Album"": ""Album"", ""AlbumArtist"": ""Artist""},
@@ -408,10 +367,8 @@ public class JellyfinModelMapperTests
         }";
         var doc = JsonDocument.Parse(json);
 
-        // Act
         var (songs, albums, artists) = _mapper.ParseSearchHintsResponse(doc);
 
-        // Assert
         Assert.Single(songs);
         Assert.Single(albums);
         Assert.Single(artists);
@@ -420,10 +377,8 @@ public class JellyfinModelMapperTests
     [Fact]
     public void ParseSearchHintsResponse_NullResponse_ReturnsEmptyLists()
     {
-        // Act
         var (songs, albums, artists) = _mapper.ParseSearchHintsResponse(null);
 
-        // Assert
         Assert.Empty(songs);
         Assert.Empty(albums);
         Assert.Empty(artists);

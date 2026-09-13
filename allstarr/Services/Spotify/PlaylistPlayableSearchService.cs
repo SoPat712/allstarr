@@ -12,19 +12,14 @@ using Microsoft.Extensions.Options;
 
 namespace allstarr.Services.Spotify;
 
-/// <summary>
-/// Runs background playlist matching through the same user/account-aware provider
-/// gateway used by Jellyfin search. This keeps encrypted shared and personal
-/// provider accounts usable without copying credentials back into deployment config.
-/// </summary>
+// Use the protocol gateway so background matching keeps tenant and user credential scoping.
 public sealed class PlaylistPlayableSearchService(
     IProtocolProviderGateway gateway,
     TrackMatchDecisionEngine matcher,
     BackendIdentityResolver identities,
     IdentityOptions identityOptions,
     IOptions<JellyfinSettings> jellyfinSettings,
-    ILogger<PlaylistPlayableSearchService> logger,
-    IProviderRegistry? providers = null)
+    ILogger<PlaylistPlayableSearchService> logger)
 {
     private readonly SemaphoreSlim _principalLock = new(1, 1);
     private AllstarrPrincipal? _principal;
@@ -87,7 +82,12 @@ public sealed class PlaylistPlayableSearchService(
         var candidates = localCandidates
             .Concat(groups.Select(group => ToCandidate(group[0], scope)))
             .ToArray();
-        var decision = matcher.Decide(scope, source, candidates, manualOverride);
+        var decision = matcher.Decide(
+            scope,
+            source,
+            candidates,
+            manualOverride,
+            gateway.GetProviderOrder(ProviderCapabilityKind.Streaming));
         return new(
             decision,
             external,
@@ -116,12 +116,7 @@ public sealed class PlaylistPlayableSearchService(
         IEnumerable<ProviderTrackIdentityRecord> identities,
         CancellationToken cancellationToken)
     {
-        var order = gateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
-            .Select((provider, index) => (
-                Provider: ExternalTrackPlaybackPolicy.Normalize(provider),
-                Index: index))
-            .GroupBy(item => item.Provider, StringComparer.Ordinal)
-            .ToDictionary(group => group.Key, group => group.Min(item => item.Index), StringComparer.Ordinal);
+        var order = ProviderRanks();
         var cachedRoutes = identities
             .Where(identity => identity.VerificationMethod != "automatic-suggestion")
             .Where(identity => order.ContainsKey(
@@ -147,7 +142,10 @@ public sealed class PlaylistPlayableSearchService(
             if (song == null) continue;
 
             var candidate = ToCandidate(song, scope);
-            var score = matcher.ScoreCandidates(source, [candidate]).Single();
+            var score = matcher.ScoreCandidates(
+                source,
+                [candidate],
+                gateway.GetProviderOrder(ProviderCapabilityKind.Streaming)).Single();
             var reasons = score.Reasons
                 .Prepend("verified_provider_identity")
                 .Distinct(StringComparer.Ordinal)
@@ -208,10 +206,7 @@ public sealed class PlaylistPlayableSearchService(
         {
             [song.ExternalProvider!] = song.ExternalId!
         },
-        IsLocal: false,
-        ProviderOrigin: providers?.TryGet(song.ExternalProvider!, out var descriptor) == true
-            ? descriptor!.Origin
-            : null);
+        IsLocal: false);
 
     private static Guid CandidateId(string provider, string externalId) =>
         new(SHA256.HashData(Encoding.UTF8.GetBytes(
@@ -219,10 +214,7 @@ public sealed class PlaylistPlayableSearchService(
 
     private List<Song[]> GroupEquivalent(IEnumerable<Song> songs, TrackMatchScope scope)
     {
-        var order = gateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
-            .Select((provider, index) => (Provider: ExternalTrackPlaybackPolicy.Normalize(provider), Index: index))
-            .GroupBy(item => item.Provider, StringComparer.Ordinal)
-            .ToDictionary(group => group.Key, group => group.Min(item => item.Index), StringComparer.Ordinal);
+        var order = ProviderRanks();
         var groups = new List<List<Song>>();
         foreach (var song in songs.OrderBy(song =>
                      order.GetValueOrDefault(
@@ -241,6 +233,14 @@ public sealed class PlaylistPlayableSearchService(
         }
         return groups.Select(group => group.ToArray()).ToList();
     }
+
+    private Dictionary<string, int> ProviderRanks() =>
+        gateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
+            .Select((provider, index) => (
+                Provider: ExternalTrackPlaybackPolicy.Normalize(provider),
+                Index: index))
+            .GroupBy(item => item.Provider, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Min(item => item.Index), StringComparer.Ordinal);
 
     private async Task<AllstarrPrincipal?> ResolvePrincipalAsync(CancellationToken cancellationToken)
     {

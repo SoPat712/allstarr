@@ -19,10 +19,7 @@ public sealed record JellyfinEndpointDecision(
     public bool Allowed => Access != JellyfinEndpointAccess.Denied;
 }
 
-/// <summary>
-/// Defines the public Jellyfin compatibility surface exposed by Allstarr.
-/// The proxy is intentionally music-only; an unclassified route is denied.
-/// </summary>
+// The public proxy is music-only and denies every route not explicitly classified.
 public static class JellyfinMusicEndpointPolicy
 {
     public const string DefaultMusicItemTypes = "Audio,MusicAlbum,MusicArtist,Playlist,MusicGenre";

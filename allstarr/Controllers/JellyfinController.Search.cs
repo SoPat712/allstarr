@@ -16,10 +16,6 @@ public partial class JellyfinController
 {
     #region Search
 
-    /// <summary>
-    /// Searches local Jellyfin library and external providers.
-    /// Combines songs/albums/artists. Works with /Items and /Users/{userId}/Items.
-    /// </summary>
     [HttpGet("Items", Order = 1)]
     [HttpGet("Users/{userId}/Items", Order = 1)]
     public async Task<IActionResult> SearchItems(
@@ -55,7 +51,7 @@ public partial class JellyfinController
 
         if (!string.IsNullOrWhiteSpace(effectiveArtistIds))
         {
-            var artistId = effectiveArtistIds.Split(',')[0]; // Take first artist if multiple
+            var artistId = effectiveArtistIds.Split(',')[0];
             var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(artistId);
 
             if (isExternal)
@@ -66,7 +62,7 @@ public partial class JellyfinController
                     return CreateEmptyItemsResponse(startIndex);
                 }
 
-                // Check if this is a curator ID (format: ext-{provider}-curator-{name})
+                // Curators use the synthetic ext-{provider}-curator-{name} identity.
                 if (artistId.Contains("-curator-", StringComparison.OrdinalIgnoreCase))
                 {
                     _logger.LogDebug("Fetching playlists for curator: {ArtistId}", artistId);
@@ -89,12 +85,11 @@ public partial class JellyfinController
                     artistId,
                     artistRelation);
             }
-            // If library artist, fall through to handle with ParentId or proxy
         }
 
         if (!string.IsNullOrWhiteSpace(albumIds))
         {
-            var albumId = albumIds.Split(',')[0]; // Take first album if multiple
+            var albumId = albumIds.Split(',')[0];
             var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(albumId);
 
             if (isExternal)
@@ -124,7 +119,6 @@ public partial class JellyfinController
                     StartIndex = startIndex
                 });
             }
-            // If library album, fall through to handle with ParentId or proxy
         }
 
         if (!string.IsNullOrWhiteSpace(parentId))
@@ -134,7 +128,6 @@ public partial class JellyfinController
                 return await GetPlaylistTracks(parentId);
             }
 
-            // Check if this is an external playlist
             if (PlaylistIdHelper.IsExternalPlaylist(parentId))
             {
                 return await GetPlaylistTracks(parentId);
@@ -150,32 +143,26 @@ public partial class JellyfinController
                     return CreateEmptyItemsResponse(startIndex);
                 }
 
-                // External parent - get external content
                 _logger.LogDebug("Fetching children for external parent: {Provider}/{Type}/{ExternalId}",
                     provider, type, externalId);
                 return await GetExternalChildItems(provider!, type!, externalId!, includeItemTypes, HttpContext.RequestAborted);
             }
 
-            // Library ParentId - check if it's the music library root with a search term
             var isMusicLibrary = parentId == _settings.LibraryId;
 
             if (isMusicLibrary && !string.IsNullOrWhiteSpace(searchTerm))
             {
                 _logger.LogDebug("Searching within music library {ParentId}, including external sources",
                     parentId);
-                // Fall through to integrated search below
             }
             else
             {
-                // Library parent - proxy the entire request to Jellyfin as-is
                 _logger.LogDebug("Library ParentId detected, proxying entire request to Jellyfin");
-                // Fall through to proxy logic at the end
             }
         }
 
         if (!string.IsNullOrWhiteSpace(effectiveArtistIds))
         {
-            // Library artist - proxy transparently with full query string
             _logger.LogDebug("Library artist filter requested, proxying to Jellyfin");
             var endpoint = userId != null
                 ? $"Users/{userId}/Items{Request.QueryString}"
@@ -186,7 +173,7 @@ public partial class JellyfinController
 
         if (!string.IsNullOrWhiteSpace(searchTerm))
         {
-            // Check cache for search results (only cache pure searches, not filtered searches)
+            // Relation-filtered searches bypass keys that do not encode every relation.
             if (string.IsNullOrWhiteSpace(effectiveArtistIds) && string.IsNullOrWhiteSpace(albumIds))
             {
                 searchCacheKey = CacheKeyBuilder.BuildSearchKey(
@@ -209,7 +196,6 @@ public partial class JellyfinController
                 }
             }
 
-            // Fall through to integrated search below
         }
         else
         {
@@ -239,7 +225,6 @@ public partial class JellyfinController
 
             if (shouldIncludeMediaSources && !string.IsNullOrEmpty(queryString))
             {
-                // Parse query string to modify Fields parameter
                 var queryParams = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(queryString);
 
                 if (queryParams.ContainsKey("Fields"))
@@ -247,12 +232,10 @@ public partial class JellyfinController
                     var fieldsValue = queryParams["Fields"].ToString();
                     if (!fieldsValue.Contains("MediaSources", StringComparison.OrdinalIgnoreCase))
                     {
-                        // Append MediaSources to existing Fields
                         var newFields = string.IsNullOrEmpty(fieldsValue)
                             ? "MediaSources"
                             : $"{fieldsValue},MediaSources";
 
-                        // Rebuild query string with updated Fields
                         var newQueryParams = new Dictionary<string, string>();
                         foreach (var kvp in queryParams)
                         {
@@ -272,13 +255,11 @@ public partial class JellyfinController
                 }
                 else
                 {
-                    // No Fields parameter, add it
                     queryString = $"{queryString}&Fields=MediaSources";
                 }
             }
             else if (shouldIncludeMediaSources)
             {
-                // No query string at all
                 queryString = "?Fields=MediaSources";
             }
 
@@ -289,14 +270,13 @@ public partial class JellyfinController
 
             var (browseResult, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
 
-            // If Jellyfin returned an error, pass it through unchanged
+            // Preserve upstream error bodies and status codes.
             if (browseResult == null)
             {
                 _logger.LogDebug("Jellyfin returned {StatusCode}, passing through to client", statusCode);
                 return HandleProxyResponse(browseResult, statusCode);
             }
 
-            // Update Spotify playlist counts if enabled and response contains playlists
             if (ShouldProcessSpotifyPlaylistCounts(browseResult, includeItemTypes))
             {
                 _logger.LogDebug("Browse result has Items, checking for Spotify playlists to update counts");
@@ -336,14 +316,9 @@ public partial class JellyfinController
             return new JsonResult(result);
         }
 
-        // ============================================================================
-        // INTEGRATED SEARCH: Search both Jellyfin library and external sources
-        // ============================================================================
-
         var cleanQuery = searchTerm?.Trim().Trim('"') ?? "";
         _logger.LogDebug("Performing integrated search for: {Query}", cleanQuery);
 
-        // Run local and external searches in parallel
         var itemTypes = ParseItemTypes(includeItemTypes);
         var integratedFetchLimit = GetIntegratedSearchFetchLimit(startIndex, limit);
         var externalSearchLimits = GetExternalSearchLimits(itemTypes, integratedFetchLimit, includePlaylistsAsAlbums: true);
@@ -403,7 +378,7 @@ public partial class JellyfinController
             externalResult.Artists.Count,
             playlistResult.Count);
 
-        // Keep raw Jellyfin items for local tracks (preserves ALL metadata!)
+        // Local items remain Jellyfin-shaped; only external items are synthesized.
         var jellyfinSongItems = new List<Dictionary<string, object?>>();
         var jellyfinAlbumItems = new List<Dictionary<string, object?>>();
         var jellyfinArtistItems = new List<Dictionary<string, object?>>();
@@ -442,18 +417,14 @@ public partial class JellyfinController
             jellyfinArtistItems.Count,
             localAlbumNamesPreview);
 
-        // Convert external results to Jellyfin format
         var externalSongItems = externalResult.Songs.Select(s => _responseBuilder.ConvertSongToJellyfinItem(s)).ToList();
         var externalAlbumItems = externalResult.Albums.Select(a => _responseBuilder.ConvertAlbumToJellyfinItem(a)).ToList();
         var externalArtistItems = externalResult.Artists.Select(a => _responseBuilder.ConvertArtistToJellyfinItem(a)).ToList();
 
-        // Keep Jellyfin/provider ordering intact.
-        // Scores only decide which source leads each interleaving round.
         var allSongs = InterleaveByScore(jellyfinSongItems, externalSongItems, cleanQuery, primaryBoost: 5.0);
         var allAlbums = InterleaveByScore(jellyfinAlbumItems, externalAlbumItems, cleanQuery, primaryBoost: 5.0);
         var allArtists = InterleaveByScore(jellyfinArtistItems, externalArtistItems, cleanQuery, primaryBoost: 5.0);
 
-        // Log top results for debugging
         if (_logger.IsEnabled(LogLevel.Debug))
         {
             if (allSongs.Any())
@@ -481,8 +452,7 @@ public partial class JellyfinController
             }
         }
 
-        // Add playlists (mixed with albums due to Jellyfin API limitations)
-        // Playlists are converted to album format for compatibility
+        // Jellyfin search cannot mix playlists directly, so project them as albums.
         var mergedPlaylistItems = new List<Dictionary<string, object?>>();
         if (playlistResult.Count > 0)
         {
@@ -500,14 +470,12 @@ public partial class JellyfinController
             _logger.LogDebug("No playlists found to merge with albums");
         }
 
-        // Keep album/playlist source ordering intact and only let scores decide who leads each round.
         var mergedAlbumsAndPlaylists = InterleaveByScore(allAlbums, mergedPlaylistItems, cleanQuery, primaryBoost: 0.0);
 
         _logger.LogDebug(
             "Merged results: Songs={Songs}, Albums+Playlists={AlbumsPlaylists}, Artists={Artists}",
             allSongs.Count, mergedAlbumsAndPlaylists.Count, allArtists.Count);
 
-        // Filter by item types if specified
         var items = new List<Dictionary<string, object?>>();
 
         _logger.LogDebug("Filtering by item types: {ItemTypes}",
@@ -552,7 +520,6 @@ public partial class JellyfinController
         {
             var json = shapedResponse.Body;
 
-            // Cache search results through the shared cache using the configured TTL.
             if (!string.IsNullOrWhiteSpace(searchTerm) &&
                 string.IsNullOrWhiteSpace(effectiveArtistIds) &&
                 !string.IsNullOrWhiteSpace(searchCacheKey))
@@ -611,9 +578,9 @@ public partial class JellyfinController
             queryParams[kvp.Key] = kvp.Value.ToString();
         }
 
-        // Preserve literal request semantics, only normalize recovered SearchTerm.
+        // Normalize recovered SearchTerm while preserving every other client parameter.
         queryParams["SearchTerm"] = cleanQuery;
-        // Every source contributes the same prefix. The merged response applies the client page once.
+        // Each source contributes the same prefix; apply client paging only after merging.
         queryParams["StartIndex"] = "0";
         queryParams["Limit"] = fetchLimit.ToString(CultureInfo.InvariantCulture);
 
@@ -625,9 +592,6 @@ public partial class JellyfinController
         return await _proxyService.GetJsonAsync(endpoint, queryParams, Request.Headers);
     }
 
-    /// <summary>
-    /// Quick search endpoint. Works with /Search/Hints and /Users/{userId}/Search/Hints.
-    /// </summary>
     [HttpGet("Search/Hints", Order = 1)]
     [HttpGet("Users/{userId}/Search/Hints", Order = 1)]
     public async Task<IActionResult> SearchHints(
@@ -678,7 +642,6 @@ public partial class JellyfinController
                 externalSearchLimits.ArtistLimit,
                 HttpContext.RequestAborted);
 
-        // Run searches in parallel (local Jellyfin hints + external providers)
         var jellyfinTask = GetLocalSearchHintsResultForCurrentRequest(cleanQuery, userId);
 
         await Task.WhenAll(jellyfinTask, externalTask);
@@ -708,10 +671,7 @@ public partial class JellyfinController
         string cleanQuery,
         string? userId)
     {
-        // Jellyfin exposes one Search/Hints route and accepts UserId as a query
-        // parameter. Allstarr also accepts the older client-facing
-        // /Users/{userId}/Search/Hints shape, but must translate it rather than
-        // forwarding a route Jellyfin does not implement.
+        // Older clients use /Users/{id}/Search/Hints; Jellyfin expects Search/Hints?UserId=.
         const string endpoint = "Search/Hints";
 
         var queryParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -720,7 +680,6 @@ public partial class JellyfinController
             queryParams[kvp.Key] = kvp.Value.ToString();
         }
 
-        // Preserve literal request semantics, only normalize recovered SearchTerm.
         queryParams["SearchTerm"] = cleanQuery;
         if (!string.IsNullOrWhiteSpace(userId)) queryParams["UserId"] = userId;
 
@@ -790,10 +749,7 @@ public partial class JellyfinController
         });
     }
 
-    /// <summary>
-    /// Merges two source queues without reordering either queue.
-    /// At each step, compare only the current head from each source and dequeue the winner.
-    /// </summary>
+    // Compare queue heads only so source-specific ordering remains stable.
     internal static List<Dictionary<string, object?>> InterleaveByScore(
         List<Dictionary<string, object?>> primaryItems,
         List<Dictionary<string, object?>> secondaryItems,
@@ -851,9 +807,6 @@ public partial class JellyfinController
         return result;
     }
 
-    /// <summary>
-    /// Calculates query relevance using the product's per-type rules.
-    /// </summary>
     internal static double CalculateItemRelevanceScore(string query, Dictionary<string, object?> item)
     {
         return GetItemType(item) switch
@@ -865,9 +818,6 @@ public partial class JellyfinController
         };
     }
 
-    /// <summary>
-    /// Extracts the name/title from a Jellyfin item dictionary.
-    /// </summary>
     private static string GetItemName(Dictionary<string, object?> item)
     {
         return GetItemStringValue(item, "Name");

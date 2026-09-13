@@ -3,9 +3,6 @@ using Microsoft.Extensions.Options;
 
 namespace allstarr.Services.Spotify;
 
-/// <summary>
-/// Stores and resolves Spotify session cookies in a user-scoped model.
-/// </summary>
 public class SpotifySessionCookieService
 {
     private readonly SpotifyApiSettings _spotifyApiSettings;

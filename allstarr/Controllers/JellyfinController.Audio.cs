@@ -121,29 +121,6 @@ public partial class JellyfinController
         StreamQuality quality = StreamQuality.Original,
         bool asDownload = false)
     {
-        // The canonical artifact is valid only when the client did not request a lower tier.
-        var localPath = quality == StreamQuality.Original
-            ? await _localLibraryService.GetLocalPathForExternalSongAsync(provider, externalId)
-            : null;
-
-        if (localPath != null && System.IO.File.Exists(localPath))
-        {
-            // A cache hit renews the artifact's cleanup lease.
-            try
-            {
-                System.IO.File.SetLastWriteTimeUtc(localPath, DateTime.UtcNow);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to update last write time for {Path}", localPath);
-            }
-
-            var stream = System.IO.File.OpenRead(localPath);
-            return asDownload
-                ? File(stream, GetContentType(localPath), Path.GetFileName(localPath), enableRangeProcessing: true)
-                : File(stream, GetContentType(localPath), enableRangeProcessing: true);
-        }
-
         if (_providerGateway != null)
         {
             try
@@ -174,19 +151,22 @@ public partial class JellyfinController
                     {
                         await _managedTrackCache.WrapAsync(
                             routed,
-                            provider,
-                            externalId,
+                            routed.ServingProviderId,
+                            routed.ServingExternalId ?? externalId,
                             requestedQuality,
                             HttpMethods.IsHead(Request.Method),
-                            () => _providerGateway.GetSongAsync(protocol, provider, externalId),
+                            () => _providerGateway.GetSongAsync(protocol, routed.ServingProviderId,
+                                routed.ServingExternalId ?? externalId),
                             HttpContext.RequestAborted);
                     }
                     return await _streamingResponseAdapter.CreateAsync(
                         HttpContext,
                         routed.Response,
                         HttpContext.RequestAborted,
-                        enableRangeProcessing: false);
+                        enableRangeProcessing: routed.IsCached);
                 }
+                if (protocol.Actor != null) return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                    new { error = "No verified playback source is available." });
             }
             catch (Exception ex)
             {

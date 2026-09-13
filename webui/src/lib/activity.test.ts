@@ -33,8 +33,18 @@ describe("event log presentation", () => {
       title: "Matched 2 tracks across 2 playlists",
       entries: [{ id: "1" }, { id: "3" }],
     }]);
-    expect(groupActivity([item("0", "New Song"), item("1", "Song A")])[0].key)
+    expect(groupActivity([item("0", "New Song"), ...[
+      { ...item("1", "Song A"), playlistName: "First" },
+      { ...item("2", "Song A"), playlistName: "First" },
+      { ...item("3", "Song B"), playlistName: "Second" },
+    ]])[0].key)
       .toBe(grouped[0].key);
+    expect(groupActivity([
+      { ...item("1", "Song A"), playlistName: "First" },
+      { ...item("2", "Song A"), playlistName: "First" },
+      { ...item("3", "Song B"), playlistName: "Second" },
+      item("4", "Older Song"),
+    ])[0].key).toBe(grouped[0].key);
     expect(groupOutcome([item("1", "Song A"), { ...item("2", "Song B"), state: "suggested" }]))
       .toBe("mixed");
   });
@@ -71,6 +81,16 @@ describe("event log presentation", () => {
       .toBe("#/library/mappings?search=Song%20A");
     expect(activityLink({ ...item("2", "Cached"), kind: "caching" }))
       .toBe("#/library/cached");
+    expect(activityLink({
+      ...item("3", "Provider unhealthy"),
+      kind: "provider_health",
+      providerId: "lumen-audio",
+    })).toBe("#/integrations/services?source=lumen-audio");
+    expect(activityLink({
+      ...item("4", "Local library"),
+      kind: "library",
+      providerId: "library",
+    })).toBeNull();
     expect(groupActivity([{ ...item("3", "Failed"), label: "scrobbling check" }])[0].title)
       .toBe("Scrobbling Check");
   });

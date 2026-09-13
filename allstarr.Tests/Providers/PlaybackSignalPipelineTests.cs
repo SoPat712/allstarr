@@ -8,6 +8,8 @@ using allstarr.Core.Protocols.Subsonic;
 using allstarr.Core.Storage;
 using allstarr.Models.Settings;
 using allstarr.Services.Subsonic;
+using allstarr.Services.Common;
+using allstarr.Core.Capabilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
@@ -817,6 +819,45 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     [InlineData(600_000, 240, true)]
     public void CompletedScrobbleHonorsMinimumDurationAndFourMinuteCap(long durationMs, int playedSeconds, bool expected) =>
         Assert.Equal(expected, ScopedPlaybackScrobbleDelivery.EligibleForCompletedScrobble(durationMs, TimeSpan.FromSeconds(playedSeconds).Ticks));
+
+    [Fact]
+    public async Task ConfirmedStreamReplacesCatalogAttributionInTheSameOccurrence()
+    {
+        const string itemId = "ext-deezer-song-source";
+        using var activity = new PlaybackDeliveryActivityStore();
+        var pipeline = new PlaybackSignalPipeline(jobs, playbackActivity: activity);
+        var handler = new PlaybackSignalJobHandler(new Writer(), new Scrobbles(), new Lyrics(), factory,
+            new PlaybackTrackResolver(factory,
+                [new BackendMetadataResolver(new("Track", "Artist", "Album", null, 180))]));
+        var start = Signal(PlaybackTransition.Start, itemId, 0);
+        await pipeline.RecordAsync(start);
+        var claim = await jobs.ClaimNextAsync("before-stream", [PlaybackSignalPipeline.JobType]);
+        var completion = await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
+        await jobs.CompleteAsync(claim!, completion);
+
+        var execution = start.ExecutionContext;
+        execution = new ProtocolExecutionContext(execution.Protocol, execution.BackendInstanceId,
+            execution.VerifiedBackendPrincipalId, execution.Principal, execution.CorrelationId, execution.Deadline,
+            default, new ProtocolClientDescriptor("client", "device"), "music");
+        using var response = new HttpResponseMessage(System.Net.HttpStatusCode.OK);
+        var lease = new ProviderStreamLease("lease", new Uri("https://media.example.test/audio"),
+            DateTimeOffset.UtcNow.AddMinutes(1), true, true, new ProviderMediaFormat("audio/flac", "flac", "flac"),
+            ProviderStreamRetryBehavior.DoNotRetry);
+        activity.StreamOpened(execution, itemId, ProviderAudioQuality.Any,
+            new ProtocolProviderStream(response, lease, "qobuz", "actual-track"));
+        clock.UtcNow = DateTimeOffset.UtcNow.AddSeconds(60);
+        await pipeline.RecordAsync(Signal(PlaybackTransition.Progress, itemId, TimeSpan.FromSeconds(60).Ticks));
+        claim = await jobs.ClaimNextAsync("after-stream", [PlaybackSignalPipeline.JobType]);
+        Assert.Contains("qobuz", claim!.Payload.ToString());
+        Assert.Equal(DurableJobCompletionKind.Succeeded,
+            (await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default)).Kind);
+        await using var db = await factory.CreateDbContextAsync();
+        var listen = Assert.Single(await db.ListeningEvents.ToListAsync());
+        Assert.Equal(itemId, listen.TrackReference);
+        Assert.Equal("qobuz", listen.ProviderId);
+        Assert.Equal("qobuz:actual-track", listen.ProviderTrackReference);
+    }
 
     private PlaybackSignalRequest Signal(PlaybackTransition transition, string item, long ticks) => new(
         new(ProtocolKind.Jellyfin, "backend", "principal", new AllstarrPrincipal(tenant, user, "jellyfin", "backend", "principal", "User", false),

@@ -17,6 +17,41 @@ public sealed class ManagedTrackCacheService(
 {
     private readonly ConcurrentDictionary<string, byte> active = new(StringComparer.OrdinalIgnoreCase);
 
+    public async Task<ProtocolProviderStream?> TryOpenAsync(ProviderExternalResourceId track,
+        Guid? accountId, ProviderAudioQuality quality, CancellationToken cancellationToken)
+    {
+        if (quality != ProviderAudioQuality.Any) return null;
+        cancellationToken.ThrowIfCancellationRequested();
+        var path = await localLibrary.GetLocalPathForExternalSongAsync(track.ProviderId, track.Value);
+        if (path == null) return null;
+        try
+        {
+            var file = File.OpenRead(path);
+            if (file.Length == 0) { file.Dispose(); return null; }
+            var extension = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
+            var mime = extension switch
+            {
+                "flac" => "audio/flac",
+                "m4a" or "mp4" => "audio/mp4",
+                "aac" => "audio/aac",
+                "opus" => "audio/opus",
+                "ogg" => "audio/ogg",
+                _ => "audio/mpeg"
+            };
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(file) };
+            response.Content.Headers.ContentType = new(mime);
+            try { File.SetLastWriteTimeUtc(path, DateTime.UtcNow); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            return new ProtocolProviderStream(response, new ProviderStreamLease("managed-cache",
+                new Uri("https://allstarr.invalid/managed-cache"), DateTimeOffset.UtcNow.AddHours(1),
+                true, true, new ProviderMediaFormat(mime, extension, extension),
+                ProviderStreamRetryBehavior.DoNotRetry), track.ProviderId, track.Value, accountId, IsCached: true);
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
     public async Task WrapAsync(
         ProtocolProviderStream stream,
         string providerId,
@@ -26,10 +61,15 @@ public sealed class ManagedTrackCacheService(
         Func<Task<Song?>> metadataFactory,
         CancellationToken cancellationToken)
     {
-        if (!IsCacheMode() ||
+        if (stream.IsCached || !IsCacheMode() ||
             headOnly ||
             requestedQuality != ProviderAudioQuality.Any ||
             !IsCompleteResponse(stream.Response)) return;
+
+        // Older callers without a resolved identity must never cache fallback bytes as the requested track.
+        if (stream.ServingExternalId == null && stream.ServingProviderId != providerId) return;
+        providerId = stream.ServingProviderId;
+        externalId = stream.ServingExternalId ?? externalId;
 
         var key = $"{providerId}\n{externalId}";
         if (!active.TryAdd(key, 0)) return;

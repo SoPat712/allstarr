@@ -32,11 +32,39 @@ def socket_url(base_url: str, device_id: str) -> str:
     )
 
 
-def qualify(label: str, base_url: str, token: str, run_id: str) -> set[str]:
+def resolve_user_id(base_url: str, token: str) -> str:
+    configured = os.environ.get("JELLYFIN_USER_ID", "").strip()
+    if configured:
+        user_id = configured
+    else:
+        request = urllib.request.Request(
+            f"{base_url.rstrip('/')}/Users",
+            headers={"X-Emby-Token": token},
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            users = json.load(response)
+        user_id = next(
+            (
+                item.get("Id", "")
+                for item in users
+                if isinstance(item, dict) and isinstance(item.get("Id"), str)
+            ),
+            "",
+        )
+    if not user_id or len(user_id) > 128 or not all(
+        character.isalnum() or character in "-_" for character in user_id
+    ):
+        raise ValueError("JELLYFIN_USER_ID must be a stable Jellyfin user ID")
+    return user_id
+
+
+def qualify(
+    label: str, base_url: str, token: str, user_id: str, run_id: str
+) -> set[str]:
     device_id = f"allstarr-ws-{run_id}-{label}"
     authorization = (
         'MediaBrowser Client="AllstarrLiveSmoke", Device="Qualification", '
-        f'DeviceId="{device_id}", Version="1", Token="{token}"'
+        f'DeviceId="{device_id}", Version="1", UserId="{user_id}", Token="{token}"'
     )
     started = time.monotonic()
     message_types: set[str] = set()
@@ -121,9 +149,10 @@ def main() -> int:
     direct_base = os.environ.get("DIRECT_BASE", "https://jellyfin.joshpatra.me")
     allstarr_base = os.environ.get("ALLSTARR_BASE", "https://jfm.joshpatra.me")
     run_id = secrets.token_hex(6)
+    user_id = resolve_user_id(direct_base, token)
 
-    direct_types = qualify("direct", direct_base, token, run_id)
-    allstarr_types = qualify("allstarr", allstarr_base, token, run_id)
+    direct_types = qualify("direct", direct_base, token, user_id, run_id)
+    allstarr_types = qualify("allstarr", allstarr_base, token, user_id, run_id)
     reject_invalid_token("direct", direct_base, run_id)
     reject_invalid_token("allstarr", allstarr_base, run_id)
     if "Sessions" not in direct_types & allstarr_types:

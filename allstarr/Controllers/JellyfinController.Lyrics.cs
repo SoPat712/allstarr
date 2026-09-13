@@ -9,10 +9,7 @@ public partial class JellyfinController
 {
     #region Lyrics
 
-    /// <summary>
-    /// Gets lyrics for an item.
-    /// Local embedded lyrics are preferred; configured typed sources are the fallback.
-    /// </summary>
+    // Prefer Jellyfin's embedded lyrics for local tracks before provider fallbacks.
     [HttpGet("Audio/{itemId}/Lyrics")]
     [HttpGet("Items/{itemId}/Lyrics")]
     public async Task<IActionResult> GetLyrics(string itemId)
@@ -30,12 +27,10 @@ public partial class JellyfinController
             "🎵 Lyrics request: itemId={ItemId}, isExternal={IsExternal}, provider={Provider}, externalId={ExternalId}",
             itemId, isExternal, provider, externalId);
 
-        // For local tracks, check if Jellyfin already has embedded lyrics
         if (!isExternal)
         {
             _logger.LogDebug("Checking Jellyfin for embedded lyrics for local track: {ItemId}", itemId);
 
-            // Try to get lyrics from Jellyfin first (it reads embedded lyrics from files)
             var (jellyfinLyrics, statusCode) =
                 await _proxyService.GetJsonAsync($"Audio/{itemId}/Lyrics", null, Request.Headers);
 
@@ -52,7 +47,6 @@ public partial class JellyfinController
                 statusCode);
         }
 
-        // Get song metadata for lyrics search
         Song? song = null;
         string? spotifyTrackId = null;
 
@@ -60,7 +54,6 @@ public partial class JellyfinController
         {
             song = await GetProviderSongAsync(provider!, externalId!);
 
-            // Use Spotify ID from song metadata if available (populated during GetSongAsync)
             if (song != null && !string.IsNullOrEmpty(song.SpotifyId))
             {
                 spotifyTrackId = song.SpotifyId;
@@ -70,7 +63,6 @@ public partial class JellyfinController
         }
         else
         {
-            // For local songs, get metadata from Jellyfin
             var (item, _) = await _proxyService.GetItemAsync(itemId, Request.Headers);
             if (item != null && item.RootElement.TryGetProperty("Type", out var typeEl) &&
                 typeEl.GetString() == "Audio")
@@ -87,7 +79,6 @@ public partial class JellyfinController
                         : 0
                 };
 
-                // Check for Spotify ID in provider IDs
                 if (item.RootElement.TryGetProperty("ProviderIds", out var providerIds))
                 {
                     if (providerIds.TryGetProperty("Spotify", out var spotifyId))
@@ -103,7 +94,7 @@ public partial class JellyfinController
             return NotFound(new { error = "Song not found" });
         }
 
-        // Strip external track labels from lyrics search terms.
+        // Provider labels are presentation-only and degrade lyric matching.
         var searchTitle = StripTrackDecorators(song.Title);
         var searchArtist = StripTrackDecorators(song.Artist);
         var searchAlbum = StripTrackDecorators(song.Album);

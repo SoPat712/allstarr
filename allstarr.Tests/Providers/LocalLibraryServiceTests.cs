@@ -69,10 +69,8 @@ public class LocalLibraryServiceTests : IDisposable
     [Fact]
     public void ParseSongId_WithExternalId_ReturnsCorrectParts()
     {
-        // Act
         var (isExternal, provider, externalId) = _service.ParseSongId("ext-deezer-123456");
 
-        // Assert
         Assert.True(isExternal);
         Assert.Equal("deezer", provider);
         Assert.Equal("123456", externalId);
@@ -81,10 +79,8 @@ public class LocalLibraryServiceTests : IDisposable
     [Fact]
     public void ParseSongId_WithLocalId_ReturnsNotExternal()
     {
-        // Act
         var (isExternal, provider, externalId) = _service.ParseSongId("local-789");
 
-        // Assert
         Assert.False(isExternal);
         Assert.Null(provider);
         Assert.Null(externalId);
@@ -93,10 +89,8 @@ public class LocalLibraryServiceTests : IDisposable
     [Fact]
     public void ParseSongId_WithNumericId_ReturnsNotExternal()
     {
-        // Act
         var (isExternal, provider, externalId) = _service.ParseSongId("12345");
 
-        // Assert
         Assert.False(isExternal);
         Assert.Null(provider);
         Assert.Null(externalId);
@@ -105,17 +99,14 @@ public class LocalLibraryServiceTests : IDisposable
     [Fact]
     public async Task GetLocalPathForExternalSongAsync_WhenNotRegistered_ReturnsNull()
     {
-        // Act
         var result = await _service.GetLocalPathForExternalSongAsync("deezer", "nonexistent");
 
-        // Assert
         Assert.Null(result);
     }
 
     [Fact]
     public async Task RegisterDownloadedSongAsync_ThenGetLocalPath_ReturnsPath()
     {
-        // Arrange
         var song = new Song
         {
             Id = "ext-deezer-123456",
@@ -130,18 +121,15 @@ public class LocalLibraryServiceTests : IDisposable
         // Create the file
         await File.WriteAllTextAsync(localPath, "fake audio content");
 
-        // Act
         await _service.RegisterDownloadedSongAsync(song, localPath);
         var result = await _service.GetLocalPathForExternalSongAsync("deezer", "123456");
 
-        // Assert
         Assert.Equal(localPath, result);
     }
 
     [Fact]
     public async Task GetLocalPathForExternalSongAsync_WhenFileDeleted_ReturnsNull()
     {
-        // Arrange
         var song = new Song
         {
             Id = "ext-deezer-999999",
@@ -158,30 +146,24 @@ public class LocalLibraryServiceTests : IDisposable
         await _service.RegisterDownloadedSongAsync(song, localPath);
         File.Delete(localPath);
 
-        // Act
         var result = await _service.GetLocalPathForExternalSongAsync("deezer", "999999");
 
-        // Assert
         Assert.Null(result);
     }
 
     [Fact]
     public async Task TriggerLibraryScanAsync_ReturnsTrue()
     {
-        // Act
         var result = await _service.TriggerLibraryScanAsync();
 
-        // Assert
         Assert.True(result);
     }
 
     [Fact]
     public async Task GetScanStatusAsync_ReturnsScanStatus()
     {
-        // Act
         var result = await _service.GetScanStatusAsync();
 
-        // Assert
         Assert.NotNull(result);
         Assert.False(result.Scanning);
         Assert.Equal(100, result.Count);
@@ -198,10 +180,8 @@ public class LocalLibraryServiceTests : IDisposable
     [InlineData("ext-deezer", false, null, null)]
     public void ParseSongId_VariousInputs_ReturnsExpected(string songId, bool expectedIsExternal, string? expectedProvider, string? expectedExternalId)
     {
-        // Act
         var (isExternal, provider, externalId) = _service.ParseSongId(songId);
 
-        // Assert
         Assert.Equal(expectedIsExternal, isExternal);
         Assert.Equal(expectedProvider, provider);
         Assert.Equal(expectedExternalId, externalId);
@@ -222,10 +202,8 @@ public class LocalLibraryServiceTests : IDisposable
     [InlineData("ext-deezer", false, null, null, null)]
     public void ParseExternalId_VariousInputs_ReturnsExpected(string id, bool expectedIsExternal, string? expectedProvider, string? expectedType, string? expectedExternalId)
     {
-        // Act
         var (isExternal, provider, type, externalId) = _service.ParseExternalId(id);
 
-        // Assert
         Assert.Equal(expectedIsExternal, isExternal);
         Assert.Equal(expectedProvider, provider);
         Assert.Equal(expectedType, type);

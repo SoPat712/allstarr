@@ -199,10 +199,22 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         PersistenceGuard.RequireLibrary(execution, link.LibraryScopeId);
         if (!link.Enabled) throw new InvalidOperationException("The playlist is paused. Resume it before synchronizing.");
 
-        var snapshot = request.SourceSnapshotId.HasValue
-            ? await LoadSnapshotAsync(initial, link, request.SourceSnapshotId.Value, cancellationToken)
-            : await CollectWithRetentionLogAsync(
-                execution, link, request.JobId, cancellationToken);
+        var frozenSnapshotId = link.ImportMode == PlaylistImportMode.OneTime
+            ? await initial.PlaylistSourceSnapshots.AsNoTracking()
+                .Where(item => item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id && item.PublishedAt.HasValue)
+                .OrderBy(item => item.PublishedAt)
+                .ThenBy(item => item.SnapshotVersion)
+                .Select(item => (Guid?)item.Id)
+                .FirstOrDefaultAsync(cancellationToken)
+            : null;
+        if (frozenSnapshotId.HasValue && request.SourceSnapshotId.HasValue &&
+            request.SourceSnapshotId != frozenSnapshotId)
+            throw new InvalidOperationException("A one-time import is frozen to its first published snapshot.");
+        var reusingOneTimeImport = frozenSnapshotId.HasValue;
+        var sourceSnapshotId = frozenSnapshotId ?? request.SourceSnapshotId;
+        var snapshot = sourceSnapshotId.HasValue
+            ? await LoadSnapshotAsync(initial, link, sourceSnapshotId.Value, cancellationToken)
+            : await CollectWithRetentionLogAsync(execution, link, request.JobId, cancellationToken);
         var (source, decisions, decisionIds) = await MatchAndLoadAsync(
             execution, link, snapshot, request.Progress, cancellationToken);
         await PublishGenerationAsync(link, snapshot, decisionIds, cancellationToken);
@@ -233,7 +245,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             decisions,
             planningTarget,
             rules,
-            latestPublishedSnapshotId);
+            link.ImportMode == PlaylistImportMode.OneTime ? snapshot.Id : latestPublishedSnapshotId);
         if (!plan.RequiresBackendWrite)
             return new(plan, null, null, false, false);
 
@@ -249,7 +261,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             var target = _targets.Resolve(link.TargetProtocol);
             ProviderPlaylistArtwork? resolvedArtwork = null;
             string? artworkIssue = null;
-            if (link.SyncArtwork && snapshot.ArtworkReferenceKey != null)
+            if (link.SyncArtwork && snapshot.ArtworkReferenceKey != null && !reusingOneTimeImport)
             {
                 if (!target.Capabilities.CanWriteArtwork)
                 {
@@ -355,6 +367,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         PersistenceGuard.RequireOwner(actor, link.OwnerUserId);
         PersistenceGuard.RequireLibrary(execution, link.LibraryScopeId);
         if (!link.Enabled) throw new InvalidOperationException("The playlist is paused. Resume it before refreshing.");
+        if (link.ImportMode == PlaylistImportMode.OneTime)
+            throw new InvalidOperationException("A one-time import keeps its original snapshot and cannot refresh from the source.");
         var snapshot = await CollectWithRetentionLogAsync(
             execution, link, jobId, cancellationToken);
         var (_, _, decisionIds) = await MatchAndLoadAsync(execution, link, snapshot, null, cancellationToken);
@@ -1034,8 +1048,26 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         }
 
         return (new ImmutablePlaylistSourceSnapshot(snapshot.Id, link.Id, snapshot.ProviderRevision, snapshot.Name,
-            entries.Select(entry => new ImmutablePlaylistSourceEntry(entry.Id, entry.SourcePosition,
-                entry.ExternalMetadataSnapshotId, externals[entry.ExternalMetadataSnapshotId].ExternalIdHash)),
+            entries.Select(entry =>
+            {
+                var external = externals[entry.ExternalMetadataSnapshotId];
+                var identity = external.ProviderTrackIdentityId is { } identityId
+                    ? providerIdentities.GetValueOrDefault(identityId)
+                    : null;
+                return new ImmutablePlaylistSourceEntry(
+                    entry.Id,
+                    entry.SourcePosition,
+                    entry.ExternalMetadataSnapshotId,
+                    external.ExternalIdHash,
+                    new PlaylistSourceIdentity(
+                        external.ProviderId,
+                        external.ProviderAccountId,
+                        external.ExternalIdHash,
+                        external.ProviderRevision,
+                        external.SnapshotVersion,
+                        identity?.ExternalId),
+                    PlaylistPersistenceService.ReadSourceMetadata(external.PayloadJson));
+            }),
             snapshot.Description, snapshot.ArtworkReferenceKey), decisions, decisionIds);
     }
 
@@ -1396,7 +1428,8 @@ public sealed record PlaylistMaterializationJobPayload(Guid PlaylistLinkId, long
 public sealed class PlaylistMaterializationJobHandler(
     IDbContextFactory<AllstarrDbContext> factory,
     IPlaylistOrchestrationService orchestration,
-    IPlatformClock clock) : IDurableJobHandler
+    IPlatformClock clock,
+    IPlaylistTrackRetentionQueue? retention = null) : IDurableJobHandler
 {
     public string JobType => "playlist.materialize";
 
@@ -1461,6 +1494,19 @@ public sealed class PlaylistMaterializationJobHandler(
                     }), cancellationToken);
             var completed = result.Plan?.Entries.Count;
             var retry = result.State is PlaylistSyncState.Failed or PlaylistSyncState.Conflicted;
+            if (!retry && result.Plan != null && retention != null)
+            {
+                var queued = await retention.EnqueueAsync(
+                    link, result.Plan, context.Claim.CorrelationId, cancellationToken);
+                if (queued > 0)
+                    await context.ReportProgressAsync(new(
+                        "playlist.retain",
+                        $"Queued {queued} downloadable playlist tracks for permanent storage.",
+                        Completed: 0,
+                        Total: queued,
+                        Provider: link.SourceProviderId,
+                        Playlist: playlistName), cancellationToken);
+            }
             await context.ReportProgressAsync(
                 new(retry ? "playlist.retry" : "playlist.complete",
                     retry ? "Playlist synchronization requires retry." : "Playlist synchronization completed.",
@@ -1500,7 +1546,9 @@ public static class PlaylistOrchestrationRegistration
         services.AddSingleton<ProviderPlaylistUpdateService>();
         services.AddSingleton<DurablePlaylistProjectionReader>();
         services.AddSingleton<IPlaylistOrchestrationService>(provider => provider.GetRequiredService<PlaylistOrchestrationService>());
+        services.AddSingleton<IPlaylistTrackRetentionQueue, PlaylistTrackRetentionQueue>();
         services.AddSingleton<IDurableJobHandler, PlaylistMaterializationJobHandler>();
+        services.AddSingleton<IDurableJobHandler, PlaylistTrackRetentionJobHandler>();
         services.AddSingleton<IDurableJobHandler, ProviderPlaylistUpdateJobHandler>();
         return services;
     }

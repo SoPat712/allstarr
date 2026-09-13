@@ -43,6 +43,7 @@
   let syncName = $state(true);
   let syncDescription = $state(true);
   let syncArtwork = $state(true);
+  let trackRetention = $state<"onDemand" | "keepAll">("onDemand");
   let targetPlaylistId = $state("");
   let targetPlaylists = $state<TargetPlaylist[]>([]);
   let revision = $state(0);
@@ -76,6 +77,8 @@
     targetName,
     targetPlaylistName,
     updateCadence,
+    playlist?.importMode ?? "linked",
+    trackRetention,
   ));
 
   $effect(() => {
@@ -98,6 +101,7 @@
     syncName = playlist.syncName;
     syncDescription = playlist.syncDescription;
     syncArtwork = playlist.syncArtwork;
+    trackRetention = playlist.trackRetention;
     targetPlaylistId = playlist.targetPlaylistId ?? "";
     targetPlaylists = [];
     error = "";
@@ -155,11 +159,13 @@
     saving = true;
     error = "";
     try {
-      await playlistLinks.update(playlist.id, {
+      const updated = await playlistLinks.update(playlist.id, {
         expectedRevision: revision,
         mode,
         projectionMode,
         materializationMode,
+        importMode: playlist.importMode,
+        trackRetention,
         scheduleId: playlist.scheduleId,
         targetPlaylistId: needsTarget ? targetPlaylistId : null,
         targetCredentialReferenceId: playlist.targetCredentialReferenceId,
@@ -172,7 +178,12 @@
         policyVersion: playlist.policyVersion,
       });
       open = false;
-      await onSaved(`Playlist settings saved. ${behaviorSummary}`);
+      const retentionStatus = updated.retentionQueued == null
+        ? ""
+        : updated.retentionQueued > 0
+          ? ` ${updated.retentionQueued} existing ${updated.retentionQueued === 1 ? "song is" : "songs are"} queued for permanent storage.`
+          : " Permanent storage is enabled for this playlist.";
+      await onSaved(`Playlist settings saved.${retentionStatus} ${behaviorSummary}`);
     } catch (cause) {
       error = cause instanceof Error
         ? cause.message
@@ -252,14 +263,26 @@
           </fieldset>
         {/if}
 
+        <fieldset class="audience-options playlist-mode-options">
+          <legend>Song storage</legend>
+          <label class:active={trackRetention === "onDemand"}>
+            <input bind:group={trackRetention} type="radio" value="onDemand" />
+            <span><strong>Stream when played</strong><small>Use normal playback caching without keeping every playlist song permanently.</small></span>
+          </label>
+          <label class:active={trackRetention === "keepAll"}>
+            <input bind:group={trackRetention} type="radio" value="keepAll" />
+            <span><strong>Keep every song</strong><small>Queue owner-scoped managed downloads for every downloadable song after imports.</small></span>
+          </label>
+        </fieldset>
+
         <div class="setting-field playlist-schedule-setting">
-          <span><strong>Automatic updates</strong><small>{details?.schedule ? scheduleCadence(details.schedule.cronExpression) : "Manual only"}</small></span>
-          <Button variant="secondary" onclick={() => { open = false; onEditSchedule(); }}>Edit schedule</Button>
+          <span><strong>Source updates</strong><small>{playlist?.importMode === "oneTime" ? "Imported once · later source changes are ignored" : details?.schedule ? scheduleCadence(details.schedule.cronExpression) : "Update when requested"}</small></span>
+          {#if playlist?.importMode !== "oneTime"}<Button variant="secondary" onclick={() => { open = false; onEditSchedule(); }}>Edit schedule</Button>{/if}
         </div>
 
         <p class="credential-safety">{behaviorSummary}</p>
 
-        <footer>
+        <footer class="dialog-actions">
           <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
           <Button type="submit" disabled={loading || saving || playlist?.revision !== revision || !targetSelectionValid}>
             {saving ? "Saving…" : "Save settings"}

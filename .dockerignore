@@ -1,4 +1,5 @@
 .git
+**/._*
 .apple-provider/
 .github
 .idea

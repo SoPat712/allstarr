@@ -164,23 +164,24 @@ public sealed class ProviderRouter(
                 continue;
             }
 
-            if (account != null)
+            var snapshot = health.Get(provider.Id, account?.AccountId, request.Capability);
+            if (snapshot.CircuitOpen)
             {
-                var snapshot = health.Get(provider.Id, account.AccountId, request.Capability);
-                if (snapshot.CircuitOpen)
-                {
-                    Reject("circuit-open");
-                    continue;
-                }
+                Reject("circuit-open");
+                continue;
+            }
 
-                if (snapshot.State is ProviderRouteHealthState.Unavailable or
-                    ProviderRouteHealthState.Unauthorized)
-                {
-                    Reject(snapshot.State == ProviderRouteHealthState.Unauthorized
-                        ? "health-unauthorized"
-                        : "health-unavailable");
-                    continue;
-                }
+            var healthRejection = snapshot.State switch
+            {
+                ProviderRouteHealthState.Degraded => "health-degraded",
+                ProviderRouteHealthState.Unavailable => "health-unavailable",
+                ProviderRouteHealthState.Unauthorized => "health-unauthorized",
+                _ => null
+            };
+            if (healthRejection != null)
+            {
+                Reject(healthRejection);
+                continue;
             }
 
             if (descriptor.SidecarDependency != null && !sidecars.IsReady(descriptor.SidecarDependency))
@@ -254,9 +255,18 @@ public sealed class ProviderRouter(
                             ProviderResourceKind.Track,
                             state.TrackCatalog),
                         request.CancellationToken);
+                    if (request.Capability is ProviderCapabilityKind.Streaming or ProviderCapabilityKind.Download &&
+                        translation.Source?.Verification == ProviderIdentityVerification.Pinned)
+                    {
+                        Reject("manual-source-pinned");
+                        continue;
+                    }
                     if (translation.Status != TrackIdentityTranslationStatus.Translated ||
                         translation.Target?.Verification is not (
-                            ProviderIdentityVerification.Verified or ProviderIdentityVerification.Pinned))
+                            ProviderIdentityVerification.Verified or ProviderIdentityVerification.Pinned) ||
+                        translation.Target.VerificationMethod is "automatic-suggestion" or
+                            ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod or
+                            ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod)
                     {
                         Reject("verified-identity-required");
                         continue;

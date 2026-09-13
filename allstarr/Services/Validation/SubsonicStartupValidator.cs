@@ -3,10 +3,7 @@ using allstarr.Models.Settings;
 
 namespace allstarr.Services.Validation;
 
-/// <summary>
-/// Validates Subsonic server connectivity at startup
-/// </summary>
-public class SubsonicStartupValidator : BaseStartupValidator
+public sealed class SubsonicStartupValidator : BaseStartupValidator
 {
     private readonly IOptions<SubsonicSettings> _subsonicSettings;
 
@@ -40,29 +37,21 @@ public class SubsonicStartupValidator : BaseStartupValidator
                     ? ValidationResult.Success("Subsonic server is accessible")
                     : ValidationResult.Success("Subsonic server is reachable");
             }
-            else
-            {
-                return ValidationResult.Failure($"HTTP {(int)response.StatusCode}",
-                    "Subsonic server returned an error", ConsoleColor.Red);
-            }
+            return ValidationResult.Failure(
+                $"HTTP {(int)response.StatusCode}",
+                "Subsonic server returned an error");
         }
         catch (TaskCanceledException)
         {
-            return ValidationResult.Failure("TIMEOUT", "Could not reach server within timeout period", ConsoleColor.Red);
+            return ValidationResult.Failure("TIMEOUT", "Could not reach server within timeout period");
         }
         catch (HttpRequestException)
         {
-            return ValidationResult.Failure(
-                "UNREACHABLE",
-                "The Subsonic server could not be reached",
-                ConsoleColor.Red);
+            return ValidationResult.Failure("UNREACHABLE", "The Subsonic server could not be reached");
         }
         catch (Exception ex)
         {
-            return ValidationResult.Failure(
-                "ERROR",
-                $"Subsonic validation failed ({ex.GetType().Name})",
-                ConsoleColor.Red);
+            return ValidationResult.Failure("ERROR", $"Subsonic validation failed ({ex.GetType().Name})");
         }
     }
 }

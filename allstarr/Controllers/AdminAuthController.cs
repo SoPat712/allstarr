@@ -13,7 +13,7 @@ namespace allstarr.Controllers;
 [ApiController]
 [Route("api/admin/auth")]
 [ServiceFilter(typeof(AdminPortFilter))]
-public class AdminAuthController : ControllerBase
+public sealed class AdminAuthController : ControllerBase
 {
     private readonly JellyfinSettings _jellyfinSettings;
     private readonly SubsonicSettings _subsonicSettings;
@@ -94,7 +94,7 @@ public class AdminAuthController : ControllerBase
             };
             httpRequest.Headers.TryAddWithoutValidation("X-Emby-Authorization", authHeader);
 
-            using var response = await _httpClient.SendAsync(httpRequest);
+            using var response = await _httpClient.SendAsync(httpRequest, HttpContext.RequestAborted);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -115,7 +115,9 @@ public class AdminAuthController : ControllerBase
                 });
             }
 
-            using var authDoc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+            using var authDoc = await JsonDocument.ParseAsync(
+                await response.Content.ReadAsStreamAsync(HttpContext.RequestAborted),
+                cancellationToken: HttpContext.RequestAborted);
             var root = authDoc.RootElement;
 
             var accessToken = root.TryGetProperty("AccessToken", out var tokenProp) ? tokenProp.GetString() : null;
@@ -137,48 +139,22 @@ public class AdminAuthController : ControllerBase
                 return StatusCode(502, new { error = "Jellyfin user details are missing in auth response" });
             }
 
-            var principal = _identityResolver == null
-                ? null
-                : await _identityResolver.ResolveAsync(
-                    new BackendIdentityDescriptor(
-                        "Jellyfin",
-                        userId,
-                        userName,
-                        isAdministrator),
-                    HttpContext.RequestAborted);
-            var session = await _sessionService.CreateSessionAsync(
-                userId: userId,
-                userName: userName,
-                isAdministrator: isAdministrator,
-                jellyfinAccessToken: accessToken,
-                jellyfinServerId: serverId,
-                isPersistent: request.RememberMe,
-                tenantId: principal?.TenantId,
-                allstarrUserId: principal?.UserId,
-                cancellationToken: HttpContext.RequestAborted);
-
-            SetSessionCookie(session.SessionId, session.ExpiresAtUtc);
-
-            _logger.LogInformation("Admin WebUI login successful for Jellyfin user {UserName} ({UserId})",
-                session.UserName, session.UserId);
-
-            return Ok(new
-            {
-                authenticated = true,
-                user = new
-                {
-                    id = session.UserId,
-                    name = session.UserName,
-                    isAdministrator = session.IsAdministrator,
-                    tenantId = session.TenantId,
-                    allstarrUserId = session.AllstarrUserId,
-                    avatarUrl = $"/api/admin/auth/me/avatar?user={Uri.EscapeDataString(session.UserId)}"
-                },
-                rememberMe = session.IsPersistent,
-                backend = BackendType.Jellyfin.ToString(),
-                providerAccountManagementMode = _providerAccountManagementMode.ToString(),
-                expiresAtUtc = session.ExpiresAtUtc
-            });
+            return await CompleteLoginAsync(
+                BackendType.Jellyfin,
+                userId,
+                userName,
+                isAdministrator,
+                accessToken,
+                serverId,
+                request.RememberMe);
+        }
+        catch (JsonException)
+        {
+            return StatusCode(502, new { error = "Jellyfin returned an invalid authentication response" });
+        }
+        catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
+        {
+            return new StatusCodeResult(499);
         }
         catch (Exception ex)
         {
@@ -209,25 +185,7 @@ public class AdminAuthController : ControllerBase
         // causing /auth/me to succeed while sibling admin APIs received a stale ID.
         SetSessionCookie(session.SessionId, session.ExpiresAtUtc);
 
-        return Ok(new
-        {
-            authenticated = true,
-            user = new
-            {
-                id = session.UserId,
-                name = session.UserName,
-                isAdministrator = session.IsAdministrator,
-                tenantId = session.TenantId,
-                allstarrUserId = session.AllstarrUserId,
-                avatarUrl = session.BackendType.Equals(BackendType.Jellyfin.ToString(), StringComparison.OrdinalIgnoreCase)
-                    ? $"/api/admin/auth/me/avatar?user={Uri.EscapeDataString(session.UserId)}"
-                    : null
-            },
-            rememberMe = session.IsPersistent,
-            backend = session.BackendType,
-            providerAccountManagementMode = _providerAccountManagementMode.ToString(),
-            expiresAtUtc = session.ExpiresAtUtc
-        });
+        return Ok(AuthenticatedSessionResponse(session));
     }
 
     [HttpGet("me/avatar")]
@@ -392,48 +350,14 @@ public class AdminAuthController : ControllerBase
                 return Unauthorized(new { error = "Invalid Subsonic credentials" });
             }
 
-            var principal = _identityResolver == null
-                ? null
-                : await _identityResolver.ResolveAsync(
-                    new BackendIdentityDescriptor(
-                        "Subsonic",
-                        identity.UserName,
-                        identity.UserName,
-                        identity.IsAdministrator),
-                    HttpContext.RequestAborted);
-            var session = await _sessionService.CreateSessionAsync(
-                userId: identity.UserName,
-                userName: identity.UserName,
-                isAdministrator: identity.IsAdministrator,
-                jellyfinAccessToken: string.Empty,
-                jellyfinServerId: null,
-                isPersistent: request.RememberMe,
-                backendType: BackendType.Subsonic.ToString(),
-                tenantId: principal?.TenantId,
-                allstarrUserId: principal?.UserId,
-                cancellationToken: HttpContext.RequestAborted);
-
-            SetSessionCookie(session.SessionId, session.ExpiresAtUtc);
-            _logger.LogInformation(
-                "Admin WebUI login successful for Subsonic user {UserName}",
-                session.UserName);
-
-            return Ok(new
-            {
-                authenticated = true,
-                user = new
-                {
-                    id = session.UserId,
-                    name = session.UserName,
-                    isAdministrator = session.IsAdministrator,
-                    tenantId = session.TenantId,
-                    allstarrUserId = session.AllstarrUserId
-                },
-                rememberMe = session.IsPersistent,
-                backend = BackendType.Subsonic.ToString(),
-                providerAccountManagementMode = _providerAccountManagementMode.ToString(),
-                expiresAtUtc = session.ExpiresAtUtc
-            });
+            return await CompleteLoginAsync(
+                BackendType.Subsonic,
+                identity.UserName,
+                identity.UserName,
+                identity.IsAdministrator,
+                string.Empty,
+                null,
+                request.RememberMe);
         }
         catch (JsonException)
         {
@@ -481,9 +405,66 @@ public class AdminAuthController : ControllerBase
         return true;
     }
 
+    private async Task<IActionResult> CompleteLoginAsync(
+        BackendType backend,
+        string userId,
+        string userName,
+        bool isAdministrator,
+        string accessToken,
+        string? serverId,
+        bool isPersistent)
+    {
+        var backendName = backend.ToString();
+        var principal = _identityResolver == null
+            ? null
+            : await _identityResolver.ResolveAsync(
+                new BackendIdentityDescriptor(backendName, userId, userName, isAdministrator),
+                HttpContext.RequestAborted);
+        var session = await _sessionService.CreateSessionAsync(
+            userId,
+            userName,
+            isAdministrator,
+            accessToken,
+            serverId,
+            isPersistent,
+            backendName,
+            principal?.TenantId,
+            principal?.UserId,
+            HttpContext.RequestAborted);
+
+        SetSessionCookie(session.SessionId, session.ExpiresAtUtc);
+        _logger.LogInformation(
+            "Admin WebUI login successful for {Backend} user {UserName} ({UserId})",
+            backendName,
+            session.UserName,
+            session.UserId);
+        return Ok(AuthenticatedSessionResponse(session));
+    }
+
+    private object AuthenticatedSessionResponse(AdminAuthSession session) => new
+    {
+        authenticated = true,
+        user = new
+        {
+            id = session.UserId,
+            name = session.UserName,
+            isAdministrator = session.IsAdministrator,
+            tenantId = session.TenantId,
+            allstarrUserId = session.AllstarrUserId,
+            avatarUrl = session.BackendType.Equals(
+                BackendType.Jellyfin.ToString(), StringComparison.OrdinalIgnoreCase)
+                ? $"/api/admin/auth/me/avatar?user={Uri.EscapeDataString(session.UserId)}"
+                : null
+        },
+        rememberMe = session.IsPersistent,
+        backend = session.BackendType,
+        providerAccountManagementMode = _providerAccountManagementMode.ToString(),
+        expiresAtUtc = session.ExpiresAtUtc
+    };
+
     private readonly record struct SubsonicIdentity(string UserName, bool IsAdministrator);
 
-    public class LoginRequest
+    public sealed class LoginRequest
     {
         public string? Username { get; set; }
         public string? Password { get; set; }

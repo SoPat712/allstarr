@@ -211,7 +211,31 @@ public sealed class LibraryIndexJobHandler(IDbContextFactory<AllstarrDbContext> 
             item.UserId == context.Claim.OwnerUserId && item.BackendInstanceId == payload.BackendInstanceId &&
             item.PrincipalId == payload.BackendPrincipalId, cancellationToken);
         if (identity == null) return DurableJobCompletion.Failure("library_index_identity_unavailable", "The linked backend identity is unavailable.");
-        var protocol = identity.BackendType.Equals("jellyfin", StringComparison.OrdinalIgnoreCase) ? ProtocolKind.Jellyfin : ProtocolKind.Subsonic;
+        var protocol = identity.BackendType.Trim().ToLowerInvariant() switch
+        {
+            "jellyfin" => ProtocolKind.Jellyfin,
+            "subsonic" => ProtocolKind.Subsonic,
+            _ => ProtocolKind.Unknown
+        };
+        if (protocol == ProtocolKind.Unknown)
+            return DurableJobCompletion.Failure("library_index_identity_unsupported", "The linked backend type does not support library indexing.");
+        if (protocol == ProtocolKind.Subsonic)
+        {
+            var credentialAvailable = payload.CredentialReferenceId.HasValue &&
+                await db.SecretReferences.AsNoTracking().AnyAsync(secret =>
+                    secret.Id == payload.CredentialReferenceId.Value &&
+                    secret.TenantId == identity.TenantId &&
+                    secret.BackendIdentityId == identity.Id &&
+                    secret.Purpose == BackendCredentialScope.SubsonicPurpose &&
+                    secret.RevokedAt == null,
+                    cancellationToken);
+            if (!credentialAvailable)
+                return DurableJobCompletion.Failure("library_index_credential_unavailable", "The linked Subsonic credential is unavailable.");
+        }
+        else if (payload.CredentialReferenceId.HasValue)
+        {
+            return DurableJobCompletion.Failure("library_index_payload_invalid", "Jellyfin library indexing does not accept a credential reference.");
+        }
         var user = await db.Users.AsNoTracking().SingleAsync(item => item.Id == identity.UserId && item.TenantId == identity.TenantId, cancellationToken);
         var execution = new ProtocolExecutionContext(protocol, identity.BackendInstanceId, identity.PrincipalId,
             new AllstarrPrincipal(identity.TenantId, identity.UserId, identity.BackendType, identity.BackendInstanceId, identity.PrincipalId, user.DisplayName, false),
@@ -252,15 +276,12 @@ public sealed class LibraryIndexJobHandler(IDbContextFactory<AllstarrDbContext> 
     }
 }
 
-/// <summary>
-/// Keeps the durable audio index warm for linked Jellyfin users. The scanner itself
-/// requests IncludeItemTypes=Audio, so video and administrative resources never enter
-/// the music identity graph.
-/// </summary>
+/// <summary>Keeps each linked user's durable audio index warm.</summary>
 public sealed class LibraryIndexMaintenanceService(
     IDbContextFactory<AllstarrDbContext> factory,
     DurableJobQueue jobs,
     DurableStorageState storageState,
+    IPlatformClock clock,
     ILogger<LibraryIndexMaintenanceService> logger) : BackgroundService
 {
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(15);
@@ -280,7 +301,7 @@ public sealed class LibraryIndexMaintenanceService(
             }
             catch (Exception exception)
             {
-                logger.LogWarning(exception, "Durable Jellyfin audio index maintenance failed; it will retry");
+                logger.LogWarning(exception, "Durable backend audio index maintenance failed; it will retry");
             }
 
             await Task.Delay(RefreshInterval, stoppingToken);
@@ -291,25 +312,43 @@ public sealed class LibraryIndexMaintenanceService(
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var identities = await db.BackendIdentities.AsNoTracking()
-            .Where(identity => identity.BackendType == "jellyfin")
+            .Where(identity => identity.BackendType == "jellyfin" || identity.BackendType == "subsonic")
             .OrderBy(identity => identity.TenantId).ThenBy(identity => identity.UserId)
             .ToListAsync(cancellationToken);
-        var now = DateTimeOffset.UtcNow;
+        var subsonicIdentityIds = identities.Where(identity => identity.BackendType == "subsonic")
+            .Select(identity => identity.Id).ToArray();
+        var credentialRows = await db.SecretReferences.AsNoTracking()
+            .Where(secret => secret.BackendIdentityId.HasValue &&
+                subsonicIdentityIds.Contains(secret.BackendIdentityId.Value) &&
+                secret.Purpose == BackendCredentialScope.SubsonicPurpose && secret.RevokedAt == null)
+            .OrderByDescending(secret => secret.UpdatedAt)
+            .Select(secret => new { secret.Id, secret.TenantId, IdentityId = secret.BackendIdentityId!.Value })
+            .ToListAsync(cancellationToken);
+        var credentials = credentialRows.Where(secret => secret.TenantId.HasValue)
+            .GroupBy(secret => (secret.TenantId!.Value, secret.IdentityId))
+            .ToDictionary(group => group.Key, group => group.First().Id);
+        var now = clock.UtcNow;
         var enqueued = 0;
 
         foreach (var identity in identities)
         {
+            Guid? credentialReferenceId = null;
+            if (identity.BackendType == "subsonic")
+            {
+                if (!credentials.TryGetValue((identity.TenantId, identity.Id), out var credential)) continue;
+                credentialReferenceId = credential;
+            }
             var lastIndexedAt = await db.LibraryTracks.AsNoTracking()
                 .Where(track => track.TenantId == identity.TenantId && track.OwnerUserId == identity.UserId &&
-                    track.BackendInstanceId == identity.BackendInstanceId && track.LibraryScopeId == "music")
+                    track.BackendIdentityId == identity.Id && track.LibraryScopeId == "music")
                 .MaxAsync(track => (DateTimeOffset?)track.IndexedAt, cancellationToken);
             if (lastIndexedAt.HasValue && now - lastIndexedAt.Value < RefreshInterval) continue;
 
             var generation = now.UtcTicks / RefreshInterval.Ticks;
             var result = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<LibraryIndexJobPayload>(
                 "library.index",
-                $"library-index:auto:{identity.TenantId:N}:{identity.UserId:N}:{identity.BackendInstanceId}:music:{generation}",
-                new("music", identity.BackendInstanceId, identity.PrincipalId, null, 200),
+                $"library-index:auto:{identity.Id:N}:music:{generation}",
+                new("music", identity.BackendInstanceId, identity.PrincipalId, credentialReferenceId, 200),
                 identity.TenantId,
                 identity.UserId,
                 LibraryScopeId: "music",
@@ -317,7 +356,7 @@ public sealed class LibraryIndexMaintenanceService(
             if (result.Created) enqueued++;
         }
 
-        if (enqueued > 0) logger.LogInformation("Enqueued {Count} stale Jellyfin audio index jobs", enqueued);
+        if (enqueued > 0) logger.LogInformation("Enqueued {Count} stale backend audio index jobs", enqueued);
         return enqueued;
     }
 }

@@ -27,7 +27,9 @@ The reusable Jellyfin kit has deterministic and live layers:
   covered alongside Finer's query-key file request.
 - `live_jellyfin_websocket_smoke.py` verifies header-authenticated direct and
   proxied WebSocket handshakes plus bidirectional session frames. It requires
-  Python's `websockets` package and never prints the supplied token.
+  Python's `websockets` package and never prints the supplied token. Set
+  `JELLYFIN_USER_ID` to pin the session actor; otherwise the harness selects a
+  visible user through the direct server before opening either socket.
 
 The source URLs, versions, commits, paths, and SHA-256 hashes for both OpenAPI
 files are locked in `allstarr.Tests/Fixtures/Protocols/protocol-source-lock.json`.
@@ -44,9 +46,24 @@ Run the safe live suite without putting a token in the command history:
 ```bash
 read -rs JELLYFIN_TOKEN
 export JELLYFIN_TOKEN
+export DIRECT_BASE=https://jellyfin.example.com
+export ALLSTARR_BASE=https://allstarr.example.com
 SAMPLES=5 bash tools/tests/live_jellyfin_smoke.sh | tee /tmp/allstarr-jellyfin-live.log
 unset JELLYFIN_TOKEN
 ```
+
+Alternatively, supply `JELLYFIN_USERNAME` and `JELLYFIN_PASSWORD` through the
+environment without setting `JELLYFIN_TOKEN`. The suite authenticates through
+Allstarr, measures login latency, limits discovery to that user, and logs out
+the newly created session on exit. It never logs out a caller-supplied token.
+Both endpoint URLs are required; no private deployment is built into the tool.
+
+Run `python3 tools/tests/test_live_jellyfin_smoke.py` for offline harness checks.
+External audio must use `[A]` or `[A]/[E]`, while artist and album labels remain
+catalog-specific. The opt-in stream checks require audio content and the actual
+`X-Allstarr-Provider`, then verify private song-info provenance and that HEAD
+does not overwrite it. They do not disable providers or change routing to force
+a live failure; deterministic gateway tests cover forced failover and isolation.
 
 Pin a configured native playlist alias when qualifying injected playlists.
 This catches clients such as Musiver that open the original Jellyfin playlist
@@ -59,6 +76,18 @@ parity checks against matched entries:
 INJECTED_PLAYLIST_ID=ddc3db277be524ad6f54e4b276cc619a \
 INJECTED_PLAYLIST_EXPECTED_COUNT=50 \
 JELLYFIN_USER_ID=1635cd7d23144ba08251ebe22a56119e \
+SAMPLES=5 bash tools/tests/live_jellyfin_smoke.sh
+```
+
+For a materialized provider playlist, pin the native Jellyfin target and its
+expected source-synchronized name. The optional artwork requirement checks
+that the item advertises a primary image and that direct and proxied image
+bytes are identical:
+
+```bash
+NATIVE_PLAYLIST_ID=ddc3db277be524ad6f54e4b276cc619a \
+NATIVE_PLAYLIST_EXPECTED_NAME='Provider playlist name' \
+NATIVE_PLAYLIST_REQUIRE_ARTWORK=1 \
 SAMPLES=5 bash tools/tests/live_jellyfin_smoke.sh
 ```
 

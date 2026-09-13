@@ -40,8 +40,8 @@ public sealed class MultiProviderDownloadServiceTests
             Options.Create(new AppleDownloadSettings { BaseUrl = "http://apple-gateway" }),
             Options.Create(new DeezerSettings { Arl = "configured-arl" }),
             Options.Create(new QobuzSettings()));
-        var apple = new AppleMusicRecordingService();
-        var deezer = new DeezerRecordingService();
+        var apple = new PrimaryRecordingService();
+        var deezer = new SecondaryRecordingService();
         var metadata = new Mock<IMusicMetadataService>();
         var service = new MultiProviderDownloadService(
             [apple, deezer],
@@ -119,6 +119,8 @@ public sealed class MultiProviderDownloadServiceTests
 
     private sealed class AppleMusicCancelingService : IConcreteDownloadService
     {
+        public string ProviderId => "apple-download";
+
         public Task<string> DownloadSongAsync(
             string externalProvider,
             string externalId,
@@ -132,13 +134,6 @@ public sealed class MultiProviderDownloadServiceTests
             CancellationToken cancellationToken = default) =>
             Task.FromCanceled<Stream>(cancellationToken);
 
-        public void DownloadRemainingAlbumTracksInBackground(
-            string externalProvider,
-            string albumExternalId,
-            string excludeTrackExternalId)
-        {
-        }
-
         public DownloadInfo? GetDownloadStatus(string songId) => null;
 
         public IReadOnlyList<DownloadInfo> GetActiveDownloads() => [];
@@ -151,6 +146,7 @@ public sealed class MultiProviderDownloadServiceTests
 
     private abstract class RecordingService : IConcreteDownloadService
     {
+        public abstract string ProviderId { get; }
         public (string Provider, string Id)? Call { get; private set; }
 
         public Task<string> DownloadSongAsync(
@@ -169,13 +165,6 @@ public sealed class MultiProviderDownloadServiceTests
             return Task.FromResult<Stream>(new MemoryStream([1]));
         }
 
-        public void DownloadRemainingAlbumTracksInBackground(
-            string externalProvider,
-            string albumExternalId,
-            string excludeTrackExternalId)
-        {
-        }
-
         public DownloadInfo? GetDownloadStatus(string songId) => null;
 
         public IReadOnlyList<DownloadInfo> GetActiveDownloads() => [];
@@ -186,11 +175,13 @@ public sealed class MultiProviderDownloadServiceTests
         public Task<bool> IsAvailableAsync() => Task.FromResult(true);
     }
 
-    private sealed class AppleMusicRecordingService : RecordingService
+    private sealed class PrimaryRecordingService : RecordingService
     {
+        public override string ProviderId => "apple-download";
     }
 
-    private sealed class DeezerRecordingService : RecordingService
+    private sealed class SecondaryRecordingService : RecordingService
     {
+        public override string ProviderId => "deezer";
     }
 }

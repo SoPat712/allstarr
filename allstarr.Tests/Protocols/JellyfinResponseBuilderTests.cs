@@ -22,7 +22,6 @@ public class JellyfinResponseBuilderTests
     [Fact]
     public void ConvertSongToJellyfinItem_SetsCorrectFields()
     {
-        // Arrange
         var song = new Song
         {
             Id = "song-123",
@@ -39,10 +38,8 @@ public class JellyfinResponseBuilderTests
             IsLocal = true
         };
 
-        // Act
         var result = _builder.ConvertSongToJellyfinItem(song);
 
-        // Assert
         Assert.Equal("song-123", result["Id"]);
         Assert.Equal("Test Track", result["Name"]);
         Assert.Equal("Audio", result["Type"]);
@@ -88,7 +85,6 @@ public class JellyfinResponseBuilderTests
     [Fact]
     public void ConvertSongToJellyfinItem_ExternalSong_IncludesProviderIds()
     {
-        // Arrange
         var song = new Song
         {
             Id = "ext-deezer-song-12345",
@@ -100,10 +96,8 @@ public class JellyfinResponseBuilderTests
             Isrc = "USRC12345678"
         };
 
-        // Act
         var result = _builder.ConvertSongToJellyfinItem(song);
 
-        // Assert
         Assert.True(result.ContainsKey("ProviderIds"));
         var providerIds = result["ProviderIds"] as Dictionary<string, string>;
         Assert.NotNull(providerIds);
@@ -226,7 +220,7 @@ public class JellyfinResponseBuilderTests
 
         var result = _builder.ConvertSongToJellyfinItem(song);
 
-        Assert.Equal("Sunflower [D] [E]", result["Name"]);
+        Assert.Equal("Sunflower [A]/[E]", result["Name"]);
     }
 
     [Fact]
@@ -245,7 +239,7 @@ public class JellyfinResponseBuilderTests
 
         var result = _builder.ConvertSongToJellyfinItem(song);
 
-        Assert.Equal("Sunflower [D]", result["Name"]);
+        Assert.Equal("Sunflower [A]", result["Name"]);
     }
 
     [Theory]
@@ -268,7 +262,7 @@ public class JellyfinResponseBuilderTests
     [InlineData("spotiflac-ytmusic-spotiflac", "[YM]")]
     [InlineData("typed-provider", "[TP]")]
     [InlineData("unknown", "[EXT]")]
-    public void ConvertSongToJellyfinItem_ExternalSong_UsesProviderSourceLabel(string provider, string label)
+    public void ConvertSongToJellyfinItem_ExternalSong_UsesNeutralTitleAndCatalogRelationships(string provider, string label)
     {
         var song = new Song
         {
@@ -284,7 +278,7 @@ public class JellyfinResponseBuilderTests
 
         var result = _builder.ConvertSongToJellyfinItem(song);
 
-        Assert.Equal($"External Track {label}", result["Name"]);
+        Assert.Equal("External Track [A]", result["Name"]);
         Assert.Equal($"External Album {label}", result["Album"]);
         var artists = Assert.IsType<string[]>(result["Artists"]);
         Assert.Equal(new[] { $"External Artist {label}" }, artists);
@@ -306,7 +300,7 @@ public class JellyfinResponseBuilderTests
 
         var result = _builder.ConvertSongToJellyfinItem(matchedSong);
 
-        Assert.Equal("Matched Track [D]", result["Name"]);
+        Assert.Equal("Matched Track [A]", result["Name"]);
         Assert.Equal("Matched Album [D]", result["Album"]);
         var artists = Assert.IsType<string[]>(result["Artists"]);
         Assert.Equal(["Matched Artist [D]"], artists);
@@ -406,7 +400,6 @@ public class JellyfinResponseBuilderTests
     [InlineData("Qobuz")]
     public void ConvertSongToJellyfinItem_ExternalStreamingProviders_DisableTranscoding(string provider)
     {
-        // Arrange
         var song = new Song
         {
             Id = $"ext-{provider}-song-123",
@@ -417,10 +410,8 @@ public class JellyfinResponseBuilderTests
             ExternalId = "123"
         };
 
-        // Act
         var result = _builder.ConvertSongToJellyfinItem(song);
 
-        // Assert
         var mediaSources = Assert.IsAssignableFrom<object[]>(result["MediaSources"]);
         var mediaSource = Assert.IsType<Dictionary<string, object?>>(mediaSources[0]);
         Assert.False(Assert.IsType<bool>(mediaSource["SupportsTranscoding"]));
@@ -429,7 +420,6 @@ public class JellyfinResponseBuilderTests
     [Fact]
     public void ConvertSongToJellyfinItem_OtherExternalProviders_KeepTranscodingEnabled()
     {
-        // Arrange
         var song = new Song
         {
             Id = "ext-spotify-song-123",
@@ -440,10 +430,8 @@ public class JellyfinResponseBuilderTests
             ExternalId = "123"
         };
 
-        // Act
         var result = _builder.ConvertSongToJellyfinItem(song);
 
-        // Assert
         var mediaSources = Assert.IsAssignableFrom<object[]>(result["MediaSources"]);
         var mediaSource = Assert.IsType<Dictionary<string, object?>>(mediaSources[0]);
         Assert.True(Assert.IsType<bool>(mediaSource["SupportsTranscoding"]));
@@ -452,7 +440,6 @@ public class JellyfinResponseBuilderTests
     [Fact]
     public void ConvertAlbumToJellyfinItem_SetsCorrectFields()
     {
-        // Arrange
         var album = new Album
         {
             Id = "album-456",
@@ -465,10 +452,8 @@ public class JellyfinResponseBuilderTests
             IsLocal = true
         };
 
-        // Act
         var result = _builder.ConvertAlbumToJellyfinItem(album);
 
-        // Assert
         Assert.Equal("album-456", result["Id"]);
         Assert.Equal("Greatest Hits", result["Name"]);
         Assert.Equal("MusicAlbum", result["Type"]);
@@ -511,7 +496,6 @@ public class JellyfinResponseBuilderTests
     [Fact]
     public void ConvertArtistToJellyfinItem_SetsCorrectFields()
     {
-        // Arrange
         var artist = new Artist
         {
             Id = "artist-789",
@@ -520,10 +504,8 @@ public class JellyfinResponseBuilderTests
             IsLocal = true
         };
 
-        // Act
         var result = _builder.ConvertArtistToJellyfinItem(artist);
 
-        // Assert
         Assert.Equal("artist-789", result["Id"]);
         Assert.Equal("The Rockers", result["Name"]);
         Assert.Equal("MusicArtist", result["Type"]);
@@ -560,7 +542,6 @@ public class JellyfinResponseBuilderTests
     [Fact]
     public void ConvertPlaylistToAlbumItem_SetsPlaylistType()
     {
-        // Arrange
         var playlist = new ExternalPlaylist
         {
             Id = "ext-playlist-deezer-999",
@@ -573,10 +554,8 @@ public class JellyfinResponseBuilderTests
             CreatedDate = new DateTime(2023, 6, 15)
         };
 
-        // Act
         var result = _builder.ConvertPlaylistToAlbumItem(playlist);
 
-        // Assert
         Assert.Equal("ext-playlist-deezer-999", result["Id"]);
         Assert.Equal("Summer Vibes [D/P]", result["Name"]);
         Assert.Equal("MusicAlbum", result["Type"]);
@@ -591,7 +570,6 @@ public class JellyfinResponseBuilderTests
     [Fact]
     public void ConvertPlaylistToAlbumItem_NoCurator_UsesProvider()
     {
-        // Arrange
         var playlist = new ExternalPlaylist
         {
             Id = "ext-playlist-deezer-888",
@@ -602,27 +580,22 @@ public class JellyfinResponseBuilderTests
             TrackCount = 30
         };
 
-        // Act
         var result = _builder.ConvertPlaylistToAlbumItem(playlist);
 
-        // Assert
         Assert.Equal("deezer", result["AlbumArtist"]);
     }
 
     [Fact]
     public void CreateItemsResponse_ReturnsPaginatedResult()
     {
-        // Arrange
         var songs = new List<Song>
         {
             new() { Id = "1", Title = "Song One", Artist = "Artist", Duration = 200 },
             new() { Id = "2", Title = "Song Two", Artist = "Artist", Duration = 180 }
         };
 
-        // Act
         var result = _builder.CreateItemsResponse(songs);
 
-        // Assert
         var jsonResult = Assert.IsType<JsonResult>(result);
         Assert.NotNull(jsonResult.Value);
     }
@@ -630,15 +603,12 @@ public class JellyfinResponseBuilderTests
     [Fact]
     public void CreateSearchHintsResponse_IncludesAllTypes()
     {
-        // Arrange
         var songs = new List<Song> { new() { Id = "s1", Title = "Track", Artist = "A" } };
         var albums = new List<Album> { new() { Id = "a1", Title = "Album", Artist = "A" } };
         var artists = new List<Artist> { new() { Id = "ar1", Name = "Artist" } };
 
-        // Act
         var result = _builder.CreateSearchHintsResponse(songs, albums, artists);
 
-        // Assert
         var jsonResult = Assert.IsType<JsonResult>(result);
         using var document = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
         Assert.All(document.RootElement.GetProperty("SearchHints").EnumerateArray(), hint =>
@@ -678,7 +648,7 @@ public class JellyfinResponseBuilderTests
         Assert.Equal("Unknown artist [Q]", hints[0].GetProperty("Name").GetString());
         Assert.Equal("Album [D]", hints[1].GetProperty("Name").GetString());
         Assert.Equal("Unknown artist [D]", hints[1].GetProperty("AlbumArtist").GetString());
-        Assert.Equal("Track [AM] [E]", hints[2].GetProperty("Name").GetString());
+        Assert.Equal("Track [A]/[E]", hints[2].GetProperty("Name").GetString());
         Assert.Equal("Album [AM]", hints[2].GetProperty("Album").GetString());
         Assert.Equal("Unknown artist [AM]", hints[2].GetProperty("Artists")[0].GetString());
     }
@@ -736,10 +706,8 @@ public class JellyfinResponseBuilderTests
     [Fact]
     public void CreateError_Returns404ForNotFound()
     {
-        // Act
         var result = _builder.CreateError(404, "Item not found");
 
-        // Assert
         var objectResult = Assert.IsType<ObjectResult>(result);
         Assert.Equal(404, objectResult.StatusCode);
     }
@@ -747,7 +715,6 @@ public class JellyfinResponseBuilderTests
     [Fact]
     public void CreateAlbumResponse_IncludesChildrenForSongs()
     {
-        // Arrange
         var album = new Album
         {
             Id = "album-1",
@@ -760,10 +727,8 @@ public class JellyfinResponseBuilderTests
             }
         };
 
-        // Act
         var result = _builder.CreateAlbumResponse(album);
 
-        // Assert
         var jsonResult = Assert.IsType<JsonResult>(result);
         Assert.NotNull(jsonResult.Value);
         using var document = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
@@ -773,7 +738,6 @@ public class JellyfinResponseBuilderTests
     [Fact]
     public void CreateArtistResponse_IncludesAlbumsList()
     {
-        // Arrange
         var artist = new Artist { Id = "art-1", Name = "Test Artist" };
         var albums = new List<Album>
         {
@@ -781,10 +745,8 @@ public class JellyfinResponseBuilderTests
             new() { Id = "alb-2", Title = "Second Album", Artist = "Test Artist" }
         };
 
-        // Act
         var result = _builder.CreateArtistResponse(artist, albums);
 
-        // Assert
         var jsonResult = Assert.IsType<JsonResult>(result);
         Assert.NotNull(jsonResult.Value);
         using var document = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
@@ -794,7 +756,6 @@ public class JellyfinResponseBuilderTests
     [Fact]
     public void CreatePlaylistAsAlbumResponse_CalculatesTotalDuration()
     {
-        // Arrange
         var playlist = new ExternalPlaylist
         {
             Id = "ext-deezer-playlist-1",
@@ -809,10 +770,8 @@ public class JellyfinResponseBuilderTests
             new() { Id = "t3", Title = "Song 3", Duration = 200 }
         };
 
-        // Act
         var result = _builder.CreatePlaylistAsAlbumResponse(playlist, tracks);
 
-        // Assert
         var jsonResult = Assert.IsType<JsonResult>(result);
         Assert.NotNull(jsonResult.Value);
     }

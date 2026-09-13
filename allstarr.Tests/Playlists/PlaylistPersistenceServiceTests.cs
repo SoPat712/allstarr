@@ -234,6 +234,86 @@ public sealed class PlaylistPersistenceServiceTests : IAsyncLifetime
         Assert.Single(await _playlists.ListLinksAsync(administratorContext, "music"));
     }
 
+    [Fact]
+    public async Task ImportAndRetentionPolicies_PersistAndLegacyUpdatesPreserveThem()
+    {
+        var context = Context(_userA, "principal-a");
+        await Assert.ThrowsAsync<ArgumentException>(() => _playlists.CreateLinkAsync(context, Link() with
+        {
+            ImportMode = PlaylistImportMode.OneTime,
+            ScheduleId = Guid.CreateVersion7()
+        }));
+        var created = await _playlists.CreateLinkAsync(context, Link() with
+        {
+            ImportMode = PlaylistImportMode.OneTime,
+            TrackRetention = PlaylistTrackRetention.KeepAll
+        });
+
+        Assert.Equal(PlaylistImportMode.OneTime, created.ImportMode);
+        Assert.Equal(PlaylistTrackRetention.KeepAll, created.TrackRetention);
+
+        var preserved = await _playlists.UpdateLinkAsync(context, created.Id, new(
+            created.Revision,
+            created.Mode,
+            created.MaterializationMode,
+            "rules-v2",
+            "policy-v2",
+            null,
+            created.TargetPlaylistId,
+            created.MirrorStaleEntries,
+            created.PreserveManualEntries,
+            created.SyncName,
+            created.SyncDescription,
+            created.SyncArtwork));
+        Assert.Equal(PlaylistImportMode.OneTime, preserved.ImportMode);
+        Assert.Equal(PlaylistTrackRetention.KeepAll, preserved.TrackRetention);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _playlists.UpdateLinkAsync(context, created.Id, new(
+            preserved.Revision,
+            preserved.Mode,
+            preserved.MaterializationMode,
+            preserved.RuleVersion,
+            preserved.PolicyVersion,
+            null,
+            preserved.TargetPlaylistId,
+            preserved.MirrorStaleEntries,
+            preserved.PreserveManualEntries,
+            preserved.SyncName,
+            preserved.SyncDescription,
+            preserved.SyncArtwork,
+            ImportMode: PlaylistImportMode.Linked,
+            TrackRetention: PlaylistTrackRetention.OnDemand)));
+        await Assert.ThrowsAsync<ArgumentException>(() => _playlists.UpdateLinkAsync(context, created.Id, new(
+            preserved.Revision,
+            preserved.Mode,
+            preserved.MaterializationMode,
+            preserved.RuleVersion,
+            preserved.PolicyVersion,
+            Guid.CreateVersion7(),
+            preserved.TargetPlaylistId,
+            preserved.MirrorStaleEntries,
+            preserved.PreserveManualEntries,
+            preserved.SyncName,
+            preserved.SyncDescription,
+            preserved.SyncArtwork)));
+        var changed = await _playlists.UpdateLinkAsync(context, created.Id, new(
+            preserved.Revision,
+            preserved.Mode,
+            preserved.MaterializationMode,
+            preserved.RuleVersion,
+            preserved.PolicyVersion,
+            null,
+            preserved.TargetPlaylistId,
+            preserved.MirrorStaleEntries,
+            preserved.PreserveManualEntries,
+            preserved.SyncName,
+            preserved.SyncDescription,
+            preserved.SyncArtwork,
+            TrackRetention: PlaylistTrackRetention.OnDemand));
+        Assert.Equal(PlaylistImportMode.OneTime, changed.ImportMode);
+        Assert.Equal(PlaylistTrackRetention.OnDemand, changed.TrackRetention);
+    }
+
     private ExternalSnapshotInput Snapshot(int version, string id) => new(_accountA, "fixture", "music", "track", Hash(id), version, $"rev-{id}", $"{{\"title\":\"{id}\"}}", Hash($"payload-{id}"));
     private PlaylistLinkInput Link() => new(_accountA, "fixture", "playlist-1", Hash("playlist-1"), "music", "jellyfin", "backend", PlaylistLinkMode.Materialized, PlaylistMaterializationMode.Reconcile, "rules-v1", "policy-v1");
     private ProtocolExecutionContext Context(Guid user, string principal, bool admin = false) => new(ProtocolKind.Jellyfin, "backend", principal, new AllstarrPrincipal(_tenant, user, "jellyfin", "backend", principal, principal, admin), "correlation", _now.AddMinutes(1), CancellationToken.None, libraryScopeId: "music");

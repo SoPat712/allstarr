@@ -5,12 +5,10 @@ using allstarr.Models.Domain;
 using allstarr.Models.Settings;
 using allstarr.Models.Subsonic;
 using allstarr.Services.Common;
+using allstarr.Core.Protocols;
 
 namespace allstarr.Services.Jellyfin;
 
-/// <summary>
-/// Builds Jellyfin-compatible API responses.
-/// </summary>
 public class JellyfinResponseBuilder
 {
     private const int DefaultExternalBitrate = 1_337_000;
@@ -23,9 +21,6 @@ public class JellyfinResponseBuilder
             : settings.Value.DeviceId;
     }
 
-    /// <summary>
-    /// Creates a Jellyfin items response containing songs.
-    /// </summary>
     public IActionResult CreateItemsResponse(List<Song> songs)
     {
         var items = songs.Select(ConvertSongToJellyfinItem).ToList();
@@ -38,9 +33,6 @@ public class JellyfinResponseBuilder
         });
     }
 
-    /// <summary>
-    /// Creates a Jellyfin items response for albums.
-    /// </summary>
     public IActionResult CreateAlbumsResponse(List<Album> albums)
     {
         var items = albums.Select(ConvertAlbumToJellyfinItem).ToList();
@@ -53,9 +45,6 @@ public class JellyfinResponseBuilder
         });
     }
 
-    /// <summary>
-    /// Creates a Jellyfin items response for artists.
-    /// </summary>
     public IActionResult CreateArtistsResponse(List<Artist> artists)
     {
         var items = artists.Select(ConvertArtistToJellyfinItem).ToList();
@@ -68,22 +57,15 @@ public class JellyfinResponseBuilder
         });
     }
 
-    /// <summary>
-    /// Creates a single item response.
-    /// </summary>
     public IActionResult CreateSongResponse(Song song)
     {
         return CreateJsonResponse(ConvertSongToJellyfinItem(song));
     }
 
-    /// <summary>
-    /// Creates a single album response with tracks.
-    /// </summary>
     public IActionResult CreateAlbumResponse(Album album)
     {
         var albumItem = ConvertAlbumToJellyfinItem(album);
 
-        // For album detail, include child items (songs)
         if (album.Songs.Count > 0)
         {
             albumItem["Children"] = album.Songs.Select(ConvertSongToJellyfinItem).ToList();
@@ -92,9 +74,6 @@ public class JellyfinResponseBuilder
         return CreateJsonResponse(albumItem);
     }
 
-    /// <summary>
-    /// Creates a single artist response with albums.
-    /// </summary>
     public IActionResult CreateArtistResponse(Artist artist, List<Album> albums)
     {
         var artistItem = ConvertArtistToJellyfinItem(artist);
@@ -104,9 +83,7 @@ public class JellyfinResponseBuilder
         return CreateJsonResponse(artistItem);
     }
 
-    /// <summary>
-    /// Creates a response for a playlist represented as an album.
-    /// </summary>
+    // Jellyfin clients require playlists projected as MusicAlbum/FileSystem containers.
     public IActionResult CreatePlaylistAsAlbumResponse(ExternalPlaylist playlist, List<Song> tracks)
     {
         var totalDuration = tracks.Sum(s => s.Duration ?? 0);
@@ -115,7 +92,6 @@ public class JellyfinResponseBuilder
             ? playlist.CuratorName
             : playlist.Provider;
 
-        // Create artist items for the curator
         var artistId = $"ext-{playlist.Provider}-curator-{curatorName.ToLowerInvariant().Replace(" ", "-")}";
         var artistItems = new[]
         {
@@ -126,14 +102,12 @@ public class JellyfinResponseBuilder
                 }
             };
 
-        // Aggregate unique genres from all tracks
         var genres = tracks
             .Where(s => !string.IsNullOrEmpty(s.Genre))
             .Select(s => s.Genre!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        // If no genres found, fallback to "Playlist"
         if (genres.Count == 0)
         {
             genres.Add("Playlist");
@@ -149,7 +123,7 @@ public class JellyfinResponseBuilder
         {
             ["Id"] = playlist.Id,
             ["Name"] = BuildExternalPlaylistName(playlist.Name, playlist.Provider),
-            ["Type"] = "MusicAlbum",  // Must be MusicAlbum for Jellyfin clients
+            ["Type"] = "MusicAlbum",
             ["ServerId"] = _serverId,
             ["ChannelId"] = null,
             ["IsFolder"] = true,
@@ -173,7 +147,7 @@ public class JellyfinResponseBuilder
             ["BackdropImageTags"] = new string[0],
             ["ParentLogoImageTag"] = artistId,
             ["ImageBlurHashes"] = new Dictionary<string, object>(),
-            ["LocationType"] = "FileSystem",  // Must be FileSystem for Jellyfin to show artist albums
+            ["LocationType"] = "FileSystem",
             ["MediaType"] = "Unknown",
             ["UserData"] = new Dictionary<string, object>
             {
@@ -191,8 +165,7 @@ public class JellyfinResponseBuilder
             ["Children"] = tracks.Select(song =>
             {
                 var item = ConvertSongToJellyfinItem(song);
-                // Override ParentId and AlbumId to be the playlist ID
-                // This makes all tracks appear to be from the same "album" (the playlist)
+                // Every child must share the synthetic playlist parent.
                 item["ParentId"] = playlist.Id;
                 item["AlbumId"] = playlist.Id;
                 item["AlbumPrimaryImageTag"] = playlist.Id;
@@ -203,13 +176,9 @@ public class JellyfinResponseBuilder
             }).ToList()
         };
 
-        // Return album object directly (not wrapped) - same as CreateAlbumResponse
         return CreateJsonResponse(albumItem);
     }
 
-    /// <summary>
-    /// Creates a search hints response (Jellyfin search format).
-    /// </summary>
     public IActionResult CreateSearchHintsResponse(
         List<Song> songs,
         List<Album> albums,
@@ -237,7 +206,6 @@ public class JellyfinResponseBuilder
             }
         }
 
-        // Add artists first
         foreach (var artist in artists)
         {
             var item = ConvertArtistToJellyfinItem(artist);
@@ -253,7 +221,6 @@ public class JellyfinResponseBuilder
             });
         }
 
-        // Add albums
         foreach (var album in albums)
         {
             var item = ConvertAlbumToJellyfinItem(album);
@@ -271,7 +238,6 @@ public class JellyfinResponseBuilder
             });
         }
 
-        // Add songs
         foreach (var song in songs)
         {
             var item = ConvertSongToJellyfinItem(song);
@@ -300,9 +266,6 @@ public class JellyfinResponseBuilder
         });
     }
 
-    /// <summary>
-    /// Creates an error response in Jellyfin format.
-    /// </summary>
     public IActionResult CreateError(int statusCode, string message)
     {
         return new ObjectResult(new
@@ -316,17 +279,11 @@ public class JellyfinResponseBuilder
         };
     }
 
-    /// <summary>
-    /// Creates a JSON response.
-    /// </summary>
     public IActionResult CreateJsonResponse(object data)
     {
         return new JsonResult(data);
     }
 
-    /// <summary>
-    /// Converts a Song domain model to a Jellyfin item.
-    /// </summary>
     public Dictionary<string, object?> ConvertSongToJellyfinItem(Song song)
     {
         if (song.IsLocal && JellyfinItemSnapshotHelper.TryGetClonedRawItemSnapshot(song, out var original))
@@ -334,7 +291,6 @@ public class JellyfinResponseBuilder
             return original;
         }
 
-        // Add external/explicit labels to song titles for external tracks.
         var songTitle = song.Title;
         var artistNames = song.Artists
             .Where(name => !string.IsNullOrWhiteSpace(name))
@@ -359,7 +315,7 @@ public class JellyfinResponseBuilder
 
         if (!song.IsLocal)
         {
-            songTitle = BuildExternalSongTitle(song);
+            songTitle = ExternalTrackPresentation.Title(song);
 
             artistName = AppendExternalSourceLabel(artistName, song.ExternalProvider);
             albumName = AppendExternalSourceLabel(albumName, song.ExternalProvider);
@@ -410,7 +366,8 @@ public class JellyfinResponseBuilder
             ["Name"] = songTitle,
             ["ServerId"] = _serverId,
             ["Id"] = song.Id,
-            ["PlaylistItemId"] = song.Id, // Required for playlist items
+            // Playlist clients require a per-entry identity even for synthetic tracks.
+            ["PlaylistItemId"] = song.Id,
             // This capability flag prompts Jellyfin clients to call the lyrics route.
             // The route still returns 404 when every configured provider has a genuine miss.
             ["HasLyrics"] = !song.IsLocal,
@@ -478,10 +435,10 @@ public class JellyfinResponseBuilder
             ["SupportsSync"] = true
         };
 
-        // Add provider IDs for external content
         if (!song.IsLocal && !string.IsNullOrEmpty(song.ExternalProvider))
         {
             var supportsTranscoding = !ShouldDisableTranscoding(song.ExternalProvider);
+            item["Overview"] = ExternalTrackPresentation.PlaybackDescription;
 
             item["ProviderIds"] = new Dictionary<string, string>
             {
@@ -494,7 +451,7 @@ public class JellyfinResponseBuilder
                 providerIds["ISRC"] = song.Isrc;
             }
 
-            // Add MediaSources with complete structure matching real Jellyfin
+            // Synthetic audio needs a complete Jellyfin MediaSource shape for client playback.
             item["MediaSources"] = new[]
             {
                 new Dictionary<string, object?>
@@ -507,9 +464,9 @@ public class JellyfinResponseBuilder
                     ["Type"] = "Default",
                     ["Container"] = "flac",
                     ["Size"] = estimatedSize,
-                    ["Name"] = song.Title,
+                    ["Name"] = "Allstarr · Automatic source",
                     ["IsRemote"] = false,
-                    ["ETag"] = song.Id, // Use song ID as ETag
+                    ["ETag"] = song.Id,
                     ["RunTimeTicks"] = runTimeTicks,
                     ["ReadAtNativeFramerate"] = false,
                     ["IgnoreDts"] = false,
@@ -566,23 +523,11 @@ public class JellyfinResponseBuilder
         }
         else if (song.IsLocal && song.JellyfinMetadata != null && song.JellyfinMetadata.ContainsKey("MediaSources"))
         {
-            // Use preserved Jellyfin metadata for local tracks to maintain bitrate info
+            // Preserve native technical metadata such as bitrate.
             item["MediaSources"] = song.JellyfinMetadata["MediaSources"];
         }
 
         return item;
-    }
-
-    private static string BuildExternalSongTitle(Song song)
-    {
-        var title = AppendExternalSourceLabel(song.Title, song.ExternalProvider);
-
-        if (song.ExplicitContentLyrics == 1)
-        {
-            title = $"{title} [E]";
-        }
-
-        return title;
     }
 
     private static bool ShouldDisableTranscoding(string provider)
@@ -644,9 +589,6 @@ public class JellyfinResponseBuilder
             : string.Concat(words.Select(word => char.ToUpperInvariant(word[0])));
     }
 
-    /// <summary>
-    /// Converts an Album domain model to a Jellyfin item.
-    /// </summary>
     public Dictionary<string, object?> ConvertAlbumToJellyfinItem(Album album)
     {
         var albumName = album.Title;
@@ -726,7 +668,6 @@ public class JellyfinResponseBuilder
             ["ChildCount"] = album.SongCount ?? album.Songs.Count
         };
 
-        // Add provider IDs for external content
         if (!album.IsLocal && !string.IsNullOrEmpty(album.ExternalProvider))
         {
             item["ProviderIds"] = new Dictionary<string, string>
@@ -738,9 +679,6 @@ public class JellyfinResponseBuilder
         return item;
     }
 
-    /// <summary>
-    /// Converts an Artist domain model to a Jellyfin item.
-    /// </summary>
     public Dictionary<string, object?> ConvertArtistToJellyfinItem(Artist artist)
     {
         var artistName = string.IsNullOrWhiteSpace(artist.Name)
@@ -757,7 +695,7 @@ public class JellyfinResponseBuilder
             ["ServerId"] = _serverId,
             ["Id"] = artist.Id,
             ["ChannelId"] = (object?)null,
-            ["Genres"] = new string[0], // Artists aggregate genres from albums/tracks
+            ["Genres"] = new string[0],
             ["RunTimeTicks"] = 0,
             ["IsFolder"] = true,
             ["Type"] = "MusicArtist",
@@ -785,7 +723,6 @@ public class JellyfinResponseBuilder
             ["AlbumCount"] = artist.AlbumCount ?? 0
         };
 
-        // Add provider IDs for external content
         if (!artist.IsLocal && !string.IsNullOrEmpty(artist.ExternalProvider))
         {
             item["ProviderIds"] = new Dictionary<string, string>
@@ -797,9 +734,6 @@ public class JellyfinResponseBuilder
         return item;
     }
 
-    /// <summary>
-    /// Converts a Jellyfin JSON element to a dictionary.
-    /// </summary>
     public object ConvertJellyfinJsonElement(JsonElement element)
     {
         return element.ValueKind switch
@@ -818,9 +752,6 @@ public class JellyfinResponseBuilder
         };
     }
 
-    /// <summary>
-    /// Converts an ExternalPlaylist to a Jellyfin playlist item.
-    /// </summary>
     public Dictionary<string, object?> ConvertPlaylistToJellyfinItem(ExternalPlaylist playlist)
     {
         var curatorName = !string.IsNullOrEmpty(playlist.CuratorName)
@@ -833,7 +764,7 @@ public class JellyfinResponseBuilder
             ["ServerId"] = _serverId,
             ["Id"] = playlist.Id,
             ["ChannelId"] = (object?)null,
-            ["Genres"] = new string[0], // Playlists aggregate genres from tracks
+            ["Genres"] = new string[0],
             ["RunTimeTicks"] = playlist.Duration * TimeSpan.TicksPerSecond,
             ["IsFolder"] = true,
             ["Type"] = "Playlist",

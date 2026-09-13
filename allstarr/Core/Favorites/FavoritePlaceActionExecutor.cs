@@ -4,19 +4,12 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Favorites;
 
-public sealed class FavoritePlacementOptions
-{
-    public Guid RootId { get; set; }
-    public string RootPath { get; set; } = string.Empty;
-    public string PathTemplate { get; set; } = "{albumArtist}/{album}/{track} - {title}{extension}";
-}
-
 public sealed class FavoritePlaceActionExecutor(
     IDbContextFactory<Core.Storage.AllstarrDbContext> factory,
     ProviderDownloadArtifactResolver artifacts,
     IServiceScopeFactory scopes,
     FavoriteTrackMetadataResolver metadata,
-    FavoritePlacementOptions options) : IFavoriteActionExecutor
+    ManagedTrackPlacementOptions options) : IFavoriteActionExecutor
 {
     public string ActionType => "place";
     public async Task<FavoriteActionExecutionResult> ExecuteAsync(FavoriteEventRecord favoriteEvent,

@@ -1,5 +1,6 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Deezer;
+using allstarr.Core.Providers.Qobuz;
 using allstarr.Core.Matching;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
@@ -234,10 +235,15 @@ public sealed class DeezerMetadataCapabilityAdapterTests
         var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
         var registry = new ProviderRegistry(
             [DeezerMetadataCapabilityAdapter.CreateRegistration(adapter, Playlist(), Download(), Streaming())]);
+        var health = new Mock<IProviderRouteHealthSource>(MockBehavior.Strict);
+        health.Setup(item => item.Get("deezer", null, ProviderCapabilityKind.Metadata))
+            .Returns(new ProviderRouteHealthSnapshot(
+                ProviderRouteHealthState.Unknown,
+                CircuitOpen: false));
         var router = new ProviderRouter(
             registry,
             new Mock<IProviderRouteAccountResolver>(MockBehavior.Strict).Object,
-            new Mock<IProviderRouteHealthSource>(MockBehavior.Strict).Object,
+            health.Object,
             new Mock<IProviderRouteSidecarSource>(MockBehavior.Strict).Object,
             new Mock<ITrackIdentityService>(MockBehavior.Strict).Object);
         var context = Context();
@@ -361,8 +367,10 @@ public sealed class DeezerMetadataCapabilityAdapterTests
         legacy.VerifyAll();
     }
 
-    [Fact]
-    public async Task PlaylistAdapter_PreservesSummaryAndOrderedTrackFacts()
+    [Theory]
+    [InlineData("deezer")]
+    [InlineData("qobuz")]
+    public async Task PublicPlaylistAdapters_PreserveSummaryAndOrderedTrackFacts(string providerId)
     {
         var created = new DateTime(2023, 4, 5, 0, 0, 0, DateTimeKind.Utc);
         var playlist = new ExternalPlaylist
@@ -371,7 +379,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
             Name = "Road",
             Description = "Drive",
             CuratorName = "Curator",
-            Provider = "deezer",
+            Provider = providerId,
             TrackCount = 2,
             Duration = 420,
             CoverUrl = "https://images.example.test/playlist.webp",
@@ -380,9 +388,9 @@ public sealed class DeezerMetadataCapabilityAdapterTests
         var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
         legacy.Setup(item => item.SearchPlaylistsAsync("road", 5, It.IsAny<CancellationToken>()))
             .ReturnsAsync([playlist]);
-        legacy.Setup(item => item.GetPlaylistAsync("deezer", "playlist-1", It.IsAny<CancellationToken>()))
+        legacy.Setup(item => item.GetPlaylistAsync(providerId, "playlist-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(playlist);
-        legacy.Setup(item => item.GetPlaylistTracksAsync("deezer", "playlist-1", It.IsAny<CancellationToken>()))
+        legacy.Setup(item => item.GetPlaylistTracksAsync(providerId, "playlist-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(
             [
                 new Song
@@ -396,16 +404,15 @@ public sealed class DeezerMetadataCapabilityAdapterTests
                     Track = 2, DiscNumber = 1, Year = 2023
                 }
             ]);
-        var metadata = new DeezerMetadataCapabilityAdapter(legacy.Object);
-        var adapter = new DeezerPlaylistCapabilityAdapter(legacy.Object, metadata);
-        var context = PlaylistContext();
+        var (metadata, adapter) = PublicPlaylistAdapter(providerId, legacy.Object);
+        var context = PlaylistContext(providerId);
 
         var search = (await adapter.SearchPlaylistsAsync(
             context, new("road", new ProviderPageRequest(5)))).RequireValue();
         var summary = Assert.Single(search.Items);
         var read = (await adapter.GetPlaylistTracksAsync(
             context,
-            new(new("deezer", ProviderResourceKind.Playlist, "playlist-1"),
+            new(new(providerId, ProviderResourceKind.Playlist, "playlist-1"),
                 new ProviderPageRequest(1), summary.SourceRevision))).RequireValue();
 
         Assert.Equal("Curator", summary.Owner.DisplayName);
@@ -449,25 +456,53 @@ public sealed class DeezerMetadataCapabilityAdapterTests
             cancellationToken: cancellationToken);
     }
 
-    private static ProviderExecutionContext PlaylistContext()
+    private static ProviderExecutionContext PlaylistContext(string providerId)
     {
         var context = Context();
         return new(
             context.Actor,
-            context.ProviderId,
+            providerId,
             new ProviderAccountContext(
                 Guid.CreateVersion7(),
-                "deezer",
+                providerId,
                 ProviderAccountScope.User,
                 1,
                 tenantId: context.Actor.TenantId,
                 ownerUserId: context.Actor.EffectiveUserId),
             context.Library,
-            context.Policy,
+            new ProviderExecutionPolicy(
+                context.Policy.Quality,
+                context.Policy.ExplicitContent,
+                context.Policy.AllowFallback,
+                context.Policy.AllowSharedAccount,
+                context.Policy.AllowManagedDownloads,
+                [providerId]),
             context.OperationId,
             context.CorrelationId,
             context.Deadline,
             context.CancellationToken);
+    }
+
+    private static (IProviderMetadataCapability Metadata, IProviderPlaylistCapability Playlist)
+        PublicPlaylistAdapter(string providerId, IConcreteMetadataService legacy) => providerId switch
+        {
+            "deezer" => CreateDeezer(legacy),
+            "qobuz" => CreateQobuz(legacy),
+            _ => throw new ArgumentOutOfRangeException(nameof(providerId), providerId, null)
+        };
+
+    private static (IProviderMetadataCapability, IProviderPlaylistCapability) CreateDeezer(
+        IConcreteMetadataService legacy)
+    {
+        var metadata = new DeezerMetadataCapabilityAdapter(legacy);
+        return (metadata, new DeezerPlaylistCapabilityAdapter(legacy, metadata));
+    }
+
+    private static (IProviderMetadataCapability, IProviderPlaylistCapability) CreateQobuz(
+        IConcreteMetadataService legacy)
+    {
+        var metadata = new QobuzMetadataCapabilityAdapter(legacy);
+        return (metadata, new QobuzPlaylistCapabilityAdapter(legacy, metadata));
     }
 
     private static IProviderDownloadCapability Download() =>

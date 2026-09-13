@@ -1,3 +1,4 @@
+using allstarr.Core.Downloads;
 using allstarr.Core.Favorites;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Identity;
@@ -98,6 +99,85 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         var favoriteState = Assert.Single(await database.Set<FavoriteStateRecord>().ToListAsync());
         Assert.True(favoriteState.IsFavorite);
         Assert.Equal(receipt.EventId, favoriteState.LastEventId);
+    }
+
+    [Fact]
+    public async Task FavoriteLifecycle_WritesScopedRecommendationSignalsThatCancelOnUnfavorite()
+    {
+        var backendIdentityId = Guid.CreateVersion7();
+        await using (var database = await _factory.CreateDbContextAsync())
+        {
+            database.BackendIdentities.Add(new BackendIdentityRecord
+            {
+                Id = backendIdentityId,
+                TenantId = _tenantId,
+                UserId = _userId,
+                BackendType = "jellyfin",
+                BackendInstanceId = "jellyfin-main",
+                PrincipalId = "backend-user",
+                CreatedAt = _clock.UtcNow,
+                LastSeenAt = _clock.UtcNow
+            });
+            database.LibraryTracks.Add(new LibraryTrackRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = _tenantId,
+                OwnerUserId = _userId,
+                BackendIdentityId = backendIdentityId,
+                LibraryScopeId = "music",
+                Protocol = "jellyfin",
+                BackendInstanceId = "jellyfin-main",
+                BackendItemId = "local-track",
+                FilePath = "/read-only/library/track.flac",
+                Title = "Fixture",
+                Artist = "Artist",
+                DurationMilliseconds = 180_000,
+                ProviderIdsJson = "{\"fixture\":\"track-1\"}",
+                IndexedAt = _clock.UtcNow,
+                SourceModifiedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            });
+            database.IntelligencePolicies.Add(new IntelligencePolicyRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = _tenantId,
+                OwnerUserId = _userId,
+                Protocol = "jellyfin",
+                BackendInstanceId = "jellyfin-main",
+                LibraryScopeId = "music",
+                Enabled = true,
+                AllowedSignalTypesJson = "[\"favorite\"]",
+                EnabledProvidersJson = "[]",
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow,
+                Revision = 1
+            });
+            await database.SaveChangesAsync();
+        }
+        var signals = new RecommendationSignalWriter(_factory, _clock);
+        var handler = new FavoriteActionJobHandler(_factory, [], _clock, signals);
+
+        await _pipeline.RecordAsync(Request(FavoriteOperation.Favorite, "signal-v1", libraryScopeId: "music"));
+        var favorite = await _jobs.ClaimNextAsync("favorite-signal", [FavoriteActionPipeline.JobType]);
+        Assert.NotNull(favorite);
+        await _jobs.CompleteAsync(favorite!,
+            await handler.ExecuteAsync(new DurableJobExecutionContext(favorite!, EmptyServices.Instance), default));
+
+        _clock.UtcNow = _clock.UtcNow.AddMinutes(1);
+        await _pipeline.RecordAsync(Request(FavoriteOperation.Unfavorite, "signal-v1", libraryScopeId: "music"));
+        var unfavorite = await _jobs.ClaimNextAsync("unfavorite-signal", [FavoriteActionPipeline.JobType]);
+        Assert.NotNull(unfavorite);
+        await _jobs.CompleteAsync(unfavorite!,
+            await handler.ExecuteAsync(new DurableJobExecutionContext(unfavorite!, EmptyServices.Instance), default));
+
+        await using var verified = await _factory.CreateDbContextAsync();
+        var values = await verified.ListeningSignals.OrderBy(item => item.ObservedAt)
+            .Select(item => item.Value).ToListAsync();
+        Assert.Equal([1d, -1d], values);
+        var profile = await new ListeningProfileService(_factory, _clock).BuildAsync(
+            new IntelligenceScope(_tenantId, _userId, "jellyfin", "jellyfin-main", "music"));
+        Assert.Equal(0, profile.FavoriteCount);
+        Assert.Empty(profile.TopTrackKeys);
     }
 
     [Fact]
@@ -293,9 +373,9 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         Assert.Contains(libraryTrackId.ToString(), audit.DetailsJson, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("/source/never-touched.flac", audit.DetailsJson, StringComparison.Ordinal);
 
-        var download = await new FavoriteDownloadActionExecutor(null!, null!, null!, _clock, _factory, null!)
+        var download = await new FavoriteDownloadActionExecutor(null!, _factory)
             .ExecuteAsync(favoriteEvent, Action("download"), default);
-        var place = await new FavoritePlaceActionExecutor(_factory, null!, null!, null!, new FavoritePlacementOptions())
+        var place = await new FavoritePlaceActionExecutor(_factory, null!, null!, null!, new ManagedTrackPlacementOptions())
             .ExecuteAsync(favoriteEvent, Action("place"), default);
         var enrich = await new FavoriteEnrichActionExecutor(_factory, null!, null!, null!, null!)
             .ExecuteAsync(favoriteEvent, Action("enrich"), default);

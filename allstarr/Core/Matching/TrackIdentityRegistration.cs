@@ -12,9 +12,12 @@ public static class TrackIdentityRegistration
         services.TryAddSingleton<TrackMatchDecisionEngine>();
         services.TryAddSingleton<TrackMatchCommandService>();
         services.TryAddSingleton<PlaylistRematchService>();
+        services.TryAddSingleton<TrackRematchAllService>();
         services.TryAddSingleton<ITrackMatchRepository>(provider =>
             provider.GetRequiredService<TrackMatchCommandService>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IDurableJobHandler, PlaylistRematchJobHandler>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IDurableJobHandler, TrackRematchAllJobHandler>());
+        services.AddHostedService<TrackMatchAlgorithmRolloutService>();
         services.TryAddSingleton<Playlists.IPlaylistPersistenceService, Playlists.PlaylistPersistenceService>();
         return services;
     }

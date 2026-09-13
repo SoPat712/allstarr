@@ -51,7 +51,8 @@
   let sourceQuery = $state("");
   let sourcePlaylists = $state<PlaylistDiscoveryItem[]>([]);
   let sourceCursor = $state("");
-  let schedule = $state("manual");
+  let schedule = $state("once");
+  let trackRetention = $state<"onDemand" | "keepAll">("onDemand");
   let mode = $state<DestinationMode>("materialized");
   let projectionMode = $state<ProjectionMode>("resolved");
   let materializationMode = $state<"reconcile" | "recreate">("reconcile");
@@ -100,6 +101,7 @@
       : schedule === "weekly"
         ? "every Monday at 3:00 AM"
         : undefined);
+  const importMode = $derived<"oneTime" | "linked">(schedule === "once" ? "oneTime" : "linked");
   const behaviorSummary = $derived(playlistBehaviorSummary(
     mode,
     materializationMode,
@@ -107,6 +109,8 @@
     targetName,
     targetPlaylistName,
     updateCadence,
+    importMode,
+    trackRetention,
   ));
   const needsTargetPlaylist = $derived(mode !== "virtual" || projectionMode === "target");
   const stepReady = $derived(
@@ -155,7 +159,8 @@
     sourceQuery = "";
     sourcePlaylists = [];
     sourceCursor = "";
-    schedule = "manual";
+    schedule = "once";
+    trackRetention = "onDemand";
     mode = "materialized";
     projectionMode = "resolved";
     materializationMode = "reconcile";
@@ -278,13 +283,15 @@
         mode,
         projectionMode,
         materializationMode,
+        importMode,
+        trackRetention,
         mirrorStaleEntries: syncBehavior === "mirror",
         preserveManualEntries: syncBehavior === "preserve",
         syncName,
         syncDescription,
         syncArtwork,
       });
-      if (schedule !== "manual") {
+      if (!["once", "manual"].includes(schedule)) {
         const cronExpression = ({
           hourly: "0 * * * *",
           daily: "0 3 * * *",
@@ -304,7 +311,7 @@
         }
       }
       open = false;
-      await onSaved(`Playlist linked. ${behaviorSummary}`);
+      await onSaved(`${importMode === "oneTime" ? "Playlist import started" : "Playlist linked and initial import started"}. ${behaviorSummary}`);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Playlist could not be linked.";
     } finally {
@@ -320,15 +327,23 @@
       <header>
         <div>
           <p class="eyebrow">Library intake</p>
-          <Dialog.Title>Link a playlist</Dialog.Title>
-          <Dialog.Description>Choose the original playlist, what listeners see, and whether Allstarr updates a playlist in your media server.</Dialog.Description>
+          <Dialog.Title>Import a playlist</Dialog.Title>
+          <Dialog.Description>Choose your source, where the playlist appears, and whether Allstarr should keep it updated.</Dialog.Description>
         </div>
         <Dialog.Close class="icon-button" aria-label="Close playlist setup"><X size={18} aria-hidden="true" /></Dialog.Close>
       </header>
 
       <nav class="playlist-add-steps" aria-label="Playlist setup progress">
         {#each ["Source", "What listeners see", "Where it appears", "Updates"] as label, index}
-          <button class:active={step === index + 1} class:complete={step > index + 1} type="button" onclick={() => { if (index + 1 < step) step = index + 1; }}>
+          <button
+            class:active={step === index + 1}
+            class:complete={step > index + 1}
+            type="button"
+            disabled={index + 1 >= step}
+            aria-current={step === index + 1 ? "step" : undefined}
+            aria-label={index + 1 < step ? `Back to ${label}` : label}
+            onclick={() => step = index + 1}
+          >
             <span>{index + 1}</span>{label}
           </button>
         {/each}
@@ -392,7 +407,7 @@
         {:else if step === 1}
           <section class="playlist-add-step">
             {#if !accounts.length && !loading}
-              <div class="compact-empty"><strong>No Playlist Sources are available</strong><p>Connect a Playlist-capable account under Integrations first.</p><Button href="#/integrations/accounts">Open Accounts</Button></div>
+              <div class="compact-empty"><strong>Connect your music account first</strong><p>Your Spotify or other playlist account is encrypted, owned by you, and kept separate from other listeners.</p><Button href="#/integrations/accounts?source=spotify&connect=1">Connect Spotify</Button></div>
             {:else}
               <div class="playlist-source-groups">
                 {#each providerIds as providerId}
@@ -456,14 +471,26 @@
               </div>
             {/if}
             <div class="setting-field">
-              <span><strong>Automatic updates</strong><small>Times use {Intl.DateTimeFormat().resolvedOptions().timeZone}.</small></span>
-              <SelectField bind:value={schedule} label="Automatic updates" options={[
-                { value: "manual", label: "Manual only" },
+              <span><strong>Source updates</strong><small>Choose a one-time import or keep following later changes. Scheduled times use {Intl.DateTimeFormat().resolvedOptions().timeZone}.</small></span>
+              <SelectField bind:value={schedule} label="Source updates" options={[
+                { value: "once", label: "Import once" },
+                { value: "manual", label: "Update when I ask" },
                 { value: "hourly", label: "Every hour" },
                 { value: "daily", label: "Daily at 3:00 AM" },
                 { value: "weekly", label: "Mondays at 3:00 AM" },
               ]} />
             </div>
+            <fieldset class="audience-options playlist-mode-options">
+              <legend>Song storage</legend>
+              <label class:active={trackRetention === "onDemand"}>
+                <input bind:group={trackRetention} type="radio" value="onDemand" />
+                <span><strong>Stream when played</strong><small>Use the normal playback cache. Songs are not permanently stored just because they are in this playlist.</small></span>
+              </label>
+              <label class:active={trackRetention === "keepAll"}>
+                <input bind:group={trackRetention} type="radio" value="keepAll" />
+                <span><strong>Keep every song</strong><small>Queue owner-scoped managed downloads for every downloadable song after each import.</small></span>
+              </label>
+            </fieldset>
             {#if mode !== "virtual"}
               {#if materializationMode === "reconcile"}
                 <div class="setting-field">
@@ -485,12 +512,12 @@
         {/if}
       </div>
 
-      <footer class="playlist-add-footer">
+      <footer class="dialog-actions">
         {#if step === 1}<Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>{:else}<Button variant="secondary" onclick={() => step--}>Back</Button>{/if}
         {#if step < 4}
           <Button disabled={!stepReady || loading} onclick={() => void next()}>Continue</Button>
         {:else}
-          <Button disabled={!sourcePlaylistId || !targetId || (needsTargetPlaylist && !targetPlaylistId) || !selectedLibraryScope || saving} onclick={() => void save()}>{saving ? "Linking…" : "Link playlist"}</Button>
+          <Button disabled={!sourcePlaylistId || !targetId || (needsTargetPlaylist && !targetPlaylistId) || !selectedLibraryScope || saving} onclick={() => void save()}>{saving ? "Starting import…" : importMode === "oneTime" ? "Import playlist" : "Import and link"}</Button>
         {/if}
       </footer>
     </Dialog.Content>

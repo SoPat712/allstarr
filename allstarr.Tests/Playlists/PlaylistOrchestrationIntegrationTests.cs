@@ -1025,6 +1025,62 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     }
 
     [Fact]
+    public async Task OneTimeImport_ReusesPublishedSnapshotWithoutReadingSourceAgain()
+    {
+        await SetLink(importMode: PlaylistImportMode.OneTime);
+        _target.CanWriteArtwork = true;
+        _source.Snapshot = Snapshot(
+            "revision-imported",
+            Entry(0, "entry-imported", "source-1", "One"));
+
+        var imported = await _service.RunAsync(Context(), new(_link, 51));
+        Assert.Equal(1, _source.CollectCalls);
+        Assert.Equal(1, _source.ArtworkCalls);
+        Assert.Equal("One", Assert.Single(imported.Plan.Entries).SourceMetadata?.Title);
+        var frozenSnapshotId = imported.Plan.SourceSnapshotId;
+        var laterSnapshotId = Guid.CreateVersion7();
+        await using (var seed = await _factory.CreateDbContextAsync())
+        {
+            seed.PlaylistSourceSnapshots.Add(new PlaylistSourceSnapshotRecord
+            {
+                Id = laterSnapshotId,
+                TenantId = _tenant,
+                OwnerUserId = _user,
+                PlaylistLinkId = _link,
+                ProviderAccountId = _account,
+                SnapshotVersion = 2,
+                ProviderRevision = "revision-later",
+                Name = "Later snapshot",
+                PayloadSha256 = Hash("later-snapshot"),
+                CorrelationId = "later-snapshot",
+                RetrievedAt = _now.AddMinutes(1),
+                PublishedAt = _now.AddMinutes(1)
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        _source.Snapshot = Snapshot(
+            "revision-ignored",
+            Entry(0, "entry-ignored", "source-2", "Two"));
+        _source.FailureCode = "source-must-not-be-read";
+
+        var overrideError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _service.RunAsync(Context(), new(_link, 52, SourceSnapshotId: laterSnapshotId)));
+        Assert.Contains("first published snapshot", overrideError.Message, StringComparison.Ordinal);
+
+        var rebuilt = await _service.RunAsync(Context(), new(_link, 53));
+
+        Assert.Equal(1, _source.CollectCalls);
+        Assert.Equal(1, _source.ArtworkCalls);
+        Assert.Equal(frozenSnapshotId, rebuilt.Plan.SourceSnapshotId);
+        Assert.Equal("One", Assert.Single(rebuilt.Plan.Entries).SourceMetadata?.Title);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _service.RefreshAsync(Context(), _link));
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(2, await db.PlaylistSourceSnapshots.CountAsync());
+    }
+
+    [Fact]
     public async Task Materialization_count_drift_is_persisted_and_actionable()
     {
         _target.ReportedTrackCountAdjustment = 1;
@@ -1703,12 +1759,16 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         CreatedAt = _now
     };
 
-    private async Task SetLink(PlaylistLinkMode? mode = null, PlaylistMaterializationMode? materialization = null)
+    private async Task SetLink(
+        PlaylistLinkMode? mode = null,
+        PlaylistMaterializationMode? materialization = null,
+        PlaylistImportMode? importMode = null)
     {
         await using var db = await _factory.CreateDbContextAsync();
         var link = await db.PlaylistLinks.SingleAsync();
         if (mode.HasValue) link.Mode = mode.Value;
         if (materialization.HasValue) link.MaterializationMode = materialization.Value;
+        if (importMode.HasValue) link.ImportMode = importMode.Value;
         await db.SaveChangesAsync();
     }
 
@@ -1783,16 +1843,25 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     {
         public CollectedPlaylistSourceSnapshot Snapshot { get; set; } = null!;
         public string? FailureCode { get; set; }
+        public int CollectCalls { get; private set; }
+        public int ArtworkCalls { get; private set; }
         public ProviderOutcome<ProviderPlaylistArtwork> Artwork { get; set; } =
             ProviderOutcome<ProviderPlaylistArtwork>.Failure(new ProviderError(ProviderErrorKind.CapabilityUnavailable));
-        public Task<CollectedPlaylistSourceSnapshot> CollectAsync(ProtocolExecutionContext context, PlaylistLinkRecord link, CancellationToken cancellationToken) =>
-            FailureCode == null
+        public Task<CollectedPlaylistSourceSnapshot> CollectAsync(ProtocolExecutionContext context, PlaylistLinkRecord link, CancellationToken cancellationToken)
+        {
+            CollectCalls++;
+            return FailureCode == null
                 ? Task.FromResult(Snapshot)
                 : Task.FromException<CollectedPlaylistSourceSnapshot>(
                     new PlaylistSourceUnavailableException(FailureCode));
+        }
         public Task<ProviderOutcome<ProviderPlaylistArtwork>> ResolveArtworkAsync(
             ProtocolExecutionContext context, PlaylistLinkRecord link, ProviderPlaylistArtworkRequest request,
-            CancellationToken cancellationToken) => Task.FromResult(Artwork);
+            CancellationToken cancellationToken)
+        {
+            ArtworkCalls++;
+            return Task.FromResult(Artwork);
+        }
     }
     private sealed class CollectingLogger<T>(List<string> messages) : ILogger<T>
     {

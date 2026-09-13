@@ -63,6 +63,10 @@ public class AdminAuthControllerTests
         Assert.Equal("user-1", payload.RootElement.GetProperty("user").GetProperty("id").GetString());
         Assert.Equal("josh", payload.RootElement.GetProperty("user").GetProperty("name").GetString());
         Assert.False(payload.RootElement.GetProperty("user").GetProperty("isAdministrator").GetBoolean());
+        Assert.Equal("Jellyfin", payload.RootElement.GetProperty("backend").GetString());
+        Assert.Equal(
+            "/api/admin/auth/me/avatar?user=user-1",
+            payload.RootElement.GetProperty("user").GetProperty("avatarUrl").GetString());
 
         Assert.NotNull(capturedRequest);
         Assert.Equal(HttpMethod.Post, capturedRequest!.Method);
@@ -150,6 +154,8 @@ public class AdminAuthControllerTests
         using var payload = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
         Assert.Equal("Subsonic", payload.RootElement.GetProperty("backend").GetString());
         Assert.True(payload.RootElement.GetProperty("user").GetProperty("isAdministrator").GetBoolean());
+        Assert.Equal(JsonValueKind.Null,
+            payload.RootElement.GetProperty("user").GetProperty("avatarUrl").ValueKind);
         Assert.NotNull(capturedRequest);
         Assert.Equal(HttpMethod.Post, capturedRequest!.Method);
         Assert.Equal("http://subsonic.local/rest/getUser.view", capturedRequest.RequestUri?.ToString());
@@ -187,6 +193,58 @@ public class AdminAuthControllerTests
         });
 
         Assert.IsType<UnauthorizedObjectResult>(result);
+    }
+
+    [Theory]
+    [InlineData(BackendType.Jellyfin)]
+    [InlineData(BackendType.Subsonic)]
+    public async Task Login_WithMalformedBackendResponse_ReturnsBadGateway(BackendType backend)
+    {
+        var handler = new DelegateHttpMessageHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("not-json")
+            }));
+        var controller = CreateController(
+            handler,
+            AdminAuthSessionTestSupport.Create(),
+            new DefaultHttpContext(),
+            backend);
+
+        var result = Assert.IsType<ObjectResult>(await controller.Login(new AdminAuthController.LoginRequest
+        {
+            Username = "alice",
+            Password = "secret-pass"
+        }));
+
+        Assert.Equal(StatusCodes.Status502BadGateway, result.StatusCode);
+        Assert.Contains("invalid authentication response", JsonSerializer.Serialize(result.Value),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(BackendType.Jellyfin)]
+    [InlineData(BackendType.Subsonic)]
+    public async Task Login_WhenRequestIsCanceled_ReturnsClientClosedRequest(BackendType backend)
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var context = new DefaultHttpContext { RequestAborted = cancellation.Token };
+        var handler = new DelegateHttpMessageHandler((_, token) =>
+            Task.FromCanceled<HttpResponseMessage>(token));
+        var controller = CreateController(
+            handler,
+            AdminAuthSessionTestSupport.Create(),
+            context,
+            backend);
+
+        var result = Assert.IsType<StatusCodeResult>(await controller.Login(new AdminAuthController.LoginRequest
+        {
+            Username = "alice",
+            Password = "secret-pass"
+        }));
+
+        Assert.Equal(499, result.StatusCode);
     }
 
     [Fact]

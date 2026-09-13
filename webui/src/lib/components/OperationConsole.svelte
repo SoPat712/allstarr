@@ -23,6 +23,7 @@
   let open = $state(false);
   let cancelOpen = $state(false);
   let cancelling = $state(false);
+  let cancelError = $state("");
   let observedJobId = "";
   let observedState = "";
 
@@ -68,10 +69,13 @@
   async function cancel() {
     if (!job || cancelling) return;
     cancelling = true;
+    cancelError = "";
     try {
       await home.cancelJob(job.id);
       cancelOpen = false;
       await load();
+    } catch (cause) {
+      cancelError = cause instanceof Error ? cause.message : "The operation could not be cancelled.";
     } finally {
       cancelling = false;
     }
@@ -122,7 +126,7 @@
             {/each}
           </ol>
           {#if active && !job.cancellationRequestedAt}
-            <Button variant="secondary" onclick={() => { open = false; cancelOpen = true; }}>Cancel operation</Button>
+            <Button variant="secondary" onclick={() => { open = false; cancelError = ""; cancelOpen = true; }}>Cancel operation</Button>
           {/if}
         </div>
       </Popover.Content>
@@ -136,6 +140,8 @@
     confirmLabel="Cancel operation"
     cancelLabel="Keep running"
     disabled={cancelling}
+    closeOnConfirm={false}
+    error={cancelError}
     onConfirm={cancel}
   />
 {/if}

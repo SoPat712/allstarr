@@ -4,13 +4,7 @@ using Microsoft.Extensions.Logging;
 
 namespace allstarr.Services.Spotify;
 
-/// <summary>
-/// Provider-agnostic descriptor for a single source track coming from any
-/// injected playlist provider (Spotify today, Apple MusicKit in the works,
-/// Deezer/Qobuz/extension playlists later). The injected matcher only needs
-/// these fields — it does not care whether the source is a Spotify track,
-/// an Apple MusicKit song, or anything else.
-/// </summary>
+// Keep playlist matching independent of provider-specific payloads.
 public sealed record InjectedSourceTrack(
     string SourceId,
     string SourceProvider,
@@ -22,9 +16,6 @@ public sealed record InjectedSourceTrack(
     string? AlbumArtUrl = null,
     int Position = 0);
 
-/// <summary>
-/// Outcome of a per-provider match walk for a single injected source track.
-/// </summary>
 public sealed record PerProviderMatchResult(
     Song? MatchedSong,
     string? MatchType,
@@ -39,10 +30,6 @@ public sealed record PerProviderAcceptedMatch(
     string Provider,
     double Score);
 
-/// <summary>
-/// One step in a per-provider walk. The outcome describes why the matcher
-/// moved on (typed miss, low score, or a provider that was not callable).
-/// </summary>
 public sealed record PerProviderAttempt(
     string Provider,
     string Query,
@@ -51,18 +38,6 @@ public sealed record PerProviderAttempt(
     string Outcome,
     string? ReasonCode);
 
-/// <summary>
-/// Per-track, per-provider matcher for injected playlist tracks. Walks the
-/// configured playback priority list in order and stops on the first
-/// verified identity (ISRC) or score above the per-provider accept
-/// threshold. Local library is the implicit first stop and the caller is
-/// expected to pass `hasLocalMatch=true` when the local pass already won.
-///
-/// The walker is intentionally provider-agnostic. The injected source
-/// describes itself through <see cref="InjectedSourceTrack"/>; the host
-/// (Spotify, Apple MusicKit, etc.) decides which concrete metadata
-/// services to register with the resolver.
-/// </summary>
 public static class PerProviderTrackMatcher
 {
     public const string MatchTypeLocal = "fuzzy-local";
@@ -149,10 +124,6 @@ public static class PerProviderTrackMatcher
     }
 }
 
-/// <summary>
-/// Per-provider accept thresholds and helper scoring logic. Centralized so
-/// providers can be tuned without touching the walk loop.
-/// </summary>
 public sealed class PerProviderAcceptThresholds
 {
     public double ProviderAcceptScore { get; init; } = 40;
@@ -246,41 +217,15 @@ public static class PerProviderTrackScorer
     }
 }
 
-/// <summary>
-/// Resolves a provider id (e.g. "deezer", "applemusic", "spotiflac-tidal-web")
-/// to a concrete metadata service so a walk step can call a single provider
-/// without fanning out to every enabled provider at once.
-/// </summary>
 public static class PerProviderServiceResolver
 {
     public static IConcreteMetadataService? Resolve(
         IEnumerable<IConcreteMetadataService> services,
-        string providerId)
-    {
-        var normalized = providerId.Trim().ToLowerInvariant();
-        return services.FirstOrDefault(service =>
-            Resolves(service, normalized));
-    }
-
-    private static bool Resolves(IConcreteMetadataService service, string normalized)
-    {
-        var typeName = service.GetType().Name;
-        if (normalized == "applemusic" || normalized == "apple-download")
-        {
-            return typeName.StartsWith("AppleMusic", StringComparison.OrdinalIgnoreCase);
-        }
-        return typeName.StartsWith(normalized, StringComparison.OrdinalIgnoreCase);
-    }
+        string providerId) => services.FirstOrDefault(service => service.ProviderId.Equals(
+            ConcreteProviderId.Normalize(providerId), StringComparison.Ordinal));
 }
 
-/// <summary>
-/// Per-track, per-provider walk for an injected source track. This is the
-/// shared engine that Spotify, Apple MusicKit, and any future injected
-/// source use. Local library is always the implicit first stop. The walker
-/// stops on the first verified identity (ISRC) or per-provider accept and
-/// only falls back to title-only retries when no provider crossed the
-/// threshold.
-/// </summary>
+// Walk configured providers deterministically: local, verified ISRC, fuzzy, then fallback.
 public sealed class PerProviderTrackWalker
 {
     private readonly IReadOnlyList<IConcreteMetadataService> _concreteServices;
@@ -300,12 +245,6 @@ public sealed class PerProviderTrackWalker
         _searchLimit = searchLimit;
     }
 
-    /// <summary>
-    /// Walks the configured playback priority list for one source track.
-    /// Pass `localMatch` when the local pass already won to short-circuit
-    /// the walk. Returns the accepted match, if any, and a list of every
-    /// provider step that was attempted.
-    /// </summary>
     public async Task<PerProviderMatchResult> WalkAsync(
         InjectedSourceTrack source,
         IReadOnlyList<string> playbackProviders,
@@ -328,9 +267,6 @@ public sealed class PerProviderTrackWalker
         var artistQuery = $"{titleStripped} {primaryArtist}".Trim();
         var titleOnlyQuery = titleStripped;
 
-        // 1. Per-provider walk in configured order.
-        // We try each provider's own concrete search directly so the walk is
-        // deterministic and we can short-circuit on the first accept.
         for (var index = 0; index < playbackProviders.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -356,7 +292,7 @@ public sealed class PerProviderTrackWalker
                 continue;
             }
 
-            // ISRC verified identity on this provider's catalog, if the source has one.
+            // Prefer verified catalog identity over fuzzy scoring within each provider.
             if (!string.IsNullOrWhiteSpace(source.Isrc))
             {
                 var isrcStep = await TryIsrcStepAsync(
@@ -384,7 +320,6 @@ public sealed class PerProviderTrackWalker
                 }
             }
 
-            // Fuzzy search on this provider only.
             var stepResult = await StepProviderAsync(
                 providerService,
                 providerId,
@@ -414,10 +349,7 @@ public sealed class PerProviderTrackWalker
             }
         }
 
-        // 2. Title-only retry on the first N providers only when no provider
-        // produced an accepted match. Once any provider accepted the track,
-        // alternate title-only searches add traffic without adding a fallback
-        // that the normal provider walk did not already collect.
+        // Retry title-only only after every normal query misses to avoid needless provider traffic.
         if (acceptedMatches.Count == 0)
         {
             var titleOnlyRetry = 0;
@@ -440,8 +372,6 @@ public sealed class PerProviderTrackWalker
                     source,
                     cancellationToken,
                     matchType: PerProviderTrackMatcher.MatchTypeTitleOnly);
-                // Title-only is a distinct conservative alternate query. Record both
-                // accepts and misses so operators can see why the walk fell through.
                 walked.Add(stepResult.Attempt);
                 if (stepResult.AcceptedSong != null)
                 {

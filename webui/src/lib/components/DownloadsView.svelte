@@ -49,6 +49,7 @@
   let transcodeCacheMinutes = $state(60);
   let controlsReady = $state(false);
   let controlsError = $state("");
+  let cacheControlsDirty = $state(false);
 
   const cached = $derived(storage === "cache");
   const label = $derived(cached ? "Cached" : "Kept");
@@ -83,9 +84,11 @@
       : `${label} tracks are unavailable.`;
     if (schemaResult.status === "fulfilled") providers = schemaResult.value.providers;
     if (cached && configResult.status === "fulfilled" && configResult.value) {
-      storageMode = String(pathValue(configResult.value, "library.storageMode") ?? "Cache");
-      cacheDurationHours = Number(pathValue(configResult.value, "library.cacheDurationHours") ?? 24);
-      transcodeCacheMinutes = Number(pathValue(configResult.value, "cache.transcodeCacheMinutes") ?? 60);
+      if (!cacheControlsDirty) {
+        storageMode = String(pathValue(configResult.value, "library.storageMode") ?? "Cache");
+        cacheDurationHours = Number(pathValue(configResult.value, "library.cacheDurationHours") ?? 24);
+        transcodeCacheMinutes = Number(pathValue(configResult.value, "cache.transcodeCacheMinutes") ?? 60);
+      }
       controlsReady = true;
       controlsError = "";
     } else if (cached && configResult.status === "rejected") {
@@ -124,6 +127,7 @@
         CACHE_DURATION_HOURS: String(cacheDurationHours),
         CACHE_TRANSCODE_MINUTES: String(transcodeCacheMinutes),
       });
+      cacheControlsDirty = false;
       feedback = "Track cache settings saved.";
       await refresh();
     } catch (cause) {
@@ -182,12 +186,12 @@
     <div class="degraded-banner" role="status">
       <span aria-hidden="true">!</span>
       <p><strong>Managed audio may be stale.</strong> {error}</p>
-      <Button variant="secondary" size="sm" onclick={() => void refresh()}>Retry</Button>
+      <Button variant="secondary" size="sm" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Trying again…" : "Retry"}</Button>
     </div>
   {/if}
 
   <section class="panel downloads-panel" aria-busy={refreshing}>
-    <header class="playlist-toolbar downloads-heading">
+    <header class="panel-heading playlist-toolbar downloads-heading">
       <div>
         <p class="eyebrow">Library storage</p>
         <h2>{label} tracks</h2>
@@ -202,8 +206,8 @@
         <span><small>Diagnostics</small><strong>{data.diagnosticCount}</strong></span>
         <span><small>Size</small><strong>{data.totalSizeFormatted}</strong></span>
       </div>
-      <div class="downloads-heading-actions">
-        <Button variant="secondary" onclick={() => void refresh()}>Refresh</Button>
+      <div class="panel-heading-actions downloads-heading-actions">
+        <Button variant="secondary" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Refreshing…" : "Refresh"}</Button>
         {#if removableCount}
           <Button variant="destructive" onclick={() => confirm({ kind: "all" })}>Remove all</Button>
         {/if}
@@ -307,20 +311,20 @@
           <form class="settings-fields track-cache-settings" onsubmit={(event) => void saveCacheControls(event)}>
             <label class="setting-field">
               <span><strong>Storage mode</strong></span>
-              <SelectField bind:value={storageMode} name="STORAGE_MODE" label="Storage mode" options={["Cache", "Permanent"]} />
+              <SelectField bind:value={storageMode} name="STORAGE_MODE" label="Storage mode" options={["Cache", "Permanent"]} onchange={() => cacheControlsDirty = true} />
               <small>Cache retains completed provider streams. Permanent sends managed downloads to Kept.</small>
             </label>
             <label class="setting-field">
               <span><strong>Track retention</strong><small>Hours</small></span>
-              <input bind:value={cacheDurationHours} name="CACHE_DURATION_HOURS" type="number" min="1" max="8760" />
+              <input bind:value={cacheDurationHours} name="CACHE_DURATION_HOURS" type="number" min="1" max="8760" oninput={() => cacheControlsDirty = true} />
               <small>Completed cached tracks older than this may be removed.</small>
             </label>
             <label class="setting-field">
               <span><strong>Quality override retention</strong><small>Minutes</small></span>
-              <input bind:value={transcodeCacheMinutes} name="CACHE_TRANSCODE_MINUTES" type="number" min="1" max="10080" />
+              <input bind:value={transcodeCacheMinutes} name="CACHE_TRANSCODE_MINUTES" type="number" min="1" max="10080" oninput={() => cacheControlsDirty = true} />
               <small>Temporary lower-bandwidth versions use this shorter window.</small>
             </label>
-            <footer><Button type="submit" disabled={Boolean(action)}>{action === "cache-settings" ? "Saving…" : "Save track cache"}</Button></footer>
+            <footer><Button type="submit" disabled={Boolean(action) || !cacheControlsDirty}>{action === "cache-settings" ? "Saving…" : "Save track cache"}</Button></footer>
           </form>
         {:else}
           <p class="action-feedback" role="status">{controlsError || "Loading track cache settings…"}</p>

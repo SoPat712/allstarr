@@ -266,9 +266,6 @@ public class PlaylistController : ControllerBase
         playlistInfo["nextSyncAt"] = nextSyncAt;
     }
 
-    /// <summary>
-    /// Gets the latest durable playlist generation with its current match state.
-    /// </summary>
     [HttpGet("playlists/{name}/tracks")]
     public async Task<IActionResult> GetPlaylistTracks(string name)
     {
@@ -399,9 +396,6 @@ public class PlaylistController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Search a specific external provider for playlists for the admin UI.
-    /// </summary>
     [HttpGet("external/playlists/search")]
     public async Task<IActionResult> SearchExternalPlaylists(
         [FromQuery] string query,
@@ -457,9 +451,6 @@ public class PlaylistController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Preview tracks from a specific external provider playlist.
-    /// </summary>
     [HttpGet("external/playlists/{provider}/{externalId}/tracks")]
     public async Task<IActionResult> GetExternalPlaylistTracks(
         string provider,
@@ -519,21 +510,15 @@ public class PlaylistController : ControllerBase
     }
 
     private static bool IsSupportedExternalPlaylistProvider(string provider) =>
-        provider is "deezer" or "qobuz" or "applemusic";
+        ConcreteProviderId.Normalize(provider) is "deezer" or "qobuz" or "apple-download";
 
     private IConcreteMetadataService? GetConcreteMetadataServiceByName(string provider)
     {
-        var normalizedProvider = provider.ToLowerInvariant();
         var services = HttpContext.RequestServices.GetServices<IConcreteMetadataService>();
-
-        return services.FirstOrDefault(s =>
-            s.GetType().Name.StartsWith(normalizedProvider, StringComparison.OrdinalIgnoreCase) ||
-            (normalizedProvider == "applemusic" && s.GetType().Name.StartsWith("AppleMusic", StringComparison.OrdinalIgnoreCase)));
+        return services.FirstOrDefault(service => service.ProviderId.Equals(
+            ConcreteProviderId.Normalize(provider), StringComparison.Ordinal));
     }
 
-    /// <summary>
-    /// Get track details by Jellyfin ID (for URL-based mapping)
-    /// </summary>
     [HttpGet("jellyfin/track/{id}")]
     public async Task<IActionResult> GetJellyfinTrack(string id)
     {
@@ -570,7 +555,6 @@ public class PlaylistController : ControllerBase
 
             var item = doc.RootElement;
 
-            // Verify it's an Audio item
             var type = item.TryGetProperty("Type", out var typeEl) ? typeEl.GetString() : "";
             if (type != "Audio")
             {
@@ -611,9 +595,6 @@ public class PlaylistController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Get current configuration (safe values only)
-    /// </summary>
     [HttpPost("playlists")]
     public async Task<IActionResult> AddPlaylist([FromBody] AddPlaylistRequest request)
     {
@@ -626,13 +607,11 @@ public class PlaylistController : ControllerBase
 
         var currentPlaylists = await GetConfiguredPlaylistsAsync();
 
-        // Check for duplicates
         if (currentPlaylists.Any(p => p.Id == request.SpotifyId || p.Name == request.Name))
         {
             return BadRequest(new { error = "Playlist with this name or ID already exists" });
         }
 
-        // Add new playlist
         currentPlaylists.Add(new SpotifyPlaylistConfig
         {
             Name = request.Name,
@@ -647,9 +626,6 @@ public class PlaylistController : ControllerBase
         return await PersistConfiguredPlaylistsAsync(currentPlaylists, playlistsJson);
     }
 
-    /// <summary>
-    /// Remove a playlist from the configuration
-    /// </summary>
     [HttpDelete("playlists/{name}")]
     public async Task<IActionResult> RemovePlaylist(string name)
     {
@@ -671,9 +647,6 @@ public class PlaylistController : ControllerBase
         return await PersistConfiguredPlaylistsAsync(currentPlaylists, playlistsJson);
     }
 
-    /// <summary>
-    /// Updates a playlist sync schedule independently of the selected media backend.
-    /// </summary>
     [HttpPut("playlists/{name}/schedule")]
     public async Task<IActionResult> UpdatePlaylistSchedule(
         string name,
@@ -754,10 +727,4 @@ public class PlaylistController : ControllerBase
         _spotifyImportSettings.Playlists = playlists.ToList();
         return Ok(new { message = "Playlist configuration updated.", changeVersion = result.ChangeVersion });
     }
-
-
-    /// <summary>
-    /// Save lyrics mapping to file for persistence across restarts.
-    /// Lyrics mappings NEVER expire - they are permanent user decisions.
-    /// </summary>
 }

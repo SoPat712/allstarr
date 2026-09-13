@@ -149,7 +149,7 @@
         {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
       </div>
 
-      <footer class="apple-manager-footer">
+      <footer class="dialog-actions">
         <Button variant="secondary" href="#/integrations/services?source=apple-download&section=configuration" onclick={() => open = false}>Provider settings</Button>
         <Button variant="secondary" disabled={Boolean(action)} onclick={() => void load()}>Refresh status</Button>
       </footer>

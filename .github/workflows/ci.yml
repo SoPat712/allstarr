@@ -47,6 +47,12 @@ jobs:
         shell: bash
         run: bash tools/ci/postgres-client.sh install
 
+      - name: Test live smoke harnesses offline
+        run: |
+          bash -n tools/tests/live_jellyfin_smoke.sh
+          python3 tools/tests/test_live_jellyfin_smoke.py
+          python3 tools/tests/test_live_subsonic_smoke.py
+
       - name: Restore dependencies
         run: python3 tools/tests/timing_report.py --name dotnet-restore -- dotnet restore -p:NuGetAudit=true
 

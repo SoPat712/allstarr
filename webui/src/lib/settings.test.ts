@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fieldValue, move, routingOrder } from "./settings";
+import { fieldValue, mergeRoutingOrders, move, routingOrder } from "./settings";
 
 describe("settings presentation", () => {
   it("reads nested schema values without provider-specific branches", () => {
@@ -18,6 +18,19 @@ describe("settings presentation", () => {
       envKey: "MULTI_PROVIDER_STREAMING_ORDER",
       providers: ["deezer", "future-extension", "new-extension"],
     })).toEqual(["future-extension", "deezer", "new-extension"]);
+  });
+
+  it("refreshes saved routing groups without overwriting another unsaved order", () => {
+    const groups = [
+      { id: "streaming", label: "Streaming", envKey: "STREAMING", providers: ["a", "b"] },
+      { id: "lyrics", label: "Lyrics", envKey: "LYRICS", providers: ["a", "b"] },
+    ];
+    expect(mergeRoutingOrders(
+      { providers: { streamingOrder: "a,b", lyricsOrder: "a,b" } },
+      groups,
+      { streaming: ["a", "b"], lyrics: ["b", "a"] },
+      ["lyrics"],
+    )).toEqual({ streaming: ["a", "b"], lyrics: ["b", "a"] });
   });
 
   it("moves routes without crossing list bounds", () => {

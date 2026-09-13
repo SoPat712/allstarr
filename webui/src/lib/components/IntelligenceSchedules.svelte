@@ -126,7 +126,7 @@
         <li><article>
           <div><strong>{item.name}</strong><small>{item.limit} tracks · {cadence(item.cronExpression)} · {item.timeZoneId}</small><small>{item.enabled ? item.nextRunAt ? `Next run ${new Date(item.nextRunAt).toLocaleString()}` : "Waiting for its next run" : "Paused"}</small></div>
           <Badge state={item.enabled ? "healthy" : "suggested"}>{item.enabled ? "On" : "Paused"}</Badge>
-          <div class="row-actions"><Button variant="secondary" size="sm" onclick={() => begin(item)}>Edit</Button><Button variant="destructive" size="sm" onclick={() => { deleteTarget = item; deleteOpen = true; }}>Remove</Button></div>
+          <div class="row-actions"><Button variant="secondary" size="sm" onclick={() => begin(item)}>Edit</Button><Button variant="destructive" size="sm" onclick={() => { error = ""; deleteTarget = item; deleteOpen = true; }}>Remove</Button></div>
         </article></li>
       {/each}
     </ul>
@@ -141,6 +141,9 @@
   description={deleteTarget ? `${deleteTarget.name} will stop running. Existing playlists will not be removed.` : ""}
   confirmLabel={action === "delete" ? "Removing…" : "Remove schedule"}
   cancelLabel="Keep schedule"
+  disabled={Boolean(action)}
+  closeOnConfirm={false}
+  {error}
   onConfirm={remove}
 />
 

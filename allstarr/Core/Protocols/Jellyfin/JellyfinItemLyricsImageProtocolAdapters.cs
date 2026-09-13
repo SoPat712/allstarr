@@ -16,10 +16,29 @@ public interface IJellyfinItemProtocolAdapter
     IActionResult ShapeNotFound(string itemType);
 }
 
-public sealed class JellyfinItemProtocolAdapter(JellyfinResponseBuilder responseBuilder)
+public sealed class JellyfinItemProtocolAdapter(JellyfinResponseBuilder responseBuilder,
+    IHttpContextAccessor? httpContextAccessor = null,
+    IPlaybackDeliveryActivitySource? playbackActivity = null)
     : IJellyfinItemProtocolAdapter
 {
-    public IActionResult ShapeSong(Song song) => responseBuilder.CreateSongResponse(song);
+    public IActionResult ShapeSong(Song song)
+    {
+        var http = httpContextAccessor?.HttpContext;
+        var context = http?.GetProtocolExecutionContext();
+        var source = context == null || song.IsLocal ? null : playbackActivity?.StreamFor(
+            context.Actor?.TenantId, context.Actor?.EffectiveUserId, context.Client.DeviceId, song.Id);
+        if (source == null || !source.Matches(context!.Protocol.ToString().ToLowerInvariant(),
+            context.BackendInstanceId, context.LibraryScopeId))
+            return responseBuilder.CreateSongResponse(song);
+
+        var item = responseBuilder.ConvertSongToJellyfinItem(song);
+        var label = $"Last stream: {source.ProviderId}{(source.Cached ? " (cached)" : "")}";
+        item["Overview"] = $"{ExternalTrackPresentation.PlaybackDescription}\n{label}. Opened {source.OpenedAt:O}.";
+        if (item.GetValueOrDefault("MediaSources") is Dictionary<string, object?>[] mediaSources)
+            foreach (var media in mediaSources) media["Name"] = label;
+        http!.Response.Headers.CacheControl = "private, no-store";
+        return responseBuilder.CreateJsonResponse(item);
+    }
 
     public IActionResult ShapeAlbum(Album album) => responseBuilder.CreateAlbumResponse(album);
 

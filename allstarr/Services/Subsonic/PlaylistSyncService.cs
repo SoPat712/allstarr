@@ -8,14 +8,10 @@ using IOFile = System.IO.File;
 
 namespace allstarr.Services.Subsonic;
 
-/// <summary>
-/// Service responsible for downloading playlist tracks and creating M3U files
-/// </summary>
-public class PlaylistSyncService
+public sealed class PlaylistSyncService
 {
-    private readonly IConcreteMetadataService _deezerMetadataService;
-    private readonly IConcreteMetadataService _qobuzMetadataService;
-    private readonly IEnumerable<IConcreteDownloadService> _downloadServices;
+    private readonly IReadOnlyDictionary<string, IConcreteMetadataService> _metadataServices;
+    private readonly IReadOnlyDictionary<string, IConcreteDownloadService> _downloadServices;
     private readonly IConfiguration _configuration;
     private readonly SubsonicSettings _subsonicSettings;
     private readonly ILogger<PlaylistSyncService> _logger;
@@ -30,13 +26,12 @@ public class PlaylistSyncService
         IOptions<SubsonicSettings> subsonicSettings,
         ILogger<PlaylistSyncService> logger)
     {
-        // Get Deezer and Qobuz metadata services
-        _deezerMetadataService = metadataServices.FirstOrDefault(s => s.GetType().Name.Contains("Deezer"))
-            ?? throw new InvalidOperationException("Deezer metadata service not found");
-        _qobuzMetadataService = metadataServices.FirstOrDefault(s => s.GetType().Name.Contains("Qobuz"))
-            ?? throw new InvalidOperationException("Qobuz metadata service not found");
-
-        _downloadServices = downloadServices;
+        _metadataServices = metadataServices.ToDictionary(
+            service => service.ProviderId,
+            StringComparer.Ordinal);
+        _downloadServices = downloadServices.ToDictionary(
+            service => service.ProviderId,
+            StringComparer.Ordinal);
         _configuration = configuration;
         _subsonicSettings = subsonicSettings.Value;
         _logger = logger;
@@ -44,37 +39,21 @@ public class PlaylistSyncService
         _musicDirectory = configuration["Library:DownloadPath"] ?? "./downloads";
         _playlistDirectory = Path.Combine(_musicDirectory, _subsonicSettings.PlaylistsDirectory ?? "playlists");
 
-        // Ensure playlists directory exists
-        if (!Directory.Exists(_playlistDirectory))
-        {
-            Directory.CreateDirectory(_playlistDirectory);
-        }
+        Directory.CreateDirectory(_playlistDirectory);
     }
 
-    /// <summary>
-    /// Gets the metadata service for the specified provider
-    /// </summary>
-    private IMusicMetadataService? GetMetadataServiceForProvider(string provider)
-    {
-        return provider.ToLower() switch
-        {
-            "deezer" => _deezerMetadataService,
-            "qobuz" => _qobuzMetadataService,
-            _ => null
-        };
-    }
+    private IConcreteMetadataService? GetMetadataServiceForProvider(string provider) =>
+        _metadataServices.GetValueOrDefault(ConcreteProviderId.Normalize(provider));
 
-    /// <summary>
-    /// Downloads all tracks from a playlist and creates an M3U file.
-    /// This is triggered when a user stars a playlist.
-    /// </summary>
+    private IConcreteDownloadService? GetDownloadServiceForProvider(string provider) =>
+        _downloadServices.GetValueOrDefault(ConcreteProviderId.Normalize(provider));
+
     public async Task DownloadFullPlaylistAsync(string playlistId, CancellationToken cancellationToken = default)
     {
         try
         {
             _logger.LogInformation("Starting download for playlist {PlaylistId}", playlistId);
 
-            // Parse playlist ID
             if (!PlaylistIdHelper.IsExternalPlaylist(playlistId))
             {
                 _logger.LogWarning("Invalid playlist ID format: {PlaylistId}", playlistId);
@@ -83,7 +62,6 @@ public class PlaylistSyncService
 
             var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
 
-            // Get playlist metadata
             var metadataService = GetMetadataServiceForProvider(provider);
             if (metadataService == null)
             {
@@ -106,9 +84,7 @@ public class PlaylistSyncService
 
             _logger.LogInformation("Found {TrackCount} tracks in playlist '{PlaylistName}'", tracks.Count, playlist.Name);
 
-            // Get the appropriate download service for this provider
-            var downloadService = _downloadServices.FirstOrDefault(s =>
-                s.GetType().Name.Contains(provider, StringComparison.OrdinalIgnoreCase));
+            var downloadService = GetDownloadServiceForProvider(provider);
 
             if (downloadService == null)
             {
@@ -116,7 +92,6 @@ public class PlaylistSyncService
                 return;
             }
 
-            // Download all tracks (M3U will be created once at the end)
             var downloadedTracks = new List<(Song Song, string LocalPath)>();
 
             foreach (var track in tracks)
@@ -135,6 +110,10 @@ public class PlaylistSyncService
                     downloadedTracks.Add((track, localPath));
                     _logger.LogDebug("Downloaded: {Path}", localPath);
                 }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Failed to download track '{Artist} - {Title}'", track.Artist, track.Title);
@@ -147,7 +126,7 @@ public class PlaylistSyncService
                 return;
             }
 
-            // Create M3U file ONCE at the end with all downloaded tracks
+            // Write once so partial downloads cannot expose a half-updated playlist.
             await CreateM3UPlaylistAsync(playlist.Name, downloadedTracks);
 
             _logger.LogInformation("Playlist download completed: {DownloadedCount}/{TotalCount} tracks for '{PlaylistName}'",
@@ -160,14 +139,10 @@ public class PlaylistSyncService
         }
     }
 
-    /// <summary>
-    /// Creates an M3U playlist file with relative paths to downloaded tracks
-    /// </summary>
     private async Task CreateM3UPlaylistAsync(string playlistName, List<(Song Song, string LocalPath)> tracks)
     {
         try
         {
-            // Sanitize playlist name for file system
             var fileName = PathHelper.SanitizeFileName(playlistName) + ".m3u";
             var playlistPath = Path.Combine(_playlistDirectory, fileName);
 
@@ -176,13 +151,11 @@ public class PlaylistSyncService
 
             foreach (var (song, localPath) in tracks)
             {
-                // Calculate relative path from playlist directory to track
                 var relativePath = Path.GetRelativePath(_playlistDirectory, localPath);
 
                 // Convert backslashes to forward slashes for M3U compatibility
                 relativePath = relativePath.Replace('\\', '/');
 
-                // Add EXTINF line with duration and artist - title
                 var duration = song.Duration ?? 0;
                 m3uContent.AppendLine($"#EXTINF:{duration},{song.Artist} - {song.Title}");
                 m3uContent.AppendLine(relativePath);
@@ -198,15 +171,9 @@ public class PlaylistSyncService
         }
     }
 
-    /// <summary>
-    /// Adds a track to an existing M3U playlist or creates it if it doesn't exist.
-    /// Called when individual tracks are played/downloaded (NOT during full playlist download).
-    /// The M3U is rebuilt in the correct playlist order each time.
-    /// </summary>
-    /// <param name="isFullPlaylistDownload">If true, skips M3U update (will be done at the end by DownloadFullPlaylistAsync)</param>
     public async Task AddTrackToM3UAsync(string playlistId, Song track, string localPath, bool isFullPlaylistDownload = false)
     {
-        // Skip real-time updates during full playlist download (M3U will be created once at the end)
+        // Full downloads publish one complete M3U after every track finishes.
         if (isFullPlaylistDownload)
         {
             _logger.LogWarning("Skipping M3U update for track {TrackId} (full playlist download in progress)", track.Id);
@@ -215,7 +182,6 @@ public class PlaylistSyncService
 
         try
         {
-            // Get playlist metadata to get the name and track order
             if (!PlaylistIdHelper.IsExternalPlaylist(playlistId))
             {
                 _logger.LogWarning("Invalid playlist ID format: {PlaylistId}", playlistId);
@@ -238,7 +204,7 @@ public class PlaylistSyncService
                 return;
             }
 
-            // Get all tracks from the playlist to maintain order
+            // Rebuild from provider order; download completion order is nondeterministic.
             var allPlaylistTracks = await metadataService.GetPlaylistTracksAsync(provider, externalId);
             if (allPlaylistTracks == null || allPlaylistTracks.Count == 0)
             {
@@ -246,36 +212,29 @@ public class PlaylistSyncService
                 return;
             }
 
-            // Sanitize playlist name for file system
             var fileName = PathHelper.SanitizeFileName(playlist.Name) + ".m3u";
             var playlistPath = Path.Combine(_playlistDirectory, fileName);
 
-            // Build M3U content in the correct order
             var m3uContent = new StringBuilder();
             m3uContent.AppendLine("#EXTM3U");
 
             int addedCount = 0;
             foreach (var playlistTrack in allPlaylistTracks)
             {
-                // Check if this track has been downloaded locally
                 string? trackLocalPath = null;
 
-                // If this is the track we just downloaded
                 if (playlistTrack.Id == track.Id)
                 {
                     trackLocalPath = localPath;
                 }
                 else
                 {
-                    // Check if track was previously downloaded
                     var trackProvider = playlistTrack.ExternalProvider;
                     var trackExternalId = playlistTrack.ExternalId;
 
                     if (!string.IsNullOrEmpty(trackProvider) && !string.IsNullOrEmpty(trackExternalId))
                     {
-                        // Try to find the download service for this provider
-                        var downloadService = _downloadServices.FirstOrDefault(s =>
-                            s.GetType().Name.Contains(trackProvider, StringComparison.OrdinalIgnoreCase));
+                        var downloadService = GetDownloadServiceForProvider(trackProvider);
 
                         if (downloadService != null)
                         {
@@ -284,7 +243,6 @@ public class PlaylistSyncService
                     }
                 }
 
-                // If track is downloaded, add it to M3U
                 if (!string.IsNullOrEmpty(trackLocalPath) && IOFile.Exists(trackLocalPath))
                 {
                     var relativePath = Path.GetRelativePath(_playlistDirectory, trackLocalPath);
@@ -297,7 +255,6 @@ public class PlaylistSyncService
                 }
             }
 
-            // Write the M3U file (overwrites existing)
             await IOFile.WriteAllTextAsync(playlistPath, m3uContent.ToString());
             _logger.LogDebug("Updated M3U playlist '{PlaylistName}' with {Count} tracks (in correct order)",
                 playlist.Name, addedCount);

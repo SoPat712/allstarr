@@ -167,15 +167,6 @@ public static class CacheKeyBuilder
 
     #endregion
 
-    #region Genre Keys
-
-    public static string BuildGenreEnrichmentKey(string compositeCacheKey)
-    {
-        return $"genre:v2:{Digest(compositeCacheKey.Trim())}";
-    }
-
-    #endregion
-
     #region MusicBrainz Keys
 
     public static string BuildMusicBrainzIsrcKey(string isrc)

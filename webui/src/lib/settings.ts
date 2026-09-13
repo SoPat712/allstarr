@@ -22,6 +22,21 @@ export function routingOrder(config: Record<string, unknown>, group: PriorityGro
   return [...configured, ...group.providers.filter((provider) => !configured.includes(provider))];
 }
 
+export function mergeRoutingOrders(
+  config: Record<string, unknown>,
+  groups: PriorityGroup[],
+  current: Record<string, string[]>,
+  dirtyGroupIds: string[],
+) {
+  const dirty = new Set(dirtyGroupIds);
+  return Object.fromEntries(groups.map((group) => [
+    group.id,
+    dirty.has(group.id) && current[group.id]
+      ? current[group.id]
+      : routingOrder(config, group),
+  ]));
+}
+
 export function move<T>(items: T[], index: number, direction: -1 | 1) {
   const next = index + direction;
   if (next < 0 || next >= items.length) return items;

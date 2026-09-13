@@ -47,7 +47,6 @@
   const integrationRoutingKeys = new Set([
     "AUDIO_QUALITY",
     "MATCHING_LOCAL_PREFERENCE_PERCENT",
-    "MATCHING_EXTENSION_PENALTY_PERCENT",
   ]);
   const shellPreferenceKeys = new Set(["THEME"]);
 
@@ -223,12 +222,12 @@
   />
 {:else}
   <section class="settings-workspace" aria-busy={refreshing}>
-    <SegmentedNav items={tabs} {active} label="Settings sections" class="settings-tabs" />
+    <SegmentedNav items={tabs} {active} label="Settings sections" class="route-tabs settings-tabs" />
 
     {#if error}
       <div class="degraded-banner" role="status">
         <span aria-hidden="true">!</span><p><strong>Some settings may be stale.</strong> {error}</p>
-        <Button variant="secondary" size="sm" onclick={() => void refresh()}>Retry</Button>
+        <Button variant="secondary" size="sm" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Trying again…" : "Retry"}</Button>
       </div>
     {/if}
     {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
@@ -268,7 +267,11 @@
                       onchange={() => markDirty(item.id)}
                     />
                   {:else if field.type === "toggle"}
-                    <Checkbox name={field.key} checked={Boolean(fieldValue(config, field))} />
+                    <Checkbox
+                      name={field.key}
+                      checked={Boolean(fieldValue(config, field))}
+                      onCheckedChange={() => markDirty(item.id)}
+                    />
                   {:else}
                     <input
                       name={field.key}
@@ -287,7 +290,7 @@
                 </p>
               {/if}
               {#if item.fields.some((field) => !field.readOnly && field.ownership !== "deployment")}
-                <footer><Button type="submit" disabled={Boolean(action)}>{action === item.id ? "Saving…" : `Save ${item.label}`}</Button></footer>
+                <footer><Button type="submit" disabled={Boolean(action) || !dirtyOwners.includes(item.id)}>{action === item.id ? "Saving…" : `Save ${item.label}`}</Button></footer>
               {/if}
             </form>
           </details>

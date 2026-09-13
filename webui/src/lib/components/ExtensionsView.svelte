@@ -272,10 +272,10 @@
   async function addRegistry(event: SubmitEvent) {
     event.preventDefault();
     const data = new FormData(event.currentTarget as HTMLFormElement);
-    await run("registry:add", () => extensions.addRegistry(
+    const saved = await run("registry:add", () => extensions.addRegistry(
       String(data.get("name") ?? ""), String(data.get("registryUrl") ?? ""),
     ), "Registry validated and added.");
-    (event.currentTarget as HTMLFormElement).reset();
+    if (saved) (event.currentTarget as HTMLFormElement).reset();
   }
 
   function dependencies(registry: ExtensionRegistry) {
@@ -297,7 +297,7 @@
       items={extensionTabs}
       active={tab}
       label="Extension views"
-      class="extension-tabs"
+      class="route-tabs extension-tabs"
       onchange={(id) => { tab = id as typeof tab; }}
     />
     {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
@@ -344,7 +344,12 @@
             <article>
               <ProviderArtwork id={item.id} definition={definition(item)} />
               <span><strong>{item.displayName}</strong><small>v{item.version}{item.author ? ` · ${item.author}` : ""}</small><p>{item.description || "No description supplied."}</p></span>
-              <Button disabled={!item.sha256 || Boolean(action)} onclick={() => void stage(item)}>{action === `install:${item.id}` ? "Verifying…" : installedVersion ? `Update ${installedVersion} → ${item.version}` : "Install"}</Button>
+              <Button
+                disabled={!item.sha256 || Boolean(action)}
+                title={!item.sha256 ? "This registry did not publish the SHA-256 checksum required for a safe install." : undefined}
+                aria-label={!item.sha256 ? `Cannot install ${item.displayName}: checksum unavailable` : undefined}
+                onclick={() => void stage(item)}
+              >{!item.sha256 ? "Checksum unavailable" : action === `install:${item.id}` ? "Verifying…" : installedVersion ? `Update ${installedVersion} → ${item.version}` : "Install"}</Button>
             </article>
           {:else}<div class="compact-empty"><strong>No matching packages</strong><p>Everything may already be current.</p></div>{/each}
         </div>
@@ -385,7 +390,7 @@
         <label class="setting-field"><span><strong>Package URL</strong></span><input name="downloadUrl" type="url" required pattern="https://.*" autocomplete="off" /></label>
         <label class="setting-field"><span><strong>SHA-256 checksum</strong></span><input name="sha256" required minlength="64" maxlength="64" pattern="[A-Fa-f0-9]{64}" autocomplete="off" spellcheck="false" /></label>
         <label class="setting-field"><span><strong>Registry attribution</strong></span><SelectField name="registryId" label="Registry attribution" value="" options={[{ value: "", label: "Direct package" }, ...registries.filter((item) => item.enabled).map((item) => ({ value: item.id, label: item.name }))]} /></label>
-        <footer><Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close><Button type="submit" disabled={Boolean(action)}>{action === "install:" ? "Verifying…" : "Verify package"}</Button></footer>
+        <footer class="dialog-actions"><Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close><Button type="submit" disabled={Boolean(action)}>{action === "install:" ? "Verifying…" : "Verify package"}</Button></footer>
       </form>
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>
@@ -429,7 +434,7 @@
       <AlertDialog.Title>{reviewAccessPackage ? `Review access for ${reviewAccessPackage.displayName}?` : activatePackage ? `Activate ${activatePackage.displayName}?` : removePackage ? `Uninstall ${removePackage.displayName}?` : `Remove ${removeRegistry?.name ?? "this registry"}?`}</AlertDialog.Title>
       <AlertDialog.Description>{reviewAccessPackage ? reviewAccessPackage.active ? "The extension runtime will stop now and remain disabled until you save a fresh permission review and reactivate it." : "The extension will remain disabled until you save a fresh permission review and reactivate it." : activatePackage ? "The reviewed runtime will start with only the approved capabilities and permissions." : removePackage ? "The package and runtime are removed. Encrypted Source accounts remain available for a later reinstall." : "You can add this registry URL again later."}</AlertDialog.Description>
       {#if feedback}<p class="error-text" role="alert">{feedback}</p>{/if}
-      <footer><AlertDialog.Cancel class={buttonVariants({ variant: "secondary" })} disabled={Boolean(action)}>Cancel</AlertDialog.Cancel><Button variant={activatePackage || reviewAccessPackage ? "default" : "destructive"} disabled={Boolean(action)} onclick={() => void confirm()}>{action ? reviewAccessPackage ? "Stopping…" : activatePackage ? "Activating…" : "Removing…" : reviewAccessPackage ? "Stop and review" : activatePackage ? "Activate extension" : removePackage ? "Uninstall" : "Remove registry"}</Button></footer>
+      <footer class="dialog-actions"><AlertDialog.Cancel class={buttonVariants({ variant: "secondary" })} disabled={Boolean(action)}>Cancel</AlertDialog.Cancel><Button variant={activatePackage || reviewAccessPackage ? "default" : "destructive"} disabled={Boolean(action)} onclick={() => void confirm()}>{action ? reviewAccessPackage ? "Stopping…" : activatePackage ? "Activating…" : "Removing…" : reviewAccessPackage ? "Stop and review" : activatePackage ? "Activate extension" : removePackage ? "Uninstall" : "Remove registry"}</Button></footer>
     </AlertDialog.Content></AlertDialog.Portal>
   </AlertDialog.Root>
 {/if}

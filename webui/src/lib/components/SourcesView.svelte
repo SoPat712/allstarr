@@ -52,11 +52,13 @@
     administrator,
     initialSource = "",
     initialSection = "data",
+    initialConnect = false,
   }: {
     mode?: "services" | "accounts";
     administrator: boolean;
     initialSource?: string;
     initialSection?: string;
+    initialConnect?: boolean;
   } = $props();
 
   let schema = $state<UiSchema | null>(null);
@@ -85,6 +87,7 @@
   let removal = $state<ProviderAccount | null>(null);
   let removeOpen = $state(false);
   let testResults = $state<Record<string, ConnectivityResult>>({});
+  let consumedSourceLink = "";
 
   const providers = $derived(
     [...(schema?.providers ?? [])].toSorted((left, right) => {
@@ -103,6 +106,7 @@
   const canManage = $derived(
     managementMode !== "AdminManaged" || administrator,
   );
+  const canManageAllAccounts = $derived(administrator && managementMode !== "UserManaged");
 
   function provider(id: string) {
     return providers.find((item) => item.id.toLowerCase() === id.toLowerCase());
@@ -192,10 +196,21 @@
   }
 
   $effect(() => {
-    if (!initialSource || !schema) return;
+    if (!initialSource) {
+      consumedSourceLink = "";
+      return;
+    }
+    const link = `${initialSource}\0${initialSection}\0${initialConnect}`;
+    if (!schema || consumedSourceLink === link) return;
     const item = schema.providers.find((provider) =>
       provider.id.toLowerCase() === initialSource.toLowerCase());
     if (!item) return;
+    consumedSourceLink = link;
+    if (initialConnect && mode === "accounts" && canManage) {
+      connectProviderId = item.id;
+      connectOpen = true;
+      return;
+    }
     selectedSource = item;
     selectedAccount = null;
     detailKind = "source";
@@ -357,17 +372,17 @@
   {#if error}
     <div class="degraded-banner" role="status">
       <span aria-hidden="true">!</span><p><strong>Source readiness may be stale.</strong> {error}</p>
-      <Button variant="secondary" size="sm" onclick={() => void refresh()}>Retry</Button>
+      <Button variant="secondary" size="sm" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Trying again…" : "Retry"}</Button>
     </div>
   {/if}
 
   <div class="sources-layout" aria-busy={refreshing}>
     {#if mode === "services"}
     <section class="panel sources-panel">
-      <header class="sources-heading">
+      <header class="panel-heading sources-heading">
         <div><p class="eyebrow">Provider-neutral services</p><h2>Services</h2><p>Capabilities describe what a Service can do. Latency appears after a health or click-to-stream check reports timing.</p></div>
-        <div class="sources-heading-actions">
-          <Button variant="secondary" onclick={() => void refresh()}>Refresh</Button>
+        <div class="panel-heading-actions sources-heading-actions">
+          <Button variant="secondary" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Refreshing…" : "Refresh"}</Button>
           {#if canManage}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</Button>{/if}
         </div>
       </header>
@@ -424,9 +439,9 @@
 
     {#if mode === "accounts"}
     <section class="panel connections-panel">
-      <header class="connections-heading">
+      <header class="panel-heading connections-heading">
         <div><p class="eyebrow">Encrypted account access</p><h2>Accounts</h2><p>{managementMode || schema.providerAccountManagementMode || "Managed"} · credentials are never returned to the browser.</p></div>
-        <span>{accounts.length}</span>
+        <span aria-label={`${accounts.length} account${accounts.length === 1 ? "" : "s"}`}>{accounts.length}</span>
       </header>
       <div class="operational-table-scroll">
         <table class="operational-table accounts-table">
@@ -459,12 +474,15 @@
                 <td><Badge state={readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready</Badge>{#if cts} · <Badge state={cts.health === "healthy" ? "healthy" : "degraded"}>CTS {ctsMeasurementLabel(cts)}</Badge>{/if}</td>
                 <td>
                   <DropdownMenu.Root>
-                    <DropdownMenu.Trigger class="icon-button" aria-label={`Actions for ${account.displayName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
+                    <DropdownMenu.Trigger class="icon-button" disabled={Boolean(action)} aria-label={`Actions for ${account.displayName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
                     <DropdownMenu.Portal>
                       <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
-                        <DropdownMenu.Item class="bits-menu-item" onSelect={() => void toggle(account)}>{account.enabled ? "Disable" : "Enable"}</DropdownMenu.Item>
+                        {#if account.canChangeAudience || canManageAllAccounts}
+                          <DropdownMenu.Item class="bits-menu-item" onSelect={() => manageAccess(account)}>Edit access</DropdownMenu.Item>
+                        {/if}
+                        <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void toggle(account)}>{account.enabled ? "Disable" : "Enable"}</DropdownMenu.Item>
                         <DropdownMenu.Separator />
-                        <DropdownMenu.Item class="bits-menu-item danger-item" onSelect={() => { removal = account; removeOpen = true; }}>Remove</DropdownMenu.Item>
+                        <DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action)} onSelect={() => { removal = account; removeOpen = true; }}>Remove</DropdownMenu.Item>
                       </DropdownMenu.Content>
                     </DropdownMenu.Portal>
                   </DropdownMenu.Root>
@@ -516,6 +534,7 @@
                 ]}
             active={detailTab}
             label="Source detail sections"
+            class="route-tabs contextual-tabs"
             onchange={(value) => detailTab = value}
           />
 
@@ -663,7 +682,7 @@
                 <div><dt>Owner</dt><dd>{selectedAccount.ownerDisplayName || "Current user"}</dd></div>
                 <div><dt>Scope</dt><dd>{selectedAccount.scope}</dd></div>
               </dl>
-              {#if administrator}<Button onclick={() => manageAccess(selectedAccount!)}>Edit access</Button>{/if}
+              {#if selectedAccount.canChangeAudience || canManageAllAccounts}<Button onclick={() => manageAccess(selectedAccount!)}>Edit access</Button>{/if}
             {/if}
           </div>
         {/if}
@@ -671,10 +690,10 @@
     </Dialog.Portal>
   </Dialog.Root>
 
-  <ConnectSourceDialog bind:open={connectOpen} {providers} {administrator} initialProviderId={connectProviderId} onSaved={completed} />
-  <ConnectSourceDialog bind:open={configureOpen} {providers} {administrator} account={selectedAccount} onSaved={completed} />
+  <ConnectSourceDialog bind:open={connectOpen} {providers} administrator={canManageAllAccounts} testConnection={administrator} initialProviderId={connectProviderId} onSaved={completed} />
+  <ConnectSourceDialog bind:open={configureOpen} {providers} administrator={canManageAllAccounts} testConnection={administrator} account={selectedAccount} onSaved={completed} />
   <AppleDownloadDialog bind:open={appleDownloadOpen} />
-  <AccountAccessDialog bind:open={accessOpen} account={selectedAccount} users={audienceUsers} onSaved={completed} />
+  <AccountAccessDialog bind:open={accessOpen} account={selectedAccount} administrator={canManageAllAccounts} users={audienceUsers} onSaved={completed} />
 
   <ConfirmDialog
     bind:open={removeOpen}

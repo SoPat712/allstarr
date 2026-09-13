@@ -9,6 +9,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using allstarr.Core.Health;
+using allstarr.Core.Operations;
 using allstarr.Services.AppleMusic;
 using allstarr.Core.Providers.AudioMuse;
 
@@ -61,6 +62,7 @@ public class ProviderStatusManager
     private readonly DurableProviderHealthStore? _durableHealth;
     private readonly IAppleDownloadEndpointDiscovery? _appleDownloadDiscovery;
     private readonly IServiceProvider? _services;
+    private readonly IPlatformClock _clock;
     private AppleDownloadEndpointSnapshot? _appleDownloadSnapshot;
 
     private readonly ConcurrentDictionary<ProviderRuntimeStatusKey, ProviderRuntimeStatus> _observations = new();
@@ -76,7 +78,8 @@ public class ProviderStatusManager
         ExtensionManager? extensionManager = null,
         DurableProviderHealthStore? durableHealth = null,
         IAppleDownloadEndpointDiscovery? appleDownloadDiscovery = null,
-        IServiceProvider? services = null)
+        IServiceProvider? services = null,
+        IPlatformClock? clock = null)
     {
         _configuration = configuration;
         _httpClientFactory = httpClientFactory;
@@ -89,6 +92,7 @@ public class ProviderStatusManager
         _durableHealth = durableHealth;
         _appleDownloadDiscovery = appleDownloadDiscovery;
         _services = services;
+        _clock = clock ?? new SystemPlatformClock();
     }
 
     public IReadOnlyList<string> GetEnabledSearchProviders()
@@ -372,7 +376,7 @@ public class ProviderStatusManager
             key.Capability,
             key.ProviderAccountId?.ToString("N") ?? "account-free");
 
-        var startedAt = DateTimeOffset.UtcNow;
+        var startedAt = _clock.UtcNow;
         try
         {
             var probe = await ProbeCapabilityAsync(
@@ -388,12 +392,12 @@ public class ProviderStatusManager
                 ? _appleDownloadSnapshot.Capability(key.Capability).ReasonCode ?? _appleDownloadSnapshot.ReasonCode
                 : "probe_failed";
             var latencyMilliseconds = probe.MeasuresLatency
-                ? (long?)Math.Max(0, (DateTimeOffset.UtcNow - startedAt).TotalMilliseconds)
+                ? (long?)Math.Max(0, (_clock.UtcNow - startedAt).TotalMilliseconds)
                 : null;
             var result = baseline with
             {
                 Health = probe.Success ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
-                TestedAt = DateTimeOffset.UtcNow,
+                TestedAt = _clock.UtcNow,
                 LatencyMilliseconds = latencyMilliseconds,
                 ReasonCode = probe.Success ? null : probe.ReasonCode ?? failureReason
             };
@@ -425,8 +429,8 @@ public class ProviderStatusManager
             var result = baseline with
             {
                 Health = ProviderHealthState.Degraded,
-                TestedAt = DateTimeOffset.UtcNow,
-                LatencyMilliseconds = (long)Math.Max(0, (DateTimeOffset.UtcNow - startedAt).TotalMilliseconds),
+                TestedAt = _clock.UtcNow,
+                LatencyMilliseconds = (long)Math.Max(0, (_clock.UtcNow - startedAt).TotalMilliseconds),
                 ReasonCode = ex is OperationCanceledException ? "timeout" : "unreachable"
             };
             _observations[key] = result;
@@ -466,11 +470,12 @@ public class ProviderStatusManager
 
     private void PruneExpiredObservations()
     {
-        var cutoff = DateTimeOffset.UtcNow - ObservationLifetime;
+        var cutoff = _clock.UtcNow - ObservationLifetime;
         foreach (var item in _observations)
         {
             if (item.Value.TestedAt.HasValue &&
-                item.Value.TestedAt.Value <= cutoff)
+                item.Value.TestedAt.Value <= cutoff &&
+                (item.Key.ProviderAccountId.HasValue || item.Value.Health != ProviderHealthState.Degraded))
             {
                 _observations.TryRemove(item.Key, out _);
             }

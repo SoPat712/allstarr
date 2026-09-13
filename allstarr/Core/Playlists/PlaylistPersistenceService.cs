@@ -69,8 +69,8 @@ public sealed record ManualOverrideInput(
     Guid ExternalSnapshotId, string LibraryScopeId, ManualOverrideDecision Decision,
     Guid? LibraryTrackId, string Reason);
 
-public sealed record PlaylistLinkInput(Guid ProviderAccountId, string SourceProviderId, string SourcePlaylistId, string SourcePlaylistIdHash, string LibraryScopeId, string TargetProtocol, string TargetBackendInstanceId, PlaylistLinkMode Mode, PlaylistMaterializationMode MaterializationMode, string RuleVersion, string PolicyVersion, Guid? ScheduleId = null, string? TargetPlaylistId = null, Guid? TargetCredentialReferenceId = null, bool MirrorStaleEntries = false, bool PreserveManualEntries = true, bool SyncName = true, bool SyncDescription = true, bool SyncArtwork = true, PlaylistProjectionMode ProjectionMode = PlaylistProjectionMode.Resolved);
-public sealed record PlaylistLinkUpdate(long ExpectedRevision, PlaylistLinkMode Mode, PlaylistMaterializationMode MaterializationMode, string RuleVersion, string PolicyVersion, Guid? ScheduleId, string? TargetPlaylistId, bool MirrorStaleEntries, bool PreserveManualEntries, bool SyncName, bool SyncDescription, bool SyncArtwork, Guid? TargetCredentialReferenceId = null, PlaylistProjectionMode ProjectionMode = PlaylistProjectionMode.Resolved);
+public sealed record PlaylistLinkInput(Guid ProviderAccountId, string SourceProviderId, string SourcePlaylistId, string SourcePlaylistIdHash, string LibraryScopeId, string TargetProtocol, string TargetBackendInstanceId, PlaylistLinkMode Mode, PlaylistMaterializationMode MaterializationMode, string RuleVersion, string PolicyVersion, Guid? ScheduleId = null, string? TargetPlaylistId = null, Guid? TargetCredentialReferenceId = null, bool MirrorStaleEntries = false, bool PreserveManualEntries = true, bool SyncName = true, bool SyncDescription = true, bool SyncArtwork = true, PlaylistProjectionMode ProjectionMode = PlaylistProjectionMode.Resolved, PlaylistImportMode ImportMode = PlaylistImportMode.Linked, PlaylistTrackRetention TrackRetention = PlaylistTrackRetention.OnDemand);
+public sealed record PlaylistLinkUpdate(long ExpectedRevision, PlaylistLinkMode Mode, PlaylistMaterializationMode MaterializationMode, string RuleVersion, string PolicyVersion, Guid? ScheduleId, string? TargetPlaylistId, bool MirrorStaleEntries, bool PreserveManualEntries, bool SyncName, bool SyncDescription, bool SyncArtwork, Guid? TargetCredentialReferenceId = null, PlaylistProjectionMode ProjectionMode = PlaylistProjectionMode.Resolved, PlaylistImportMode? ImportMode = null, PlaylistTrackRetention? TrackRetention = null);
 public sealed record PlaylistSourceEntryInput(int Position, Guid ExternalMetadataSnapshotId, string SourceEntryIdHash);
 public sealed record PlaylistSourceSnapshotInput(int SnapshotVersion, string ProviderRevision, string? ETag, string Name, string? Description, string? ArtworkReferenceKey, string PayloadSha256, IReadOnlyList<PlaylistSourceEntryInput> Entries, Guid? SourceJobId = null);
 public sealed record PersistedPlaylistPreviewEntry(
@@ -139,6 +139,7 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
     {
         var (principal, actor) = PersistenceGuard.Require(context, input.LibraryScopeId);
         PersistenceGuard.Required(input.RuleVersion, nameof(input.RuleVersion)); PersistenceGuard.Required(input.PolicyVersion, nameof(input.PolicyVersion)); PersistenceGuard.ValidateStableReference(input.TargetPlaylistId, nameof(input.TargetPlaylistId));
+        ValidateImportPolicy(input.ImportMode, input.TrackRetention, input.ScheduleId);
         if (input.SourcePlaylistIdHash.Length != 64) throw new ArgumentException("A source playlist hash is required.", nameof(input));
         var account = await _accounts.ResolveAsync(new ProviderAccountResolutionRequest(principal, input.SourceProviderId, "playlist", input.ProviderAccountId, input.LibraryScopeId), cancellationToken) ?? throw new UnauthorizedAccessException("The provider account is unavailable.");
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
@@ -163,6 +164,8 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
             Mode = input.Mode,
             ProjectionMode = input.ProjectionMode,
             MaterializationMode = input.MaterializationMode,
+            ImportMode = input.ImportMode,
+            TrackRetention = input.TrackRetention,
             MirrorStaleEntries = input.MirrorStaleEntries,
             PreserveManualEntries = input.PreserveManualEntries,
             SyncName = input.SyncName,
@@ -202,8 +205,23 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         var actor = context.RequireActor(); PersistenceGuard.Required(update.RuleVersion, nameof(update.RuleVersion)); PersistenceGuard.Required(update.PolicyVersion, nameof(update.PolicyVersion)); PersistenceGuard.ValidateStableReference(update.TargetPlaylistId, nameof(update.TargetPlaylistId));
         await using var db = await _factory.CreateDbContextAsync(cancellationToken); var record = await db.PlaylistLinks.SingleOrDefaultAsync(item => item.Id == linkId && item.TenantId == actor.TenantId, cancellationToken) ?? throw new KeyNotFoundException("Playlist link not found.");
         PersistenceGuard.RequireOwner(actor, record.OwnerUserId); PersistenceGuard.RequireLibrary(context, record.LibraryScopeId); if (record.Revision != update.ExpectedRevision) throw new DbUpdateConcurrencyException("The playlist link changed before this update.");
-        record.Mode = update.Mode; record.ProjectionMode = update.ProjectionMode; record.MaterializationMode = update.MaterializationMode; record.RuleVersion = update.RuleVersion.Trim(); record.PolicyVersion = update.PolicyVersion.Trim(); record.ScheduleId = update.ScheduleId; record.TargetPlaylistId = update.TargetPlaylistId; record.TargetCredentialReferenceId = update.TargetCredentialReferenceId; record.MirrorStaleEntries = update.MirrorStaleEntries; record.PreserveManualEntries = update.PreserveManualEntries; record.SyncName = update.SyncName; record.SyncDescription = update.SyncDescription; record.SyncArtwork = update.SyncArtwork; record.UpdatedAt = _clock.UtcNow; record.Revision++;
+        if (update.ImportMode.HasValue && update.ImportMode != record.ImportMode)
+            throw new InvalidOperationException("Import behavior cannot be changed after playlist creation.");
+        var trackRetention = update.TrackRetention ?? record.TrackRetention;
+        ValidateImportPolicy(record.ImportMode, trackRetention, update.ScheduleId);
+        record.Mode = update.Mode; record.ProjectionMode = update.ProjectionMode; record.MaterializationMode = update.MaterializationMode; record.TrackRetention = trackRetention; record.RuleVersion = update.RuleVersion.Trim(); record.PolicyVersion = update.PolicyVersion.Trim(); record.ScheduleId = update.ScheduleId; record.TargetPlaylistId = update.TargetPlaylistId; record.TargetCredentialReferenceId = update.TargetCredentialReferenceId; record.MirrorStaleEntries = update.MirrorStaleEntries; record.PreserveManualEntries = update.PreserveManualEntries; record.SyncName = update.SyncName; record.SyncDescription = update.SyncDescription; record.SyncArtwork = update.SyncArtwork; record.UpdatedAt = _clock.UtcNow; record.Revision++;
         await db.SaveChangesAsync(cancellationToken); return record;
+    }
+
+    private static void ValidateImportPolicy(
+        PlaylistImportMode importMode,
+        PlaylistTrackRetention trackRetention,
+        Guid? scheduleId)
+    {
+        if (!Enum.IsDefined(importMode)) throw new ArgumentOutOfRangeException(nameof(importMode));
+        if (!Enum.IsDefined(trackRetention)) throw new ArgumentOutOfRangeException(nameof(trackRetention));
+        if (importMode == PlaylistImportMode.OneTime && scheduleId.HasValue)
+            throw new ArgumentException("A one-time import cannot have an update schedule.", nameof(scheduleId));
     }
 
     public async Task DeleteLinkAsync(
@@ -559,7 +577,7 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         }
     }
 
-    private static PlaylistSourceMetadata ReadSourceMetadata(string payload)
+    internal static PlaylistSourceMetadata ReadSourceMetadata(string payload)
     {
         try
         {

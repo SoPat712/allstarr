@@ -3,18 +3,9 @@ using System.Text.Json;
 
 namespace allstarr.Services.Subsonic;
 
-/// <summary>
-/// Service responsible for parsing HTTP request parameters from various sources
-/// (query string, form body, JSON body) for Subsonic API requests.
-/// </summary>
 public class SubsonicRequestParser
 {
-    /// <summary>
-    /// Extracts all parameters from an HTTP request (query parameters + body parameters).
-    /// Supports multiple content types: application/x-www-form-urlencoded and application/json.
-    /// </summary>
-    /// <param name="request">The HTTP request to parse</param>
-    /// <returns>Parameters with their original source and repetition preserved.</returns>
+    // Relay fidelity depends on retaining parameter source, repetition, and order.
     public async Task<SubsonicRequestParameters> ExtractAllParametersAsync(HttpRequest request)
     {
         var parameters = new List<SubsonicParameter>();

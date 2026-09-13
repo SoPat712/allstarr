@@ -40,7 +40,7 @@ Open the dashboard at `http://localhost:5275`. Sign in with the selected backend
 
 The dashboard binds to loopback by default. LAN or reverse-proxy access requires an explicit trusted-network policy; see [configuration](docs/operations/configuration.md). Keep Allstarr behind a private network, VPN, or authenticated proxy because it can access media-server and provider accounts.
 
-Read the [user guide](docs/user-guide.md) for the dashboard map, setup order, listening-history imports, playlist modes, matching, cache, and Intelligence.
+Read the [user guide](docs/user-guide.md) for the dashboard map, setup order, playlist modes, matching, cache, and the retained development-only Intelligence workspace.
 
 ## Upgrade or recover
 
@@ -66,21 +66,21 @@ Later source updates use `./allstarr.sh update`; the command requires a clean tr
 
 - **Home** shows current playback, listeners, health, storage, work, and recent activity.
 - **Library** owns provider playlists, match review, cached audio, and kept audio.
-- **Intelligence** owns listening history, imports, recommendations, automation, and the built-in AudioMuse-AI connection.
 - **Integrations** owns Services, encrypted Accounts, extension packages, health, and provider Routing.
 - **Activity** explains completed and failed work with correlation details.
 - **Settings** owns deployment-level behavior, matching, playback, cache policy, maintenance, backup, and recovery.
+
+Intelligence is deferred from the first release and hidden from navigation. Its development workspace and existing deep links remain available for now; accounts, history, and opt-in background work are unchanged. See the [release scope and remaining gates](docs/release-readiness.md#first-release-scope-decision-2026-09-13).
 
 ## Capabilities
 
 - Presents one selected Jellyfin or Subsonic/OpenSubsonic surface while relaying native backend behavior.
 - Merges local results with configured metadata and playable providers.
 - Matches one recording to a local item and multiple provider identities with reviewable evidence.
-- Projects provider playlists as virtual views or materializes exact local matches into the backend without silently downloading unresolved entries.
+- Imports personal provider playlists once or keeps them linked, with per-user credentials and an explicit option to retain every resolved downloadable song in owner-scoped kept storage.
 - Routes streaming, download, lyrics, and artwork through typed, account-aware capabilities.
 - Runs imports, matching, downloads, playlist changes, scrobbling, and other long work as durable inspectable jobs.
-- Supports opt-in listening history and imports from Spotify Extended Streaming History, Last.fm, ListenBrainz, Koito, and Maloja exports.
-- Builds explained recommendations from enabled sources and an optional self-hosted AudioMuse-AI server configured inside Intelligence.
+- The deferred Intelligence workspace supports opt-in history, history imports, and explained recommendations, including optional self-hosted AudioMuse-AI integration; these are not first-release commitments.
 - Installs verified third-party provider extensions through an explicit registry, permission review, staged activation, and rollback boundary.
 
 Provider availability depends on connected accounts, optional sidecars, permissions, and health. Missing optional services reduce only the affected capability.

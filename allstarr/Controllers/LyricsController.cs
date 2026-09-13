@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using allstarr.Models.Admin;
 using allstarr.Services.Common;
-using allstarr.Services.Spotify;
+using allstarr.Services.Lyrics;
 using allstarr.Filters;
 using allstarr.Core.Storage;
 
@@ -13,26 +13,22 @@ namespace allstarr.Controllers;
 public class LyricsController : ControllerBase
 {
     private readonly ILogger<LyricsController> _logger;
-    private readonly IApplicationCache _cache;
     private readonly IManualLyricsMappingStore _mappingStore;
-    private readonly IServiceProvider _serviceProvider;
+    private readonly LrclibService _lrclib;
+    private readonly SpotifyLyricsService _spotifyLyrics;
 
     public LyricsController(
         ILogger<LyricsController> logger,
-        IApplicationCache cache,
         IManualLyricsMappingStore mappingStore,
-        IServiceProvider serviceProvider)
+        LrclibService lrclib,
+        SpotifyLyricsService spotifyLyrics)
     {
         _logger = logger;
-        _cache = cache;
         _mappingStore = mappingStore;
-        _serviceProvider = serviceProvider;
+        _lrclib = lrclib;
+        _spotifyLyrics = spotifyLyrics;
     }
 
-
-    /// <summary>
-    /// Save manual lyrics ID mapping for a track
-    /// </summary>
     [HttpPost("lyrics/map")]
     public async Task<IActionResult> SaveLyricsMapping([FromBody] LyricsMappingRequest request)
     {
@@ -59,43 +55,34 @@ public class LyricsController : ControllerBase
             _logger.LogInformation("Manual lyrics mapping saved: {Artist} - {Title} → Lyrics ID {LyricsId}",
                 request.Artist, request.Title, request.LyricsId);
 
-            // Optionally fetch and cache the lyrics immediately
             try
             {
-                var lyricsService = _serviceProvider.GetService<allstarr.Services.Lyrics.LrclibService>();
-                if (lyricsService != null)
+                var lyricsInfo = await _lrclib.GetLyricsByIdAsync(request.LyricsId);
+                if (lyricsInfo != null && !string.IsNullOrEmpty(lyricsInfo.PlainLyrics))
                 {
-                    var lyricsInfo = await lyricsService.GetLyricsByIdAsync(request.LyricsId);
-                    if (lyricsInfo != null && !string.IsNullOrEmpty(lyricsInfo.PlainLyrics))
-                    {
-                        // Cache the lyrics using the standard cache key
-                        var lyricsCacheKey = CacheKeyBuilder.BuildLyricsKey(
-                            request.Artist,
-                            request.Title,
-                            request.Album ?? string.Empty,
-                            request.DurationSeconds);
-                        await _cache.SetAsync(
-                            lyricsCacheKey,
-                            lyricsInfo.PlainLyrics,
-                            CacheExtensions.LyricsTTL);
-                        _logger.LogDebug("✓ Fetched and cached lyrics for {Artist} - {Title}", request.Artist, request.Title);
+                    var lyricsCacheKey = CacheKeyBuilder.BuildLyricsKey(
+                        request.Artist,
+                        request.Title,
+                        request.Album ?? string.Empty,
+                        request.DurationSeconds);
+                    await _lrclib.CacheLyricsAsync(lyricsCacheKey, lyricsInfo);
+                    _logger.LogDebug("Fetched and cached lyrics for {Artist} - {Title}", request.Artist, request.Title);
 
-                        return Ok(new
+                    return Ok(new
+                    {
+                        message = "Lyrics mapping saved and lyrics cached successfully",
+                        lyricsId = request.LyricsId,
+                        cached = true,
+                        lyrics = new
                         {
-                            message = "Lyrics mapping saved and lyrics cached successfully",
-                            lyricsId = request.LyricsId,
-                            cached = true,
-                            lyrics = new
-                            {
-                                id = lyricsInfo.Id,
-                                trackName = lyricsInfo.TrackName,
-                                artistName = lyricsInfo.ArtistName,
-                                albumName = lyricsInfo.AlbumName,
-                                duration = lyricsInfo.Duration,
-                                instrumental = lyricsInfo.Instrumental
-                            }
-                        });
-                    }
+                            id = lyricsInfo.Id,
+                            trackName = lyricsInfo.TrackName,
+                            artistName = lyricsInfo.ArtistName,
+                            albumName = lyricsInfo.AlbumName,
+                            duration = lyricsInfo.Duration,
+                            instrumental = lyricsInfo.Instrumental
+                        }
+                    });
                 }
             }
             catch (Exception ex)
@@ -117,9 +104,6 @@ public class LyricsController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Get manual lyrics mappings
-    /// </summary>
     [HttpGet("lyrics/mappings")]
     public async Task<IActionResult> GetLyricsMappings()
     {
@@ -145,12 +129,6 @@ public class LyricsController : ControllerBase
         }
     }
 
-
-
-    /// <summary>
-    /// Test Spotify lyrics API by fetching lyrics for a specific Spotify track ID
-    /// Example: GET /api/admin/lyrics/spotify/test?trackId=3yII7UwgLF6K5zW3xad3MP
-    /// </summary>
     [HttpGet("lyrics/spotify/test")]
     public async Task<IActionResult> TestSpotifyLyrics([FromQuery] string trackId)
     {
@@ -161,16 +139,9 @@ public class LyricsController : ControllerBase
 
         try
         {
-            var spotifyLyricsService = _serviceProvider.GetService<allstarr.Services.Lyrics.SpotifyLyricsService>();
-
-            if (spotifyLyricsService == null)
-            {
-                return StatusCode(500, new { error = "Spotify lyrics service not available" });
-            }
-
             _logger.LogInformation("Testing Spotify lyrics for track ID: {TrackId}", trackId);
 
-            var result = await spotifyLyricsService.GetLyricsByTrackIdAsync(trackId);
+            var result = await _spotifyLyrics.GetLyricsByTrackIdAsync(trackId);
 
             if (result == null)
             {
@@ -186,18 +157,13 @@ public class LyricsController : ControllerBase
             {
                 success = true,
                 trackId = result.SpotifyTrackId,
-                syncType = result.SyncType,
                 lineCount = result.Lines.Count,
-                language = result.Language,
-                provider = result.Provider,
-                providerDisplayName = result.ProviderDisplayName,
                 lines = result.Lines.Select(l => new
                 {
                     startTimeMs = l.StartTimeMs,
                     endTimeMs = l.EndTimeMs,
                     words = l.Words
                 }).ToList(),
-                // Also show LRC format
                 lrcFormat = string.Join("\n", result.Lines.Select(l =>
                 {
                     var timestamp = TimeSpan.FromMilliseconds(l.StartTimeMs);
@@ -214,10 +180,4 @@ public class LyricsController : ControllerBase
             return StatusCode(500, new { error = "Failed to fetch lyrics" });
         }
     }
-
-
-
-    /// <summary>
-    /// Invalidates the cached playlist summary so it will be regenerated on next request
-    /// </summary>
 }

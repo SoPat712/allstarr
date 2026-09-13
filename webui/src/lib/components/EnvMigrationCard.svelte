@@ -117,7 +117,7 @@
   {:else}
     <form class="settings-fields" onsubmit={(event) => { event.preventDefault(); void inspect(); }}>
       <label class="setting-field"><span><strong>Legacy environment file</strong></span><input type="file" onchange={(event) => { file = event.currentTarget.files?.[0] ?? null; }} /></label>
-      <Button variant="secondary" type="submit" disabled={!file || Boolean(action)}>{action === "preview" ? "Inspecting…" : status?.completed ? "Preview revision" : "Preview import"}</Button>
+      <footer><Button variant="secondary" type="submit" disabled={!file || Boolean(action)}>{action === "preview" ? "Inspecting…" : status?.completed ? "Preview revision" : "Preview import"}</Button></footer>
     </form>
   {/if}
   {#if feedback}<p class={failed ? "notice-error" : "action-feedback"} role={failed ? "alert" : "status"}>{feedback}</p>{/if}

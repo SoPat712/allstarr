@@ -608,11 +608,11 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
 
         Assert.Equal(local.LibraryTrackId, score.LibraryTrackId);
         Assert.True(score.Confidence >= 0.9);
-        Assert.Equal(0.07, score.Components!["localPreference"]);
+        Assert.Equal(0.07, score.Components!["priorityWindow"]);
     }
 
     [Fact]
-    public void LocalPreferenceBoostCountsTowardAutomaticAcceptance()
+    public void PriorityWindowDoesNotInflateConfidenceOrAutomaticAcceptance()
     {
         var scope = Scope();
         var source = Source() with
@@ -631,77 +631,113 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         var decision = engine.Decide(scope, source, [candidate]);
 
         Assert.True(score.Confidence < decision.AcceptThreshold);
-        Assert.True(score.Components!["preferenceScore"] >= decision.AcceptThreshold);
-        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
-        Assert.Equal(score.Components["preferenceScore"], decision.Confidence);
+        Assert.Equal(TrackMatchReviewState.Suggested, decision.State);
+        Assert.Equal(score.Confidence, decision.Confidence);
     }
 
     [Fact]
-    public void AcceptanceQualifiedLocalCandidateWinsOverHigherProviderRoute()
+    public void LocalCandidateWithinSevenPointsWinsOverHigherProviderConfidence()
     {
         var scope = Scope();
-        var source = Source() with { Isrc = "USAAA2600001" };
+        var source = Source();
         var local = Candidate(scope) with
         {
             CanonicalRecordingId = null,
             Album = null,
             AlbumArtist = null,
-            DurationMilliseconds = 230_000,
-            IsLocal = true
+            DurationMilliseconds = 245_000
         };
-        var provider = Candidate(scope) with
-        {
-            LibraryTrackId = Guid.CreateVersion7(),
-            BackendItemId = "provider-route",
-            CanonicalRecordingId = null,
-            Isrc = source.Isrc,
-            IsLocal = false,
-            ProviderOrigin = ProviderOrigin.BuiltIn
-        };
+        var provider = ProviderCandidate(scope, "fourth", 240_000);
         var engine = new TrackMatchDecisionEngine();
 
-        var scores = engine.ScoreCandidates(source, [provider, local]);
+        var scores = engine.ScoreCandidates(source, [provider, local], ["apple-download", "deezer", "qobuz", "fourth"]);
         var localScore = scores.Single(score => score.LibraryTrackId == local.LibraryTrackId);
         var providerScore = scores.Single(score => score.LibraryTrackId == provider.LibraryTrackId);
-        var decision = engine.Decide(scope, source, [provider, local]);
+        var decision = engine.Decide(
+            scope,
+            source,
+            [provider, local],
+            providerPriority: ["apple-download", "deezer", "qobuz", "fourth"]);
 
-        Assert.True(providerScore.Confidence > localScore.Components!["preferenceScore"]);
-        Assert.True(localScore.Components["preferenceScore"] >= decision.AcceptThreshold);
+        Assert.InRange(providerScore.Confidence - localScore.Confidence, 0.05, 0.07);
         Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
         Assert.Equal(local.LibraryTrackId, decision.SelectedLibraryTrackId);
         Assert.Equal(local.LibraryTrackId, decision.Candidates[0].LibraryTrackId);
-        Assert.Equal(localScore.Components["preferenceScore"], decision.Confidence);
+        Assert.Equal(localScore.Confidence, decision.Confidence);
+        Assert.Equal(0.07, localScore.Components!["priorityWindow"]);
+        Assert.Contains("local_priority_window_selected", decision.Reasons);
     }
 
     [Fact]
-    public void AcceptanceQualifiedLocalCandidateIsRetainedAheadOfTwentyProviderRoutes()
+    public void PriorityWindowBoundaryIsInclusive()
     {
         var scope = Scope();
-        var source = Source() with { Isrc = "USAAA2600002" };
+        var source = Source();
         var local = Candidate(scope) with
         {
             CanonicalRecordingId = null,
             Album = null,
             AlbumArtist = null,
-            DurationMilliseconds = 230_000
+            DurationMilliseconds = 245_000
         };
-        var providers = Enumerable.Range(0, 20).Select(index => Candidate(scope) with
+        var provider = ProviderCandidate(scope, "deezer", 240_000);
+        var raw = new TrackMatchDecisionEngine().ScoreCandidates(source, [provider, local])
+            .ToDictionary(score => score.LibraryTrackId);
+        var exactWindow = raw[provider.LibraryTrackId].Confidence - raw[local.LibraryTrackId].Confidence;
+
+        var inside = new TrackMatchDecisionEngine(new TrackMatchPolicy
         {
-            LibraryTrackId = Guid.CreateVersion7(),
-            BackendItemId = $"provider-{index}",
-            CanonicalRecordingId = null,
-            Isrc = source.Isrc,
-            IsLocal = false,
-            ProviderOrigin = ProviderOrigin.BuiltIn
-        });
+            LocalPriorityWindow = exactWindow
+        }).Decide(scope, source, [provider, local]);
+        var outside = new TrackMatchDecisionEngine(new TrackMatchPolicy
+        {
+            LocalPriorityWindow = exactWindow - 0.0002
+        }).Decide(scope, source, [provider, local]);
+
+        Assert.Equal(local.LibraryTrackId, inside.SelectedLibraryTrackId);
+        Assert.Equal(provider.LibraryTrackId, outside.SelectedLibraryTrackId);
+    }
+
+    [Theory]
+    [InlineData("apple-download", 244_000)]
+    [InlineData("deezer", 242_100)]
+    [InlineData("qobuz", 242_000)]
+    [InlineData("fourth", 240_000)]
+    public void ProviderPriorityWindowsFallFromFiveToThreeToOneToRawHighest(
+        string expectedProvider,
+        long expectedDuration)
+    {
+        var scope = Scope();
+        var source = Source();
+        var order = new[] { "apple-download", "deezer", "qobuz", "fourth" };
+        var candidates = new[]
+        {
+            Candidate(scope) with
+            {
+                CanonicalRecordingId = null,
+                Album = null,
+                AlbumArtist = null,
+                DurationMilliseconds = 247_000
+            },
+            ProviderCandidate(scope, "apple-download", expectedProvider == "apple-download" ? expectedDuration : 247_000),
+            ProviderCandidate(scope, "deezer", expectedProvider == "deezer" ? expectedDuration : 245_000),
+            ProviderCandidate(scope, "qobuz", expectedProvider == "qobuz" ? expectedDuration : 242_100),
+            ProviderCandidate(scope, "fourth", 240_000)
+        };
 
         var decision = new TrackMatchDecisionEngine().Decide(
-            scope, source, [.. providers, local]);
+            scope, source, candidates, providerPriority: order);
 
         Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
-        Assert.Equal(local.LibraryTrackId, decision.SelectedLibraryTrackId);
-        Assert.Equal(local.LibraryTrackId, decision.Candidates[0].LibraryTrackId);
-        Assert.Equal(20, decision.Candidates.Count);
+        Assert.Equal(
+            candidates.Single(candidate => candidate.ProviderTrackIds?.ContainsKey(expectedProvider) == true).LibraryTrackId,
+            decision.SelectedLibraryTrackId);
+        Assert.Equal(expectedProvider == "fourth" ? 0 : expectedProvider switch
+        {
+            "apple-download" => 0.05,
+            "deezer" => 0.03,
+            _ => 0.01
+        }, decision.Candidates[0].Components?.GetValueOrDefault("priorityWindow") ?? 0);
     }
 
     [Fact]
@@ -725,27 +761,43 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void ExtensionPreferencePenaltyFavorsAnOtherwiseEqualBuiltInCandidate()
+    public void EarlierConfiguredProviderWinsAnEqualConfidenceTie()
     {
         var scope = Scope();
-        var builtIn = Candidate(scope) with
+        var first = ProviderCandidate(scope, "apple-download", 240_000);
+        var second = ProviderCandidate(scope, "deezer", 240_000);
+
+        var scores = new TrackMatchDecisionEngine().ScoreCandidates(
+            Source(), [second, first], ["apple-download", "deezer"]);
+
+        Assert.Equal(first.LibraryTrackId, scores[0].LibraryTrackId);
+        Assert.Equal(scores[0].Confidence, scores[1].Confidence);
+    }
+
+    [Fact]
+    public void ProviderSearchIsSkippedOnlyWhenLocalCannotLoseItsSevenPointWindow()
+    {
+        var scope = Scope();
+        var source = Source();
+        var safe = Candidate(scope) with
         {
-            IsLocal = false,
-            ProviderOrigin = ProviderOrigin.BuiltIn
+            CanonicalRecordingId = null,
+            Album = null,
+            AlbumArtist = null,
+            DurationMilliseconds = 245_000
         };
-        var extension = builtIn with
+        var vulnerable = safe with
         {
             LibraryTrackId = Guid.CreateVersion7(),
-            BackendItemId = "extension-track",
-            ProviderOrigin = ProviderOrigin.Extension
+            DurationMilliseconds = 247_000
         };
+        var engine = new TrackMatchDecisionEngine();
 
-        var scores = new TrackMatchDecisionEngine().ScoreCandidates(Source(), [extension, builtIn]);
-        var extensionComponents = scores[1].Components!;
+        var safeDecision = engine.Decide(scope, source, [safe]);
+        var vulnerableDecision = engine.Decide(scope, source, [vulnerable]);
 
-        Assert.Equal(builtIn.LibraryTrackId, scores[0].LibraryTrackId);
-        Assert.Equal(-0.03, extensionComponents["extensionPenalty"]);
-        Assert.Equal(scores[1].Confidence - 0.03, extensionComponents["preferenceScore"], 6);
+        Assert.True(engine.CanSkipProviderComparison(safeDecision));
+        Assert.False(engine.CanSkipProviderComparison(vulnerableDecision));
     }
 
     [Fact]
@@ -969,7 +1021,7 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void Local_candidates_receive_the_default_seven_point_preference()
+    public void LocalCandidatesExposeTheDefaultSevenPointPriorityWindow()
     {
         var scope = Scope();
         var external = Candidate(scope) with
@@ -995,12 +1047,9 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         Assert.Equal(
             scores[external.LibraryTrackId].Confidence,
             scores[local.LibraryTrackId].Confidence);
-        Assert.Equal(0.07, scores[local.LibraryTrackId].Components!["localPreference"]);
-        Assert.Equal(
-            Math.Min(1, scores[local.LibraryTrackId].Confidence + 0.07),
-            scores[local.LibraryTrackId].Components!["preferenceScore"]);
+        Assert.Equal(0.07, scores[local.LibraryTrackId].Components!["priorityWindow"]);
         Assert.DoesNotContain(
-            "localPreference",
+            "priorityWindow",
             scores[external.LibraryTrackId].Components?.Keys ?? []);
     }
 
@@ -1043,6 +1092,24 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         null,
         null,
         IsExplicit: false);
+
+    private static LocalTrackMatchCandidate ProviderCandidate(
+        TrackMatchScope scope,
+        string provider,
+        long durationMilliseconds) => Candidate(scope) with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = $"{provider}-{durationMilliseconds}",
+            CanonicalRecordingId = null,
+            Album = null,
+            AlbumArtist = null,
+            DurationMilliseconds = durationMilliseconds,
+            ProviderTrackIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [provider] = $"{provider}-track"
+            },
+            IsLocal = false
+        };
 
     private static LocalTrackMatchCandidate Candidate(TrackMatchScope scope) => new(
         Guid.CreateVersion7(),

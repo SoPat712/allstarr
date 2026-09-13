@@ -48,8 +48,6 @@ export function playableProviderIds(providers: ProviderDefinition[]) {
 
 export function rankedTargets(targets: MatchTarget[]) {
   return targets.toSorted((left, right) =>
-    (right.components?.preferenceScore ?? right.confidence ?? -1) -
-      (left.components?.preferenceScore ?? left.confidence ?? -1) ||
     (right.confidence ?? -1) - (left.confidence ?? -1) ||
     left.title.localeCompare(right.title));
 }

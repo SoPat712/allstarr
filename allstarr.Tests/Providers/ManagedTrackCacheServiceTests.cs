@@ -15,21 +15,25 @@ namespace allstarr.Tests;
 
 public sealed class ManagedTrackCacheServiceTests
 {
-    [Fact]
-    public async Task CompletedFullRangeStream_IsPublishedAndRegistered()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CompletedFullRangeStream_IsPublishedAndRegistered(bool fallback)
     {
         var root = CreateRoot();
         try
         {
             string? registeredPath = null;
+            var provider = fallback ? "qobuz" : "deezer";
+            var externalId = fallback ? "other-track" : "track-1";
             var local = new Mock<ILocalLibraryService>(MockBehavior.Strict);
-            local.Setup(item => item.GetLocalPathForExternalSongAsync("deezer", "track-1"))
+            local.Setup(item => item.GetLocalPathForExternalSongAsync(provider, externalId))
                 .ReturnsAsync((string?)null);
             local.Setup(item => item.RegisterDownloadedSongAsync(It.IsAny<Song>(), It.IsAny<string>()))
                 .Callback<Song, string>((song, path) =>
                 {
-                    Assert.Equal("deezer", song.ExternalProvider);
-                    Assert.Equal("track-1", song.ExternalId);
+                    Assert.Equal(provider, song.ExternalProvider);
+                    Assert.Equal(externalId, song.ExternalId);
                     registeredPath = path;
                 })
                 .Returns(Task.CompletedTask);
@@ -38,7 +42,7 @@ public sealed class ManagedTrackCacheServiceTests
             response.Content.Headers.ContentRange = new ContentRangeHeaderValue(0, 3, 4);
 
             await service.WrapAsync(
-                ProviderStream(response),
+                ProviderStream(response) with { ServingProviderId = provider, ServingExternalId = externalId },
                 "deezer",
                 "track-1",
                 ProviderAudioQuality.Any,

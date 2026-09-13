@@ -12,6 +12,7 @@
     open = $bindable(false),
     providers,
     administrator,
+    testConnection = false,
     account = null,
     initialProviderId = "",
     onSaved,
@@ -19,12 +20,14 @@
     open: boolean;
     providers: ProviderDefinition[];
     administrator: boolean;
+    testConnection?: boolean;
     account?: ProviderAccount | null;
     initialProviderId?: string;
     onSaved: (message: string) => void | Promise<void>;
   } = $props();
 
   let providerId = $state("");
+  let scope = $state("User");
   let saving = $state(false);
   let error = $state("");
 
@@ -38,7 +41,7 @@
 
   $effect(() => {
     if (open && choices[0]) providerId = account?.providerId || initialProviderId || choices[0].id;
-    if (!open) error = "";
+    if (!open) { error = ""; scope = "User"; }
   });
 
   async function create(event: SubmitEvent) {
@@ -49,6 +52,8 @@
     const form = event.currentTarget as HTMLFormElement;
     const data = new FormData(form);
     try {
+      if (!account && scope === "Global" && !data.has("confirmShare"))
+        throw new Error("Confirm that every Allstarr user may use this connection.");
       let saved: ProviderAccount;
       if (account) {
         const replacement = await sources.replaceSecret(account, secretFromForm(selected, data));
@@ -72,7 +77,9 @@
           String(data.get("password") || ""),
         );
       const savedState = !account ? "connected" : account.enabled ? "configuration saved" : "connection enabled";
-      try {
+      if (!testConnection) {
+        await onSaved(`${selected.name} ${savedState}.`);
+      } else try {
         await sources.test(saved);
         await onSaved(`${selected.name} ${savedState} and tested.`);
       } catch {
@@ -121,12 +128,18 @@
             <label class="field"><span>Connection name</span><input name="displayName" placeholder={`My ${selected.name} connection`} /></label>
             <label class="field">
               <span>Who can use it?</span>
-              <SelectField name="scope" label="Who can use it?" value="User" options={[
-                { value: "User", label: "Only me" },
-                ...(administrator ? [{ value: "Global", label: "Everyone" }, { value: "Library", label: "One library" }] : []),
+              <SelectField name="scope" label="Who can use it?" bind:value={scope} options={[
+                { value: "User", label: "Private" },
+                { value: "Global", label: "Global" },
+                ...(administrator ? [{ value: "Library", label: "One library" }] : []),
               ]} />
+              <small>{scope === "Global" ? "Shared provider use for everyone on this Allstarr server, subject to server policy. You keep control of this connection." : scope === "Library" ? "Only requests in the selected media library may use this connection." : "Only you can use this connection unless you choose to share it."}</small>
             </label>
-            {#if administrator}<label class="field"><span>Library ID (only for one library)</span><input name="libraryScopeId" /></label>{/if}
+            {#if scope === "Global"}
+              <label class="toggle-line"><Checkbox name="confirmShare" required /><span>I agree to share provider access with every Allstarr user.<small>Other users may consume this account’s provider limits. Credentials stay hidden; personal playlists and scrobbling are not shared by default.</small></span></label>
+            {:else if scope === "Library" && administrator}
+              <label class="field"><span>Library ID</span><input name="libraryScopeId" required /></label>
+            {/if}
           {/if}
 
           <div class="source-setting-grid">
@@ -151,9 +164,9 @@
             {/each}
           </div>
           {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
-          <footer>
+          <footer class="dialog-actions">
             <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
-            <Button type="submit" disabled={saving}>{saving ? "Saving…" : "Save and test"}</Button>
+            <Button type="submit" disabled={saving}>{saving ? "Saving…" : testConnection ? "Save and test" : "Save connection"}</Button>
           </footer>
         </form>
       {:else}

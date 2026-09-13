@@ -2,10 +2,6 @@ using Microsoft.Extensions.Logging;
 
 namespace allstarr.Services.Common;
 
-/// <summary>
-/// Utility class for handling retry logic with exponential backoff.
-/// Centralizes retry patterns used across download and metadata services.
-/// </summary>
 public static class RetryHelper
 {
     internal static HttpResponseMessage EnsureSuccessOrDispose(HttpResponseMessage response)
@@ -21,16 +17,6 @@ public static class RetryHelper
         }
     }
 
-    /// <summary>
-    /// Executes an async action with exponential backoff retry logic.
-    /// Retries on HTTP 503 (Service Unavailable) and 429 (Too Many Requests).
-    /// </summary>
-    /// <typeparam name="T">Return type of the action</typeparam>
-    /// <param name="action">The async action to execute</param>
-    /// <param name="logger">Logger for retry attempts</param>
-    /// <param name="maxRetries">Maximum number of retry attempts (default: 3)</param>
-    /// <param name="initialDelayMs">Initial delay in milliseconds (default: 1000)</param>
-    /// <returns>Result of the action</returns>
     public static async Task<T> RetryWithBackoffAsync<T>(
         Func<Task<T>> action,
         ILogger logger,
@@ -38,6 +24,8 @@ public static class RetryHelper
         int initialDelayMs = 1000,
         CancellationToken cancellationToken = default)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxRetries, 1);
+        ArgumentOutOfRangeException.ThrowIfNegative(initialDelayMs);
         Exception? lastException = null;
 
         for (int attempt = 0; attempt < maxRetries; attempt++)
@@ -62,26 +50,19 @@ public static class RetryHelper
                     await Task.Delay(delay, cancellationToken);
                 }
             }
-            catch
-            {
-                throw;
-            }
         }
 
         throw lastException!;
     }
 
-    /// <summary>
-    /// Executes an async action with exponential backoff retry logic (void return).
-    /// </summary>
-    public static async Task RetryWithBackoffAsync(
+    public static Task RetryWithBackoffAsync(
         Func<Task> action,
         ILogger logger,
         int maxRetries = 3,
         int initialDelayMs = 1000,
         CancellationToken cancellationToken = default)
     {
-        await RetryWithBackoffAsync(async () =>
+        return RetryWithBackoffAsync(async () =>
         {
             await action();
             return true;

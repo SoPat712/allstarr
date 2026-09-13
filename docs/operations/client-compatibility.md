@@ -36,6 +36,16 @@ These clients have been used with a Navidrome or other Subsonic-compatible backe
 
 The Subsonic surface accepts normal query and form-post request styles and preserves XML or JSON responses. It supports integrated search, item lookup, streaming, cover art, structured lyrics, stars, playlists, playback observations, and catch-all relay. Some clients filter provider playlists out of their dedicated playlist screen even when the same results are visible through global search.
 
+## External song labels and playback sources
+
+Injected song titles use `[A]`, or `[A]/[E]` when explicit. Native library titles stay unchanged. Existing external IDs remain compatible; the provider embedded in an ID identifies its catalog entry, not necessarily the provider serving its audio. Album, artist, and playlist relationships remain catalog-specific.
+
+For clients with a device identifier, playback first checks authorized cached copies, then tries configured streaming providers with an exact verified identity for the same recording. Manual source pins remain authoritative. Failed leases, transport failures, unavailable media, empty streams, and non-audio error pages can advance to another eligible source before audio starts. Authentication and policy denials do not bypass authorization, and an active response is never spliced together from multiple providers. A track without verified alternatives stays on its known source; playback does not run a speculative title search.
+
+The Home page distinguishes **Playing from**, **Cached from**, and an unconfirmed catalog source. Jellyfin song details can include the last opened source for that user/device, with its timestamp; whether a client displays `Overview` or the media-source name depends on the client. Stream responses also expose `X-Allstarr-Provider`, never account identifiers or signed URLs. Artwork is deliberately not stamped: cached/shared covers cannot reliably represent a per-listener playback route.
+
+Byte-range continuation stays on the opened provider, identity, account, and requested quality. If the short-lived selection is unavailable (for example after a restart), the client must restart playback before seeking. Clients without a device identifier—including standard Subsonic requests that identify only the application name—retain exact-provider playback and seeking; they do not participate in cross-provider failover yet. HEAD probes do not change the reported playback source.
+
 ## Known Limitation
 
 [Symfonium](https://symfonium.app/) uses an offline-first local index for search. It may not send the live search requests Allstarr needs in order to merge provider results, so provider discovery through that client is not considered compatible. Local backend playback can still be a separate question from integrated provider search.

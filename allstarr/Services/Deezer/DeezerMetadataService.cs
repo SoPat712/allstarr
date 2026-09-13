@@ -94,7 +94,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
 
             return songs;
         }
-        catch
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             return new List<Song>();
         }
@@ -193,7 +193,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
 
             return albums;
         }
-        catch
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             return new List<Album>();
         }
@@ -255,7 +255,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
 
             return artists;
         }
-        catch
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             return new List<Artist>();
         }

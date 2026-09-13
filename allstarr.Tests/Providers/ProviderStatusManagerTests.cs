@@ -3,7 +3,9 @@ using System.Net;
 using System.Text;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
+using allstarr.Services.AppleMusic;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Operations;
 using Moq;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -463,6 +465,43 @@ public sealed class ProviderStatusManagerTests
         Assert.Equal("probe_failed", current.ReasonCode);
     }
 
+    [Fact]
+    public async Task ExpiredAccountFreeFailure_RemainsExcludedUntilReprobed()
+    {
+        var clock = new FakeClock(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        var discovery = new Mock<IAppleDownloadEndpointDiscovery>();
+        discovery.Setup(item => item.DiscoverAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AppleDownloadEndpointSnapshot(
+                AppleDownloadEndpointState.Unreachable,
+                "endpoint_unreachable",
+                null,
+                false,
+                [new AppleDownloadCapabilityStatus(
+                    ProviderCapabilities.Metadata,
+                    AppleDownloadCapabilityState.Degraded,
+                    "endpoint_unreachable")]));
+        var manager = CreateManager(
+            new Dictionary<string, string?>
+            {
+                ["MULTI_PROVIDER_METADATA_ORDER"] = "apple-download,deezer",
+                ["MULTI_PROVIDER_ENABLED_SEARCH"] = "apple-download,deezer"
+            },
+            appleMusicSettings: new AppleDownloadSettings { BaseUrl = "http://apple-gateway" },
+            appleDownloadDiscovery: discovery.Object,
+            clock: clock);
+
+        var failed = await manager.TestAccountFreeProviderCapabilityAsync(
+            "apple-download",
+            ProviderCapabilities.Metadata);
+        clock.UtcNow += TimeSpan.FromHours(1);
+
+        Assert.Equal(ProviderHealthState.Degraded, failed.Health);
+        Assert.Equal(["deezer"], manager.GetEnabledSearchProviders());
+        Assert.Equal(
+            ProviderHealthState.Degraded,
+            manager.GetAccountFreeStatus("apple-download", ProviderCapabilities.Metadata).Health);
+    }
+
     private static ProviderStatusManager CreateManager(
         IReadOnlyDictionary<string, string?> values,
         IHttpClientFactory? httpClientFactory = null,
@@ -470,7 +509,9 @@ public sealed class ProviderStatusManagerTests
         AppleDownloadSettings? appleMusicSettings = null,
         DeezerSettings? deezerSettings = null,
         QobuzSettings? qobuzSettings = null,
-        IProviderRegistry? providerRegistry = null)
+        IProviderRegistry? providerRegistry = null,
+        IAppleDownloadEndpointDiscovery? appleDownloadDiscovery = null,
+        IPlatformClock? clock = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(values)
@@ -484,10 +525,12 @@ public sealed class ProviderStatusManagerTests
             Options.Create(appleMusicSettings ?? new AppleDownloadSettings()),
             Options.Create(deezerSettings ?? new DeezerSettings()),
             Options.Create(qobuzSettings ?? new QobuzSettings()),
+            appleDownloadDiscovery: appleDownloadDiscovery,
             services: providerRegistry == null
                 ? null
                 : Mock.Of<IServiceProvider>(provider =>
-                    provider.GetService(typeof(IProviderRegistry)) == providerRegistry));
+                    provider.GetService(typeof(IProviderRegistry)) == providerRegistry),
+            clock: clock);
     }
 
     private static HttpResponseMessage Json(HttpStatusCode status, string json) =>
@@ -561,5 +604,10 @@ public sealed class ProviderStatusManagerTests
 
             return Task.FromResult(response);
         }
+    }
+
+    private sealed class FakeClock(DateTimeOffset utcNow) : IPlatformClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = utcNow;
     }
 }

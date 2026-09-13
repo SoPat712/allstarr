@@ -2,7 +2,6 @@ using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
 using allstarr.Services.Common;
 using System.Text.RegularExpressions;
@@ -59,8 +58,7 @@ public sealed record LocalTrackMatchCandidate(
     string? MusicBrainzRecordingId,
     bool? IsExplicit,
     IReadOnlyDictionary<string, string>? ProviderTrackIds = null,
-    bool IsLocal = true,
-    ProviderOrigin? ProviderOrigin = null);
+    bool IsLocal = true);
 
 public sealed record ScopedTrackMatchOverride(
     Guid TenantId,
@@ -109,9 +107,9 @@ public sealed record TrackMatchDecision(
 
 public sealed class TrackMatchPolicy
 {
-    public double LocalPreferenceBoost { get; set; } = 0.07;
+    public double LocalPriorityWindow { get; set; } = 0.07;
 
-    public double ExtensionPreferencePenalty { get; set; } = 0.03;
+    public IReadOnlyList<double> ProviderPriorityWindows { get; init; } = [0.05, 0.03, 0.01];
 
     public double AcceptThreshold { get; init; } = 0.88;
 
@@ -123,8 +121,9 @@ public sealed class TrackMatchPolicy
 
     public void Validate()
     {
-        if (LocalPreferenceBoost is < 0 or > 1 ||
-            ExtensionPreferencePenalty is < 0 or > 1 ||
+        if (LocalPriorityWindow is < 0 or > 1 ||
+            ProviderPriorityWindows == null ||
+            ProviderPriorityWindows.Any(window => window is < 0 or > 1) ||
             AcceptThreshold is <= 0 or > 1 ||
             SuggestThreshold is < 0 or > 1 ||
             SuggestThreshold > AcceptThreshold ||
@@ -138,7 +137,8 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "normalized-v14";
+    public const string AlgorithmVersion = "priority-windows-v16";
+    private const double ScoreEpsilon = 0.0000001;
 
     private readonly TrackMatchPolicy _policy;
 
@@ -178,64 +178,114 @@ public sealed class TrackMatchDecisionEngine
 
     public IReadOnlyList<TrackMatchCandidateScore> ScoreCandidates(
         ExternalTrackMatchSnapshot source,
-        IEnumerable<LocalTrackMatchCandidate> candidates)
+        IEnumerable<LocalTrackMatchCandidate> candidates,
+        IReadOnlyList<string>? providerPriority = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(candidates);
         ValidateSource(source);
-        return candidates
-            .Select(candidate => ApplyPreference(ScoreCandidate(source, candidate), candidate))
-            .OrderByDescending(PreferenceScore)
-            .ThenByDescending(candidate => candidate.Confidence)
-            .ThenBy(candidate => candidate.LibraryTrackId)
+        var ranked = candidates
+            .Select(candidate => new RankedCandidate(
+                candidate,
+                ScoreCandidate(source, candidate),
+                Priority(candidate, providerPriority)))
+            .OrderByDescending(candidate => candidate.Score.Confidence)
+            .ThenBy(candidate => candidate.Score.LibraryTrackId)
+            .ToArray();
+        if (ranked.Length == 0) return [];
+
+        var highestConfidence = ranked[0].Score.Confidence;
+        var selected = ranked
+            .Where(candidate => candidate.Score.Confidence + candidate.Priority.Window + ScoreEpsilon >=
+                                highestConfidence)
+            .OrderBy(candidate => candidate.Priority.Rank)
+            .ThenByDescending(candidate => candidate.Score.Confidence)
+            .ThenBy(candidate => candidate.Score.LibraryTrackId)
+            .First();
+        return ranked
+            .OrderBy(candidate => candidate.Score.LibraryTrackId == selected.Score.LibraryTrackId ? 0 : 1)
+            .ThenByDescending(candidate => candidate.Score.Confidence)
+            .ThenBy(candidate => candidate.Score.LibraryTrackId)
+            .Select(candidate => ExplainPrioritySelection(
+                candidate,
+                candidate.Score.LibraryTrackId == selected.Score.LibraryTrackId &&
+                candidate.Score.LibraryTrackId != ranked[0].Score.LibraryTrackId))
             .ToArray();
     }
 
-    private TrackMatchCandidateScore ApplyPreference(
-        TrackMatchCandidateScore score,
-        LocalTrackMatchCandidate candidate)
+    private TrackMatchCandidateScore ExplainPrioritySelection(
+        RankedCandidate candidate,
+        bool displacedHigherConfidence)
     {
-        var adjustment = candidate.IsLocal
-            ? _policy.LocalPreferenceBoost
-            : candidate.ProviderOrigin == ProviderOrigin.Extension
-                ? -_policy.ExtensionPreferencePenalty
-                : 0;
-        if (adjustment == 0) return score;
+        if (candidate.Priority.Window == 0) return candidate.Score;
 
         var components = new Dictionary<string, double>(
-            score.Components ?? new Dictionary<string, double>())
+            candidate.Score.Components ?? new Dictionary<string, double>())
         {
-            [candidate.IsLocal ? "localPreference" : "extensionPenalty"] = adjustment,
-            ["preferenceScore"] = Math.Clamp(score.Confidence + adjustment, 0, 1)
+            ["priorityWindow"] = candidate.Priority.Window
         };
-        return score with
+        return candidate.Score with
         {
             Components = components,
-            Reasons = score.Reasons
-                .Append(candidate.IsLocal ? "local_preference_boost" : "extension_preference_penalty")
-                .Distinct(StringComparer.Ordinal)
-                .ToArray()
+            Reasons = displacedHigherConfidence
+                ? candidate.Score.Reasons
+                    .Append(candidate.Candidate.IsLocal
+                        ? "local_priority_window_selected"
+                        : "provider_priority_window_selected")
+                    .ToArray()
+                : candidate.Score.Reasons
         };
     }
 
-    private static double PreferenceScore(TrackMatchCandidateScore score) =>
-        score.Components != null &&
-        score.Components.TryGetValue("preferenceScore", out var preferenceScore)
-            ? preferenceScore
-            : score.Confidence;
+    private CandidatePriority Priority(
+        LocalTrackMatchCandidate candidate,
+        IReadOnlyList<string>? providerPriority)
+    {
+        if (candidate.IsLocal) return new(0, _policy.LocalPriorityWindow);
+        if (candidate.ProviderTrackIds == null || providerPriority == null) return CandidatePriority.Fallback;
+
+        var providers = candidate.ProviderTrackIds.Keys
+            .Select(NormalizeProvider)
+            .ToHashSet(StringComparer.Ordinal);
+        var ordered = providerPriority
+            .Select(NormalizeProvider)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var index = Array.FindIndex(ordered, providers.Contains);
+        return index < 0
+            ? CandidatePriority.Fallback
+            : new(index + 1, index < _policy.ProviderPriorityWindows.Count
+                ? _policy.ProviderPriorityWindows[index]
+                : 0);
+    }
+
+    private static string NormalizeProvider(string provider)
+    {
+        var normalized = provider.Trim().ToLowerInvariant()
+            .Replace("-", string.Empty, StringComparison.Ordinal)
+            .Replace("_", string.Empty, StringComparison.Ordinal);
+        return normalized == "applemusic" ? "appledownload" : normalized;
+    }
+
+    public bool CanSkipProviderComparison(TrackMatchDecision decision) =>
+        decision.State == TrackMatchReviewState.Accepted &&
+        decision.Candidates.FirstOrDefault() is { IsLocal: true } local &&
+        local.Confidence + _policy.LocalPriorityWindow + ScoreEpsilon >= 1;
 
     public TrackMatchDecision Decide(
         TrackMatchScope scope,
         ExternalTrackMatchSnapshot source,
         TrackMatchCandidateSet candidates,
-        ScopedTrackMatchOverride? manualOverride = null) =>
-        Decide(scope, source, candidates.Select(source), manualOverride);
+        ScopedTrackMatchOverride? manualOverride = null,
+        IReadOnlyList<string>? providerPriority = null) =>
+        Decide(scope, source, candidates.Select(source), manualOverride, providerPriority);
 
     public TrackMatchDecision Decide(
         TrackMatchScope scope,
         ExternalTrackMatchSnapshot source,
         IReadOnlyList<LocalTrackMatchCandidate> candidates,
-        ScopedTrackMatchOverride? manualOverride = null)
+        ScopedTrackMatchOverride? manualOverride = null,
+        IReadOnlyList<string>? providerPriority = null)
     {
         ArgumentNullException.ThrowIfNull(scope);
         ArgumentNullException.ThrowIfNull(source);
@@ -277,7 +327,7 @@ public sealed class TrackMatchDecisionEngine
                     scope);
         }
 
-        var rankedScores = ScoreCandidates(source, visible);
+        var rankedScores = ScoreCandidates(source, visible, providerPriority);
         if (rankedScores.Count == 0)
         {
             return Result(
@@ -292,40 +342,21 @@ public sealed class TrackMatchDecisionEngine
                 scope);
         }
 
-        // A backend-local candidate that independently clears the automatic
-        // acceptance bar is the useful library answer. Provider routes remain
-        // fallbacks and must not displace it merely by scoring a few points
-        // higher.
-        var acceptedLocal = rankedScores.FirstOrDefault(score =>
-            score.IsLocal &&
-            PreferenceScore(score) >= _policy.AcceptThreshold &&
-            HasStrongArtistEvidence(score));
-        var scores = (acceptedLocal == null
-                ? rankedScores
-                : [acceptedLocal, .. rankedScores.Where(score =>
-                    score.LibraryTrackId != acceptedLocal.LibraryTrackId)])
-            .Take(20)
-            .ToList();
+        var scores = rankedScores.Take(20).ToList();
         var best = scores[0];
         var selected = visible.Single(candidate => candidate.LibraryTrackId == best.LibraryTrackId);
-        var competingScores = acceptedLocal == null
-            ? rankedScores
-            : rankedScores.Where(score => score.IsLocal);
-        var runnerUp = competingScores.FirstOrDefault(score =>
+        var selectedPriority = Priority(selected, providerPriority);
+        var runnerUp = rankedScores.FirstOrDefault(score =>
             score.LibraryTrackId != best.LibraryTrackId &&
+            Priority(
+                visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId),
+                providerPriority).Rank == selectedPriority.Rank &&
             !SameRecordingIdentity(
                 selected,
                 visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId)));
-        var runnerUpDelta = runnerUp != null &&
-                            best.Components?.ContainsKey("localPreference") ==
-                            runnerUp.Components?.ContainsKey("localPreference")
-            ? best.Confidence - runnerUp.Confidence
-            : runnerUp != null
-                ? PreferenceScore(best) - PreferenceScore(runnerUp)
-                : double.MaxValue;
         if (runnerUp != null &&
-            PreferenceScore(best) >= _policy.SuggestThreshold &&
-            runnerUpDelta <= _policy.AmbiguityDelta)
+            best.Confidence >= _policy.SuggestThreshold &&
+            best.Confidence - runnerUp.Confidence <= _policy.AmbiguityDelta)
         {
             return Result(
                 TrackMatchReviewState.Ambiguous,
@@ -337,7 +368,7 @@ public sealed class TrackMatchDecisionEngine
                 scope);
         }
 
-        var decisionScore = PreferenceScore(best);
+        var decisionScore = best.Confidence;
         var strongArtistEvidence = HasStrongArtistEvidence(best);
         var state = decisionScore >= _policy.AcceptThreshold && strongArtistEvidence
             ? TrackMatchReviewState.Accepted
@@ -361,6 +392,16 @@ public sealed class TrackMatchDecisionEngine
                 _ => []
             },
             scope);
+    }
+
+    private sealed record RankedCandidate(
+        LocalTrackMatchCandidate Candidate,
+        TrackMatchCandidateScore Score,
+        CandidatePriority Priority);
+
+    private readonly record struct CandidatePriority(int Rank, double Window)
+    {
+        public static CandidatePriority Fallback { get; } = new(int.MaxValue, 0);
     }
 
     private static bool HasStrongArtistEvidence(TrackMatchCandidateScore score) =>

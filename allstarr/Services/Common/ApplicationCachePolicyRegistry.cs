@@ -81,7 +81,6 @@ public static class ApplicationCachePolicyRegistry
                 "musicbrainz:isrc:v2:",
                 "musicbrainz:search:v2:",
                 "musicbrainz:mbid:v2:",
-                "genre:v2:",
                 "playback:metadata:v1:"))
             category = ApplicationCacheCategory.CanonicalMetadata;
         if (key.StartsWith("search:v2:", StringComparison.Ordinal))

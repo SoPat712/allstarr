@@ -166,6 +166,67 @@ public class ScrobblingAdminControllerTests
         Assert.Contains("Try again later", payload, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("validate")]
+    [InlineData("test")]
+    public async Task ListenBrainzTokenEndpoints_RejectInvalidTokensUniformly(string endpoint)
+    {
+        var settings = CreateSettings("testuser", "password123");
+        settings.ListenBrainz.UserToken = "configured-token";
+        var controller = CreateController(
+            settings,
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"valid\":false}", Encoding.UTF8, "application/json")
+            });
+
+        var result = Assert.IsType<BadRequestObjectResult>(
+            await InvokeListenBrainzEndpoint(controller, endpoint, CancellationToken.None));
+
+        Assert.Contains("Invalid user token", JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("validate")]
+    [InlineData("test")]
+    public async Task ListenBrainzTokenEndpoints_RejectMalformedProviderResponses(string endpoint)
+    {
+        var settings = CreateSettings("testuser", "password123");
+        settings.ListenBrainz.UserToken = "configured-token";
+        var controller = CreateController(
+            settings,
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("not-json", Encoding.UTF8, "application/json")
+            });
+
+        var result = Assert.IsType<ObjectResult>(
+            await InvokeListenBrainzEndpoint(controller, endpoint, CancellationToken.None));
+
+        Assert.Equal(StatusCodes.Status502BadGateway, result.StatusCode);
+        Assert.Contains("invalid token validation response", JsonSerializer.Serialize(result.Value),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("validate")]
+    [InlineData("test")]
+    public async Task ListenBrainzTokenEndpoints_MapCallerCancellation(string endpoint)
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var settings = CreateSettings("testuser", "password123");
+        settings.ListenBrainz.UserToken = "configured-token";
+        var controller = CreateController(
+            settings,
+            new StubHttpMessageHandler((_, token) => Task.FromCanceled<HttpResponseMessage>(token)));
+
+        var result = Assert.IsType<StatusCodeResult>(
+            await InvokeListenBrainzEndpoint(controller, endpoint, cancellation.Token));
+
+        Assert.Equal(499, result.StatusCode);
+    }
+
     private static ScrobblingSettings CreateSettings(string? username, string? password)
     {
         return new ScrobblingSettings
@@ -191,7 +252,12 @@ public class ScrobblingAdminControllerTests
 
     private static ScrobblingAdminController CreateController(
         ScrobblingSettings settings,
-        HttpResponseMessage httpResponse)
+        HttpResponseMessage httpResponse) =>
+        CreateController(settings, new StubHttpMessageHandler(httpResponse));
+
+    private static ScrobblingAdminController CreateController(
+        ScrobblingSettings settings,
+        HttpMessageHandler handler)
     {
         var mockSettings = new Mock<IOptions<ScrobblingSettings>>();
         mockSettings.Setup(s => s.Value).Returns(settings);
@@ -199,7 +265,7 @@ public class ScrobblingAdminControllerTests
         var logger = new Mock<ILogger<ScrobblingAdminController>>();
         var httpClientFactory = new Mock<IHttpClientFactory>();
 
-        var httpClient = new HttpClient(new StubHttpMessageHandler(httpResponse));
+        var httpClient = new HttpClient(handler);
         httpClientFactory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
 
         return new ScrobblingAdminController(
@@ -208,20 +274,34 @@ public class ScrobblingAdminControllerTests
             logger.Object);
     }
 
+    private static Task<IActionResult> InvokeListenBrainzEndpoint(
+        ScrobblingAdminController controller,
+        string endpoint,
+        CancellationToken cancellationToken) => endpoint switch
+        {
+            "validate" => controller.ValidateListenBrainzToken(
+                new ScrobblingAdminController.ValidateTokenRequest { UserToken = "request-token" },
+                cancellationToken),
+            "test" => controller.TestListenBrainzConnection(cancellationToken),
+            _ => throw new ArgumentOutOfRangeException(nameof(endpoint), endpoint, null)
+        };
+
     private sealed class StubHttpMessageHandler : HttpMessageHandler
     {
-        private readonly HttpResponseMessage _response;
+        private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> _handler;
 
-        public StubHttpMessageHandler(HttpResponseMessage response)
+        public StubHttpMessageHandler(HttpResponseMessage response) :
+            this((_, _) => Task.FromResult(response))
         {
-            _response = response;
         }
+
+        public StubHttpMessageHandler(
+            Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler) =>
+            _handler = handler;
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
-            CancellationToken cancellationToken)
-        {
-            return Task.FromResult(_response);
-        }
+            CancellationToken cancellationToken) =>
+            _handler(request, cancellationToken);
     }
 }

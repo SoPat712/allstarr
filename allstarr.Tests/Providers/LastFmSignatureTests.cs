@@ -39,7 +39,6 @@ public class LastFmSignatureTests
     [Fact]
     public void GenerateSignature_BasicParameters_ReturnsUppercaseHex()
     {
-        // Arrange
         var parameters = new Dictionary<string, string>
         {
             ["api_key"] = "testkey",
@@ -49,10 +48,8 @@ public class LastFmSignatureTests
         };
         var sharedSecret = "testsecret";
 
-        // Act
         var signature = GenerateSignature(parameters, sharedSecret);
 
-        // Assert
         Assert.Matches("^[A-F0-9]{32}$", signature); // 32 uppercase hex chars
         Assert.Equal(32, signature.Length);
     }
@@ -60,7 +57,6 @@ public class LastFmSignatureTests
     [Fact]
     public void GenerateSignature_PasswordWithSpecialChars_HandlesCorrectly()
     {
-        // Arrange
         var parameters = new Dictionary<string, string>
         {
             ["api_key"] = "cb3bdcd415fcb40cd572b137b2b255f5",
@@ -70,10 +66,8 @@ public class LastFmSignatureTests
         };
         var sharedSecret = "3a08f9fad6ddc4c35b0dce0062cecb5e";
 
-        // Act
         var signature = GenerateSignature(parameters, sharedSecret);
 
-        // Assert
         Assert.Matches("^[A-F0-9]{32}$", signature);
         Assert.Equal(32, signature.Length);
     }
@@ -89,7 +83,6 @@ public class LastFmSignatureTests
     [InlineData("pass^word")]
     public void GenerateSignature_VariousSpecialChars_GeneratesValidSignature(string password)
     {
-        // Arrange
         var parameters = new Dictionary<string, string>
         {
             ["api_key"] = "testkey",
@@ -99,10 +92,8 @@ public class LastFmSignatureTests
         };
         var sharedSecret = "testsecret";
 
-        // Act
         var signature = GenerateSignature(parameters, sharedSecret);
 
-        // Assert
         Assert.Matches("^[A-F0-9]{32}$", signature);
         Assert.Equal(32, signature.Length);
     }
@@ -110,7 +101,6 @@ public class LastFmSignatureTests
     [Fact]
     public void GenerateSignature_ParameterOrder_DoesNotMatter()
     {
-        // Arrange - same parameters, different order
         var parameters1 = new Dictionary<string, string>
         {
             ["api_key"] = "testkey",
@@ -129,18 +119,15 @@ public class LastFmSignatureTests
 
         var sharedSecret = "testsecret";
 
-        // Act
         var signature1 = GenerateSignature(parameters1, sharedSecret);
         var signature2 = GenerateSignature(parameters2, sharedSecret);
 
-        // Assert
         Assert.Equal(signature1, signature2);
     }
 
     [Fact]
     public void GenerateSignature_EmptyPassword_HandlesCorrectly()
     {
-        // Arrange
         var parameters = new Dictionary<string, string>
         {
             ["api_key"] = "testkey",
@@ -150,17 +137,14 @@ public class LastFmSignatureTests
         };
         var sharedSecret = "testsecret";
 
-        // Act
         var signature = GenerateSignature(parameters, sharedSecret);
 
-        // Assert
         Assert.Matches("^[A-F0-9]{32}$", signature);
     }
 
     [Fact]
     public void GenerateSignature_UnicodePassword_HandlesCorrectly()
     {
-        // Arrange
         var parameters = new Dictionary<string, string>
         {
             ["api_key"] = "testkey",
@@ -170,10 +154,8 @@ public class LastFmSignatureTests
         };
         var sharedSecret = "testsecret";
 
-        // Act
         var signature = GenerateSignature(parameters, sharedSecret);
 
-        // Assert
         Assert.Matches("^[A-F0-9]{32}$", signature);
         Assert.Equal(32, signature.Length);
     }
@@ -181,7 +163,6 @@ public class LastFmSignatureTests
     [Fact]
     public void GenerateSignature_LongPassword_HandlesCorrectly()
     {
-        // Arrange
         var parameters = new Dictionary<string, string>
         {
             ["api_key"] = "testkey",
@@ -191,17 +172,14 @@ public class LastFmSignatureTests
         };
         var sharedSecret = "testsecret";
 
-        // Act
         var signature = GenerateSignature(parameters, sharedSecret);
 
-        // Assert
         Assert.Matches("^[A-F0-9]{32}$", signature);
     }
 
     [Fact]
     public void GenerateSignature_PasswordWithWhitespace_PreservesWhitespace()
     {
-        // Arrange
         var parameters1 = new Dictionary<string, string>
         {
             ["api_key"] = "testkey",
@@ -220,18 +198,15 @@ public class LastFmSignatureTests
 
         var sharedSecret = "testsecret";
 
-        // Act
         var signature1 = GenerateSignature(parameters1, sharedSecret);
         var signature2 = GenerateSignature(parameters2, sharedSecret);
 
-        // Assert - should be different because whitespace matters
         Assert.NotEqual(signature1, signature2);
     }
 
     [Fact]
     public void GenerateSignature_CaseSensitivePassword_GeneratesDifferentSignatures()
     {
-        // Arrange
         var parameters1 = new Dictionary<string, string>
         {
             ["api_key"] = "testkey",
@@ -250,18 +225,15 @@ public class LastFmSignatureTests
 
         var sharedSecret = "testsecret";
 
-        // Act
         var signature1 = GenerateSignature(parameters1, sharedSecret);
         var signature2 = GenerateSignature(parameters2, sharedSecret);
 
-        // Assert - passwords are case-sensitive
         Assert.NotEqual(signature1, signature2);
     }
 
     [Fact]
     public void GenerateSignature_ConsistentResults_MatchesExpected()
     {
-        // Arrange - Test with known values to ensure consistency
         var parameters = new Dictionary<string, string>
         {
             ["api_key"] = "testkey123",
@@ -271,11 +243,9 @@ public class LastFmSignatureTests
         };
         var sharedSecret = "testsecret456";
 
-        // Act
         var signature1 = GenerateSignature(parameters, sharedSecret);
         var signature2 = GenerateSignature(parameters, sharedSecret);
 
-        // Assert - should be consistent
         Assert.Equal(signature1, signature2);
         Assert.Matches("^[A-F0-9]{32}$", signature1);
     }

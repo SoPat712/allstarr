@@ -38,7 +38,7 @@ public class LyricsStartupValidator : BaseStartupValidator
 
         return allSuccess
             ? ValidationResult.Success("Lyrics services validation completed")
-            : ValidationResult.Failure("PARTIAL", "Some lyrics services had issues", ConsoleColor.Yellow);
+            : ValidationResult.Failure("PARTIAL", "Some lyrics services had issues");
     }
 
     private async Task<bool> TestLrclibAsync(CancellationToken cancellationToken)

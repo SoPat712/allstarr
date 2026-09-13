@@ -38,20 +38,33 @@ export function playlistBehaviorSummary(
   targetName: string,
   targetPlaylistName: string,
   cadence?: string,
+  importMode: "oneTime" | "linked" = "linked",
+  trackRetention: "onDemand" | "keepAll" = "onDemand",
 ) {
+  const retention = trackRetention === "keepAll"
+    ? " Allstarr will also keep a permanent managed copy of every downloadable song."
+    : "";
+  if (importMode === "oneTime") {
+    const destination = mode === "virtual"
+      ? `show it through Allstarr without changing a playlist in ${targetName}`
+      : materializationMode === "recreate"
+        ? `create a new playlist in ${targetName}`
+        : `add its playable songs to ${targetPlaylistName} in ${targetName}`;
+    return `Allstarr will import ${sourcePlaylistName} once and ${destination}. It will not check the source for later changes.${retention}`;
+  }
   if (mode === "virtual")
     return cadence
-      ? `Allstarr will refresh ${sourcePlaylistName} through Allstarr ${cadence} and will not create or change a playlist in ${targetName}.`
-      : `Allstarr will refresh ${sourcePlaylistName} only when you run an update and will not create or change a playlist in ${targetName}.`;
+      ? `Allstarr will refresh ${sourcePlaylistName} through Allstarr ${cadence} and will not create or change a playlist in ${targetName}.${retention}`
+      : `Allstarr will refresh ${sourcePlaylistName} only when you run an update and will not create or change a playlist in ${targetName}.${retention}`;
 
   const visibility = mode === "hybrid"
     ? ` Allstarr will also show every song from ${sourcePlaylistName} to listeners.`
     : " It will not show a second playlist through Allstarr.";
   if (materializationMode === "recreate")
-    return `Allstarr will create a new playlist in ${targetName} ${cadence ?? "when you run an update"} instead of changing ${targetPlaylistName}.${visibility}`;
+    return `Allstarr will create a new playlist in ${targetName} ${cadence ?? "when you run an update"} instead of changing ${targetPlaylistName}.${visibility}${retention}`;
   return cadence
-    ? `Allstarr will keep ${targetPlaylistName} in ${targetName} updated ${cadence} with songs from ${sourcePlaylistName} that ${targetName} can play.${visibility}`
-    : `Allstarr will add songs from ${sourcePlaylistName} to ${targetPlaylistName} in ${targetName} only when you run an update. It will not keep that playlist updated automatically.${visibility}`;
+    ? `Allstarr will keep ${targetPlaylistName} in ${targetName} updated ${cadence} with songs from ${sourcePlaylistName} that ${targetName} can play.${visibility}${retention}`
+    : `Allstarr will add songs from ${sourcePlaylistName} to ${targetPlaylistName} in ${targetName} only when you run an update. It will not keep that playlist updated automatically.${visibility}${retention}`;
 }
 
 export function playlistOutcomeLabel(code?: string | null, targetName = "the media server playlist") {

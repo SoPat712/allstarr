@@ -10,11 +10,10 @@
   import { ArrowRight, ChevronDown, MoreHorizontal, X } from "@lucide/svelte";
   import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
   import CoverageBar from "$lib/components/CoverageBar.svelte";
-  import MatchDialog from "$lib/components/MatchDialog.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import OperationConsole from "$lib/components/OperationConsole.svelte";
   import PlaylistSettingsDialog from "$lib/components/PlaylistSettingsDialog.svelte";
-  import PlaylistRematchDialog from "$lib/components/PlaylistRematchDialog.svelte";
+  import BulkRematchDialog from "$lib/components/BulkRematchDialog.svelte";
   import PlaylistSourceUpdateDialog from "$lib/components/PlaylistSourceUpdateDialog.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
@@ -82,6 +81,7 @@
   let operationJobId = $state("");
   let bulkProgress = $state("");
   let matchOpen = $state(false);
+  let LoadedMatchDialog = $state<typeof import("$lib/components/MatchDialog.svelte").default | null>(null);
   let selectedMatch = $state<MatchReviewItem | null>(null);
   let matchLoading = $state("");
   let trackMenuOpen = $state<number | null>(null);
@@ -113,6 +113,7 @@
   let rematchOpen = $state(false);
 
   const visiblePlaylists = $derived(filterPlaylists(playlists, query, stateFilter, sort));
+  const refreshablePlaylists = $derived(playlists.filter((playlist) => playlist.importMode === "linked"));
   const pageCount = $derived(Math.max(1, Math.ceil(visiblePlaylists.length / 20)));
   const currentPage = $derived(Math.min(page, pageCount));
   const pagePlaylists = $derived(
@@ -181,6 +182,7 @@
     detailWasOpen = false;
     selectedId = "";
     details = null;
+    operationJobId = "";
     detailLoading = false;
     detailError = "";
     detailRequest++;
@@ -265,6 +267,7 @@
     viewMode = requestedMode;
     if (changingPlaylist) {
       details = null;
+      operationJobId = "";
       trackQuery = "";
       routeFilter = "all";
     } else if (details && details.clientProjection?.projectionMode !== requestedMode) {
@@ -286,7 +289,7 @@
   }
 
   async function changeView(mode: string) {
-    if (!selectedId || detailLoading || !["resolved", "source", "target"].includes(mode)) return;
+    if (!selectedId || !["resolved", "source", "target"].includes(mode)) return;
     await loadDetails(selectedId, undefined, mode as typeof viewMode);
   }
 
@@ -351,7 +354,7 @@
     }
   }
 
-  async function refreshSources(ids = playlists.map((playlist) => playlist.id)) {
+  async function refreshSources(ids = refreshablePlaylists.map((playlist) => playlist.id)) {
     if (action || refreshing || !ids.length) return;
     action = "refresh-sources";
     feedback = "";
@@ -388,8 +391,13 @@
     if (returnFocus) matchReturnFocus = returnFocus;
     matchLoading = externalSnapshotId;
     try {
-      selectedMatch = await matchReview.get(externalSnapshotId);
-      if (!selectedMatch) throw new Error("This track no longer has a current match snapshot.");
+      const [match, dialog] = await Promise.all([
+        matchReview.get(externalSnapshotId),
+        LoadedMatchDialog ?? import("$lib/components/MatchDialog.svelte").then((module) => module.default),
+      ]);
+      if (!match) throw new Error("This track no longer has a current match snapshot.");
+      selectedMatch = match;
+      LoadedMatchDialog = dialog;
       matchOpen = true;
     } catch (cause) {
       feedback = cause instanceof Error ? cause.message : "Track details are unavailable.";
@@ -450,31 +458,31 @@
   <section class="panel empty-state">
     <span class="empty-orbit" aria-hidden="true">♫</span>
     <p class="eyebrow">Library playlists</p>
-    <h2>No linked playlists yet.</h2>
-    <p>Add a playlist from a connected Source. Allstarr will show which songs can play and whether the playlist needs attention.</p>
-    <Button class="empty-action" onclick={() => addOpen = true}>Add playlist</Button>
+    <h2>No imported playlists yet.</h2>
+    <p>Import a playlist from your own connected account. You can copy it once, keep following changes, and choose whether its songs are stored permanently.</p>
+    <Button class="empty-action" onclick={() => addOpen = true}>Import playlist</Button>
   </section>
 {:else}
   {#if degraded}
     <div class="degraded-banner" role="status">
       <span aria-hidden="true">!</span>
       <p><strong>Some playlist data is unavailable.</strong> {degraded}</p>
-      <Button variant="secondary" size="sm" onclick={() => void refresh()}>Retry</Button>
+      <Button variant="secondary" size="sm" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Trying again…" : "Retry"}</Button>
     </div>
   {/if}
 
   <section class="playlist-layout" aria-busy={refreshing}>
     <article class="panel playlist-list">
-      <header class="playlist-toolbar">
+      <header class="panel-heading playlist-toolbar">
         <div>
-          <p class="eyebrow">Linked playlists</p>
-          <h2>{playlists.length} linked</h2>
+          <p class="eyebrow">Imported playlists</p>
+          <h2>{playlists.length} imported</h2>
         </div>
-        <div class="playlist-toolbar-actions">
-          <Button onclick={() => addOpen = true}>Add playlist</Button>
+        <div class="panel-heading-actions playlist-toolbar-actions">
+          <Button onclick={() => addOpen = true}>Import playlist</Button>
           <Button
             variant="secondary"
-            disabled={Boolean(action) || refreshing}
+            disabled={Boolean(action) || refreshing || refreshablePlaylists.length === 0}
             type="button"
             onclick={() => rematchOpen = true}
           >
@@ -521,6 +529,8 @@
             <span class="playlist-copy">
               <span class="playlist-title-line">
                 <strong>{playlist.name}</strong>
+                {#if playlist.importMode === "oneTime"}<Badge tone="neutral">Once</Badge>{/if}
+                {#if playlist.trackRetention === "keepAll"}<Badge state="healthy">Kept</Badge>{/if}
                 <small class="route-pair">
                   <ProviderMark id={playlist.sourceProviderId} definition={provider(playlist.sourceProviderId)} />
                   <span>{providerName(playlist.sourceProviderId)}</span>
@@ -617,9 +627,9 @@
             </DropdownMenu.Trigger>
             <DropdownMenu.Portal>
               <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
-                <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("sync")}>Update playlist now</DropdownMenu.Item>
+                <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("sync")}>{selected.importMode === "oneTime" ? "Rebuild from imported copy" : "Update playlist now"}</DropdownMenu.Item>
                 <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => { detailOpen = false; rematchOpen = true; }}>Review account rematch</DropdownMenu.Item>
-                <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void refreshSources([selected.id])}>Refresh source</DropdownMenu.Item>
+                {#if selected.importMode === "linked"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void refreshSources([selected.id])}>Refresh source</DropdownMenu.Item>{/if}
                 {#if selected.sourceUpdateAvailable}
                   <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => sourceUpdateOpen = true}>
                     Preview changes to {providerName(selected.sourceProviderId)}
@@ -639,6 +649,7 @@
             items={detailProjectionOptions}
             active={viewMode}
             label="What listeners see"
+            class="route-tabs contextual-tabs"
             onchange={(mode) => void changeView(mode)}
           />
         </div>
@@ -686,7 +697,10 @@
           <span>Refreshed <strong>{relativeTime(details.retrievedAt, "Not yet")}</strong></span>
           <span>Rematched <strong>{relativeTime(details.lastRematchedAt, "Not yet")}</strong></span>
           <span>
-            {#if details.schedule?.enabled}
+            {#if selected.importMode === "oneTime"}
+              <strong>Imported once</strong>
+              · source changes are ignored
+            {:else if details.schedule?.enabled}
               <strong>{scheduleCadence(details.schedule.cronExpression)}</strong>
               · next {relativeTime(details.schedule.nextRunAt, "Not yet")}
               · {details.schedule.timeZoneId}
@@ -698,7 +712,7 @@
               <strong>No automatic updates</strong>
             {/if}
           </span>
-          <Popover.Root bind:open={scheduleEditorOpen}>
+          {#if selected.importMode === "linked"}<Popover.Root bind:open={scheduleEditorOpen}>
             <Popover.Trigger class="schedule-edit-button" onclick={editSchedule}>
               {details.schedule ? "Edit schedule" : "Set schedule"}
             </Popover.Trigger>
@@ -724,7 +738,7 @@
                 </form>
               </Popover.Content>
             </Popover.Portal>
-          </Popover.Root>
+          </Popover.Root>{/if}
           <OperationConsole
             playlistName={details.name}
             requestedJobId={operationJobId}
@@ -816,11 +830,13 @@
                           <button
                             type="button"
                             class="track-title-button"
-                            aria-label={`Open mapping details for ${track.title}`}
-                            disabled={matchLoading === track.externalSnapshotId}
+                            aria-label={matchLoading === track.externalSnapshotId
+                              ? `Loading mapping details for ${track.title}`
+                              : `Open mapping details for ${track.title}`}
+                            disabled={Boolean(matchLoading)}
                             onclick={(event) => void openTrackMatch(track.externalSnapshotId, event.currentTarget)}
                           >
-                            {track.title}
+                            {matchLoading === track.externalSnapshotId ? `Loading ${track.title}…` : track.title}
                           </button>
                         {:else}
                           <strong class="track-title-static">{track.title}</strong>
@@ -877,6 +893,7 @@
                                 <Button
                                   variant="secondary"
                                   size="sm"
+                                  disabled={Boolean(matchLoading)}
                                   onclick={() => {
                                     trackMenuOpen = null;
                                     void openTrackMatch(
@@ -884,7 +901,7 @@
                                       document.getElementById(`track-details-${track.sourcePosition}`) ?? undefined,
                                     );
                                   }}
-                                >Review match</Button>
+                                >{matchLoading === track.externalSnapshotId ? "Loading match…" : "Review match"}</Button>
                               {/if}
                             </div>
                           </Popover.Content>
@@ -938,15 +955,17 @@
   targetName={providerName(selected?.targetProtocol)}
   onQueued={sourceUpdateQueued}
 />
-<PlaylistRematchDialog bind:open={rematchOpen} onQueued={sourceUpdateQueued} />
+<BulkRematchDialog kind="playlist" bind:open={rematchOpen} onQueued={sourceUpdateQueued} />
 
 <AddPlaylistDialog bind:open={addOpen} {providers} onSaved={playlistAdded} />
-<MatchDialog
-  bind:open={matchOpen}
-  match={selectedMatch}
-  {providers}
-  backend={details?.targetProtocol ?? "Local library"}
-  autoSearch
-  showReject={false}
-  onSaved={matchSaved}
-/>
+{#if LoadedMatchDialog}
+  <LoadedMatchDialog
+    bind:open={matchOpen}
+    match={selectedMatch}
+    {providers}
+    backend={details?.targetProtocol ?? "Local library"}
+    autoSearch
+    showReject={false}
+    onSaved={matchSaved}
+  />
+{/if}

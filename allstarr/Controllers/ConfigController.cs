@@ -150,8 +150,7 @@ public class ConfigController : ControllerBase
             enableExternalPlaylists = RuntimeBool("Library:EnableExternalPlaylists", fallbackEnableExternalPlaylists),
             matching = new
             {
-                localPreferencePercent = RuntimeInt("Matching:LocalPreferencePercent", 7),
-                extensionPenaltyPercent = RuntimeInt("Matching:ExtensionPenaltyPercent", 3)
+                localPreferencePercent = RuntimeInt("Matching:LocalPreferencePercent", 7)
             },
             audio = new { quality = audioQuality },
             playlistsDirectory = RuntimeString("Library:PlaylistsDirectory", fallbackPlaylistsDirectory),
@@ -294,7 +293,6 @@ public class ConfigController : ControllerBase
         });
     }
 
-    /// <summary>Update allowlisted tenant runtime settings in durable storage.</summary>
     [HttpPost("config")]
     public async Task<IActionResult> UpdateConfig([FromBody] ConfigUpdateRequest request)
     {
@@ -390,9 +388,6 @@ public class ConfigController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Add a new playlist to the configuration
-    /// </summary>
     [HttpPost("cache/clear")]
     public async Task<IActionResult> ClearCache()
     {
@@ -408,9 +403,6 @@ public class ConfigController : ControllerBase
         });
     }
 
-    /// <summary>
-    /// Restart the allstarr container to apply configuration changes
-    /// </summary>
     [HttpPost("restart")]
     public async Task<IActionResult> RestartContainer()
     {
@@ -424,7 +416,6 @@ public class ConfigController : ControllerBase
 
         try
         {
-            // Use Docker socket to restart the container
             var socketPath = "/var/run/docker.sock";
 
             if (!System.IO.File.Exists(socketPath))
@@ -437,14 +428,11 @@ public class ConfigController : ControllerBase
                 });
             }
 
-            // Get container ID from hostname (Docker sets hostname to container ID by default)
-            // Or use the well-known container name
             var containerId = Environment.MachineName;
             var containerName = "allstarr";
 
             _logger.LogDebug("Attempting to restart container {ContainerId} / {ContainerName}", containerId, containerName);
 
-            // Create Unix socket HTTP client
             var handler = new SocketsHttpHandler
             {
                 ConnectCallback = async (context, cancellationToken) =>
@@ -466,12 +454,10 @@ public class ConfigController : ControllerBase
                 BaseAddress = new Uri("http://localhost")
             };
 
-            // Try to restart by container name first, then by ID
             var restartResponse = await dockerClient.PostAsync($"/containers/{containerName}/restart?t=5", null);
 
             if (!restartResponse.IsSuccessStatusCode)
             {
-                // Try by container ID
                 restartResponse.Dispose();
                 restartResponse = await dockerClient.PostAsync($"/containers/{containerId}/restart?t=5", null);
             }
@@ -505,9 +491,6 @@ public class ConfigController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Get all Jellyfin users
-    /// </summary>
     [HttpGet("export-env")]
     public IActionResult ExportEnv()
     {
@@ -546,9 +529,6 @@ public class ConfigController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Import .env file from upload
-    /// </summary>
     [HttpPost("import-env")]
     public async Task<IActionResult> ImportEnv([FromForm] IFormFile file)
     {
@@ -1215,10 +1195,6 @@ public class ConfigController : ControllerBase
 
         return values;
     }
-
-    /// <summary>
-    /// Gets detailed memory usage statistics for debugging.
-    /// </summary>
 }
 
 public sealed class SelectiveStateTransferControllerRequest

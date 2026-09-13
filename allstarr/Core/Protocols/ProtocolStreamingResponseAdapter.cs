@@ -11,7 +11,8 @@ public sealed class ProtocolStreamingResponseAdapter
         "Content-Length",
         "ETag",
         "Last-Modified",
-        "Cache-Control"
+        "Cache-Control",
+        "X-Allstarr-Provider"
     ];
 
     public void ForwardRangeRequestHeaders(

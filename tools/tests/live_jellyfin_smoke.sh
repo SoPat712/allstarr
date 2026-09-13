@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${JELLYFIN_TOKEN:?Set JELLYFIN_TOKEN to a temporary Jellyfin API key or access token}"
-
-DIRECT_BASE="${DIRECT_BASE:-https://jellyfin.joshpatra.me}"
-ALLSTARR_BASE="${ALLSTARR_BASE:-https://jfm.joshpatra.me}"
+: "${DIRECT_BASE:?Set DIRECT_BASE to the original Jellyfin server URL}"
+: "${ALLSTARR_BASE:?Set ALLSTARR_BASE to the Allstarr proxy URL}"
+JELLYFIN_TOKEN="${JELLYFIN_TOKEN:-}"
+if [[ -z "$JELLYFIN_TOKEN" && ( -z "${JELLYFIN_USERNAME:-}" || -z "${JELLYFIN_PASSWORD:-}" ) ]]; then
+    echo 'Supply JELLYFIN_TOKEN or JELLYFIN_USERNAME and JELLYFIN_PASSWORD through the environment' >&2
+    exit 1
+fi
 JELLYFIN_USER_ID="${JELLYFIN_USER_ID:-}"
 SAMPLES="${SAMPLES:-3}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-20}"
@@ -26,7 +29,7 @@ MAX_EXTERNAL_METADATA_TTFB_MS="${MAX_EXTERNAL_METADATA_TTFB_MS:-2000}"
 MAX_EXTERNAL_ARTWORK_TTFB_MS="${MAX_EXTERNAL_ARTWORK_TTFB_MS:-2000}"
 MAX_EXTERNAL_STREAM_TTFB_MS="${MAX_EXTERNAL_STREAM_TTFB_MS:-8000}"
 
-for command in curl jq awk diff cmp head mkfifo od tr wc; do
+for command in curl jq awk diff cmp head od tr wc; do
     command -v "$command" >/dev/null || { echo "Missing required command: $command" >&2; exit 1; }
 done
 if command -v sha256sum >/dev/null; then
@@ -107,9 +110,7 @@ direct_playlists_file="$(mktemp)"
 allstarr_playlists_file="$(mktemp)"
 external_search_file="$(mktemp)"
 provider_cases_file="$(mktemp)"
-stream_pipe="$(mktemp)"
-rm -f "$stream_pipe"
-mkfifo "$stream_pipe"
+issued_token=0
 stateful_playlist_id=""
 stateful_playlist_name=""
 stateful_playlist_original_name=""
@@ -122,7 +123,7 @@ playlist_identity_matches() {
             '.Id == $id and .Name == $name and .Type == "Playlist"' >/dev/null
 }
 cleanup() {
-    local cleanup_delete_code cleanup_probe_code
+    local cleanup_delete_code cleanup_probe_code cleanup_failed=0
     if [[ -n "$stateful_playlist_id" ]]; then
         if playlist_identity_matches "$stateful_playlist_id" "$stateful_playlist_name" ||
            playlist_identity_matches "$stateful_playlist_id" "$stateful_playlist_original_name"; then
@@ -142,29 +143,55 @@ cleanup() {
             echo 'CLEANUP-BLOCKED exact playlist ID/name/type verification failed' >&2
         fi
     fi
+    if [[ "$issued_token" == 1 ]]; then
+        cleanup_delete_code="$(curl -s --max-time "$TIMEOUT_SECONDS" -X POST "${auth[@]}" \
+            "$ALLSTARR_BASE/Sessions/Logout" -o /dev/null -w '%{http_code}' || true)"
+        if [[ "$cleanup_delete_code" == 204 ]]; then
+            echo 'PASS test session logout'
+        else
+            echo 'FAIL test session logout; revoke the temporary test session' >&2
+            cleanup_failed=1
+        fi
+    fi
     rm -f "$users_file" "$current_user_file" "$items_file" "$response_file" "$timings_file" \
         "$direct_shape_file" "$allstarr_shape_file" "$metrics_file" \
         "$direct_media_file" "$allstarr_media_file" "$direct_headers_file" \
         "$allstarr_headers_file" "$virtual_items_file" "$direct_virtual_items_file" \
         "$direct_playlists_file" "$allstarr_playlists_file" "$external_search_file"
-    rm -f "$provider_cases_file" "$stream_pipe"
+    rm -f "$provider_cases_file"
+    [[ "$cleanup_failed" == 0 ]] || exit 1
 }
 trap cleanup EXIT
 
-auth=(-H "Authorization: MediaBrowser Token=\"$JELLYFIN_TOKEN\"" \
+client_auth="MediaBrowser Client=\"AllstarrLiveSmoke\", Device=\"Qualification\", DeviceId=\"$run_id\", Version=\"1\""
+if [[ -z "$JELLYFIN_TOKEN" ]]; then
+    login_result="$(jq -cn '{Username:env.JELLYFIN_USERNAME,Pw:env.JELLYFIN_PASSWORD}' |
+        curl -s --max-time "$TIMEOUT_SECONDS" -H "Authorization: $client_auth" \
+            -H 'Content-Type: application/json' --data-binary @- \
+            -o "$response_file" -w '%{http_code} %{time_starttransfer}' \
+            "$ALLSTARR_BASE/Users/AuthenticateByName" || true)"
+    read -r login_code login_ttfb <<<"$login_result"
+    [[ "$login_code" == 200 ]] && jq -e '.AccessToken | type == "string" and length > 0' "$response_file" >/dev/null ||
+        { echo "FAIL proxy login status=${login_code:-000}" >&2; exit 1; }
+    JELLYFIN_TOKEN="$(jq -r '.AccessToken' "$response_file")"
+    issued_token=1
+    printf 'PASS proxy login ttfb_ms=%.1f\n' "$(awk -v value="$login_ttfb" 'BEGIN { print value * 1000 }')"
+fi
+auth=(-H "Authorization: $client_auth, Token=\"$JELLYFIN_TOKEN\"" \
       -H "User-Agent: AllstarrLiveSmoke/$run_id")
 echo "live-smoke-start=$started_at samples=$SAMPLES range_bytes=65536 external_stream=$TEST_EXTERNAL_STREAM playlist_writes=$TEST_PLAYLIST_WRITES"
 
-curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" "$DIRECT_BASE/Users" -o "$users_file"
 best_user_id=""
 best_audio_count=-1
-user_candidates="$(jq -r '.[].Id' "$users_file")"
 if curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" \
        "$DIRECT_BASE/Users/Me" -o "$current_user_file" 2>/dev/null; then
     authenticated_user_id="$(jq -r '.Id // empty' "$current_user_file")"
+    jq '[.]' "$current_user_file" >"$users_file"
 else
     authenticated_user_id=""
+    curl -fsS --max-time "$TIMEOUT_SECONDS" "${auth[@]}" "$DIRECT_BASE/Users" -o "$users_file"
 fi
+user_candidates="$(jq -r '.[].Id' "$users_file")"
 if [[ -n "$JELLYFIN_USER_ID" ]]; then
     jq -e --arg id "$JELLYFIN_USER_ID" 'any(.[]; .Id == $id)' "$users_file" >/dev/null ||
         { echo "JELLYFIN_USER_ID is not visible to this credential" >&2; exit 1; }
@@ -461,18 +488,16 @@ check_image() {
 }
 
 check_external_stream() {
-    local label="$1" url="$2" range="${3:-0-65535}" result code content_type bytes ttfb total reader_pid
+    local label="$1" url="$2" range="${3:-0-65535}" result code content_type bytes ttfb total
     local content_range accept_ranges saved_bytes timely=0
+    last_stream_provider=""
     : >"$response_file"
     : >"$direct_headers_file"
-    head -c 65536 <"$stream_pipe" >"$response_file" &
-    reader_pid=$!
-    result="$(curl -s --max-time "$TIMEOUT_SECONDS" "${auth[@]}" --range "$range" \
-        -D "$direct_headers_file" \
-        -o "$stream_pipe" \
-        -w '%{http_code}\t%{content_type}\t%{size_download}\t%{time_starttransfer}\t%{time_total}' \
-        "$url" || true)"
-    wait "$reader_pid" || true
+    curl -s --max-time "$TIMEOUT_SECONDS" "${auth[@]}" --range "$range" \
+        -D "$direct_headers_file" -o - \
+        -w '%{stderr}%{http_code}\t%{content_type}\t%{size_download}\t%{time_starttransfer}\t%{time_total}' \
+        "$url" 2>"$metrics_file" | head -c 65536 >"$response_file" || true
+    result="$(<"$metrics_file")"
     IFS=$'\t' read -r code content_type bytes ttfb total <<<"$result"
     code="${code:-000}"
     bytes="${bytes:-0}"
@@ -480,6 +505,15 @@ check_external_stream() {
     saved_bytes="$(wc -c <"$response_file" | tr -d ' ')"
     content_range="$(awk 'tolower($1) == "content-range:" { print tolower($2) }' "$direct_headers_file" | tail -n 1 | tr -d '\r')"
     accept_ranges="$(awk 'tolower($1) == "accept-ranges:" { print tolower($2) }' "$direct_headers_file" | tail -n 1 | tr -d '\r')"
+    last_stream_provider="$(awk 'tolower($1) == "x-allstarr-provider:" { print $2 }' "$direct_headers_file" | tail -n 1 | tr -d '\r')"
+    if [[ ! "$last_stream_provider" =~ ^[a-z][a-z0-9_-]{0,63}$ ||
+          ! "$content_type" =~ ^(audio/|application/octet-stream|video/mp4) ]]; then
+        echo "FAIL $label missing serving provider or invalid audio content type"
+        last_stream_provider=""
+        last_stream_ranges_supported=0
+        failures=$((failures + 1))
+        return
+    fi
     if awk -v value="${ttfb:-0}" -v max="$MAX_EXTERNAL_STREAM_TTFB_MS" \
         'BEGIN { exit !((value * 1000) <= max) }'; then
         timely=1
@@ -501,6 +535,28 @@ check_external_stream() {
             "$label" "$code" "$content_type" "$saved_bytes" "$bytes" \
             "$(awk -v value="${ttfb:-0}" 'BEGIN { print value * 1000 }')" \
             "${content_range:-none}" "${accept_ranges:-none}" "$timely"
+        failures=$((failures + 1))
+        last_stream_provider=""
+    fi
+}
+
+check_stream_provenance() {
+    local song_id="$1" provider="$last_stream_provider" before code
+    [[ -n "$provider" ]] || return 0
+    check_json "stream source in song info" "$ALLSTARR_BASE/Items/$song_id?UserId=$best_user_id" \
+        '(.Overview | contains("Last stream: " + $provider)) and
+         all(.MediaSources[]; .Name | startswith("Last stream: " + $provider))' --arg provider "$provider"
+    before="$(jq -c '{Overview, sources:[.MediaSources[]?.Name]}' "$response_file")"
+    check_code "external stream HEAD" "200,206" HEAD \
+        "$ALLSTARR_BASE/Audio/$song_id/stream?static=true&UserId=$best_user_id"
+    code="$(curl -s --max-time "$TIMEOUT_SECONDS" "${auth[@]}" -D "$allstarr_headers_file" \
+        -o "$response_file" -w '%{http_code}' "$ALLSTARR_BASE/Items/$song_id?UserId=$best_user_id" || true)"
+    checks=$((checks + 1))
+    if [[ "$code" == 200 && "$before" == "$(jq -c '{Overview, sources:[.MediaSources[]?.Name]}' "$response_file")" ]] &&
+       awk 'tolower($1) == "cache-control:" && /private/ && /no-store/ { found=1 } END { exit !found }' "$allstarr_headers_file"; then
+        echo "PASS HEAD preserves private playback provenance provider=$provider"
+    else
+        echo 'FAIL HEAD changed playback provenance or song info is publicly cacheable'
         failures=$((failures + 1))
     fi
 }
@@ -1002,7 +1058,7 @@ item_contract='
         named_ids and album_ids and genre_ids and media_ids and user_data;
     def external_audio:
         client_item and .Type == "Audio" and .MediaType == "Audio" and
-        (.Name | provider_labeled) and
+        (.Name | type == "string" and test(" \\[A\\](/\\[E\\])?$")) and
         (.Album | type == "string") and
         ((.Album | length) == 0 or (.Album | provider_labeled)) and
         (.AlbumId == null or (.AlbumId | nonempty)) and
@@ -1128,6 +1184,7 @@ check_external_provider_case() {
     if [[ "$TEST_EXTERNAL_STREAM" == 1 ]]; then
         check_external_stream "$provider external stream" \
             "$ALLSTARR_BASE/Audio/$song_id/stream?static=true&UserId=$best_user_id"
+        check_stream_provenance "$song_id"
     fi
 }
 
@@ -1565,6 +1622,7 @@ if [[ -n "$external_song_id" ]]; then
     if [[ "$TEST_EXTERNAL_STREAM" == 1 ]]; then
         check_external_stream "external stream-64k" \
             "$ALLSTARR_BASE/Audio/$external_song_id/stream?static=true&UserId=$best_user_id"
+        check_stream_provenance "$external_song_id"
         if [[ "$last_stream_ranges_supported" -eq 1 ]]; then
             check_external_stream "external suffix stream-64k" \
                 "$ALLSTARR_BASE/Audio/$external_song_id/stream?static=true&UserId=$best_user_id" \

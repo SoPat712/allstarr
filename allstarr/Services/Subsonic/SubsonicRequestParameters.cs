@@ -15,9 +15,7 @@ public sealed record SubsonicParameter(
     string Value,
     SubsonicParameterSource Source);
 
-/// <summary>
-/// Preserves the inbound method, parameter source, repetition, and ordering.
-/// </summary>
+// Subsonic clients may repeat parameters and place them in either query or body.
 public sealed class SubsonicRequestParameters : IReadOnlyDictionary<string, string>
 {
     private readonly IReadOnlyList<SubsonicParameter> _parameters;
@@ -106,11 +104,7 @@ public sealed class SubsonicRequestParameters : IReadOnlyDictionary<string, stri
         return new SubsonicRequestParameters(Method, ContentType, BuildBody(selected), selected);
     }
 
-    /// <summary>
-    /// Replaces a parameter without flattening repeated values or moving any parameter
-    /// between the query string and request body. This is used when an Allstarr protocol
-    /// identifier must be translated to the corresponding backend identifier.
-    /// </summary>
+    // Identifier translation must not flatten values or move them between query and body.
     public SubsonicRequestParameters ReplaceValue(string name, string value)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);

@@ -27,11 +27,22 @@ Use Google Material 3 as the interaction and visual grammar, adapted to Allstarr
 - Provider identity uses the existing provider mark and artwork components.
 - Creative canvas effects require a GPL-compatible implementation or license. Canvas UI is not vendored because its Commons Clause adds distribution restrictions that conflict with this repository's GPL terms.
 
+## Geometry
+
+- `--workspace-gutter` owns the outer content track, `--surface-gutter` owns panel insets, and `--section-gap` owns the vertical and horizontal rhythm between peer surfaces. Route CSS must reuse these tokens instead of introducing nearby fixed values.
+- Route tabs span the same content track as the route header and primary surface. At compact widths they scroll horizontally with 44px minimum targets instead of shrinking labels or overflowing the viewport.
+- Panel headings use two tracks: flexible title and context on the left, actions or status on the right. Below 650px, actions move to a full-width grid beneath the copy; an unpaired final action spans the grid.
+- Peer dashboard cards use equal columns unless the task hierarchy documents a deliberate primary surface. A single grid item expands to the available track instead of retaining an empty half-column.
+- Regular controls use the 44px `--control-md` baseline. Labels, controls, helper text, and footer actions align within a shared field grid.
+- The compact bottom navigation reserves `--mobile-nav-height` on the scrolling workspace so terminal content and actions remain fully visible above it.
+- The compact bottom navigation keeps Home, Library, Activity, and **More** in equal-width tracks derived from its contents. Integrations, Settings, appearance, and session controls live in the More sheet instead of crowding the primary bar.
+- Data surfaces grow with sparse content and cap their height only when a real list needs internal scrolling. Empty viewport-filling panels are not used as decoration.
+
 ## Information architecture
 
 - **Home:** current playback and listeners first; source route, scrobble delivery, health, and work follow.
 - **Library:** playlists, mappings, cached files, and kept files share one task vocabulary and aligned tables.
-- **Intelligence:** Overview → History → Import → Discover → Automation. Import is a top-level task, not a setting hidden inside history.
+- **Intelligence (deferred):** excluded from first-release navigation. Existing deep links remain usable during development; hiding navigation does not disable backend work or remove data. Its retained workspace owns Overview, History, Import, Discover, Playlists, and Automation. See the release boundary in [the release plan](docs/release-readiness.md).
 - **Integrations:** Services owns provider configuration and diagnostics. Extensions owns package lifecycle. Accounts and Routing explain their scope in plain language.
 - **Activity:** outcome, actor, target, duration, and time are primary; technical payloads are progressive detail.
 - **Settings:** deployment and operator controls only. User-scoped controls stay near the data they affect.

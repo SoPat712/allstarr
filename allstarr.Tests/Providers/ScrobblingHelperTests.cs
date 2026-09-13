@@ -20,10 +20,8 @@ public class ScrobblingHelperTests
     public void IsTrackLongEnoughToScrobble_VariousDurations_ReturnsCorrectly(int durationSeconds, bool expected)
     {
         // Last.fm rules: tracks must be at least 30 seconds long
-        // Act
         var result = ScrobblingHelper.IsTrackLongEnoughToScrobble(durationSeconds);
 
-        // Assert
         Assert.Equal(expected, result);
     }
 
@@ -40,10 +38,8 @@ public class ScrobblingHelperTests
         int trackDurationSeconds, int playedSeconds, bool expected)
     {
         // Last.fm rules: must listen to at least 50% of track OR 4 minutes (whichever comes first)
-        // Act
         var result = ScrobblingHelper.HasListenedEnoughToScrobble(trackDurationSeconds, playedSeconds);
 
-        // Assert
         Assert.Equal(expected, result);
     }
 
@@ -56,13 +52,11 @@ public class ScrobblingHelperTests
         int trackDurationSeconds, int playedSeconds, bool expected)
     {
         // For tracks longer than 8 minutes, only need to listen to 4 minutes
-        // Act
         var halfDuration = trackDurationSeconds / 2.0;
         var fourMinutes = 240;
         var threshold = Math.Min(halfDuration, fourMinutes);
         var result = playedSeconds >= threshold;
 
-        // Assert
         Assert.Equal(expected, result);
     }
 
@@ -75,10 +69,8 @@ public class ScrobblingHelperTests
         string trackName, string artistName, bool expected)
     {
         // Scrobbling requires at minimum: track name and artist name
-        // Act
         var result = ScrobblingHelper.HasRequiredMetadata(trackName, artistName);
 
-        // Assert
         Assert.Equal(expected, result);
     }
 
@@ -89,17 +81,14 @@ public class ScrobblingHelperTests
     public void FormatScrobbleDisplay_VariousInputs_FormatsCorrectly(
         string trackName, string artistName, string expected)
     {
-        // Act
         var result = ScrobblingHelper.FormatTrackForDisplay(trackName, artistName);
 
-        // Assert
         Assert.Equal(expected, result);
     }
 
     [Fact]
     public void ScrobbleTrack_ValidData_CreatesCorrectObject()
     {
-        // Arrange
         var track = new ScrobbleTrack
         {
             Title = "Test Track",
@@ -109,7 +98,6 @@ public class ScrobblingHelperTests
             DurationSeconds = 180
         };
 
-        // Assert
         Assert.NotNull(track.Title);
         Assert.NotNull(track.Artist);
         Assert.True(track.Timestamp > 0);
@@ -124,7 +112,6 @@ public class ScrobblingHelperTests
     public void TrackName_SpecialCharacters_PreservesCorrectly(string input, string expected)
     {
         // Track names with special characters should be preserved as-is
-        // Act
         var track = new ScrobbleTrack
         {
             Title = input,
@@ -132,7 +119,6 @@ public class ScrobblingHelperTests
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
         };
 
-        // Assert
         Assert.Equal(expected, track.Title);
     }
 
@@ -142,7 +128,6 @@ public class ScrobblingHelperTests
     [InlineData(1700000000)]    // 2023-11-14
     public void Timestamp_ValidUnixTimestamps_AcceptsCorrectly(long timestamp)
     {
-        // Act
         var track = new ScrobbleTrack
         {
             Title = "Track",
@@ -150,7 +135,6 @@ public class ScrobblingHelperTests
             Timestamp = timestamp
         };
 
-        // Assert
         Assert.Equal(timestamp, track.Timestamp);
         Assert.True(timestamp > 0);
     }
@@ -161,7 +145,6 @@ public class ScrobblingHelperTests
     public void Timestamp_InvalidValues_ShouldBeRejected(long timestamp)
     {
         // Timestamps should be positive Unix timestamps
-        // Act & Assert
         Assert.True(timestamp <= 0);
     }
 
@@ -173,7 +156,6 @@ public class ScrobblingHelperTests
     [InlineData(3600)]    // 1 hour
     public void Duration_ValidDurations_AcceptsCorrectly(int duration)
     {
-        // Act
         var track = new ScrobbleTrack
         {
             Title = "Track",
@@ -182,7 +164,6 @@ public class ScrobblingHelperTests
             DurationSeconds = duration
         };
 
-        // Assert
         Assert.Equal(duration, track.DurationSeconds);
         Assert.True(duration >= 30);
     }

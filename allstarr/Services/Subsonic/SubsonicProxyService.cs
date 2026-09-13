@@ -7,9 +7,6 @@ using allstarr.Core.Protocols;
 
 namespace allstarr.Services.Subsonic;
 
-/// <summary>
-/// Handles proxying requests to the underlying Subsonic server.
-/// </summary>
 public class SubsonicProxyService
 {
     private readonly HttpClient _httpClient;
@@ -31,9 +28,6 @@ public class SubsonicProxyService
         _streamingResponseAdapter = streamingResponseAdapter ?? new ProtocolStreamingResponseAdapter();
     }
 
-    /// <summary>
-    /// Relays a request to the Subsonic server and returns the response.
-    /// </summary>
     public async Task<(byte[] Body, string? ContentType)> RelayAsync(
         string endpoint,
         Dictionary<string, string> parameters)
@@ -84,9 +78,6 @@ public class SubsonicProxyService
             headers);
     }
 
-    /// <summary>
-    /// Safely relays a request to the Subsonic server, returning null on failure.
-    /// </summary>
     public async Task<(byte[]? Body, string? ContentType, bool Success)> RelaySafeAsync(
         string endpoint,
         Dictionary<string, string> parameters)
@@ -110,9 +101,6 @@ public class SubsonicProxyService
         }
     }
 
-    /// <summary>
-    /// Relays a stream request to the Subsonic server with range processing support.
-    /// </summary>
     public async Task<IActionResult> RelayStreamAsync(
         Dictionary<string, string> parameters,
         CancellationToken cancellationToken)
@@ -128,7 +116,6 @@ public class SubsonicProxyService
     {
         try
         {
-            // Get HTTP context for request/response forwarding
             var httpContext = _httpContextAccessor.HttpContext;
             if (httpContext == null)
             {

@@ -455,7 +455,6 @@ public class ConcretePlaylistCapabilityAdapter(
             createdDate: playlist.CreatedDate);
     }
 
-    // ponytail: concrete readers expose no checksum/ETag; use the full playlist summary until they do.
     private static string Revision(ExternalPlaylist playlist) => Convert.ToHexString(
         SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
         {

@@ -22,7 +22,6 @@ public class JellyfinResponseStructureTests
     [Fact]
     public void Track_MediaSources_Should_Have_Complete_Structure()
     {
-        // Arrange
         var song = new Song
         {
             Id = "test-id",
@@ -35,10 +34,8 @@ public class JellyfinResponseStructureTests
             ExternalId = "123456"
         };
 
-        // Act
         var result = _builder.ConvertSongToJellyfinItem(song);
 
-        // Assert - MediaSources exists
         Assert.NotNull(result["MediaSources"]);
         var mediaSources = result["MediaSources"] as object[];
         Assert.NotNull(mediaSources);
@@ -47,7 +44,6 @@ public class JellyfinResponseStructureTests
         var mediaSource = mediaSources[0] as Dictionary<string, object?>;
         Assert.NotNull(mediaSource);
 
-        // Assert - Required MediaSource fields
         Assert.Contains("Protocol", mediaSource.Keys);
         Assert.Contains("Id", mediaSource.Keys);
         Assert.Contains("Path", mediaSource.Keys);
@@ -57,7 +53,6 @@ public class JellyfinResponseStructureTests
         Assert.Contains("ETag", mediaSource.Keys);
         Assert.Contains("RunTimeTicks", mediaSource.Keys);
 
-        // Assert - Boolean flags
         Assert.Contains("IsRemote", mediaSource.Keys);
         Assert.Contains("IsInfiniteStream", mediaSource.Keys);
         Assert.Contains("RequiresOpening", mediaSource.Keys);
@@ -74,7 +69,6 @@ public class JellyfinResponseStructureTests
         Assert.Contains("UseMostCompatibleTranscodingProfile", mediaSource.Keys);
         Assert.Contains("HasSegments", mediaSource.Keys);
 
-        // Assert - Arrays (must not be null)
         Assert.Contains("MediaStreams", mediaSource.Keys);
         Assert.NotNull(mediaSource["MediaStreams"]);
         Assert.Contains("MediaAttachments", mediaSource.Keys);
@@ -84,7 +78,6 @@ public class JellyfinResponseStructureTests
         Assert.Contains("RequiredHttpHeaders", mediaSource.Keys);
         Assert.NotNull(mediaSource["RequiredHttpHeaders"]);
 
-        // Assert - Other fields
         Assert.Contains("TranscodingSubProtocol", mediaSource.Keys);
         Assert.Contains("DefaultAudioStreamIndex", mediaSource.Keys);
     }
@@ -92,7 +85,6 @@ public class JellyfinResponseStructureTests
     [Fact]
     public void Track_MediaStreams_Should_Have_Complete_Audio_Stream()
     {
-        // Arrange
         var song = new Song
         {
             Id = "test-id",
@@ -102,20 +94,17 @@ public class JellyfinResponseStructureTests
             ExternalProvider = "Deezer"
         };
 
-        // Act
         var result = _builder.ConvertSongToJellyfinItem(song);
         var mediaSources = result["MediaSources"] as object[];
         var mediaSource = mediaSources![0] as Dictionary<string, object?>;
         var mediaStreams = mediaSource!["MediaStreams"] as object[];
 
-        // Assert
         Assert.NotNull(mediaStreams);
         Assert.Single(mediaStreams);
 
         var audioStream = mediaStreams[0] as Dictionary<string, object?>;
         Assert.NotNull(audioStream);
 
-        // Assert - Required audio stream fields
         Assert.Contains("Codec", audioStream.Keys);
         Assert.Equal("flac", audioStream["Codec"]);
         Assert.Contains("Type", audioStream.Keys);
@@ -128,16 +117,13 @@ public class JellyfinResponseStructureTests
         Assert.Contains("TimeBase", audioStream.Keys);
         Assert.Contains("DisplayTitle", audioStream.Keys);
 
-        // Assert - Video-related fields (required even for audio)
         Assert.Contains("VideoRange", audioStream.Keys);
         Assert.Contains("VideoRangeType", audioStream.Keys);
         Assert.Contains("AudioSpatialFormat", audioStream.Keys);
 
-        // Assert - Localization
         Assert.Contains("LocalizedDefault", audioStream.Keys);
         Assert.Contains("LocalizedExternal", audioStream.Keys);
 
-        // Assert - Boolean flags
         Assert.Contains("IsInterlaced", audioStream.Keys);
         Assert.Contains("IsAVC", audioStream.Keys);
         Assert.Contains("IsDefault", audioStream.Keys);
@@ -147,7 +133,6 @@ public class JellyfinResponseStructureTests
         Assert.Contains("IsTextSubtitleStream", audioStream.Keys);
         Assert.Contains("SupportsExternalStream", audioStream.Keys);
 
-        // Assert - Index and Level
         Assert.Contains("Index", audioStream.Keys);
         Assert.Contains("Level", audioStream.Keys);
     }
@@ -155,17 +140,14 @@ public class JellyfinResponseStructureTests
     [Fact]
     public void All_Entities_Should_Have_UserData_With_ItemId()
     {
-        // Arrange
         var song = new Song { Id = "song-id", Title = "Test", Artist = "Test" };
         var album = new Album { Id = "album-id", Title = "Test", Artist = "Test" };
         var artist = new Artist { Id = "artist-id", Name = "Test" };
 
-        // Act
         var songResult = _builder.ConvertSongToJellyfinItem(song);
         var albumResult = _builder.ConvertAlbumToJellyfinItem(album);
         var artistResult = _builder.ConvertArtistToJellyfinItem(artist);
 
-        // Assert
         var songUserData = songResult["UserData"] as Dictionary<string, object>;
         Assert.NotNull(songUserData);
         Assert.Contains("ItemId", songUserData.Keys);

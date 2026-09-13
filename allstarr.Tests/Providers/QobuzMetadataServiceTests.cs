@@ -52,12 +52,10 @@ public class QobuzMetadataServiceTests
             _loggerMock.Object);
     }
 
-    #region SearchPlaylistsAsync Tests
 
     [Fact]
     public async Task SearchPlaylistsAsync_WithValidQuery_ReturnsPlaylists()
     {
-        // Arrange
         var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
@@ -88,10 +86,8 @@ public class QobuzMetadataServiceTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(mockResponse);
 
-        // Act
         var result = await _service.SearchPlaylistsAsync("jazz", 20);
 
-        // Assert
         Assert.NotNull(result);
         Assert.Single(result);
         Assert.Equal("Jazz Classics", result[0].Name);
@@ -107,7 +103,6 @@ public class QobuzMetadataServiceTests
     [Fact]
     public async Task SearchPlaylistsAsync_WithEmptyResults_ReturnsEmptyList()
     {
-        // Arrange
         var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
@@ -125,10 +120,8 @@ public class QobuzMetadataServiceTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(mockResponse);
 
-        // Act
         var result = await _service.SearchPlaylistsAsync("nonexistent", 20);
 
-        // Assert
         Assert.NotNull(result);
         Assert.Empty(result);
     }
@@ -136,7 +129,6 @@ public class QobuzMetadataServiceTests
     [Fact]
     public async Task SearchPlaylistsAsync_WhenHttpFails_ReturnsEmptyList()
     {
-        // Arrange
         var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.InternalServerError
@@ -149,22 +141,17 @@ public class QobuzMetadataServiceTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(mockResponse);
 
-        // Act
         var result = await _service.SearchPlaylistsAsync("jazz", 20);
 
-        // Assert
         Assert.NotNull(result);
         Assert.Empty(result);
     }
 
-    #endregion
 
-    #region GetPlaylistAsync Tests
 
     [Fact]
     public async Task GetPlaylistAsync_WithValidId_ReturnsPlaylist()
     {
-        // Arrange
         var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
@@ -189,10 +176,8 @@ public class QobuzMetadataServiceTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(mockResponse);
 
-        // Act
         var result = await _service.GetPlaylistAsync("qobuz", "1578664");
 
-        // Assert
         Assert.NotNull(result);
         Assert.Equal("Best Of Jazz", result.Name);
         Assert.Equal("Top jazz tracks", result.Description);
@@ -206,21 +191,16 @@ public class QobuzMetadataServiceTests
     [Fact]
     public async Task GetPlaylistAsync_WithWrongProvider_ReturnsNull()
     {
-        // Act
         var result = await _service.GetPlaylistAsync("deezer", "12345");
 
-        // Assert
         Assert.Null(result);
     }
 
-    #endregion
 
-    #region GetPlaylistTracksAsync Tests
 
     [Fact]
     public async Task GetPlaylistTracksAsync_WithValidId_ReturnsTracks()
     {
-        // Arrange
         var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
@@ -285,10 +265,8 @@ public class QobuzMetadataServiceTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(mockResponse);
 
-        // Act
         var result = await _service.GetPlaylistTracksAsync("qobuz", "1578664");
 
-        // Assert
         Assert.NotNull(result);
         Assert.Equal(2, result.Count);
 
@@ -312,10 +290,8 @@ public class QobuzMetadataServiceTests
     [Fact]
     public async Task GetPlaylistTracksAsync_WithWrongProvider_ReturnsEmptyList()
     {
-        // Act
         var result = await _service.GetPlaylistTracksAsync("deezer", "12345");
 
-        // Assert
         Assert.NotNull(result);
         Assert.Empty(result);
     }
@@ -323,7 +299,6 @@ public class QobuzMetadataServiceTests
     [Fact]
     public async Task GetPlaylistTracksAsync_WhenHttpFails_ReturnsEmptyList()
     {
-        // Arrange
         var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.NotFound
@@ -336,10 +311,8 @@ public class QobuzMetadataServiceTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(mockResponse);
 
-        // Act
         var result = await _service.GetPlaylistTracksAsync("qobuz", "999999");
 
-        // Assert
         Assert.NotNull(result);
         Assert.Empty(result);
     }
@@ -347,7 +320,6 @@ public class QobuzMetadataServiceTests
     [Fact]
     public async Task GetPlaylistTracksAsync_WithMissingPlaylistName_UsesDefaultName()
     {
-        // Arrange
         var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
@@ -383,23 +355,18 @@ public class QobuzMetadataServiceTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(mockResponse);
 
-        // Act
         var result = await _service.GetPlaylistTracksAsync("qobuz", "1578664");
 
-        // Assert
         Assert.NotNull(result);
         Assert.Single(result);
         Assert.Equal("Unknown Playlist", result[0].Album);
     }
 
-    #endregion
 
-    #region SearchSongsAsync Tests
 
     [Fact]
     public async Task SearchSongsAsync_WithValidQuery_ReturnsSongs()
     {
-        // Arrange
         var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
@@ -436,24 +403,19 @@ public class QobuzMetadataServiceTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(mockResponse);
 
-        // Act
         var result = await _service.SearchSongsAsync("Take Five", 20);
 
-        // Assert
         Assert.NotNull(result);
         Assert.Single(result);
         Assert.Equal("Take Five", result[0].Title);
         Assert.Equal("Dave Brubeck Quartet", result[0].Artist);
     }
 
-    #endregion
 
-    #region SearchAlbumsAsync Tests
 
     [Fact]
     public async Task SearchAlbumsAsync_WithValidQuery_ReturnsAlbums()
     {
-        // Arrange
         var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
@@ -482,10 +444,8 @@ public class QobuzMetadataServiceTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(mockResponse);
 
-        // Act
         var result = await _service.SearchAlbumsAsync("Time Out", 20);
 
-        // Assert
         Assert.NotNull(result);
         Assert.Single(result);
         Assert.Equal("Time Out", result[0].Title);
@@ -493,14 +453,49 @@ public class QobuzMetadataServiceTests
         Assert.Equal(1959, result[0].Year);
     }
 
-    #endregion
+    [Theory]
+    [InlineData("songs")]
+    [InlineData("albums")]
+    [InlineData("artists")]
+    public async Task MetadataSearch_WithMalformedResponse_ReturnsEmpty(string resultKind)
+    {
+        _httpMessageHandlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("not-json")
+            });
 
-    #region GetSongAsync Tests
+        Assert.Equal(0, await SearchCountAsync(resultKind, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("songs")]
+    [InlineData("albums")]
+    [InlineData("artists")]
+    public async Task MetadataSearch_PropagatesCallerCancellation(string resultKind)
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        _httpMessageHandlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ThrowsAsync(new OperationCanceledException(cancellation.Token));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => SearchCountAsync(resultKind, cancellation.Token));
+    }
+
+
 
     [Fact]
     public async Task GetSongAsync_WithValidId_ReturnsSong()
     {
-        // Arrange
         var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
@@ -540,10 +535,8 @@ public class QobuzMetadataServiceTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(mockResponse);
 
-        // Act
         var result = await _service.GetSongAsync("qobuz", "123456789");
 
-        // Assert
         Assert.NotNull(result);
         Assert.Equal("Take Five", result.Title);
         Assert.Equal("Dave Brubeck Quartet", result.Artist);
@@ -559,21 +552,16 @@ public class QobuzMetadataServiceTests
     [Fact]
     public async Task GetSongAsync_WithWrongProvider_ReturnsNull()
     {
-        // Act
         var result = await _service.GetSongAsync("deezer", "123456789");
 
-        // Assert
         Assert.Null(result);
     }
 
-    #endregion
 
-    #region GetAlbumAsync Tests
 
     [Fact]
     public async Task GetAlbumAsync_WithValidId_ReturnsAlbumWithTracks()
     {
-        // Arrange
         var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
@@ -635,10 +623,8 @@ public class QobuzMetadataServiceTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(mockResponse);
 
-        // Act
         var result = await _service.GetAlbumAsync("qobuz", "222");
 
-        // Assert
         Assert.NotNull(result);
         Assert.Equal("Time Out", result.Title);
         Assert.Equal("Dave Brubeck Quartet", result.Artist);
@@ -651,16 +637,12 @@ public class QobuzMetadataServiceTests
     [Fact]
     public async Task GetAlbumAsync_WithWrongProvider_ReturnsNull()
     {
-        // Act
         var result = await _service.GetAlbumAsync("deezer", "222");
 
-        // Assert
         Assert.Null(result);
     }
 
-    #endregion
 
-    #region GetArtistTracksAsync Tests
 
     [Fact]
     public async Task GetArtistTracksAsync_PagesAlbumsAndTracksWithoutDuplicates()
@@ -740,5 +722,13 @@ public class QobuzMetadataServiceTests
             Task.FromResult(handler(request));
     }
 
-    #endregion
+    private async Task<int> SearchCountAsync(string resultKind, CancellationToken cancellationToken) =>
+        resultKind switch
+        {
+            "songs" => (await _service.SearchSongsAsync("query", cancellationToken: cancellationToken)).Count,
+            "albums" => (await _service.SearchAlbumsAsync("query", cancellationToken: cancellationToken)).Count,
+            "artists" => (await _service.SearchArtistsAsync("query", cancellationToken: cancellationToken)).Count,
+            _ => throw new ArgumentOutOfRangeException(nameof(resultKind), resultKind, null)
+        };
+
 }

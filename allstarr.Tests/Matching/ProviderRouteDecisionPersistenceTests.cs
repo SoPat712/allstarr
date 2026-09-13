@@ -1,5 +1,6 @@
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Downloads;
 using allstarr.Core.Favorites;
 using allstarr.Core.Operations;
 using allstarr.Core.Routing;
@@ -304,13 +305,13 @@ public sealed class ProviderRouteDecisionPersistenceTests : IAsyncLifetime
             .Callback<ProviderRouteDecisionHandle, ProviderRouteExecutionOutcome, CancellationToken>(
                 (_, outcome, _) => outcomeKeys.Add(outcome.OutcomeKey))
             .Returns(Task.CompletedTask);
-        var executor = new FavoriteDownloadActionExecutor(
+        var managedDownloads = new ManagedTrackDownloadService(
             router.Object,
             providers.Object,
             null!,
             _clock,
-            _factory,
             store.Object);
+        var executor = new FavoriteDownloadActionExecutor(managedDownloads, _factory);
 
         var result = await executor.ExecuteAsync(favoriteEvent, action, default);
         action.AttemptCount = 2;

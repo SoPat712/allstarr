@@ -67,6 +67,7 @@ public sealed class ProtocolLibraryScopeResolver(
             return providers?.Any(pair =>
                 pair.Value.Equals(itemId, StringComparison.Ordinal) ||
                 $"{pair.Key}:{pair.Value}".Equals(itemId, StringComparison.OrdinalIgnoreCase) ||
+                $"external:{pair.Key}:{pair.Value}".Equals(itemId, StringComparison.OrdinalIgnoreCase) ||
                 $"ext-{pair.Key}-song-{pair.Value}".Equals(itemId, StringComparison.OrdinalIgnoreCase) ||
                 $"ext-{pair.Key}-{pair.Value}".Equals(itemId, StringComparison.OrdinalIgnoreCase)) == true;
         }

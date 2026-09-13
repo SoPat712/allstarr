@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { X } from "@lucide/svelte";
+  import { FileUp, Heart, History, LayoutDashboard, ListMusic, SlidersHorizontal, Sparkles, X } from "@lucide/svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
   import { Checkbox } from "$lib/components/ui/checkbox";
@@ -16,6 +16,7 @@
   import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
+  import SubsonicLibraryAccessDialog from "$lib/components/SubsonicLibraryAccessDialog.svelte";
   import {
     home,
     intelligence,
@@ -28,7 +29,7 @@
     type ProviderDefinition,
   } from "$lib/api";
 
-  type IntelligenceSection = "overview" | "history" | "imports" | "discover" | "automation";
+  type IntelligenceSection = "overview" | "history" | "imports" | "discover" | "playlists" | "automation";
 
   let {
     initialSection = "overview",
@@ -63,10 +64,17 @@
   let providerSetupRequested = $state(false);
   let audioMuseSetupLoading = $state(true);
   let audioMuseSetupFeedback = $state("");
+  let libraryAccessOpen = $state(false);
+  let libraryAccessTarget = $state<MediaTarget | null>(null);
+  let librarySetupFeedback = $state("");
+  let indexingTargetId = $state("");
+  let indexPollCount = $state(0);
+  let loadRequest = 0;
 
   const activeSection = $derived<IntelligenceSection>(
     initialSection === "history" || initialSection === "imports" ? initialSection
       : initialSection === "discover" || initialSection === "recommendations" ? "discover"
+        : initialSection === "playlists" ? "playlists"
         : initialSection === "automation" || initialSection === "settings" ? "automation"
           : "overview",
   );
@@ -75,6 +83,7 @@
     history: { title: "Your listening history.", description: "Search, correct, and export the activity saved for this account and library." },
     imports: { title: "Bring your history with you.", description: "Upload Spotify Extended Streaming History or exports from your other listening services." },
     discover: { title: "Turn listening into discovery.", description: "Review recommendations and create playlists without sending your history to Allstarr." },
+    playlists: { title: "Recommendations you can play anywhere.", description: "Turn live intelligence into personal playlists in this Jellyfin or Subsonic library." },
     automation: { title: "Choose what Allstarr remembers.", description: "Control private history, recommendation inputs, listening services, and schedules." },
   }[activeSection]);
   const historySection = $derived(activeSection === "imports" ? "imports" : activeSection === "history" ? "history" : "overview");
@@ -92,8 +101,10 @@
   const canManageAudioMuse = $derived(providerManagementMode !== "AdminManaged" || administrator);
   const runState = $derived(data?.actions.latestRunState?.replace("retryscheduled", "retry scheduled"));
   const runStatus = $derived(runState === "succeeded" ? "Ready" : ["pending", "running", "retry scheduled"].includes(runState ?? "") ? "Refreshing" : runState);
+  const materializationActive = $derived(data?.generatedSets.some((item) => ["pending", "running"].includes(item.state)) ?? false);
   const readyRecommendationSources = $derived(data?.providers.filter((item) => item.enabled && item.available && item.state === "ready").length ?? 0);
   const scopedTargets = $derived(mediaTargets.filter((item) => Boolean(item.libraryScopeId)));
+  const connectableSubsonicTarget = $derived(mediaTargets.find((item) => item.protocol === "subsonic") ?? null);
   const selectedTarget = $derived(scopedTargets.find((item) => item.id === selectedTargetId) ?? scopedTargets[0]);
   const targetOptions = $derived(scopedTargets.map((item) => ({ value: item.id, label: targetLabel(item) })));
   const credentialOptions = $derived(mediaTargets
@@ -102,10 +113,28 @@
     .map((item) => ({ value: item.credentialReferenceId!, label: item.displayName })));
   const nextSchedule = $derived(data?.schedules.filter((item) => item.enabled && item.nextRunAt)
     .sort((left, right) => new Date(left.nextRunAt!).getTime() - new Date(right.nextRunAt!).getTime())[0]);
+  const policyDirty = $derived(Boolean(data) && (
+    enabled !== Boolean(data?.policy?.enabled) ||
+    retentionDays !== (data?.policy?.retentionDays ?? 0) ||
+    targetCredentialReferenceId !== (data?.policy?.targetCredentialReferenceId ?? "") ||
+    !sameMembers(selectedSignals, data?.availableSignalTypes.filter((item) => item.enabled).map((item) => item.id) ?? []) ||
+    !sameMembers(selectedProviders, data?.providers.filter((item) => item.enabled).map((item) => item.id) ?? [])
+  ));
 
   $effect(() => {
-    if (!["pending", "running", "retry scheduled"].includes(runState ?? "")) return;
+    if (!["pending", "running", "retry scheduled"].includes(runState ?? "") && !materializationActive) return;
     const timer = setTimeout(() => void refresh(), 1500);
+    return () => clearTimeout(timer);
+  });
+
+  $effect(() => {
+    if (!indexingTargetId) return;
+    if (indexPollCount >= 60) {
+      indexingTargetId = "";
+      librarySetupFeedback = "Library access is connected, but indexing is taking longer than expected. Activity will show its progress.";
+      return;
+    }
+    const timer = setTimeout(() => void refreshIndexedTarget(), 5000);
     return () => clearTimeout(timer);
   });
 
@@ -143,8 +172,10 @@
     await refresh();
   }
 
-  function adopt(next: IntelligenceState) {
+  function adopt(next: IntelligenceState, preservePolicyDraft = false) {
+    const keepPolicyDraft = preservePolicyDraft && policyDirty;
     data = next;
+    if (keepPolicyDraft) return;
     enabled = Boolean(next.policy?.enabled);
     retentionDays = next.policy?.retentionDays ?? 0;
     selectedSignals = next.availableSignalTypes.filter((item) => item.enabled).map((item) => item.id);
@@ -182,6 +213,45 @@
     }
   }
 
+  async function refreshIndexedTarget() {
+    if (!indexingTargetId) return;
+    try {
+      const response = await playlistLinks.targets();
+      mediaTargets = response.targets;
+      const ready = response.targets.find((item) => item.id === indexingTargetId && item.libraryScopeId);
+      if (ready) {
+        indexingTargetId = "";
+        librarySetupFeedback = "Your Subsonic library is indexed and ready for Intelligence.";
+        await openTarget(ready.id);
+        return;
+      }
+    } catch {}
+    indexPollCount++;
+  }
+
+  function openLibraryAccess(target: MediaTarget) {
+    libraryAccessTarget = target;
+    libraryAccessOpen = true;
+  }
+
+  async function startExistingIndex(target: MediaTarget) {
+    if (!target.credentialReferenceId || indexingTargetId) return;
+    error = "";
+    try {
+      await playlistLinks.enqueueLibraryIndex(target, target.credentialReferenceId);
+      await libraryAccessConnected("Library indexing started.", target.id);
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : "Library indexing could not be started.";
+    }
+  }
+
+  async function libraryAccessConnected(message: string, targetId: string) {
+    librarySetupFeedback = message;
+    indexingTargetId = targetId;
+    indexPollCount = 0;
+    await refreshIndexedTarget();
+  }
+
   async function openTarget(targetId: string) {
     const target = mediaTargets.find((item) => item.id === targetId && item.libraryScopeId);
     if (!target?.libraryScopeId) return;
@@ -194,18 +264,21 @@
 
   async function load(requestedScope: IntelligenceScope = { ...scope }) {
     if (!requestedScope.backendInstanceId.trim() || !requestedScope.libraryScopeId.trim()) return;
+    const request = ++loadRequest;
     loading = true;
     error = "";
     try {
       const next = await intelligence.get(requestedScope);
+      if (request !== loadRequest) return;
       loadedScope = requestedScope;
       adopt(next);
     } catch (cause) {
+      if (request !== loadRequest) return;
       data = null;
       loadedScope = null;
       error = cause instanceof Error ? cause.message : "Intelligence could not be loaded.";
     } finally {
-      loading = false;
+      if (request === loadRequest) loading = false;
     }
   }
 
@@ -215,7 +288,7 @@
     error = "";
     try {
       await operation();
-      adopt(await intelligence.get(activeScope));
+      adopt(await intelligence.get(activeScope), name !== "policy" && name !== "purge");
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "The action could not be completed.";
     } finally {
@@ -226,7 +299,7 @@
   async function refresh() {
     if (!loadedScope) return;
     try {
-      adopt(await intelligence.get(loadedScope));
+      adopt(await intelligence.get(loadedScope), true);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Intelligence could not be refreshed.";
     }
@@ -234,6 +307,10 @@
 
   function toggle(values: string[], value: string, checked: boolean) {
     return checked ? [...new Set([...values, value])] : values.filter((item) => item !== value);
+  }
+
+  function sameMembers(left: string[], right: string[]) {
+    return left.length === right.length && left.every((item) => right.includes(item));
   }
 
   function generatedStatus(item: IntelligenceState["generatedSets"][number]) {
@@ -294,22 +371,40 @@
       {:else if scopedTargets.length > 1}
         <label class="field library-picker"><span>Library</span><SelectField value={selectedTargetId} label="Music library" options={targetOptions} onchange={(value) => void openTarget(value)} /></label>
       {:else}
-        <span class="scope-value"><small>Library needed</small><strong>{mediaTargets.length ? "Finish indexing" : "Connect a music server"}</strong><Button variant="secondary" size="sm" href="#/integrations/services">Open services</Button></span>
+        <span class="scope-value">
+          <small>Library needed</small>
+          <strong>{indexingTargetId ? "Indexing your music…" : mediaTargets.length ? "Connect background access" : "Connect a music server"}</strong>
+          {#if connectableSubsonicTarget}
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={Boolean(indexingTargetId)}
+              onclick={() => connectableSubsonicTarget.credentialReferenceId
+                ? void startExistingIndex(connectableSubsonicTarget)
+                : openLibraryAccess(connectableSubsonicTarget)}
+            >{indexingTargetId ? "Indexing…" : connectableSubsonicTarget.credentialReferenceId ? "Start indexing" : "Connect access"}</Button>
+          {:else}
+            <Button variant="secondary" size="sm" href="#/integrations/services">Open services</Button>
+          {/if}
+        </span>
       {/if}
-      {#if data?.actions.canRun && activeSection === "discover"}
+      {#if data?.actions.canRun && (activeSection === "discover" || activeSection === "playlists")}
         {#if runStatus}<Badge state={runState === "succeeded" ? "healthy" : "suggested"}>{runStatus}</Badge>{/if}
         <Button disabled={Boolean(action)} onclick={() => void perform("run", () => intelligence.run(activeScope))}>{action === "run" ? "Starting…" : "Refresh recommendations"}</Button>
       {/if}
     </div>
   </header>
 
+  {#if librarySetupFeedback}<p class="action-feedback library-setup-feedback" role="status">{librarySetupFeedback}</p>{/if}
+
   <SegmentedNav items={[
-    { id: "overview", label: "Overview", href: "#/intelligence?section=overview" },
-    { id: "history", label: "History", href: "#/intelligence?section=history" },
-    { id: "imports", label: "Import", href: "#/intelligence?section=imports" },
-    { id: "discover", label: "Discover", href: "#/intelligence?section=discover" },
-    { id: "automation", label: "Automation", href: "#/intelligence?section=automation" },
-  ]} active={activeSection} label="Intelligence sections" class="intelligence-tabs" />
+    { id: "overview", label: "Overview", href: "#/intelligence?section=overview", icon: LayoutDashboard },
+    { id: "history", label: "History", href: "#/intelligence?section=history", icon: History },
+    { id: "imports", label: "Import", href: "#/intelligence?section=imports", icon: FileUp },
+    { id: "discover", label: "Discover", href: "#/intelligence?section=discover", icon: Sparkles },
+    { id: "playlists", label: "Playlists", href: "#/intelligence?section=playlists", icon: ListMusic },
+    { id: "automation", label: "Automation", href: "#/intelligence?section=automation", icon: SlidersHorizontal },
+  ]} active={activeSection} label="Intelligence sections" class="route-tabs intelligence-tabs" />
 
   {#if error}<div class="notice-error intelligence-error" role="alert"><span>{error}</span>{#if selectedTarget}<Button variant="outline" size="sm" disabled={loading} onclick={() => void load()}>{loading ? "Trying again…" : "Try again"}</Button>{/if}</div>{/if}
 
@@ -328,7 +423,7 @@
     {#if data.state === "degraded"}
       <div class="degraded-banner" role="status"><span aria-hidden="true">!</span><p><strong>Some discovery sources need attention.</strong> Existing results remain available.</p></div>
     {/if}
-    {#if activeSection === "discover" && data.actions.progress}
+    {#if (activeSection === "discover" || activeSection === "playlists") && data.actions.progress}
       <section class="panel run-progress" role="status">
         <div><p class="eyebrow">Refreshing recommendations</p><strong>{data.actions.progress.message}</strong>
           {#if data.actions.progress.provider || data.actions.progress.playlist || data.actions.progress.track}<small>{[data.actions.progress.provider, data.actions.progress.playlist, data.actions.progress.track].filter(Boolean).join(" · ")}</small>{/if}
@@ -410,7 +505,7 @@
                 {/if}
               </fieldset>
             </div>
-            <footer><Button variant="destructive" onclick={() => purgeOpen = true}>Turn off and clear</Button><Button type="submit" disabled={Boolean(action)}>{action === "policy" ? "Saving…" : "Save settings"}</Button></footer>
+            <footer><Button variant="destructive" onclick={() => purgeOpen = true}>Turn off and clear</Button><Button type="submit" disabled={Boolean(action) || !policyDirty}>{action === "policy" ? "Saving…" : "Save settings"}</Button></footer>
           </form>
         </section>
         <div class="settings-status-grid">
@@ -429,6 +524,31 @@
         <ListeningAppsCard scope={activeScope} policyEnabled={enabled} />
         <IntelligenceSchedules scope={activeScope} schedules={data.schedules ?? []} policyEnabled={enabled} onChanged={refresh} />
       </div>
+    {:else if activeSection === "playlists"}
+      <div class="intelligence-grid intelligence-playlists">
+        <section class="panel generated-card playlist-library">
+          <header>
+            <div><p class="eyebrow">Personal and live</p><h3>Recommendation playlists</h3></div>
+            {#if materializationActive}<Badge state="suggested">Updating</Badge>{:else if data.generatedSets.length}<Badge state="healthy">Ready</Badge>{/if}
+          </header>
+          <p class="playlist-explainer">Recommendations stay temporary until you create a playlist. Allstarr then injects it into this user’s {serverLabel(activeScope.protocol)} library and keeps scheduled playlists refreshed.</p>
+          <ul class="generated-list" aria-live="polite">
+            {#each data.generatedSets as item}
+              <li class="generated-row"><span><strong>{item.name}</strong><small>{item.trackCount} tracks · {generatedStatus(item)}</small></span><Badge state={item.materialized ? "healthy" : "suggested"}>{item.materialized ? "Playable" : item.state}</Badge></li>
+            {:else}<li class="compact-empty"><strong>No recommendation playlists yet</strong><p>Refresh recommendations, then turn the result into a playlist here.</p></li>{/each}
+          </ul>
+          {#if data.actions.canGenerate && data.actions.latestRunId}
+            <form class="generate-form" onsubmit={(event) => { event.preventDefault(); void perform("generate", () => intelligence.generate(activeScope, data!.actions.latestRunId!, generatedName)); }}>
+              <label class="field"><span>Playlist name</span><input bind:value={generatedName} maxlength="200" required /></label>
+              <Button type="submit" disabled={Boolean(action)}>{action === "generate" ? "Creating…" : `Create in ${serverLabel(activeScope.protocol)}`}</Button>
+            </form>
+          {/if}
+        </section>
+        <aside class="side-stack">
+          <section class="panel profile-card"><p class="eyebrow">Learning loop</p><h3>Shape what comes next</h3><p>Completed plays, skips, favorites, playlist adds, and recommendation feedback build this library’s private profile. Favorite songs in your player or like a recommendation to make related music more influential.</p><Button variant="secondary" href="#/intelligence?section=discover">Review recommendations</Button></section>
+          <section class="panel profile-card"><p class="eyebrow">Automation</p><h3>Rotating playlists</h3><p>{nextSchedule?.nextRunAt ? `The next playlist refresh is ${new Date(nextSchedule.nextRunAt).toLocaleString()}.` : "Create a schedule to keep a recommendation playlist changing as your listening changes."}</p><Button variant="secondary" href="#/intelligence?section=automation">Manage schedules</Button></section>
+        </aside>
+      </div>
     {:else}
       {#if audioMuseReady}<AudioMuseDiscovery scope={activeScope} songs={visibleCandidates} onCreated={refresh} />{/if}
       <div class="intelligence-grid">
@@ -440,7 +560,7 @@
                 <li>
                   <span class="track-art">{#if item.artworkUrl}<img src={item.artworkUrl} alt="" loading="lazy" />{:else}<span aria-hidden="true">♪</span>{/if}</span>
                   <div class="track-copy"><strong>{item.title || item.trackKey}</strong><small>{item.artist || item.providerId}{item.album ? ` · ${item.album}` : ""}</small><details><summary class="disclosure-summary compact"><DisclosureLabel title="Why this track" /></summary><ul>{#each item.explanations as reason}<li>{reason.explanation}</li>{/each}</ul></details></div>
-                  <div class="track-actions"><span class="score">{Math.round(item.score * 100)}%</span><Button variant="outline" size="xs" disabled={Boolean(action)} onclick={() => void perform(`similar:${item.id}`, () => intelligence.run(activeScope, [item.trackKey]))}>Similar</Button><Button variant="ghost" size="icon-xs" aria-label={`Dismiss ${item.title || item.trackKey}`} disabled={Boolean(action)} onclick={() => void perform(`dismiss:${item.id}`, () => intelligence.feedback(activeScope, item.id, "dismiss", item.feedback?.revision ?? 0))}><X size={16} aria-hidden="true" /></Button></div>
+                  <div class="track-actions"><span class="score">{Math.round(item.score * 100)}%</span><Button variant="outline" size="xs" disabled={Boolean(action)} onclick={() => void perform(`similar:${item.id}`, () => intelligence.run(activeScope, [item.trackKey]))}>Similar</Button><Button variant={item.feedback?.kind === "like" ? "secondary" : "ghost"} size="icon-xs" aria-label={`${item.feedback?.kind === "like" ? "Liked" : "Like"} ${item.title || item.trackKey}`} aria-pressed={item.feedback?.kind === "like"} disabled={Boolean(action) || item.feedback?.kind === "like"} onclick={() => void perform(`like:${item.id}`, () => intelligence.feedback(activeScope, item.id, "like", item.feedback?.revision ?? 0))}><Heart size={16} fill={item.feedback?.kind === "like" ? "currentColor" : "none"} aria-hidden="true" /></Button><Button variant="ghost" size="icon-xs" aria-label={`Dismiss ${item.title || item.trackKey}`} disabled={Boolean(action)} onclick={() => void perform(`dismiss:${item.id}`, () => intelligence.feedback(activeScope, item.id, "dismiss", item.feedback?.revision ?? 0))}><X size={16} aria-hidden="true" /></Button></div>
                 </li>
               {/each}
             </ol>
@@ -451,12 +571,18 @@
 
         <aside class="side-stack">
           <section class="panel profile-card"><p class="eyebrow">Recent listening</p><h3>Your profile</h3>{#if data.visualization.length}<ul class="profile-list">{#each data.visualization as item}<li><span>{item.label}</span><meter aria-label={item.label} min="0" max="1" value={item.value}>{item.value}</meter></li>{/each}</ul>{:else}<p class="muted">Turn on automatic history in <a class="touch-link" href="#/intelligence?section=automation">Automation</a>, then play music or import a history file.</p>{/if}</section>
-          <section class="panel generated-card"><p class="eyebrow">Saved output</p><h3>Generated playlists</h3><ul class="generated-list">{#each data.generatedSets as item}<li class="generated-row"><span><strong>{item.name}</strong><small>{item.trackCount} tracks</small></span><Badge state={item.materialized ? "healthy" : "suggested"}>{generatedStatus(item)}</Badge></li>{:else}<li class="muted">No generated playlists yet.</li>{/each}</ul>{#if data.actions.canGenerate && data.actions.latestRunId}<form class="generate-form" onsubmit={(event) => { event.preventDefault(); void perform("generate", () => intelligence.generate(activeScope, data!.actions.latestRunId!, generatedName)); }}><label class="field"><span>Playlist name</span><input bind:value={generatedName} maxlength="200" required /></label><Button type="submit" disabled={Boolean(action)}>{action === "generate" ? "Creating…" : "Create playlist"}</Button></form>{/if}</section>
+          <section class="panel generated-card"><p class="eyebrow">Playable output</p><h3>Recommendation playlists</h3><p>{data.generatedSets.length ? `${data.generatedSets.length} personal ${data.generatedSets.length === 1 ? "playlist is" : "playlists are"} available.` : "Create a personal or rotating playlist from these recommendations."}</p><Button variant="secondary" href="#/intelligence?section=playlists">Open playlists</Button></section>
         </aside>
       </div>
     {/if}
   {/if}
 </section>
+
+<SubsonicLibraryAccessDialog
+  bind:open={libraryAccessOpen}
+  target={libraryAccessTarget}
+  onConnected={libraryAccessConnected}
+/>
 
 <ConnectSourceDialog
   bind:open={audioMuseConnectionOpen}
@@ -477,8 +603,9 @@
 />
 
 <style>
-  .intelligence-view{display:grid;min-width:0;grid-template-columns:minmax(0,1fr);gap:1rem}.intelligence-header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:1.5rem;padding:.25rem 0}.route-heading-copy h2{margin:.25rem 0;font-family:var(--font-display);font-size:2rem;letter-spacing:-.03em}.route-heading-copy p{margin:0}.route-heading-copy p:last-child{max-width:70ch;color:var(--color-ink-muted)}.heading-tools{display:flex;align-items:center;justify-content:flex-end;gap:.75rem}.scope-value{display:grid;min-width:11rem;gap:.08rem;border-radius:var(--radius-md);background:var(--color-panel);padding:.6rem .8rem}.scope-value small,.scope-value span{color:var(--color-ink-muted);font-size:var(--text-xs)}.scope-value :global([data-slot="button"]){margin-top:.35rem}.library-picker{width:18rem}.intelligence-error{display:flex;align-items:center;justify-content:space-between;gap:1rem}.run-progress{display:grid;grid-template-columns:minmax(0,1fr) minmax(10rem,.5fr) auto;align-items:center;gap:1rem;padding:1rem}.run-progress p{margin:0}.run-progress small{display:block;color:var(--color-ink-muted)}.settings-stack{display:grid;gap:1rem}.settings-status-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.status-card{padding:1.15rem}.status-card h3,.status-card p{margin:.2rem 0}.status-list,.profile-list,.generated-list{margin:0;padding:0;list-style:none}.status-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.75rem 0}.status-row strong,.status-row small{display:block}.status-row small{color:var(--color-ink-muted)}.intelligence-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(18rem,.8fr);gap:1rem}.recommendations,.profile-card,.generated-card,.privacy-card{padding:1.15rem}.recommendations>header,.privacy-card>header{display:flex;align-items:center;justify-content:space-between}.recommendations h3,.profile-card h3,.generated-card h3,.privacy-card h3{margin:.2rem 0 1rem}.recommendation-list{display:grid;margin:0;padding:0;list-style:none}.recommendation-list>li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.85rem;align-items:center;border-top:1px solid var(--color-edge);padding:.9rem 0}.track-copy small,summary{color:var(--color-ink-muted);font-size:.75rem}.track-copy details{margin-top:.35rem}.track-copy ul{margin:.4rem 0 0;padding-left:1.1rem;color:var(--color-ink-muted);font-size:.78rem}.side-stack{display:grid;align-content:start;gap:1rem}.profile-list li,.generated-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.7rem 0}.profile-card meter{width:55%;accent-color:var(--color-signal)}.generated-row span:first-child strong,.generated-row span:first-child small{display:block}.generated-row small{color:var(--color-ink-muted)}.generate-form{display:grid;gap:.75rem;margin-top:1rem}.automation-summary{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:1rem;padding:1.15rem}.automation-summary>header{grid-column:1/-1;display:flex;align-items:start;justify-content:space-between;gap:1rem}.automation-summary h3,.automation-summary p{margin:.2rem 0}.automation-summary header p:last-child{color:var(--color-ink-muted)}.automation-summary dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0;border:1px solid var(--color-edge);border-radius:var(--radius-md)}.automation-summary dl div{padding:.75rem}.automation-summary dl div+div{border-left:1px solid var(--color-edge)}.automation-summary dt{color:var(--color-ink-muted);font-size:var(--text-xs)}.automation-summary dd{margin:.2rem 0 0;font-weight:750}.privacy-card form{display:grid;gap:1rem}.policy-basics{display:grid;grid-template-columns:minmax(16rem,1.25fr) minmax(12rem,.75fr) minmax(16rem,1fr);align-items:start;gap:1rem}.policy-choices{display:grid;grid-template-columns:minmax(16rem,.8fr) minmax(22rem,1.2fr);gap:1.5rem;border-top:1px solid var(--color-edge);padding-top:1rem}.toggle-line{display:flex;align-items:flex-start;gap:.65rem;padding:.25rem 0;cursor:pointer}.toggle-line span>*{display:block}.toggle-line small,fieldset small{color:var(--color-ink-muted)}fieldset{display:grid;grid-template-columns:1fr 1fr;align-content:start;gap:0 .85rem;border:0;margin:0;padding:0}fieldset legend{grid-column:1/-1;font-weight:750}fieldset>p{grid-column:1/-1;max-width:65ch;margin:.2rem 0 .45rem;color:var(--color-ink-muted);font-size:var(--text-sm)}fieldset label{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.65rem;min-height:2.75rem;border-top:1px solid var(--color-edge);padding:.55rem 0;cursor:pointer}.signal-choices label{grid-template-columns:auto minmax(0,1fr)}.signal-choices label span{font-weight:700}.provider-choices label span>*{display:block}.provider-choices label.unavailable{cursor:not-allowed}.provider-setup{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:.75rem;margin-top:.6rem;border:1px solid var(--color-edge);border-radius:var(--radius-md);background:var(--color-panel-raised);padding:.7rem}.provider-setup>span{display:grid;gap:.08rem}.provider-setup-actions{display:flex;align-items:center;justify-content:flex-end;gap:.45rem;flex-wrap:wrap}.setup-feedback{color:var(--color-success)}.privacy-card footer{display:flex;justify-content:space-between;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}
+  .intelligence-view{display:grid;min-width:0;grid-template-columns:minmax(0,1fr);gap:1rem}.library-setup-feedback{margin:0}.intelligence-header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:1.5rem;padding:.25rem 0}.route-heading-copy h2{margin:.25rem 0;font-family:var(--font-display);font-size:2rem;letter-spacing:-.03em}.route-heading-copy p{margin:0}.route-heading-copy p:last-child{max-width:70ch;color:var(--color-ink-muted)}.heading-tools{display:flex;align-items:center;justify-content:flex-end;gap:.75rem}.scope-value{display:grid;min-width:11rem;gap:.08rem;border-radius:var(--radius-md);background:var(--color-panel);padding:.6rem .8rem}.scope-value small,.scope-value span{color:var(--color-ink-muted);font-size:var(--text-xs)}.scope-value :global([data-slot="button"]){margin-top:.35rem}.library-picker{width:18rem}.intelligence-error{display:flex;align-items:center;justify-content:space-between;gap:1rem}.run-progress{display:grid;grid-template-columns:minmax(0,1fr) minmax(10rem,.5fr) auto;align-items:center;gap:1rem;padding:1rem}.run-progress p{margin:0}.run-progress small{display:block;color:var(--color-ink-muted)}.settings-stack{display:grid;gap:1rem}.settings-status-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.status-card{padding:1.15rem}.status-card h3,.status-card p{margin:.2rem 0}.status-list,.profile-list,.generated-list{margin:0;padding:0;list-style:none}.status-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.75rem 0}.status-row strong,.status-row small{display:block}.status-row small{color:var(--color-ink-muted)}.intelligence-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(18rem,.8fr);gap:1rem}.recommendations,.profile-card,.generated-card,.privacy-card{padding:1.15rem}.recommendations>header,.privacy-card>header,.playlist-library>header{display:flex;align-items:center;justify-content:space-between;gap:1rem}.recommendations h3,.profile-card h3,.generated-card h3,.privacy-card h3{margin:.2rem 0 1rem}.recommendation-list{display:grid;margin:0;padding:0;list-style:none}.recommendation-list>li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.85rem;align-items:center;border-top:1px solid var(--color-edge);padding:.9rem 0}.track-copy small,summary{color:var(--color-ink-muted);font-size:.75rem}.track-copy details{margin-top:.35rem}.track-copy ul{margin:.4rem 0 0;padding-left:1.1rem;color:var(--color-ink-muted);font-size:.78rem}.side-stack{display:grid;align-content:start;gap:1rem}.profile-list li,.generated-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--color-edge);padding:.7rem 0}.profile-card meter{width:55%;accent-color:var(--color-signal)}.profile-card>p:not(.eyebrow),.playlist-explainer{color:var(--color-ink-muted);line-height:1.55}.profile-card>:global([data-slot="button"]){margin-top:.5rem}.generated-row span:first-child strong,.generated-row span:first-child small{display:block}.generated-row small{color:var(--color-ink-muted)}.generate-form{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:.75rem;margin-top:1rem}.generate-form>:global([data-slot="button"]){min-height:var(--control-md)}.automation-summary{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:1rem;padding:1.15rem}.automation-summary>header{grid-column:1/-1;display:flex;align-items:start;justify-content:space-between;gap:1rem}.automation-summary h3,.automation-summary p{margin:.2rem 0}.automation-summary header p:last-child{color:var(--color-ink-muted)}.automation-summary dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0;border:1px solid var(--color-edge);border-radius:var(--radius-md)}.automation-summary dl div{padding:.75rem}.automation-summary dl div+div{border-left:1px solid var(--color-edge)}.automation-summary dt{color:var(--color-ink-muted);font-size:var(--text-xs)}.automation-summary dd{margin:.2rem 0 0;font-weight:750}.privacy-card form{display:grid;gap:1rem}.policy-basics{display:grid;grid-template-columns:minmax(16rem,1.25fr) minmax(12rem,.75fr) minmax(16rem,1fr);align-items:start;gap:1rem}.policy-choices{display:grid;grid-template-columns:minmax(16rem,.8fr) minmax(22rem,1.2fr);gap:1.5rem;border-top:1px solid var(--color-edge);padding-top:1rem}.toggle-line{display:flex;align-items:flex-start;gap:.65rem;padding:.25rem 0;cursor:pointer}.toggle-line span>*{display:block}.toggle-line small,fieldset small{color:var(--color-ink-muted)}fieldset{display:grid;grid-template-columns:1fr 1fr;align-content:start;gap:0 .85rem;border:0;margin:0;padding:0}fieldset legend{grid-column:1/-1;font-weight:750}fieldset>p{grid-column:1/-1;max-width:65ch;margin:.2rem 0 .45rem;color:var(--color-ink-muted);font-size:var(--text-sm)}fieldset label{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.65rem;min-height:2.75rem;border-top:1px solid var(--color-edge);padding:.55rem 0;cursor:pointer}.signal-choices label{grid-template-columns:auto minmax(0,1fr)}.signal-choices label span{font-weight:700}.provider-choices label span>*{display:block}.provider-choices label.unavailable{cursor:not-allowed}.provider-setup{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:.75rem;margin-top:.6rem;border:1px solid var(--color-edge);border-radius:var(--radius-md);background:var(--color-panel-raised);padding:.7rem}.provider-setup>span{display:grid;gap:.08rem}.provider-setup-actions{display:flex;align-items:center;justify-content:flex-end;gap:.45rem;flex-wrap:wrap}.setup-feedback{color:var(--color-success)}.privacy-card footer{display:flex;justify-content:space-between;gap:.75rem;border-top:1px solid var(--color-edge);padding-top:1rem}
   @media(max-width:1050px){.policy-basics{grid-template-columns:1fr 1fr}.policy-choices{grid-template-columns:1fr}}
   @media(max-width:900px){.intelligence-header{grid-template-columns:1fr}.heading-tools{justify-content:flex-start;flex-wrap:wrap}.library-picker{width:min(24rem,100%)}.run-progress{grid-template-columns:1fr}.settings-status-grid,.intelligence-grid{grid-template-columns:1fr}.automation-summary{grid-template-columns:1fr}.automation-summary>:global([data-slot="button"]){justify-self:start}}
   @media(max-width:620px){.intelligence-header{gap:.75rem}.route-heading-copy h2{margin-top:0;font-size:1.6rem}.heading-tools,.scope-value,.library-picker{width:100%}.scope-value{grid-template-columns:auto minmax(0,1fr);align-items:baseline;column-gap:.55rem;padding:.55rem .75rem}.scope-value small{grid-column:1}.scope-value strong,.scope-value span{grid-column:2}:global(.intelligence-tabs :is(a,button)){min-width:4.5rem;flex:1 0 4.5rem;padding-inline:var(--space-1);font-size:var(--text-xs)}.policy-basics,.run-progress{grid-template-columns:1fr}.policy-choices{gap:1rem}.provider-choices,.signal-choices{grid-template-columns:1fr}.provider-choices label,.signal-choices label,fieldset legend,fieldset>p{grid-column:1}.provider-setup{align-items:stretch;flex-direction:column}.provider-setup-actions{display:grid;width:100%;grid-template-columns:1fr}.provider-setup-actions>:global([data-slot="button"]){width:100%}.recommendation-list>li{grid-template-columns:auto minmax(0,1fr)}.track-actions{grid-column:2;flex-wrap:wrap}.automation-summary dl{grid-template-columns:1fr}.automation-summary dl div+div{border-top:1px solid var(--color-edge);border-left:0}.automation-summary>:global([data-slot="button"]){width:100%}.privacy-card footer{flex-direction:column-reverse}.privacy-card footer>:global([data-slot="button"]){width:100%}.touch-link{display:inline-flex;min-height:var(--control-md);align-items:center}}
+  @media(max-width:620px){.heading-tools>:global([data-slot="button"]){min-width:0;flex:1 1 12rem}.generate-form{grid-template-columns:1fr}.generate-form>:global([data-slot="button"]){width:100%}}
 </style>

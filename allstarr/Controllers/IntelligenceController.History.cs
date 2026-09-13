@@ -33,8 +33,9 @@ public sealed partial class IntelligenceController
         var recentRecords = await selectedHistory
             .OrderByDescending(item => item.ListenedAt).ThenByDescending(item => item.Id)
             .Take(10).ToListAsync(cancellationToken);
+        var recentlyActiveAfter = Now.AddHours(-8);
         var nowPlaying = await ScopedHistory(db, scope).Where(item =>
-                item.State == ListeningEventState.Playing && item.UpdatedAt >= Now.AddHours(-8))
+                item.State == ListeningEventState.Playing && item.UpdatedAt >= recentlyActiveAfter)
             .OrderByDescending(item => item.UpdatedAt).FirstOrDefaultAsync(cancellationToken);
         var activity = await ActivityAsync(db, scope, period, request.TimeZoneId, cancellationToken);
         var breakdowns = await BreakdownsAsync(db, scope, period, cancellationToken);
@@ -595,6 +596,8 @@ public sealed partial class IntelligenceController
                           to_timestamp(("ListenedAt" - 621355968000000000) / 10000000.0)),
                           'YYYY-MM-DD') AS "Date",
                    count(*)::integer AS "Count",
+                   count(*) FILTER (WHERE "SourceKind" <> 'protocol')::integer AS "ImportedCount",
+                   count(*) FILTER (WHERE "SourceKind" = 'protocol')::integer AS "PlaybackCount",
                    coalesce(sum("DurationMilliseconds"), 0)::bigint AS "DurationMilliseconds"
             FROM listening_events
             WHERE "TenantId" = {{scope.TenantId}} AND "OwnerUserId" = {{scope.OwnerUserId}}
@@ -966,6 +969,8 @@ internal sealed class ListeningHistoryActivityBucket
 {
     public string Date { get; set; } = "";
     public int Count { get; set; }
+    public int ImportedCount { get; set; }
+    public int PlaybackCount { get; set; }
     public long DurationMilliseconds { get; set; }
 }
 

@@ -6,9 +6,6 @@ using allstarr.Services.Common;
 
 namespace allstarr.Services.Jellyfin;
 
-/// <summary>
-/// Maps between Jellyfin API responses and domain models.
-/// </summary>
 public class JellyfinModelMapper
 {
     private readonly JellyfinResponseBuilder _responseBuilder;
@@ -22,9 +19,6 @@ public class JellyfinModelMapper
         _logger = logger;
     }
 
-    /// <summary>
-    /// Parses a Jellyfin items response into domain objects.
-    /// </summary>
     public (List<Song> Songs, List<Album> Albums, List<Artist> Artists) ParseItemsResponse(JsonDocument? response)
     {
         var songs = new List<Song>();
@@ -40,10 +34,9 @@ public class JellyfinModelMapper
         {
             JsonElement items;
 
-            // Handle both direct array and Items property
+            // Jellyfin may return either an Items envelope or a bare array.
             if (response.RootElement.TryGetProperty("Items", out items))
             {
-                // Standard items response
             }
             else if (response.RootElement.ValueKind == JsonValueKind.Array)
             {
@@ -83,9 +76,6 @@ public class JellyfinModelMapper
         return (songs, albums, artists);
     }
 
-    /// <summary>
-    /// Parses a Jellyfin search hints response.
-    /// </summary>
     public (List<Song> Songs, List<Album> Albums, List<Artist> Artists) ParseSearchHintsResponse(JsonDocument? response)
     {
         var songs = new List<Song>();
@@ -133,9 +123,6 @@ public class JellyfinModelMapper
         return (songs, albums, artists);
     }
 
-    /// <summary>
-    /// Parses a single Jellyfin item as a Song.
-    /// </summary>
     public Song ParseSong(JsonElement item)
     {
         var id = item.TryGetProperty("Id", out var idEl) ? idEl.GetString() ?? "" : "";
@@ -154,7 +141,6 @@ public class JellyfinModelMapper
             IsLocal = true
         };
 
-        // Get artist info
         if (item.TryGetProperty("Artists", out var artists) && artists.GetArrayLength() > 0)
         {
             song.Artist = artists[0].GetString() ?? "";
@@ -170,13 +156,11 @@ public class JellyfinModelMapper
             song.ArtistId = firstArtist.TryGetProperty("Id", out var artId) ? artId.GetString() : null;
         }
 
-        // Get genre
         if (item.TryGetProperty("Genres", out var genres) && genres.GetArrayLength() > 0)
         {
             song.Genre = genres[0].GetString();
         }
 
-        // Get provider IDs
         if (item.TryGetProperty("ProviderIds", out var providerIds))
         {
             if (providerIds.TryGetProperty("ISRC", out var isrc))
@@ -185,14 +169,12 @@ public class JellyfinModelMapper
             }
         }
 
-        // Cover art URL construction
         song.CoverArtUrl = $"/Items/{id}/Images/Primary";
 
-        // Preserve the full raw item so cached local matches can be replayed without losing fields.
+        // Preserve the complete upstream item so local matches can be replayed without field loss.
         JellyfinItemSnapshotHelper.StoreRawItemSnapshot(song, item);
 
-        // Preserve Jellyfin metadata (MediaSources, etc.) for local tracks.
-        // This ensures bitrate and other technical details are maintained.
+        // Keep technical MediaSources available to response shaping.
         song.JellyfinMetadata ??= new Dictionary<string, object?>();
         if (item.TryGetProperty("MediaSources", out var mediaSources))
         {
@@ -202,9 +184,6 @@ public class JellyfinModelMapper
         return song;
     }
 
-    /// <summary>
-    /// Parses a search hint as a Song.
-    /// </summary>
     private Song ParseSongFromHint(JsonElement hint)
     {
         var id = hint.TryGetProperty("Id", out var idEl) ? idEl.GetString() ?? "" : "";
@@ -222,9 +201,6 @@ public class JellyfinModelMapper
         };
     }
 
-    /// <summary>
-    /// Parses a single Jellyfin item as an Album.
-    /// </summary>
     public Album ParseAlbum(JsonElement item)
     {
         var id = item.TryGetProperty("Id", out var idEl) ? idEl.GetString() ?? "" : "";
@@ -240,14 +216,12 @@ public class JellyfinModelMapper
             CoverArtUrl = $"/Items/{id}/Images/Primary"
         };
 
-        // Get artist ID
         if (item.TryGetProperty("AlbumArtists", out var albumArtists) && albumArtists.GetArrayLength() > 0)
         {
             var firstArtist = albumArtists[0];
             album.ArtistId = firstArtist.TryGetProperty("Id", out var artId) ? artId.GetString() : null;
         }
 
-        // Get genre
         if (item.TryGetProperty("Genres", out var genres) && genres.GetArrayLength() > 0)
         {
             album.Genre = genres[0].GetString();
@@ -256,9 +230,6 @@ public class JellyfinModelMapper
         return album;
     }
 
-    /// <summary>
-    /// Parses a search hint as an Album.
-    /// </summary>
     private Album ParseAlbumFromHint(JsonElement hint)
     {
         var id = hint.TryGetProperty("Id", out var idEl) ? idEl.GetString() ?? "" : "";
@@ -274,9 +245,6 @@ public class JellyfinModelMapper
         };
     }
 
-    /// <summary>
-    /// Parses a single Jellyfin item as an Artist.
-    /// </summary>
     public Artist ParseArtist(JsonElement item)
     {
         var id = item.TryGetProperty("Id", out var idEl) ? idEl.GetString() ?? "" : "";
@@ -291,9 +259,6 @@ public class JellyfinModelMapper
         };
     }
 
-    /// <summary>
-    /// Parses a search hint as an Artist.
-    /// </summary>
     private Artist ParseArtistFromHint(JsonElement hint)
     {
         var id = hint.TryGetProperty("Id", out var idEl) ? idEl.GetString() ?? "" : "";
@@ -307,9 +272,6 @@ public class JellyfinModelMapper
         };
     }
 
-    /// <summary>
-    /// Merges local Jellyfin results with external search results.
-    /// </summary>
     public (List<Dictionary<string, object?>> MergedSongs,
             List<Dictionary<string, object?>> MergedAlbums,
             List<Dictionary<string, object?>> MergedArtists) MergeSearchResults(
@@ -319,20 +281,18 @@ public class JellyfinModelMapper
         SearchResult externalResult,
         List<ExternalPlaylist> externalPlaylists)
     {
-        // Convert local results to Jellyfin format
         var mergedSongs = localSongs
             .Select(s => _responseBuilder.ConvertSongToJellyfinItem(s))
             .Concat(externalResult.Songs.Select(s => _responseBuilder.ConvertSongToJellyfinItem(s)))
             .ToList();
 
-        // Merge albums with playlists
         var mergedAlbums = localAlbums
             .Select(a => _responseBuilder.ConvertAlbumToJellyfinItem(a))
             .Concat(externalResult.Albums.Select(a => _responseBuilder.ConvertAlbumToJellyfinItem(a)))
             .Concat(externalPlaylists.Select(p => _responseBuilder.ConvertPlaylistToAlbumItem(p)))
             .ToList();
 
-        // Deduplicate artists by name - prefer local artists
+        // Prefer the local artist when names collide across catalogs.
         var localArtistNames = new HashSet<string>(
             localArtists.Select(a => a.Name),
             StringComparer.OrdinalIgnoreCase);
@@ -352,9 +312,6 @@ public class JellyfinModelMapper
         return (mergedSongs, mergedAlbums, mergedArtists);
     }
 
-    /// <summary>
-    /// Parses an album with its tracks from a Jellyfin response.
-    /// </summary>
     public Album? ParseAlbumWithTracks(JsonDocument? albumResponse, JsonDocument? tracksResponse)
     {
         if (albumResponse == null)
@@ -375,9 +332,6 @@ public class JellyfinModelMapper
         return album;
     }
 
-    /// <summary>
-    /// Parses an artist with albums from Jellyfin responses.
-    /// </summary>
     public Artist? ParseArtistWithAlbums(JsonDocument? artistResponse, JsonDocument? albumsResponse)
     {
         if (artistResponse == null)

@@ -41,6 +41,7 @@ public sealed class PlaylistLinksController(
     ProviderPolicyOptions providerPolicy,
     AdminProtocolExecutionContextFactory protocolContexts,
     IPlaylistVirtualizationService virtualization,
+    IPlaylistTrackRetentionQueue retentionQueue,
     IConfiguration configuration,
     ApplicationCacheRequestCoalescer requestCoalescer) : ControllerBase
 {
@@ -77,8 +78,8 @@ public sealed class PlaylistLinksController(
             }).ToArray();
             var availableAccounts = capableAccounts
                 .Where(item => item.Scope != ProviderAccountScope.Global ||
-                               providerPolicy.AllowGlobalPersonalAccounts ||
-                               session.IsAdministrator)
+                               providerPolicy.AllowsGlobalAccount(item.CreatedByUserId,
+                                   session.AllstarrUserId, "playlist", session.IsAdministrator))
                 .ToArray();
             var blockedAccounts = capableAccounts.Except(availableAccounts).ToArray();
             var configuredProviderOrder = (configuration["Providers:PlaylistOrder"] ??
@@ -575,9 +576,13 @@ public sealed class PlaylistLinksController(
         return await Execute(async session =>
         {
             if (!TryEnums(request.Mode, request.MaterializationMode, out var mode, out var materialization, out var error) ||
-                !TryProjectionMode(request.ProjectionMode, out var projectionMode, out error)) return BadRequest(new { error });
+                !TryProjectionMode(request.ProjectionMode, out var projectionMode, out error) ||
+                !TryPlaylistPolicies(request.ImportMode, request.TrackRetention, out var importMode, out var trackRetention, out error))
+                return BadRequest(new { error });
             if (projectionMode == PlaylistProjectionMode.Target && string.IsNullOrWhiteSpace(request.TargetPlaylistId))
                 return BadRequest(new { error = "ProjectionMode target requires TargetPlaylistId" });
+            if (importMode == PlaylistImportMode.OneTime && request.ScheduleId.HasValue)
+                return BadRequest(new { error = "A one-time import cannot have an update schedule" });
             if (!ValidTargetProtocol(request.TargetProtocol)) return BadRequest(new { error = "TargetProtocol must be jellyfin or subsonic" });
             var context = await CreateExecutionAsync(session, request.LibraryScopeId, cancellationToken);
             if (!await CredentialReferenceAllowed(context, request.TargetProtocol, request.TargetBackendInstanceId,
@@ -592,8 +597,17 @@ public sealed class PlaylistLinksController(
                 Required(request.TargetBackendInstanceId, nameof(request.TargetBackendInstanceId)), mode, materialization,
                 "playlist-rules-v1", "playlist-policy-v1", request.ScheduleId, request.TargetPlaylistId,
                 request.TargetCredentialReferenceId, request.MirrorStaleEntries, request.PreserveManualEntries,
-                request.SyncName, request.SyncDescription, request.SyncArtwork, projectionMode), cancellationToken);
-            return CreatedAtAction(nameof(List), new { libraryScopeId = record.LibraryScopeId }, ToDto(record));
+                request.SyncName, request.SyncDescription, request.SyncArtwork, projectionMode, importMode,
+                trackRetention), cancellationToken);
+            var generation = Math.Max(1, record.CreatedAt.UtcTicks);
+            var initial = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistMaterializationJobPayload>(
+                "playlist.materialize", $"initial-import:{record.Id:N}",
+                new PlaylistMaterializationJobPayload(record.Id, generation),
+                record.TenantId, record.OwnerUserId, ProviderAccountId: record.ProviderAccountId,
+                LibraryScopeId: record.LibraryScopeId, Capability: "playlist",
+                CorrelationId: HttpContext.TraceIdentifier), cancellationToken);
+            return CreatedAtAction(nameof(List), new { libraryScopeId = record.LibraryScopeId },
+                ToDto(record, initial.JobId));
         });
     }
 
@@ -605,8 +619,15 @@ public sealed class PlaylistLinksController(
             if (!TryEnums(request.Mode, request.MaterializationMode, out var mode, out var materialization, out var error)) return BadRequest(new { error });
             var existing = await LoadScopedLink(session, id, cancellationToken);
             if (!TryProjectionMode(request.ProjectionMode ?? existing.ProjectionMode.ToString(), out var projectionMode, out error)) return BadRequest(new { error });
+            if (!TryPlaylistPolicies(request.ImportMode ?? existing.ImportMode.ToString(),
+                    request.TrackRetention ?? existing.TrackRetention.ToString(), out var importMode,
+                    out var trackRetention, out error)) return BadRequest(new { error });
+            if (importMode != existing.ImportMode)
+                return Conflict(new { error = "Import behavior cannot be changed after creation. Import the playlist again instead." });
             if (projectionMode == PlaylistProjectionMode.Target && string.IsNullOrWhiteSpace(request.TargetPlaylistId))
                 return BadRequest(new { error = "ProjectionMode target requires TargetPlaylistId" });
+            if (importMode == PlaylistImportMode.OneTime && request.ScheduleId.HasValue)
+                return BadRequest(new { error = "Remove the update schedule before changing this to a one-time import" });
             var context = await CreateExecutionAsync(session, existing.LibraryScopeId, cancellationToken);
             if (!await CredentialReferenceAllowed(context, existing.TargetProtocol, existing.TargetBackendInstanceId,
                     request.TargetCredentialReferenceId, cancellationToken))
@@ -616,8 +637,14 @@ public sealed class PlaylistLinksController(
                 request.ExpectedRevision, mode, materialization, request.RuleVersion ?? existing.RuleVersion,
                 request.PolicyVersion ?? existing.PolicyVersion, request.ScheduleId, request.TargetPlaylistId,
                 request.MirrorStaleEntries, request.PreserveManualEntries, request.SyncName,
-                request.SyncDescription, request.SyncArtwork, request.TargetCredentialReferenceId, projectionMode), cancellationToken);
-            return Ok(ToDto(updated));
+                request.SyncDescription, request.SyncArtwork, request.TargetCredentialReferenceId, projectionMode,
+                importMode, trackRetention), cancellationToken);
+            var retentionQueued = existing.TrackRetention != PlaylistTrackRetention.KeepAll &&
+                                  updated.TrackRetention == PlaylistTrackRetention.KeepAll
+                ? await retentionQueue.EnqueuePublishedAsync(
+                    updated, HttpContext.TraceIdentifier, cancellationToken)
+                : (int?)null;
+            return Ok(ToDto(updated, retentionQueued: retentionQueued));
         });
     }
 
@@ -639,6 +666,8 @@ public sealed class PlaylistLinksController(
         return await Execute(async session =>
         {
             var link = await LoadScopedLink(session, id, cancellationToken);
+            if (link.ImportMode == PlaylistImportMode.OneTime)
+                return Conflict(new { error = "This was imported once and does not refresh from the source." });
             var context = await CreateExecutionAsync(session, link.LibraryScopeId, cancellationToken);
             var refreshed = await orchestration.RefreshAsync(context, id, cancellationToken: cancellationToken);
             var preview = await playlists.ReadPreviewAsync(context, id, refreshed.SnapshotId, cancellationToken);
@@ -697,11 +726,26 @@ public sealed class PlaylistLinksController(
             if (!link.Enabled) return Conflict(new { error = "The playlist is paused. Resume it before running." });
             var generation = request?.Generation ?? clock.UtcNow.UtcTicks;
             if (generation <= 0) return BadRequest(new { error = "Generation must be positive" });
+            if (link.ImportMode == PlaylistImportMode.OneTime && request?.SnapshotId is { } requestedSnapshot)
+            {
+                await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+                var frozenSnapshot = await db.PlaylistSourceSnapshots.AsNoTracking()
+                    .Where(item => item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id &&
+                                   item.PublishedAt.HasValue)
+                    .OrderBy(item => item.PublishedAt)
+                    .ThenBy(item => item.SnapshotVersion)
+                    .Select(item => (Guid?)item.Id)
+                    .FirstOrDefaultAsync(cancellationToken);
+                if (frozenSnapshot.HasValue && frozenSnapshot != requestedSnapshot)
+                    return Conflict(new { error = "A one-time import is frozen to its first published snapshot." });
+            }
             var result = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistMaterializationJobPayload>(
                 "playlist.materialize", $"manual:{id:N}:generation:{generation}",
                 new PlaylistMaterializationJobPayload(id, generation, request?.SnapshotId),
-                link.TenantId, link.OwnerUserId, ProviderAccountId: link.ProviderAccountId,
-                LibraryScopeId: link.LibraryScopeId, Capability: "playlist",
+                link.TenantId, link.OwnerUserId,
+                ProviderAccountId: link.ImportMode == PlaylistImportMode.Linked ? link.ProviderAccountId : null,
+                LibraryScopeId: link.LibraryScopeId,
+                Capability: link.ImportMode == PlaylistImportMode.Linked ? "playlist" : null,
                 CorrelationId: HttpContext.TraceIdentifier), cancellationToken);
             return Accepted(new { jobId = result.JobId, created = result.Created, generation });
         });
@@ -757,6 +801,8 @@ public sealed class PlaylistLinksController(
             if (!session.IsAdministrator)
                 return StatusCode(StatusCodes.Status403Forbidden, new { error = "Only an administrator can update a source playlist." });
             var link = await LoadScopedLink(session, id, cancellationToken);
+            if (link.ImportMode == PlaylistImportMode.OneTime)
+                return Conflict(new { error = "A one-time import never writes changes back to its source." });
             if (session.AllstarrUserId != link.OwnerUserId)
                 return StatusCode(StatusCodes.Status403Forbidden, new { error = "Only the playlist owner can update its source playlist." });
             var execution = await CreateExecutionAsync(session, link.LibraryScopeId, cancellationToken);
@@ -822,6 +868,8 @@ public sealed class PlaylistLinksController(
                 request.ConfirmationId.Any(character => character is not (>= '0' and <= '9' or >= 'a' and <= 'f')))
                 return BadRequest(new { error = "Review the source update again before applying it." });
             var link = await LoadScopedLink(session, id, cancellationToken);
+            if (link.ImportMode == PlaylistImportMode.OneTime)
+                return Conflict(new { error = "A one-time import never writes changes back to its source." });
             if (session.AllstarrUserId != link.OwnerUserId)
                 return StatusCode(StatusCodes.Status403Forbidden, new { error = "Only the playlist owner can update its source playlist." });
             if (link.Revision != request.ExpectedRevision)
@@ -899,6 +947,8 @@ public sealed class PlaylistLinksController(
         return await Execute(async session =>
         {
             var link = await LoadScopedLink(session, id, cancellationToken);
+            if (link.ImportMode == PlaylistImportMode.OneTime)
+                return Conflict(new { error = "A one-time import cannot have an update schedule." });
             if (!TryScheduleEnums(request, out var overlap, out var misfire, out var error)) return BadRequest(new { error });
             DurableScheduleEngine.Validate(request.CronExpression, request.TimeZoneId);
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
@@ -941,6 +991,10 @@ public sealed class PlaylistLinksController(
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
             var schedule = await db.JobSchedules.SingleOrDefaultAsync(item => item.Id == scheduleId, cancellationToken) ?? throw new KeyNotFoundException("Schedule not found.");
             EnsureSessionScope(session, schedule.TenantId, schedule.OwnerUserId);
+            var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
+                item.TenantId == schedule.TenantId && item.ScheduleId == schedule.Id, cancellationToken);
+            if (link?.ImportMode == PlaylistImportMode.OneTime)
+                return Conflict(new { error = "A one-time import cannot have an update schedule." });
             if (schedule.Revision != request.ExpectedRevision) throw new DbUpdateConcurrencyException("The schedule changed before this update.");
             schedule.CronExpression = request.CronExpression.Trim(); schedule.TimeZoneId = request.TimeZoneId.Trim();
             schedule.OverlapPolicy = overlap; schedule.MisfirePolicy = misfire; schedule.Enabled = request.Enabled;
@@ -1165,6 +1219,23 @@ public sealed class PlaylistLinksController(
     { error = null; if (!Enum.TryParse(modeValue, true, out mode) || !Enum.IsDefined(mode)) { materialization = default; error = "Mode must be virtual, materialized, or hybrid"; return false; } if (!Enum.TryParse(materializationValue, true, out materialization) || !Enum.IsDefined(materialization)) { error = "MaterializationMode must be reconcile or recreate"; return false; } return true; }
     private static bool TryProjectionMode(string value, out PlaylistProjectionMode mode, out string? error)
     { error = null; if (Enum.TryParse(value, true, out mode) && Enum.IsDefined(mode)) return true; error = "ProjectionMode must be resolved, source, or target"; return false; }
+    private static bool TryPlaylistPolicies(string importValue, string retentionValue,
+        out PlaylistImportMode importMode, out PlaylistTrackRetention trackRetention, out string? error)
+    {
+        error = null;
+        if (!Enum.TryParse(importValue, true, out importMode) || !Enum.IsDefined(importMode))
+        {
+            trackRetention = default;
+            error = "ImportMode must be oneTime or linked";
+            return false;
+        }
+        if (!Enum.TryParse(retentionValue, true, out trackRetention) || !Enum.IsDefined(trackRetention))
+        {
+            error = "TrackRetention must be onDemand or keepAll";
+            return false;
+        }
+        return true;
+    }
     private static bool TryScheduleEnums(ScheduleRequest request, out ScheduleOverlapPolicy overlap, out ScheduleMisfirePolicy misfire, out string? error)
     { error = null; if (!Enum.TryParse(request.OverlapPolicy, true, out overlap) || !Enum.IsDefined(overlap)) { misfire = default; error = "OverlapPolicy must be skip or queue"; return false; } if (!Enum.TryParse(request.MisfirePolicy, true, out misfire) || !Enum.IsDefined(misfire)) { error = "MisfirePolicy must be skip or runOnce"; return false; } return true; }
     private static bool ValidTargetProtocol(string value) => value?.Trim().ToLowerInvariant() is "jellyfin" or "subsonic";
@@ -1234,7 +1305,7 @@ public sealed class PlaylistLinksController(
     }
     private static string EncodeOffsetCursor(int offset) =>
         Convert.ToBase64String(Encoding.UTF8.GetBytes(offset.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-    private static object ToDto(PlaylistLinkRecord value) => new { id = value.Id, enabled = value.Enabled, providerAccountId = value.ProviderAccountId, sourceProviderId = value.SourceProviderId, sourcePlaylistId = value.SourcePlaylistId, libraryScopeId = value.LibraryScopeId, targetProtocol = value.TargetProtocol, targetBackendInstanceId = value.TargetBackendInstanceId, mode = value.Mode.ToString().ToLowerInvariant(), projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(), materializationMode = value.MaterializationMode.ToString().ToLowerInvariant(), scheduleId = value.ScheduleId, targetPlaylistId = value.TargetPlaylistId, targetCredentialReferenceId = value.TargetCredentialReferenceId, mirrorStaleEntries = value.MirrorStaleEntries, preserveManualEntries = value.PreserveManualEntries, syncName = value.SyncName, syncDescription = value.SyncDescription, syncArtwork = value.SyncArtwork, ruleVersion = value.RuleVersion, policyVersion = value.PolicyVersion, revision = value.Revision, virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id) };
+    private static object ToDto(PlaylistLinkRecord value, Guid? initialJobId = null, int? retentionQueued = null) => new { id = value.Id, enabled = value.Enabled, providerAccountId = value.ProviderAccountId, sourceProviderId = value.SourceProviderId, sourcePlaylistId = value.SourcePlaylistId, libraryScopeId = value.LibraryScopeId, targetProtocol = value.TargetProtocol, targetBackendInstanceId = value.TargetBackendInstanceId, mode = value.Mode.ToString().ToLowerInvariant(), projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(), materializationMode = value.MaterializationMode.ToString().ToLowerInvariant(), importMode = LowerCamel(value.ImportMode.ToString()), trackRetention = LowerCamel(value.TrackRetention.ToString()), scheduleId = value.ScheduleId, targetPlaylistId = value.TargetPlaylistId, targetCredentialReferenceId = value.TargetCredentialReferenceId, mirrorStaleEntries = value.MirrorStaleEntries, preserveManualEntries = value.PreserveManualEntries, syncName = value.SyncName, syncDescription = value.SyncDescription, syncArtwork = value.SyncArtwork, ruleVersion = value.RuleVersion, policyVersion = value.PolicyVersion, revision = value.Revision, virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id), initialJobId, retentionQueued };
     private object ToListDto(PlaylistLinkRecord value, DurablePlaylistProjection? projection) => new
     {
         id = value.Id,
@@ -1246,13 +1317,15 @@ public sealed class PlaylistLinksController(
         providerAccountId = value.ProviderAccountId,
         sourceProviderId = value.SourceProviderId,
         sourcePlaylistId = value.SourcePlaylistId,
-        sourceUpdateAvailable = value.TargetPlaylistId != null && providerUpdates.CanReplaceSource(value.SourceProviderId),
+        sourceUpdateAvailable = value.ImportMode == PlaylistImportMode.Linked && value.TargetPlaylistId != null && providerUpdates.CanReplaceSource(value.SourceProviderId),
         libraryScopeId = value.LibraryScopeId,
         targetProtocol = value.TargetProtocol,
         targetBackendInstanceId = value.TargetBackendInstanceId,
         mode = value.Mode.ToString().ToLowerInvariant(),
         projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(),
         materializationMode = value.MaterializationMode.ToString().ToLowerInvariant(),
+        importMode = LowerCamel(value.ImportMode.ToString()),
+        trackRetention = LowerCamel(value.TrackRetention.ToString()),
         scheduleId = value.ScheduleId,
         targetPlaylistId = value.TargetPlaylistId,
         targetCredentialReferenceId = value.TargetCredentialReferenceId,
@@ -1525,11 +1598,13 @@ public sealed record CreatePlaylistLinkRequest(Guid ProviderAccountId, string So
     string LibraryScopeId, string TargetProtocol, string TargetBackendInstanceId, string Mode, string MaterializationMode,
     Guid? ScheduleId = null, string? TargetPlaylistId = null, Guid? TargetCredentialReferenceId = null,
     bool MirrorStaleEntries = false, bool PreserveManualEntries = true, bool SyncName = true,
-    bool SyncDescription = true, bool SyncArtwork = true, string ProjectionMode = "resolved");
+    bool SyncDescription = true, bool SyncArtwork = true, string ProjectionMode = "resolved",
+    string ImportMode = "linked", string TrackRetention = "onDemand");
 public sealed record UpdatePlaylistLinkRequest(long ExpectedRevision, string Mode, string MaterializationMode,
     Guid? ScheduleId, string? TargetPlaylistId, Guid? TargetCredentialReferenceId, bool MirrorStaleEntries,
     bool PreserveManualEntries, bool SyncName, bool SyncDescription, bool SyncArtwork,
-    string? RuleVersion = null, string? PolicyVersion = null, string? ProjectionMode = null);
+    string? RuleVersion = null, string? PolicyVersion = null, string? ProjectionMode = null,
+    string? ImportMode = null, string? TrackRetention = null);
 public sealed record DeletePlaylistLinkRequest(long ExpectedRevision);
 public sealed record SetPlaylistLinkStateRequest(long ExpectedRevision, bool Enabled);
 public sealed record RunPlaylistLinkRequest(long? Generation = null, Guid? SnapshotId = null);

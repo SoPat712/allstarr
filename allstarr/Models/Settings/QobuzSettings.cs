@@ -1,31 +1,9 @@
 namespace allstarr.Models.Settings;
 
-/// <summary>
-/// Configuration for the Qobuz downloader and metadata service
-/// </summary>
 public class QobuzSettings
 {
-    /// <summary>
-    /// Qobuz user authentication token
-    /// Obtained from browser's localStorage after logging into play.qobuz.com
-    /// </summary>
     public string? UserAuthToken { get; set; }
-
-    /// <summary>
-    /// Qobuz user ID
-    /// Obtained from browser's localStorage after logging into play.qobuz.com
-    /// </summary>
     public string? UserId { get; set; }
-
-    /// <summary>
-    /// Preferred audio quality: FLAC_24_HIGH, FLAC_24_LOW, FLAC_16, MP3_320
-    /// If not specified or unavailable, the highest available quality will be used.
-    /// </summary>
     public string? Quality { get; set; } = "FLAC_24_HIGH";
-
-    /// <summary>
-    /// Minimum interval between requests in milliseconds.
-    /// Default: 200ms
-    /// </summary>
     public int MinRequestIntervalMs { get; set; } = 200;
 }

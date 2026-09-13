@@ -6,17 +6,22 @@
   import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import UiIcon from "$lib/components/UiIcon.svelte";
+  import { Dialog } from "$lib/components/ui/dialog";
   import { applyThemeMode, onThemeModeChange, readThemeMode, saveThemeMode, type ThemeMode } from "$lib/theme";
-  import { Monitor, Moon, PanelLeftClose, PanelLeftOpen, Sun } from "@lucide/svelte";
+  import { Monitor, Moon, PanelLeftClose, PanelLeftOpen, Sun, X } from "@lucide/svelte";
 
   const destinations = [
-    { href: "#/", label: "Home", icon: "home" },
-    { href: "#/library/playlists", prefix: "/library/", label: "Library", icon: "library" },
-    { href: "#/intelligence", label: "Intelligence", icon: "headphones" },
-    { href: "#/integrations/services", prefix: "/integrations/", label: "Integrations", icon: "sources" },
-    { href: "#/activity", label: "Activity", icon: "activity" },
-    { href: "#/settings", label: "Settings", icon: "settings" },
+    { href: "#/", label: "Home", mobileLabel: "Home", icon: "home", mobile: true },
+    { href: "#/library/playlists", prefix: "/library/", label: "Library", mobileLabel: "Library", icon: "library", mobile: true },
+    { href: "#/intelligence", label: "Intelligence", mobileLabel: "Insights", icon: "headphones", mobile: true },
+    { href: "#/integrations/services", prefix: "/integrations/", label: "Integrations", mobileLabel: "Integrations", icon: "sources", mobile: false },
+    { href: "#/activity", label: "Activity", mobileLabel: "Activity", icon: "activity", mobile: true },
+    { href: "#/settings", label: "Settings", mobileLabel: "Settings", icon: "settings", mobile: false },
   ];
+  // Keep existing Intelligence deep links usable while deferring its release navigation.
+  const navigationDestinations = destinations.filter((item) => item.href !== "#/intelligence");
+  const mobileDestinations = navigationDestinations.filter((item) => item.mobile);
+  const moreDestinations = navigationDestinations.filter((item) => !item.mobile);
   const librarySections = [
     { id: "playlists", label: "Playlists", href: "#/library/playlists" },
     { id: "mappings", label: "Mappings", href: "#/library/mappings" },
@@ -37,12 +42,15 @@
   let username = $state("");
   let password = $state("");
   let rememberMe = $state(true);
+  let authBusy = $state(false);
+  let authError = $state("");
   let avatarFailed = $state(false);
   let onboardingState = $state<OnboardingState | null>(null);
   let onboardingOpen = $state(false);
   let onboardingError = $state("");
   let OnboardingDialog = $state<Component<any>>();
   let sidebarSlim = $state(false);
+  let mobileMenuOpen = $state(false);
   let themeMode = $state<ThemeMode>("system");
   let ActiveView = $state<Component<any>>();
   let loadedRoute = $state("");
@@ -70,6 +78,7 @@
       item.href === "#/" ? route === "/" : route.startsWith(item.prefix ?? item.href.slice(1)),
     ) ?? destinations[0],
   );
+  const moreDestinationActive = $derived(!activeDestination.mobile);
   const nextTheme = $derived<ThemeMode>(themeMode === "system" ? "light" : themeMode === "light" ? "dark" : "system");
   const initials = $derived(
     session?.user?.name
@@ -104,6 +113,7 @@
                       administrator: session?.user?.isAdministrator ?? false,
                       initialSource: routeQuery.get("source") ?? "",
                       initialSection: routeQuery.get("section") ?? "data",
+                      initialConnect: routeQuery.get("connect") === "1",
                     }
                   : route.startsWith("/settings")
                     ? {
@@ -158,6 +168,11 @@
 
   const viewKey = (path: string) => path.startsWith("/settings") ? "/settings"
     : path.startsWith("/integrations") ? "/integrations" : path;
+
+  $effect(() => {
+    route;
+    mobileMenuOpen = false;
+  });
 
   $effect(() => {
     const path = route;
@@ -246,6 +261,8 @@
   });
 
   async function login() {
+    if (authBusy) return;
+    authBusy = true;
     error = "";
     try {
       session = await auth.login(username, password, rememberMe);
@@ -255,15 +272,26 @@
       liveUpdates.connect();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Sign in failed.";
+    } finally {
+      authBusy = false;
     }
   }
 
   async function logout() {
-    await auth.logout();
-    liveUpdates.close();
-    onboardingState = null;
-    onboardingOpen = false;
-    session = await auth.session();
+    if (authBusy) return;
+    authBusy = true;
+    authError = "";
+    try {
+      await auth.logout();
+      liveUpdates.close();
+      onboardingState = null;
+      onboardingOpen = false;
+      session = await auth.session();
+    } catch (cause) {
+      authError = cause instanceof Error ? cause.message : "You are still signed in. Try again.";
+    } finally {
+      authBusy = false;
+    }
   }
 </script>
 
@@ -314,25 +342,26 @@
         Sign in with your {session?.backend ?? "media server"} account.
       </p>
 
-      <form class="mt-8 space-y-4" onsubmit={(event) => { event.preventDefault(); login(); }}>
+      <form class="mt-8 space-y-4" aria-busy={authBusy} onsubmit={(event) => { event.preventDefault(); void login(); }}>
         <label class="field">
           <span>Username</span>
-          <input bind:value={username} autocomplete="username" required />
+          <input bind:value={username} autocomplete="username" required disabled={authBusy} />
         </label>
         <label class="field">
           <span>Password</span>
-          <input bind:value={password} type="password" autocomplete="current-password" required />
+          <input bind:value={password} type="password" autocomplete="current-password" required disabled={authBusy} />
         </label>
         <label class="flex min-h-11 items-center gap-3 text-sm text-ink-muted">
-          <input bind:checked={rememberMe} type="checkbox" class="size-4 accent-signal" />
+          <input bind:checked={rememberMe} type="checkbox" class="size-4 accent-signal" disabled={authBusy} />
           Keep me signed in
         </label>
         {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
-        <button class="auth-submit w-full" type="submit">Sign in</button>
+        <button class="auth-submit w-full" type="submit" disabled={authBusy}>{authBusy ? "Signing in…" : "Sign in"}</button>
       </form>
     </section>
   </main>
 {:else}
+  <a class="skip-link" href="#main-workspace">Skip to main content</a>
   <div class="app-shell" class:slim={sidebarSlim}>
     <aside class="sidebar">
       <a class="brand" href="#/" aria-label="Allstarr home">
@@ -353,8 +382,8 @@
         {:else}<PanelLeftClose class="menu-icon" size={20} aria-hidden="true" />{/if}
       </button>
 
-      <nav aria-label="Primary">
-        {#each destinations as destination}
+      <nav class="desktop-navigation" aria-label="Primary">
+        {#each navigationDestinations as destination}
           <a
             href={destination.href}
             class:active={activeDestination.href === destination.href}
@@ -364,6 +393,31 @@
             <span class="nav-label">{destination.label}</span>
           </a>
         {/each}
+      </nav>
+
+      <nav class="mobile-navigation" aria-label="Primary">
+        {#each mobileDestinations as destination}
+          <a
+            href={destination.href}
+            class:active={activeDestination.href === destination.href}
+            aria-current={activeDestination.href === destination.href ? "page" : undefined}
+          >
+            <span class="nav-icon"><UiIcon name={destination.icon} /></span>
+            <span class="nav-label">{destination.mobileLabel}</span>
+          </a>
+        {/each}
+        <button
+          type="button"
+          class:active={moreDestinationActive}
+          aria-label="More destinations"
+          aria-pressed={moreDestinationActive}
+          aria-haspopup="dialog"
+          aria-expanded={mobileMenuOpen}
+          onclick={() => mobileMenuOpen = true}
+        >
+          <span class="nav-icon"><UiIcon name="more" /></span>
+          <span class="nav-label">More</span>
+        </button>
       </nav>
 
       <div class="profile">
@@ -384,22 +438,20 @@
           <strong>{session.user?.name}</strong>
           <small>{session.backend}</small>
         </div>
-        <button class="icon-button" type="button" onclick={logout} aria-label="Sign out"><UiIcon name="logout" /></button>
+        <button
+          class="icon-button"
+          type="button"
+          disabled={authBusy}
+          onclick={() => void logout()}
+          aria-label={authBusy ? "Signing out" : "Sign out"}
+        ><UiIcon name="logout" /></button>
       </div>
     </aside>
 
-    <main class="workspace">
+    <main class="workspace" id="main-workspace">
       <header class="workspace-header">
         <div class="workspace-title">
           <h1>{activeDestination.label}</h1>
-          {#if route.startsWith("/library/")}
-            <SegmentedNav
-              items={librarySections}
-              active={route.split("/").at(-1) ?? "playlists"}
-              label="Library sections"
-              class="library-tabs"
-            />
-          {/if}
         </div>
         <div class="flex items-center gap-2">
           <button
@@ -413,17 +465,36 @@
             {:else if themeMode === "light"}<Sun aria-hidden="true" />
             {:else}<Moon aria-hidden="true" />{/if}
           </button>
-          <div class="live-state" data-state={liveUpdates.state.status}>
+          <div class="live-state" data-state={liveUpdates.state.status} role="status" aria-label={`Live updates ${liveUpdates.state.status}`}>
             <span aria-hidden="true"></span>
             {liveUpdates.state.status[0].toUpperCase() + liveUpdates.state.status.slice(1)}
           </div>
         </div>
       </header>
 
+      {#if route.startsWith("/library/")}
+        <SegmentedNav
+          items={librarySections}
+          active={route.split("/").at(-1) ?? "playlists"}
+          label="Library sections"
+          class="route-tabs library-tabs"
+        />
+      {/if}
+
       {#if onboardingError || onboardingState?.recoveryNotices.includes("backend_identity_missing")}
         <div class="degraded-banner" role="status">
           <span aria-hidden="true">!</span>
           <p><strong>Media server connection needs attention.</strong> {onboardingError || "The identity saved during setup is no longer available. Sign in again or review the media server connection."}</p>
+        </div>
+      {/if}
+
+      {#if authError}
+        <div class="degraded-banner" role="alert">
+          <span aria-hidden="true">!</span>
+          <p><strong>Sign out failed.</strong> {authError}</p>
+          <button class="icon-button" type="button" aria-label="Dismiss sign out error" onclick={() => authError = ""}>
+            <X size={18} aria-hidden="true" />
+          </button>
         </div>
       {/if}
 
@@ -451,6 +522,69 @@
       {/if}
     </main>
   </div>
+
+  <Dialog.Root bind:open={mobileMenuOpen}>
+    <Dialog.Portal>
+      <Dialog.Overlay class="dialog-overlay" />
+      <Dialog.Content class="source-dialog mobile-menu-sheet">
+        <header>
+          <div>
+            <p class="eyebrow">Account and administration</p>
+            <Dialog.Title>More</Dialog.Title>
+            <Dialog.Description>Connections, deployment settings, appearance, and your session.</Dialog.Description>
+          </div>
+          <Dialog.Close class="icon-button" aria-label="Close more destinations"><X size={18} aria-hidden="true" /></Dialog.Close>
+        </header>
+
+        <div class="mobile-menu-body">
+          <section class="mobile-sheet-profile" aria-label="Signed-in account">
+            <span class="avatar" aria-hidden="true">
+              {#if session.user?.avatarUrl && !avatarFailed}
+                <img src={session.user.avatarUrl} alt="" onerror={() => avatarFailed = true} />
+              {:else}
+                <span>{initials}</span>
+              {/if}
+            </span>
+            <span>
+              <strong>{session.user?.name}</strong>
+              <small>{session.backend}</small>
+            </span>
+          </section>
+
+          <nav class="mobile-menu-destinations" aria-label="More destinations">
+            {#each moreDestinations as destination}
+              <a
+                href={destination.href}
+                class:active={activeDestination.href === destination.href}
+                aria-current={activeDestination.href === destination.href ? "page" : undefined}
+                onclick={() => mobileMenuOpen = false}
+              >
+                <span class="nav-icon"><UiIcon name={destination.icon} /></span>
+                <span>
+                  <strong>{destination.label}</strong>
+                  <small>{destination.label === "Integrations" ? "Services, accounts, extensions, and routing" : "Deployment and operator controls"}</small>
+                </span>
+              </a>
+            {/each}
+          </nav>
+
+          <div class="mobile-menu-actions">
+            <button type="button" onclick={cycleTheme}>
+              {#if themeMode === "system"}<Monitor aria-hidden="true" />
+              {:else if themeMode === "light"}<Sun aria-hidden="true" />
+              {:else}<Moon aria-hidden="true" />{/if}
+              <span><strong>Appearance</strong><small>{themeMode[0].toUpperCase() + themeMode.slice(1)} · switch to {nextTheme}</small></span>
+            </button>
+            <button type="button" disabled={authBusy} onclick={() => void logout()}>
+              <UiIcon name="logout" />
+              <span><strong>{authBusy ? "Signing out…" : "Sign out"}</strong><small>End this Allstarr session</small></span>
+            </button>
+          </div>
+        </div>
+      </Dialog.Content>
+    </Dialog.Portal>
+  </Dialog.Root>
+
   {#if onboardingState && OnboardingDialog}
     <OnboardingDialog
       bind:open={onboardingOpen}

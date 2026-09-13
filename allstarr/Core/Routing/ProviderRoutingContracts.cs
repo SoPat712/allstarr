@@ -38,7 +38,7 @@ public interface IProviderRouteHealthSource
 {
     ProviderRouteHealthSnapshot Get(
         string providerId,
-        Guid providerAccountId,
+        Guid? providerAccountId,
         ProviderCapabilityKind capability);
 }
 

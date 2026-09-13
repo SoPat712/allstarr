@@ -7,7 +7,7 @@
       "status": 200,
       "contentType": "application/json",
       "id": "ext-deezer-song-42",
-      "name": "Fixture Song [D]",
+      "name": "Fixture Song [A]",
       "type": "Audio",
       "providerId": "42"
     }

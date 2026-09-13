@@ -83,8 +83,14 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         Assert.True(search.IsSuccess);
         Assert.Equal("6", user.RequireValue().NextCursor);
         Assert.Equal("9", search.RequireValue().NextCursor);
+        var match = Assert.Single(search.RequireValue().Items);
+        Assert.Equal("Road Mix", match.Name);
+        Assert.Equal("playlist-opaque", match.Id.Value);
+        Assert.Equal(match.Id, match.Artwork!.ResourceId);
+        Assert.Null(match.Artwork.PublicUri);
         Assert.Contains(handler.Paths, path => path.Contains("\"offset\":5", StringComparison.Ordinal));
         Assert.Contains(handler.Paths, path => path.Contains("\"offset\":8", StringComparison.Ordinal));
+        Assert.Contains(handler.Paths, path => path.Contains("\"textFilter\":\"road\"", StringComparison.Ordinal));
         Assert.DoesNotContain(handler.Paths, path => path.Contains("stream", StringComparison.OrdinalIgnoreCase) || path.Contains("download", StringComparison.OrdinalIgnoreCase));
         Assert.All(handler.ApiPaths, path => Assert.Contains("api-partner.spotify.com/pathfinder", path, StringComparison.Ordinal));
     }

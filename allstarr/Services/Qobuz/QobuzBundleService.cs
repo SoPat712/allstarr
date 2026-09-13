@@ -2,11 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace allstarr.Services.Qobuz;
 
-/// <summary>
-/// Service to dynamically extract Qobuz App ID and secrets from the Qobuz web player
-/// This is necessary because these values change periodically
-/// Based on the Python qobuz-dl implementation
-/// </summary>
+// Qobuz rotates these values; derive them from the bundle with qobuz-dl-compatible decoding.
 public class QobuzBundleService
 {
     private readonly HttpClient _httpClient;
@@ -15,7 +11,6 @@ public class QobuzBundleService
     private const string BaseUrl = "https://play.qobuz.com";
     private const string LoginPageUrl = "https://play.qobuz.com/login";
 
-    // Regex patterns to extract bundle URL and App ID
     private static readonly Regex BundleUrlRegex = new(
         @"<script src=""(/resources/\d+\.\d+\.\d+-[a-z]\d{3}/bundle\.js)""></script>",
         RegexOptions.Compiled);
@@ -24,7 +19,6 @@ public class QobuzBundleService
         @"production:\{api:\{appId:""(?<app_id>\d{9})"",appSecret:""\w{32}""",
         RegexOptions.Compiled);
 
-    // Cached values (valid for the lifetime of the application)
     private string? _cachedAppId;
     private List<string>? _cachedSecrets;
     private readonly SemaphoreSlim _initLock = new(1, 1);
@@ -37,9 +31,6 @@ public class QobuzBundleService
         _logger = logger;
     }
 
-    /// <summary>
-    /// Gets the Qobuz App ID, extracting it from the bundle if not cached
-    /// </summary>
     public virtual Task<string> GetAppIdAsync() => GetAppIdAsync(CancellationToken.None);
 
     public virtual async Task<string> GetAppIdAsync(CancellationToken cancellationToken)
@@ -48,9 +39,6 @@ public class QobuzBundleService
         return _cachedAppId!;
     }
 
-    /// <summary>
-    /// Gets the Qobuz secrets list, extracting them from the bundle if not cached
-    /// </summary>
     public virtual Task<List<string>> GetSecretsAsync() => GetSecretsAsync(CancellationToken.None);
 
     public virtual async Task<List<string>> GetSecretsAsync(CancellationToken cancellationToken)
@@ -59,9 +47,6 @@ public class QobuzBundleService
         return _cachedSecrets!;
     }
 
-    /// <summary>
-    /// Gets a specific secret by index (used for signing requests)
-    /// </summary>
     public virtual async Task<string> GetSecretAsync(int index = 0)
     {
         var secrets = await GetSecretsAsync();
@@ -73,9 +58,6 @@ public class QobuzBundleService
         return secrets[index];
     }
 
-    /// <summary>
-    /// Ensures App ID and secrets are extracted and cached
-    /// </summary>
     private async Task EnsureInitializedAsync(CancellationToken cancellationToken)
     {
         if (_cachedAppId != null && _cachedSecrets != null)
@@ -86,7 +68,6 @@ public class QobuzBundleService
         await _initLock.WaitAsync(cancellationToken);
         try
         {
-            // Double-check after acquiring lock
             if (_cachedAppId != null && _cachedSecrets != null)
             {
                 return;
@@ -94,18 +75,14 @@ public class QobuzBundleService
 
             _logger.LogInformation("Extracting Qobuz App ID and secrets from web bundle...");
 
-            // Step 1: Get the bundle URL from login page
             var bundleUrl = await GetBundleUrlAsync(cancellationToken);
             _logger.LogDebug("Found bundle URL: {BundleUrl}", bundleUrl);
 
-            // Step 2: Download the bundle JavaScript
             var bundleJs = await DownloadBundleAsync(bundleUrl, cancellationToken);
 
-            // Step 3: Extract App ID
             _cachedAppId = ExtractAppId(bundleJs);
             _logger.LogDebug("Extracted App ID: {AppId}", _cachedAppId);
 
-            // Step 4: Extract secrets (they are base64 encoded in the bundle)
             _cachedSecrets = ExtractSecrets(bundleJs);
             _logger.LogDebug("Extracted {Count} secrets", _cachedSecrets.Count);
         }
@@ -115,9 +92,6 @@ public class QobuzBundleService
         }
     }
 
-    /// <summary>
-    /// Gets the bundle JavaScript URL from the login page
-    /// </summary>
     private async Task<string> GetBundleUrlAsync(CancellationToken cancellationToken)
     {
         using var response = await _httpClient.GetAsync(LoginPageUrl, cancellationToken);
@@ -134,9 +108,6 @@ public class QobuzBundleService
         return BaseUrl + match.Groups[1].Value;
     }
 
-    /// <summary>
-    /// Downloads the bundle JavaScript file
-    /// </summary>
     private async Task<string> DownloadBundleAsync(string bundleUrl, CancellationToken cancellationToken)
     {
         using var response = await _httpClient.GetAsync(bundleUrl, cancellationToken);
@@ -144,9 +115,6 @@ public class QobuzBundleService
         return await response.Content.ReadAsStringAsync(cancellationToken);
     }
 
-    /// <summary>
-    /// Extracts the App ID from the bundle JavaScript
-    /// </summary>
     private string ExtractAppId(string bundleJs)
     {
         var match = AppIdRegex.Match(bundleJs);
@@ -159,17 +127,11 @@ public class QobuzBundleService
         return match.Groups["app_id"].Value;
     }
 
-    /// <summary>
-    /// Extracts the secrets from the bundle JavaScript
-    /// Based on the Python qobuz-dl implementation (bundle.py)
-    /// The secrets are composed of seed, info, and extras base64-encoded strings
-    /// </summary>
     private List<string> ExtractSecrets(string bundleJs)
     {
         var secrets = new Dictionary<string, List<string>>();
 
-        // Step 1: Extract seed and timezone pairs
-        // Pattern: [a-z].initialSeed("base64string",window.utimezone.timezone)
+        // Match seed/timezone pairs emitted by Qobuz's minified web bundle.
         var seedTimezonePattern = new Regex(
             @"[a-z]\.initialSeed\(""(?<seed>[\w=]+)"",window\.utimezone\.(?<timezone>[a-z]+)\)",
             RegexOptions.IgnoreCase);
@@ -193,7 +155,7 @@ public class QobuzBundleService
             throw new Exception("Could not extract seed/timezone pairs from bundle");
         }
 
-        // Step 2: Reorder secrets (move second item to first, as per Python implementation)
+        // qobuz-dl moves the second timezone entry first before decoding.
         var keypairs = secrets.ToList();
         if (keypairs.Count > 1)
         {
@@ -210,8 +172,7 @@ public class QobuzBundleService
             secrets = newDict;
         }
 
-        // Step 3: Extract info and extras for each timezone
-        // Pattern: name:"\w+/(Timezone)",info:"base64",extras:"base64"
+        // Each timezone contributes its seed plus matching info and extras fields.
         var timezones = string.Join("|", secrets.Keys.Select(tz =>
             char.ToUpper(tz[0]) + tz.Substring(1)));
 
@@ -234,15 +195,13 @@ public class QobuzBundleService
             }
         }
 
-        // Step 4: Decode the secrets
-        // Concatenate all base64 strings for each timezone, remove last 44 chars, then decode
+        // qobuz-dl removes the final 44 characters from each concatenated payload.
         var decodedSecrets = new List<string>();
 
         foreach (var kvp in secrets)
         {
             var concatenated = string.Join("", kvp.Value);
 
-            // Remove last 44 characters as per Python implementation
             if (concatenated.Length > 44)
             {
                 concatenated = concatenated.Substring(0, concatenated.Length - 44);

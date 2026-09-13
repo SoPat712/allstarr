@@ -41,7 +41,6 @@ public class DeezerMetadataServiceTests
     [Fact]
     public async Task SearchSongsAsync_ReturnsListOfSongs()
     {
-        // Arrange
         var deezerResponse = new
         {
             data = new[]
@@ -61,10 +60,8 @@ public class DeezerMetadataServiceTests
 
         SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
 
-        // Act
         var result = await _service.SearchSongsAsync("test query", 20);
 
-        // Assert
         Assert.NotNull(result);
         Assert.Single(result);
         Assert.Equal("ext-deezer-song-123456", result[0].Id);
@@ -118,7 +115,6 @@ public class DeezerMetadataServiceTests
     [Fact]
     public async Task SearchAlbumsAsync_ReturnsListOfAlbums()
     {
-        // Arrange
         var deezerResponse = new
         {
             data = new[]
@@ -137,10 +133,8 @@ public class DeezerMetadataServiceTests
 
         SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
 
-        // Act
         var result = await _service.SearchAlbumsAsync("test album", 20);
 
-        // Assert
         Assert.NotNull(result);
         Assert.Single(result);
         Assert.Equal("ext-deezer-album-456789", result[0].Id);
@@ -154,7 +148,6 @@ public class DeezerMetadataServiceTests
     [Fact]
     public async Task SearchArtistsAsync_ReturnsListOfArtists()
     {
-        // Arrange
         var deezerResponse = new
         {
             data = new[]
@@ -171,16 +164,27 @@ public class DeezerMetadataServiceTests
 
         SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
 
-        // Act
         var result = await _service.SearchArtistsAsync("test artist", 20);
 
-        // Assert
         Assert.NotNull(result);
         Assert.Single(result);
         Assert.Equal("ext-deezer-artist-789012", result[0].Id);
         Assert.Equal("Test Artist", result[0].Name);
         Assert.Equal(5, result[0].AlbumCount);
         Assert.False(result[0].IsLocal);
+    }
+
+    [Theory]
+    [InlineData("songs")]
+    [InlineData("albums")]
+    [InlineData("artists")]
+    public async Task MetadataSearch_PropagatesCallerCancellation(string resultKind)
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => SearchCountAsync(resultKind, cancellation.Token));
     }
 
     [Fact]
@@ -190,15 +194,22 @@ public class DeezerMetadataServiceTests
         var emptyResponse = JsonSerializer.Serialize(new { data = Array.Empty<object>() });
         SetupHttpResponse(emptyResponse);
 
-        // Act
         var result = await _service.SearchAllAsync("test");
 
-        // Assert
         Assert.NotNull(result);
         Assert.NotNull(result.Songs);
         Assert.NotNull(result.Albums);
         Assert.NotNull(result.Artists);
     }
+
+    private async Task<int> SearchCountAsync(string resultKind, CancellationToken cancellationToken) =>
+        resultKind switch
+        {
+            "songs" => (await _service.SearchSongsAsync("query", cancellationToken: cancellationToken)).Count,
+            "albums" => (await _service.SearchAlbumsAsync("query", cancellationToken: cancellationToken)).Count,
+            "artists" => (await _service.SearchArtistsAsync("query", cancellationToken: cancellationToken)).Count,
+            _ => throw new ArgumentOutOfRangeException(nameof(resultKind), resultKind, null)
+        };
 
     [Fact]
     public async Task SearchAllAsync_AmpersandQuery_UsesVariantsForEachRequestedBucket()
@@ -267,7 +278,6 @@ public class DeezerMetadataServiceTests
     [Fact]
     public async Task GetSongAsync_WithDeezerProvider_ReturnsSong()
     {
-        // Arrange
         var deezerResponse = new
         {
             id = 123456,
@@ -280,10 +290,8 @@ public class DeezerMetadataServiceTests
 
         SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
 
-        // Act
         var result = await _service.GetSongAsync("deezer", "123456");
 
-        // Assert
         Assert.NotNull(result);
         Assert.Equal("ext-deezer-song-123456", result.Id);
         Assert.Equal("Test Song", result.Title);
@@ -292,23 +300,18 @@ public class DeezerMetadataServiceTests
     [Fact]
     public async Task GetSongAsync_WithNonDeezerProvider_ReturnsNull()
     {
-        // Act
         var result = await _service.GetSongAsync("spotify", "123456");
 
-        // Assert
         Assert.Null(result);
     }
 
     [Fact]
     public async Task SearchSongsAsync_WithEmptyResponse_ReturnsEmptyList()
     {
-        // Arrange
         SetupHttpResponse(JsonSerializer.Serialize(new { data = Array.Empty<object>() }));
 
-        // Act
         var result = await _service.SearchSongsAsync("nonexistent", 20);
 
-        // Assert
         Assert.NotNull(result);
         Assert.Empty(result);
     }
@@ -316,13 +319,10 @@ public class DeezerMetadataServiceTests
     [Fact]
     public async Task SearchSongsAsync_WithHttpError_ReturnsEmptyList()
     {
-        // Arrange
         SetupHttpResponse("Error", HttpStatusCode.InternalServerError);
 
-        // Act
         var result = await _service.SearchSongsAsync("test", 20);
 
-        // Assert
         Assert.NotNull(result);
         Assert.Empty(result);
     }
@@ -330,7 +330,6 @@ public class DeezerMetadataServiceTests
     [Fact]
     public async Task GetAlbumAsync_WithDeezerProvider_ReturnsAlbumWithTracks()
     {
-        // Arrange
         var deezerResponse = new
         {
             id = 456789,
@@ -367,10 +366,8 @@ public class DeezerMetadataServiceTests
 
         SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
 
-        // Act
         var result = await _service.GetAlbumAsync("deezer", "456789");
 
-        // Assert
         Assert.NotNull(result);
         Assert.Equal("ext-deezer-album-456789", result.Id);
         Assert.Equal("Test Album", result.Title);
@@ -383,10 +380,8 @@ public class DeezerMetadataServiceTests
     [Fact]
     public async Task GetAlbumAsync_WithNonDeezerProvider_ReturnsNull()
     {
-        // Act
         var result = await _service.GetAlbumAsync("spotify", "123456");
 
-        // Assert
         Assert.Null(result);
     }
 
@@ -569,12 +564,10 @@ public class DeezerMetadataServiceTests
         };
     }
 
-    #region Explicit Filter Tests
 
     [Fact]
     public async Task SearchSongsAsync_ExplicitOnlyFilter_ExcludesCleanVersions()
     {
-        // Arrange
         _service = CreateService(new SubsonicSettings { ExplicitFilter = ExplicitFilter.ExplicitOnly });
 
         var deezerResponse = new
@@ -613,10 +606,8 @@ public class DeezerMetadataServiceTests
 
         SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
 
-        // Act
         var result = await _service.SearchSongsAsync("test", 20);
 
-        // Assert
         Assert.Equal(2, result.Count);
         Assert.Contains(result, s => s.Title == "Explicit Original");
         Assert.Contains(result, s => s.Title == "Naturally Clean");
@@ -626,7 +617,6 @@ public class DeezerMetadataServiceTests
     [Fact]
     public async Task SearchSongsAsync_CleanOnlyFilter_ExcludesExplicitContent()
     {
-        // Arrange
         _service = CreateService(new SubsonicSettings { ExplicitFilter = ExplicitFilter.CleanOnly });
 
         var deezerResponse = new
@@ -665,10 +655,8 @@ public class DeezerMetadataServiceTests
 
         SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
 
-        // Act
         var result = await _service.SearchSongsAsync("test", 20);
 
-        // Assert
         Assert.Equal(2, result.Count);
         Assert.Contains(result, s => s.Title == "Clean Version");
         Assert.Contains(result, s => s.Title == "Naturally Clean");
@@ -678,7 +666,6 @@ public class DeezerMetadataServiceTests
     [Fact]
     public async Task SearchSongsAsync_AllFilter_IncludesEverything()
     {
-        // Arrange
         _service = CreateService(new SubsonicSettings { ExplicitFilter = ExplicitFilter.All });
 
         var deezerResponse = new
@@ -717,17 +704,14 @@ public class DeezerMetadataServiceTests
 
         SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
 
-        // Act
         var result = await _service.SearchSongsAsync("test", 20);
 
-        // Assert
         Assert.Equal(3, result.Count);
     }
 
     [Fact]
     public async Task SearchSongsAsync_ExplicitOnlyFilter_IncludesTracksWithNoExplicitInfo()
     {
-        // Arrange
         _service = CreateService(new SubsonicSettings { ExplicitFilter = ExplicitFilter.ExplicitOnly });
 
         var deezerResponse = new
@@ -748,10 +732,8 @@ public class DeezerMetadataServiceTests
 
         SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
 
-        // Act
         var result = await _service.SearchSongsAsync("test", 20);
 
-        // Assert
         Assert.Single(result);
         Assert.Equal("No Explicit Info", result[0].Title);
     }
@@ -759,7 +741,6 @@ public class DeezerMetadataServiceTests
     [Fact]
     public async Task GetAlbumAsync_ExplicitOnlyFilter_FiltersAlbumTracks()
     {
-        // Arrange
         _service = CreateService(new SubsonicSettings { ExplicitFilter = ExplicitFilter.ExplicitOnly });
 
         var deezerResponse = new
@@ -807,10 +788,8 @@ public class DeezerMetadataServiceTests
 
         SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
 
-        // Act
         var result = await _service.GetAlbumAsync("deezer", "456789");
 
-        // Assert
         Assert.NotNull(result);
         Assert.Equal(2, result.Songs.Count);
         Assert.Contains(result.Songs, s => s.Title == "Explicit Track");
@@ -821,7 +800,6 @@ public class DeezerMetadataServiceTests
     [Fact]
     public async Task SearchSongsAsync_ParsesExplicitContentLyrics()
     {
-        // Arrange
         var deezerResponse = new
         {
             data = new object[]
@@ -840,22 +818,17 @@ public class DeezerMetadataServiceTests
 
         SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
 
-        // Act
         var result = await _service.SearchSongsAsync("test", 20);
 
-        // Assert
         Assert.Single(result);
         Assert.Equal(1, result[0].ExplicitContentLyrics);
     }
 
-    #endregion
 
-    #region Playlist Tests
 
     [Fact]
     public async Task SearchPlaylistsAsync_ReturnsListOfPlaylists()
     {
-        // Arrange
         var deezerResponse = new
         {
             data = new[]
@@ -881,10 +854,8 @@ public class DeezerMetadataServiceTests
 
         SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
 
-        // Act
         var result = await _service.SearchPlaylistsAsync("chill");
 
-        // Assert
         Assert.Equal(2, result.Count);
         Assert.Equal("Chill Vibes", result[0].Name);
         Assert.Equal(50, result[0].TrackCount);
@@ -932,7 +903,6 @@ public class DeezerMetadataServiceTests
     [Fact]
     public async Task SearchPlaylistsAsync_WithLimit_RespectsLimit()
     {
-        // Arrange
         var deezerResponse = new
         {
             data = new[]
@@ -950,17 +920,14 @@ public class DeezerMetadataServiceTests
 
         SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
 
-        // Act
         var result = await _service.SearchPlaylistsAsync("test", 1);
 
-        // Assert
         Assert.Single(result);
     }
 
     [Fact]
     public async Task SearchPlaylistsAsync_WithEmptyResults_ReturnsEmptyList()
     {
-        // Arrange
         var deezerResponse = new
         {
             data = new object[] { }
@@ -968,17 +935,14 @@ public class DeezerMetadataServiceTests
 
         SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
 
-        // Act
         var result = await _service.SearchPlaylistsAsync("nonexistent");
 
-        // Assert
         Assert.Empty(result);
     }
 
     [Fact]
     public async Task GetPlaylistAsync_WithValidId_ReturnsPlaylist()
     {
-        // Arrange
         var deezerResponse = new
         {
             id = 12345,
@@ -991,10 +955,8 @@ public class DeezerMetadataServiceTests
 
         SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
 
-        // Act
         var result = await _service.GetPlaylistAsync("deezer", "12345");
 
-        // Assert
         Assert.NotNull(result);
         Assert.Equal("Best Of Jazz", result.Name);
         Assert.Equal(100, result.TrackCount);
@@ -1004,17 +966,14 @@ public class DeezerMetadataServiceTests
     [Fact]
     public async Task GetPlaylistAsync_WithWrongProvider_ReturnsNull()
     {
-        // Act
         var result = await _service.GetPlaylistAsync("qobuz", "12345");
 
-        // Assert
         Assert.Null(result);
     }
 
     [Fact]
     public async Task GetPlaylistTracksAsync_ReturnsListOfSongs()
     {
-        // Arrange
         var deezerResponse = new
         {
             tracks = new
@@ -1069,10 +1028,8 @@ public class DeezerMetadataServiceTests
 
         SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
 
-        // Act
         var result = await _service.GetPlaylistTracksAsync("deezer", "12345");
 
-        // Assert
         Assert.Equal(2, result.Count);
         Assert.Equal("Track 1", result[0].Title);
         Assert.Equal("Artist A", result[0].Artist);
@@ -1083,10 +1040,8 @@ public class DeezerMetadataServiceTests
     [Fact]
     public async Task GetPlaylistTracksAsync_WithWrongProvider_ReturnsEmptyList()
     {
-        // Act
         var result = await _service.GetPlaylistTracksAsync("qobuz", "12345");
 
-        // Assert
         Assert.Empty(result);
     }
 
@@ -1150,7 +1105,6 @@ public class DeezerMetadataServiceTests
     [Fact]
     public async Task GetPlaylistTracksAsync_WithEmptyPlaylist_ReturnsEmptyList()
     {
-        // Arrange
         var deezerResponse = new
         {
             tracks = new
@@ -1161,12 +1115,9 @@ public class DeezerMetadataServiceTests
 
         SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
 
-        // Act
         var result = await _service.GetPlaylistTracksAsync("deezer", "12345");
 
-        // Assert
         Assert.Empty(result);
     }
 
-    #endregion
 }

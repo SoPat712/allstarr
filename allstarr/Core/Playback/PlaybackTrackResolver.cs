@@ -73,6 +73,11 @@ public sealed class PlaybackTrackResolver(
             if (metadata != null)
             {
                 var external = ExternalPlaybackMetadataResolver.ParseTrackIdentity(itemId);
+                var source = payload.StreamSource;
+                if (source?.Matches(payload.Scope.Protocol, payload.Scope.BackendInstanceId, payload.Scope.LibraryScopeId) != true)
+                    source = null;
+                if (external != null && source != null)
+                    external = (source.ProviderId, source.ExternalId);
                 ProviderTrackIdentityRecord? identity = null;
                 if (external != null)
                 {
@@ -81,8 +86,8 @@ public sealed class PlaybackTrackResolver(
                         .Where(candidate => candidate.TenantId == payload.Scope.TenantId && candidate.ExternalIdHash == hash)
                         .ToListAsync(cancellationToken);
                     var matching = candidates.Where(candidate => candidate.ProviderId.Equals(external.Value.Provider, StringComparison.OrdinalIgnoreCase)).ToList();
-                    identity = matching.FirstOrDefault(candidate => candidate.ProviderAccountId == null) ??
-                               (matching.Count == 1 ? matching[0] : null);
+                    identity = matching.FirstOrDefault(candidate => source?.AccountId != null && candidate.ProviderAccountId == source.AccountId) ??
+                               matching.FirstOrDefault(candidate => candidate.ProviderAccountId == null);
                 }
                 return new PlaybackTrackSnapshot(
                     null,
@@ -96,7 +101,7 @@ public sealed class PlaybackTrackResolver(
                     metadata.RecordingMusicBrainzId,
                     metadata.TrackNumber,
                     external?.Provider,
-                    identity?.ProviderAccountId,
+                    source?.AccountId ?? identity?.ProviderAccountId,
                     identity?.Id,
                     external == null ? null : $"{external.Value.Provider}:{external.Value.ExternalId}");
             }

@@ -17,10 +17,7 @@ public partial class JellyfinController
 
     #region Session Management
 
-    /// <summary>
-    /// Reports session capabilities. Required for Jellyfin to track active sessions.
-    /// Handles both POST (with body) and GET (query params only) methods.
-    /// </summary>
+    // Jellyfin creates and keeps client sessions only after capabilities are reported.
     [HttpPost("Sessions/Capabilities")]
     [HttpPost("Sessions/Capabilities/Full")]
     [HttpGet("Sessions/Capabilities")]
@@ -41,10 +38,8 @@ public partial class JellyfinController
                     k.Contains("Device", StringComparison.OrdinalIgnoreCase) ||
                     k.Contains("Client", StringComparison.OrdinalIgnoreCase))));
 
-            // Forward to Jellyfin with query string and headers
             var endpoint = $"Sessions/Capabilities{queryString}";
 
-            // Read body if present (POST requests)
             string body = "{}";
             if (method == "POST" && Request.ContentLength > 0)
             {
@@ -75,11 +70,6 @@ public partial class JellyfinController
         }
     }
 
-    /// <summary>
-    /// Reports playback start. Handles both local and external tracks.
-    /// For local tracks, forwards to Jellyfin. For external tracks, logs locally.
-    /// Also ensures session is initialized if this is the first report from a device.
-    /// </summary>
     [HttpPost("Sessions/Playing")]
     public async Task<IActionResult> ReportPlaybackStart()
     {
@@ -97,7 +87,6 @@ public partial class JellyfinController
 
             _logger.LogDebug("📻 Playback START reported");
 
-            // Parse the body to check if it's an external track
             using var doc = JsonDocument.Parse(body);
             string? itemId = null;
             string? itemName = null;
@@ -114,12 +103,11 @@ public partial class JellyfinController
             positionTicks = ParsePlaybackPositionTicks(doc.RootElement);
             playSessionId = ParsePlaybackSessionId(doc.RootElement);
 
-            // Track local playback so missing start/stop events can be inferred.
             var (deviceId, client, device, version) = ExtractDeviceInfo(Request.Headers);
             deviceId = ResolveDeviceId(deviceId, doc.RootElement);
 
 
-            // Only update session for local tracks - external tracks don't need session tracking
+            // Native playback state is retained so missing transitions can be inferred.
             if (!string.IsNullOrEmpty(deviceId) && !string.IsNullOrEmpty(itemId))
             {
                 var (isExt, _, _) = _localLibraryService.ParseSongId(itemId);
@@ -188,21 +176,16 @@ public partial class JellyfinController
                         return NoContent();
                     }
 
-                    // Fetch metadata early so we can log the correct track name
                     var song = await GetProviderSongAsync(provider!, externalId!);
                     var trackName = song != null ? $"{song.Artist} - {song.Title}" : "Unknown";
 
                     _logger.LogInformation("▶️ External track playback started: {TrackName} ({Provider}/{ExternalId})",
                         trackName, provider, externalId);
 
-                    // Proactively fetch lyrics in background for external tracks
-
-                    // Create a ghost/fake item to report to Jellyfin so "Now Playing" shows up
-                    // Generate a deterministic UUID from the external ID
+                    // Jellyfin needs a deterministic synthetic UUID to show external Now Playing state.
                     var ghostUuid = GenerateUuidFromString(itemId);
 
-                    // Build minimal playback start with just the ghost UUID
-                    // Don't include the Item object - Jellyfin will just track the session without item details
+                    // Omit Item so Jellyfin tracks the session without resolving external metadata.
                     var playbackStart = new
                     {
                         ItemId = ghostUuid,
@@ -216,7 +199,6 @@ public partial class JellyfinController
                     var playbackJson = JsonSerializer.Serialize(playbackStart);
                     _logger.LogDebug("📤 Sending ghost playback start for external track: {Json}", playbackJson);
 
-                    // Forward to Jellyfin with ghost UUID
                     var (ghostResult, ghostStatusCode) =
                         await _proxyService.PostJsonAsync("Sessions/Playing", playbackJson, Request.Headers);
 
@@ -246,7 +228,6 @@ public partial class JellyfinController
                     return NoContent();
                 }
 
-                // Proactively fetch lyrics in background for local tracks
             }
 
             if (!string.IsNullOrEmpty(itemId) &&
@@ -267,10 +248,9 @@ public partial class JellyfinController
                 return NoContent();
             }
 
-            // For local tracks, forward playback start to Jellyfin FIRST
+            // Let Jellyfin accept native playback before updating synthesized session state.
             _logger.LogDebug("Forwarding playback start to Jellyfin...");
 
-            // Fetch full item details to include in playback report
             var playbackStartAccepted = false;
             try
             {
@@ -280,7 +260,6 @@ public partial class JellyfinController
                 {
                     var item = itemResult.RootElement;
 
-                    // Extract track name from item details for logging
                     string? trackName = null;
                     if (item.TryGetProperty("Name", out var nameElement))
                     {
@@ -290,12 +269,11 @@ public partial class JellyfinController
                     _logger.LogInformation("🎵 Local track playback started: {Name} (ID: {ItemId})",
                         trackName ?? "Unknown", itemId);
 
-                    // Build playback start info - Jellyfin will fetch item details itself
                     var playbackStart = new
                     {
                         ItemId = itemId,
                         PositionTicks = positionTicks ?? 0,
-                        // Let Jellyfin fetch the item details - don't include NowPlayingItem
+                        // Jellyfin resolves its own item; duplicating NowPlayingItem can diverge.
                     };
 
                     var playbackJson = JsonSerializer.Serialize(playbackStart);
@@ -319,7 +297,6 @@ public partial class JellyfinController
                 {
                     _logger.LogWarning("⚠️  Could not fetch item details ({StatusCode}), sending basic playback start",
                         itemStatus);
-                    // Fall back to basic playback start
                     var (result, statusCode) =
                         await _proxyService.PostJsonAsync("Sessions/Playing", body, Request.Headers);
                     if (statusCode == 204 || statusCode == 200)
@@ -334,7 +311,6 @@ public partial class JellyfinController
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to send playback start, trying basic");
-                // Fall back to basic playback start
                 var (result, statusCode) = await _proxyService.PostJsonAsync("Sessions/Playing", body, Request.Headers);
                 if (statusCode == 204 || statusCode == 200)
                 {
@@ -380,13 +356,10 @@ public partial class JellyfinController
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to report playback start");
-            return NoContent(); // Return success anyway to not break playback
+            return NoContent(); // Telemetry failures must not interrupt playback.
         }
     }
 
-    /// <summary>
-    /// Reports playback progress. Handles both local and external tracks.
-    /// </summary>
     [HttpPost("Sessions/Playing/Progress")]
     public async Task<IActionResult> ReportPlaybackProgress()
     {
@@ -402,10 +375,8 @@ public partial class JellyfinController
 
             Request.Body.Position = 0;
 
-            // Update session activity (local tracks only)
             var (deviceId, client, device, version) = ExtractDeviceInfo(Request.Headers);
 
-            // Parse the body to check if it's an external track
             using var doc = JsonDocument.Parse(body);
             string? itemId = null;
             long? positionTicks = null;
@@ -524,10 +495,9 @@ public partial class JellyfinController
                         }
                     }
 
-                    // For external tracks, report progress with ghost UUID to Jellyfin
+                    // Keep external progress tied to the synthetic Now Playing identity.
                     var ghostUuid = GenerateUuidFromString(itemId);
 
-                    // Build progress report with ghost UUID
                     var progressReport = new
                     {
                         ItemId = ghostUuid,
@@ -540,7 +510,6 @@ public partial class JellyfinController
 
                     var progressJson = JsonSerializer.Serialize(progressReport);
 
-                    // Forward to Jellyfin with ghost UUID
                     var (progressResult, progressStatusCode) =
                         await _proxyService.PostJsonAsync("Sessions/Playing/Progress", progressJson, Request.Headers);
 
@@ -549,7 +518,6 @@ public partial class JellyfinController
                         await QueuePlaybackSignalAsync(PlaybackTransition.Progress, itemId, deviceId, playSessionId, positionTicks);
                     }
 
-                    // Log progress occasionally for debugging (every ~30 seconds)
                     if (positionTicks.HasValue)
                     {
                         var position = TimeSpan.FromTicks(positionTicks.Value);
@@ -564,8 +532,7 @@ public partial class JellyfinController
                     return NoContent();
                 }
 
-                // Some clients (e.g. mobile) may skip /Sessions/Playing and only send Progress.
-                // Infer playback start from first progress event or track-change progress event.
+                // Mobile clients may omit /Sessions/Playing, so infer transitions from progress.
                 if (!string.IsNullOrEmpty(deviceId))
                 {
                     var sessionReady = _sessionManager.HasSession(deviceId);
@@ -650,17 +617,14 @@ public partial class JellyfinController
                             deviceId);
                     }
 
-                    // When local scrobbling is disabled, still trigger Jellyfin's user-data path
-                    // shortly after the normal scrobble threshold so downstream plugins that listen
-                    // to user-data events can process local listens even without a stop event.
+                    // Preserve Jellyfin user-data events for plugins when local scrobbling is off
+                    // and the client never sends a stop event.
                     await MaybeTriggerLocalPlayedSignalFromProgressAsync(doc.RootElement, deviceId, itemId, positionTicks);
                 }
 
-                // Log progress for local tracks (only every ~10 seconds to avoid spam)
                 if (positionTicks.HasValue)
                 {
                     var position = TimeSpan.FromTicks(positionTicks.Value);
-                    // Only log at 10-second intervals
                     if (position.Seconds % 10 == 0 && position.Milliseconds < 500)
                     {
                         _logger.LogDebug("▶️ Progress: {Position:mm\\:ss} for item {ItemId}", position, itemId);
@@ -668,7 +632,6 @@ public partial class JellyfinController
                 }
             }
 
-            // For local tracks, forward to Jellyfin
             _logger.LogDebug("📤 Sending playback progress body ({BodyLength} bytes)", body.Length);
 
             var (result, statusCode) =
@@ -942,9 +905,6 @@ public partial class JellyfinController
         return string.IsNullOrWhiteSpace(queryDeviceId) ? parsedDeviceId : queryDeviceId;
     }
 
-    /// <summary>
-    /// Reports playback stopped. Handles both local and external tracks.
-    /// </summary>
     [HttpPost("Sessions/Playing/Stopped")]
     public async Task<IActionResult> ReportPlaybackStopped()
     {
@@ -963,7 +923,6 @@ public partial class JellyfinController
             _logger.LogInformation("⏹️ Playback STOPPED reported");
             _logger.LogDebug("📤 Sending playback stop body ({BodyLength} bytes)", body.Length);
 
-            // Parse the body to check if it's an external track
             using var doc = JsonDocument.Parse(body);
             string? itemId = null;
             string? itemName = null;
@@ -1035,7 +994,6 @@ public partial class JellyfinController
                         ? TimeSpan.FromTicks(positionTicks.Value).ToString(@"mm\:ss")
                         : "unknown";
 
-                    // Try to get track metadata from provider if not in stop event
                     if (string.IsNullOrEmpty(itemName))
                     {
                         try
@@ -1044,7 +1002,6 @@ public partial class JellyfinController
                             if (song != null)
                             {
                                 itemName = $"{song.Artist} - {song.Title}";
-                                // Update position with actual track duration if available
                                 if (positionTicks.HasValue && song.Duration > 0)
                                 {
                                     var actualPosition = TimeSpan.FromTicks(positionTicks.Value);
@@ -1063,7 +1020,7 @@ public partial class JellyfinController
                         "🎵 External track playback stopped: {Name} at {Position} ({Provider}/{ExternalId})",
                         itemName ?? "Unknown", position, provider, externalId);
 
-                    // Report stop to Jellyfin with ghost UUID
+                    // Stop the same synthetic item used for external start and progress reports.
                     var ghostUuid = GenerateUuidFromString(itemId);
 
                     var externalStopInfo = new
@@ -1094,7 +1051,6 @@ public partial class JellyfinController
                     return NoContent();
                 }
 
-                // For local tracks, fetch item details to get track name
                 string? trackName = itemName;
                 if (string.IsNullOrEmpty(trackName))
                 {
@@ -1140,13 +1096,11 @@ public partial class JellyfinController
 
             }
 
-            // For local tracks, forward to Jellyfin
             _logger.LogDebug("Forwarding playback stop to Jellyfin...");
 
-            // Log the body being sent for debugging
             _logger.LogDebug("📤 Original playback stop body length: {BodyLength} bytes", body.Length);
 
-            // Parse and fix the body - ensure IsPaused is false for a proper stop
+            // Jellyfin treats IsPaused=true as a pause, even on its stopped route.
             using var stopDoc = JsonDocument.Parse(body);
             var stopInfo = new Dictionary<string, object?>();
 
@@ -1154,7 +1108,6 @@ public partial class JellyfinController
             {
                 if (prop.Name == "IsPaused")
                 {
-                    // Force IsPaused to false for a proper stop
                     stopInfo[prop.Name] = false;
                 }
                 else
@@ -1165,7 +1118,6 @@ public partial class JellyfinController
                 }
             }
 
-            // Ensure required fields are present
             if (!stopInfo.ContainsKey("ItemId") && !string.IsNullOrEmpty(itemId))
             {
                 stopInfo["ItemId"] = itemId;
@@ -1214,9 +1166,6 @@ public partial class JellyfinController
         }
     }
 
-    /// <summary>
-    /// Pings a playback session to keep it alive.
-    /// </summary>
     [HttpPost("Sessions/Playing/Ping")]
     public async Task<IActionResult> PingPlaybackSession([FromQuery] string playSessionId)
     {
@@ -1224,7 +1173,6 @@ public partial class JellyfinController
         {
             _logger.LogDebug("Playback session ping: {SessionId}", playSessionId);
 
-            // Forward to Jellyfin
             var endpoint = $"Sessions/Playing/Ping?playSessionId={Uri.EscapeDataString(playSessionId)}";
             var (result, statusCode) = await _proxyService.PostJsonAsync(endpoint, "{}", Request.Headers);
             return NoContent();
@@ -1236,9 +1184,6 @@ public partial class JellyfinController
         }
     }
 
-    /// <summary>
-    /// Proxy unhandled session-related endpoints to Jellyfin.
-    /// </summary>
     [HttpGet("Sessions")]
     [HttpPost("Sessions")]
     [HttpGet("Sessions/{**path}")]
@@ -1427,7 +1372,7 @@ public partial class JellyfinController
         return null;
     }
 
-    #endregion // Session Management
+    #endregion
 
-    #endregion // Playback Session Reporting
+    #endregion
 }

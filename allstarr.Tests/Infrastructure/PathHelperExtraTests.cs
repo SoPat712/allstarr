@@ -1,10 +1,8 @@
-using System;
-using System.IO;
 using allstarr.Services.Common;
 
 namespace allstarr.Tests;
 
-public class PathHelperExtraTests : IDisposable
+public sealed class PathHelperExtraTests : IDisposable
 {
     private readonly string _testPath;
 
@@ -26,12 +24,11 @@ public class PathHelperExtraTests : IDisposable
         var artist = "Artist";
         var album = "Album";
         var title = "Song";
-        var provider = "prov/../ider"; // contains slashes and dots
-        var externalId = "..\evil|id"; // contains traversal and invalid chars
+        var provider = "prov/../ider";
+        var externalId = "..\evil|id";
 
         var path = PathHelper.BuildTrackPath(downloadPath, artist, album, title, 1, ".mp3", provider, externalId);
 
-        // Ensure the path contains sanitized provider/external id and no directory separators in the filename
         var fileName = Path.GetFileName(path);
         Assert.Contains("[", fileName);
         Assert.DoesNotContain("..", fileName);
@@ -42,7 +39,6 @@ public class PathHelperExtraTests : IDisposable
     [Fact]
     public void ResolveUniquePath_HandlesNoDirectoryProvided()
     {
-        // Arrange - create files in current directory
         var originalCurrent = Directory.GetCurrentDirectory();
         try
         {
@@ -50,10 +46,8 @@ public class PathHelperExtraTests : IDisposable
             var baseName = "song.mp3";
             File.WriteAllText(Path.Combine(_testPath, baseName), "x");
 
-            // Act
             var unique = PathHelper.ResolveUniquePath(baseName);
 
-            // Assert
             Assert.NotEqual(baseName, unique);
             Assert.Contains("song (1).mp3", unique);
         }

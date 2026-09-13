@@ -5,16 +5,29 @@
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
-  import { ArrowRight, MoreHorizontal } from "@lucide/svelte";
+  import {
+    ArrowRight,
+    Ban,
+    CircleQuestionMark,
+    Clock3,
+    Hand,
+    List,
+    MoreHorizontal,
+    ScanSearch,
+    Sparkles,
+  } from "@lucide/svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import {
     home,
     matchReview,
+    type ManualMatchAuthority,
     type MatchReviewItem,
     type MatchReviewResponse,
     type ProviderDefinition,
   } from "$lib/api";
+  import { manualMatchAuthority } from "$lib/matching-api";
   import MatchDialog from "$lib/components/MatchDialog.svelte";
+  import BulkRematchDialog from "$lib/components/BulkRematchDialog.svelte";
   import ArtworkSimilarity from "$lib/components/ArtworkSimilarity.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
@@ -36,15 +49,39 @@
   import { relativeTime } from "$lib/activity";
   import { findProviderDefinition, providerDisplayName } from "$lib/sources";
 
-  type DestructiveAction = { kind: "reject" | "clear"; match: MatchReviewItem };
+  type DestructiveAction =
+    | { kind: "reject"; match: MatchReviewItem }
+    | {
+        kind: "manual_delete" | "manual_rematch";
+        match: MatchReviewItem;
+        authority: ManualMatchAuthority;
+      };
+  type MappingView =
+    | "all"
+    | "manual"
+    | "rejected"
+    | "automatic"
+    | "tentative"
+    | "review"
+    | "unresolved";
+
+  const viewFilters: Record<MappingView, string> = {
+    all: "",
+    manual: "manual_matches",
+    rejected: "manual_rejections",
+    automatic: "automatic",
+    tentative: "suggested",
+    review: "ambiguous",
+    unresolved: "unresolved",
+  };
 
   let { initialSearch = "", initialReview = "" }: { initialSearch?: string; initialReview?: string } = $props();
 
   let data = $state<MatchReviewResponse | null>(null);
   let providers = $state<ProviderDefinition[]>([]);
   let backend = $state("Local library");
-  let stateFilter = $state("attention");
-  let view = $state<"all" | "review" | "unresolved" | "history">("review");
+  let stateFilter = $state(viewFilters.review);
+  let view = $state<MappingView>("review");
   let searchInput = $state("");
   let search = $state("");
   let libraryScopeId = $state("");
@@ -64,6 +101,7 @@
   let selected = $state<MatchReviewItem | null>(null);
   let destructiveOpen = $state(false);
   let destructive = $state<DestructiveAction | null>(null);
+  let rematchAllOpen = $state(false);
 
   const provider = (providerId: string) => findProviderDefinition(providers, providerId);
 
@@ -133,19 +171,22 @@
   }
 
   function setView(value: string) {
-    view = value as typeof view;
-    setState(view === "all" ? "" : view === "review" ? "attention" : view);
+    if (!(value in viewFilters)) return;
+    view = value as MappingView;
+    setState(viewFilters[view]);
   }
 
   function removeResolvedFromQueue(match: MatchReviewItem) {
-    if (!data || !["review", "unresolved"].includes(view)) return;
+    if (!data || !["tentative", "review", "unresolved"].includes(view)) return;
     const wasVisible = data.matches.some((item) => item.externalSnapshotId === match.externalSnapshotId);
     data = {
       ...data,
       matches: data.matches.filter((item) => item.externalSnapshotId !== match.externalSnapshotId),
       stats: {
         ...data.stats,
-        attention: Math.max(0, data.stats.attention - (wasVisible && view === "review" ? 1 : 0)),
+        suggested: Math.max(0, data.stats.suggested - (wasVisible && view === "tentative" ? 1 : 0)),
+        ambiguous: Math.max(0, (data.stats.ambiguous ?? 0) - (wasVisible && view === "review" ? 1 : 0)),
+        attention: Math.max(0, data.stats.attention - (wasVisible && ["tentative", "review"].includes(view) ? 1 : 0)),
         unresolved: Math.max(0, data.stats.unresolved - (wasVisible && view === "unresolved" ? 1 : 0)),
       },
       pagination: {
@@ -173,9 +214,14 @@
     if (resolved) removeResolvedFromQueue(resolved);
   }
 
+  async function rematchAllQueued(_jobId: string, message: string) {
+    feedback = message;
+    await load();
+  }
+
   async function rematch(match: MatchReviewItem) {
     if (action) return;
-    action = match.externalSnapshotId;
+    action = `rematch:${match.externalSnapshotId}`;
     try {
       await matchReview.rematch(match.externalSnapshotId);
       feedback = `${match.title || "Track"} rematched.`;
@@ -191,8 +237,9 @@
     const candidate = match.candidates.find((item) =>
       candidateResolution(item, match.providerId, playbackProviders));
     const resolution = candidateResolution(candidate, match.providerId, playbackProviders);
-    if (!resolution || action) return openMatch(match);
-    action = match.externalSnapshotId;
+    if (action) return;
+    if (!resolution) return openMatch(match);
+    action = `accept:${match.externalSnapshotId}`;
     try {
       await matchReview.resolve(match.externalSnapshotId, {
         ...resolution,
@@ -209,13 +256,25 @@
   }
 
   function confirm(kind: DestructiveAction["kind"], match: MatchReviewItem) {
+    if (kind !== "reject") return;
     destructive = { kind, match };
+    destructiveOpen = true;
+  }
+
+  function confirmAuthority(
+    kind: "manual_delete" | "manual_rematch",
+    match: MatchReviewItem,
+    authority: ManualMatchAuthority,
+  ) {
+    destructive = { kind, match, authority };
     destructiveOpen = true;
   }
 
   async function applyDestructive() {
     if (!destructive || action) return;
-    action = destructive.kind;
+    action = destructive.kind === "reject"
+      ? destructive.kind
+      : `authority:${destructive.authority.id}`;
     try {
       if (destructive.kind === "reject") {
         await matchReview.resolve(destructive.match.externalSnapshotId, {
@@ -223,12 +282,12 @@
           reason: "Rejected from the match review queue",
         });
         feedback = "Candidate rejected.";
-      } else if (destructive.match.overrideId) {
-        await matchReview.clear(
-          destructive.match.overrideId,
-          destructive.match.overrideRevision ?? 0,
-        );
-        feedback = "Manual review cleared.";
+      } else if (destructive.kind === "manual_rematch") {
+        await manualMatchAuthority.rematch(destructive.authority);
+        feedback = `${destructive.match.title || "Track"} released and rematched with the current algorithm.`;
+      } else {
+        await manualMatchAuthority.delete(destructive.authority);
+        feedback = "Manual authority deleted; automatic matching is authoritative again.";
       }
       destructiveOpen = false;
       dialogOpen = false;
@@ -239,6 +298,34 @@
     } finally {
       action = "";
     }
+  }
+
+  function authorityLabel(authority: ManualMatchAuthority) {
+    return authority.kind === "provider_match"
+      ? `Manual ${providerName(authority.targetProviderId)} match`
+      : authority.kind === "local_match"
+        ? `Manual ${backend} match`
+        : "Manual rejection";
+  }
+
+  function confirmationCopy() {
+    if (destructive?.kind === "manual_rematch") return {
+      title: "Release and rematch this decision?",
+      description: "Manual authority will be removed first, then the current matching algorithm will calculate a new result. Durable audit history is retained.",
+      label: "Release and rematch",
+    };
+    if (destructive?.kind === "manual_delete") return {
+      title: "Delete this manual decision?",
+      description: destructive.authority.kind === "provider_match"
+        ? "The provider pin will stop being authoritative. Its verified identity history is retained and may still be selected by a future automatic match."
+        : "The manual decision will stop being authoritative. Its durable audit history is retained.",
+      label: "Delete manual decision",
+    };
+    return {
+      title: "Reject this candidate?",
+      description: "The current candidate will be recorded as rejected. You can rematch it later.",
+      label: "Reject candidate",
+    };
   }
 
   onMount(() => {
@@ -283,21 +370,37 @@
 
   <section class="mapping-page" aria-busy={refreshing}>
     <article class="panel mapping-queue">
-      <header class="playlist-toolbar mapping-heading">
+      <header class="panel-heading playlist-toolbar mapping-heading">
         <div>
           <p class="eyebrow">Library matching</p>
           <h2>Match review queue</h2>
           <p>Automatic and manual decisions share one durable matching pipeline.</p>
         </div>
-        <Button variant="secondary" onclick={() => void load()}>Refresh</Button>
+        <div class="panel-heading-actions playlist-toolbar-actions mapping-heading-actions">
+          <Button variant="secondary" disabled={Boolean(action) || refreshing} onclick={() => rematchAllOpen = true}>Rematch all</Button>
+          <Button variant="secondary" disabled={Boolean(action) || refreshing} onclick={() => void load()}>Refresh</Button>
+        </div>
       </header>
 
       <SegmentedNav
         items={[
-          { id: "all", label: "All", count: data.stats.total },
-          { id: "review", label: "Review", count: data.stats.attention },
-          { id: "unresolved", label: "Unresolved", count: data.stats.unresolved },
-          { id: "history", label: "History", count: data.stats.accepted + data.stats.rejected },
+          { id: "all", label: "All", count: data.stats.total, icon: List },
+          { id: "manual", label: "Manual", count: data.stats.manualMatches ?? 0, icon: Hand },
+          { id: "rejected", label: "Rejected", count: data.stats.manualRejections ?? 0, icon: Ban },
+          {
+            id: "automatic",
+            label: "Automatic",
+            count: data.stats.automatic ?? Math.max(0, data.stats.accepted - (data.stats.manualMatches ?? 0)),
+            icon: Sparkles,
+          },
+          { id: "tentative", label: "Tentative", count: data.stats.suggested, icon: Clock3 },
+          {
+            id: "review",
+            label: "Review",
+            count: data.stats.ambiguous ?? Math.max(0, data.stats.review - data.stats.suggested),
+            icon: ScanSearch,
+          },
+          { id: "unresolved", label: "Unresolved", count: data.stats.unresolved, icon: CircleQuestionMark },
         ]}
         active={view}
         label="Mapping views"
@@ -333,6 +436,12 @@
             : candidate?.backendItemId
               ? `/api/admin/downloads/artwork/${encodeURIComponent(candidate.backendItemId)}`
               : ""}
+          {@const visibleAuthorities = (match.manualAuthorities ?? []).filter((authority) =>
+            view === "manual"
+              ? authority.kind !== "rejection"
+              : view === "rejected"
+                ? authority.kind === "rejection"
+                : true)}
           <article class:needs-attention={isAttention(match.state)} class="mapping-row">
             <div class="mapping-comparison">
               <div class="mapping-party">
@@ -391,6 +500,34 @@
               </div>
             </div>
 
+            {#if view === "manual" || view === "rejected"}
+              <div class="manual-authority-list" aria-label={`Manual decisions for ${match.title || "track"}`}>
+                {#each visibleAuthorities as authority (authority.id)}
+                  <div class="manual-authority-row">
+                    <span>
+                      <strong>{authorityLabel(authority)}</strong>
+                      <small>
+                        {authority.reason}
+                        {#if !authority.effective} · Superseded by the current algorithm{/if}
+                      </small>
+                    </span>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={Boolean(action)}
+                      onclick={() => confirmAuthority("manual_rematch", match, authority)}
+                    >Rematch</Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={Boolean(action)}
+                      onclick={() => confirmAuthority("manual_delete", match, authority)}
+                    >Delete</Button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+
             <div class="mapping-row-footer">
               <div class="mapping-evidence">
                 <Badge state={match.state}>{reviewStateLabel(match.state)}</Badge>
@@ -413,23 +550,28 @@
                     <strong>{percent(candidate?.confidence ?? match.confidence)}</strong>
                     <small>Confidence</small>
                   </span>
-                  <Button disabled={action === match.externalSnapshotId} onclick={() => void accept(match)}>Accept</Button>
+                  <Button disabled={Boolean(action)} onclick={() => void accept(match)}>{action === `accept:${match.externalSnapshotId}` ? "Accepting…" : "Accept"}</Button>
                 {/if}
                 {#if !target}
-                  <Button class="mapping-rematch-action" variant="secondary" disabled={action === match.externalSnapshotId} onclick={() => void rematch(match)}>Rematch</Button>
+                  <Button class="mapping-rematch-action" variant="secondary" disabled={Boolean(action)} onclick={() => void rematch(match)}>{action === `rematch:${match.externalSnapshotId}` ? "Rematching…" : "Rematch"}</Button>
                 {/if}
                 <Button class="mapping-search-action" onclick={() => openMatch(match)}>
                   {target ? "Review match" : "Interactive search"}
                 </Button>
                 <DropdownMenu.Root>
-                  <DropdownMenu.Trigger class="track-menu-trigger" aria-label={`More actions for ${match.title || "track"}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
+                  <DropdownMenu.Trigger class="track-menu-trigger" disabled={Boolean(action)} aria-label={`More actions for ${match.title || "track"}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
                   <DropdownMenu.Portal>
                     <DropdownMenu.Content class="bits-menu" sideOffset={4} align="end">
-                      <DropdownMenu.Item class="bits-menu-item" onSelect={() => void rematch(match)}>Rematch</DropdownMenu.Item>
-                      <DropdownMenu.Item class="bits-menu-item danger-item" onSelect={() => confirm("reject", match)}>Reject candidate</DropdownMenu.Item>
-                      {#if match.overrideId}
-                        <DropdownMenu.Item class="bits-menu-item danger-item" onSelect={() => confirm("clear", match)}>Clear manual review</DropdownMenu.Item>
-                      {/if}
+                      <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void rematch(match)}>Rematch</DropdownMenu.Item>
+                      <DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action)} onSelect={() => confirm("reject", match)}>Reject candidate</DropdownMenu.Item>
+                      {#each match.manualAuthorities ?? [] as authority (authority.id)}
+                        <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => confirmAuthority("manual_rematch", match, authority)}>
+                          Rematch {authorityLabel(authority).toLowerCase()}
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action)} onSelect={() => confirmAuthority("manual_delete", match, authority)}>
+                          Delete {authorityLabel(authority).toLowerCase()}
+                        </DropdownMenu.Item>
+                      {/each}
                     </DropdownMenu.Content>
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
@@ -490,14 +632,14 @@
     onReject={(match) => confirm("reject", match)}
   />
 
+  <BulkRematchDialog kind="automatic" bind:open={rematchAllOpen} onQueued={rematchAllQueued} />
+
   <ConfirmDialog
     bind:open={destructiveOpen}
     preventScroll={!dialogOpen}
-    title={destructive?.kind === "clear" ? "Clear manual review?" : "Reject this candidate?"}
-    description={destructive?.kind === "clear"
-      ? "The durable manual decision will be revoked and automatic matching will become authoritative again."
-      : "The current candidate will be recorded as rejected. You can rematch it later."}
-    confirmLabel={destructive?.kind === "clear" ? "Clear review" : "Reject candidate"}
+    title={confirmationCopy().title}
+    description={confirmationCopy().description}
+    confirmLabel={confirmationCopy().label}
     onConfirm={applyDestructive}
   />
 {/if}

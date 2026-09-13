@@ -10,11 +10,13 @@
   let {
     open = $bindable(false),
     account,
+    administrator = false,
     users,
     onSaved,
   }: {
     open: boolean;
     account: ProviderAccount | null;
+    administrator?: boolean;
     users: { id: string; displayName: string }[];
     onSaved: (message: string) => void | Promise<void>;
   } = $props();
@@ -36,6 +38,11 @@
   );
 
   $effect(() => {
+    if (!open) {
+      preparedRevision = "";
+      confirmOpen = false;
+      return;
+    }
     const revision = account ? `${account.id}:${account.revision}` : "";
     if (!open || !account || preparedRevision === revision) return;
     preparedRevision = revision;
@@ -103,29 +110,33 @@
             <legend>Who can use this source connection?</legend>
             <label class:active={audience === "owner"}>
               <input bind:group={audience} type="radio" value="owner" />
-              <span><strong>Connection owner</strong><small>{account.creatorDisplayName || account.ownerDisplayName || "The user who connected it"} can use this account.</small></span>
+              <span><strong>{administrator ? "Connection owner" : "Private"}</strong><small>{administrator ? account.creatorDisplayName || account.ownerDisplayName || "The user who connected it" : "Only you"} can use this account.</small></span>
             </label>
+            {#if administrator}
             <label class:active={audience === "user"}>
               <input bind:group={audience} type="radio" value="user" disabled={!users.length} />
               <span><strong>One user</strong><small>{users.length ? "Choose one active Allstarr user without exposing credentials." : "No active users are available."}</small></span>
             </label>
+            {/if}
             <label class:active={audience === "global"}>
               <input bind:group={audience} type="radio" value="global" />
-              <span><strong>Everyone</strong><small>Every user may route supported Source capabilities through this account.</small></span>
+              <span><strong>Global</strong><small>Every Allstarr user may use eligible provider capabilities. The person who connected it keeps control.</small></span>
             </label>
+            {#if administrator}
             <label class:active={audience === "library"}>
               <input bind:group={audience} type="radio" value="library" />
               <span><strong>One library</strong><small>Only requests in the selected media library may use this account.</small></span>
             </label>
+            {/if}
           </fieldset>
           {#if audience === "user"}
             <label class="field"><span>Allstarr user</span><SelectField bind:value={ownerUserId} label="Allstarr user" options={users.map((user) => ({ value: user.id, label: user.displayName }))} required /></label>
           {:else if audience === "library"}
             <label class="field"><span>Library ID</span><input bind:value={libraryScopeId} required /></label>
           {/if}
-          <p class="credential-safety">Credentials stay encrypted and are never shown when access changes.</p>
+          <p class="credential-safety">Credentials stay encrypted and hidden. Global access may consume provider limits; personal playlists and scrobbling stay private by default. Making this connection private stops new shared requests, not audio already delivered.</p>
           {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
-          <footer>
+          <footer class="dialog-actions">
             <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
             <Button type="submit" disabled={saving}>{saving ? "Saving…" : "Save access"}</Button>
           </footer>

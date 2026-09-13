@@ -100,11 +100,6 @@
       : displayName || providerName(providerId);
   }
 
-  function implementationName(providerId: string) {
-    const origin = providerDefinition(providerId)?.implementationOrigin;
-    return origin ? humanize(origin) : "Built in";
-  }
-
   function deliveryComplete(kind: string, state: string) {
     return kind === "completed" && ["delivered", "ignored"].includes(state);
   }
@@ -160,7 +155,7 @@
     <div class="degraded-banner" role="status">
       <span aria-hidden="true">!</span>
       <p><strong>Some live data is unavailable.</strong> {snapshot.failures.join(" · ")}</p>
-      <Button variant="secondary" size="sm" onclick={() => void refresh()}>Retry</Button>
+      <Button variant="secondary" size="sm" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Trying again…" : "Retry"}</Button>
     </div>
   {/if}
 
@@ -223,7 +218,7 @@
                   <ProviderMark id={item.providerId} definition={providerDefinition(item.providerId)} />
                   <span>
                     <strong>{providerName(item.providerId)}</strong>
-                    <small>{item.providerAccountName || implementationName(item.providerId)}</small>
+                    <small>{item.sourceConfirmed ? (item.cached ? "Cached from" : "Playing from") : "Catalog source · playback unconfirmed"}{item.sourceConfirmed && item.providerAccountName ? ` · ${item.providerAccountName}` : ""}</small>
                   </span>
                 </span>
                 <span class="scrobble-state" class:complete={item.scrobbled}>

@@ -145,6 +145,56 @@ public sealed class ProtocolPlaylistGatewayTests
     [Theory]
     [InlineData(ProtocolKind.Jellyfin)]
     [InlineData(ProtocolKind.Subsonic)]
+    public async Task PlaylistArtwork_UsesTheSelectedTypedCapability(ProtocolKind protocolKind)
+    {
+        var tenant = Guid.CreateVersion7();
+        var user = Guid.CreateVersion7();
+        var accountId = Guid.CreateVersion7();
+        var context = Context(protocolKind, tenant, user);
+        var artworkBytes = new byte[] { 0xFF, 0xD8, 0xFF, 0xD9 };
+        var capability = new Mock<IProviderPlaylistCapability>(MockBehavior.Strict);
+        capability.SetupGet(item => item.ProviderId).Returns("spotify");
+        capability.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Playlist);
+        capability.Setup(item => item.GetPlaylistTracksAsync(
+                It.Is<ProviderExecutionContext>(execution =>
+                    execution.Actor.TenantId == tenant &&
+                    execution.Actor.EffectiveUserId == user &&
+                    execution.Account != null && execution.Account.AccountId == accountId),
+                It.IsAny<ProviderPlaylistTracksRequest>()))
+            .ReturnsAsync(PlaylistPage(includeArtwork: true));
+        capability.Setup(item => item.ResolveArtworkAsync(
+                It.Is<ProviderExecutionContext>(execution =>
+                    execution.Account != null && execution.Account.AccountId == accountId),
+                It.Is<ProviderPlaylistArtworkRequest>(request =>
+                    request.Artwork.ResourceId!.Value == "playlist-1" && request.MaximumBytes == 64)))
+            .ReturnsAsync(ProviderOutcome<ProviderPlaylistArtwork>.Success(
+                new(artworkBytes, "image/jpeg")));
+        var descriptor = Descriptor(hasImplementation: true);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderPlaylistCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => Plan(
+                request,
+                descriptor,
+                capability.Object,
+                new ProviderAccountContext(
+                    accountId, "spotify", ProviderAccountScope.User, 1,
+                    tenantId: tenant, ownerUserId: user)));
+        var legacy = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        var gateway = Gateway(router.Object, Registry(descriptor, capability.Object), legacy.Object);
+
+        var result = await gateway.ResolvePlaylistArtworkAsync(
+            context, "spotify", "playlist-1", maximumBytes: 64);
+
+        Assert.NotNull(result);
+        Assert.Equal(artworkBytes, result.Bytes);
+        Assert.Equal("image/jpeg", result.ContentType);
+        legacy.VerifyNoOtherCalls();
+        capability.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
     public async Task PlaylistRead_RejectsUnavailableUserRouteWithoutCrossUserLegacyFallback(
         ProtocolKind protocolKind)
     {
@@ -231,11 +281,11 @@ public sealed class ProtocolPlaylistGatewayTests
             CancellationToken.None);
     }
 
-    private static ProviderOutcome<ProviderPlaylistTrackPage> PlaylistPage()
+    private static ProviderOutcome<ProviderPlaylistTrackPage> PlaylistPage(bool includeArtwork = false)
     {
         var trackId = new ProviderExternalResourceId(
             "spotify", ProviderResourceKind.Track, "track-1");
-        var summary = PlaylistSummary();
+        var summary = PlaylistSummary(includeArtwork);
         var metadata = new ProviderTrackMetadata(
             trackId,
             "Track",
@@ -255,13 +305,19 @@ public sealed class ProtocolPlaylistGatewayTests
                 "spotify", [new ProviderPlaylistTrack(0, trackId, metadata: metadata)])));
     }
 
-    private static ProviderPlaylistSummary PlaylistSummary() => new(
-        new ProviderExternalResourceId("spotify", ProviderResourceKind.Playlist, "playlist-1"),
-        "Playlist",
-        new ProviderPlaylistOwner("owner"),
-        "revision",
-        durationSeconds: 420,
-        createdDate: new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc));
+    private static ProviderPlaylistSummary PlaylistSummary(bool includeArtwork = false)
+    {
+        var id = new ProviderExternalResourceId(
+            "spotify", ProviderResourceKind.Playlist, "playlist-1");
+        return new(
+            id,
+            "Playlist",
+            new ProviderPlaylistOwner("owner"),
+            "revision",
+            artwork: includeArtwork ? new ProviderArtworkReference(id, revision: "revision") : null,
+            durationSeconds: 420,
+            createdDate: new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc));
+    }
 
     private static ProviderRoutePlan<IProviderPlaylistCapability> Plan(
         ProviderRouteRequest request,

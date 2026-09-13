@@ -6,10 +6,22 @@ namespace allstarr.Core.Identity;
 public sealed class ProviderPolicyOptions
 {
     public const string SectionName = "ProviderPolicy";
+    private static readonly IReadOnlySet<string> PersonalCapabilities =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "playlist", "personal-library", "scrobbling", "favorites"
+        };
 
     public bool AllowGlobalAccounts { get; set; } = true;
     public bool AllowGlobalPersonalAccounts { get; set; }
     public Guid? SharedDownloaderAccountId { get; set; }
+
+    public bool AllowsGlobalAccount(Guid? creatorId, Guid? userId, string capability,
+        bool administratorSelection = false) =>
+        AllowGlobalAccounts &&
+        (!PersonalCapabilities.Contains(capability) ||
+         userId.HasValue && creatorId == userId ||
+         AllowGlobalPersonalAccounts || administratorSelection);
 }
 
 public sealed record ProviderAccountResolutionRequest(
@@ -25,15 +37,6 @@ public sealed record ResolvedProviderAccount(
 
 public sealed class ProviderAccountResolver
 {
-    private static readonly IReadOnlySet<string> PersonalCapabilities =
-        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "playlist",
-            "personal-library",
-            "scrobbling",
-            "favorites"
-        };
-
     private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
     private readonly ProviderPolicyOptions _policy;
 
@@ -93,6 +96,11 @@ public sealed class ProviderAccountResolver
             return new ResolvedProviderAccount(user, "user_account");
         }
 
+        var connected = eligible.FirstOrDefault(item =>
+            item.Scope == ProviderAccountScope.Global && item.CreatedByUserId == request.Principal.UserId);
+        if (connected != null)
+            return new ResolvedProviderAccount(connected, "own_shared_account");
+
         var library = eligible.FirstOrDefault(item => item.Scope == ProviderAccountScope.Library);
         if (library != null)
         {
@@ -118,11 +126,8 @@ public sealed class ProviderAccountResolver
                 account.LibraryScopeId == request.LibraryScopeId,
             ProviderAccountScope.Global =>
                 account.TenantId == null &&
-                _policy.AllowGlobalAccounts &&
-                (!PersonalCapabilities.Contains(request.Capability) ||
-                 _policy.AllowGlobalPersonalAccounts ||
-                 request.Principal.IsAdministrator &&
-                 request.RequestedAccountId == account.Id),
+                _policy.AllowsGlobalAccount(account.CreatedByUserId, request.Principal.UserId,
+                    request.Capability, request.Principal.IsAdministrator && request.RequestedAccountId == account.Id),
             _ => false
         };
     }

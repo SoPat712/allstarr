@@ -5,10 +5,7 @@ using allstarr.Services.Validation;
 
 namespace allstarr.Services.Jellyfin;
 
-/// <summary>
-/// Validates Jellyfin server connectivity at startup.
-/// </summary>
-public class JellyfinStartupValidator : BaseStartupValidator
+public sealed class JellyfinStartupValidator : BaseStartupValidator
 {
     private readonly IOptions<JellyfinSettings> _settings;
 
@@ -48,30 +45,21 @@ public class JellyfinStartupValidator : BaseStartupValidator
 
                 return ValidationResult.Success($"Connected to {serverInfo}");
             }
-            else
-            {
-                return ValidationResult.Failure($"HTTP {(int)response.StatusCode}",
-                    "Jellyfin server returned an error", ConsoleColor.Red);
-            }
+            return ValidationResult.Failure(
+                $"HTTP {(int)response.StatusCode}",
+                "Jellyfin server returned an error");
         }
         catch (TaskCanceledException)
         {
-            return ValidationResult.Failure("TIMEOUT", "Could not reach server within timeout period", ConsoleColor.Red);
+            return ValidationResult.Failure("TIMEOUT", "Could not reach server within timeout period");
         }
         catch (HttpRequestException)
         {
-            return ValidationResult.Failure(
-                "UNREACHABLE",
-                "The Jellyfin server could not be reached",
-                ConsoleColor.Red);
+            return ValidationResult.Failure("UNREACHABLE", "The Jellyfin server could not be reached");
         }
         catch (Exception ex)
         {
-            return ValidationResult.Failure(
-                "ERROR",
-                $"Jellyfin validation failed ({ex.GetType().Name})",
-                ConsoleColor.Red);
+            return ValidationResult.Failure("ERROR", $"Jellyfin validation failed ({ex.GetType().Name})");
         }
     }
-
 }

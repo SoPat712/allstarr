@@ -105,6 +105,10 @@ public class AdminAuthenticationMiddleware
             return true;
         }
 
+        if (HttpMethods.IsPost(method) &&
+            path.TrimEnd('/').Equals("/api/admin/scrobbling/lastfm/authenticate", StringComparison.OrdinalIgnoreCase))
+            return true;
+
         if (IsPlaylistSelfServiceRoute(path))
         {
             return true;
@@ -136,6 +140,7 @@ public class AdminAuthenticationMiddleware
         var normalizedPath = path.Length > 1 ? path.TrimEnd('/') : path;
         return new[]
         {
+            "/api/admin/library-index",
             "/api/admin/playlist-links",
             "/api/admin/playlist-sources",
             "/api/admin/media-targets"
@@ -161,12 +166,13 @@ public class AdminAuthenticationMiddleware
             .Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (segments.Length == 1 && Guid.TryParse(segments[0], out _))
         {
-            return HttpMethods.IsDelete(method);
+            return HttpMethods.IsDelete(method) || HttpMethods.IsPatch(method);
         }
 
         return segments.Length == 2 &&
                Guid.TryParse(segments[0], out _) &&
-               segments[1].Equals("secret", StringComparison.OrdinalIgnoreCase) &&
+               (segments[1].Equals("secret", StringComparison.OrdinalIgnoreCase) ||
+                segments[1].Equals("audience", StringComparison.OrdinalIgnoreCase)) &&
                HttpMethods.IsPut(method);
     }
 

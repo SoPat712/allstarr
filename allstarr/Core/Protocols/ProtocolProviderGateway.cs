@@ -60,6 +60,12 @@ public interface IProtocolProviderGateway
         string providerId,
         string externalId);
 
+    Task<ProviderPlaylistArtwork?> ResolvePlaylistArtworkAsync(
+        ProtocolExecutionContext protocol,
+        string providerId,
+        string externalId,
+        int maximumBytes) => Task.FromResult<ProviderPlaylistArtwork?>(null);
+
     Task<List<Song>> GetPlaylistTracksAsync(
         ProtocolExecutionContext protocol,
         string providerId,
@@ -87,7 +93,10 @@ public interface IProtocolProviderGateway
 public sealed record ProtocolProviderStream(
     HttpResponseMessage Response,
     ProviderStreamLease Lease,
-    string ServingProviderId);
+    string ServingProviderId,
+    string? ServingExternalId = null,
+    Guid? ServingAccountId = null,
+    bool IsCached = false);
 
 public sealed class ProtocolProviderGateway(
     IProviderRouter router,
@@ -97,7 +106,9 @@ public sealed class ProtocolProviderGateway(
     IHttpClientFactory httpClientFactory,
     IConfiguration? configuration = null,
     IApplicationCache? applicationCache = null,
-    ILogger<ProtocolProviderGateway>? logger = null) : IProtocolProviderGateway
+    ILogger<ProtocolProviderGateway>? logger = null,
+    ManagedTrackCacheService? managedTrackCache = null,
+    PlaybackDeliveryActivityStore? playbackActivity = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
     private const int ProviderSearchConcurrency = 4;
@@ -527,24 +538,29 @@ public sealed class ProtocolProviderGateway(
         string providerId,
         string externalId)
     {
-        ArgumentNullException.ThrowIfNull(protocol);
-        if (protocol.Actor is null)
-            throw new UnauthorizedAccessException("A resolved user is required for provider playlists.");
+        var (_, summary) = await ReadPlaylistSummaryAsync(
+            protocol, providerId, externalId, "protocol-playlist-get");
+        return summary == null ? null : Map(summary);
+    }
 
-        var routed = await PlanExactAsync<IProviderPlaylistCapability>(
-            protocol, providerId, ProviderCapabilityKind.Playlist, "protocol-playlist-get");
-        if (routed.Candidate != null)
-        {
-            var playlistId = new ProviderExternalResourceId(providerId, ProviderResourceKind.Playlist, externalId);
-            var outcome = await routed.Candidate.Implementation.GetPlaylistTracksAsync(
-                routed.Candidate.Context,
-                new ProviderPlaylistTracksRequest(playlistId, new ProviderPageRequest(1)));
-            if (outcome.IsSuccess) return Map(outcome.RequireValue().Playlist);
-            if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
-            ThrowRouteFailure(outcome.Error);
-        }
+    public async Task<ProviderPlaylistArtwork?> ResolvePlaylistArtworkAsync(
+        ProtocolExecutionContext protocol,
+        string providerId,
+        string externalId,
+        int maximumBytes)
+    {
+        var (candidate, summary) = await ReadPlaylistSummaryAsync(
+            protocol, providerId, externalId, "protocol-playlist-artwork");
+        if (candidate == null || summary?.Artwork?.ResourceId == null) return null;
 
-        await RequireCompatibilityProviderAsync(protocol, providerId, ProviderCapabilityKind.Playlist);
+        var outcome = await candidate.Implementation.ResolveArtworkAsync(
+            candidate.Context,
+            new ProviderPlaylistArtworkRequest(summary.Artwork, maximumBytes));
+        if (outcome.IsSuccess) return outcome.RequireValue();
+        if (outcome.Error!.Kind is ProviderErrorKind.NotFound or
+            ProviderErrorKind.NotSupported or ProviderErrorKind.CapabilityUnavailable)
+            return null;
+        ThrowRouteFailure(outcome.Error);
         return null;
     }
 
@@ -585,6 +601,36 @@ public sealed class ProtocolProviderGateway(
         return [];
     }
 
+    private async Task<(ProviderRouteCandidate<IProviderPlaylistCapability>? Candidate,
+        ProviderPlaylistSummary? Summary)> ReadPlaylistSummaryAsync(
+        ProtocolExecutionContext protocol,
+        string providerId,
+        string externalId,
+        string operationId)
+    {
+        ArgumentNullException.ThrowIfNull(protocol);
+        if (protocol.Actor is null)
+            throw new UnauthorizedAccessException("A resolved user is required for provider playlists.");
+
+        var routed = await PlanExactAsync<IProviderPlaylistCapability>(
+            protocol, providerId, ProviderCapabilityKind.Playlist, operationId);
+        if (routed.Candidate == null)
+        {
+            await RequireCompatibilityProviderAsync(protocol, providerId, ProviderCapabilityKind.Playlist);
+            return (null, null);
+        }
+
+        var playlistId = new ProviderExternalResourceId(
+            providerId, ProviderResourceKind.Playlist, externalId);
+        var outcome = await routed.Candidate.Implementation.GetPlaylistTracksAsync(
+            routed.Candidate.Context,
+            new ProviderPlaylistTracksRequest(playlistId, new ProviderPageRequest(1)));
+        if (outcome.IsSuccess) return (routed.Candidate, outcome.RequireValue().Playlist);
+        if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return (routed.Candidate, null);
+        ThrowRouteFailure(outcome.Error);
+        return (routed.Candidate, null);
+    }
+
     public async Task<ProtocolProviderStream?> OpenStreamAsync(
         ProtocolExecutionContext protocol,
         string providerId,
@@ -596,6 +642,12 @@ public sealed class ProtocolProviderGateway(
         ArgumentNullException.ThrowIfNull(protocol);
         if (protocol.Actor is null) return null;
 
+        using var opening = CancellationTokenSource.CreateLinkedTokenSource(protocol.CancellationToken);
+        var remaining = protocol.Deadline - DateTimeOffset.UtcNow;
+        opening.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
+        protocol = new ProtocolExecutionContext(protocol.Protocol, protocol.BackendInstanceId,
+            protocol.VerifiedBackendPrincipalId, protocol.Principal, protocol.CorrelationId,
+            protocol.Deadline, opening.Token, protocol.Client, protocol.LibraryScopeId);
         providerId = NormalizeProvider(providerId);
         var actor = protocol.RequireActor();
         var exactRouteMissKey = CacheKeyBuilder.BuildPlaybackRouteNegativeKey(
@@ -618,10 +670,23 @@ public sealed class ProtocolProviderGateway(
         var rangeStart = parsedRange?.Ranges.Single().From;
         var trackId = new ProviderExternalResourceId(
             providerId, ProviderResourceKind.Track, externalId);
-        var providerOrder = new[] { providerId }
-            .Concat(ResolveProviderOrder(ProviderCapabilityKind.Streaming))
+        var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Streaming)
+            .Append(providerId)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+        var itemId = ProtocolItemId(trackId);
+        var previous = playbackActivity?.StreamFor(protocol, itemId, quality);
+        var resuming = parsedRange != null && rangeStart != 0;
+        var hasPlaybackIdentity = !string.IsNullOrWhiteSpace(protocol.Client.DeviceId);
+        if (!hasPlaybackIdentity) providerOrder = [providerId];
+        if (resuming)
+        {
+            // Byte offsets cannot be transferred between two encodings of the same recording.
+            if (hasPlaybackIdentity && playbackActivity != null && previous == null)
+                throw new HttpRequestException("Restart playback before seeking this external track.", null,
+                    HttpStatusCode.RequestedRangeNotSatisfiable);
+            providerOrder = [previous?.ProviderId ?? providerId];
+        }
         var plan = await router.PlanAsync<IProviderStreamingCapability>(Request(
             protocol,
             actor,
@@ -656,17 +721,35 @@ public sealed class ProtocolProviderGateway(
             return null;
         }
 
+        foreach (var candidate in plan.Candidates)
+        {
+            protocol.CancellationToken.ThrowIfCancellationRequested();
+            var servingTrack = candidate.TrackId ?? trackId;
+            if (resuming && previous != null &&
+                (servingTrack.Value != previous.ExternalId || candidate.Context.Account?.AccountId != previous.AccountId))
+                throw new HttpRequestException("The previous playback source is no longer available. Restart playback.", null,
+                    HttpStatusCode.RequestedRangeNotSatisfiable);
+            var cached = managedTrackCache == null ? null : await managedTrackCache.TryOpenAsync(
+                servingTrack, candidate.Context.Account?.AccountId, quality, protocol.CancellationToken);
+            if (cached != null) return Opened(cached);
+        }
+
         for (var candidateIndex = 0; candidateIndex < plan.Candidates.Count; candidateIndex++)
         {
+            protocol.CancellationToken.ThrowIfCancellationRequested();
             var candidate = plan.Candidates[candidateIndex];
+            var servingTrack = candidate.TrackId ?? trackId;
             var leaseRequest = new ProviderStreamLeaseRequest(
-                candidate.TrackId ?? trackId,
+                servingTrack,
                 quality,
                 rangeStart);
 
             async Task<ProviderOutcome<ProviderStreamLease>> ResolveLeaseAsync() =>
                 await candidate.Implementation.GetStreamLeaseAsync(
-                    candidate.Context,
+                    new ProviderExecutionContext(candidate.Context.Actor, candidate.Context.ProviderId,
+                        candidate.Context.Account, candidate.Context.Library, candidate.Context.Policy,
+                        candidate.Context.OperationId, candidate.Context.CorrelationId, protocol.Deadline,
+                        protocol.CancellationToken, candidate.Context.IdempotencyKey),
                     leaseRequest);
 
             async Task<HttpResponseMessage> OpenLeaseAsync(ProviderStreamLease lease)
@@ -684,63 +767,101 @@ public sealed class ProtocolProviderGateway(
                         protocol.CancellationToken);
             }
 
-            var leaseOutcome = await ResolveLeaseAsync();
-            if (!leaseOutcome.IsSuccess)
+            var outcome = await OpenCandidateAsync(ResolveLeaseAsync, OpenLeaseAsync,
+                headOnly, protocol.CancellationToken);
+            if (outcome.IsSuccess)
             {
-                var fallback = router.EvaluateFallback(
-                    plan,
-                    candidateIndex,
-                    leaseOutcome.Error!);
-                if (fallback.Disposition == ProviderFallbackDisposition.Advance)
-                {
-                    logger?.LogInformation(
-                        "Exact playback fallback advanced from chosen provider {ChosenProvider} after {FailureCode}",
-                        providerId,
-                        leaseOutcome.Error!.Code);
-                    continue;
-                }
-                ThrowRouteFailure(leaseOutcome.Error!);
-                return null;
+                var (response, lease) = outcome.RequireValue();
+                return Opened(new ProtocolProviderStream(response, lease, candidate.Provider.Id,
+                    servingTrack.Value, candidate.Context.Account?.AccountId));
             }
-
-            var lease = leaseOutcome.RequireValue();
-            HttpResponseMessage response;
-            try
+            if (!resuming && router.EvaluateFallback(plan, candidateIndex, outcome.Error!).Disposition ==
+                ProviderFallbackDisposition.Advance)
             {
-                response = await OpenLeaseAsync(lease);
+                logger?.LogInformation("Playback advanced from {Provider} after {FailureCode}",
+                    candidate.Provider.Id, outcome.Error!.Code);
+                continue;
             }
-            catch (HttpRequestException) when (
-                lease.RetryBehavior != ProviderStreamRetryBehavior.DoNotRetry)
-            {
-                if (lease.RetryBehavior == ProviderStreamRetryBehavior.RefreshLease)
-                {
-                    var refreshed = await ResolveLeaseAsync();
-                    if (!refreshed.IsSuccess) ThrowRouteFailure(refreshed.Error!);
-                    lease = refreshed.RequireValue();
-                }
-                response = await OpenLeaseAsync(lease);
-            }
-            if (ShouldRetry(lease, response.StatusCode))
-            {
-                response.Dispose();
-                if (lease.RetryBehavior == ProviderStreamRetryBehavior.RefreshLease)
-                {
-                    var refreshed = await ResolveLeaseAsync();
-                    if (!refreshed.IsSuccess) ThrowRouteFailure(refreshed.Error!);
-                    lease = refreshed.RequireValue();
-                }
-                response = await OpenLeaseAsync(lease);
-            }
-
-            logger?.LogInformation(
-                "Opened stream with chosen provider {ChosenProvider} and serving provider {ServingProvider}",
-                providerId,
-                candidate.Provider.Id);
-            return new ProtocolProviderStream(response, lease, candidate.Provider.Id);
+            ThrowRouteFailure(outcome.Error!);
         }
 
         return null;
+
+        ProtocolProviderStream Opened(ProtocolProviderStream stream)
+        {
+            stream.Response.Headers.Remove("X-Allstarr-Provider");
+            stream.Response.Headers.Add("X-Allstarr-Provider", stream.ServingProviderId);
+            if (!headOnly) playbackActivity?.StreamOpened(protocol, itemId, quality, stream);
+            logger?.LogInformation("Opened external playback from {Provider} (cached: {Cached})",
+                stream.ServingProviderId, stream.IsCached);
+            return stream;
+        }
     }
+
+    private static async Task<ProviderOutcome<(HttpResponseMessage Response, ProviderStreamLease Lease)>> OpenCandidateAsync(
+        Func<Task<ProviderOutcome<ProviderStreamLease>>> resolve,
+        Func<ProviderStreamLease, Task<HttpResponseMessage>> open,
+        bool headOnly,
+        CancellationToken cancellationToken)
+    {
+        ProviderStreamLease? lease = null;
+        ProviderError error = new(ProviderErrorKind.TransientFailure);
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            HttpResponseMessage? response = null;
+            var transferred = false;
+            try
+            {
+                if (lease == null || lease.RetryBehavior == ProviderStreamRetryBehavior.RefreshLease)
+                {
+                    var result = await resolve();
+                    if (!result.IsSuccess) return ProviderOutcome<(HttpResponseMessage, ProviderStreamLease)>.Failure(result.Error!);
+                    lease = result.RequireValue();
+                }
+                response = await open(lease);
+                if (response.IsSuccessStatusCode)
+                {
+                    response.Content.Headers.ContentType ??= new MediaTypeHeaderValue(lease.Media.MimeType);
+                    var mediaType = response.Content.Headers.ContentType?.MediaType;
+                    if ((mediaType == null || mediaType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) ||
+                        mediaType is "application/octet-stream" or "video/mp4") &&
+                        (headOnly || await PrefetchedStream.PrepareAsync(response, cancellationToken)))
+                    {
+                        transferred = true;
+                        return ProviderOutcome<(HttpResponseMessage, ProviderStreamLease)>.Success((response, lease));
+                    }
+                    error = new(ProviderErrorKind.IncompatibleMedia);
+                    break;
+                }
+                error = StreamError(response.StatusCode);
+                if (!ShouldRetry(lease, response.StatusCode)) break;
+            }
+            catch (Exception exception) when (exception is HttpRequestException or IOException ||
+                exception is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            {
+                error = exception is HttpRequestException { StatusCode: { } status }
+                    ? StreamError(status) : new(ProviderErrorKind.TransientFailure);
+                if (lease?.RetryBehavior is null or ProviderStreamRetryBehavior.DoNotRetry ||
+                    exception is HttpRequestException { StatusCode: { } failedStatus } && !ShouldRetry(lease, failedStatus)) break;
+            }
+            finally
+            {
+                if (!transferred) response?.Dispose();
+            }
+        }
+        return ProviderOutcome<(HttpResponseMessage, ProviderStreamLease)>.Failure(error);
+    }
+
+    private static ProviderError StreamError(HttpStatusCode status) => status switch
+    {
+        HttpStatusCode.NotFound or HttpStatusCode.Gone => new(ProviderErrorKind.NotFound),
+        HttpStatusCode.Unauthorized => new(ProviderErrorKind.Unauthorized),
+        HttpStatusCode.Forbidden => new(ProviderErrorKind.Forbidden),
+        HttpStatusCode.TooManyRequests => new(ProviderErrorKind.RateLimited, TimeSpan.FromSeconds(30)),
+        HttpStatusCode.RequestTimeout or >= HttpStatusCode.InternalServerError => new(ProviderErrorKind.TransientFailure),
+        _ => new(ProviderErrorKind.PermanentFailure)
+    };
 
     private static bool ShouldRetry(ProviderStreamLease lease, HttpStatusCode statusCode) =>
         lease.RetryBehavior != ProviderStreamRetryBehavior.DoNotRetry &&

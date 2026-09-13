@@ -45,11 +45,7 @@ public interface IAppleDownloadEndpointDiscovery
     Task<AppleDownloadEndpointSnapshot> DiscoverAsync(CancellationToken cancellationToken = default);
 }
 
-/// <summary>
-/// Discovers an explicitly configured, operator-managed Apple download endpoint.
-/// The named client must not follow redirects; no Apple credentials are sent by
-/// Allstarr during discovery.
-/// </summary>
+// Discovery follows no redirects and never sends Apple credentials.
 public sealed class AppleDownloadEndpointDiscovery(
     IHttpClientFactory httpClientFactory,
     IOptions<AppleDownloadSettings> settings) : IAppleDownloadEndpointDiscovery

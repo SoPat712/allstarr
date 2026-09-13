@@ -11,6 +11,8 @@ namespace allstarr.Services.AppleMusic;
 
 public class AppleMusicMetadataService : IConcreteMetadataService
 {
+    public string ProviderId => "apple-download";
+
     private readonly HttpClient _httpClient;
     private readonly AppleDownloadSettings _settings;
     private readonly ILogger<AppleMusicMetadataService> _logger;
@@ -73,7 +75,7 @@ public class AppleMusicMetadataService : IConcreteMetadataService
 
     public async Task<Song?> FindSongByIsrcAsync(string isrc, CancellationToken cancellationToken = default)
     {
-        // Fallback to song search by ISRC if not explicitly supported via an endpoint
+        // The sidecar has no dedicated ISRC lookup, so catalog search is the fallback.
         var results = await SearchSongsAsync(isrc, 1, cancellationToken);
         return results.FirstOrDefault();
     }
@@ -262,8 +264,6 @@ public class AppleMusicMetadataService : IConcreteMetadataService
 
     private static int? Year(string? releaseDate) =>
         DateTimeOffset.TryParse(releaseDate, out var parsed) ? parsed.Year : null;
-
-    // --- JSON Mapping Helper Classes ---
 
     private class GamdlSong
     {

@@ -96,6 +96,60 @@ public sealed class PlaylistPlayableSearchServiceTests
     }
 
     [Fact]
+    public async Task AutomaticSearchUsesConfiguredProviderPriorityWindows()
+    {
+        var tenant = Guid.CreateVersion7();
+        var user = Guid.CreateVersion7();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
+            .Returns(["apple-download", "deezer", "qobuz", "fourth"]);
+        gateway.Setup(item => item.SearchPlayableSongsAsync(
+                It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 60))
+            .ReturnsAsync(
+            [
+                new Song
+                {
+                    ExternalProvider = "apple-download",
+                    ExternalId = "preferred",
+                    Title = "Window Song",
+                    Artist = "The Artist",
+                    Duration = 244
+                },
+                new Song
+                {
+                    ExternalProvider = "deezer",
+                    ExternalId = "raw-best",
+                    Title = "Window Song",
+                    Artist = "The Artist",
+                    Duration = 240
+                }
+            ]);
+        var service = new PlaylistPlayableSearchService(
+            gateway.Object,
+            new TrackMatchDecisionEngine(),
+            null!,
+            new IdentityOptions(),
+            Options.Create(new JellyfinSettings()),
+            NullLogger<PlaylistPlayableSearchService>.Instance);
+        var result = await service.MatchAsync(
+            Context(tenant, user),
+            new ExternalTrackMatchSnapshot(
+                "source", "spotify", "source-track", "Window Song",
+                "The Artist", null, null, 240_000, null, null, null),
+            new TrackMatchScope(
+                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1),
+            [],
+            null,
+            CancellationToken.None);
+
+        var selected = Assert.Single(result.RoutableExternalCandidates);
+        Assert.Equal("preferred", selected.ExternalId);
+        Assert.Equal("preferred", result.SelectedExternal!.ExternalId);
+        Assert.Contains("provider_priority_window_selected", result.Decision.Reasons);
+        Assert.True(result.Decision.Candidates[0].Confidence < result.Decision.Candidates[1].Confidence);
+    }
+
+    [Fact]
     public async Task Concise_search_query_keeps_full_title_scoring()
     {
         var tenant = Guid.CreateVersion7();

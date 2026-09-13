@@ -102,51 +102,40 @@ public class QobuzDownloadServiceTests : IDisposable
             _loggerMock.Object);
     }
 
-    #region IsAvailableAsync Tests
 
     [Fact]
     public async Task IsAvailableAsync_WithoutUserAuthToken_ReturnsFalse()
     {
-        // Arrange
         var service = CreateService(userAuthToken: null, userId: "123");
 
-        // Act
         var result = await service.IsAvailableAsync();
 
-        // Assert
         Assert.False(result);
     }
 
     [Fact]
     public async Task IsAvailableAsync_WithoutUserId_ReturnsFalse()
     {
-        // Arrange
         var service = CreateService(userAuthToken: "test-token", userId: null);
 
-        // Act
         var result = await service.IsAvailableAsync();
 
-        // Assert
         Assert.False(result);
     }
 
     [Fact]
     public async Task IsAvailableAsync_WithEmptyCredentials_ReturnsFalse()
     {
-        // Arrange
         var service = CreateService(userAuthToken: "", userId: "");
 
-        // Act
         var result = await service.IsAvailableAsync();
 
-        // Assert
         Assert.False(result);
     }
 
     [Fact]
     public async Task IsAvailableAsync_WithValidCredentials_WhenBundleServiceWorks_ReturnsTrue()
     {
-        // Arrange
         // Mock a successful response for bundle service
         var mockResponse = new HttpResponseMessage
         {
@@ -163,17 +152,14 @@ public class QobuzDownloadServiceTests : IDisposable
 
         var service = CreateService(userAuthToken: "test-token", userId: "123");
 
-        // Act
         var result = await service.IsAvailableAsync();
 
-        // Assert - Will be false because bundle extraction will fail with our mock, but service is constructed
         Assert.False(result);
     }
 
     [Fact]
     public async Task IsAvailableAsync_WhenBundleServiceFails_ReturnsFalse()
     {
-        // Arrange
         var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.ServiceUnavailable
@@ -188,24 +174,18 @@ public class QobuzDownloadServiceTests : IDisposable
 
         var service = CreateService(userAuthToken: "test-token", userId: "123");
 
-        // Act
         var result = await service.IsAvailableAsync();
 
-        // Assert
         Assert.False(result);
     }
 
-    #endregion
 
-    #region DownloadSongAsync Tests
 
     [Fact]
     public async Task DownloadSongAsync_WithUnsupportedProvider_ThrowsNotSupportedException()
     {
-        // Arrange
         var service = CreateService(userAuthToken: "test-token", userId: "123");
 
-        // Act & Assert
         await Assert.ThrowsAsync<NotSupportedException>(() =>
             service.DownloadSongAsync("spotify", "123456"));
     }
@@ -213,7 +193,6 @@ public class QobuzDownloadServiceTests : IDisposable
     [Fact]
     public async Task DownloadSongAsync_WhenAlreadyDownloaded_ReturnsExistingPath()
     {
-        // Arrange
         var existingPath = Path.Combine(_testDownloadPath, "existing-song.flac");
         await File.WriteAllTextAsync(existingPath, "fake audio content");
 
@@ -223,17 +202,14 @@ public class QobuzDownloadServiceTests : IDisposable
 
         var service = CreateService(userAuthToken: "test-token", userId: "123");
 
-        // Act
         var result = await service.DownloadSongAsync("qobuz", "123456");
 
-        // Assert
         Assert.Equal(existingPath, result);
     }
 
     [Fact]
     public async Task DownloadSongAsync_WhenSongNotFound_ThrowsException()
     {
-        // Arrange
         _localLibraryServiceMock
             .Setup(s => s.GetLocalPathForExternalSongAsync("qobuz", "999999"))
             .ReturnsAsync((string?)null);
@@ -244,46 +220,22 @@ public class QobuzDownloadServiceTests : IDisposable
 
         var service = CreateService(userAuthToken: "test-token", userId: "123");
 
-        // Act & Assert
         var exception = await Assert.ThrowsAsync<Exception>(() =>
             service.DownloadSongAsync("qobuz", "999999"));
 
         Assert.Equal("Song not found", exception.Message);
     }
 
-    #endregion
 
-    #region GetDownloadStatus Tests
 
     [Fact]
     public void GetDownloadStatus_WithUnknownSongId_ReturnsNull()
     {
-        // Arrange
         var service = CreateService(userAuthToken: "test-token", userId: "123");
 
-        // Act
         var result = service.GetDownloadStatus("unknown-id");
 
-        // Assert
         Assert.Null(result);
     }
 
-    #endregion
-
-    #region Album Download Tests
-
-    [Fact]
-    public void DownloadRemainingAlbumTracksInBackground_WithUnsupportedProvider_DoesNotThrow()
-    {
-        // Arrange
-        var service = CreateService(
-            userAuthToken: "test-token",
-            userId: "123",
-            downloadMode: DownloadMode.Album);
-
-        // Act & Assert - Should not throw, just log warning
-        service.DownloadRemainingAlbumTracksInBackground("spotify", "123456", "789");
-    }
-
-    #endregion
 }

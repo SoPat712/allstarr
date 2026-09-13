@@ -5,6 +5,7 @@
     House,
     Library,
     LogOut,
+    MoreHorizontal,
     Settings,
     Waypoints,
   } from "@lucide/svelte";
@@ -16,6 +17,7 @@
     home: House,
     library: Library,
     logout: LogOut,
+    more: MoreHorizontal,
     settings: Settings,
     sources: Waypoints,
   };

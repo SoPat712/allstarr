@@ -6,10 +6,6 @@ using allstarr.Services.Common;
 
 namespace allstarr.Services.Lyrics;
 
-/// <summary>
-/// Orchestrates lyrics fetching from multiple sources with priority-based fallback.
-/// Note: Jellyfin local lyrics are handled by the controller before calling this orchestrator.
-/// </summary>
 public class LyricsOrchestrator
 {
     private readonly SpotifyLyricsService _spotifyLyrics;
@@ -32,16 +28,6 @@ public class LyricsOrchestrator
         _logger = logger;
     }
 
-    /// <summary>
-    /// Fetches lyrics with automatic fallback through all available sources.
-    /// Note: Jellyfin local lyrics are handled by the controller before calling this.
-    /// </summary>
-    /// <param name="trackName">Track title</param>
-    /// <param name="artistNames">Artist names (can be multiple)</param>
-    /// <param name="albumName">Album name</param>
-    /// <param name="durationSeconds">Track duration in seconds</param>
-    /// <param name="spotifyTrackId">Spotify track ID (if available)</param>
-    /// <returns>Lyrics info or null if not found</returns>
     public async Task<LyricsInfo?> GetLyricsAsync(
         string trackName,
         string[] artistNames,
@@ -82,10 +68,6 @@ public class LyricsOrchestrator
         return null;
     }
 
-    /// <summary>
-    /// Prefetches lyrics in the background (for cache warming).
-    /// Skips Jellyfin local since we don't have an itemId.
-    /// </summary>
     public async Task<bool> PrefetchLyricsAsync(
         string trackName,
         string[] artistNames,
@@ -127,8 +109,6 @@ public class LyricsOrchestrator
         return false;
     }
 
-    #region Private Helper Methods
-
     private async Task<LyricsInfo?> TrySpotifyLyrics(string spotifyTrackId, string artistName, string trackName)
     {
         if (string.IsNullOrWhiteSpace(_spotifySettings.LyricsApiUrl))
@@ -139,8 +119,11 @@ public class LyricsOrchestrator
 
         try
         {
-            // Validate Spotify ID format
-            var cleanSpotifyId = spotifyTrackId.Replace("spotify:track:", "").Trim();
+            const string prefix = "spotify:track:";
+            var value = spotifyTrackId.Trim();
+            var cleanSpotifyId = value.StartsWith(prefix, StringComparison.Ordinal)
+                ? value[prefix.Length..]
+                : value;
 
             if (cleanSpotifyId.Length != 22 || cleanSpotifyId.Contains(":") || cleanSpotifyId.Contains("local"))
             {
@@ -148,14 +131,14 @@ public class LyricsOrchestrator
                 return null;
             }
 
-            _logger.LogDebug("→ Trying Spotify lyrics for track ID: {SpotifyId}", cleanSpotifyId);
+            _logger.LogDebug("Trying Spotify lyrics for track ID: {SpotifyId}", cleanSpotifyId);
 
             var spotifyLyrics = await _spotifyLyrics.GetLyricsByTrackIdAsync(cleanSpotifyId);
 
             if (spotifyLyrics != null && spotifyLyrics.Lines.Count > 0)
             {
-                _logger.LogDebug("✓ Found Spotify lyrics for {Artist} - {Track} ({LineCount} lines, type: {SyncType})",
-                    artistName, trackName, spotifyLyrics.Lines.Count, spotifyLyrics.SyncType);
+                _logger.LogDebug("Found Spotify lyrics for {Artist} - {Track} ({LineCount} lines)",
+                    artistName, trackName, spotifyLyrics.Lines.Count);
 
                 return _spotifyLyrics.ToLyricsInfo(spotifyLyrics);
             }
@@ -198,6 +181,4 @@ public class LyricsOrchestrator
             return null;
         }
     }
-
-    #endregion
 }

@@ -11,6 +11,8 @@
     confirmVariant = "destructive",
     disabled = false,
     preventScroll = true,
+    closeOnConfirm = true,
+    error = "",
     onConfirm,
   }: {
     open: boolean;
@@ -21,6 +23,8 @@
     confirmVariant?: ButtonVariant;
     disabled?: boolean;
     preventScroll?: boolean;
+    closeOnConfirm?: boolean;
+    error?: string;
     onConfirm: () => void | Promise<void>;
   } = $props();
 </script>
@@ -31,9 +35,14 @@
     <AlertDialog.Content class="confirm-dialog" {preventScroll}>
       <AlertDialog.Title>{title}</AlertDialog.Title>
       <AlertDialog.Description>{description}</AlertDialog.Description>
-      <footer>
+      {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
+      <footer class="dialog-actions">
         <AlertDialog.Cancel class={buttonVariants({ variant: "secondary" })} {disabled}>{cancelLabel}</AlertDialog.Cancel>
-        <AlertDialog.Action class={buttonVariants({ variant: confirmVariant })} {disabled} onclick={() => void onConfirm()}>{confirmLabel}</AlertDialog.Action>
+        {#if closeOnConfirm}
+          <AlertDialog.Action class={buttonVariants({ variant: confirmVariant })} {disabled} onclick={() => void onConfirm()}>{confirmLabel}</AlertDialog.Action>
+        {:else}
+          <button class={buttonVariants({ variant: confirmVariant })} {disabled} type="button" onclick={() => void onConfirm()}>{confirmLabel}</button>
+        {/if}
       </footer>
     </AlertDialog.Content>
   </AlertDialog.Portal>

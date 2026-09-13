@@ -9,7 +9,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class ProtocolProviderStreamingGatewayTests
+public sealed partial class ProtocolProviderStreamingGatewayTests
 {
     [Fact]
     public async Task OpenStream_ActorlessContextDefersToCompatibilityFallback()
@@ -416,7 +416,7 @@ public sealed class ProtocolProviderStreamingGatewayTests
             true,
             new ProviderMediaFormat("audio/flac", "flac", "flac"),
             ProviderStreamRetryBehavior.DoNotRetry,
-            (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)))));
+            (_, _) => Task.FromResult(AudioResponse()))));
         var registry = Registry(first.Object, second.Object);
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
         router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(
@@ -557,7 +557,7 @@ public sealed class ProtocolProviderStreamingGatewayTests
             (request, _) =>
             {
                 observedRange = request.Headers.Range?.ToString();
-                return Task.FromResult(new HttpResponseMessage(
+                return Task.FromResult(AudioResponse(
                     observedRange == null ? HttpStatusCode.OK : HttpStatusCode.PartialContent));
             });
         var capability = Capability("qobuz", ProviderOutcome<ProviderStreamLease>.Success(lease));
@@ -655,7 +655,7 @@ public sealed class ProtocolProviderStreamingGatewayTests
                         var status = retryBehavior == ProviderStreamRetryBehavior.RefreshLease
                             ? ordinal == 1 ? HttpStatusCode.Forbidden : HttpStatusCode.OK
                             : openCount == 1 ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK;
-                        return Task.FromResult(new HttpResponseMessage(status));
+                        return Task.FromResult(AudioResponse(status));
                     }));
             });
         var registry = Registry(capability.Object);
@@ -879,6 +879,7 @@ public sealed class ProtocolProviderStreamingGatewayTests
             "stream-test",
             DateTimeOffset.UtcNow.AddMinutes(1),
             CancellationToken.None,
+            new ProtocolClientDescriptor("client", "device"),
             libraryScopeId: "music");
     }
 
@@ -897,7 +898,7 @@ public sealed class ProtocolProviderStreamingGatewayTests
             CancellationToken cancellationToken)
         {
             inspect(request);
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            return Task.FromResult(AudioResponse());
         }
     }
 }

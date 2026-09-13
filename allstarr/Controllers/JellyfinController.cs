@@ -26,10 +26,7 @@ using SkiaSharp;
 
 namespace allstarr.Controllers;
 
-/// <summary>
-/// Jellyfin-compatible API controller. Merges local library with external providers
-/// (Deezer, Qobuz, Apple Music, and extensions). Auth goes through Jellyfin.
-/// </summary>
+// Jellyfin remains the authentication authority while Allstarr augments its music surface.
 [ApiController]
 [Route("")]
 [ServiceFilter(typeof(JellyfinAuthFilter), Order = int.MinValue)]
@@ -234,9 +231,6 @@ public partial class JellyfinController : ControllerBase
 
     #region Items
 
-    /// <summary>
-    /// Gets a single item by ID.
-    /// </summary>
     [HttpGet("Items/{itemId}", Order = 10)]
     [HttpGet("Users/{userId}/Items/{itemId}", Order = 10)]
     public async Task<IActionResult> GetItem(string itemId, string? userId = null)
@@ -267,7 +261,6 @@ public partial class JellyfinController : ControllerBase
             if (projection != null) return projection;
         }
 
-        // Check for external playlist
         if (PlaylistIdHelper.IsExternalPlaylist(itemId))
         {
             return await GetPlaylistAsAlbum(itemId);
@@ -295,9 +288,6 @@ public partial class JellyfinController : ControllerBase
         return HandleProxyResponse(result, statusCode);
     }
 
-    /// <summary>
-    /// Gets an external item (song, album, or artist).
-    /// </summary>
     private async Task<IActionResult> GetExternalItem(string provider, string? type, string externalId, CancellationToken cancellationToken = default)
     {
         switch (type)
@@ -317,7 +307,6 @@ public partial class JellyfinController : ControllerBase
                 if (artist == null) return _itemProtocolAdapter.ShapeNotFound("Artist");
                 var albums = await GetProviderArtistAlbumsAsync(provider, externalId, cancellationToken);
 
-                // Fill in artist info for albums
                 foreach (var a in albums)
                 {
                     if (string.IsNullOrEmpty(a.Artist)) a.Artist = artist.Name;
@@ -327,7 +316,6 @@ public partial class JellyfinController : ControllerBase
                 return _itemProtocolAdapter.ShapeArtist(artist, albums);
 
             default:
-                // Try song first, then album
                 var s = await GetProviderSongAsync(provider, externalId, cancellationToken);
                 if (s != null) return _itemProtocolAdapter.ShapeSong(s);
 
@@ -338,9 +326,6 @@ public partial class JellyfinController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Gets child items for an external parent (album tracks or artist albums).
-    /// </summary>
     private enum ExternalArtistRelation
     {
         All,
@@ -504,7 +489,6 @@ public partial class JellyfinController : ControllerBase
             }
         }
 
-        // Fallback: return empty result
         _logger.LogWarning("Unhandled GetExternalChildItems request: provider={Provider}, type={Type}, externalId={ExternalId}, itemTypes={ItemTypes}",
             provider, type, externalId, string.Join(",", itemTypes ?? Array.Empty<string>()));
         return _responseBuilder.CreateItemsResponse(new List<Song>());
@@ -595,15 +579,11 @@ public partial class JellyfinController : ControllerBase
         _logger.LogDebug("GetCuratorPlaylists: provider={Provider}, curatorId={CuratorId}, itemTypes={ItemTypes}",
             provider, externalId, string.Join(",", itemTypes ?? Array.Empty<string>()));
 
-        // Extract curator name from externalId (format: "curator-{name}")
+        // Curator IDs encode the name; provider APIs require search-then-filter.
         var curatorName = externalId.Replace("curator-", "", StringComparison.OrdinalIgnoreCase);
 
-        // Search for playlists by this curator
-        // Since we don't have a direct "get playlists by curator" method, we'll search for the curator name
-        // and filter the results
         var playlists = await _metadataService.SearchPlaylistsAsync(curatorName, 50, cancellationToken);
 
-        // Filter to only playlists from this curator (case-insensitive match)
         var curatorPlaylists = playlists
             .Where(p => !string.IsNullOrEmpty(p.CuratorName) &&
                        p.CuratorName.Equals(curatorName, StringComparison.OrdinalIgnoreCase))
@@ -611,7 +591,6 @@ public partial class JellyfinController : ControllerBase
 
         _logger.LogDebug("Found {Count} playlists for curator '{CuratorName}'", curatorPlaylists.Count, curatorName);
 
-        // Convert playlists to album items
         var albumItems = curatorPlaylists
             .Select(p => _responseBuilder.ConvertPlaylistToAlbumItem(p))
             .ToList();
@@ -632,11 +611,6 @@ public partial class JellyfinController : ControllerBase
 
     #region Artists
 
-    /// <summary>
-    /// Gets artists from the library.
-    /// Supports both /Artists and /Artists/AlbumArtists routes.
-    /// When searchTerm is provided, integrates external search results.
-    /// </summary>
     [HttpGet("Artists", Order = 1)]
     [HttpGet("Artists/AlbumArtists", Order = 1)]
     public async Task<IActionResult> GetArtists(
@@ -646,13 +620,11 @@ public partial class JellyfinController : ControllerBase
     {
         _logger.LogDebug("GetArtists called: searchTerm={SearchTerm}, limit={Limit}", searchTerm, limit);
 
-        // If there's a search term, integrate external results
         if (!string.IsNullOrWhiteSpace(searchTerm))
         {
             var cleanQuery = searchTerm.Trim().Trim('"');
             _logger.LogDebug("Searching artists for: {Query}", cleanQuery);
 
-            // Run local and external searches in parallel
             var jellyfinTask = GetLocalArtistsResultForCurrentRequest(cleanQuery);
 
             var externalTask = _metadataService.SearchArtistsAsync(
@@ -688,7 +660,7 @@ public partial class JellyfinController : ControllerBase
             });
         }
 
-        // No search term - proxy the literal request route and query string to Jellyfin
+        // Browse is a transparent relay; preserve the client's route and query semantics.
         var endpoint = Request.Path.Value?.TrimStart('/') ?? "Artists";
         if (Request.QueryString.HasValue)
         {
@@ -710,7 +682,7 @@ public partial class JellyfinController : ControllerBase
             queryParams[kvp.Key] = kvp.Value.ToString();
         }
 
-        // Preserve literal request semantics, only normalize recovered SearchTerm.
+        // Normalize recovered SearchTerm while preserving every other client parameter.
         queryParams["SearchTerm"] = cleanQuery;
 
         _logger.LogInformation(
@@ -721,10 +693,7 @@ public partial class JellyfinController : ControllerBase
         return await _proxyService.GetJsonAsync(endpoint, queryParams, Request.Headers);
     }
 
-    /// <summary>
-    /// Gets a single artist by ID or name.
-    /// This route has lower priority to avoid conflicting with Artists/AlbumArtists.
-    /// </summary>
+    // This lower-priority route must not shadow /Artists/AlbumArtists.
     [HttpGet("Artists/{artistIdOrName}", Order = 10)]
     public async Task<IActionResult> GetArtist(string artistIdOrName)
     {
@@ -748,7 +717,6 @@ public partial class JellyfinController : ControllerBase
             return _responseBuilder.CreateArtistResponse(artist, albums);
         }
 
-        // Get local artist from Jellyfin
         var (jellyfinArtist, statusCode) = await _proxyService.GetArtistAsync(artistIdOrName, Request.Headers);
         if (jellyfinArtist == null)
         {
@@ -761,9 +729,6 @@ public partial class JellyfinController : ControllerBase
 
     #region Images
 
-    /// <summary>
-    /// Gets the primary image for an item.
-    /// </summary>
     [HttpGet("Items/{itemId}/Images/{imageType}")]
     [HttpGet("Items/{itemId}/Images/{imageType}/{imageIndex}")]
     [HttpHead("Items/{itemId}/Images/{imageType}")]
@@ -793,7 +758,6 @@ public partial class JellyfinController : ControllerBase
                     Request.Path.Value!, itemId, sourceId);
         }
 
-        // Check for external playlist
         if (PlaylistIdHelper.IsExternalPlaylist(itemId))
         {
             return await GetPlaylistImage(itemId, maxWidth, maxHeight, requestedFormat);
@@ -861,6 +825,16 @@ public partial class JellyfinController : ControllerBase
             {
                 async Task<MediaAssetSource?> Fetch()
                 {
+                    if (resourceKind == "playlist" &&
+                        _providerGateway != null &&
+                        HttpContext.GetProtocolExecutionContext() is { } protocol)
+                    {
+                        var artwork = await _providerGateway.ResolvePlaylistArtworkAsync(
+                            protocol, provider, resourceId, MaximumArtworkBytes);
+                        if (artwork != null)
+                            return new MediaAssetSource(artwork.Bytes, artwork.ContentType);
+                    }
+
                     var coverUrl = resourceKind switch
                     {
                         "artist" => (await GetProviderArtistForImageAsync(
@@ -1088,15 +1062,10 @@ public partial class JellyfinController : ControllerBase
 
     #region Favorites
 
-    /// <summary>
-    /// Marks an item as favorite. For playlists, triggers a full download.
-    /// Supports both /Users/{userId}/FavoriteItems/{itemId} and /UserFavoriteItems/{itemId}?userId=xxx
-    /// </summary>
     [HttpPost("Users/{userId}/FavoriteItems/{itemId}")]
     [HttpPost("UserFavoriteItems/{itemId}")]
     public async Task<IActionResult> MarkFavorite(string itemId, string? userId = null)
     {
-        // Get userId from query string if not in path
         if (string.IsNullOrEmpty(userId))
         {
             userId = Request.Query["userId"].ToString();
@@ -1105,7 +1074,6 @@ public partial class JellyfinController : ControllerBase
         _logger.LogDebug("MarkFavorite called: userId={UserId}, itemId={ItemId}, route={Route}",
             userId, itemId, Request.Path);
 
-        // Check if this is an external playlist - trigger download
         if (PlaylistIdHelper.IsExternalPlaylist(itemId))
         {
             if (CanRunOptionalUserScopedWork())
@@ -1116,7 +1084,6 @@ public partial class JellyfinController : ControllerBase
             return CreateProtocolResponse(_interactionProtocolAdapter.ShapeFavorite(itemId, true));
         }
 
-        // Check if this is an external song/album
         var (isExternal, _, _, _) =
             _localLibraryService.ParseExternalId(itemId);
         if (isExternal)
@@ -1129,8 +1096,6 @@ public partial class JellyfinController : ControllerBase
             return CreateProtocolResponse(_interactionProtocolAdapter.ShapeFavorite(itemId, true));
         }
 
-        // For local Jellyfin items, proxy the request through
-        // Use the official Jellyfin endpoint format
         var endpoint = $"UserFavoriteItems/{itemId}";
         if (!string.IsNullOrEmpty(userId))
         {
@@ -1149,15 +1114,10 @@ public partial class JellyfinController : ControllerBase
         return HandleProxyResponse(result, statusCode);
     }
 
-    /// <summary>
-    /// Removes an item from favorites.
-    /// Supports both /Users/{userId}/FavoriteItems/{itemId} and /UserFavoriteItems/{itemId}?userId=xxx
-    /// </summary>
     [HttpDelete("Users/{userId}/FavoriteItems/{itemId}")]
     [HttpDelete("UserFavoriteItems/{itemId}")]
     public async Task<IActionResult> UnmarkFavorite(string itemId, string? userId = null)
     {
-        // Get userId from query string if not in path
         if (string.IsNullOrEmpty(userId))
         {
             userId = Request.Query["userId"].ToString();
@@ -1180,8 +1140,6 @@ public partial class JellyfinController : ControllerBase
             return CreateProtocolResponse(_interactionProtocolAdapter.ShapeFavorite(itemId, false));
         }
 
-        // Proxy to Jellyfin to unfavorite
-        // Use the official Jellyfin endpoint format
         var endpoint = $"UserFavoriteItems/{itemId}";
         if (!string.IsNullOrEmpty(userId))
         {
@@ -1225,10 +1183,6 @@ public partial class JellyfinController : ControllerBase
 
     #region Recommendations & Instant Mix
 
-    /// <summary>
-    /// Gets similar items for a given item.
-    /// For external items, searches for similar content from the provider.
-    /// </summary>
     [HttpGet("Items/{itemId}/Similar")]
     [HttpGet("Songs/{itemId}/Similar")]
     [HttpGet("Artists/{itemId}/Similar")]
@@ -1242,10 +1196,8 @@ public partial class JellyfinController : ControllerBase
 
         if (isExternal)
         {
-            // Check if this is an artist
             if (itemId.Contains("-artist-", StringComparison.OrdinalIgnoreCase))
             {
-                // For external artists, return empty - we don't have similar artist functionality
                 _logger.LogDebug("Similar artists not supported for external artist {ItemId}", itemId);
                 return _responseBuilder.CreateJsonResponse(new
                 {
@@ -1257,7 +1209,6 @@ public partial class JellyfinController : ControllerBase
 
             try
             {
-                // Get the original song to find similar content
                 var song = await GetProviderSongAsync(provider!, externalId!);
                 if (song == null)
                 {
@@ -1269,12 +1220,10 @@ public partial class JellyfinController : ControllerBase
                     });
                 }
 
-                // Search for similar songs using artist and genre
                 var searchQuery = $"{song.Artist}";
                 var searchResult = await SearchProviderSongsAsync(
                     provider!, searchQuery, limit, HttpContext.RequestAborted);
 
-                // Filter out the original song and convert to Jellyfin format
                 var similarSongs = searchResult
                     .Where(s => !string.Equals(s.ExternalId, externalId, StringComparison.OrdinalIgnoreCase)
                                 && !string.Equals(s.Id, itemId, StringComparison.OrdinalIgnoreCase))
@@ -1301,12 +1250,11 @@ public partial class JellyfinController : ControllerBase
             }
         }
 
-        // For local items, determine the correct endpoint based on the request path
         var endpoint = Request.Path.Value?.Contains("/Artists/", StringComparison.OrdinalIgnoreCase) == true
             ? $"Artists/{itemId}/Similar"
             : $"Items/{itemId}/Similar";
 
-        // Preserve full client query string to keep Jellyfin behavior consistent for all supported params
+        // Preserve the full query string for Jellyfin's optional similarity parameters.
         if (Request.QueryString.HasValue)
         {
             endpoint = $"{endpoint}{Request.QueryString.Value}";
@@ -1317,10 +1265,6 @@ public partial class JellyfinController : ControllerBase
         return HandleProxyResponse(result, statusCode);
     }
 
-    /// <summary>
-    /// Gets an instant mix for a given item.
-    /// For external items, creates a mix from the artist's other songs.
-    /// </summary>
     [HttpGet("Songs/{itemId}/InstantMix")]
     [HttpGet("Items/{itemId}/InstantMix")]
     [HttpGet("Albums/{itemId}/InstantMix")]
@@ -1444,7 +1388,7 @@ public partial class JellyfinController : ControllerBase
             }
         }
 
-        // For local items, proxy using the same route shape and full query string from the client
+        // Native mixes remain transparent relays, including route shape and query parameters.
         var endpoint = Request.Path.Value!.TrimStart('/');
 
         if (Request.QueryString.HasValue)
@@ -1503,9 +1447,6 @@ public partial class JellyfinController : ControllerBase
 
     #region System & Proxy
 
-    /// <summary>
-    /// Returns public server info.
-    /// </summary>
     [HttpGet("System/Info/Public")]
     public async Task<IActionResult> GetPublicSystemInfo()
     {
@@ -1523,9 +1464,6 @@ public partial class JellyfinController : ControllerBase
         });
     }
 
-    /// <summary>
-    /// Root path handler - redirects to Jellyfin web UI.
-    /// </summary>
     [HttpGet("", Order = 99)]
     public async Task<IActionResult> ProxyRootRequest()
     {
@@ -1580,22 +1518,18 @@ public partial class JellyfinController : ControllerBase
             path, playlistId, route.TargetPlaylistId);
     }
 
-    /// <summary>
-    /// Catch-all endpoint that proxies unhandled requests to Jellyfin transparently.
-    /// This route has the lowest priority and should only match requests that don't have SearchTerm.
-    /// Blocks dangerous admin endpoints for security.
-    /// </summary>
+    // The lowest-priority catch-all relays only requests that escaped explicit music routes.
+    // Privileged Jellyfin operations are denied at this public proxy boundary.
     [AcceptVerbs("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", Route = "{**path}", Order = 100)]
     public async Task<IActionResult> ProxyRequest(string path)
     {
-        // Block admin API routes - these should be handled by admin controllers, not proxied to Jellyfin
+        // Admin controllers own this namespace; never forward it upstream.
         if (path.StartsWith("api/admin", StringComparison.OrdinalIgnoreCase))
         {
             _logger.LogWarning("Admin route {Path} reached ProxyRequest - this should be handled by admin controllers", path);
             return NotFound(new { error = "Admin endpoint not found" });
         }
 
-        // Log session-related requests prominently to debug missing capabilities call
         if (path.Contains("session", StringComparison.OrdinalIgnoreCase) ||
             path.Contains("capabilit", StringComparison.OrdinalIgnoreCase))
         {
@@ -1607,28 +1541,25 @@ public partial class JellyfinController : ControllerBase
             _logger.LogDebug("ProxyRequest: {Method} /{Path}", Request.Method, path);
         }
 
-        // Log endpoint usage to file for analysis
         await LogEndpointUsageAsync(path, Request.Method);
 
-        // Block dangerous admin endpoints
         var blockedPrefixes = new[]
         {
-            "system/restart",           // Server restart
-            "system/shutdown",          // Server shutdown
-            "system/configuration",     // System configuration changes
-            "system/logs",              // Server logs access
-            "system/activitylog",       // Activity log access
-            "plugins/",                 // Plugin management (install/uninstall/configure)
-            "scheduledtasks/",          // Scheduled task management
-            "startup/",                 // Initial server setup
-            "users/new",                // User creation
-            "library/refresh",          // Library scan (expensive operation)
-            "library/virtualfolders",   // Library folder management
-            "branding/",                // Branding configuration
-            "notifications/admin"       // Admin notifications
+            "system/restart",
+            "system/shutdown",
+            "system/configuration",
+            "system/logs",
+            "system/activitylog",
+            "plugins/",
+            "scheduledtasks/",
+            "startup/",
+            "users/new",
+            "library/refresh",
+            "library/virtualfolders",
+            "branding/",
+            "notifications/admin"
         };
 
-        // Check if path matches any blocked prefix
         if (blockedPrefixes.Any(prefix =>
             path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
         {
@@ -1663,7 +1594,6 @@ public partial class JellyfinController : ControllerBase
                 _logger.LogInformation("Configured Playlists: {Playlists}", string.Join(", ", _spotifySettings.Playlists.Select(p => $"{p.Name}:{p.Id}")));
                 _logger.LogInformation("Is configured: {IsConfigured}", _spotifySettings.IsSpotifyPlaylist(playlistItemsRequestId));
 
-                // Check if this playlist ID is configured for Spotify injection
                 if (_spotifySettings.IsSpotifyPlaylist(playlistItemsRequestId))
                 {
                     _logger.LogInformation("========================================");
@@ -1693,7 +1623,7 @@ public partial class JellyfinController : ControllerBase
             return await RelaySynthesizedPlaylistTargetAsync(path, playlistRequestId);
         }
 
-        // Handle non-JSON responses (images, robots.txt, etc.)
+        // Relay non-JSON assets without forcing them through JSON parsing.
         if (path.Contains("/Images/", StringComparison.OrdinalIgnoreCase) ||
             path.EndsWith(".txt", StringComparison.OrdinalIgnoreCase) ||
             path.EndsWith(".xml", StringComparison.OrdinalIgnoreCase) ||
@@ -1709,14 +1639,13 @@ public partial class JellyfinController : ControllerBase
             return await RelayCurrentRequestAsync(path);
         }
 
-        // Check if this is a search request that should be handled by specific endpoints
+        // Search requests must reach the merge handlers before transparent fallback.
         var searchTerm = Request.Query["SearchTerm"].ToString();
 
         if (!string.IsNullOrWhiteSpace(searchTerm))
         {
             _logger.LogDebug("ProxyRequest intercepting search request: Path={Path}, SearchTerm={SearchTerm}", path, searchTerm);
 
-            // Item search: /users/{userId}/items or /items
             if (path.EndsWith("/items", StringComparison.OrdinalIgnoreCase) || path.Equals("items", StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogDebug("Redirecting to SearchItems");
@@ -1731,7 +1660,6 @@ public partial class JellyfinController : ControllerBase
                     userId: path.Contains("/users/", StringComparison.OrdinalIgnoreCase) && path.Split('/').Length > 2 ? path.Split('/')[2] : null);
             }
 
-            // Artist search: /artists/albumartists or /artists
             if (path.Contains("/artists", StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogInformation("Redirecting to GetArtists");
@@ -1753,7 +1681,6 @@ public partial class JellyfinController : ControllerBase
                 return await RelayCurrentRequestAsync(path);
             }
 
-            // Include query string in the path
             var fullPath = path;
             var safePathForLogs = path;
             if (Request.QueryString.HasValue)
@@ -1767,21 +1694,17 @@ public partial class JellyfinController : ControllerBase
 
             if (HttpContext.Request.Method == HttpMethod.Post.Method)
             {
-                // Enable buffering BEFORE any reads
                 Request.EnableBuffering();
 
-                // Log request details for debugging
                 _logger.LogDebug("POST request to {Path}: Method={Method}, ContentType={ContentType}, ContentLength={ContentLength}",
                     safePathForLogs, Request.Method, Request.ContentType, Request.ContentLength);
 
-                // Read body using StreamReader with proper encoding
                 string body;
                 using (var reader = new StreamReader(Request.Body, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 1024, leaveOpen: true))
                 {
                     body = await reader.ReadToEndAsync();
                 }
 
-                // Reset stream position after reading so it can be read again if needed
                 Request.Body.Position = 0;
 
                 if (string.IsNullOrWhiteSpace(body))
@@ -1800,14 +1723,11 @@ public partial class JellyfinController : ControllerBase
             }
             else
             {
-                // Forward GET requests transparently with authentication headers and query string
                 (result, statusCode) = await _proxyService.GetJsonAsync(fullPath, null, Request.Headers);
             }
 
-            // Handle different status codes
             if (result == null)
             {
-                // No body - return the status code from Jellyfin
                 if (statusCode == 204)
                 {
                     return NoContent();
@@ -1833,28 +1753,23 @@ public partial class JellyfinController : ControllerBase
                     return StatusCode(statusCode);
                 }
 
-                // Default to 204 for 2xx responses with no body
                 return NoContent();
             }
 
-            // Modify response if it contains Spotify playlists to update ChildCount
-            // Only check for Items if the response is an object (not a string or array)
             if (ShouldProcessSpotifyPlaylistCounts(result, Request.Query["IncludeItemTypes"].ToString()))
             {
                 _logger.LogDebug("Response has Items property, checking for Spotify playlists to update counts");
             }
 
-            // Return the raw JSON element directly to avoid deserialization issues with simple types
+            // Cloning preserves scalar and array payloads that object deserialization can distort.
             return new JsonResult(result.RootElement.Clone()) { StatusCode = statusCode };
         }
         catch (HttpRequestException httpEx)
         {
-            // HTTP-specific errors - preserve the status code if available
             var statusCode = httpEx.StatusCode.HasValue ? (int)httpEx.StatusCode.Value : 502;
 
             _logger.LogError(httpEx, "HTTP error proxying request to Jellyfin for {Path}: {StatusCode}", path, statusCode);
 
-            // Return appropriate status code based on the error
             if (statusCode == 404)
             {
                 return NotFound();
@@ -1870,13 +1785,11 @@ public partial class JellyfinController : ControllerBase
         }
         catch (TaskCanceledException)
         {
-            // Request was cancelled (timeout or client disconnect)
             _logger.LogWarning("Proxy request cancelled or timed out for {Path}", path);
             return StatusCode(504, new { error = "Request to Jellyfin timed out" });
         }
         catch (Exception ex)
         {
-            // Generic error - return 502 Bad Gateway
             _logger.LogError(ex, "Proxy request failed for {Path}", path);
             return _responseBuilder.CreateError(502, "Proxy error");
         }
@@ -1884,9 +1797,6 @@ public partial class JellyfinController : ControllerBase
 
     #endregion
 
-    /// <summary>
-    /// Checks if an item dictionary represents a local Jellyfin item (not external).
-    /// </summary>
     private bool IsLocalItem(Dictionary<string, object?> item)
     {
         if (!item.TryGetValue("Id", out var idObj)) return false;
@@ -1894,13 +1804,9 @@ public partial class JellyfinController : ControllerBase
         var id = idObj is JsonElement idEl ? idEl.GetString() : idObj?.ToString();
         if (string.IsNullOrEmpty(id)) return false;
 
-        // External items have IDs starting with "ext-"
         return !id.StartsWith("ext-", StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>
-    /// Extracts device information from Authorization header.
-    /// </summary>
     private (string? deviceId, string? client, string? device, string? version) ExtractDeviceInfo(IHeaderDictionary headers)
     {
         string? deviceId = null;
@@ -1908,8 +1814,7 @@ public partial class JellyfinController : ControllerBase
         string? device = null;
         string? version = null;
 
-        // Check X-Emby-Authorization FIRST (most Jellyfin clients use this)
-        // Then fall back to Authorization header
+        // Most clients use X-Emby-Authorization; generic Authorization is the fallback.
         string? authStr = null;
         if (headers.TryGetValue("X-Emby-Authorization", out var embyAuthHeader))
         {
@@ -1922,7 +1827,7 @@ public partial class JellyfinController : ControllerBase
 
         if (!string.IsNullOrEmpty(authStr))
         {
-            // Parse: MediaBrowser Client="...", Device="...", DeviceId="...", Version="..."
+            // Jellyfin encodes device fields in its MediaBrowser authorization grammar.
             var parts = authStr.Replace("MediaBrowser ", "").Split(',');
             foreach (var part in parts)
             {
@@ -1942,19 +1847,15 @@ public partial class JellyfinController : ControllerBase
         return (deviceId, client, device, version);
     }
 
-    /// <summary>
-    /// Generates a deterministic UUID (v5) from a string.
-    /// This allows us to create consistent UUIDs for external track IDs.
-    /// </summary>
+    // Stable synthetic UUIDs keep external playback identity consistent across reports.
     private string GenerateUuidFromString(string input)
     {
-        // Use MD5 hash to generate a deterministic UUID
         using var md5 = System.Security.Cryptography.MD5.Create();
         var hash = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(input));
 
-        // Convert to UUID format (version 5, namespace-based)
-        hash[6] = (byte)((hash[6] & 0x0F) | 0x50); // Version 5
-        hash[8] = (byte)((hash[8] & 0x3F) | 0x80); // Variant
+        // Set UUID version and RFC 4122 variant bits.
+        hash[6] = (byte)((hash[6] & 0x0F) | 0x50);
+        hash[8] = (byte)((hash[8] & 0x3F) | 0x80);
 
         var guid = new Guid(hash);
         return guid.ToString();

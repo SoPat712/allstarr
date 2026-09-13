@@ -78,6 +78,7 @@ public class DownloadActivityController : ControllerBase
             var duration = metadata?.DurationSeconds;
             var position = (int)Math.Max(0, state.PositionTicks / TimeSpan.TicksPerSecond);
             deliveryState.TryGetValue(DeliveryKey(state.UserId, itemId), out var delivery);
+            var streamSource = _playbackDeliveries?.StreamFor(state.TenantId, state.UserId, state.DeviceId, itemId);
             var threshold = duration is >= 30 ? Math.Min(duration.Value / 2d, 240d) : (double?)null;
             items.Add(new NowPlayingEntry
             {
@@ -93,8 +94,12 @@ public class DownloadActivityController : ControllerBase
                 Title = metadata?.Title ?? ResolvePlaybackTitle(itemId),
                 Artist = metadata?.Artist ?? "Unknown artist",
                 Album = metadata?.Album,
-                ProviderId = delivery?.Event.ProviderId ?? ResolvePlaybackProvider(itemId),
-                ProviderAccountName = delivery?.ProviderAccountName,
+                ProviderId = streamSource?.ProviderId ?? ResolvePlaybackProvider(itemId),
+                CatalogProviderId = ResolvePlaybackProvider(itemId),
+                SourceConfirmed = streamSource != null || ExternalPlaybackMetadataResolver.ParseTrackIdentity(itemId) == null,
+                Cached = streamSource?.Cached ?? false,
+                ProviderAccountName = streamSource?.AccountId == delivery?.Event.ProviderAccountId
+                    ? delivery?.ProviderAccountName : null,
                 ArtworkUrl = string.IsNullOrWhiteSpace(metadata?.CoverArtUrl) ? null : ArtworkUrl(itemId),
                 PositionSeconds = position,
                 DurationSeconds = duration,
@@ -132,10 +137,11 @@ public class DownloadActivityController : ControllerBase
             .SelectMany(item => new[] { item.ItemId, NormalizeExternalItemId(item.ItemId) })
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var updatedAfter = DateTimeOffset.UtcNow.AddHours(-8);
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
         var events = await db.ListeningEvents.AsNoTracking()
             .Where(item => item.TenantId == tenantId && userIds.Contains(item.OwnerUserId) &&
-                trackReferences.Contains(item.TrackReference) && item.UpdatedAt >= DateTimeOffset.UtcNow.AddHours(-8))
+                trackReferences.Contains(item.TrackReference) && item.UpdatedAt >= updatedAfter)
             .OrderByDescending(item => item.UpdatedAt)
             .ToListAsync(cancellationToken);
         var latest = events
@@ -420,6 +426,9 @@ public class DownloadActivityController : ControllerBase
         public required string Artist { get; init; }
         public string? Album { get; init; }
         public required string ProviderId { get; init; }
+        public required string CatalogProviderId { get; init; }
+        public bool SourceConfirmed { get; init; }
+        public bool Cached { get; init; }
         public string? ProviderAccountName { get; init; }
         public string? ArtworkUrl { get; init; }
         public int PositionSeconds { get; init; }

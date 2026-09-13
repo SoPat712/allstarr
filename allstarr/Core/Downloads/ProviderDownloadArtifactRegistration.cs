@@ -8,6 +8,16 @@ public static class ProviderDownloadArtifactRegistration
         services.AddSingleton(options);
         services.AddSingleton<IProviderDownloadArtifactStore, EfProviderDownloadArtifactStore>();
         services.AddSingleton<ProviderDownloadArtifactResolver>();
+        services.AddSingleton<ManagedTrackDownloadService>();
+        var placement = new ManagedTrackPlacementOptions();
+        configuration.GetSection("FavoriteActions:Placement").Bind(placement);
+        if (placement.RootId == Guid.Empty) placement.RootId = ManagedTrackPlacementOptions.DefaultRootId;
+        if (string.IsNullOrWhiteSpace(placement.RootPath))
+        {
+            var downloadRoot = configuration["Library:DownloadPath"] ?? "./downloads";
+            placement.RootPath = configuration["Library:KeptPath"] ?? Path.Combine(downloadRoot, "kept");
+        }
+        services.AddSingleton(placement);
         return services;
     }
 }

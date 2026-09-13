@@ -13,11 +13,6 @@ using IOFile = System.IO.File;
 
 namespace allstarr.Services.Common;
 
-/// <summary>
-/// Abstract base class for download services.
-/// Implements common download logic, tracking, and metadata writing.
-/// Subclasses implement provider-specific download and authentication logic.
-/// </summary>
 public abstract class BaseDownloadService : IConcreteDownloadService
 {
     private const int MaximumTrackedDownloads = 256;
@@ -36,48 +31,20 @@ public abstract class BaseDownloadService : IConcreteDownloadService
 
     protected readonly ConcurrentDictionary<string, DownloadInfo> ActiveDownloads = new();
 
-    // Concurrency and state locking
     protected readonly SemaphoreSlim _stateSemaphore = new(1, 1);
     protected readonly SemaphoreSlim _concurrencySemaphore;
 
-    // Rate limiting fields
     private readonly SemaphoreSlim _requestLock = new(1, 1);
     private DateTime _lastRequestTime = DateTime.MinValue;
     protected int _minRequestIntervalMs = 200;
 
-    protected StorageMode CurrentStorageMode
-    {
-        get
-        {
-            var backendType = Configuration["Backend:Type"] ?? "Subsonic";
-            var modeStr = backendType.Equals("Jellyfin", StringComparison.OrdinalIgnoreCase)
-                ? Configuration["Jellyfin:StorageMode"] ?? Configuration["Subsonic:StorageMode"] ?? "Permanent"
-                : Configuration["Subsonic:StorageMode"] ?? "Permanent";
-            return Enum.TryParse<StorageMode>(modeStr, true, out var result) ? result : StorageMode.Permanent;
-        }
-    }
+    protected StorageMode CurrentStorageMode => BackendSetting("StorageMode", StorageMode.Permanent);
+    protected DownloadMode CurrentDownloadMode => BackendSetting("DownloadMode", DownloadMode.Track);
 
-    protected DownloadMode CurrentDownloadMode
-    {
-        get
-        {
-            var backendType = Configuration["Backend:Type"] ?? "Subsonic";
-            var modeStr = backendType.Equals("Jellyfin", StringComparison.OrdinalIgnoreCase)
-                ? Configuration["Jellyfin:DownloadMode"] ?? Configuration["Subsonic:DownloadMode"] ?? "Track"
-                : Configuration["Subsonic:DownloadMode"] ?? "Track";
-            return Enum.TryParse<DownloadMode>(modeStr, true, out var result) ? result : DownloadMode.Track;
-        }
-    }
-
-    /// <summary>
-    /// Provider name (e.g., "deezer", "qobuz")
-    /// </summary>
     protected abstract string ProviderName { get; }
+    public string ProviderId => ProviderName;
 
-    /// <summary>
-    /// Provider identifier used for metadata lookup when the download capability has a
-    /// different runtime identifier (for example apple-download versus applemusic).
-    /// </summary>
+    // Download and metadata capabilities can have different runtime IDs.
     protected virtual string MetadataProviderName => ProviderName;
 
     protected BaseDownloadService(
@@ -98,15 +65,8 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         DownloadPath = configuration["Library:DownloadPath"] ?? "./downloads";
         CachePath = PathHelper.GetCachePath();
 
-        if (!Directory.Exists(DownloadPath))
-        {
-            Directory.CreateDirectory(DownloadPath);
-        }
-
-        if (!Directory.Exists(CachePath))
-        {
-            Directory.CreateDirectory(CachePath);
-        }
+        Directory.CreateDirectory(DownloadPath);
+        Directory.CreateDirectory(CachePath);
 
         var maxDownloadsStr = configuration["MAX_CONCURRENT_DOWNLOADS"];
         if (!int.TryParse(maxDownloadsStr, out var maxDownloads) || maxDownloads <= 0)
@@ -116,67 +76,46 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         _concurrencySemaphore = new SemaphoreSlim(maxDownloads, maxDownloads);
     }
 
-    #region IDownloadService Implementation
-
-    /// <summary>
-    /// Downloads a song and returns the local file path.
-    /// This method respects the cancellation token for user-initiated downloads (e.g., playlist downloads).
-    /// For streaming downloads, use DownloadAndStreamAsync which ensures downloads complete server-side.
-    /// </summary>
-    public async Task<string> DownloadSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
-    {
-        return await DownloadSongInternalAsync(
+    public Task<string> DownloadSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default) =>
+        DownloadSongInternalAsync(
             externalProvider,
             externalId,
             triggerAlbumDownload: true,
             requestedForStreaming: false,
             cancellationToken);
-    }
 
 
     public virtual async Task<Stream> DownloadAndStreamAsync(string externalProvider, string externalId, StreamQuality? qualityOverride = null, CancellationToken cancellationToken = default)
     {
-        // If a quality override is requested (not Original), use the quality override path
-        // This downloads to a temp file at the requested quality and streams it without caching
         if (qualityOverride.HasValue && qualityOverride.Value != StreamQuality.Original)
         {
             return await DownloadAndStreamWithQualityOverrideAsync(externalProvider, externalId, qualityOverride.Value, cancellationToken);
         }
 
-        // Standard path: use .env quality, cache the result
         var startTime = DateTime.UtcNow;
 
-        // Check if already downloaded locally
         var localPath = await LocalLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
         if (localPath != null && IOFile.Exists(localPath))
         {
             var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
             Logger.LogInformation("Streaming from local cache ({ElapsedMs}ms): {Path}", elapsed, localPath);
 
-            // Update write time for cache cleanup (extends cache lifetime)
             if (CurrentStorageMode == StorageMode.Cache)
             {
                 IOFile.SetLastWriteTime(localPath, DateTime.UtcNow);
             }
 
-            // Start background Odesli conversion for lyrics (if not already cached)
             StartBackgroundOdesliConversion(externalProvider, externalId);
 
             return IOFile.OpenRead(localPath);
         }
 
-        // Download to disk first to ensure complete file with metadata
-        // This is necessary because:
-        // 1. Clients may seek to arbitrary positions (requires full file)
-        // 2. Metadata embedding requires complete file
-        // 3. Caching for future plays
+        // Seeking, metadata embedding, and reuse require a complete local artifact.
         Logger.LogInformation("Downloading song for streaming: {Provider}:{ExternalId}", externalProvider, externalId);
 
         try
         {
-            // IMPORTANT: Use CancellationToken.None for the actual download
-            // This ensures downloads complete server-side even if the client cancels the request
-            // The client can request the file again later once it's ready
+            // A disconnected client must not abandon the shared server-side artifact.
             localPath = await DownloadSongInternalAsync(
                 externalProvider,
                 externalId,
@@ -186,7 +125,6 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
             Logger.LogInformation("Download completed, starting stream ({ElapsedMs}ms total): {Path}", elapsed, localPath);
 
-            // Start background Odesli conversion for lyrics (after stream starts)
             StartBackgroundOdesliConversion(externalProvider, externalId);
 
             return IOFile.OpenRead(localPath);
@@ -205,12 +143,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         }
     }
 
-    /// <summary>
-    /// Downloads and streams with a quality override.
-    /// When the client requests lower quality (e.g., cellular mode), this downloads to a temp file
-    /// at the requested quality tier and streams it. The temp file is auto-deleted after streaming.
-    /// This does NOT pollute the cache — the cached file at .env quality remains the canonical copy.
-    /// </summary>
+    // Quality overrides use the short-lived transcoded cache without replacing the canonical copy.
     private async Task<Stream> DownloadAndStreamWithQualityOverrideAsync(
         string externalProvider, string externalId, StreamQuality quality, CancellationToken cancellationToken)
     {
@@ -222,28 +155,21 @@ public abstract class BaseDownloadService : IConcreteDownloadService
 
         try
         {
-            // Get metadata for the track
             var song = await MetadataService.GetSongAsync(MetadataProviderName, externalId);
             if (song == null)
             {
                 throw new Exception("Song not found");
             }
 
-            // Download to a temp file at the overridden quality
-            // IMPORTANT: Use CancellationToken.None to ensure download completes server-side
             var tempPath = await DownloadTrackWithQualityAsync(externalId, song, quality, CancellationToken.None);
             var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
             Logger.LogInformation(
                 "Quality-override download completed ({Quality}, {ElapsedMs}ms): {Path}",
                 quality, elapsed, tempPath);
-            // Touch the file to extend its cache lifetime for TTL-based cleanup
             IOFile.SetLastWriteTime(tempPath, DateTime.UtcNow);
 
-            // Start background Odesli conversion for lyrics (doesn't block streaming)
             StartBackgroundOdesliConversion(externalProvider, externalId);
 
-            // Return a regular stream — the file stays in the transcoded cache
-            // and is cleaned up by CacheCleanupService based on CACHE_TRANSCODE_MINUTES TTL
             return IOFile.OpenRead(tempPath);
         }
         catch (OperationCanceledException)
@@ -265,17 +191,12 @@ public abstract class BaseDownloadService : IConcreteDownloadService
     }
 
 
-    /// <summary>
-    /// Starts background Odesli conversion for lyrics support.
-    /// This is called AFTER streaming starts so it doesn't block the client.
-    /// </summary>
     private void StartBackgroundOdesliConversion(string externalProvider, string externalId)
     {
         _ = Task.Run(async () =>
         {
             try
             {
-                // Provider-specific conversion (override in subclasses if needed)
                 await ConvertToSpotifyIdAsync(externalProvider, externalId);
             }
             catch (Exception ex)
@@ -285,16 +206,8 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         });
     }
 
-    /// <summary>
-    /// Converts external track ID to Spotify ID for lyrics support.
-    /// Override in provider-specific services if needed.
-    /// </summary>
-    protected virtual Task ConvertToSpotifyIdAsync(string externalProvider, string externalId)
-    {
-        // Default implementation does nothing
-        // Provider-specific services can override this
-        return Task.CompletedTask;
-    }
+    protected virtual Task ConvertToSpotifyIdAsync(string externalProvider, string externalId) =>
+        Task.CompletedTask;
 
     public DownloadInfo? GetDownloadStatus(string songId)
     {
@@ -352,22 +265,13 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             return null;
         }
 
-        // Check local library (works for both cache and permanent storage)
         var localPath = await LocalLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
-        if (localPath != null && IOFile.Exists(localPath))
-        {
-            return localPath;
-        }
-
-        return null;
+        return localPath != null && IOFile.Exists(localPath) ? localPath : null;
     }
 
     public abstract Task<bool> IsAvailableAsync();
 
-    protected string BuildTrackedSongId(string externalId)
-    {
-        return BuildTrackedSongId(ProviderName, externalId);
-    }
+    protected string BuildTrackedSongId(string externalId) => BuildTrackedSongId(ProviderName, externalId);
 
     protected static string BuildTrackedSongId(string externalProvider, string externalId)
     {
@@ -382,14 +286,8 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         }
     }
 
-    public void DownloadRemainingAlbumTracksInBackground(string externalProvider, string albumExternalId, string excludeTrackExternalId)
+    private void StartRemainingAlbumDownload(string albumExternalId, string excludeTrackExternalId)
     {
-        if (externalProvider != ProviderName)
-        {
-            Logger.LogWarning("Provider '{Provider}' is not supported for album download", externalProvider);
-            return;
-        }
-
         _ = Task.Run(async () =>
         {
             try
@@ -403,43 +301,13 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         });
     }
 
-    #endregion
-
-    #region Template Methods (to be implemented by subclasses)
-
-    /// <summary>
-    /// Downloads a track and saves it to disk.
-    /// Subclasses implement provider-specific logic (encryption, authentication, etc.)
-    /// </summary>
-    /// <param name="trackId">External track ID</param>
-    /// <param name="song">Song metadata</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>Local file path where the track was saved</returns>
     protected abstract Task<string> DownloadTrackAsync(string trackId, Song song, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Downloads a track at a specific quality tier to a temp file.
-    /// Subclasses override this to map StreamQuality to provider-specific quality settings.
-    /// The .env quality is used as a ceiling — the override can only go equal or lower.
-    /// Default implementation falls back to DownloadTrackAsync (uses .env quality).
-    /// </summary>
-    /// <param name="trackId">External track ID</param>
-    /// <param name="song">Song metadata</param>
-    /// <param name="quality">Requested quality tier</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>Local temp file path where the track was saved</returns>
     protected virtual Task<string> DownloadTrackWithQualityAsync(string trackId, Song song, StreamQuality quality, CancellationToken cancellationToken)
     {
-        // Default: ignore quality override and use configured quality
         return DownloadTrackAsync(trackId, song, cancellationToken);
     }
 
-    /// <summary>
-    /// Extracts the external album ID from the internal album ID format.
-    /// Example: "ext-deezer-album-123456" -> "123456"
-    /// Default implementation handles standard format: "ext-{provider}-album-{id}"
-    /// Override if your provider uses a different format.
-    /// </summary>
     protected virtual string? ExtractExternalIdFromAlbumId(string albumId)
     {
         var prefix = $"ext-{ProviderName}-album-";
@@ -450,13 +318,6 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         return null;
     }
 
-    #endregion
-
-    #region Common Download Logic
-
-    /// <summary>
-    /// Internal method for downloading a song with control over album download triggering
-    /// </summary>
     protected async Task<string> DownloadSongInternalAsync(
         string externalProvider,
         string externalId,
@@ -475,17 +336,14 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         bool isInitiator = false;
         PruneDownloadHistory();
 
-        // 1. Synchronous state check to prevent race conditions on checking existence or ActiveDownloads
         await _stateSemaphore.WaitAsync(cancellationToken);
         try
         {
-            // Check if already downloaded (works for both cache and permanent modes)
             var existingPath = await LocalLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
             if (existingPath != null && IOFile.Exists(existingPath))
             {
                 Logger.LogInformation("Song already downloaded: {Path}", existingPath);
 
-                // For cache mode, update file write time to extend cache lifetime
                 if (isCache)
                 {
                     IOFile.SetLastWriteTime(existingPath, DateTime.UtcNow);
@@ -494,7 +352,6 @@ public abstract class BaseDownloadService : IConcreteDownloadService
                 return existingPath;
             }
 
-            // Check if download in progress
             if (ActiveDownloads.TryGetValue(songId, out var activeDownload) && activeDownload.Status == DownloadStatus.InProgress)
             {
                 if (requestedForStreaming)
@@ -503,18 +360,16 @@ public abstract class BaseDownloadService : IConcreteDownloadService
                 }
 
                 Logger.LogDebug("Download already in progress for {SongId}, waiting for completion...", songId);
-                // We are not the initiator; we will wait outside the lock.
             }
             else
             {
-                // We must initiate the download
                 isInitiator = true;
                 ActiveDownloads[songId] = new DownloadInfo
                 {
                     SongId = songId,
                     ExternalId = externalId,
                     ExternalProvider = externalProvider,
-                    Title = "Unknown Title", // Will be updated after fetching
+                    Title = "Unknown Title",
                     Artist = "Unknown Artist",
                     Status = DownloadStatus.InProgress,
                     Progress = 0,
@@ -528,13 +383,11 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             _stateSemaphore.Release();
         }
 
-        // If another thread is already downloading this track, wait for it.
         if (!isInitiator)
         {
             DownloadInfo? activeDownload;
             while (ActiveDownloads.TryGetValue(songId, out activeDownload) && activeDownload.Status == DownloadStatus.InProgress)
             {
-                // If client cancels, throw but let the download continue in background
                 if (cancellationToken.IsCancellationRequested)
                 {
                     Logger.LogInformation("Client cancelled while waiting for download {SongId}, but download continues server-side", songId);
@@ -549,41 +402,32 @@ public abstract class BaseDownloadService : IConcreteDownloadService
                 return activeDownload.LocalPath;
             }
 
-            // Download failed or was cancelled
             throw new Exception(activeDownload?.ErrorMessage ?? "Download failed while waiting");
         }
 
-        // --- Execute the Download (we are the initiator) ---
-
-        // Wait for a concurrency permit before doing the heavy lifting
         await _concurrencySemaphore.WaitAsync(cancellationToken);
         try
         {
-            // Get metadata
-            // In Album mode, fetch the full album first to ensure AlbumArtist is correctly set
+            // Album metadata supplies the canonical AlbumArtist for every track.
             Song? song = null;
 
             if (CurrentDownloadMode == DownloadMode.Album)
             {
-                // First try to get the song to extract album ID
                 var tempSong = await MetadataService.GetSongAsync(MetadataProviderName, externalId);
                 if (tempSong != null && !string.IsNullOrEmpty(tempSong.AlbumId))
                 {
                     var albumExternalId = ExtractExternalIdFromAlbumId(tempSong.AlbumId);
                     if (!string.IsNullOrEmpty(albumExternalId))
                     {
-                        // Get full album with correct AlbumArtist
                         var album = await MetadataService.GetAlbumAsync(MetadataProviderName, albumExternalId);
                         if (album != null)
                         {
-                            // Find the track in the album
                             song = album.Songs.FirstOrDefault(s => s.ExternalId == externalId);
                         }
                     }
                 }
             }
 
-            // Fallback to individual song fetch if not in Album mode or album fetch failed
             if (song == null)
             {
                 song = await MetadataService.GetSongAsync(MetadataProviderName, externalId);
@@ -594,7 +438,6 @@ public abstract class BaseDownloadService : IConcreteDownloadService
                 throw new Exception("Song not found");
             }
 
-            // Update ActiveDownloads with the real title/artist information
             if (ActiveDownloads.TryGetValue(songId, out var info))
             {
                 info.Title = song.Title ?? "Unknown Title";
@@ -616,13 +459,10 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             song.LocalPath = localPath;
             PruneDownloadHistory();
 
-            // Register BEFORE releasing lock to prevent race conditions (both cache and download modes)
             await LocalLibraryService.RegisterDownloadedSongAsync(song, localPath);
 
-            // Trigger library scan and album download AFTER releasing lock (download mode only)
             if (!isCache)
             {
-                // Trigger a Subsonic library rescan (with debounce)
                 _ = Task.Run(async () =>
                 {
                     try
@@ -635,20 +475,19 @@ public abstract class BaseDownloadService : IConcreteDownloadService
                     }
                 });
 
-                // If download mode is Album and triggering is enabled, start background download of remaining tracks
                 if (triggerAlbumDownload && CurrentDownloadMode == DownloadMode.Album && !string.IsNullOrEmpty(song.AlbumId))
                 {
                     var albumExternalId = ExtractExternalIdFromAlbumId(song.AlbumId);
                     if (!string.IsNullOrEmpty(albumExternalId))
                     {
                         Logger.LogInformation("Download mode is Album, triggering background download for album {AlbumId}", albumExternalId);
-                        DownloadRemainingAlbumTracksInBackground(externalProvider, albumExternalId, externalId);
+                        StartRemainingAlbumDownload(albumExternalId, externalId);
                     }
                 }
             }
             else
             {
-                Logger.LogInformation("Cache mode: skipping library registration and scan");
+                Logger.LogInformation("Cache mode: skipping backend library scan");
             }
 
             Logger.LogInformation("Download completed: {Path}", localPath);
@@ -659,7 +498,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             if (ActiveDownloads.TryGetValue(songId, out var downloadInfo))
             {
                 downloadInfo.Status = DownloadStatus.Failed;
-                downloadInfo.ErrorMessage = ex.Message;
+                downloadInfo.ErrorMessage = SafeDownloadError(ex);
                 downloadInfo.CompletedAt = DateTime.UtcNow;
             }
             PruneDownloadHistory();
@@ -712,7 +551,6 @@ public abstract class BaseDownloadService : IConcreteDownloadService
                     continue;
                 }
 
-                // Check if download is already in progress or recently completed
                 var songId = BuildTrackedSongId(track.ExternalId!);
                 if (ActiveDownloads.TryGetValue(songId, out var activeDownload))
                 {
@@ -746,13 +584,6 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         Logger.LogInformation("Completed background download for album '{AlbumTitle}'", album.Title);
     }
 
-    #endregion
-
-    #region Common Metadata Writing
-
-    /// <summary>
-    /// Writes ID3/Vorbis metadata and cover art to the audio file
-    /// </summary>
     protected async Task WriteMetadataAsync(string filePath, Song song, CancellationToken cancellationToken)
     {
         try
@@ -761,7 +592,6 @@ public abstract class BaseDownloadService : IConcreteDownloadService
 
             using var tagFile = TagLib.File.Create(filePath);
 
-            // Basic metadata
             tagFile.Tag.Title = song.Title;
             tagFile.Tag.Performers = new[] { song.Artist };
             tagFile.Tag.Album = song.Album;
@@ -798,7 +628,6 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             if (comments.Count > 0)
                 tagFile.Tag.Comment = string.Join(" | ", comments);
 
-            // Download and embed cover art
             var coverUrl = song.CoverArtUrlLarge ?? song.CoverArtUrl;
             if (!string.IsNullOrEmpty(coverUrl))
             {
@@ -834,9 +663,6 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         }
     }
 
-    /// <summary>
-    /// Downloads cover art from a URL
-    /// </summary>
     protected async Task<byte[]?> DownloadCoverArtAsync(string url, CancellationToken cancellationToken)
     {
         try
@@ -869,39 +695,8 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         }
     }
 
-    #endregion
+    protected static void EnsureDirectoryExists(string path) => Directory.CreateDirectory(path);
 
-    #region Utility Methods
-
-    /// <summary>
-    /// Ensures a directory exists, creating it and all parent directories if necessary
-    /// </summary>
-    protected void EnsureDirectoryExists(string path)
-    {
-        try
-        {
-            if (!Directory.Exists(path))
-            {
-                Directory.CreateDirectory(path);
-                Logger.LogDebug("Created directory: {Path}", path);
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Failed to create directory: {Path}", path);
-            throw;
-        }
-    }
-
-
-    #endregion
-
-    #region Rate Limiting
-
-    /// <summary>
-    /// Queues a request with rate limiting to prevent overwhelming the API.
-    /// Ensures minimum interval between requests.
-    /// </summary>
     protected async Task<T> QueueRequestAsync<T>(
         Func<Task<T>> action,
         CancellationToken cancellationToken = default)
@@ -926,5 +721,25 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         }
     }
 
-    #endregion
+    private T BackendSetting<T>(string key, T fallback) where T : struct, Enum
+    {
+        var backend = Configuration["Backend:Type"]?.Equals(
+            "Jellyfin", StringComparison.OrdinalIgnoreCase) == true
+                ? "Jellyfin"
+                : "Subsonic";
+        var configured = Configuration[$"{backend}:{key}"] ??
+                         Configuration[$"Subsonic:{key}"];
+        return Enum.TryParse<T>(configured, ignoreCase: true, out var value) ? value : fallback;
+    }
+
+    private static string SafeDownloadError(Exception exception) => exception switch
+    {
+        OperationCanceledException => "Download canceled.",
+        HttpRequestException { StatusCode: { } status } =>
+            $"Provider download request failed with HTTP {(int)status}.",
+        HttpRequestException => "The provider could not be reached.",
+        IOException => "The downloaded file could not be written.",
+        InvalidDataException => "The provider returned an invalid download.",
+        _ => "Download failed."
+    };
 }

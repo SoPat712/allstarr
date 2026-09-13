@@ -105,6 +105,20 @@ public sealed record TrackRematchCommandResult(
     int CandidateCount = 0,
     int DecisionVersion = 0);
 
+public enum ManualTrackAuthorityKind
+{
+    LocalMatch,
+    ProviderMatch,
+    Rejection
+}
+
+public sealed record ManualTrackAuthorityCommandResult(
+    bool Succeeded,
+    TrackMatchCommandFailure Failure = TrackMatchCommandFailure.None,
+    string? Error = null,
+    Guid? ExternalSnapshotId = null,
+    Guid? ReleasedProviderIdentityId = null);
+
 public interface ITrackMatchRepository
 {
     bool SupportsExternalMatching => false;
@@ -207,6 +221,24 @@ public interface ITrackMatchRepository
         Guid externalSnapshotId,
         string correlationId,
         string policyVersion,
+        CancellationToken cancellationToken = default);
+
+    Task<ManualTrackAuthorityCommandResult> ClearManualAuthorityAsync(
+        TrackMatchActor actor,
+        Guid externalSnapshotId,
+        ManualTrackAuthorityKind kind,
+        Guid authorityId,
+        long expectedRevision,
+        string correlationId,
+        CancellationToken cancellationToken = default);
+
+    Task<TrackRematchCommandResult> RematchManualAuthorityAsync(
+        ProtocolExecutionContext context,
+        Guid externalSnapshotId,
+        ManualTrackAuthorityKind kind,
+        Guid authorityId,
+        long expectedRevision,
+        string correlationId,
         CancellationToken cancellationToken = default);
 
     Task<TrackMatchCommandResult> ClearSpotifyAsync(
@@ -527,6 +559,179 @@ public sealed class TrackMatchCommandService(
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    public Task<ManualTrackAuthorityCommandResult> ClearManualAuthorityAsync(
+        TrackMatchActor actor,
+        Guid externalSnapshotId,
+        ManualTrackAuthorityKind kind,
+        Guid authorityId,
+        long expectedRevision,
+        string correlationId,
+        CancellationToken cancellationToken = default) =>
+        ReleaseManualAuthorityAsync(
+            actor,
+            externalSnapshotId,
+            kind,
+            authorityId,
+            expectedRevision,
+            correlationId,
+            "manual-authority.delete",
+            cancellationToken);
+
+    public async Task<TrackRematchCommandResult> RematchManualAuthorityAsync(
+        ProtocolExecutionContext context,
+        Guid externalSnapshotId,
+        ManualTrackAuthorityKind kind,
+        Guid authorityId,
+        long expectedRevision,
+        string correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        var actor = context.RequireActor();
+        var matchActor = new TrackMatchActor(
+            actor.TenantId,
+            actor.EffectiveUserId ?? throw new UnauthorizedAccessException("A user owner is required."),
+            actor.Kind == ProviderActorKind.Administrator);
+        var released = await ReleaseManualAuthorityAsync(
+            matchActor,
+            externalSnapshotId,
+            kind,
+            authorityId,
+            expectedRevision,
+            correlationId,
+            "manual-authority.rematch",
+            cancellationToken);
+        if (!released.Succeeded)
+            return new(false, released.Failure, released.Error);
+
+        return await CoalesceRematchAsync(
+            matchActor,
+            externalSnapshotId,
+            () => RematchSnapshotAsync(
+                matchActor,
+                externalSnapshotId,
+                correlationId,
+                ManualTrackAuthorityPolicy.RematchPolicyVersion,
+                context,
+                released.ReleasedProviderIdentityId,
+                ConcurrentWriteRetries,
+                cancellationToken),
+            cancellationToken);
+    }
+
+    private async Task<ManualTrackAuthorityCommandResult> ReleaseManualAuthorityAsync(
+        TrackMatchActor actor,
+        Guid externalSnapshotId,
+        ManualTrackAuthorityKind kind,
+        Guid authorityId,
+        long expectedRevision,
+        string correlationId,
+        string auditAction,
+        CancellationToken cancellationToken)
+    {
+        if (expectedRevision < 0)
+            return new(false, TrackMatchCommandFailure.Invalid, "ExpectedRevision is invalid");
+
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var snapshot = await db.ExternalMetadataSnapshots.SingleOrDefaultAsync(item =>
+            item.Id == externalSnapshotId && item.TenantId == actor.TenantId,
+            cancellationToken);
+        if (snapshot == null)
+            return new(false, TrackMatchCommandFailure.NotFound, "Track snapshot was not found");
+        if (!actor.IsAdministrator && snapshot.OwnerUserId != actor.UserId)
+            return new(false, TrackMatchCommandFailure.Forbidden, "Track snapshot is outside your account");
+
+        Guid? releasedProviderIdentityId = null;
+        if (kind is ManualTrackAuthorityKind.LocalMatch or ManualTrackAuthorityKind.Rejection)
+        {
+            var record = await db.ManualTrackOverrides.SingleOrDefaultAsync(item =>
+                item.Id == authorityId &&
+                item.TenantId == actor.TenantId &&
+                item.ExternalSnapshotId == snapshot.Id,
+                cancellationToken);
+            if (record == null)
+                return new(false, TrackMatchCommandFailure.NotFound, "Manual decision was not found");
+            var expectedDecision = kind == ManualTrackAuthorityKind.Rejection
+                ? ManualOverrideDecision.Reject
+                : ManualOverrideDecision.Pin;
+            if (record.Decision != expectedDecision)
+                return new(false, TrackMatchCommandFailure.Conflict, "The manual decision type changed");
+            if (record.RevokedAt.HasValue)
+                return new(false, TrackMatchCommandFailure.Conflict, "The manual decision is no longer active");
+            if (record.Revision != expectedRevision)
+                return new(false, TrackMatchCommandFailure.Conflict, "The manual decision changed; refresh and try again");
+            record.RevokedAt = clock.UtcNow;
+            record.Revision++;
+        }
+        else
+        {
+            if (!actor.IsAdministrator)
+                return new(false, TrackMatchCommandFailure.Forbidden,
+                    "Administrator permissions are required to release a tenant-wide provider match");
+            var identity = await db.ProviderTrackIdentities.SingleOrDefaultAsync(item =>
+                item.Id == authorityId && item.TenantId == actor.TenantId,
+                cancellationToken);
+            if (identity == null)
+                return new(false, TrackMatchCommandFailure.NotFound, "Manual provider match was not found");
+            if (!ManualTrackAuthorityPolicy.IsProviderAuthority(identity))
+                return new(false, TrackMatchCommandFailure.Conflict, "The provider match is no longer manually authoritative");
+            if (identity.Revision != expectedRevision)
+                return new(false, TrackMatchCommandFailure.Conflict, "The provider match changed; refresh and try again");
+            var canonicalId = await db.TrackMatches.AsNoTracking()
+                .Where(item => item.TenantId == actor.TenantId &&
+                               item.ExternalSnapshotId == snapshot.Id)
+                .OrderByDescending(item => item.DecisionVersion)
+                .Select(item => item.CanonicalRecordingId)
+                .FirstOrDefaultAsync(cancellationToken);
+            canonicalId ??= snapshot.ProviderTrackIdentityId.HasValue
+                ? await db.ProviderTrackIdentities.AsNoTracking()
+                    .Where(item => item.Id == snapshot.ProviderTrackIdentityId.Value &&
+                                   item.TenantId == actor.TenantId)
+                    .Select(item => (Guid?)item.CanonicalRecordingId)
+                    .SingleOrDefaultAsync(cancellationToken)
+                : null;
+            if (canonicalId != identity.CanonicalRecordingId)
+                return new(false, TrackMatchCommandFailure.Forbidden,
+                    "The manual provider match does not belong to this track");
+            identity.Verification = ProviderIdentityVerification.Verified;
+            identity.VerificationMethod = ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod;
+            identity.UpdatedAt = clock.UtcNow;
+            identity.Revision++;
+            releasedProviderIdentityId = identity.Id;
+        }
+
+        db.AuditEvents.Add(new AuditEventRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = actor.TenantId,
+            ActorUserId = actor.UserId,
+            Category = "track-match",
+            Action = auditAction,
+            Outcome = "released",
+            CorrelationId = correlationId,
+            DetailsJson = JsonSerializer.Serialize(new
+            {
+                externalSnapshotId,
+                authorityId,
+                authorityKind = kind.ToString().ToLowerInvariant(),
+                expectedRevision
+            }),
+            CreatedAt = clock.UtcNow
+        });
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return new(false, TrackMatchCommandFailure.Conflict,
+                "The manual decision changed; refresh and try again");
+        }
+        return new(
+            true,
+            ExternalSnapshotId: snapshot.Id,
+            ReleasedProviderIdentityId: releasedProviderIdentityId);
+    }
+
     public async Task<ManualTrackOverrideRecord?> GetActiveOverrideAsync(
         ProtocolExecutionContext context,
         Guid externalSnapshotId,
@@ -826,22 +1031,39 @@ public sealed class TrackMatchCommandService(
             .Select(item => item.ProviderTrackIdentityId!.Value)
             .Distinct()
             .ToArray();
-        var identities = identityIds.Length == 0
+        var externalHashes = snapshots.Select(item => item.ExternalIdHash)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var sourceIdentities = identityIds.Length == 0 && externalHashes.Length == 0
             ? []
             : await db.ProviderTrackIdentities.AsNoTracking()
                 .Where(item => item.TenantId == actor.TenantId &&
-                               identityIds.Contains(item.Id))
+                               (identityIds.Contains(item.Id) ||
+                                externalHashes.Contains(item.ExternalIdHash)))
+                .ToListAsync(cancellationToken);
+        var canonicalIds = matches.Where(item => item.CanonicalRecordingId.HasValue)
+            .Select(item => item.CanonicalRecordingId!.Value)
+            .Concat(sourceIdentities.Select(item => item.CanonicalRecordingId))
+            .Distinct()
+            .ToArray();
+        var identities = canonicalIds.Length == 0
+            ? sourceIdentities
+            : await db.ProviderTrackIdentities.AsNoTracking()
+                .Where(item => item.TenantId == actor.TenantId &&
+                               canonicalIds.Contains(item.CanonicalRecordingId))
                 .ToListAsync(cancellationToken);
         var libraryIds = matches
             .Where(item => item.LibraryTrackId.HasValue)
             .Select(item => item.LibraryTrackId!.Value)
             .Distinct()
             .ToArray();
-        var libraryTracks = libraryIds.Length == 0
+        var libraryTracks = libraryIds.Length == 0 && canonicalIds.Length == 0
             ? []
             : await db.LibraryTracks.AsNoTracking()
                 .Where(item => item.TenantId == actor.TenantId &&
-                               libraryIds.Contains(item.Id))
+                               (libraryIds.Contains(item.Id) ||
+                                item.CanonicalRecordingId.HasValue &&
+                                canonicalIds.Contains(item.CanonicalRecordingId.Value)))
                 .ToListAsync(cancellationToken);
         return new(matches, snapshots, identities, libraryTracks);
     }
@@ -1354,7 +1576,7 @@ public sealed class TrackMatchCommandService(
             externalSnapshotId,
             () => RematchSnapshotAsync(
                 actor, externalSnapshotId, correlationId, "manual-rematch-v3", null,
-                ConcurrentWriteRetries, cancellationToken),
+                null, ConcurrentWriteRetries, cancellationToken),
             cancellationToken);
 
     public async Task<TrackRematchCommandResult> RematchSnapshotAsync(
@@ -1378,6 +1600,7 @@ public sealed class TrackMatchCommandService(
                 correlationId,
                 policyVersion,
                 context,
+                null,
                 ConcurrentWriteRetries,
                 cancellationToken),
             cancellationToken);
@@ -1413,6 +1636,7 @@ public sealed class TrackMatchCommandService(
         string correlationId,
         string policyVersion,
         ProtocolExecutionContext? execution,
+        Guid? excludedProviderIdentityId,
         int retriesRemaining,
         CancellationToken cancellationToken)
     {
@@ -1440,6 +1664,27 @@ public sealed class TrackMatchCommandService(
                             item.ProviderAccountId == snapshot.ProviderAccountId))
             .OrderByDescending(item => item.ProviderAccountId == snapshot.ProviderAccountId)
             .FirstOrDefaultAsync(cancellationToken);
+        var manual = await db.ManualTrackOverrides.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.TenantId == actor.TenantId &&
+            item.ExternalSnapshotId == snapshot.Id &&
+            item.RevokedAt == null,
+            cancellationToken);
+        var latestDecision = await db.TrackMatches.AsNoTracking()
+            .Where(item => item.TenantId == actor.TenantId &&
+                           item.ExternalSnapshotId == snapshot.Id)
+            .OrderByDescending(item => item.DecisionVersion)
+            .FirstOrDefaultAsync(cancellationToken);
+        var latestVersion = latestDecision?.DecisionVersion ?? 0;
+        if (TrackRematchAllService.RequiresAuthorityGuard(policyVersion) &&
+            await HasManualAuthorityAsync(
+                db,
+                snapshot,
+                source?.CanonicalRecordingId ?? latestDecision?.CanonicalRecordingId,
+                cancellationToken))
+            return new(
+                false,
+                TrackMatchCommandFailure.Conflict,
+                "A manual match became authoritative while the full rematch was running");
         var candidates = await db.LibraryTracks.AsNoTracking()
             .Where(item =>
                 item.TenantId == actor.TenantId &&
@@ -1447,16 +1692,6 @@ public sealed class TrackMatchCommandService(
                 item.LibraryScopeId == snapshot.LibraryScopeId &&
                 item.BackendInstanceId == snapshot.BackendInstanceId)
             .ToListAsync(cancellationToken);
-        var manual = await db.ManualTrackOverrides.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.TenantId == actor.TenantId &&
-            item.ExternalSnapshotId == snapshot.Id &&
-            item.RevokedAt == null,
-            cancellationToken);
-        var latestVersion = await db.TrackMatches
-            .Where(item => item.TenantId == actor.TenantId &&
-                           item.ExternalSnapshotId == snapshot.Id)
-            .Select(item => (int?)item.DecisionVersion)
-            .MaxAsync(cancellationToken) ?? 0;
         var payload = ReadMetadata(snapshot.PayloadJson);
         var sourceTrack = new ExternalTrackMatchSnapshot(
             snapshot.Id.ToString("N"),
@@ -1499,7 +1734,8 @@ public sealed class TrackMatchCommandService(
             playableSearch != null &&
             manual?.Decision is not ManualOverrideDecision.Pin &&
             !(manual?.Decision == ManualOverrideDecision.Reject && !manual.LibraryTrackId.HasValue) &&
-            decision.State is not (TrackMatchReviewState.Accepted or TrackMatchReviewState.Pinned))
+            decision.State != TrackMatchReviewState.Pinned &&
+            !decisionEngine.CanSkipProviderComparison(decision))
         {
             var cachedRoutes = source == null
                 ? []
@@ -1508,6 +1744,7 @@ public sealed class TrackMatchCommandService(
                         item.TenantId == source.TenantId &&
                         item.CanonicalRecordingId == source.CanonicalRecordingId &&
                         item.Id != source.Id &&
+                        item.Id != excludedProviderIdentityId &&
                         item.ResourceKind == ProviderResourceKind.Track &&
                         item.VerificationMethod != "source-snapshot-hash" &&
                         (item.Verification == ProviderIdentityVerification.Verified ||
@@ -1582,7 +1819,22 @@ public sealed class TrackMatchCommandService(
         var record = ToRecord(
             input, actor.TenantId, snapshot.OwnerUserId, snapshot.LibraryScopeId,
             correlationId, clock.UtcNow);
+        if (TrackRematchAllService.RequiresAuthorityGuard(policyVersion) &&
+            await HasManualAuthorityAsync(
+                db, snapshot, canonicalRecordingId, cancellationToken))
+            return new(
+                false,
+                TrackMatchCommandFailure.Conflict,
+                "A manual match became authoritative while the full rematch was running");
         db.TrackMatches.Add(record);
+        if (TrackRematchAllService.IsManagedPolicy(policyVersion))
+            db.AuditEvents.Add(TrackRematchAllService.SuccessAudit(
+                actor.TenantId,
+                snapshot.OwnerUserId,
+                snapshot.Id,
+                correlationId,
+                record.DecisionVersion,
+                record.DecidedAt));
         try
         {
             await db.SaveChangesAsync(cancellationToken);
@@ -1616,6 +1868,7 @@ public sealed class TrackMatchCommandService(
                     correlationId,
                     policyVersion,
                     execution,
+                    excludedProviderIdentityId,
                     retriesRemaining - 1,
                     cancellationToken);
             }
@@ -1627,6 +1880,28 @@ public sealed class TrackMatchCommandService(
             Confidence: decision.Confidence,
             CandidateCount: decision.Candidates.Count,
             DecisionVersion: record.DecisionVersion);
+    }
+
+    private static async Task<bool> HasManualAuthorityAsync(
+        AllstarrDbContext db,
+        ExternalMetadataSnapshotRecord snapshot,
+        Guid? canonicalRecordingId,
+        CancellationToken cancellationToken)
+    {
+        if (await db.ManualTrackOverrides.AsNoTracking().AnyAsync(item =>
+                item.TenantId == snapshot.TenantId &&
+                item.ExternalSnapshotId == snapshot.Id &&
+                item.RevokedAt == null,
+                cancellationToken))
+            return true;
+        return canonicalRecordingId.HasValue &&
+               await db.ProviderTrackIdentities.AsNoTracking().AnyAsync(item =>
+                   item.TenantId == snapshot.TenantId &&
+                   item.CanonicalRecordingId == canonicalRecordingId.Value &&
+                   item.ResourceKind == ProviderResourceKind.Track &&
+                   item.Verification == ProviderIdentityVerification.Pinned &&
+                   item.VerificationMethod == ManualTrackAuthorityPolicy.ProviderVerificationMethod,
+                   cancellationToken);
     }
 
     private static async Task<Guid> LinkExternalIdentitiesAsync(
@@ -1691,13 +1966,16 @@ public sealed class TrackMatchCommandService(
                 source.CanonicalRecordingId = canonicalRecordingId;
                 source.UpdatedAt = now;
             }
-            if (verificationMethod == "automatic-match" &&
+            if (identity.VerificationMethod == ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod ||
+                verificationMethod == "automatic-match" &&
                 identity.VerificationMethod == "automatic-suggestion")
             {
+                identity.Verification = ProviderIdentityVerification.Verified;
                 identity.VerificationMethod = verificationMethod;
                 identity.DecisionVersion = decisionVersion;
                 identity.VerifiedAt = now;
                 identity.UpdatedAt = now;
+                identity.Revision++;
             }
             return canonicalRecordingId;
         }
@@ -1877,6 +2155,16 @@ public sealed class TrackMatchCommandService(
             activeOverride.RevokedAt = now;
             activeOverride.Revision++;
         }
+        var existingCanonicalId = latestDecision?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId;
+        if (targetType is "local" or "reject" && existingCanonicalId.HasValue)
+            await ReplaceProviderAuthoritiesAsync(
+                db,
+                actor.TenantId,
+                existingCanonicalId.Value,
+                exceptIdentityId: null,
+                decisionVersion,
+                now,
+                cancellationToken);
 
         if (targetType == "local")
         {
@@ -1983,6 +2271,14 @@ public sealed class TrackMatchCommandService(
                 return TrackMatchCommandResult.Fail(
                     TrackMatchCommandFailure.Conflict,
                     "That provider track is already linked to a different recording");
+            await ReplaceProviderAuthoritiesAsync(
+                db,
+                actor.TenantId,
+                canonicalId.Value,
+                identity?.Id,
+                decisionVersion,
+                now,
+                cancellationToken);
             if (identity == null)
             {
                 db.ProviderTrackIdentities.Add(new ProviderTrackIdentityRecord
@@ -1997,7 +2293,7 @@ public sealed class TrackMatchCommandService(
                     ExternalId = externalId,
                     ExternalIdHash = externalHash,
                     Verification = ProviderIdentityVerification.Pinned,
-                    VerificationMethod = "manual-review",
+                    VerificationMethod = ManualTrackAuthorityPolicy.ProviderVerificationMethod,
                     DecisionVersion = decisionVersion,
                     VerifiedAt = now,
                     CreatedAt = now,
@@ -2008,15 +2304,43 @@ public sealed class TrackMatchCommandService(
             {
                 identity.ExternalId = externalId;
                 identity.Verification = ProviderIdentityVerification.Pinned;
-                identity.VerificationMethod = "manual-review";
+                identity.VerificationMethod = ManualTrackAuthorityPolicy.ProviderVerificationMethod;
                 identity.DecisionVersion = decisionVersion;
                 identity.VerifiedAt = now;
                 identity.UpdatedAt = now;
+                identity.Revision++;
             }
         }
 
         await db.SaveChangesAsync(cancellationToken);
         return TrackMatchCommandResult.Success(snapshot.Id);
+    }
+
+    private static async Task ReplaceProviderAuthoritiesAsync(
+        AllstarrDbContext db,
+        Guid tenantId,
+        Guid canonicalRecordingId,
+        Guid? exceptIdentityId,
+        int decisionVersion,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var authorities = await db.ProviderTrackIdentities
+            .Where(item =>
+                item.TenantId == tenantId &&
+                item.CanonicalRecordingId == canonicalRecordingId &&
+                item.Id != exceptIdentityId &&
+                item.Verification == ProviderIdentityVerification.Pinned &&
+                item.VerificationMethod == ManualTrackAuthorityPolicy.ProviderVerificationMethod)
+            .ToArrayAsync(cancellationToken);
+        foreach (var authority in authorities)
+        {
+            authority.Verification = ProviderIdentityVerification.Verified;
+            authority.VerificationMethod = ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod;
+            authority.DecisionVersion = decisionVersion;
+            authority.UpdatedAt = now;
+            authority.Revision++;
+        }
     }
 
     private static ProviderTrackIdentityRecord AddSourceSnapshotIdentity(

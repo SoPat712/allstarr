@@ -6,6 +6,7 @@ using allstarr.Core.Jobs;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Services.MusicBrainz;
+using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Playback;
@@ -17,7 +18,8 @@ public sealed record PlaybackSignalRequest(ProtocolExecutionContext ExecutionCon
 public sealed record PlaybackSignalPayload(IntelligenceScope Scope, PlaybackTransition Transition, string ItemId,
     string? DeviceId, string? PlaySessionId, long? PositionTicks, DateTimeOffset ObservedAt, string SignalKey,
     string? OccurrenceKey = null, string? ClientClass = null, string? DeviceClass = null,
-    PlaybackTrackSnapshot? SubmittedTrack = null, bool RelayExternally = true, string SourceKind = "protocol");
+    PlaybackTrackSnapshot? SubmittedTrack = null, bool RelayExternally = true, string SourceKind = "protocol",
+    PlaybackStreamSource? StreamSource = null);
 public interface IPlaybackSignalPipeline { Task<bool> RecordAsync(PlaybackSignalRequest request, CancellationToken cancellationToken = default); }
 public interface IScopedPlaybackScrobbleDelivery
 {
@@ -30,7 +32,8 @@ public interface IPlaybackLyricsPrefetch
 
 public sealed class PlaybackSignalPipeline(
     DurableJobQueue jobs,
-    IProtocolLibraryScopeResolver? libraryScopes = null) : IPlaybackSignalPipeline
+    IProtocolLibraryScopeResolver? libraryScopes = null,
+    IPlaybackDeliveryActivitySource? playbackActivity = null) : IPlaybackSignalPipeline
 {
     public const string JobType = "playback.signal.process";
     public async Task<bool> RecordAsync(PlaybackSignalRequest request, CancellationToken cancellationToken = default)
@@ -50,6 +53,10 @@ public sealed class PlaybackSignalPipeline(
             execution.BackendInstanceId, execution.LibraryScopeId);
         var bucket = request.Transition == PlaybackTransition.Progress ? (request.PositionTicks ?? 0) / TimeSpan.TicksPerSecond / 10 : 0;
         var deviceId = request.DeviceId ?? execution.Client.DeviceId;
+        var streamSource = playbackActivity?.StreamFor(actor.TenantId, owner, deviceId, request.ItemId);
+        if (streamSource?.Matches(scope.Protocol, scope.BackendInstanceId, scope.LibraryScopeId) != true ||
+            streamSource?.OpenedAt > request.ObservedAt)
+            streamSource = null;
         var occurrenceKey = CreateOccurrenceKey(scope, request.ItemId, deviceId, request.PlaySessionId,
             request.PositionTicks, request.ObservedAt);
         var key = Hash($"{occurrenceKey}|{request.Transition}|{bucket}");
@@ -57,7 +64,7 @@ public sealed class PlaybackSignalPipeline(
         var result = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaybackSignalPayload>(JobType, key,
             new(scope, request.Transition, request.ItemId, deviceId, request.PlaySessionId, normalizedTicks,
                 request.ObservedAt, key, occurrenceKey, execution.Client.ClientId, execution.Client.DeviceName,
-                request.SubmittedTrack, request.RelayExternally, request.SourceKind),
+                request.SubmittedTrack, request.RelayExternally, request.SourceKind, streamSource),
             scope.TenantId, scope.OwnerUserId, LibraryScopeId: scope.LibraryScopeId,
             CorrelationId: execution.CorrelationId), cancellationToken);
         return result.Created;
@@ -191,6 +198,7 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
     private static void Apply(ListeningEventRecord record, PlaybackSignalPayload payload,
         PlaybackTrackSnapshot? track, bool added, bool enrichWithMusicBrainz)
     {
+        var latest = added || payload.ObservedAt >= record.UpdatedAt;
         var next = Classify(payload, track);
         record.State = added || Rank(next) > Rank(record.State) ? next : record.State;
         if (record.StartedAt == null && payload.Transition != PlaybackTransition.Submission)
@@ -220,6 +228,14 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         record.ProviderAccountId ??= track?.ProviderAccountId;
         record.ProviderTrackIdentityId ??= track?.ProviderTrackIdentityId;
         record.ProviderTrackReference ??= Trim(track?.ProviderTrackReference, 500);
+        if (latest && payload.StreamSource is { } source &&
+            source.Matches(payload.Scope.Protocol, payload.Scope.BackendInstanceId, payload.Scope.LibraryScopeId))
+        {
+            record.ProviderId = source.ProviderId;
+            record.ProviderAccountId = source.AccountId;
+            record.ProviderTrackIdentityId = track?.ProviderId == source.ProviderId ? track.ProviderTrackIdentityId : null;
+            record.ProviderTrackReference = $"{source.ProviderId}:{source.ExternalId}";
+        }
         record.Revision++;
     }
 

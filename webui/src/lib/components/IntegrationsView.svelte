@@ -9,11 +9,13 @@
     administrator,
     initialSource = "",
     initialSection = "data",
+    initialConnect = false,
   }: {
     section?: string;
     administrator: boolean;
     initialSource?: string;
     initialSection?: string;
+    initialConnect?: boolean;
   } = $props();
 
   const tabs = [
@@ -27,7 +29,7 @@
 </script>
 
 <section class="settings-workspace integrations-workspace">
-  <SegmentedNav items={tabs} {active} label="Integration sections" class="settings-tabs" />
+  <SegmentedNav items={tabs} {active} label="Integration sections" class="route-tabs settings-tabs" />
 
   {#if active === "services" || active === "accounts"}
     <SourcesView
@@ -35,6 +37,7 @@
       {administrator}
       {initialSource}
       {initialSection}
+      {initialConnect}
     />
   {:else if active === "extensions"}
     <ExtensionsView />

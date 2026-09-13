@@ -40,7 +40,6 @@ public class SubsonicProxyServiceTests
     [Fact]
     public async Task RelayAsync_SuccessfulRequest_ReturnsBodyAndContentType()
     {
-        // Arrange
         var responseContent = new byte[] { 1, 2, 3, 4, 5 };
         var responseMessage = new HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -61,10 +60,8 @@ public class SubsonicProxyServiceTests
             { "v", "1.16.0" }
         };
 
-        // Act
         var (body, contentType) = await _service.RelayAsync("rest/ping", parameters);
 
-        // Assert
         Assert.Equal(responseContent, body);
         Assert.Equal("application/json", contentType);
     }
@@ -72,7 +69,6 @@ public class SubsonicProxyServiceTests
     [Fact]
     public async Task RelayAsync_BuildsCorrectUrl()
     {
-        // Arrange
         HttpRequestMessage? capturedRequest = null;
         var responseMessage = new HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -92,10 +88,8 @@ public class SubsonicProxyServiceTests
             { "p", "secret" }
         };
 
-        // Act
         await _service.RelayAsync("rest/ping", parameters);
 
-        // Assert
         Assert.NotNull(capturedRequest);
         Assert.Contains("http://localhost:4533/rest/ping", capturedRequest!.RequestUri!.ToString());
         Assert.Contains("u=admin", capturedRequest.RequestUri.ToString());
@@ -105,7 +99,6 @@ public class SubsonicProxyServiceTests
     [Fact]
     public async Task RelayAsync_EncodesSpecialCharacters()
     {
-        // Arrange
         HttpRequestMessage? capturedRequest = null;
         var responseMessage = new HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -125,10 +118,8 @@ public class SubsonicProxyServiceTests
             { "artist", "AC/DC" }
         };
 
-        // Act
         await _service.RelayAsync("rest/search3", parameters);
 
-        // Assert
         Assert.NotNull(capturedRequest);
         var url = capturedRequest!.RequestUri!.ToString();
         // HttpClient automatically applies URL encoding when building the URI
@@ -141,7 +132,6 @@ public class SubsonicProxyServiceTests
     [Fact]
     public async Task RelayAsync_HttpError_ThrowsException()
     {
-        // Arrange
         var responseMessage = new HttpResponseMessage(HttpStatusCode.NotFound);
 
         _mockHttpMessageHandler.Protected()
@@ -152,7 +142,6 @@ public class SubsonicProxyServiceTests
 
         var parameters = new Dictionary<string, string> { { "u", "admin" } };
 
-        // Act & Assert
         await Assert.ThrowsAsync<HttpRequestException>(() =>
             _service.RelayAsync("rest/ping", parameters));
     }
@@ -160,7 +149,6 @@ public class SubsonicProxyServiceTests
     [Fact]
     public async Task RelaySafeAsync_SuccessfulRequest_ReturnsSuccessTrue()
     {
-        // Arrange
         var responseContent = new byte[] { 1, 2, 3 };
         var responseMessage = new HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -176,10 +164,8 @@ public class SubsonicProxyServiceTests
 
         var parameters = new Dictionary<string, string> { { "u", "admin" } };
 
-        // Act
         var (body, contentType, success) = await _service.RelaySafeAsync("rest/ping", parameters);
 
-        // Assert
         Assert.True(success);
         Assert.Equal(responseContent, body);
         Assert.Equal("application/xml", contentType);
@@ -188,7 +174,6 @@ public class SubsonicProxyServiceTests
     [Fact]
     public async Task RelaySafeAsync_HttpError_ReturnsSuccessFalse()
     {
-        // Arrange
         var responseMessage = new HttpResponseMessage(HttpStatusCode.InternalServerError);
 
         _mockHttpMessageHandler.Protected()
@@ -199,10 +184,8 @@ public class SubsonicProxyServiceTests
 
         var parameters = new Dictionary<string, string> { { "u", "admin" } };
 
-        // Act
         var (body, contentType, success) = await _service.RelaySafeAsync("rest/ping", parameters);
 
-        // Assert
         Assert.False(success);
         Assert.Null(body);
         Assert.Null(contentType);
@@ -211,7 +194,6 @@ public class SubsonicProxyServiceTests
     [Fact]
     public async Task RelaySafeAsync_NetworkException_ReturnsSuccessFalse()
     {
-        // Arrange
         _mockHttpMessageHandler.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
                 ItExpr.IsAny<HttpRequestMessage>(),
@@ -220,10 +202,8 @@ public class SubsonicProxyServiceTests
 
         var parameters = new Dictionary<string, string> { { "u", "admin" } };
 
-        // Act
         var (body, contentType, success) = await _service.RelaySafeAsync("rest/ping", parameters);
 
-        // Assert
         Assert.False(success);
         Assert.Null(body);
         Assert.Null(contentType);
@@ -232,7 +212,6 @@ public class SubsonicProxyServiceTests
     [Fact]
     public async Task RelayStreamAsync_SuccessfulRequest_ReturnsFileStreamResult()
     {
-        // Arrange
         var streamContent = new byte[] { 1, 2, 3, 4, 5 };
         var responseMessage = new HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -252,10 +231,8 @@ public class SubsonicProxyServiceTests
             { "u", "admin" }
         };
 
-        // Act
         var result = await _service.RelayStreamAsync(parameters, CancellationToken.None);
 
-        // Assert
         var fileResult = Assert.IsType<FileStreamResult>(result);
         Assert.Equal("audio/mpeg", fileResult.ContentType);
         Assert.False(fileResult.EnableRangeProcessing);
@@ -264,7 +241,6 @@ public class SubsonicProxyServiceTests
     [Fact]
     public async Task RelayStreamAsync_HttpError_ReturnsStatusCodeResult()
     {
-        // Arrange
         var responseMessage = new HttpResponseMessage(HttpStatusCode.NotFound);
 
         _mockHttpMessageHandler.Protected()
@@ -275,10 +251,8 @@ public class SubsonicProxyServiceTests
 
         var parameters = new Dictionary<string, string> { { "id", "song123" } };
 
-        // Act
         var result = await _service.RelayStreamAsync(parameters, CancellationToken.None);
 
-        // Assert
         var statusResult = Assert.IsType<StatusCodeResult>(result);
         Assert.Equal(404, statusResult.StatusCode);
     }
@@ -286,7 +260,6 @@ public class SubsonicProxyServiceTests
     [Fact]
     public async Task RelayStreamAsync_Exception_ReturnsObjectResultWith500()
     {
-        // Arrange
         _mockHttpMessageHandler.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
                 ItExpr.IsAny<HttpRequestMessage>(),
@@ -295,10 +268,8 @@ public class SubsonicProxyServiceTests
 
         var parameters = new Dictionary<string, string> { { "id", "song123" } };
 
-        // Act
         var result = await _service.RelayStreamAsync(parameters, CancellationToken.None);
 
-        // Assert
         var objectResult = Assert.IsType<ObjectResult>(result);
         Assert.Equal(500, objectResult.StatusCode);
     }
@@ -306,7 +277,6 @@ public class SubsonicProxyServiceTests
     [Fact]
     public async Task RelayStreamAsync_DefaultContentType_UsesAudioMpeg()
     {
-        // Arrange
         var streamContent = new byte[] { 1, 2, 3 };
         var responseMessage = new HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -322,10 +292,8 @@ public class SubsonicProxyServiceTests
 
         var parameters = new Dictionary<string, string> { { "id", "song123" } };
 
-        // Act
         var result = await _service.RelayStreamAsync(parameters, CancellationToken.None);
 
-        // Assert
         var fileResult = Assert.IsType<FileStreamResult>(result);
         Assert.Equal("audio/mpeg", fileResult.ContentType);
     }
@@ -333,7 +301,6 @@ public class SubsonicProxyServiceTests
     [Fact]
     public async Task RelayStreamAsync_WithRangeHeader_ForwardsRangeToUpstream()
     {
-        // Arrange
         HttpRequestMessage? capturedRequest = null;
         var streamContent = new byte[] { 1, 2, 3, 4, 5 };
         var responseMessage = new HttpResponseMessage(HttpStatusCode.PartialContent)
@@ -358,10 +325,8 @@ public class SubsonicProxyServiceTests
 
         var parameters = new Dictionary<string, string> { { "id", "song123" } };
 
-        // Act
         await service.RelayStreamAsync(parameters, CancellationToken.None);
 
-        // Assert
         Assert.NotNull(capturedRequest);
         Assert.True(capturedRequest!.Headers.Contains("Range"));
         Assert.Equal("bytes=0-1023", capturedRequest.Headers.GetValues("Range").First());
@@ -370,7 +335,6 @@ public class SubsonicProxyServiceTests
     [Fact]
     public async Task RelayStreamAsync_WithIfRangeHeader_ForwardsIfRangeToUpstream()
     {
-        // Arrange
         HttpRequestMessage? capturedRequest = null;
         var streamContent = new byte[] { 1, 2, 3 };
         var responseMessage = new HttpResponseMessage(HttpStatusCode.OK)
@@ -394,10 +358,8 @@ public class SubsonicProxyServiceTests
 
         var parameters = new Dictionary<string, string> { { "id", "song123" } };
 
-        // Act
         await service.RelayStreamAsync(parameters, CancellationToken.None);
 
-        // Assert
         Assert.NotNull(capturedRequest);
         Assert.True(capturedRequest!.Headers.Contains("If-Range"));
     }
@@ -405,7 +367,6 @@ public class SubsonicProxyServiceTests
     [Fact]
     public async Task RelayStreamAsync_NullHttpContext_ReturnsError()
     {
-        // Arrange
         var httpContextAccessor = new HttpContextAccessor { HttpContext = null };
         var service = new SubsonicProxyService(_mockHttpClientFactory.Object,
             Options.Create(new SubsonicSettings { Url = "http://localhost:4533" }),
@@ -413,10 +374,8 @@ public class SubsonicProxyServiceTests
 
         var parameters = new Dictionary<string, string> { { "id", "song123" } };
 
-        // Act
         var result = await service.RelayStreamAsync(parameters, CancellationToken.None);
 
-        // Assert
         var objectResult = Assert.IsType<ObjectResult>(result);
         Assert.Equal(500, objectResult.StatusCode);
     }

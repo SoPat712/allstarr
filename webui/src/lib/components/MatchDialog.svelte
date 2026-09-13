@@ -267,24 +267,20 @@
                         definition={provider(candidateProvider(candidate))}
                       />
                       {providerName(candidateProvider(candidate))}
-                      {#if resolution?.targetType === "local" && candidate.components?.localPreference}
-                        <span>· +{percent(candidate.components.localPreference)} local boost</span>
-                      {:else if candidate.components?.extensionPenalty}
-                        <span>· {percent(candidate.components.extensionPenalty)} extension penalty</span>
+                      {#if candidate.components?.priorityWindow}
+                        <span>· {percent(candidate.components.priorityWindow)} priority window</span>
                       {/if}
                     </span>
                   </div>
                   <span
                     class="candidate-confidence"
                   >
-                    <strong>{percent(
-                      candidate.components?.preferenceScore ?? candidate.confidence
-                    )}</strong>
+                    <strong>{percent(candidate.confidence)}</strong>
                     <small>confidence</small>
                   </span>
                   <div class="score-components">
                     {#each scoreComponents(candidate) as [name, value]}
-                      {#if name !== "localPreference" && name !== "extensionPenalty" && name !== "preferenceScore"}
+                      {#if name !== "priorityWindow"}
                         <span>
                           <small>{name.replaceAll("_", " ")}</small>
                           <strong>{percent(value)}</strong>
@@ -386,10 +382,8 @@
                     definition={provider(target.externalProvider || "")}
                   />
                   {providerName(target.externalProvider)}
-                  {#if !target.externalProvider && target.components?.localPreference}
-                    <span>· +{percent(target.components.localPreference)} local boost</span>
-                  {:else if target.components?.extensionPenalty}
-                    <span>· {percent(target.components.extensionPenalty)} extension penalty</span>
+                  {#if target.components?.priorityWindow}
+                    <span>· {percent(target.components.priorityWindow)} priority window</span>
                   {/if}
                 </span>
                 <strong>{target.title}</strong>
@@ -401,9 +395,7 @@
                 <small>{target.externalId || target.backendItemId || target.id}</small>
               </span>
               <span class="target-score">
-                <strong>{percent(
-                  target.components?.preferenceScore ?? target.confidence
-                )}</strong>
+                <strong>{percent(target.confidence)}</strong>
                 <small>confidence</small>
                 <small>rank #{results.indexOf(target) + 1}</small>
               </span>
@@ -429,7 +421,7 @@
           {/each}
         </div>
 
-        <footer>
+        <footer class="dialog-actions">
           {#if showReject}
             <Button variant="destructive" onclick={() => onReject?.(match!)}>Reject candidate</Button>
           {/if}

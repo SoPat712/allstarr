@@ -31,7 +31,8 @@ public sealed class TrackMatchesController(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     IHttpClientFactory httpClients,
     IMediaAssetResolver mediaAssets,
-    TrackMatchDecisionEngine matcher) : ControllerBase
+    TrackMatchDecisionEngine matcher,
+    TrackRematchAllService bulkRematches) : ControllerBase
 {
     public sealed record ResolveTrackMatchRequest(
         string TargetType,
@@ -39,6 +40,10 @@ public sealed class TrackMatchesController(
         string? ExternalProvider = null,
         string? ExternalId = null,
         string? Reason = null);
+
+    public sealed record ApplyTrackRematchAllRequest(string ConfirmationId);
+
+    public sealed record ManualAuthorityRequest(string Kind, long ExpectedRevision);
 
     [HttpGet("{externalSnapshotId:guid}/artwork")]
     public async Task<IActionResult> SourceArtwork(
@@ -268,6 +273,9 @@ public sealed class TrackMatchesController(
             !state.Equals("attention", StringComparison.OrdinalIgnoreCase) &&
             !state.Equals("matched", StringComparison.OrdinalIgnoreCase) &&
             !state.Equals("history", StringComparison.OrdinalIgnoreCase) &&
+            !state.Equals("automatic", StringComparison.OrdinalIgnoreCase) &&
+            !state.Equals("manual_matches", StringComparison.OrdinalIgnoreCase) &&
+            !state.Equals("manual_rejections", StringComparison.OrdinalIgnoreCase) &&
             !Enum.TryParse<TrackMatchState>(state, true, out _))
             return BadRequest(new { error = "State is not a valid match state" });
         if (sort is not (null or "" or "confidence_desc" or "confidence_asc"))
@@ -284,12 +292,6 @@ public sealed class TrackMatchesController(
         var decisions = review.LatestDecisions.ToDictionary(item => item.ExternalSnapshotId);
         var overrides = review.ActiveOverrides.ToDictionary(item => item.ExternalSnapshotId);
         var library = review.LibraryTracks.ToDictionary(item => item.Id);
-        var libraryByCanonical = review.LibraryTracks
-            .Where(item => item.CanonicalRecordingId.HasValue)
-            .GroupBy(item => item.CanonicalRecordingId!.Value)
-            .ToDictionary(group => group.Key, group => group
-                .OrderBy(item => item.BackendItemId, StringComparer.Ordinal)
-                .First());
         var sourceIdentities = review.ProviderIdentities.ToDictionary(item => item.Id);
         var sourceIdentitiesByHash = review.ProviderIdentities
             .GroupBy(item => item.ExternalIdHash, StringComparer.Ordinal)
@@ -302,7 +304,8 @@ public sealed class TrackMatchesController(
         var playableProviders = providerGateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
             .Concat(providerGateway.GetProviderOrder(ProviderCapabilityKind.Download))
             .Select(ExternalTrackPlaybackPolicy.Normalize)
-            .ToHashSet(StringComparer.Ordinal);
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
 
         var allRows = review.Snapshots
             .GroupBy(snapshot => new
@@ -339,12 +342,17 @@ public sealed class TrackMatchesController(
                     manual,
                     sourceIdentity,
                     library,
-                    libraryByCanonical,
                     identities,
                     playableProviders);
             })
             .ToArray();
-        var filteredRows = allRows.Where(row => MatchesStateFilter(row.State, state));
+        var filteredRows = allRows.Where(row => state?.ToLowerInvariant() switch
+        {
+            "manual_matches" => row.HasManualMatch,
+            "manual_rejections" => row.HasManualRejection,
+            "automatic" => IsAutomaticDecision(row.State, row.HasManualMatch, row.HasManualRejection),
+            _ => MatchesStateFilter(row.State, state)
+        });
         var rows = sort switch
         {
             "confidence_desc" => filteredRows.OrderByDescending(row => row.Confidence).ToArray(),
@@ -364,7 +372,14 @@ public sealed class TrackMatchesController(
                 unresolved = allRows.Count(item => item.State == TrackMatchState.Unresolved),
                 suggested = allRows.Count(item => item.State == TrackMatchState.Suggested),
                 review = allRows.Count(item => item.State is TrackMatchState.Suggested or TrackMatchState.Ambiguous),
+                ambiguous = allRows.Count(item => item.State == TrackMatchState.Ambiguous),
                 rejected = allRows.Count(item => item.State == TrackMatchState.Rejected),
+                manualMatches = allRows.Count(item => item.HasManualMatch),
+                manualRejections = allRows.Count(item => item.HasManualRejection),
+                automatic = allRows.Count(item => IsAutomaticDecision(
+                    item.State,
+                    item.HasManualMatch,
+                    item.HasManualRejection)),
                 attention = allRows.Count(item => item.State is
                     TrackMatchState.Suggested or TrackMatchState.Ambiguous)
             },
@@ -598,6 +613,135 @@ public sealed class TrackMatchesController(
         });
     }
 
+    [HttpDelete("{externalSnapshotId:guid}/manual-authorities/{authorityId:guid}")]
+    public async Task<IActionResult> DeleteManualAuthority(
+        Guid externalSnapshotId,
+        Guid authorityId,
+        [FromQuery] string kind,
+        [FromQuery] long? expectedRevision,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TrySession(out var session, out var error)) return error!;
+        if (!TryManualAuthorityKind(kind, out var authorityKind))
+            return BadRequest(new { error = "Manual authority kind is invalid" });
+        if (!expectedRevision.HasValue)
+            return BadRequest(new { error = "ExpectedRevision is required" });
+        var result = await trackMatchCommands.ClearManualAuthorityAsync(
+            new TrackMatchActor(
+                session!.TenantId!.Value,
+                session.AllstarrUserId!.Value,
+                session.IsAdministrator),
+            externalSnapshotId,
+            authorityKind,
+            authorityId,
+            expectedRevision.Value,
+            HttpContext.TraceIdentifier,
+            cancellationToken);
+        return result.Succeeded
+            ? NoContent()
+            : MatchCommandError(result.Failure, result.Error, "Failed to delete the manual decision");
+    }
+
+    [HttpPost("{externalSnapshotId:guid}/manual-authorities/{authorityId:guid}/rematch")]
+    public async Task<IActionResult> RematchManualAuthority(
+        Guid externalSnapshotId,
+        Guid authorityId,
+        [FromBody] ManualAuthorityRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TrySession(out var session, out var error)) return error!;
+        if (!TryManualAuthorityKind(request.Kind, out var authorityKind))
+            return BadRequest(new { error = "Manual authority kind is invalid" });
+        ProtocolExecutionContext execution;
+        try
+        {
+            execution = await protocolContexts.CreateAsync(
+                session!, null, HttpContext.TraceIdentifier, cancellationToken);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return StatusCode(403, new { error = "The linked backend identity is unavailable" });
+        }
+        var result = await trackMatchCommands.RematchManualAuthorityAsync(
+            execution,
+            externalSnapshotId,
+            authorityKind,
+            authorityId,
+            request.ExpectedRevision,
+            HttpContext.TraceIdentifier,
+            cancellationToken);
+        if (!result.Succeeded)
+            return MatchCommandError(result.Failure, result.Error, "Failed to rematch the manual decision");
+        return Ok(new
+        {
+            rematched = true,
+            state = result.State,
+            confidence = result.Confidence,
+            candidateCount = result.CandidateCount,
+            decisionVersion = result.DecisionVersion
+        });
+    }
+
+    [HttpGet("rematch-all/preview")]
+    public async Task<IActionResult> PreviewRematchAll(CancellationToken cancellationToken = default)
+    {
+        if (!TrySession(out var session, out var error)) return error!;
+        var scopeOwnerUserId = session!.IsAdministrator
+            ? null
+            : session.AllstarrUserId;
+        var preview = await bulkRematches.PreviewAsync(
+            session.TenantId!.Value,
+            scopeOwnerUserId,
+            cancellationToken);
+        return Ok(new
+        {
+            confirmationId = preview.ConfirmationId,
+            algorithmVersion = preview.AlgorithmVersion,
+            totalTracks = preview.TotalTracks,
+            resolvedTracks = preview.ResolvedTracks,
+            reviewTracks = preview.ReviewTracks,
+            unresolvedTracks = preview.UnresolvedTracks,
+            protectedManualTracks = preview.ProtectedManualTracks,
+            automaticDecisionsToReplace = preview.AutomaticDecisionsToReplace,
+            tracksToRematch = preview.TracksToRematch,
+            canApply = preview.CanApply
+        });
+    }
+
+    [HttpPost("rematch-all/apply")]
+    public async Task<IActionResult> ApplyRematchAll(
+        [FromBody] ApplyTrackRematchAllRequest? request,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TrySession(out var session, out var error)) return error!;
+        if (request?.ConfirmationId is not { Length: 64 } ||
+            request.ConfirmationId.Any(character => character is not (>= '0' and <= '9' or >= 'a' and <= 'f')))
+            return BadRequest(new { error = "Review the rematch preview again before applying it." });
+        var scopeOwnerUserId = session!.IsAdministrator
+            ? null
+            : session.AllstarrUserId;
+        var preview = await bulkRematches.PreviewAsync(
+            session.TenantId!.Value,
+            scopeOwnerUserId,
+            cancellationToken);
+        if (!preview.ConfirmationId.Equals(request.ConfirmationId, StringComparison.Ordinal))
+            return Conflict(new { error = "The match state changed. Review the rematch preview again." });
+        if (!preview.CanApply)
+            return Conflict(new { error = "No automatic track decisions are available to rematch." });
+        var queued = await bulkRematches.QueueForceAsync(
+            session.TenantId.Value,
+            session.AllstarrUserId!.Value,
+            preview,
+            cancellationToken);
+        return Accepted(new
+        {
+            jobId = queued.JobId,
+            created = queued.Created,
+            algorithmVersion = preview.AlgorithmVersion,
+            trackCount = preview.TracksToRematch
+        });
+    }
+
     private static bool MatchesStateFilter(TrackMatchState state, string? filter) =>
         string.IsNullOrWhiteSpace(filter) ||
         (filter.Equals("attention", StringComparison.OrdinalIgnoreCase) && state is
@@ -606,6 +750,36 @@ public sealed class TrackMatchesController(
         (filter.Equals("history", StringComparison.OrdinalIgnoreCase) && state is
             TrackMatchState.Accepted or TrackMatchState.Pinned or TrackMatchState.Rejected) ||
         state.ToString().Equals(filter, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsAutomaticDecision(
+        TrackMatchState state,
+        bool hasManualMatch,
+        bool hasManualRejection) =>
+        state == TrackMatchState.Accepted && !hasManualMatch && !hasManualRejection;
+
+    private static bool TryManualAuthorityKind(string? value, out ManualTrackAuthorityKind kind)
+    {
+        kind = value?.Trim().ToLowerInvariant() switch
+        {
+            "local_match" => ManualTrackAuthorityKind.LocalMatch,
+            "provider_match" => ManualTrackAuthorityKind.ProviderMatch,
+            "rejection" => ManualTrackAuthorityKind.Rejection,
+            _ => default
+        };
+        return value?.Trim().ToLowerInvariant() is "local_match" or "provider_match" or "rejection";
+    }
+
+    private IActionResult MatchCommandError(
+        TrackMatchCommandFailure failure,
+        string? message,
+        string fallback) => failure switch
+        {
+            TrackMatchCommandFailure.Invalid => BadRequest(new { error = message ?? fallback }),
+            TrackMatchCommandFailure.NotFound => NotFound(new { error = message ?? fallback }),
+            TrackMatchCommandFailure.Forbidden => StatusCode(403, new { error = message ?? fallback }),
+            TrackMatchCommandFailure.Conflict => Conflict(new { error = message ?? fallback }),
+            _ => StatusCode(500, new { error = message ?? fallback })
+        };
 
     private static bool MatchesSourceIdentity(
         ExternalMetadataSnapshotRecord snapshot,
@@ -628,51 +802,66 @@ public sealed class TrackMatchesController(
     private static MatchRow Row(ExternalMetadataSnapshotRecord snapshot, TrackMatchRecord? decision,
         ManualTrackOverrideRecord? manual, ProviderTrackIdentityRecord? sourceIdentity,
         IReadOnlyDictionary<Guid, LibraryTrackRecord> library,
-        IReadOnlyDictionary<Guid, LibraryTrackRecord> libraryByCanonical,
         IReadOnlyDictionary<Guid, ProviderTrackIdentityRecord[]> identities,
-        IReadOnlySet<string> playableProviders)
+        IReadOnlyCollection<string> playableProviders)
     {
         var routeCanonicalId = decision?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId;
         var routeIdentities = routeCanonicalId.HasValue &&
                               identities.TryGetValue(routeCanonicalId.Value, out var canonicalIdentities)
             ? canonicalIdentities
             : [];
-        var providerOrder = routeIdentities.Select(item => item.ProviderId)
-            .Distinct(StringComparer.Ordinal)
-            .Order(StringComparer.Ordinal)
-            .ToArray();
-        var indexedLibraryTrackIds = library.Keys.ToHashSet();
-        var classification = TrackClassifier.Classify(
-            manual,
+        var projection = TrackRouteProjector.Project(
+            snapshot,
             decision,
+            manual,
             sourceIdentity,
+            library.Values,
             routeIdentities,
-            providerOrder,
-            indexedLibraryTrackIds);
-        var state = classification.ReviewState;
-        var trackId = classification.LibraryTrackId;
-        library.TryGetValue(trackId ?? Guid.Empty, out var track);
-        var canonicalId = decision?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId ?? track?.CanonicalRecordingId;
-        if (track == null &&
-            state is TrackMatchState.Accepted or TrackMatchState.Pinned &&
-            canonicalId.HasValue &&
-            libraryByCanonical.TryGetValue(canonicalId.Value, out var canonicalTrack) &&
-            canonicalTrack.OwnerUserId == snapshot.OwnerUserId &&
-            canonicalTrack.LibraryScopeId == snapshot.LibraryScopeId &&
-            canonicalTrack.BackendInstanceId == snapshot.BackendInstanceId)
-        {
-            track = canonicalTrack;
-            trackId = canonicalTrack.Id;
-        }
-        var providerIdentities = canonicalId.HasValue && identities.TryGetValue(canonicalId.Value, out var values)
-            ? values.Select(item => new
+            playableProviders);
+        var playableProviderSet = playableProviders.ToHashSet(StringComparer.Ordinal);
+        var indexedLibraryTrackIds = library.Keys.ToHashSet();
+        var state = projection.ReviewState;
+        var track = projection.LibraryTrack;
+        var trackId = track?.Id;
+        var canonicalId = projection.CanonicalRecordingId;
+        var providerIdentities = projection.ProviderIdentities
+            .Select(item => new
             {
+                id = item.Id,
                 providerId = item.ProviderId,
                 externalId = item.ExternalId,
                 scope = item.Scope.ToString(),
-                verification = item.Verification.ToString()
-            }).ToArray()
-            : [];
+                verification = item.Verification.ToString(),
+                verificationMethod = item.VerificationMethod,
+                revision = item.Revision
+            }).ToArray();
+        var manualAuthorities = new List<ManualAuthorityRow>();
+        if (manual != null)
+        {
+            var rejection = manual.Decision == ManualOverrideDecision.Reject;
+            manualAuthorities.Add(new(
+                manual.Id,
+                rejection ? "rejection" : "local_match",
+                manual.Revision,
+                manual.ExternalSnapshotId,
+                manual.Reason,
+                manual.CreatedAt,
+                !rejection || TrackMatchOverridePolicy.IsEffectiveRejection(manual, decision)));
+        }
+        manualAuthorities.AddRange(projection.ProviderIdentities
+            .Where(ManualTrackAuthorityPolicy.IsProviderAuthority)
+            .Select(item => new ManualAuthorityRow(
+                item.Id,
+                "provider_match",
+                item.Revision,
+                decision?.ExternalSnapshotId ?? snapshot.Id,
+                "Selected during manual review",
+                item.VerifiedAt,
+                true,
+                item.ProviderId,
+                item.ExternalId)));
+        var hasManualMatch = manualAuthorities.Any(item => item.Kind != "rejection");
+        var hasManualRejection = manualAuthorities.Any(item => item.Kind == "rejection");
         var metadata = Metadata(snapshot.PayloadJson);
         var sourceArtworkUrl = metadata.ArtworkUrl == null
             ? null
@@ -687,8 +876,8 @@ public sealed class TrackMatchesController(
             providerAccountId = snapshot.ProviderAccountId,
             libraryScopeId = snapshot.LibraryScopeId,
             state = state.ToString().ToLowerInvariant(),
-            decisionSource = manual != null
-                ? "manual_override"
+            decisionSource = manualAuthorities.Count > 0
+                ? "manual_authority"
                 : decision != null
                     ? "track_match_decision"
                     : sourceIdentity != null
@@ -705,6 +894,7 @@ public sealed class TrackMatchesController(
             libraryTrackId = trackId,
             overrideId = manual?.Id,
             overrideRevision = manual?.Revision,
+            manualAuthorities,
             title = metadata.Title,
             searchQuery = FuzzyMatcher.SearchQuery(metadata.Title ?? string.Empty, metadata.Artist),
             artist = metadata.Artist,
@@ -736,16 +926,24 @@ public sealed class TrackMatchesController(
             providerIdentities,
             candidates = ParseCandidates(
                 decision?.CandidateResultsJson,
-                playableProviders,
+                playableProviderSet,
                 indexedLibraryTrackIds),
             reasons = decision == null && sourceIdentity != null
                 ? ["Existing canonical provider identity is available."]
                 : ParseArray(decision?.ReasonsJson),
             warnings = ParseArray(decision?.WarningsJson),
             decidedAt = decision?.DecidedAt,
-            reviewedAt = manual?.CreatedAt
+            reviewedAt = manualAuthorities.Count == 0
+                ? null
+                : (DateTimeOffset?)manualAuthorities.Max(item => item.CreatedAt)
         };
-        return new(state, decision?.Confidence, $"{metadata.Title} {metadata.Artist} {metadata.Album} {snapshot.ProviderId} {track?.Title} {track?.Artist}", value);
+        return new(
+            state,
+            decision?.Confidence,
+            $"{metadata.Title} {metadata.Artist} {metadata.Album} {snapshot.ProviderId} {track?.Title} {track?.Artist}",
+            hasManualMatch,
+            hasManualRejection,
+            value);
     }
 
     private static (string? Title, string? Artist, string? Album, string? ArtworkUrl, string? Isrc, long? DurationMilliseconds) Metadata(string json)
@@ -1006,5 +1204,22 @@ public sealed class TrackMatchesController(
         session = found; return true;
     }
 
-    private sealed record MatchRow(TrackMatchState State, double? Confidence, string SearchText, object Value);
+    private sealed record MatchRow(
+        TrackMatchState State,
+        double? Confidence,
+        string SearchText,
+        bool HasManualMatch,
+        bool HasManualRejection,
+        object Value);
+
+    private sealed record ManualAuthorityRow(
+        Guid Id,
+        string Kind,
+        long Revision,
+        Guid AuthoritySnapshotId,
+        string Reason,
+        DateTimeOffset CreatedAt,
+        bool Effective,
+        string? TargetProviderId = null,
+        string? TargetExternalId = null);
 }

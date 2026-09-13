@@ -16,14 +16,11 @@ public class SubsonicRequestParserTests
     [Fact]
     public async Task ExtractAllParametersAsync_QueryParameters_ExtractsCorrectly()
     {
-        // Arrange
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString("?u=admin&p=password&v=1.16.0&c=testclient&f=json");
 
-        // Act
         var result = await _parser.ExtractAllParametersAsync(context.Request);
 
-        // Assert
         Assert.Equal(5, result.Count);
         Assert.Equal("admin", result["u"]);
         Assert.Equal("password", result["p"]);
@@ -35,7 +32,6 @@ public class SubsonicRequestParserTests
     [Fact]
     public async Task ExtractAllParametersAsync_FormEncodedBody_ExtractsCorrectly()
     {
-        // Arrange
         var context = new DefaultHttpContext();
         var formData = "u=admin&p=password&query=test+artist&artistCount=10";
         var bytes = Encoding.UTF8.GetBytes(formData);
@@ -45,10 +41,8 @@ public class SubsonicRequestParserTests
         context.Request.ContentLength = bytes.Length;
         context.Request.Method = "POST";
 
-        // Act
         var result = await _parser.ExtractAllParametersAsync(context.Request);
 
-        // Assert
         Assert.Equal(4, result.Count);
         Assert.Equal("admin", result["u"]);
         Assert.Equal("password", result["p"]);
@@ -59,7 +53,6 @@ public class SubsonicRequestParserTests
     [Fact]
     public async Task ExtractAllParametersAsync_JsonBody_ExtractsCorrectly()
     {
-        // Arrange
         var context = new DefaultHttpContext();
         var jsonData = "{\"u\":\"admin\",\"p\":\"password\",\"query\":\"test artist\",\"artistCount\":10}";
         var bytes = Encoding.UTF8.GetBytes(jsonData);
@@ -68,10 +61,8 @@ public class SubsonicRequestParserTests
         context.Request.ContentType = "application/json";
         context.Request.ContentLength = bytes.Length;
 
-        // Act
         var result = await _parser.ExtractAllParametersAsync(context.Request);
 
-        // Assert
         Assert.Equal(4, result.Count);
         Assert.Equal("admin", result["u"]);
         Assert.Equal("password", result["p"]);
@@ -82,7 +73,6 @@ public class SubsonicRequestParserTests
     [Fact]
     public async Task ExtractAllParametersAsync_QueryAndFormBody_MergesCorrectly()
     {
-        // Arrange
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString("?u=admin&p=password&f=json");
 
@@ -93,10 +83,8 @@ public class SubsonicRequestParserTests
         context.Request.ContentLength = bytes.Length;
         context.Request.Method = "POST";
 
-        // Act
         var result = await _parser.ExtractAllParametersAsync(context.Request);
 
-        // Assert
         Assert.Equal(5, result.Count);
         Assert.Equal("admin", result["u"]);
         Assert.Equal("password", result["p"]);
@@ -108,27 +96,21 @@ public class SubsonicRequestParserTests
     [Fact]
     public async Task ExtractAllParametersAsync_EmptyRequest_ReturnsEmptyDictionary()
     {
-        // Arrange
         var context = new DefaultHttpContext();
 
-        // Act
         var result = await _parser.ExtractAllParametersAsync(context.Request);
 
-        // Assert
         Assert.Empty(result);
     }
 
     [Fact]
     public async Task ExtractAllParametersAsync_SpecialCharacters_EncodesCorrectly()
     {
-        // Arrange
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString("?query=rock+%26+roll&artist=AC%2FDC");
 
-        // Act
         var result = await _parser.ExtractAllParametersAsync(context.Request);
 
-        // Assert
         Assert.Equal(2, result.Count);
         Assert.Equal("rock & roll", result["query"]);
         Assert.Equal("AC/DC", result["artist"]);
@@ -137,7 +119,6 @@ public class SubsonicRequestParserTests
     [Fact]
     public async Task ExtractAllParametersAsync_InvalidJson_IgnoresBody()
     {
-        // Arrange
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString("?u=admin");
 
@@ -147,10 +128,8 @@ public class SubsonicRequestParserTests
         context.Request.ContentType = "application/json";
         context.Request.ContentLength = bytes.Length;
 
-        // Act
         var result = await _parser.ExtractAllParametersAsync(context.Request);
 
-        // Assert
         Assert.Single(result);
         Assert.Equal("admin", result["u"]);
     }
@@ -158,7 +137,6 @@ public class SubsonicRequestParserTests
     [Fact]
     public async Task ExtractAllParametersAsync_NullJsonValues_HandlesGracefully()
     {
-        // Arrange
         var context = new DefaultHttpContext();
         var jsonData = "{\"u\":\"admin\",\"p\":null,\"query\":\"test\"}";
         var bytes = Encoding.UTF8.GetBytes(jsonData);
@@ -167,10 +145,8 @@ public class SubsonicRequestParserTests
         context.Request.ContentType = "application/json";
         context.Request.ContentLength = bytes.Length;
 
-        // Act
         var result = await _parser.ExtractAllParametersAsync(context.Request);
 
-        // Assert
         Assert.Equal(3, result.Count);
         Assert.Equal("admin", result["u"]);
         Assert.Equal("", result["p"]);
@@ -180,7 +156,6 @@ public class SubsonicRequestParserTests
     [Fact]
     public async Task ExtractAllParametersAsync_DuplicateKeys_BodyOverridesQuery()
     {
-        // Arrange
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString("?format=xml&query=old");
 
@@ -190,10 +165,8 @@ public class SubsonicRequestParserTests
         context.Request.ContentType = "application/json";
         context.Request.ContentLength = bytes.Length;
 
-        // Act
         var result = await _parser.ExtractAllParametersAsync(context.Request);
 
-        // Assert
         Assert.Equal(3, result.Count);
         Assert.Equal("xml", result["format"]);
         Assert.Equal("new", result["query"]); // Body overrides query

@@ -149,6 +149,9 @@ export type NowPlayingItem = {
   album?: string | null;
   providerId: string;
   providerAccountName?: string | null;
+  catalogProviderId?: string;
+  sourceConfirmed?: boolean;
+  cached?: boolean;
   artworkUrl?: string | null;
   positionSeconds: number;
   durationSeconds?: number | null;
@@ -437,6 +440,7 @@ export type ProviderAccount = {
   libraryScopeId?: string | null;
   enabled: boolean;
   revision: number;
+  canChangeAudience?: boolean;
   configuration?: Record<string, unknown>;
   configuredFields?: string[];
   secret: {
@@ -517,6 +521,8 @@ export type PlaylistLink = {
   mode: "virtual" | "materialized" | "hybrid";
   projectionMode: "resolved" | "source" | "target";
   materializationMode: "reconcile" | "recreate";
+  importMode: "oneTime" | "linked";
+  trackRetention: "onDemand" | "keepAll";
   scheduleId?: string | null;
   mirrorStaleEntries: boolean;
   preserveManualEntries: boolean;
@@ -750,6 +756,18 @@ export type MatchCandidate = {
   warnings?: string[] | null;
 };
 
+export type ManualMatchAuthority = {
+  id: string;
+  kind: "local_match" | "provider_match" | "rejection";
+  revision: number;
+  authoritySnapshotId: string;
+  reason: string;
+  createdAt: string;
+  effective: boolean;
+  targetProviderId?: string | null;
+  targetExternalId?: string | null;
+};
+
 export type MatchReviewItem = {
   externalSnapshotId: string;
   providerId: string;
@@ -768,6 +786,7 @@ export type MatchReviewItem = {
   libraryTrackId?: string | null;
   overrideId?: string | null;
   overrideRevision?: number | null;
+  manualAuthorities?: ManualMatchAuthority[];
   title?: string | null;
   searchQuery?: string | null;
   artist?: string | null;
@@ -788,10 +807,13 @@ export type MatchReviewItem = {
     providerIds?: Record<string, string>;
   } | null;
   providerIdentities: Array<{
+    id?: string;
     providerId: string;
     externalId: string;
     scope: string;
     verification: string;
+    verificationMethod?: string;
+    revision?: number;
   }>;
   candidates: MatchCandidate[];
   reasons: string[];
@@ -809,10 +831,27 @@ export type MatchReviewResponse = {
     unresolved: number;
     suggested: number;
     review: number;
+    ambiguous?: number;
     rejected: number;
+    manualMatches?: number;
+    manualRejections?: number;
+    automatic?: number;
     attention: number;
   };
   pagination: { page: number; pageSize: number; total: number; totalPages: number };
+};
+
+export type TrackRematchAllPreview = {
+  confirmationId: string;
+  algorithmVersion: string;
+  totalTracks: number;
+  resolvedTracks: number;
+  reviewTracks: number;
+  unresolvedTracks: number;
+  protectedManualTracks: number;
+  automaticDecisionsToReplace: number;
+  tracksToRematch: number;
+  canApply: boolean;
 };
 
 export type MatchTarget = {
@@ -1075,7 +1114,13 @@ export type ListeningHistoryActivity = {
   period: ListeningHistoryPeriod;
   currentStreakDays: number;
   longestStreakDays: number;
-  buckets: Array<{ date: string; count: number; durationMilliseconds: number }>;
+  buckets: Array<{
+    date: string;
+    count: number;
+    importedCount: number;
+    playbackCount: number;
+    durationMilliseconds: number;
+  }>;
 };
 
 export type ListeningHistoryTopItem = {
@@ -1177,7 +1222,7 @@ export class ApiError extends Error {
   }
 }
 
-async function json<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+export async function json<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
   const response = await request(input, init);
   if (response.status === 204) return undefined as T;
   return normalizeResponse(await response.json()) as T;
@@ -1746,6 +1791,32 @@ export const playlistLinks = {
     );
   },
   targets: () => json<{ targets: MediaTarget[] }>("/api/admin/media-targets"),
+  saveBackendCredential: (target: MediaTarget, username: string, password: string) =>
+    json<{ referenceId: string; activeVersion: number; updatedAt: string }>(
+      target.credentialReferenceId
+        ? `/api/admin/playlist-links/backend-credentials/${encodeURIComponent(target.credentialReferenceId)}`
+        : "/api/admin/playlist-links/backend-credentials",
+      {
+        method: target.credentialReferenceId ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetProtocol: target.protocol,
+          backendInstanceId: target.backendInstanceId,
+          username,
+          password,
+        }),
+      },
+    ),
+  enqueueLibraryIndex: (target: MediaTarget, credentialReferenceId: string) =>
+    json<{ jobId: string; created: boolean; generation: number }>("/api/admin/library-index/enqueue", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        libraryScopeId: target.libraryScopeId || "music",
+        credentialReferenceId,
+        pageSize: 200,
+      }),
+    }),
   targetPlaylists: (targetId: string, query = "", cursor = "") => {
     const params = new URLSearchParams({ limit: "100" });
     if (query) params.set("query", query);
@@ -1766,12 +1837,14 @@ export const playlistLinks = {
     mode: "virtual" | "materialized" | "hybrid";
     projectionMode?: "resolved" | "source" | "target";
     materializationMode: "reconcile" | "recreate";
+    importMode: "oneTime" | "linked";
+    trackRetention: "onDemand" | "keepAll";
     mirrorStaleEntries: boolean;
     preserveManualEntries: boolean;
     syncName: boolean;
     syncDescription: boolean;
     syncArtwork: boolean;
-  }) => json<{ id: string }>("/api/admin/playlist-links", {
+  }) => json<{ id: string; initialJobId?: string | null }>("/api/admin/playlist-links", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -1781,6 +1854,8 @@ export const playlistLinks = {
     mode: "virtual" | "materialized" | "hybrid";
     projectionMode: "resolved" | "source" | "target";
     materializationMode: "reconcile" | "recreate";
+    importMode?: "oneTime" | "linked";
+    trackRetention?: "onDemand" | "keepAll";
     scheduleId?: string | null;
     targetPlaylistId?: string | null;
     targetCredentialReferenceId?: string | null;
@@ -1791,7 +1866,7 @@ export const playlistLinks = {
     syncArtwork: boolean;
     ruleVersion?: string;
     policyVersion?: string;
-  }) => json<PlaylistLink>(`/api/admin/playlist-links/${encodeURIComponent(id)}`, {
+  }) => json<PlaylistLink & { retentionQueued?: number | null }>(`/api/admin/playlist-links/${encodeURIComponent(id)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -1873,11 +1948,6 @@ export const matchReview = {
     json<{ rematched: boolean; state: string }>(
       `/api/admin/track-matches/${encodeURIComponent(externalSnapshotId)}/rematch`,
       { method: "POST" },
-    ),
-  clear: (overrideId: string, expectedRevision: number) =>
-    json<void>(
-      `/api/admin/playlist-links/matches/overrides/${encodeURIComponent(overrideId)}?expectedRevision=${expectedRevision}`,
-      { method: "DELETE" },
     ),
 };
 

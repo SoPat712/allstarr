@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
+  import { flip } from "svelte/animate";
   import { ArrowRight, ChevronRight } from "@lucide/svelte";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { Badge } from "$lib/components/ui/badge";
@@ -49,6 +50,10 @@
   let severity = $state("");
   let filtersOpen = $state(false);
   let expanded = $state(new Set<string>());
+  let streamedIds = $state(new Set<string>());
+  let streamAnnouncement = $state("");
+  let reducedMotion = $state(false);
+  let streamTimer: ReturnType<typeof setTimeout> | null = null;
 
   const filtered = $derived(filterActivity(items, {
     query,
@@ -88,7 +93,26 @@
         : { limit: 50 });
       if (mode === "initial") items = response.items;
       else if (mode === "older") items = mergeActivity(items, response.items);
-      else items = mergeActivity(items, response.items);
+      else {
+        const knownIds = new Set(items.map((item) => item.id));
+        const added = response.items.filter((item) => !knownIds.has(item.id));
+        items = mergeActivity(items, response.items);
+        if (added.length) {
+          streamedIds = new Set(added.map((item) => item.id));
+          const announcement = `${added.length} new ${added.length === 1 ? "event" : "events"} streamed in.`;
+          if (streamAnnouncement === announcement) {
+            streamAnnouncement = "";
+            await tick();
+          }
+          streamAnnouncement = announcement;
+          if (streamTimer) clearTimeout(streamTimer);
+          streamTimer = setTimeout(() => {
+            streamedIds = new Set();
+            streamAnnouncement = "";
+            streamTimer = null;
+          }, 600);
+        }
+      }
       if (mode !== "refresh" || !cursor) {
         cursor = response.nextCursor || "";
         cursorId = response.nextCursorId || "";
@@ -156,16 +180,22 @@
 
   onMount(() => {
     const desktopFilters = window.matchMedia("(min-width: 651px)");
+    const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
     const syncFilters = (event: MediaQueryListEvent) => filtersOpen = event.matches;
+    const syncMotion = (event: MediaQueryListEvent) => reducedMotion = event.matches;
     filtersOpen = desktopFilters.matches;
+    reducedMotion = motionPreference.matches;
     desktopFilters.addEventListener("change", syncFilters);
+    motionPreference.addEventListener("change", syncMotion);
     void loadProviders();
     void load("initial");
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
       desktopFilters.removeEventListener("change", syncFilters);
+      motionPreference.removeEventListener("change", syncMotion);
       unsubscribe();
       refreshScheduler.cancel();
+      if (streamTimer) clearTimeout(streamTimer);
     };
   });
 </script>
@@ -184,18 +214,19 @@
     <div class="degraded-banner" role="status">
       <span aria-hidden="true">!</span>
       <p><strong>New events could not be loaded.</strong> {error}</p>
-      <Button variant="secondary" size="sm" onclick={() => void load("refresh")}>Retry</Button>
+      <Button variant="secondary" size="sm" disabled={refreshing || loadingEarlier} onclick={() => void load("refresh")}>{refreshing ? "Trying again…" : "Retry"}</Button>
     </div>
   {/if}
 
   <section class="panel event-log-panel" aria-busy={refreshing}>
-    <header class="playlist-toolbar event-log-heading">
+    <p class="sr-only" aria-live="polite" aria-atomic="true">{streamAnnouncement}</p>
+    <header class="panel-heading playlist-toolbar event-log-heading">
       <div>
         <p class="eyebrow">Durable activity</p>
         <h2>Event log</h2>
         <p>Matching, playlists, providers, jobs, and administrative changes.</p>
       </div>
-      <Button variant="secondary" onclick={() => void load("refresh")}>Refresh</Button>
+      <Button variant="secondary" disabled={refreshing || loadingEarlier} onclick={() => void load("refresh")}>{refreshing ? "Refreshing…" : "Refresh"}</Button>
     </header>
 
     <details class="event-filter-disclosure" bind:open={filtersOpen}>
@@ -233,6 +264,8 @@
         {@const severityState = groupSeverity(group.entries)}
         <details
           class="event-log-group"
+          class:streaming={group.entries.some((item) => streamedIds.has(item.id))}
+          animate:flip={{ duration: reducedMotion ? 0 : 260 }}
           open={expanded.has(group.key)}
           ontoggle={(event) => rememberExpanded(group.key, event.currentTarget.open)}
         >
