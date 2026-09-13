@@ -25,6 +25,15 @@ class StreamFixture(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        if self.path.startswith("/api/admin/"):
+            valid_cookie = self.headers.get("Cookie") == "fixture=session"
+            body = json.dumps({"authenticated": valid_cookie} if self.path.endswith("auth/me") else []).encode()
+            self.send_response(200 if valid_cookie else 401)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == "/timeout":
             time.sleep(1.2)
             return
@@ -42,6 +51,17 @@ class StreamFixture(BaseHTTPRequestHandler):
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
             pass
+
+    def do_POST(self):
+        login = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+        valid = login.get("username") == "fixture" and login.get("password") == "fixture-password"
+        body = json.dumps({"authenticated": valid}).encode()
+        self.send_response(200 if valid else 400)
+        if valid:
+            self.send_header("Set-Cookie", "fixture=session; Path=/; HttpOnly")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
 
 class JellyfinSmokeTests(unittest.TestCase):
@@ -112,6 +132,24 @@ class JellyfinSmokeTests(unittest.TestCase):
 
     def test_timeout_before_headers_terminates_instead_of_hanging(self):
         self.assertIn("RESULT 1 0 0", self.stream("/timeout"))
+
+    def test_dashboard_cookie_session_and_now_playing(self):
+        for password, expected in (("fixture-password", "RESULT 3 0 1"), ("invalid", "RESULT 1 1 0")):
+            with self.subTest(password=password), tempfile.TemporaryDirectory() as directory:
+                code = "\n".join([
+                    "set -euo pipefail",
+                    "checks=0; failures=0; issued_admin_session=0; TIMEOUT_SECONDS=2",
+                    "response_file=body; admin_cookies_file=cookies",
+                    function("check_dashboard_session"),
+                    "check_dashboard_session",
+                    'printf "RESULT %s %s %s\\n" "$checks" "$failures" "$issued_admin_session"',
+                ])
+                result = subprocess.run(["bash", "-c", code], cwd=directory, text=True, capture_output=True, timeout=5,
+                                        env={**os.environ, "ADMIN_BASE": f"http://127.0.0.1:{self.server.server_port}",
+                                             "JELLYFIN_USERNAME": "fixture", "JELLYFIN_PASSWORD": password})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(expected, result.stdout)
+                self.assertNotIn(password, result.stdout)
 
 
 if __name__ == "__main__":

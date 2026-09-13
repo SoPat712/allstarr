@@ -1536,9 +1536,10 @@ for (const viewport of viewports) {
         request.url().endsWith("/api/admin/provider-accounts/audio-account/secret") && request.method() === "PUT");
       const enableRequest = page.waitForRequest((request) =>
         request.url().endsWith("/api/admin/provider-accounts/audio-account") && request.method() === "PATCH");
-      await dialog.getByRole("button", { name: "Save and test" }).click();
+      await dialog.getByRole("button", { name: "Save connection" }).click();
       await secretRequest;
       expect((await enableRequest).postDataJSON()).toMatchObject({ enabled: true, expectedRevision: 3 });
+      await expect(dialog).not.toBeVisible();
     });
 
     test("Match and removal dialogs remain usable", async ({ page }) => {

@@ -71,7 +71,8 @@ public class AdminAuthControllerTests
         Assert.NotNull(capturedRequest);
         Assert.Equal(HttpMethod.Post, capturedRequest!.Method);
         Assert.Equal("http://jellyfin.local/Users/AuthenticateByName", capturedRequest.RequestUri?.ToString());
-        Assert.Contains("X-Emby-Authorization", capturedRequest.Headers.Select(h => h.Key));
+        Assert.StartsWith("MediaBrowser Client=\"AllstarrAdmin\"", capturedRequest.Headers.GetValues("Authorization").Single());
+        Assert.False(capturedRequest.Headers.Contains("X-Emby-Authorization"));
 
         Assert.NotNull(capturedBody);
         Assert.Contains("\"Username\":\"josh\"", capturedBody!);

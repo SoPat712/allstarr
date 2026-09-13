@@ -57,6 +57,9 @@ environment without setting `JELLYFIN_TOKEN`. The suite authenticates through
 Allstarr, measures login latency, limits discovery to that user, and logs out
 the newly created session on exit. It never logs out a caller-supplied token.
 Both endpoint URLs are required; no private deployment is built into the tool.
+Set `ADMIN_BASE` to the dashboard origin when using test-account credentials to
+also verify dashboard login, session cookies, and the now-playing endpoint. Its
+temporary dashboard session is logged out independently on exit.
 
 Run `python3 tools/tests/test_live_jellyfin_smoke.py` for offline harness checks.
 External audio must use `[A]` or `[A]/[E]`, while artist and album labels remain

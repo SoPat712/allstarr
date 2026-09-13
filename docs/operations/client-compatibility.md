@@ -4,6 +4,10 @@ Allstarr exposes either a Jellyfin-compatible surface or a Subsonic/OpenSubsonic
 
 ## Jellyfin Clients
 
+Dashboard sign-in uses `Authorization: MediaBrowser ...`. Jellyfin 12 rejects
+the legacy `X-Emby-Authorization` login header with HTTP 400 even for valid
+credentials. The live smoke suite can check dashboard login using `ADMIN_BASE`.
+
 These clients have been used successfully with the Jellyfin surface:
 
 - [Feishin](https://github.com/jeffvli/feishin) on desktop

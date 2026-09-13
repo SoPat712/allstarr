@@ -92,7 +92,7 @@ public sealed class AdminAuthController : ControllerBase
             {
                 Content = new StringContent(loginJson, Encoding.UTF8, "application/json")
             };
-            httpRequest.Headers.TryAddWithoutValidation("X-Emby-Authorization", authHeader);
+            httpRequest.Headers.TryAddWithoutValidation("Authorization", authHeader);
 
             using var response = await _httpClient.SendAsync(httpRequest, HttpContext.RequestAborted);
 

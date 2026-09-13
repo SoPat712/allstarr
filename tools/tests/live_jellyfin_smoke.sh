@@ -4,11 +4,16 @@ set -euo pipefail
 : "${DIRECT_BASE:?Set DIRECT_BASE to the original Jellyfin server URL}"
 : "${ALLSTARR_BASE:?Set ALLSTARR_BASE to the Allstarr proxy URL}"
 JELLYFIN_TOKEN="${JELLYFIN_TOKEN:-}"
+ADMIN_BASE="${ADMIN_BASE:-}"
 if [[ -z "$JELLYFIN_TOKEN" && ( -z "${JELLYFIN_USERNAME:-}" || -z "${JELLYFIN_PASSWORD:-}" ) ]]; then
     echo 'Supply JELLYFIN_TOKEN or JELLYFIN_USERNAME and JELLYFIN_PASSWORD through the environment' >&2
     exit 1
 fi
 JELLYFIN_USER_ID="${JELLYFIN_USER_ID:-}"
+if [[ -n "$ADMIN_BASE" && ( -z "${JELLYFIN_USERNAME:-}" || -z "${JELLYFIN_PASSWORD:-}" ) ]]; then
+    echo 'ADMIN_BASE requires the test username and password to verify dashboard login' >&2
+    exit 1
+fi
 SAMPLES="${SAMPLES:-3}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-20}"
 CONSISTENCY_TIMEOUT_SECONDS="${CONSISTENCY_TIMEOUT_SECONDS:-5}"
@@ -101,6 +106,7 @@ direct_shape_file="$(mktemp)"
 allstarr_shape_file="$(mktemp)"
 metrics_file="$(mktemp)"
 stream_metrics_file="$(mktemp)"
+admin_cookies_file="$(mktemp)"
 direct_media_file="$(mktemp)"
 allstarr_media_file="$(mktemp)"
 direct_headers_file="$(mktemp)"
@@ -112,6 +118,7 @@ allstarr_playlists_file="$(mktemp)"
 external_search_file="$(mktemp)"
 provider_cases_file="$(mktemp)"
 issued_token=0
+issued_admin_session=0
 stateful_playlist_id=""
 stateful_playlist_name=""
 stateful_playlist_original_name=""
@@ -125,6 +132,17 @@ playlist_identity_matches() {
 }
 cleanup() {
     local cleanup_delete_code cleanup_probe_code cleanup_failed=0
+    if [[ "$issued_admin_session" == 1 ]]; then
+        cleanup_delete_code="$(curl -s --max-time "$TIMEOUT_SECONDS" -X POST \
+            --cookie "$admin_cookies_file" -H "Origin: $ADMIN_BASE" \
+            "$ADMIN_BASE/api/admin/auth/logout" -o /dev/null -w '%{http_code}' || true)"
+        if [[ "$cleanup_delete_code" == 200 ]]; then
+            echo 'PASS dashboard test session logout'
+        else
+            echo 'FAIL dashboard test session logout' >&2
+            cleanup_failed=1
+        fi
+    fi
     if [[ -n "$stateful_playlist_id" ]]; then
         if playlist_identity_matches "$stateful_playlist_id" "$stateful_playlist_name" ||
            playlist_identity_matches "$stateful_playlist_id" "$stateful_playlist_original_name"; then
@@ -155,7 +173,7 @@ cleanup() {
         fi
     fi
     rm -f "$users_file" "$current_user_file" "$items_file" "$response_file" "$timings_file" \
-        "$direct_shape_file" "$allstarr_shape_file" "$metrics_file" "$stream_metrics_file" \
+        "$direct_shape_file" "$allstarr_shape_file" "$metrics_file" "$stream_metrics_file" "$admin_cookies_file" \
         "$direct_media_file" "$allstarr_media_file" "$direct_headers_file" \
         "$allstarr_headers_file" "$virtual_items_file" "$direct_virtual_items_file" \
         "$direct_playlists_file" "$allstarr_playlists_file" "$external_search_file"
@@ -529,7 +547,9 @@ check_external_stream() {
     elif [[ "$code" == 200 && -z "$content_range" && "$accept_ranges" != bytes && "$timely" -eq 1 ]] &&
          (( saved_bytes == 65536 && bytes >= saved_bytes )); then
         last_stream_ranges_supported=0
-        block "$label=range unsupported; bounded progressive close passed status=200 retained_bytes=$saved_bytes transport_bytes=$bytes"
+        printf 'PASS %-34s progressive status=200 retained_bytes=%s ttfb_ms=%.1f provider=%s\n' \
+            "$label" "$saved_bytes" "$(awk -v value="${ttfb:-0}" 'BEGIN {print value * 1000}')" "$last_stream_provider"
+        block "$label=byte seeking unsupported by the serving source"
     else
         last_stream_ranges_supported=0
         printf 'FAIL %-34s status=%s type=%s saved_bytes=%s response_bytes=%s ttfb_ms=%.1f content_range=%s accept_ranges=%s timely=%s\n' \
@@ -560,6 +580,37 @@ check_stream_provenance() {
         echo 'FAIL HEAD changed playback provenance or song info is publicly cacheable'
         failures=$((failures + 1))
     fi
+}
+
+check_dashboard_session() {
+    [[ -n "$ADMIN_BASE" ]] || return 0
+    local code result ttfb path filter
+    result="$(jq -cn '{username:env.JELLYFIN_USERNAME,password:env.JELLYFIN_PASSWORD,rememberMe:false}' |
+        curl -s --max-time "$TIMEOUT_SECONDS" --cookie-jar "$admin_cookies_file" \
+            -H 'Content-Type: application/json' -H "Origin: $ADMIN_BASE" --data-binary @- \
+            -o "$response_file" -w '%{http_code} %{time_starttransfer}' "$ADMIN_BASE/api/admin/auth/login" || true)"
+    read -r code ttfb <<<"$result"
+    checks=$((checks + 1))
+    if [[ "$code" != 200 ]] || ! jq -e '.authenticated == true' "$response_file" >/dev/null; then
+        echo "FAIL dashboard login status=${code:-000}"
+        failures=$((failures + 1))
+        return
+    fi
+    issued_admin_session=1
+    printf 'PASS dashboard login ttfb_ms=%.1f\n' "$(awk -v value="$ttfb" 'BEGIN {print value * 1000}')"
+    for path in auth/me ui/now-playing; do
+        filter='type == "array"'
+        [[ "$path" != auth/me ]] || filter='.authenticated == true'
+        code="$(curl -s --max-time "$TIMEOUT_SECONDS" --cookie "$admin_cookies_file" \
+            -o "$response_file" -w '%{http_code}' "$ADMIN_BASE/api/admin/$path" || true)"
+        checks=$((checks + 1))
+        if [[ "$code" == 200 ]] && jq -e "$filter" "$response_file" >/dev/null; then
+            echo "PASS dashboard $path"
+        else
+            echo "FAIL dashboard $path status=${code:-000}"
+            failures=$((failures + 1))
+        fi
+    done
 }
 
 check_stateful_playlist_identity() {
@@ -1094,6 +1145,10 @@ check_external_provider_case() {
     detail_url="$ALLSTARR_BASE/Items/$song_id?UserId=$best_user_id"
     check_json "$provider external detail" "$detail_url" \
         "$item_contract external_audio and .Id == \$id" --arg id "$song_id"
+    if jq -e '.Id | type == "string"' "$response_file" >/dev/null &&
+       ! jq -e --arg id "$song_id" '.Id == $id' "$response_file" >/dev/null; then
+        echo "DIAGNOSTIC $provider lookup returned a different item identity"
+    fi
     artist_id="$(jq -r '.ArtistItems[0].Id // empty' "$response_file")"
     album_id="$(jq -r '.AlbumId // empty' "$response_file")"
     check_json "$provider user item detail" \
@@ -1190,6 +1245,7 @@ check_external_provider_case() {
 }
 
 echo "functional-and-security-checks"
+check_dashboard_session
 check_public_code "public bootstrap" "200" "$ALLSTARR_BASE/System/Info/Public"
 direct_version="$(curl -fsS --max-time "$TIMEOUT_SECONDS" "$DIRECT_BASE/System/Info/Public" |
     jq -r '.Version // empty' || true)"
