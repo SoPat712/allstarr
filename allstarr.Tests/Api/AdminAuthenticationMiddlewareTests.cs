@@ -74,6 +74,7 @@ public class AdminAuthenticationMiddlewareTests
 
     [Theory]
     [InlineData("/api/admin/ui/schema", "GET")]
+    [InlineData("/api/admin/ui/home", "GET")]
     [InlineData("/api/admin/provider-accounts", "GET")]
     [InlineData("/api/admin/provider-accounts", "POST")]
     [InlineData("/api/admin/provider-accounts/019f48f2-5f28-7b11-b42d-0d9b76b73b40", "DELETE")]
@@ -150,6 +151,9 @@ public class AdminAuthenticationMiddlewareTests
 
     [Theory]
     [InlineData("/api/admin/ui/schema", "POST")]
+    [InlineData("/api/admin/ui/home", "POST")]
+    [InlineData("/api/admin/ui/home-extra", "GET")]
+    [InlineData("/api/admin/ui/now-playing", "GET")]
     [InlineData("/api/admin/config", "GET")]
     [InlineData("/api/admin/status", "GET")]
     [InlineData("/api/admin/library-index-spoof", "POST")]

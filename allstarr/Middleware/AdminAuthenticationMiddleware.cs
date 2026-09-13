@@ -89,7 +89,8 @@ public class AdminAuthenticationMiddleware
         }
 
         if (HttpMethods.IsGet(method) &&
-            path.Equals("/api/admin/ui/schema", StringComparison.OrdinalIgnoreCase))
+            (path.Equals("/api/admin/ui/schema", StringComparison.OrdinalIgnoreCase) ||
+             path.Equals("/api/admin/ui/home", StringComparison.OrdinalIgnoreCase)))
         {
             return true;
         }

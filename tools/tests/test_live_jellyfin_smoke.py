@@ -26,9 +26,22 @@ class StreamFixture(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/api/admin/"):
-            valid_cookie = self.headers.get("Cookie") == "fixture=session"
-            body = json.dumps({"authenticated": valid_cookie} if self.path.endswith("auth/me") else []).encode()
-            self.send_response(200 if valid_cookie else 401)
+            cookie = self.headers.get("Cookie")
+            valid_cookie = cookie in ("fixture=admin", "fixture=listener")
+            administrator = cookie == "fixture=admin"
+            status = 200 if valid_cookie else 401
+            if self.path.endswith("auth/me"):
+                value = {"authenticated": valid_cookie}
+            elif self.path.endswith("ui/home"):
+                value = {"schema": {}, "stats": {"cacheTracks": None, "keptTracks": None},
+                         "providerHealth": {"providers": []}, "activity": {"items": []}}
+            elif administrator:
+                value = {"items": []}
+            else:
+                status = 403 if valid_cookie else 401
+                value = {"error": "Administrator permissions required"}
+            body = json.dumps(value).encode()
+            self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -54,11 +67,12 @@ class StreamFixture(BaseHTTPRequestHandler):
 
     def do_POST(self):
         login = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
-        valid = login.get("username") == "fixture" and login.get("password") == "fixture-password"
-        body = json.dumps({"authenticated": valid}).encode()
+        valid = login.get("username") in ("fixture", "fixture-admin") and login.get("password") == "fixture-password"
+        administrator = login.get("username") == "fixture-admin"
+        body = json.dumps({"authenticated": valid, "user": {"isAdministrator": administrator}}).encode()
         self.send_response(200 if valid else 400)
         if valid:
-            self.send_header("Set-Cookie", "fixture=session; Path=/; HttpOnly")
+            self.send_header("Set-Cookie", f"fixture={'admin' if administrator else 'listener'}; Path=/; HttpOnly")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -134,8 +148,10 @@ class JellyfinSmokeTests(unittest.TestCase):
         self.assertIn("RESULT 1 0 0", self.stream("/timeout"))
 
     def test_dashboard_cookie_session_and_now_playing(self):
-        for password, expected in (("fixture-password", "RESULT 3 0 1"), ("invalid", "RESULT 1 1 0")):
-            with self.subTest(password=password), tempfile.TemporaryDirectory() as directory:
+        for username, password, expected in (("fixture", "fixture-password", "RESULT 4 0 1"),
+                                             ("fixture-admin", "fixture-password", "RESULT 4 0 1"),
+                                             ("fixture", "invalid", "RESULT 1 1 0")):
+            with self.subTest(username=username, password=password), tempfile.TemporaryDirectory() as directory:
                 code = "\n".join([
                     "set -euo pipefail",
                     "checks=0; failures=0; issued_admin_session=0; TIMEOUT_SECONDS=2",
@@ -146,7 +162,7 @@ class JellyfinSmokeTests(unittest.TestCase):
                 ])
                 result = subprocess.run(["bash", "-c", code], cwd=directory, text=True, capture_output=True, timeout=5,
                                         env={**os.environ, "ADMIN_BASE": f"http://127.0.0.1:{self.server.server_port}",
-                                             "JELLYFIN_USERNAME": "fixture", "JELLYFIN_PASSWORD": password})
+                                             "JELLYFIN_USERNAME": username, "JELLYFIN_PASSWORD": password})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(expected, result.stdout)
                 self.assertNotIn(password, result.stdout)
