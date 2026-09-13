@@ -85,7 +85,7 @@ class JellyfinSmokeTests(unittest.TestCase):
             code = "\n".join([
                 "set -euo pipefail",
                 "checks=0; failures=0; blocked=0; auth=(); TIMEOUT_SECONDS=1; MAX_EXTERNAL_STREAM_TTFB_MS=1000",
-                "response_file=body; direct_headers_file=headers; metrics_file=metrics",
+                "response_file=body; direct_headers_file=headers; stream_metrics_file=stream-metrics",
                 'block() { blocked=$((blocked + 1)); }',
                 function("check_external_stream"),
                 'check_external_stream fixture "$FIXTURE_URL"',

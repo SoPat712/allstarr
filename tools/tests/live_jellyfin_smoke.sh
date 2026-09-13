@@ -100,6 +100,7 @@ timings_file="$(mktemp)"
 direct_shape_file="$(mktemp)"
 allstarr_shape_file="$(mktemp)"
 metrics_file="$(mktemp)"
+stream_metrics_file="$(mktemp)"
 direct_media_file="$(mktemp)"
 allstarr_media_file="$(mktemp)"
 direct_headers_file="$(mktemp)"
@@ -154,7 +155,7 @@ cleanup() {
         fi
     fi
     rm -f "$users_file" "$current_user_file" "$items_file" "$response_file" "$timings_file" \
-        "$direct_shape_file" "$allstarr_shape_file" "$metrics_file" \
+        "$direct_shape_file" "$allstarr_shape_file" "$metrics_file" "$stream_metrics_file" \
         "$direct_media_file" "$allstarr_media_file" "$direct_headers_file" \
         "$allstarr_headers_file" "$virtual_items_file" "$direct_virtual_items_file" \
         "$direct_playlists_file" "$allstarr_playlists_file" "$external_search_file"
@@ -496,8 +497,8 @@ check_external_stream() {
     curl -s --max-time "$TIMEOUT_SECONDS" "${auth[@]}" --range "$range" \
         -D "$direct_headers_file" -o - \
         -w '%{stderr}%{http_code}\t%{content_type}\t%{size_download}\t%{time_starttransfer}\t%{time_total}' \
-        "$url" 2>"$metrics_file" | head -c 65536 >"$response_file" || true
-    result="$(<"$metrics_file")"
+        "$url" 2>"$stream_metrics_file" | head -c 65536 >"$response_file" || true
+    result="$(<"$stream_metrics_file")"
     IFS=$'\t' read -r code content_type bytes ttfb total <<<"$result"
     code="${code:-000}"
     bytes="${bytes:-0}"
@@ -1461,7 +1462,7 @@ if [[ -n "$external_song_id" ]]; then
     external_album_id="$(jq -r '.AlbumId // empty' "$response_file")"
     external_search_term="$(jq -r '
         .Name |
-        sub(" \\[[A-Z][A-Za-z0-9]{0,15}\\]( \\[E\\])?$"; "")' "$response_file" 2>/dev/null || true)"
+        sub(" \\[A\\](/\\[E\\])?$"; "")' "$response_file" 2>/dev/null || true)"
     external_search_term="${external_search_term:-$search_term}"
     if [[ -n "$external_artist_id" ]]; then
         check_json "external artist detail" \
@@ -1556,7 +1557,7 @@ if [[ -n "$external_song_id" ]]; then
              .Type == "Audio" and
              ((.Id // .ItemId) | type == "string" and length > 0) and
              (.Name | type == "string" and
-                 test(" \\[[A-Z][A-Za-z0-9]{0,15}\\]( \\[E\\])?$")))' \
+                 test(" \\[A\\](/\\[E\\])?$")))' \
         --arg id "$external_song_id"
     check_json "external playback identity" \
         "$ALLSTARR_BASE/Items/$external_song_id/PlaybackInfo?UserId=$best_user_id" \
