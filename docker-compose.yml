@@ -66,6 +66,9 @@ services:
       start_period: 40s
     networks:
       - allstarr-network
+    extra_hosts:
+      # Lets Linux containers reach Jellyfin running on the Docker host.
+      - "host.docker.internal:host-gateway"
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       # Backend type: Subsonic or Jellyfin (default: Subsonic)
@@ -101,7 +104,7 @@ services:
       - Subsonic__PlaylistsDirectory=${PLAYLISTS_DIRECTORY:-playlists}
 
       # ===== JELLYFIN BACKEND =====
-      - Jellyfin__Url=${JELLYFIN_URL:-http://localhost:8096}
+      - Jellyfin__Url=${JELLYFIN_URL:-http://host.docker.internal:8096}
       - Jellyfin__ApiKey=${JELLYFIN_API_KEY:-}
       - Jellyfin__UserId=${JELLYFIN_USER_ID:-}
       - Jellyfin__LibraryId=${JELLYFIN_LIBRARY_ID:-}

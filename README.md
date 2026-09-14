@@ -200,8 +200,8 @@ Choose your preferred provider via the `MUSIC_SERVICE` environment variable. Add
    # Backend selection
    BACKEND_TYPE=Jellyfin
 
-   # Jellyfin server URL
-   JELLYFIN_URL=http://localhost:8096
+   # Jellyfin on the Docker host (use its service name on a shared Docker network)
+   JELLYFIN_URL=http://host.docker.internal:8096
 
    # API key (get from Jellyfin Dashboard > API Keys)
    JELLYFIN_API_KEY=your-api-key-here
@@ -212,6 +212,10 @@ Choose your preferred provider via the `MUSIC_SERVICE` environment variable. Add
    # Music library ID (optional, auto-detected if not set)
    JELLYFIN_LIBRARY_ID=
    ```
+
+   `localhost` inside the Allstarr container points to Allstarr itself, not to
+   Jellyfin. The Compose file maps `host.docker.internal` on Linux, macOS, and
+   Windows for a Jellyfin server running on the Docker host.
 
    ```bash
    # Path where downloaded songs will be stored
