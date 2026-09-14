@@ -16,8 +16,18 @@ export function percent(value?: number | null) {
 
 export function scoreComponents(candidate: MatchCandidate) {
   return Object.entries(candidate.components ?? {})
-    .filter((entry): entry is [string, number] => Number.isFinite(entry[1]))
+    .filter((entry): entry is [string, number] =>
+      !["priorityWindow", "routingPriority", "acceptanceQualified"].includes(entry[0]) && Number.isFinite(entry[1]))
     .toSorted((left, right) => right[1] - left[1]);
+}
+
+export function routingPreference(components?: Record<string, number> | null) {
+  if (components?.acceptanceQualified === 1) {
+    const priority = components.routingPriority;
+    return priority === 0 ? "Local first" : priority > 0 && priority < 2147483647
+      ? `Streaming priority ${priority}` : "Meets acceptance checks";
+  }
+  return components?.priorityWindow ? `${percent(components.priorityWindow)} tentative window` : "";
 }
 
 export function providerResultCounts(targets: MatchTarget[]) {

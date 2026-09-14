@@ -17,6 +17,7 @@
     playableProviderIds,
     providerResultCounts,
     rankedTargets,
+    routingPreference,
     scoreComponents,
   } from "$lib/mappings";
   import { formatDuration } from "$lib/playlists";
@@ -267,8 +268,8 @@
                         definition={provider(candidateProvider(candidate))}
                       />
                       {providerName(candidateProvider(candidate))}
-                      {#if candidate.components?.priorityWindow}
-                        <span>· {percent(candidate.components.priorityWindow)} priority window</span>
+                      {#if routingPreference(candidate.components)}
+                        <span>· {routingPreference(candidate.components)}</span>
                       {/if}
                     </span>
                   </div>
@@ -304,6 +305,7 @@
                     <dl>
                       <div><dt>Candidate ID</dt><dd>{candidate.libraryTrackId || candidate.backendItemId || candidateExternalId(candidate) || "—"}</dd></div>
                       <div><dt>Raw confidence</dt><dd>{percent(candidate.confidence)}</dd></div>
+                      {#if routingPreference(candidate.components)}<div><dt>Routing preference</dt><dd>{routingPreference(candidate.components)}</dd></div>{/if}
                       {#each candidateFacts(candidate) as [label, value]}
                         <div><dt>{label}</dt><dd>{value}</dd></div>
                       {/each}
@@ -382,8 +384,8 @@
                     definition={provider(target.externalProvider || "")}
                   />
                   {providerName(target.externalProvider)}
-                  {#if target.components?.priorityWindow}
-                    <span>· {percent(target.components.priorityWindow)} priority window</span>
+                  {#if routingPreference(target.components)}
+                    <span>· {routingPreference(target.components)}</span>
                   {/if}
                 </span>
                 <strong>{target.title}</strong>
@@ -397,17 +399,18 @@
               <span class="target-score">
                 <strong>{percent(target.confidence)}</strong>
                 <small>confidence</small>
-                <small>rank #{results.indexOf(target) + 1}</small>
+                <small>score rank #{results.indexOf(target) + 1}</small>
               </span>
             </button>
             <details class="target-evidence">
               <summary class="disclosure-summary compact"><span class="disclosure-label"><strong>Evidence for {target.title}</strong></span></summary>
               <dl>
-                <div><dt>Rank</dt><dd>#{results.indexOf(target) + 1}</dd></div>
+                <div><dt>Score rank</dt><dd>#{results.indexOf(target) + 1}</dd></div>
                 <div><dt>Candidate ID</dt><dd>{target.externalId || target.backendItemId || target.id}</dd></div>
                 <div><dt>Raw confidence</dt><dd>{percent(target.confidence)}</dd></div>
                 {#if target.isrc}<div><dt>ISRC</dt><dd>{target.isrc}</dd></div>{/if}
-                {#each Object.entries(target.components ?? {}) as [name, value]}
+                {#if routingPreference(target.components)}<div><dt>Routing preference</dt><dd>{routingPreference(target.components)}</dd></div>{/if}
+                {#each scoreComponents({ components: target.components }) as [name, value]}
                   <div><dt>{evidenceLabel(name)}</dt><dd>{percent(value)}</dd></div>
                 {/each}
                 {#each target.reasons ?? [] as reason}<div><dt>Reason</dt><dd>{evidenceLabel(reason)}</dd></div>{/each}

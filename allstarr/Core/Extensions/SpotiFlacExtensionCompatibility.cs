@@ -242,6 +242,16 @@ public static class SpotiFlacExtensionCompatibility
             snapshotVersion: null
           };
         }
+        var _sfTrackCache = Object.create(null);
+        var _sfTrackCacheOrder = [];
+        function _sfRememberTrack(track) {
+          if (!track || !track.id) return track;
+          var id = String(track.id);
+          if (!Object.prototype.hasOwnProperty.call(_sfTrackCache, id)) _sfTrackCacheOrder.push(id);
+          _sfTrackCache[id] = track;
+          while (_sfTrackCacheOrder.length > 512) delete _sfTrackCache[_sfTrackCacheOrder.shift()];
+          return track;
+        }
         function _sfAlbum(value) {
           value = value && (value.album || value) || {};
           return { id: String(value.id || ''), title: String(value.name || value.title || ''), artists: _sfArtists(value),
@@ -258,6 +268,7 @@ public static class SpotiFlacExtensionCompatibility
             var type = String(item.item_type || item.type || '').toLowerCase();
             return !type || type === filter || type === filter.replace(/s$/, '');
           }).map(mapper).filter(function(item) { return item.id; });
+          if (filter === 'tracks') items.forEach(_sfRememberTrack);
           return { items: items, nextCursor: null, isPartial: false, snapshotVersion: null };
         }
         function _sfPlaylist(value) {
@@ -271,9 +282,11 @@ public static class SpotiFlacExtensionCompatibility
           initialize: function(settings) { return typeof _spotiflacExtension.initialize === 'function' ? _spotiflacExtension.initialize(settings || {}) : true; },
           searchTracks: function(request) { return _sfSearch(request, 'tracks', _sfTrack); },
           getTrack: function(request) {
-            if (typeof _spotiflacExtension.getTrack === 'function') return _sfTrack(_spotiflacExtension.getTrack(request.id));
+            var id = String(request.id);
+            if (Object.prototype.hasOwnProperty.call(_sfTrackCache, id)) return _sfTrackCache[id];
+            if (typeof _spotiflacExtension.getTrack === 'function') return _sfRememberTrack(_sfTrack(_spotiflacExtension.getTrack(id)));
             var page = _sfSearch({ query: request.id, page: { limit: 10 } }, 'tracks', _sfTrack);
-            return page.items.filter(function(item) { return item.id === String(request.id); })[0] || page.items[0] || { id: String(request.id), title: String(request.id), artists: [] };
+            return page.items.filter(function(item) { return item.id === id; })[0] || null;
           },
           searchAlbums: function(request) { return _sfSearch(request, 'albums', _sfAlbum); },
           getAlbum: function(request) { return _sfAlbum(typeof _spotiflacExtension.getAlbum === 'function' ? _spotiflacExtension.getAlbum(request.id) : null); },

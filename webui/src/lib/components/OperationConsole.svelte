@@ -49,15 +49,14 @@
     try {
       data = await home.jobs();
       const next = selectJob(data);
-      if (observedJobId === next?.id &&
+      const reachedTerminal = observedJobId === next?.id &&
           observedState && ["Pending", "Running", "Deferred"].includes(observedState) &&
-          !["Pending", "Running", "Deferred"].includes(next.state)) {
-        await onTerminal();
-      }
+          !["Pending", "Running", "Deferred"].includes(next?.state ?? "");
       if (next) {
         observedJobId = next.id;
         observedState = next.state;
       }
+      if (reachedTerminal) await onTerminal();
     } catch {
       // The parent route retains its authoritative playlist state when job diagnostics fail.
     }

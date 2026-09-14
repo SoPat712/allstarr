@@ -75,25 +75,7 @@ public sealed class PlaylistPlayableSearchService(
             .SelectMany(result => result)
             .DistinctBy(song => $"{song.ExternalProvider}:{song.ExternalId}", StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var groups = GroupEquivalent(songs, scope);
-        var external = songs.ToDictionary(
-            song => CandidateId(song.ExternalProvider!, song.ExternalId!),
-            song => song);
-        var candidates = localCandidates
-            .Concat(groups.Select(group => ToCandidate(group[0], scope)))
-            .ToArray();
-        var decision = matcher.Decide(
-            scope,
-            source,
-            candidates,
-            manualOverride,
-            gateway.GetProviderOrder(ProviderCapabilityKind.Streaming));
-        return new(
-            decision,
-            external,
-            groups.ToDictionary(
-                group => CandidateId(group[0].ExternalProvider!, group[0].ExternalId!),
-                group => (IReadOnlyList<Song>)group));
+        return DecideMatch(source, scope, songs, localCandidates, manualOverride);
 
         async Task<Song[]> SearchAsync(string query) =>
             ((await gateway.SearchPlayableSongsAsync(context, query, 60)) ?? [])
@@ -114,6 +96,8 @@ public sealed class PlaylistPlayableSearchService(
         ExternalTrackMatchSnapshot source,
         TrackMatchScope scope,
         IEnumerable<ProviderTrackIdentityRecord> identities,
+        IReadOnlyList<LocalTrackMatchCandidate> localCandidates,
+        ScopedTrackMatchOverride? manualOverride,
         CancellationToken cancellationToken)
     {
         var order = ProviderRanks();
@@ -139,32 +123,34 @@ public sealed class PlaylistPlayableSearchService(
                     cached.ExternalId);
                 continue;
             }
-            if (song == null) continue;
+            if (song == null || !IsPlayable(song) || string.IsNullOrWhiteSpace(song.ExternalId)) continue;
 
-            var candidate = ToCandidate(song, scope);
-            var score = matcher.ScoreCandidates(
-                source,
-                [candidate],
-                gateway.GetProviderOrder(ProviderCapabilityKind.Streaming)).Single();
-            var reasons = score.Reasons
-                .Prepend("verified_provider_identity")
-                .Distinct(StringComparer.Ordinal)
-                .ToArray();
-            return new(
-                new TrackMatchDecision(
-                    TrackMatchReviewState.Accepted,
-                    candidate.LibraryTrackId,
-                    candidate.BackendItemId,
-                    1,
-                    [score with { Confidence = 1, Reasons = reasons }],
-                    reasons,
-                    [],
-                    scope.PolicyVersion,
-                    scope.SourceSnapshotVersion),
-                new Dictionary<Guid, Song> { [candidate.LibraryTrackId] = song },
-                new Dictionary<Guid, IReadOnlyList<Song>> { [candidate.LibraryTrackId] = [song] });
+            var match = DecideMatch(source, scope, [song], localCandidates, manualOverride);
+            if (match.Decision.State is TrackMatchReviewState.Accepted or TrackMatchReviewState.Pinned)
+                return match;
         }
         return null;
+    }
+
+    private PlayableTrackMatch DecideMatch(
+        ExternalTrackMatchSnapshot source,
+        TrackMatchScope scope,
+        IReadOnlyList<Song> songs,
+        IReadOnlyList<LocalTrackMatchCandidate> localCandidates,
+        ScopedTrackMatchOverride? manualOverride)
+    {
+        var groups = GroupEquivalent(songs, scope);
+        return new(
+            matcher.Decide(
+                scope,
+                source,
+                localCandidates.Concat(songs.Select(song => ToCandidate(song, scope))).ToArray(),
+                manualOverride,
+                gateway.GetProviderOrder(ProviderCapabilityKind.Streaming)),
+            songs.ToDictionary(song => CandidateId(song.ExternalProvider!, song.ExternalId!)),
+            groups.SelectMany(group => group.Select(song => (
+                    Id: CandidateId(song.ExternalProvider!, song.ExternalId!), Group: (IReadOnlyList<Song>)group)))
+                .ToDictionary(item => item.Id, item => item.Group));
     }
 
     public bool CanUseProvider(string? providerId)

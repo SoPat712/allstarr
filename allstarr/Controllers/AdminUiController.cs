@@ -1421,10 +1421,10 @@ public class AdminUiController : ControllerBase
             Field("EXPLICIT_FILTER", "Explicit filter", "select", "explicitFilter", ["All", "ExplicitOnly", "CleanOnly"]),
             Field(
                 "MATCHING_LOCAL_PREFERENCE_PERCENT",
-                "Local match window",
+                "Tentative local window",
                 "number",
                 "matching.localPreferencePercent",
-                helpText: "A local candidate wins when it is no more than this many confidence points behind the strongest result. Default: 7%.",
+                helpText: "Only used when no candidate qualifies for automatic acceptance. Accepted matches always use local first, then Streaming priority. This window never raises confidence. Default: 7 points.",
                 min: 0,
                 max: 20)
         ]),

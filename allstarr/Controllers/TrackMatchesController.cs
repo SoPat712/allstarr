@@ -495,7 +495,8 @@ public sealed class TrackMatchesController(
         }).ToArray();
         var scores = source == null
             ? []
-            : matcher.ScoreCandidates(source, candidates.Select(item => item.Candidate))
+            : matcher.ScoreCandidates(source, candidates.Select(item => item.Candidate),
+                    providerGateway.GetProviderOrder(ProviderCapabilityKind.Streaming))
                 .ToDictionary(item => item.LibraryTrackId);
         var ranked = candidates
             .Select(item => new
@@ -953,12 +954,9 @@ public sealed class TrackMatchesController(
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
             var title = Text(root, "title") ?? Text(root, "Title") ?? Text(root, "name") ?? Text(root, "Name");
-            var artist = Text(root, "artist") ?? Text(root, "Artist");
-            if (artist == null && (root.TryGetProperty("artists", out var artists) || root.TryGetProperty("Artists", out artists)) && artists.ValueKind == JsonValueKind.Array)
-                artist = string.Join(", ", artists.EnumerateArray().Select(item => item.ValueKind == JsonValueKind.String ? item.GetString() : Text(item, "name")).Where(item => item != null));
             return (
                 title,
-                artist,
+                TrackSnapshotMetadata.Artist(root),
                 Text(root, "album") ?? Text(root, "Album") ?? Text(root, "albumTitle") ?? Text(root, "AlbumTitle"),
                 Text(root, "artworkUrl") ?? Text(root, "ArtworkUrl") ?? Text(root, "coverUrl") ?? Text(root, "CoverUrl") ??
                     Text(root, "imageUrl") ?? Text(root, "ImageUrl") ??

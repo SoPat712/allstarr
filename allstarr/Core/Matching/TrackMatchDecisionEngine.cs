@@ -137,7 +137,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "priority-windows-v17";
+    public const string AlgorithmVersion = "accepted-routing-v18";
     private const double ScoreEpsilon = 0.0000001;
 
     private readonly TrackMatchPolicy _policy;
@@ -195,9 +195,11 @@ public sealed class TrackMatchDecisionEngine
         if (ranked.Length == 0) return [];
 
         var highestConfidence = ranked[0].Score.Confidence;
-        var selected = ranked
+        var accepted = ranked.Where(candidate => IsAcceptanceQualified(candidate.Score)).ToArray();
+        var eligible = accepted.Length > 0 ? accepted : ranked
             .Where(candidate => candidate.Score.Confidence + candidate.Priority.Window + ScoreEpsilon >=
-                                highestConfidence)
+                                highestConfidence);
+        var selected = eligible
             .OrderBy(candidate => candidate.Priority.Rank)
             .ThenByDescending(candidate => candidate.Score.Confidence)
             .ThenBy(candidate => candidate.Score.LibraryTrackId)
@@ -217,19 +219,21 @@ public sealed class TrackMatchDecisionEngine
         RankedCandidate candidate,
         bool displacedHigherConfidence)
     {
-        if (candidate.Priority.Window == 0) return candidate.Score;
-
         var components = new Dictionary<string, double>(
             candidate.Score.Components ?? new Dictionary<string, double>())
         {
-            ["priorityWindow"] = candidate.Priority.Window
+            ["priorityWindow"] = candidate.Priority.Window,
+            ["routingPriority"] = candidate.Priority.Rank,
+            ["acceptanceQualified"] = IsAcceptanceQualified(candidate.Score) ? 1 : 0
         };
         return candidate.Score with
         {
             Components = components,
             Reasons = displacedHigherConfidence
                 ? candidate.Score.Reasons
-                    .Append(candidate.Candidate.IsLocal
+                    .Append(IsAcceptanceQualified(candidate.Score)
+                        ? "accepted_route_priority_selected"
+                        : candidate.Candidate.IsLocal
                         ? "local_priority_window_selected"
                         : "provider_priority_window_selected")
                     .ToArray()
@@ -269,8 +273,10 @@ public sealed class TrackMatchDecisionEngine
 
     public bool CanSkipProviderComparison(TrackMatchDecision decision) =>
         decision.State == TrackMatchReviewState.Accepted &&
-        decision.Candidates.FirstOrDefault() is { IsLocal: true } local &&
-        local.Confidence + _policy.LocalPriorityWindow + ScoreEpsilon >= 1;
+        decision.Candidates.FirstOrDefault() is { IsLocal: true };
+
+    private bool IsAcceptanceQualified(TrackMatchCandidateScore score) =>
+        score.Confidence >= _policy.AcceptThreshold && HasStrongArtistEvidence(score);
 
     public TrackMatchDecision Decide(
         TrackMatchScope scope,
@@ -404,10 +410,15 @@ public sealed class TrackMatchDecisionEngine
         public static CandidatePriority Fallback { get; } = new(int.MaxValue, 0);
     }
 
-    private static bool HasStrongArtistEvidence(TrackMatchCandidateScore score) =>
+    private bool HasStrongArtistEvidence(TrackMatchCandidateScore score) =>
         score.Components == null ||
         !score.Components.TryGetValue("artist", out var artistScore) ||
-        artistScore >= 0.7;
+        artistScore >= 0.7 ||
+        (score.Confidence >= _policy.AcceptThreshold &&
+         score.Components.GetValueOrDefault("primaryArtist") >= 0.98 &&
+         score.Components.GetValueOrDefault("title") >= 0.98 &&
+         score.Components.GetValueOrDefault("album") >= 0.98 &&
+         score.Components.GetValueOrDefault("duration") >= 0.95);
 
     private TrackMatchCandidateScore ScoreCandidate(
         ExternalTrackMatchSnapshot source,
@@ -450,7 +461,9 @@ public sealed class TrackMatchDecisionEngine
         var components = new Dictionary<string, double>
         {
             ["title"] = Math.Round(title, 4),
-            ["artist"] = Math.Round(artist, 4)
+            ["artist"] = Math.Round(artist, 4),
+            ["primaryArtist"] = Similarity(SplitArtists(source.Artist).FirstOrDefault(),
+                SplitArtists(candidate.Artist).FirstOrDefault())
         };
         AddReason(reasons, "title", title);
         AddReason(reasons, "artist", artist);

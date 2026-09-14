@@ -246,7 +246,9 @@ public sealed class ExtensionCapabilityAdapterTests
              "type":["metadata_provider"],"permissions":{"storage":true}}
             """;
         const string script = """
-            registerExtension({customSearch:function(){return [{id:'track-1',name:'Song',artists:'Artist',artist_id:'artist-1',album_id:'album-1',album_name:'Album',cover_url:'https://images.example.test/cover.jpg',item_type:'track'}];},getPlaylist:function(){return {tracks:[]};}});
+            registerExtension({customSearch:function(query){return query === 'Song'
+              ? [{id:'track-1',name:'Song',artists:'Artist',artist_id:'artist-1',album_id:'album-1',album_name:'Album',cover_url:'https://images.example.test/cover.jpg',item_type:'track'}]
+              : [{id:'wrong-track',name:'Wrong song',artists:'Wrong artist',item_type:'track'}];},getPlaylist:function(){return {tracks:[]};}});
             """;
         var manifest = SpotiFlacExtensionCompatibility.NormalizeManifest(sourceManifest, script);
         Assert.DoesNotContain(ExtensionSdkV1.ParseManifest(manifest).Capabilities,
@@ -262,6 +264,30 @@ public sealed class ExtensionCapabilityAdapterTests
         Assert.Contains("\"id\":\"artist-1\"", json, StringComparison.Ordinal);
         Assert.Contains("\"albumId\":\"album-1\"", json, StringComparison.Ordinal);
         Assert.Contains("https://images.example.test/cover.jpg", json, StringComparison.Ordinal);
+
+        var detail = sandbox.InvokeJson("getTrack", "{\"id\":\"track-1\"}");
+
+        Assert.Contains("\"id\":\"track-1\"", detail, StringComparison.Ordinal);
+        Assert.Contains("\"title\":\"Song\"", detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("wrong-track", detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Metadata_GetTrackRejectsAProviderResponseForAnotherIdentity()
+    {
+        var manifest = Manifest(ProviderCapabilityKind.Metadata, ["getTrack"]);
+        var sandbox = Sandbox(manifest, """
+            registerExtension({getTrack:function(){return {
+              id:'other-track',title:'Wrong track',artists:[{name:'Wrong artist'}]
+            };}});
+            """);
+        var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest);
+        var requested = new ProviderExternalResourceId(manifest.Id, ProviderResourceKind.Track, "requested-track");
+
+        var outcome = await adapter.GetTrackAsync(Context(manifest.Id), new ProviderTrackLookupRequest(requested));
+
+        Assert.False(outcome.IsSuccess);
+        Assert.Equal(ProviderErrorKind.NotFound, outcome.Error!.Kind);
     }
 
     [Fact]

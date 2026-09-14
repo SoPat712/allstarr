@@ -1753,7 +1753,8 @@ public sealed class TrackMatchCommandService(
             playable = source == null
                 ? null
                 : await playableSearch.ReuseAsync(
-                    execution, sourceTrack, scope, cachedRoutes, cancellationToken);
+                    execution, sourceTrack, scope, cachedRoutes,
+                    localCandidates.Select(sourceTrack), rejectedOverride, cancellationToken);
             playable ??= await playableSearch.MatchAsync(
                 execution,
                 sourceTrack,
@@ -2507,18 +2508,9 @@ public sealed class TrackMatchCommandService(
         {
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
-            var artists = root.TryGetProperty("Artists", out var artistValues) &&
-                          artistValues.ValueKind == JsonValueKind.Array
-                ? artistValues.EnumerateArray()
-                    .Select(item => item.GetString())
-                    .Where(item => !string.IsNullOrWhiteSpace(item))
-                    .ToArray()
-                : [];
             return (
                 ReadString(root, "title", "Title", "name", "Name"),
-                artists.Length > 0
-                    ? string.Join(", ", artists)
-                    : ReadString(root, "artist", "Artist", "primaryArtist", "PrimaryArtist"),
+                TrackSnapshotMetadata.Artist(root),
                 ReadString(root, "album", "Album"),
                 ReadString(root, "albumArtist", "AlbumArtist"),
                 ReadString(root, "isrc", "Isrc", "ISRC"));

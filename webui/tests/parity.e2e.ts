@@ -139,7 +139,7 @@ const schema = {
     {
       id: "general", label: "General", fields: [
       { key: "AUDIO_QUALITY", label: "Audio quality", type: "audio-quality", valuePath: "audio.quality" },
-      { key: "MATCHING_LOCAL_PREFERENCE_PERCENT", label: "Local match window", type: "number", valuePath: "matching.localPreferencePercent", min: 0, max: 20, helpText: "A local candidate wins when it is no more than this many confidence points behind the strongest result. Default: 7%." },
+      { key: "MATCHING_LOCAL_PREFERENCE_PERCENT", label: "Tentative local window", type: "number", valuePath: "matching.localPreferencePercent", min: 0, max: 20, helpText: "Only used when no candidate qualifies for automatic acceptance. Accepted matches always use local first, then Streaming priority." },
       { key: "STORAGE_MODE", label: "Storage mode", type: "select", valuePath: "library.storageMode", options: ["Permanent", "Cache"] },
       { key: "PublicUrl", label: "Public URL", type: "text", valuePath: "deployment.url", ownership: "deployment", readOnly: true },
       ],
@@ -622,7 +622,7 @@ async function mockApi(page: Page, options: {
           id: "jellyfin-kiss-me-more", backendItemId: "jellyfin-kiss-me-more",
           title: "Kiss Me More", artist: "Doja Cat feat. SZA", album: "Planet Her",
           durationMilliseconds: 208_000, confidence: 0.91,
-          components: { priorityWindow: 0.07 },
+          components: { priorityWindow: 0.07, routingPriority: 0, acceptanceQualified: 1 },
         }],
       };
     if (url.pathname === "/api/admin/track-matches/targets/provider")
@@ -2703,7 +2703,7 @@ test("Tentative mappings sort by confidence and deep links open review", async (
           id: "jellyfin-kiss-me-more", backendItemId: "jellyfin-kiss-me-more",
           title: "Kiss Me More", artist: "Doja Cat feat. SZA", album: "Planet Her",
           durationMilliseconds: 208_000, confidence: 0.91,
-          components: { priorityWindow: 0.07 },
+          components: { priorityWindow: 0.07, routingPriority: 0, acceptanceQualified: 1 },
         }] : [],
       }),
     });
@@ -2719,7 +2719,7 @@ test("Tentative mappings sort by confidence and deep links open review", async (
           externalProvider: "lumen-audio", title: "Kiss Me More",
           artist: "Doja Cat feat. SZA", album: "Planet Her",
           durationMilliseconds: 208_000, confidence: 0.94,
-          components: { priorityWindow: 0.05 },
+          components: { priorityWindow: 0.05, routingPriority: 1, acceptanceQualified: 1 },
         }],
         providers: ["lumen-audio", "qobuz"],
       }),
@@ -2735,7 +2735,7 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await expect(dialog.locator(".candidate-card .mapping-art > span").first()).toBeVisible();
   await expect(
     dialog.locator(".automatic-candidates .candidate-provider")
-      .filter({ hasText: "Jellyfin · 7% priority window" }),
+      .filter({ hasText: "Jellyfin · 7% tentative window" }),
   ).toBeVisible();
   await expect(dialog.locator(".automatic-candidates .candidate-confidence").getByText("82%"))
     .toHaveCount(2);
@@ -2750,8 +2750,8 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await expect(dialog.getByRole("button", { name: /Qobuz/ })).toHaveCount(0);
   await expect(dialog.getByText("Planet Her")).toHaveCount(2);
   await expect(dialog.locator(".target-results > button .target-score")).toHaveCount(2);
-  await expect(dialog.locator(".target-results").getByText("· 7% priority window")).toHaveCount(1);
-  await expect(dialog.locator(".target-results").getByText("· 5% priority window")).toHaveCount(1);
+  await expect(dialog.locator(".target-results").getByText("· Local first")).toHaveCount(1);
+  await expect(dialog.locator(".target-results").getByText("· Streaming priority 1")).toHaveCount(1);
   await expect(dialog.locator(".target-results")).toHaveCSS("overflow-y", "visible");
   await expect(dialog.locator(":scope > footer")).toHaveCSS("position", "sticky");
   await expect(
@@ -2762,7 +2762,7 @@ test("Tentative mappings sort by confidence and deep links open review", async (
     dialog.locator(".target-results > button").filter({ hasText: "Lumen Audio" })
       .locator(".target-score").getByText("94%"),
   ).toBeVisible();
-  await expect(dialog.getByText("rank #1")).toBeVisible();
+  await expect(dialog.getByText("score rank #1")).toBeVisible();
   await dialog.locator(".candidate-card").first().getByText("Full scoring evidence").click();
   await expect(dialog.locator(".candidate-card").first().getByText("Candidate ID")).toBeVisible();
   await expect(dialog.locator(".candidate-card").first().getByText("Artist overlap")).toBeVisible();
@@ -2770,7 +2770,7 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await expect(dialog.locator(".candidate-card").first().getByText("Apple Music – GAMDL track ID")).toBeVisible();
   await dialog.locator(".candidate-card").last().getByText("Full scoring evidence").click();
   await expect(dialog.locator(".candidate-card").last().getByRole("term")
-    .filter({ hasText: /priority window/i }))
+    .filter({ hasText: "Routing preference" }))
     .toBeVisible();
   await dialog.getByLabel("Search local library and playable providers").fill("No local copy");
   await dialog.getByRole("button", { name: "Search", exact: true }).click();
@@ -3773,7 +3773,7 @@ test("Audio quality supports keyboard changes, provider outcomes, save, and relo
   await page.getByText("Music source quality details", { exact: true }).click();
   await expect(page.getByText("Apple Music: AAC 320 kbps")).toBeVisible();
   await expect(page.getByText("Deezer: MP3 320 kbps")).toBeVisible();
-  await expect(page.getByLabel("Local match window")).toHaveValue("7");
+  await expect(page.getByLabel("Tentative local window")).toHaveValue("7");
   await page.getByRole("button", { name: "Save playback and matching" }).click();
   await expect.poll(() => saved).toBe("High");
   await page.reload();
@@ -4238,6 +4238,117 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/#\/library\/playlists$/);
   await expect(page.getByRole("dialog", { name: "Test song" })).toBeVisible();
+});
+
+test("Playlist dialog keeps Actions and close controls independent at desktop and mobile widths", async ({ page }) => {
+  await mockApi(page);
+  for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("#/library/playlists");
+    const opener = page.getByRole("button", { name: "Open Test playlist playlist details", exact: true });
+    await opener.click();
+    const dialog = page.getByRole("dialog", { name: "Test playlist" });
+    const actions = dialog.getByRole("button", { name: "Actions" });
+    const close = dialog.getByRole("button", { name: "Close playlist details" });
+    await expect(actions).toBeVisible();
+    await expect(close).toBeVisible();
+    await expect(close).toHaveAttribute("aria-label", "Close playlist details");
+
+    const geometry = await dialog.evaluate((element) => {
+      const hero = element.querySelector<HTMLElement>(".playlist-hero");
+      const action = element.querySelector<HTMLElement>(".playlist-actions-trigger");
+      const closeButton = element.querySelector<HTMLElement>(".playlist-dialog-close");
+      if (!hero || !action || !closeButton) return null;
+      const heroBounds = hero.getBoundingClientRect();
+      const actionBounds = action.getBoundingClientRect();
+      const closeBounds = closeButton.getBoundingClientRect();
+      const overlap = !(
+        actionBounds.right <= closeBounds.left || closeBounds.right <= actionBounds.left ||
+        actionBounds.bottom <= closeBounds.top || closeBounds.bottom <= actionBounds.top
+      );
+      return {
+        overlap,
+        actionInHero: hero.contains(action),
+        closeInHero: hero.contains(closeButton),
+        actionRight: actionBounds.right,
+        closeLeft: closeBounds.left,
+        heroRight: heroBounds.right,
+      };
+    });
+    expect(geometry).not.toBeNull();
+    expect(geometry?.overlap).toBe(false);
+    expect(geometry?.actionInHero).toBe(true);
+    expect(geometry?.closeInHero).toBe(true);
+    expect(geometry?.actionRight ?? 0).toBeLessThanOrEqual(geometry?.heroRight ?? 0);
+    expect(geometry?.closeLeft ?? 0).toBeGreaterThanOrEqual(0);
+
+    await close.focus();
+    await expect(close).toBeFocused();
+    await actions.click();
+    await expect(page.getByRole("menuitem", { name: "Update playlist now" })).toBeVisible();
+    await expect(close).toBeVisible();
+    await page.keyboard.press("Escape");
+    await close.click();
+    await expect(dialog).toBeHidden();
+    await expect(opener).toBeFocused();
+  }
+});
+
+test("Passive playlist refresh keeps mutation controls enabled while detail reads finish", async ({ page }) => {
+  await page.setViewportSize({ width: 835, height: 762 });
+  await page.addInitScript(() => {
+    class TestEventSource {
+      static instance: TestEventSource | undefined;
+      listeners = new Map<string, EventListener[]>();
+
+      constructor() {
+        TestEventSource.instance = this;
+      }
+
+      addEventListener(type: string, listener: EventListener) {
+        this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+      }
+
+      close() {}
+    }
+
+    Object.defineProperty(window, "EventSource", { value: TestEventSource });
+    window.__emitAllstarrUpdate = () => {
+      const event = {
+        data: JSON.stringify({ resource: "playlist-links", resourceId: "playlist-link", revision: 2 }),
+        lastEventId: "playlist-links-2",
+      };
+      for (const listener of TestEventSource.instance?.listeners.get("update") ?? [])
+        listener(event as unknown as Event);
+    };
+  });
+  await mockApi(page);
+  const detailRefresh = routeRelease();
+  let detailRequests = 0;
+  await page.route("**/api/admin/playlist-links/playlist-link?*", async (route) => {
+    detailRequests++;
+    if (detailRequests === 2) await detailRefresh.promise;
+    return route.fallback();
+  });
+  let postRequests = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST") postRequests++;
+  });
+
+  await page.goto("#/library/playlists");
+  await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
+  const dialog = page.getByRole("dialog", { name: "Test playlist" });
+  await expect(dialog).toBeVisible();
+  await expect.poll(() => detailRequests).toBe(1);
+
+  await page.evaluate(() => window.__emitAllstarrUpdate?.());
+  await expect.poll(() => detailRequests).toBe(2);
+  await expect(page.getByRole("button", { name: "Refresh playlists" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Review rematch" })).toBeEnabled();
+  expect(postRequests).toBe(0);
+
+  detailRefresh.release();
+  await expect(dialog.getByRole("button", { name: "Close playlist details" })).toBeVisible();
 });
 
 for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }]) {

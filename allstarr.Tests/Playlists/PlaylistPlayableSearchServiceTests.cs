@@ -145,7 +145,7 @@ public sealed class PlaylistPlayableSearchServiceTests
         var selected = Assert.Single(result.RoutableExternalCandidates);
         Assert.Equal("preferred", selected.ExternalId);
         Assert.Equal("preferred", result.SelectedExternal!.ExternalId);
-        Assert.Contains("provider_priority_window_selected", result.Decision.Reasons);
+        Assert.Contains("accepted_route_priority_selected", result.Decision.Reasons);
         Assert.True(result.Decision.Candidates[0].Confidence < result.Decision.Candidates[1].Confidence);
     }
 
@@ -271,6 +271,8 @@ public sealed class PlaylistPlayableSearchServiceTests
                     Verification = ProviderIdentityVerification.Verified
                 }
             ],
+            [],
+            null,
             CancellationToken.None);
 
         Assert.NotNull(result);
@@ -282,6 +284,55 @@ public sealed class PlaylistPlayableSearchServiceTests
             It.IsAny<ProtocolExecutionContext>(), "deezer", "fallback-track"), Times.Once);
         gateway.Verify(item => item.SearchPlayableSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CachedRouteUsesCurrentScoringAndLocalPriority()
+    {
+        var tenant = Guid.CreateVersion7();
+        var user = Guid.CreateVersion7();
+        var scope = new TrackMatchScope(tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1);
+        var source = new ExternalTrackMatchSnapshot("source", "spotify", "source-track", "Sunroof",
+            "Nicky Youre, hey daisy", "Sunroof", null, 163_025, null, null, null);
+        var local = new LocalTrackMatchCandidate(Guid.CreateVersion7(), tenant, user, "main", "music",
+            "local-track", null, "Sunroof", "Nicky Youre, dazy", "Sunroof", null, 163_025, null, null, null);
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["apple-download"]);
+        gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "apple-download", "cached"))
+            .ReturnsAsync(new Song
+            {
+                ExternalProvider = "apple-download",
+                ExternalId = "cached",
+                Title = "Sunroof",
+                Artist = "Nicky Youre & hey daisy",
+                Album = "Sunroof (Remixes) - EP",
+                Duration = 163
+            });
+        var service = new PlaylistPlayableSearchService(gateway.Object, new TrackMatchDecisionEngine(), null!,
+            new IdentityOptions(), Options.Create(new JellyfinSettings()), NullLogger<PlaylistPlayableSearchService>.Instance);
+        var routes = new[] { new ProviderTrackIdentityRecord
+        {
+            TenantId = tenant, CanonicalRecordingId = Guid.CreateVersion7(), ProviderId = "apple-download",
+            ExternalId = "cached", ResourceKind = ProviderResourceKind.Track, Verification = ProviderIdentityVerification.Verified
+        } };
+
+        var result = await service.ReuseAsync(Context(tenant, user), source, scope, routes, [local], null, CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
+        Assert.Equal(local.LibraryTrackId, result.Decision.SelectedLibraryTrackId);
+        Assert.Null(result.SelectedExternal);
+        Assert.Equal(2, result.Decision.Candidates.Count);
+        Assert.All(result.Decision.Candidates, candidate => Assert.True(candidate.Confidence < 1));
+
+        var rejection = new ScopedTrackMatchOverride(tenant, user, "music", "spotify", "source-track", null,
+            new HashSet<Guid> { local.LibraryTrackId });
+        var rejectedLocal = await service.ReuseAsync(Context(tenant, user), source, scope, routes, [local], rejection, CancellationToken.None);
+        Assert.Equal("cached", rejectedLocal!.SelectedExternal!.ExternalId);
+
+        var changedRecording = await service.ReuseAsync(Context(tenant, user), source with { Title = "Sunroof (Live)" },
+            scope, routes, [], null, CancellationToken.None);
+        Assert.Null(changedRecording);
     }
 
     [Fact]
@@ -321,6 +372,8 @@ public sealed class PlaylistPlayableSearchServiceTests
                     VerificationMethod = "automatic-suggestion"
                 }
             ],
+            [],
+            null,
             CancellationToken.None);
 
         Assert.Null(result);

@@ -66,6 +66,7 @@
   let detailLoading = $state(false);
   let detailError = $state("");
   let refreshing = $state(false);
+  let passiveRefreshing = $state(false);
   let error = $state("");
   let degraded = $state("");
   let feedback = $state("");
@@ -76,6 +77,7 @@
   let detailReturnFocus: HTMLElement | null = null;
   let matchWasOpen = false;
   let matchReturnFocus: HTMLElement | null = null;
+  let refreshInFlight = false;
   let page = $state(1);
   let addOpen = $state(false);
   let operationJobId = $state("");
@@ -297,43 +299,50 @@
     await loadDetails(selectedId, undefined, mode as typeof viewMode);
   }
 
-  async function refresh() {
-    if (refreshing) {
-      refreshQueued = true;
+  async function refresh(passive = false) {
+    if (refreshInFlight) {
+      if (!passive) refreshQueued = true;
       return;
     }
-    refreshing = true;
+    refreshInFlight = true;
+    if (passive) passiveRefreshing = true;
+    else refreshing = true;
     error = "";
     degraded = "";
-    const [linksResult, schemaResult] = await Promise.allSettled([
-      playlistLinks.list(),
-      home.schema(),
-    ]);
-    if (linksResult.status === "rejected") {
-      error =
-        linksResult.reason instanceof Error
-          ? linksResult.reason.message
-          : "Playlists are unavailable.";
-    } else {
-      playlists = linksResult.value.playlistLinks;
-      const nextId = playlists.some((playlist) => playlist.id === selectedId) ? selectedId : "";
-      if (nextId && (detailOpen || initialId === nextId)) await loadDetails(nextId);
-      else {
-        selectedId = "";
-        details = null;
+    try {
+      const [linksResult, schemaResult] = await Promise.allSettled([
+        playlistLinks.list(),
+        home.schema(),
+      ]);
+      if (linksResult.status === "rejected") {
+        error =
+          linksResult.reason instanceof Error
+            ? linksResult.reason.message
+            : "Playlists are unavailable.";
+      } else {
+        playlists = linksResult.value.playlistLinks;
+        const nextId = playlists.some((playlist) => playlist.id === selectedId) ? selectedId : "";
+        if (nextId && (detailOpen || initialId === nextId)) await loadDetails(nextId);
+        else {
+          selectedId = "";
+          details = null;
+        }
       }
-    }
-    if (schemaResult.status === "fulfilled") providers = schemaResult.value.providers;
-    else degraded = "Provider names and artwork are temporarily unavailable.";
-    loading = false;
-    refreshing = false;
-    if (refreshQueued) {
-      refreshQueued = false;
-      void refresh();
+      if (schemaResult.status === "fulfilled") providers = schemaResult.value.providers;
+      else degraded = "Provider names and artwork are temporarily unavailable.";
+      loading = false;
+    } finally {
+      refreshInFlight = false;
+      if (passive) passiveRefreshing = false;
+      else refreshing = false;
+      if (refreshQueued) {
+        refreshQueued = false;
+        void refresh();
+      }
     }
   }
 
-  const refreshScheduler = createRefreshScheduler(refresh);
+  const refreshScheduler = createRefreshScheduler(() => refresh(true));
   const scheduleRefresh = refreshScheduler.schedule;
 
   async function run(name: "sync" | "toggle") {
@@ -475,7 +484,7 @@
     </div>
   {/if}
 
-  <section class="playlist-layout" aria-busy={refreshing}>
+  <section class="playlist-layout" aria-busy={refreshing || passiveRefreshing}>
     <article class="panel playlist-list">
       <header class="panel-heading playlist-toolbar">
         <div>
@@ -623,27 +632,29 @@
               <span>Allstarr · via {providerName(details.targetProtocol)}</span>
             </div>
           </div>
-          <Dialog.Close class="icon-button playlist-dialog-close" aria-label="Close playlist details"><X size={18} aria-hidden="true" /></Dialog.Close>
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger class={`${buttonVariants({ variant: "secondary" })} playlist-actions-trigger`}>
-              Actions <ChevronDown size={16} aria-hidden="true" />
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
-                <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("sync")}>{selected.importMode === "oneTime" ? "Rebuild from imported copy" : "Update playlist now"}</DropdownMenu.Item>
-                <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => { detailOpen = false; rematchOpen = true; }}>Review account rematch</DropdownMenu.Item>
-                {#if selected.importMode === "linked"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void refreshSources([selected.id])}>Refresh source</DropdownMenu.Item>{/if}
-                {#if selected.sourceUpdateAvailable}
-                  <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => sourceUpdateOpen = true}>
-                    Preview changes to {providerName(selected.sourceProviderId)}
-                  </DropdownMenu.Item>
-                {/if}
-                <DropdownMenu.Separator />
-                <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => settingsOpen = true}>Edit settings</DropdownMenu.Item>
-                <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run("toggle")}>{selected.enabled ? "Pause" : "Resume"}</DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
+          <div class="playlist-hero-actions">
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger class={`${buttonVariants({ variant: "secondary" })} playlist-actions-trigger`}>
+                Actions <ChevronDown size={16} aria-hidden="true" />
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
+                  <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("sync")}>{selected.importMode === "oneTime" ? "Rebuild from imported copy" : "Update playlist now"}</DropdownMenu.Item>
+                  <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => { detailOpen = false; rematchOpen = true; }}>Review account rematch</DropdownMenu.Item>
+                  {#if selected.importMode === "linked"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void refreshSources([selected.id])}>Refresh source</DropdownMenu.Item>{/if}
+                  {#if selected.sourceUpdateAvailable}
+                    <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => sourceUpdateOpen = true}>
+                      Preview changes to {providerName(selected.sourceProviderId)}
+                    </DropdownMenu.Item>
+                  {/if}
+                  <DropdownMenu.Separator />
+                  <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => settingsOpen = true}>Edit settings</DropdownMenu.Item>
+                  <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run("toggle")}>{selected.enabled ? "Pause" : "Resume"}</DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+            <Dialog.Close class="icon-button playlist-dialog-close" aria-label="Close playlist details"><X size={18} aria-hidden="true" /></Dialog.Close>
+          </div>
         </header>
 
         <div class="playlist-view-switcher">

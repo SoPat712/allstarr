@@ -42,11 +42,15 @@ public sealed class ExtensionMetadataCapabilityAdapter : ExtensionCapabilityAdap
         ProviderExecutionContext context, ProviderMetadataSearchRequest request) =>
         InvokeAsync(context, "searchTracks", SearchRequest(request), value => MapPage(value, MapTrack));
 
-    public Task<ProviderOutcome<ProviderTrackMetadata>> GetTrackAsync(
+    public async Task<ProviderOutcome<ProviderTrackMetadata>> GetTrackAsync(
         ProviderExecutionContext context, ProviderTrackLookupRequest request)
     {
         context.RequireResourceOwner(request.Id, ProviderResourceKind.Track);
-        return InvokeAsync(context, "getTrack", new { id = request.Id.Value, request.ExpectedSnapshotVersion }, MapTrack);
+        var outcome = await InvokeAsync(context, "getTrack",
+            new { id = request.Id.Value, request.ExpectedSnapshotVersion }, MapTrack);
+        return outcome.IsSuccess && outcome.RequireValue().Id != request.Id
+            ? Failure<ProviderTrackMetadata>(ProviderErrorKind.NotFound)
+            : outcome;
     }
 
     public Task<ProviderOutcome<ProviderTrackMetadata>> LookupByIsrcAsync(

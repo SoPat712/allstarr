@@ -10,10 +10,19 @@ import {
   providerResultCounts,
   rankedTargets,
   reviewStateLabel,
+  routingPreference,
   scoreComponents,
 } from "./mappings";
 
 describe("mapping review presentation", () => {
+  it("separates routing priority from confidence evidence", () => {
+    const components = { title: 1, priorityWindow: 0.07, routingPriority: 0, acceptanceQualified: 1 };
+    expect(scoreComponents({ components })).toEqual([["title", 1]]);
+    expect(routingPreference(components)).toBe("Local first");
+    expect(routingPreference({ ...components, routingPriority: 2 })).toBe("Streaming priority 2");
+    expect(routingPreference({ ...components, acceptanceQualified: 0 })).toBe("7% tentative window");
+    expect(routingPreference(undefined)).toBe("");
+  });
   it("compares simple artwork fingerprints", () => {
     const pixels = new Uint8ClampedArray(9 * 8 * 4);
     for (let row = 0; row < 8; row += 1)

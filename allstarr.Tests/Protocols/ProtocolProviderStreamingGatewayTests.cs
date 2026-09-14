@@ -452,12 +452,14 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             It.IsAny<ProviderExecutionContext>(),
             It.Is<ProviderStreamLeaseRequest>(request =>
                 request.TrackId.ProviderId == "deezer" &&
-                request.TrackId.Value == "source-track")), Times.Once);
+                request.TrackId.Value == "source-track" &&
+                request.RequestedQuality == ProviderAudioQuality.Lossless)), Times.Once);
         second.Verify(item => item.GetStreamLeaseAsync(
             It.IsAny<ProviderExecutionContext>(),
             It.Is<ProviderStreamLeaseRequest>(request =>
                 request.TrackId.ProviderId == "qobuz" &&
-                request.TrackId.Value == "qobuz-track")), Times.Once);
+                request.TrackId.Value == "qobuz-track" &&
+                request.RequestedQuality == ProviderAudioQuality.Lossless)), Times.Once);
         stream.Response.Dispose();
         first.VerifyAll();
         second.VerifyAll();
