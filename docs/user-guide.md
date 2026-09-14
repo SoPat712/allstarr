@@ -106,6 +106,8 @@ Imports stay private inside Allstarr unless a separate listening-app or scrobbli
 3. Choose **Import once**, **Update when I ask**, or a schedule. An imported-once playlist keeps its published snapshot and never reads later source changes, even if the source account is subsequently disabled.
 4. Choose **Stream when played** or **Keep every song**. Keep-all queues owner- and library-scoped durable downloads for every resolved external song; local songs are already permanent. An unavailable or unresolved song is reported in Activity without rolling back the playlist import.
 5. Open **Mappings** for ambiguous or unresolved tracks.
+
+The default **Mapped** view always preserves the source playlist's full order. Local matches play from the media server, external `[A]` tracks use their eligible mapped providers in the configured streaming order, and unresolved songs remain visible with a clear not-playable status. **Original** previews the source metadata, while **Native** is only a diagnostic view of the separate playlist written into Jellyfin or Subsonic; it can omit external and unresolved entries that the backend cannot store natively.
 6. Accept only a candidate that represents the same recording. Use interactive search when automatic candidates are wrong.
 
 An accepted match is reusable across playlist sync, search, playback, and later rematches. A matched local item is returned as the complete native backend object. A genuinely external item keeps a stable virtual identity and provider label.

@@ -126,8 +126,11 @@ describe("playlist presentation", () => {
     expect(destinations[0].description).toContain("will not create or change");
     expect(destinations[1].description).toContain("playable Morning mix songs");
     expect(views.map((item) => item.label)).toEqual([
-      "Jellyfin when available", "Every song from Spotify", "Road trip in Jellyfin",
+      "Mapped", "Original", "Native",
     ]);
+    expect(views[0].description).toContain("Every Spotify song, in order");
+    expect(views[0].description).toContain("Unresolved songs stay visible");
+    expect(views[2].description).toContain("External and unresolved songs are not added");
     expect(playlistBehaviorSummary(
       "materialized", "reconcile", "Morning mix", "Jellyfin", "Road trip",
     )).toContain("only when you run an update");

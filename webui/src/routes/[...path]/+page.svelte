@@ -51,6 +51,8 @@
   let OnboardingDialog = $state<Component<any>>();
   let sidebarSlim = $state(false);
   let mobileMenuOpen = $state(false);
+  let mobileMenuTrigger = $state<HTMLButtonElement>();
+  let sidebarExpander = $state<HTMLButtonElement>();
   let themeMode = $state<ThemeMode>("system");
   let ActiveView = $state<Component<any>>();
   let loadedRoute = $state("");
@@ -240,20 +242,24 @@
 
   onMount(() => {
     const compactSidebar = matchMedia("(min-width: 761px) and (max-width: 900px)");
+    const mobileNavigation = matchMedia("(max-width: 760px)");
     const colorScheme = matchMedia("(prefers-color-scheme: dark)");
     themeMode = readThemeMode();
     const applySidebarBreakpoint = () => { sidebarSlim = compactSidebar.matches; };
+    const closeDesktopMenu = () => { if (!mobileNavigation.matches) mobileMenuOpen = false; };
     const applySystemTheme = () => { if (themeMode === "system") applyThemeMode(themeMode); };
     const unsubscribeTheme = onThemeModeChange((mode) => { themeMode = mode; });
     applySidebarBreakpoint();
     applyThemeMode(themeMode);
     compactSidebar.addEventListener("change", applySidebarBreakpoint);
+    mobileNavigation.addEventListener("change", closeDesktopMenu);
     colorScheme.addEventListener("change", applySystemTheme);
 
     void bootstrap();
 
     return () => {
       compactSidebar.removeEventListener("change", applySidebarBreakpoint);
+      mobileNavigation.removeEventListener("change", closeDesktopMenu);
       colorScheme.removeEventListener("change", applySystemTheme);
       unsubscribeTheme();
       liveUpdates.close();
@@ -373,6 +379,7 @@
       </a>
       <button
         class="sidebar-expander"
+        bind:this={sidebarExpander}
         type="button"
         aria-label={sidebarSlim ? "Expand sidebar" : "Collapse sidebar"}
         aria-expanded={!sidebarSlim}
@@ -410,6 +417,7 @@
           type="button"
           class:active={moreDestinationActive}
           aria-label="More destinations"
+          bind:this={mobileMenuTrigger}
           aria-pressed={moreDestinationActive}
           aria-haspopup="dialog"
           aria-expanded={mobileMenuOpen}
@@ -421,7 +429,7 @@
       </nav>
 
       <div class="profile">
-        <a class="avatar" href="#/settings" aria-label={`Settings for ${session.user?.name ?? "current user"}`}>
+        <span class="avatar" aria-hidden="true">
           {#if session.user?.avatarUrl && !avatarFailed}
             <img
               src={session.user.avatarUrl}
@@ -433,7 +441,7 @@
           {:else}
             <span>{initials}</span>
           {/if}
-        </a>
+        </span>
         <div class="min-w-0">
           <strong>{session.user?.name}</strong>
           <small>{session.backend}</small>
@@ -526,7 +534,10 @@
   <Dialog.Root bind:open={mobileMenuOpen}>
     <Dialog.Portal>
       <Dialog.Overlay class="dialog-overlay" />
-      <Dialog.Content class="source-dialog mobile-menu-sheet">
+      <Dialog.Content class="source-dialog mobile-menu-sheet" onCloseAutoFocus={(event) => {
+        event.preventDefault();
+        (mobileMenuTrigger?.offsetParent ? mobileMenuTrigger : sidebarExpander)?.focus();
+      }}>
         <header>
           <div>
             <p class="eyebrow">Account and administration</p>

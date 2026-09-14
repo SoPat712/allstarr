@@ -21,13 +21,10 @@ export function playlistProjectionOptions(
   targetName = "your media server",
   playlistName = `the selected ${targetName} playlist`,
 ) {
-  const targetLabel = playlistName.startsWith("the selected ")
-    ? `${targetName} playlist`
-    : `${playlistName} in ${targetName}`;
   return [
-    { id: "resolved", label: `${targetName} when available`, description: `Listeners get songs from ${targetName} when available and the original ${sourceName} version for anything else.` },
-    { id: "source", label: `Every song from ${sourceName}`, description: `Keep the songs and order from ${sourceName}, even when a song is not in ${targetName}.` },
-    { id: "target", label: targetLabel, description: `Show exactly the songs currently in ${playlistName}.` },
+    { id: "resolved", label: "Mapped", description: `Every ${sourceName} song, in order, using local ${targetName} matches or mapped external providers. Unresolved songs stay visible but cannot play.` },
+    { id: "source", label: "Original", description: `The same full playlist with original ${sourceName} titles and artwork. Playback still uses available mappings; unresolved songs cannot play.` },
+    { id: "target", label: "Native", description: `Only the songs currently in ${playlistName}. External and unresolved songs are not added to a native ${targetName} playlist.` },
   ] as const;
 }
 
@@ -143,7 +140,7 @@ export function filterTracks(
       (track) =>
         (route === "all" || (route === "review" ? isReviewTrack(track) : track.routeKind === route)) &&
         (!needle ||
-          `${track.title} ${track.artists.join(" ")} ${track.album ?? ""} ${track.routeProviderId ?? ""}`
+          `${track.title} ${track.artists.join(" ")} ${track.album ?? ""} ${track.routeProviderId ?? ""} ${track.providerRoutes.map((item) => item.providerId).join(" ")}`
             .toLocaleLowerCase()
             .includes(needle)),
     )

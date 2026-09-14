@@ -234,8 +234,10 @@ public sealed class PlaylistVirtualizationService(
             if (backendIds.Any(id => !hydrated.ContainsKey(id))) return null;
             nativeItems = hydrated;
         }
+        var sourceByPosition = projection.SourceEntries.ToDictionary(item => item.Position);
         var resolvedTracks = projection.Entries
-            .Select(item => ToResolvedVirtualTrack(item, libraryTracks, link.SourceProviderId, nativeItems))
+            .Select(item => ToResolvedVirtualTrack(item, libraryTracks, link.SourceProviderId, nativeItems,
+                sourceByPosition.GetValueOrDefault(item.Position)?.Metadata))
             .ToArray();
         var resolvedByPosition = resolvedTracks.ToDictionary(item => item.SourcePosition);
         var sourceTracks = projection.SourceEntries
@@ -330,7 +332,8 @@ public sealed class PlaylistVirtualizationService(
         DurablePlaylistEntryProjection entry,
         IReadOnlyDictionary<string, LibraryTrackRecord> libraryTracks,
         string sourceProviderId,
-        IReadOnlyDictionary<string, BackendPlaylistMember>? nativeItems = null)
+        IReadOnlyDictionary<string, BackendPlaylistMember>? nativeItems = null,
+        PlaylistSourceMetadata? sourceMetadata = null)
     {
         if (entry.BackendItemId != null &&
             libraryTracks.TryGetValue(entry.BackendItemId, out var local))
@@ -338,6 +341,7 @@ public sealed class PlaylistVirtualizationService(
                 local.Album, local.AlbumArtist, local.DurationMilliseconds,
                 local.CoverArtReference, entry.MatchState ?? TrackMatchState.Unresolved,
                 sourceProviderId, null, TrackRouteKind.Local,
+                SourceMetadata: sourceMetadata,
                 NativeEntryJson: nativeItems?.GetValueOrDefault(local.BackendItemId)?.NativeEntryJson);
         var artist = entry.Artists.FirstOrDefault();
         if (entry.RouteKind == "external" && entry.RouteProviderId != null)
@@ -348,14 +352,14 @@ public sealed class PlaylistVirtualizationService(
                 entry.DurationMilliseconds, null,
                 entry.MatchState ?? TrackMatchState.Unresolved,
                 entry.RouteProviderId, entry.ExternalId, TrackRouteKind.External,
-                entry.RouteProviderId, entry.ExternalId);
+                entry.RouteProviderId, entry.ExternalId, SourceMetadata: sourceMetadata);
         }
 
         return new(entry.Position, $"{UnresolvedItemPrefix}{entry.ExternalId}",
             entry.Title, string.IsNullOrWhiteSpace(artist) ? "Unknown Artist" : artist,
             entry.Album, null,
             entry.DurationMilliseconds, null, entry.MatchState ?? TrackMatchState.Unresolved,
-            sourceProviderId, null, TrackRouteKind.Unresolved);
+            sourceProviderId, null, TrackRouteKind.Unresolved, SourceMetadata: sourceMetadata);
     }
 
     internal static IReadOnlyList<VirtualPlaylistTrack> ToTargetVirtualTracks(

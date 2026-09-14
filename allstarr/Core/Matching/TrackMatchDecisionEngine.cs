@@ -137,7 +137,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "priority-windows-v16";
+    public const string AlgorithmVersion = "priority-windows-v17";
     private const double ScoreEpsilon = 0.0000001;
 
     private readonly TrackMatchPolicy _policy;
@@ -644,8 +644,13 @@ public sealed class TrackMatchDecisionEngine
         var rightTitle = FuzzyMatcher.NormalizeForMatching(
             FuzzyMatcher.StripDecorators(right.Title));
         var sameTitle = leftTitle.Equals(rightTitle, StringComparison.Ordinal);
-        var sameArtist = FuzzyMatcher.NormalizeForMatching(left.Artist)
-            .Equals(FuzzyMatcher.NormalizeForMatching(right.Artist), StringComparison.Ordinal);
+        var sameArtist = SplitArtists(left.Artist)
+            .Select(FuzzyMatcher.NormalizeForMatching)
+            .ToHashSet(StringComparer.Ordinal)
+            .SetEquals(
+                SplitArtists(right.Artist)
+                    .Select(FuzzyMatcher.NormalizeForMatching)
+                    .ToHashSet(StringComparer.Ordinal));
         var sameAlbum = !string.IsNullOrWhiteSpace(left.Album) &&
                         !string.IsNullOrWhiteSpace(right.Album) &&
                         FuzzyMatcher.NormalizeForMatching(left.Album)

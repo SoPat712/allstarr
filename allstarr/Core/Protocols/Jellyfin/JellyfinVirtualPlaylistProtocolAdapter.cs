@@ -267,7 +267,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                         track.BackendItemId);
                     item = JsonSerializer.SerializeToNode(FallbackItem(track))!.AsObject();
                     item["Id"] = $"{PlaylistVirtualizationService.UnresolvedItemPrefix}{track.BackendItemId}";
-                    AddSourceLabels(item, track.SourceProviderId);
+                    AddSourceLabels(item, track, track.SourceProviderId);
                     item["LocationType"] = "Virtual";
                     item["PlayAccess"] = "None";
                     item["CanDownload"] = false;
@@ -297,7 +297,8 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                         : null,
                     IsLocal = false,
                     ExternalProvider = track.RouteProviderId ?? track.SourceProviderId,
-                    ExternalId = track.RouteExternalId ?? track.SourceExternalId
+                    ExternalId = track.RouteExternalId ?? track.SourceExternalId,
+                    ExplicitContentLyrics = track.SourceMetadata?.IsExplicit == true ? 1 : 0
                 };
                 item = JsonSerializer.SerializeToNode(responseBuilder.ConvertSongToJellyfinItem(song))!.AsObject();
             }
@@ -310,7 +311,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                     var labelProvider = playlist.ProjectionMode == PlaylistProjectionMode.Source
                         ? track.SourceProviderId
                         : track.RouteProviderId ?? track.SourceProviderId;
-                    AddSourceLabels(item, labelProvider);
+                    AddSourceLabels(item, track, labelProvider);
                 }
                 if (playlist.ProjectionMode == PlaylistProjectionMode.Source)
                 {
@@ -442,9 +443,10 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             .ToDictionary(item => item["Id"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
-    private static void AddSourceLabels(JsonObject item, string? provider)
+    private static void AddSourceLabels(JsonObject item, VirtualPlaylistTrack track, string? provider)
     {
-        foreach (var name in new[] { "Name", "Album", "AlbumArtist" })
+        item["Name"] = ExternalTrackPresentation.Title(track.Title, track.SourceMetadata?.IsExplicit == true);
+        foreach (var name in new[] { "Album", "AlbumArtist" })
             Label(item, name, provider);
         if (item["Artists"] is JsonArray artists)
             for (var index = 0; index < artists.Count; index++)

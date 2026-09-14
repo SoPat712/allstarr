@@ -948,8 +948,8 @@ for (const viewport of viewports) {
       await page.goto("#/library/playlists");
       await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
       const details = page.getByRole("dialog", { name: "Test playlist" });
-      await expect(details).not.toContainText(/native playlist|hybrid|materialized|write-back|projection mode|backend/i);
-      await details.getByRole("tab", { name: "Jellyfin playlist", exact: true }).click();
+      await expect(details).not.toContainText(/hybrid|materialized|write-back|projection mode/i);
+      await details.getByRole("tab", { name: "Native", exact: true }).click();
       await expect(details.getByText("target track", { exact: true })).toBeVisible();
       await expect(details).toHaveCSS("overflow", "hidden");
       await expect(details.locator(".track-scroll")).toHaveCSS("overflow", "auto");
@@ -2087,7 +2087,7 @@ test("Slim sidebar centers navigation and profile controls", async ({ page }) =>
   const sidebar = await page.locator(".sidebar").boundingBox();
   const home = await page.locator(".desktop-navigation").getByRole("link", { name: "Home", exact: true }).boundingBox();
   const sourcesIcon = await page.locator(".desktop-navigation").getByRole("link", { name: "Integrations" }).locator("svg").boundingBox();
-  const profile = await page.getByRole("link", { name: "Settings for Tester" }).boundingBox();
+  const profile = await page.locator(".profile .avatar").boundingBox();
   expect(sidebar && home && sourcesIcon && profile).toBeTruthy();
   const center = (box: NonNullable<typeof sidebar>) => box.x + box.width / 2;
   expect(Math.abs(center(home!) - center(sidebar!))).toBeLessThanOrEqual(1);
@@ -2406,7 +2406,7 @@ test("Import playlist separates source, client view, destination, updates, and s
   await expect(dialog.getByRole("button", { name: "What listeners see", exact: true })).toHaveAttribute("aria-current", "step");
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
     await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/playlist-390-listener-choice.png` });
-  await dialog.getByRole("radio", { name: /Every song from Spotify Keep the songs/ }).check();
+  await dialog.getByRole("radio", { name: /Original The same full playlist/ }).check();
   await dialog.getByRole("button", { name: "Continue" }).click();
   await expect.poll(() => dialog.locator(".playlist-add-body").evaluate((body) => body.scrollTop)).toBe(0);
   await dialog.getByRole("radio", { name: /Show through Allstarr and add songs to.*Allstarr will show/ }).check();
@@ -2470,13 +2470,13 @@ test("Playlist views and revisioned settings stay keyboard-safe", async ({ page 
   await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
   const details = page.getByRole("dialog", { name: "Test playlist" });
   await expect(details).toBeVisible();
-  const resolved = details.getByRole("tab", { name: "Jellyfin when available", exact: true });
+  const resolved = details.getByRole("tab", { name: "Mapped", exact: true });
   await resolved.focus();
   await page.keyboard.press("ArrowRight");
-  await expect(details.getByRole("tab", { name: "Every song from Lumen Audio", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(details.getByRole("tab", { name: "Original", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(details.getByText("source track", { exact: true })).toBeVisible();
   await page.keyboard.press("ArrowRight");
-  await expect(details.getByRole("tab", { name: "Jellyfin playlist", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(details.getByRole("tab", { name: "Native", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(details.getByText("target track", { exact: true })).toBeVisible();
   await expect(details).toHaveCSS("overflow", "hidden");
   await expect(details.locator(".track-scroll")).toHaveCSS("overflow", "auto");
@@ -2487,7 +2487,7 @@ test("Playlist views and revisioned settings stay keyboard-safe", async ({ page 
   await page.getByRole("menuitem", { name: "Edit settings" }).click();
   let settings = page.getByRole("dialog", { name: "Edit playlist settings" });
   await exactTarget;
-  await settings.getByRole("radio", { name: /Every song from Lumen Audio Keep the songs/ }).check();
+  await settings.getByRole("radio", { name: /Original The same full playlist/ }).check();
   await settings.getByRole("radio", { name: /Show only through Allstarr Allstarr will show/ }).check();
   const update = page.waitForRequest((request) =>
     request.method() === "PUT" && request.url().endsWith("/api/admin/playlist-links/playlist-link"));
@@ -2530,7 +2530,7 @@ test("Playlist views and revisioned settings stay keyboard-safe", async ({ page 
     contentType: "application/json",
     body: JSON.stringify({ error: "Projection fixture unavailable" }),
   }), { times: 1 });
-  await details.getByRole("tab", { name: "Lumen Audio" }).click();
+  await details.getByRole("tab", { name: "Original" }).click();
   const projectionError = details.getByRole("alert");
   await expect(projectionError).toContainText("Projection fixture unavailable");
   await projectionError.getByRole("button", { name: "Try again" }).click();
@@ -3314,6 +3314,65 @@ test("Mobile primary navigation stays contained and moves secondary tasks into M
     await expect(page).toHaveURL(/#\/settings$/);
     await expect(more).toHaveAttribute("aria-pressed", "true");
   }
+});
+
+for (const theme of ["light", "dark"] as const) {
+  test(`Navigation has one visible primary menu across breakpoints in ${theme}`, async ({ page }) => {
+    await page.addInitScript((mode) => localStorage.setItem("allstarr.theme", mode), theme);
+    await page.emulateMedia({ reducedMotion: theme === "dark" ? "reduce" : "no-preference" });
+    await mockApi(page);
+    await page.goto("#/library/playlists");
+    for (const width of [1606, 901, 900, 761, 760, 390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      const primary = page.getByRole("navigation", { name: "Primary", exact: true });
+      await expect(primary).toHaveCount(1);
+      for (const name of ["Home", "Library", "Activity"])
+        await expect(primary.getByRole("link", { name, exact: true })).toHaveCount(1);
+      await expect(primary.getByRole("link", { name: "Library", exact: true }))
+        .toHaveAttribute("aria-current", "page");
+      await expect(page.locator(".profile a[href='#/settings']")).toHaveCount(0);
+      if (width > 760) {
+        await expect(page.locator(".mobile-navigation")).toBeHidden();
+        await expect(primary.getByRole("link")).toHaveCount(5);
+        await expect(primary.getByRole("link", { name: "Settings", exact: true })).toHaveCount(1);
+        await expect(page.getByRole("button", { name: "More destinations" })).toHaveCount(0);
+      } else {
+        await expect(page.locator(".desktop-navigation")).toBeHidden();
+        await expect(primary.getByRole("link")).toHaveCount(3);
+        await expect(primary.getByRole("button", { name: "More destinations" })).toBeVisible();
+      }
+      if (process.env.ALLSTARR_SCREENSHOT_DIR && [1606, 900, 390].includes(width))
+        await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/${theme}-navigation-${width}.png` });
+    }
+  });
+}
+
+test("More restores keyboard focus and closes when returning to desktop", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+  await page.goto("#/library/playlists");
+  const more = page.getByRole("button", { name: "More destinations" });
+  await more.focus();
+  await more.press("Enter");
+  const sheet = page.getByRole("dialog", { name: "More", exact: true });
+  await expect(sheet).toBeVisible();
+  await expect(page.locator(".mobile-navigation button")).toHaveAttribute("aria-expanded", "true");
+  await expect(sheet.getByRole("link")).toHaveCount(2);
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
+  await expect(more).toBeFocused();
+  await more.press("Enter");
+  await expect(sheet).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect(sheet).toBeHidden();
+  await expect(page.getByRole("button", { name: "Collapse sidebar" })).toBeFocused();
+  await expect(page.getByRole("navigation", { name: "Primary", exact: true })).toHaveCount(1);
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(page).toHaveURL(/#\/settings$/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(sheet).toBeHidden();
+  await more.click();
+  await expect(sheet.getByRole("link", { name: /Settings/ })).toHaveAttribute("aria-current", "page");
 });
 
 test("Contextual dialog tabs scroll inside their panels at narrow widths", async ({ page }) => {
@@ -4727,12 +4786,12 @@ test("playlist projections, operations, and cancellation keep the selected playl
     await projection.promise;
     return route.fallback();
   });
-  await details.getByRole("tab", { name: "Every song from Lumen Audio" }).click();
-  await details.getByRole("tab", { name: "Jellyfin playlist" }).click();
-  await expect(details.getByRole("tab", { name: "Jellyfin playlist" })).toHaveAttribute("aria-selected", "true");
+  await details.getByRole("tab", { name: "Original" }).click();
+  await details.getByRole("tab", { name: "Native" }).click();
+  await expect(details.getByRole("tab", { name: "Native" })).toHaveAttribute("aria-selected", "true");
   await expect(details.getByText("target track", { exact: true })).toBeVisible();
   projection.release();
-  await expect(details.getByRole("tab", { name: "Jellyfin playlist" })).toHaveAttribute("aria-selected", "true");
+  await expect(details.getByRole("tab", { name: "Native" })).toHaveAttribute("aria-selected", "true");
 
   await details.getByRole("button", { name: "Actions" }).click();
   await page.getByRole("menuitem", { name: "Update playlist now" }).click();

@@ -126,6 +126,25 @@ public sealed class DurablePlaylistProjectionTests
         Assert.Equal(nativeJson, track.NativeEntryJson);
     }
 
+    [Theory]
+    [InlineData("local", TrackRouteKind.Local)]
+    [InlineData("external", TrackRouteKind.External)]
+    [InlineData("unmatched", TrackRouteKind.Unresolved)]
+    public void ResolvedProjection_PreservesSourceExplicitnessForFallbackTitles(string route, TrackRouteKind expected)
+    {
+        var metadata = new PlaylistSourceMetadata(IsExplicit: true);
+        var entry = Entry(route, TrackMatchState.Accepted,
+            route == "local" ? "native" : null, [new("deezer", "external")]);
+        var track = PlaylistVirtualizationService.ToResolvedVirtualTrack(entry,
+            new Dictionary<string, LibraryTrackRecord>
+            {
+                ["native"] = new() { BackendItemId = "native", Title = "Native title" }
+            }, "spotify", sourceMetadata: metadata);
+
+        Assert.Same(metadata, track.SourceMetadata);
+        Assert.Equal(expected, track.RouteKind);
+    }
+
     private static ProjectionRow Row(string id, params string[] alternates) => new(id, alternates);
     private sealed record ProjectionRow(string Id, IReadOnlyList<string> AlternateRoutes);
 

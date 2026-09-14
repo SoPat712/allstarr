@@ -223,6 +223,106 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void ReorderedDuetCreditsOnDifferentReleases_DoNotCreateAmbiguity()
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            Title = "Dream A Little Dream Of Me - Single Version",
+            Artist = "Ella Fitzgerald, Louis Armstrong",
+            Album = "Love, Ella",
+            AlbumArtist = null,
+            DurationMilliseconds = 185_160
+        };
+        var first = ProviderCandidate(scope, "apple-download", 186_000) with
+        {
+            Title = "Dream a Little Dream of Me",
+            Artist = "Louis Armstrong & Ella Fitzgerald",
+            Album = "Stranger Things: Soundtrack from the Netflix Series, Season 4"
+        };
+        var second = first with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "another-release",
+            Artist = "Ella Fitzgerald & Louis Armstrong",
+            Album = "Cheek To Cheek: The Complete Duet Recordings",
+            DurationMilliseconds = 187_000
+        };
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source, [first, second]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(2, decision.Candidates.Count);
+        Assert.DoesNotContain("ambiguous_top_candidates", decision.Warnings);
+        Assert.True(TrackMatchDecisionEngine.SameRecordingIdentity(first, second));
+    }
+
+    [Theory]
+    [InlineData("Dream a Little Dream of Me", "Ella Fitzgerald & Louis Armstrong", 187_000, true)]
+    [InlineData("Dream a Little Dream of Me (Live)", "Ella Fitzgerald & Louis Armstrong", 187_000, false)]
+    [InlineData("Dream a Little Dream of Me (Instrumental)", "Ella Fitzgerald & Louis Armstrong", 187_000, false)]
+    [InlineData("Dream a Little Dream of Me", "Ella Fitzgerald", 187_000, false)]
+    [InlineData("Dream a Little Dream of Me", "Ella Fitzgerald & Another Singer", 187_000, false)]
+    [InlineData("Dream a Little Dream of Me", "Ella Fitzgerald & Louis Armstrong", 200_000, false)]
+    public void ReleaseEquivalence_PreservesVersionAndCreditDifferences(
+        string title, string artist, long duration, bool equivalent)
+    {
+        var first = ProviderCandidate(Scope(), "apple-download", 186_000) with
+        {
+            Title = "Dream a Little Dream of Me",
+            Artist = "Louis Armstrong & Ella Fitzgerald",
+            Album = "First compilation"
+        };
+        var second = first with { Title = title, Artist = artist, Album = "Another compilation", DurationMilliseconds = duration };
+
+        Assert.Equal(equivalent, TrackMatchDecisionEngine.SameRecordingIdentity(first, second));
+    }
+
+    [Fact]
+    public void KissMeMore_VocalFixtureIsAccepted_InstrumentalFixtureIsNotEquivalent()
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            SnapshotId = "fixture-kiss-me-more",
+            ProviderId = "fixture-provider",
+            ExternalId = "fixture-kiss-me-more-vocal",
+            Title = "Kiss Me More",
+            Artist = "Doja Cat feat. SZA",
+            Album = "Planet Her",
+            AlbumArtist = "Doja Cat",
+            DurationMilliseconds = 208_000
+        };
+        var vocal = Candidate(scope) with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "fixture-kiss-me-more-vocal",
+            CanonicalRecordingId = null,
+            Title = "Kiss Me More",
+            Artist = "Doja Cat feat. SZA",
+            Album = "Planet Her",
+            AlbumArtist = "Doja Cat",
+            DurationMilliseconds = 208_000,
+            ProviderTrackIds = null,
+            IsLocal = false
+        };
+        var instrumental = vocal with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "fixture-kiss-me-more-instrumental",
+            Title = "Kiss Me More (Instrumental)"
+        };
+
+        var engine = new TrackMatchDecisionEngine();
+        var vocalDecision = engine.Decide(scope, source, [vocal]);
+        var instrumentalDecision = engine.Decide(scope, source, [instrumental]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, vocalDecision.State);
+        Assert.NotEqual(TrackMatchReviewState.Accepted, instrumentalDecision.State);
+        Assert.False(TrackMatchDecisionEngine.SameRecordingIdentity(vocal, instrumental));
+    }
+
+    [Fact]
     public void HigherScoringCandidateOutsideNarrowMarginWins()
     {
         var scope = Scope();

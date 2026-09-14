@@ -36,6 +36,7 @@ Use Google Material 3 as the interaction and visual grammar, adapted to Allstarr
 - Regular controls use the 44px `--control-md` baseline. Labels, controls, helper text, and footer actions align within a shared field grid.
 - The compact bottom navigation reserves `--mobile-nav-height` on the scrolling workspace so terminal content and actions remain fully visible above it.
 - The compact bottom navigation keeps Home, Library, Activity, and **More** in equal-width tracks derived from its contents. Integrations, Settings, appearance, and session controls live in the More sheet instead of crowding the primary bar.
+- Only one primary navigation is visible at a time: the sidebar above 760px, or bottom navigation at 760px and below. Desktop sidebar styles must not target the mobile navigation. The More sheet closes when leaving the compact layout and restores focus to a visible navigation control.
 - Data surfaces grow with sparse content and cap their height only when a real list needs internal scrolling. Empty viewport-filling panels are not used as decoration.
 
 ## Information architecture
@@ -66,4 +67,5 @@ Use Google Material 3 as the interaction and visual grammar, adapted to Allstarr
 - Core tasks work at 320px, keyboard-only, reduced-motion, light, and dark themes.
 - Status is never color-only.
 - Tables share gutters, row heights, alignment, and action placement.
+- Playlist details distinguish the complete mapped listener view from the native backend playlist. Routes show one active choice plus verified alternatives; native materialization eligibility is supporting detail, not part of the track title.
 - Shared-system changes should delete route-specific CSS over time and keep the current JS/CSS budgets green.

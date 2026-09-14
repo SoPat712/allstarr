@@ -37,6 +37,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         Assert.Equal(3, items[0].GetProperty("IndexNumber").GetInt32());
         Assert.Equal("jellyfin-local-a", items[1].GetProperty("Id").GetString());
         var unresolved = items[2];
+        Assert.Equal("Missing [A]", unresolved.GetProperty("Name").GetString());
         Assert.Equal("allstarr-unresolved-source-hash", unresolved.GetProperty("Id").GetString());
         Assert.Equal("None", unresolved.GetProperty("PlayAccess").GetString());
         Assert.False(unresolved.GetProperty("CanDownload").GetBoolean());
@@ -136,7 +137,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
         var item = json.RootElement.GetProperty("Items")[0];
 
-        Assert.Contains("Source title", item.GetProperty("Name").GetString(), StringComparison.Ordinal);
+        Assert.Equal("Source title [A]", item.GetProperty("Name").GetString());
         Assert.Contains("Source artist", item.GetProperty("Artists")[0].GetString(), StringComparison.Ordinal);
         Assert.Contains("Second artist", item.GetProperty("Artists")[1].GetString(), StringComparison.Ordinal);
         Assert.Equal("Virtual", item.GetProperty("LocationType").GetString());
@@ -197,6 +198,49 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             item.GetProperty("AlbumArtists")[0].GetProperty("Id").GetString());
         Assert.Equal("ext-apple-download-album-301", item.GetProperty("AlbumId").GetString());
         gateway.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData(PlaylistProjectionMode.Resolved, TrackRouteKind.Unresolved, false)]
+    [InlineData(PlaylistProjectionMode.Resolved, TrackRouteKind.Unresolved, true)]
+    [InlineData(PlaylistProjectionMode.Resolved, TrackRouteKind.External, false)]
+    [InlineData(PlaylistProjectionMode.Resolved, TrackRouteKind.External, true)]
+    [InlineData(PlaylistProjectionMode.Source, TrackRouteKind.Local, false)]
+    [InlineData(PlaylistProjectionMode.Source, TrackRouteKind.Local, true)]
+    [InlineData(PlaylistProjectionMode.Source, TrackRouteKind.External, false)]
+    [InlineData(PlaylistProjectionMode.Source, TrackRouteKind.External, true)]
+    public async Task JellyfinPlaylistTitles_UseNeutralLabelsWithoutChangingIdentity(
+        PlaylistProjectionMode projection, TrackRouteKind route, bool isExplicit)
+    {
+        var model = Model() with
+        {
+            ProjectionMode = projection,
+            Tracks =
+            [
+                new(0, "fixture-item", "Track", "Artist", "Album", null, 1_000, null,
+                    TrackMatchState.Accepted, "spotify", "source-item", route,
+                    RouteProviderId: "deezer", RouteExternalId: "route-item",
+                    SourceMetadata: new(IsExplicit: isExplicit))
+            ]
+        };
+        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(
+            new StubVirtualizationService(model), new StubJellyfinMutationResolver(null),
+            responseBuilder: new JellyfinResponseBuilder());
+        var result = Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(
+            Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+        var item = Assert.Single(json.RootElement.GetProperty("Items").EnumerateArray());
+
+        Assert.Equal(isExplicit ? "Track [A]/[E]" : "Track [A]", item.GetProperty("Name").GetString());
+        Assert.Equal("fixture-item", item.GetProperty("Id").GetString());
+        Assert.Equal(projection == PlaylistProjectionMode.Source ? "Album [S]" : "Album [D]",
+            item.GetProperty("Album").GetString());
+        Assert.Equal("Track", model.Tracks[0].Title);
+        if (route == TrackRouteKind.Unresolved)
+        {
+            Assert.Equal("None", item.GetProperty("PlayAccess").GetString());
+            Assert.Empty(item.GetProperty("MediaSources").EnumerateArray());
+        }
     }
 
     [Fact]

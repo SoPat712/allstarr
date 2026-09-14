@@ -2616,6 +2616,10 @@ public sealed class ProtocolRouteFixtureTests
         Assert.All(playlist.RootElement.GetProperty("Items").EnumerateArray(),
             item => Assert.False(string.IsNullOrWhiteSpace(item.GetProperty("Id").GetString())));
         var first = playlist.RootElement.GetProperty("Items")[0];
+        Assert.Equal("Babydoll", first.GetProperty("Name").GetString());
+        foreach (var response in new[] { playlist.RootElement, parentItems.RootElement })
+            Assert.All(response.GetProperty("Items").EnumerateArray().Skip(1), item =>
+                Assert.EndsWith(" [A]", item.GetProperty("Name").GetString(), StringComparison.Ordinal));
         Assert.Equal(nativeId, first.GetProperty("ParentId").GetString());
         Assert.Equal("source-a", first.GetProperty("MediaSources")[0].GetProperty("Id").GetString());
         Assert.Equal(
@@ -2797,7 +2801,7 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Empty(unresolved.GetProperty("MediaSources").EnumerateArray());
         var stale = tracks.RootElement.GetProperty("Items")[2];
         Assert.Equal("allstarr-unresolved-stale-local-song", stale.GetProperty("Id").GetString());
-        Assert.Equal("Stale Track [S]", stale.GetProperty("Name").GetString());
+        Assert.Equal("Stale Track [A]", stale.GetProperty("Name").GetString());
         Assert.Equal("None", stale.GetProperty("PlayAccess").GetString());
         Assert.False(stale.GetProperty("CanDownload").GetBoolean());
         Assert.Empty(stale.GetProperty("MediaSources").EnumerateArray());

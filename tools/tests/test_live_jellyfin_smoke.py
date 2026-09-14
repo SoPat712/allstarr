@@ -106,12 +106,15 @@ class JellyfinSmokeTests(unittest.TestCase):
             }],
         }
         for title, expected in (("Fixture [A]", True), ("Fixture [A]/[E]", True),
-                                ("Fixture [Qobuz]", False), ("Fixture [A] [E]", False),
+                                ("Fixture [S]", False), ("Fixture [Qobuz]", False), ("Fixture [A] [E]", False),
                                 ("Fixture", False)):
             with self.subTest(title=title):
                 audio["Name"] = title
                 result = subprocess.run(["jq", "-e", contract + "external_audio"],
                                         input=json.dumps(audio), text=True, capture_output=True)
+                self.assertEqual(result.returncode == 0, expected, result.stderr)
+                result = subprocess.run(["jq", "-e", contract + "injected_title"],
+                                        input=json.dumps(title), text=True, capture_output=True)
                 self.assertEqual(result.returncode == 0, expected, result.stderr)
 
     def stream(self, path):

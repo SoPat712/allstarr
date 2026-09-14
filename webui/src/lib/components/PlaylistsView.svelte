@@ -20,6 +20,7 @@
   import SearchField from "$lib/components/SearchField.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
+  import TrackRoutes from "$lib/components/TrackRoutes.svelte";
   import {
     home,
     matchReview,
@@ -39,7 +40,6 @@
     isReviewTrack,
     playlistOutcomeLabel,
     playlistProjectionOptions,
-    providerColor,
     runBounded,
     scheduleCadence,
     type PlaylistSort,
@@ -121,10 +121,11 @@
   );
   const projectedTracks = $derived.by((): PlaylistTrack[] => {
     if (!details?.clientProjection) return [];
+    const sourceTracks = new Map(details.tracks.map((track) => [track.sourcePosition, track]));
     return details.clientProjection.tracks.map((track) => {
       const source = viewMode === "target"
         ? undefined
-        : details?.tracks.find((item) => item.sourcePosition === track.sourcePosition);
+        : sourceTracks.get(track.sourcePosition);
       return {
         sourcePosition: track.sourcePosition,
         position: track.position,
@@ -159,7 +160,10 @@
     detailProjectionOptions.find((option) => option.id === viewMode)?.label ?? "Selected songs",
   );
   const savedProjectionLabel = $derived(
-    detailProjectionOptions.find((option) => option.id === selected?.projectionMode)?.label ?? "Media server when available",
+    detailProjectionOptions.find((option) => option.id === selected?.projectionMode)?.label ?? "Mapped",
+  );
+  const selectedProjectionDescription = $derived(
+    detailProjectionOptions.find((option) => option.id === viewMode)?.description,
   );
   const visibleTrackColumnCount = $derived(
     trackColumnOptions.filter((column) => trackColumns[column.id]).length,
@@ -169,7 +173,7 @@
       (trackColumns.position ? 3 : 0) +
       (trackColumns.artist ? 12 : 0) +
       (trackColumns.album ? 14 : 0) +
-      (trackColumns.route ? 9 : 0) +
+      (trackColumns.route ? 12 : 0) +
       (trackColumns.duration ? 4.5 : 0),
   );
 
@@ -616,8 +620,7 @@
               <ProviderMark id={details.sourceProviderId} definition={provider(details.sourceProviderId)} />
               <span>{providerName(details.sourceProviderId)}</span>
               <ArrowRight size={18} aria-hidden="true" />
-              <ProviderMark id={details.targetProtocol} definition={provider(details.targetProtocol)} />
-              <span>{providerName(details.targetProtocol)}</span>
+              <span>Allstarr · via {providerName(details.targetProtocol)}</span>
             </div>
           </div>
           <Dialog.Close class="icon-button playlist-dialog-close" aria-label="Close playlist details"><X size={18} aria-hidden="true" /></Dialog.Close>
@@ -644,12 +647,12 @@
         </header>
 
         <div class="playlist-view-switcher">
-          <span><strong>What listeners see</strong><small>Preview only. Saved choice: {savedProjectionLabel}.</small></span>
+          <span><strong>Playlist view · {savedProjectionLabel} for listeners</strong><small>{selectedProjectionDescription}</small><small>Previewing a tab does not change the saved view.</small></span>
           <SegmentedNav
             items={detailProjectionOptions}
             active={viewMode}
-            label="What listeners see"
-            class="route-tabs contextual-tabs"
+            label="Playlist preview"
+            class="contextual-tabs"
             onchange={(mode) => void changeView(mode)}
           />
         </div>
@@ -808,12 +811,12 @@
               </colgroup>
               <thead>
                 <tr>
-                  {#if trackColumns.position}<th scope="col">#</th>{/if}
+                  {#if trackColumns.position}<th scope="col" class="track-index">#</th>{/if}
                   <th scope="col">Track</th>
                   {#if trackColumns.artist}<th scope="col">Artist</th>{/if}
                   {#if trackColumns.album}<th scope="col">Album</th>{/if}
-                  {#if trackColumns.route}<th scope="col">Route</th>{/if}
-                  {#if trackColumns.duration}<th scope="col">Time</th>{/if}
+                  {#if trackColumns.route}<th scope="col">Playback routes</th>{/if}
+                  {#if trackColumns.duration}<th scope="col" class="track-duration">Time</th>{/if}
                   <th scope="col"><span class="sr-only">Details</span></th>
                 </tr>
               </thead>
@@ -844,13 +847,6 @@
                         {#if isReviewTrack(track)}
                           <small class="track-review-badge">Needs review</small>
                         {/if}
-                        {#if viewMode !== "target" && track.outcomeCode}
-                          <small
-                            class="track-eligibility"
-                            class:included={track.targetEligible}
-                            title={playlistOutcomeLabel(track.outcomeCode, `${providerName(details.targetProtocol)} playlist`)}
-                          >{playlistOutcomeLabel(track.outcomeCode, `${providerName(details.targetProtocol)} playlist`)}</small>
-                        {/if}
                       </span>
                     </th>
                     {#if trackColumns.artist}
@@ -861,13 +857,7 @@
                     {/if}
                     {#if trackColumns.route}
                       <td>
-                        <span class="route-cell">
-                          <i style={`--route-color:${providerColor(track.routeProviderId ?? track.routeKind)}`}></i>
-                          <span>
-                            <strong>{providerName(track.routeProviderId ?? (track.routeKind === "local" ? details.targetProtocol : null))}</strong>
-                            <small>{track.routeKind}</small>
-                          </span>
-                        </span>
+                        <TrackRoutes {track} {providers} backend={details.targetProtocol} />
                       </td>
                     {/if}
                     {#if trackColumns.duration}

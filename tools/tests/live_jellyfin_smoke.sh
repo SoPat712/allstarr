@@ -1123,9 +1123,11 @@ item_contract='
     def client_item:
         (.Id | nonempty) and (.Name | nonempty) and (.Type | nonempty) and
         named_ids and album_ids and genre_ids and media_ids and user_data;
+    def injected_title:
+        type == "string" and test(" \\[A\\](/\\[E\\])?$");
     def external_audio:
         client_item and .Type == "Audio" and .MediaType == "Audio" and
-        (.Name | type == "string" and test(" \\[A\\](/\\[E\\])?$")) and
+        (.Name | injected_title) and
         (.Album | type == "string") and
         ((.Album | length) == 0 or (.Album | provider_labeled)) and
         (.AlbumId == null or (.AlbumId | nonempty)) and
@@ -1990,7 +1992,7 @@ if [[ -n "$virtual_playlist_id" ]]; then
              (.Album | nonempty) and
              (.Artists | type == \"array\" and length > 0 and all(.[]; nonempty)) and
              (if (.Id | startswith(\"allstarr-unresolved-\"))
-              then .PlayAccess == \"None\" and .CanDownload == false and
+              then (.Name | injected_title) and .PlayAccess == \"None\" and .CanDownload == false and
                    ((.MediaSources // []) | length == 0)
               elif (.Id | startswith(\"ext-\"))
               then external_audio

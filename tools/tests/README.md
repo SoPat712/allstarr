@@ -74,7 +74,8 @@ This catches clients such as Musiver that open the original Jellyfin playlist
 ID instead of an `allstarr-vpl-*` ID. The kit requires one browse row with the
 expected count, replays the observed playlist-items query shape, validates
 every item ID and playlist context, and runs the existing full native-object
-parity checks against matched entries:
+parity checks against matched entries. Unresolved playlist rows must also use
+the neutral injection label while remaining non-playable:
 
 ```bash
 INJECTED_PLAYLIST_ID=ddc3db277be524ad6f54e4b276cc619a \
