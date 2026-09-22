@@ -14,7 +14,6 @@ from fastapi.responses import StreamingResponse
 
 from apple_gateway.app import (
     API_VERSION,
-    FLAC_GUIDANCE_PADDING_BYTES,
     FLAC_GUIDANCE_PREFIX,
     create_app,
 )
@@ -283,16 +282,9 @@ async def test_song_stream_opens_before_preparing_configured_quality(settings: S
     assert runner.calls[-1][1] == "alac"
 
 
-def test_flac_guidance_prefix_is_a_metadata_free_id3v24_padding_tag():
-    assert FLAC_GUIDANCE_PREFIX[:6] == b"ID3\x04\x00\x00"
-    encoded_size = FLAC_GUIDANCE_PREFIX[6:10]
-    assert all(byte < 0x80 for byte in encoded_size)
-    decoded_size = sum(
-        byte << shift for byte, shift in zip(encoded_size, (21, 14, 7, 0))
-    )
-    assert decoded_size == FLAC_GUIDANCE_PADDING_BYTES
-    assert len(FLAC_GUIDANCE_PREFIX) == 10 + FLAC_GUIDANCE_PADDING_BYTES
-    assert not any(FLAC_GUIDANCE_PREFIX[10:])
+def test_flac_guidance_prefix_is_an_empty_id3v24_tag():
+    assert FLAC_GUIDANCE_PREFIX == b"ID3\x04\x00\x00\x00\x00\x00\x00"
+    assert len(FLAC_GUIDANCE_PREFIX) == 10
 
 
 @pytest.mark.asyncio

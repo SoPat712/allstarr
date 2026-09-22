@@ -118,7 +118,7 @@ release is available.
 
 For an uncached `apple-download` track, Allstarr opens the compatible sidecar's
 `api/stream/{id}` response with `ResponseHeadersRead`. The sidecar first emits a
-metadata-free ID3v2.4 padding tag accepted by the supported FLAC readers, then
+empty 10-byte ID3v2.4 tag accepted by the supported FLAC readers, then
 streams FFmpeg's FLAC stdout after Apple fetch/decryption. This opens the response
 for clients with short prefix deadlines without inserting audio, changing
 duration, resampling, or routing to another provider. The gateway returns FLAC,
