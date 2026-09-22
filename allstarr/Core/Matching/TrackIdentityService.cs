@@ -171,7 +171,7 @@ public sealed class TrackIdentityService : ITrackIdentityService
         if (existing != null)
         {
             EnsureSignalsCompatible(existing, normalizedIsrc, normalizedMusicBrainzId);
-            await ProjectCanonicalSignalAliasesAsync(
+            await CanonicalCatalogIdentityProjection.ProjectRecordingSignalsAsync(
                 context,
                 actor,
                 existing,
@@ -207,7 +207,7 @@ public sealed class TrackIdentityService : ITrackIdentityService
             UpdatedAt = now
         };
         context.CanonicalRecordings.Add(record);
-        await ProjectCanonicalSignalAliasesAsync(
+        await CanonicalCatalogIdentityProjection.ProjectRecordingSignalsAsync(
             context,
             actor,
             record,
@@ -247,7 +247,7 @@ public sealed class TrackIdentityService : ITrackIdentityService
             }
 
             EnsureSignalsCompatible(existing, normalizedIsrc, normalizedMusicBrainzId);
-            await ProjectCanonicalSignalAliasesAsync(
+            await CanonicalCatalogIdentityProjection.ProjectRecordingSignalsAsync(
                 context,
                 actor,
                 existing,
@@ -350,7 +350,7 @@ public sealed class TrackIdentityService : ITrackIdentityService
             UpdatedAt = now
         };
         context.ProviderTrackIdentities.Add(link);
-        await ProjectProviderAliasAsync(
+        await CanonicalCatalogIdentityProjection.ProjectProviderIdentityAsync(
             context,
             executionContext.Actor,
             link,
@@ -517,7 +517,7 @@ public sealed class TrackIdentityService : ITrackIdentityService
         bool concurrent = false)
     {
         EnsureExactExternalId(existing, request.ExternalId.Value);
-        await ProjectProviderAliasAsync(
+        await CanonicalCatalogIdentityProjection.ProjectProviderIdentityAsync(
             context,
             executionContext.Actor,
             existing,
@@ -823,76 +823,6 @@ public sealed class TrackIdentityService : ITrackIdentityService
         externalId.ResourceKind,
         externalId.Catalog ?? DefaultCatalog,
         CanonicalCatalogKeys.Hash(externalId.Value));
-
-    private static async Task ProjectCanonicalSignalAliasesAsync(
-        AllstarrDbContext context,
-        ProviderActorContext actor,
-        CanonicalRecordingRecord recording,
-        DateTimeOffset observedAt,
-        CancellationToken cancellationToken)
-    {
-        CanonicalCatalogAliasInput[] aliases =
-        [
-            .. recording.Isrc == null
-                ? []
-                : new[] { new CanonicalCatalogAliasInput("isrc", recording.Isrc) },
-            .. recording.MusicBrainzRecordingId == null
-                ? []
-                : new[] { new CanonicalCatalogAliasInput("musicbrainz", recording.MusicBrainzRecordingId) }
-        ];
-        if (aliases.Length == 0)
-        {
-            return;
-        }
-
-        var fingerprint = CanonicalCatalogKeys.Hash(string.Join(
-            '\n', aliases.Select(alias => $"{alias.Namespace}:{alias.ExternalId}")));
-        await CanonicalCatalogEvidenceStore.RecordInContextAsync(
-            context,
-            actor,
-            new CanonicalCatalogEntityReference(CanonicalCatalogEntityKind.Recording, recording.Id),
-            new CanonicalCatalogSourceStamp(
-                "canonical-signal",
-                null,
-                fingerprint,
-                1,
-                observedAt,
-                null),
-            aliases,
-            [],
-            cancellationToken);
-    }
-
-    private static async Task ProjectProviderAliasAsync(
-        AllstarrDbContext context,
-        ProviderActorContext actor,
-        ProviderTrackIdentityRecord identity,
-        DateTimeOffset observedAt,
-        CancellationToken cancellationToken)
-    {
-        var aliasNamespace = CanonicalCatalogKeys.ProviderTrackNamespace(
-            identity.ProviderId,
-            identity.ResourceKind,
-            identity.CatalogNamespace,
-            identity.Scope,
-            identity.ProviderAccountId);
-        await CanonicalCatalogEvidenceStore.RecordInContextAsync(
-            context,
-            actor,
-            new CanonicalCatalogEntityReference(
-                CanonicalCatalogEntityKind.Recording,
-                identity.CanonicalRecordingId),
-            new CanonicalCatalogSourceStamp(
-                "provider-identity",
-                $"{identity.Verification}:{identity.DecisionVersion}",
-                CanonicalCatalogKeys.Hash($"{aliasNamespace}\n{identity.ExternalId}"),
-                1,
-                observedAt,
-                null),
-            [new CanonicalCatalogAliasInput(aliasNamespace, identity.ExternalId)],
-            [],
-            cancellationToken);
-    }
 
     private static void EnsureExactExternalId(
         ProviderTrackIdentityRecord record,

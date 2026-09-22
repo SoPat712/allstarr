@@ -78,6 +78,78 @@ public static class CanonicalCatalogKeys
     }
 }
 
+internal static class CanonicalCatalogIdentityProjection
+{
+    public static async Task ProjectRecordingSignalsAsync(
+        AllstarrDbContext db,
+        ProviderActorContext actor,
+        CanonicalRecordingRecord recording,
+        DateTimeOffset observedAt,
+        CancellationToken cancellationToken)
+    {
+        CanonicalCatalogAliasInput[] aliases =
+        [
+            .. recording.Isrc == null
+                ? []
+                : new[] { new CanonicalCatalogAliasInput("isrc", recording.Isrc) },
+            .. recording.MusicBrainzRecordingId == null
+                ? []
+                : new[] { new CanonicalCatalogAliasInput("musicbrainz", recording.MusicBrainzRecordingId) }
+        ];
+        if (aliases.Length == 0)
+        {
+            return;
+        }
+
+        await CanonicalCatalogEvidenceStore.RecordInContextAsync(
+            db,
+            actor,
+            new CanonicalCatalogEntityReference(CanonicalCatalogEntityKind.Recording, recording.Id),
+            new CanonicalCatalogSourceStamp(
+                "canonical-signal",
+                null,
+                CanonicalCatalogKeys.Hash(string.Join(
+                    '\n', aliases.Select(alias => $"{alias.Namespace}:{alias.ExternalId}"))),
+                1,
+                observedAt,
+                null),
+            aliases,
+            [],
+            cancellationToken);
+    }
+
+    public static Task ProjectProviderIdentityAsync(
+        AllstarrDbContext db,
+        ProviderActorContext actor,
+        ProviderTrackIdentityRecord identity,
+        DateTimeOffset observedAt,
+        CancellationToken cancellationToken)
+    {
+        var aliasNamespace = CanonicalCatalogKeys.ProviderTrackNamespace(
+            identity.ProviderId,
+            identity.ResourceKind,
+            identity.CatalogNamespace,
+            identity.Scope,
+            identity.ProviderAccountId);
+        return CanonicalCatalogEvidenceStore.RecordInContextAsync(
+            db,
+            actor,
+            new CanonicalCatalogEntityReference(
+                CanonicalCatalogEntityKind.Recording,
+                identity.CanonicalRecordingId),
+            new CanonicalCatalogSourceStamp(
+                "provider-identity",
+                $"{identity.Verification}:{identity.DecisionVersion}",
+                CanonicalCatalogKeys.Hash($"{aliasNamespace}\n{identity.ExternalId}"),
+                1,
+                observedAt,
+                null),
+            [new CanonicalCatalogAliasInput(aliasNamespace, identity.ExternalId)],
+            [],
+            cancellationToken);
+    }
+}
+
 public interface ICanonicalCatalogEvidenceStore
 {
     Task<CanonicalCatalogEvidenceResult> RecordAsync(

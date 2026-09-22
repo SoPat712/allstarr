@@ -748,6 +748,14 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.Equal(source.CanonicalRecordingId, selected.CanonicalRecordingId);
         Assert.Equal(ProviderIdentityVerification.Verified, source.Verification);
         Assert.Equal(ProviderIdentityVerification.Pinned, selected.Verification);
+        var aliases = await verify.CanonicalCatalogAliases
+            .Where(item => item.CanonicalEntityId == source.CanonicalRecordingId)
+            .ToListAsync();
+        Assert.Equal(2, aliases.Count);
+        Assert.All(aliases, item =>
+            Assert.StartsWith("provider:", item.Namespace, StringComparison.Ordinal));
+        Assert.Contains(aliases, item => item.ExternalId == source.ExternalId);
+        Assert.Contains(aliases, item => item.ExternalId == selected.ExternalId);
         var review = await _trackMatches.GetReviewDataAsync(
             new TrackMatchActor(_tenant, _user, false),
             externalSnapshotId: externalSnapshotId);

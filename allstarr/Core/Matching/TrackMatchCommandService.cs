@@ -1169,6 +1169,14 @@ public sealed class TrackMatchCommandService(
                                    identity.UserId == owner.Id)
                 .OrderByDescending(identity => identity.LastSeenAt)
                 .FirstOrDefaultAsync(cancellationToken);
+            var catalogActor = new ProviderActorContext(
+                owner.TenantId,
+                ProviderActorKind.User,
+                owner.Id,
+                new ProviderBackendPrincipal(
+                    backend?.BackendType ?? "jellyfin",
+                    backend?.BackendInstanceId ?? "source-import",
+                    backend?.PrincipalId ?? owner.Id.ToString("N")));
 
             foreach (var providerGroup in tracks.GroupBy(
                          item => item.ProviderId.Trim().ToLowerInvariant(),
@@ -1206,6 +1214,7 @@ public sealed class TrackMatchCommandService(
                             Id = Guid.CreateVersion7(),
                             TenantId = owner.TenantId,
                             CreatedByUserId = owner.Id,
+                            IsProvisional = true,
                             CreatedAt = now,
                             UpdatedAt = now
                         };
@@ -1229,8 +1238,13 @@ public sealed class TrackMatchCommandService(
                         };
                         db.CanonicalRecordings.Add(canonical);
                         db.ProviderTrackIdentities.Add(identity);
+                        await CanonicalCatalogIdentityProjection.ProjectRecordingSignalsAsync(
+                            db, catalogActor, canonical, now, cancellationToken);
                         created++;
                     }
+
+                    await CanonicalCatalogIdentityProjection.ProjectProviderIdentityAsync(
+                        db, catalogActor, identity, now, cancellationToken);
 
                     var payloadJson = JsonSerializer.Serialize(new
                     {
@@ -1666,6 +1680,7 @@ public sealed class TrackMatchCommandService(
             return new(false, TrackMatchCommandFailure.NotFound, "Track snapshot was not found");
         if (!actor.IsAdministrator && snapshot.OwnerUserId != actor.UserId)
             return new(false, TrackMatchCommandFailure.Forbidden, "Track snapshot is outside your account");
+        var catalogActor = CatalogActor(actor, snapshot);
 
         var source = snapshot.ProviderTrackIdentityId.HasValue
             ? await db.ProviderTrackIdentities.SingleOrDefaultAsync(
@@ -1802,15 +1817,20 @@ public sealed class TrackMatchCommandService(
                     TenantId = actor.TenantId,
                     CreatedByUserId = actor.UserId,
                     Isrc = payload.Isrc,
+                    IsProvisional = true,
                     CreatedAt = clock.UtcNow,
                     UpdatedAt = clock.UtcNow
                 };
                 db.CanonicalRecordings.Add(canonical);
-                source = AddSourceSnapshotIdentity(
-                    db, snapshot, canonical.Id, latestVersion + 1, clock.UtcNow);
+                await CanonicalCatalogIdentityProjection.ProjectRecordingSignalsAsync(
+                    db, catalogActor, canonical, clock.UtcNow, cancellationToken);
+                source = await AddSourceSnapshotIdentityAsync(
+                    db, catalogActor, snapshot, canonical.Id, latestVersion + 1,
+                    clock.UtcNow, cancellationToken);
             }
             canonicalRecordingId = await LinkExternalIdentitiesAsync(
                 db,
+                catalogActor,
                 source,
                 selectedExternal,
                 playable!.RoutableExternalCandidates,
@@ -1926,6 +1946,7 @@ public sealed class TrackMatchCommandService(
 
     private static async Task<Guid> LinkExternalIdentitiesAsync(
         AllstarrDbContext db,
+        ProviderActorContext actor,
         ProviderTrackIdentityRecord source,
         Song selected,
         IReadOnlyList<Song> routable,
@@ -1938,14 +1959,14 @@ public sealed class TrackMatchCommandService(
             ? "automatic-suggestion"
             : "automatic-match";
         var canonicalRecordingId = await LinkExternalIdentityAsync(
-            db, source, selected, source.CanonicalRecordingId, true, verificationMethod,
+            db, actor, source, selected, source.CanonicalRecordingId, true, verificationMethod,
             decisionVersion, now, cancellationToken);
         foreach (var alternate in routable.Where(song =>
                      !string.Equals(song.ExternalProvider, selected.ExternalProvider, StringComparison.OrdinalIgnoreCase) ||
                      !string.Equals(song.ExternalId, selected.ExternalId, StringComparison.Ordinal)))
         {
             await LinkExternalIdentityAsync(
-                db, source, alternate, canonicalRecordingId, false, verificationMethod,
+                db, actor, source, alternate, canonicalRecordingId, false, verificationMethod,
                 decisionVersion, now, cancellationToken);
         }
         return canonicalRecordingId;
@@ -1953,6 +1974,7 @@ public sealed class TrackMatchCommandService(
 
     private static async Task<Guid> LinkExternalIdentityAsync(
         AllstarrDbContext db,
+        ProviderActorContext actor,
         ProviderTrackIdentityRecord source,
         Song song,
         Guid canonicalRecordingId,
@@ -1997,10 +2019,12 @@ public sealed class TrackMatchCommandService(
                 identity.UpdatedAt = now;
                 identity.Revision++;
             }
+            await CanonicalCatalogIdentityProjection.ProjectProviderIdentityAsync(
+                db, actor, identity, now, cancellationToken);
             return canonicalRecordingId;
         }
 
-        db.ProviderTrackIdentities.Add(new ProviderTrackIdentityRecord
+        identity = new ProviderTrackIdentityRecord
         {
             Id = Guid.CreateVersion7(),
             TenantId = source.TenantId,
@@ -2017,7 +2041,10 @@ public sealed class TrackMatchCommandService(
             VerifiedAt = now,
             CreatedAt = now,
             UpdatedAt = now
-        });
+        };
+        db.ProviderTrackIdentities.Add(identity);
+        await CanonicalCatalogIdentityProjection.ProjectProviderIdentityAsync(
+            db, actor, identity, now, cancellationToken);
         return canonicalRecordingId;
     }
 
@@ -2146,6 +2173,7 @@ public sealed class TrackMatchCommandService(
             return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.NotFound, "Track snapshot was not found");
         if (!actor.IsAdministrator && snapshot.OwnerUserId != actor.UserId)
             return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.Forbidden, "Track snapshot is outside your account");
+        var catalogActor = CatalogActor(actor, snapshot);
 
         var sourceIdentity = snapshot.ProviderTrackIdentityId.HasValue
             ? await db.ProviderTrackIdentities.SingleOrDefaultAsync(
@@ -2265,17 +2293,21 @@ public sealed class TrackMatchCommandService(
                     TenantId = actor.TenantId,
                     CreatedByUserId = actor.UserId,
                     Isrc = metadata.Isrc,
+                    IsProvisional = true,
                     CreatedAt = now,
                     UpdatedAt = now
                 };
                 db.CanonicalRecordings.Add(canonical);
+                await CanonicalCatalogIdentityProjection.ProjectRecordingSignalsAsync(
+                    db, catalogActor, canonical, now, cancellationToken);
                 canonicalId = canonical.Id;
             }
 
             if (sourceIdentity == null)
             {
-                sourceIdentity = AddSourceSnapshotIdentity(
-                    db, snapshot, canonicalId.Value, decisionVersion, now);
+                sourceIdentity = await AddSourceSnapshotIdentityAsync(
+                    db, catalogActor, snapshot, canonicalId.Value, decisionVersion,
+                    now, cancellationToken);
             }
 
             var externalHash = Hash(externalId);
@@ -2302,7 +2334,7 @@ public sealed class TrackMatchCommandService(
                 cancellationToken);
             if (identity == null)
             {
-                db.ProviderTrackIdentities.Add(new ProviderTrackIdentityRecord
+                identity = new ProviderTrackIdentityRecord
                 {
                     Id = Guid.CreateVersion7(),
                     TenantId = actor.TenantId,
@@ -2319,7 +2351,8 @@ public sealed class TrackMatchCommandService(
                     VerifiedAt = now,
                     CreatedAt = now,
                     UpdatedAt = now
-                });
+                };
+                db.ProviderTrackIdentities.Add(identity);
             }
             else
             {
@@ -2331,6 +2364,8 @@ public sealed class TrackMatchCommandService(
                 identity.UpdatedAt = now;
                 identity.Revision++;
             }
+            await CanonicalCatalogIdentityProjection.ProjectProviderIdentityAsync(
+                db, catalogActor, identity, now, cancellationToken);
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -2364,12 +2399,14 @@ public sealed class TrackMatchCommandService(
         }
     }
 
-    private static ProviderTrackIdentityRecord AddSourceSnapshotIdentity(
+    private static async Task<ProviderTrackIdentityRecord> AddSourceSnapshotIdentityAsync(
         AllstarrDbContext db,
+        ProviderActorContext actor,
         ExternalMetadataSnapshotRecord snapshot,
         Guid canonicalRecordingId,
         int decisionVersion,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
         var identity = new ProviderTrackIdentityRecord
         {
@@ -2391,8 +2428,24 @@ public sealed class TrackMatchCommandService(
             UpdatedAt = now
         };
         db.ProviderTrackIdentities.Add(identity);
+        await CanonicalCatalogIdentityProjection.ProjectProviderIdentityAsync(
+            db, actor, identity, now, cancellationToken);
         return identity;
     }
+
+    private static ProviderActorContext CatalogActor(
+        TrackMatchActor actor,
+        ExternalMetadataSnapshotRecord snapshot) => new(
+            actor.TenantId,
+            actor.IsAdministrator ? ProviderActorKind.Administrator : ProviderActorKind.User,
+            actor.UserId,
+            new ProviderBackendPrincipal(
+                snapshot.Protocol,
+                snapshot.BackendInstanceId,
+                snapshot.BackendPrincipalId),
+            actingForUserId: actor.IsAdministrator && snapshot.OwnerUserId != actor.UserId
+                ? snapshot.OwnerUserId
+                : null);
 
     private static string CleanReason(string? value, string fallback)
     {
@@ -2466,6 +2519,10 @@ public sealed class TrackMatchCommandService(
                 "IX_provider_track_identity_account_exact" or
                 "IX_provider_track_identity_catalog_exact" or
                 "IX_track_match_scoped_decision")
+                return true;
+            if (postgres.ConstraintName?.StartsWith(
+                    "IX_canonical_catalog_aliases_",
+                    StringComparison.Ordinal) == true)
                 return true;
         }
         return false;
