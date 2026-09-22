@@ -17,7 +17,8 @@ both on Allstarr's private network. Do not expose the gateway or wrapper login e
 - `GET /api/search?q=...&type=song|album|artist&limit=...`
 - `GET /api/song/{songId}`
 - `GET /api/download/{songId}?quality=...` — complete managed FLAC artifact
-- `GET /api/stream/{songId}?quality=...` — progressive FLAC after Apple fetch/decryption
+- `GET /api/stream/{songId}?quality=...` — progressive FLAC with an immediate,
+  metadata-free ID3v2 padding prelude while Apple fetch/decryption completes
 - `HEAD /api/stream/{songId}?quality=...` — FLAC type/disposition only; no media preparation
 - `POST /api/jobs/download` for supported Apple catalog or library URLs
 - `GET /api/jobs/download/{jobId}`

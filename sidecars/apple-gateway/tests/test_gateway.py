@@ -12,7 +12,12 @@ import pytest
 from fastapi.testclient import TestClient
 from fastapi.responses import StreamingResponse
 
-from apple_gateway.app import API_VERSION, create_app
+from apple_gateway.app import (
+    API_VERSION,
+    FLAC_GUIDANCE_PADDING_BYTES,
+    FLAC_GUIDANCE_PREFIX,
+    create_app,
+)
 from apple_gateway.catalog import CatalogClient
 from apple_gateway.config import Settings
 from apple_gateway.runner import BoundedProcessRunner, ProcessFailure
@@ -237,7 +242,7 @@ def test_song_download_uses_safe_id_quality_mapping_and_flac_contract(client):
     streamed = client[0].get("/api/stream/102", params={"quality": "aac-320"})
     assert streamed.status_code == 200
     assert streamed.headers["content-type"].startswith("audio/flac")
-    assert streamed.content == b"fLaCfixture"
+    assert streamed.content == FLAC_GUIDANCE_PREFIX + b"fLaCfixture"
     assert client[2].transcodes == ["file", "stream"]
     assert client[2].calls[-1] == ("https://music.apple.com/us/album/fixture/1?i=102", "aac")
     assert client[0].get("/api/download/not-an-id").status_code == 400
@@ -260,7 +265,11 @@ def test_song_stream_head_reports_only_known_facts_without_preparing_media(clien
 async def test_song_stream_opens_before_preparing_configured_quality(settings: Settings):
     runner = FakeRunner()
     app = create_app(settings, FakeWrapper(), FakeCatalog(), runner)
-    route = next(route for route in app.routes if getattr(route, "path", None) == "/api/stream/{song_id}")
+    route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/api/stream/{song_id}"
+    )
 
     response = await route.endpoint("102", "alac-16-44")
 
@@ -268,8 +277,56 @@ async def test_song_stream_opens_before_preparing_configured_quality(settings: S
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["x-accel-buffering"] == "no"
     assert runner.calls == []
-    assert b"".join([chunk async for chunk in response.body_iterator]) == b"fLaCfixture"
+    assert b"".join(
+        [chunk async for chunk in response.body_iterator]
+    ) == FLAC_GUIDANCE_PREFIX + b"fLaCfixture"
     assert runner.calls[-1][1] == "alac"
+
+
+def test_flac_guidance_prefix_is_a_metadata_free_id3v24_padding_tag():
+    assert FLAC_GUIDANCE_PREFIX[:6] == b"ID3\x04\x00\x00"
+    encoded_size = FLAC_GUIDANCE_PREFIX[6:10]
+    assert all(byte < 0x80 for byte in encoded_size)
+    decoded_size = sum(
+        byte << shift for byte, shift in zip(encoded_size, (21, 14, 7, 0))
+    )
+    assert decoded_size == FLAC_GUIDANCE_PADDING_BYTES
+    assert len(FLAC_GUIDANCE_PREFIX) == 10 + FLAC_GUIDANCE_PADDING_BYTES
+    assert not any(FLAC_GUIDANCE_PREFIX[10:])
+
+
+@pytest.mark.asyncio
+async def test_song_stream_sends_guidance_prefix_before_apple_preparation(settings: Settings):
+    class BlockingRunner(FakeRunner):
+        def __init__(self):
+            super().__init__()
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def download(
+            self, url: str, quality: str, output: Path, temporary: Path
+        ) -> list[Path]:
+            self.started.set()
+            await self.release.wait()
+            return await super().download(url, quality, output, temporary)
+
+    runner = BlockingRunner()
+    app = create_app(settings, FakeWrapper(), FakeCatalog(), runner)
+    route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/api/stream/{song_id}"
+    )
+    response = await route.endpoint("102", "aac-320")
+
+    assert await anext(response.body_iterator) == FLAC_GUIDANCE_PREFIX
+    assert not runner.started.is_set()
+
+    first_audio = asyncio.create_task(anext(response.body_iterator))
+    await asyncio.wait_for(runner.started.wait(), timeout=0.5)
+    assert not first_audio.done()
+    runner.release.set()
+    assert await asyncio.wait_for(first_audio, timeout=0.5) == b"fLaC"
 
 
 def test_song_stream_falls_back_to_web_aac_when_lossless_is_unavailable(settings):
@@ -319,10 +376,9 @@ async def test_simultaneous_song_streams_share_preparation(settings):
         route.endpoint("102", "aac-320"),
         route.endpoint("102", "aac-320"),
     )
-    await asyncio.gather(*(
-        anext(response.body_iterator)
-        for response in responses
-    ))
+    prefixes = await asyncio.gather(*(anext(response.body_iterator) for response in responses))
+    assert prefixes == [FLAC_GUIDANCE_PREFIX, FLAC_GUIDANCE_PREFIX]
+    await asyncio.gather(*(anext(response.body_iterator) for response in responses))
 
     assert len(runner.calls) == 1
 

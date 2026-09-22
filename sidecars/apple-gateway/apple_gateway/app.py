@@ -39,6 +39,17 @@ CAPABILITIES = (
 )
 PREPARED_CACHE_TTL_SECONDS = 6 * 60 * 60
 PREPARED_CACHE_MAX_TRACKS = 32
+FLAC_GUIDANCE_PADDING_BYTES = 64 * 1024
+
+
+def _id3_padding_tag(payload_size: int) -> bytes:
+    if not 0 <= payload_size <= 0x0FFFFFFF:
+        raise ValueError("ID3 payload size is outside the synchsafe range")
+    size = bytes((payload_size >> shift) & 0x7F for shift in (21, 14, 7, 0))
+    return b"ID3\x04\x00\x00" + size + bytes(payload_size)
+
+
+FLAC_GUIDANCE_PREFIX = _id3_padding_tag(FLAC_GUIDANCE_PADDING_BYTES)
 
 
 def _version(distribution: str) -> str:
@@ -334,6 +345,9 @@ def create_app(
     @application.get("/api/stream/{song_id}")
     async def stream_song(song_id: str, quality: str = "alac-16-44") -> StreamingResponse:
         async def content() -> AsyncIterator[bytes]:
+            # ID3v2 tags may precede FLAC. A padding-only tag opens the response
+            # immediately while Apple prepares the real, otherwise unchanged audio.
+            yield FLAC_GUIDANCE_PREFIX
             source = await prepare_song(song_id, quality, "aac-web")
             async for chunk in process_runner.stream_flac(source):
                 yield chunk
