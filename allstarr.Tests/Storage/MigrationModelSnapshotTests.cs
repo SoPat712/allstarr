@@ -14,6 +14,6 @@ public sealed class MigrationModelSnapshotTests
         using var context = new AllstarrDbContext(options);
 
         Assert.False(context.Database.HasPendingModelChanges());
-        Assert.Equal("20260915000028_ExpandCanonicalCatalog", context.Database.GetMigrations().Last());
+        Assert.Equal("20260922000029_ProjectCanonicalAliases", context.Database.GetMigrations().Last());
     }
 }

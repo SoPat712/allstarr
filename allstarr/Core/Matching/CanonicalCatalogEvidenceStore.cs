@@ -33,6 +33,51 @@ public sealed record CanonicalCatalogEvidenceResult(
     int FactsCreated,
     int FactsSuperseded);
 
+public static class CanonicalCatalogKeys
+{
+    private const string DefaultCatalog = "default";
+
+    public static string Hash(string value) => Convert.ToHexString(
+        SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+
+    public static string ProviderTrackNamespace(
+        string providerId,
+        ProviderResourceKind resourceKind,
+        string? catalog,
+        ProviderIdentityScope scope,
+        Guid? providerAccountId)
+    {
+        providerId = ProviderContractValidation.ProviderId(providerId, nameof(providerId));
+        if (resourceKind != ProviderResourceKind.Track)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(resourceKind),
+                "Canonical recording aliases require a track resource.");
+        }
+
+        catalog = catalog == null
+            ? DefaultCatalog
+            : ProviderContractValidation.Catalog(catalog, nameof(catalog));
+        if (scope is not ProviderIdentityScope.Catalog and not ProviderIdentityScope.Account ||
+            scope == ProviderIdentityScope.Catalog && providerAccountId.HasValue ||
+            scope == ProviderIdentityScope.Account && !providerAccountId.HasValue)
+        {
+            throw new ArgumentException(
+                "Provider alias scope and account must describe one exact identity boundary.",
+                nameof(scope));
+        }
+
+        var descriptor = string.Join(
+            '\n',
+            providerId,
+            resourceKind.ToString(),
+            catalog,
+            scope.ToString(),
+            providerAccountId?.ToString("D") ?? string.Empty);
+        return $"provider:{Hash(descriptor)}";
+    }
+}
+
 public interface ICanonicalCatalogEvidenceStore
 {
     Task<CanonicalCatalogEvidenceResult> RecordAsync(
@@ -92,7 +137,7 @@ public sealed class CanonicalCatalogEvidenceStore(
         var seenAliases = 0;
         foreach (var alias in NormalizeAliases(aliases))
         {
-            var hash = Hash(alias.ExternalId);
+            var hash = CanonicalCatalogKeys.Hash(alias.ExternalId);
             var existing = db.CanonicalCatalogAliases.Local.SingleOrDefault(item =>
                     item.TenantId == actor.TenantId &&
                     item.Namespace == alias.Namespace &&
@@ -361,9 +406,6 @@ public sealed class CanonicalCatalogEvidenceStore(
             ? normalized
             : throw new ArgumentOutOfRangeException(name, $"Values are limited to {maxLength} characters.");
     }
-
-    private static string Hash(string value) => Convert.ToHexString(
-        SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
     private void EnsureStorageReady()
     {
