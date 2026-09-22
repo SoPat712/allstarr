@@ -1512,6 +1512,12 @@ public sealed class TrackMatchCommandService(
             {
                 selected.CanonicalRecordingId = identity.CanonicalRecordingId;
                 selected.UpdatedAt = now;
+                await CanonicalCatalogIdentityProjection.ProjectLibraryTrackAsync(
+                    db,
+                    CatalogActor(snapshot),
+                    selected,
+                    now,
+                    cancellationToken);
             }
 
             var state = Enum.Parse<TrackMatchState>(decision.State.ToString(), true);
@@ -2446,6 +2452,16 @@ public sealed class TrackMatchCommandService(
             actingForUserId: actor.IsAdministrator && snapshot.OwnerUserId != actor.UserId
                 ? snapshot.OwnerUserId
                 : null);
+
+    private static ProviderActorContext CatalogActor(
+        ExternalMetadataSnapshotRecord snapshot) => new(
+            snapshot.TenantId,
+            ProviderActorKind.User,
+            snapshot.OwnerUserId,
+            new ProviderBackendPrincipal(
+                snapshot.Protocol,
+                snapshot.BackendInstanceId,
+                snapshot.BackendPrincipalId));
 
     private static string CleanReason(string? value, string fallback)
     {

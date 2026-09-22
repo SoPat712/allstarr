@@ -76,6 +76,16 @@ public static class CanonicalCatalogKeys
             providerAccountId?.ToString("D") ?? string.Empty);
         return $"provider:{Hash(descriptor)}";
     }
+
+    public static string NativeTrackNamespace(string protocol, string backendInstanceId)
+    {
+        protocol = ProviderContractValidation.Catalog(protocol, nameof(protocol));
+        backendInstanceId = ProviderContractValidation.RequiredText(
+            backendInstanceId,
+            nameof(backendInstanceId),
+            200);
+        return $"native:{Hash($"{protocol}\n{backendInstanceId}")}";
+    }
 }
 
 internal static class CanonicalCatalogIdentityProjection
@@ -145,6 +155,39 @@ internal static class CanonicalCatalogIdentityProjection
                 observedAt,
                 null),
             [new CanonicalCatalogAliasInput(aliasNamespace, identity.ExternalId)],
+            [],
+            cancellationToken);
+    }
+
+    public static Task ProjectLibraryTrackAsync(
+        AllstarrDbContext db,
+        ProviderActorContext actor,
+        LibraryTrackRecord track,
+        DateTimeOffset observedAt,
+        CancellationToken cancellationToken)
+    {
+        if (!track.CanonicalRecordingId.HasValue)
+        {
+            return Task.CompletedTask;
+        }
+
+        var aliasNamespace = CanonicalCatalogKeys.NativeTrackNamespace(
+            track.Protocol,
+            track.BackendInstanceId);
+        return CanonicalCatalogEvidenceStore.RecordInContextAsync(
+            db,
+            actor,
+            new CanonicalCatalogEntityReference(
+                CanonicalCatalogEntityKind.Recording,
+                track.CanonicalRecordingId.Value),
+            new CanonicalCatalogSourceStamp(
+                "native-library-identity",
+                $"{track.SourceModifiedAt.UtcTicks}:{track.AcceptedDecisionVersion}",
+                CanonicalCatalogKeys.Hash($"{aliasNamespace}\n{track.BackendItemId}"),
+                1,
+                observedAt,
+                null),
+            [new CanonicalCatalogAliasInput(aliasNamespace, track.BackendItemId)],
             [],
             cancellationToken);
     }

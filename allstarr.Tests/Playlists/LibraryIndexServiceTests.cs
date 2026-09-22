@@ -107,6 +107,43 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CanonicalTrack_ProjectsOneBackendAliasAcrossAuthorizedUsers()
+    {
+        var canonicalId = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.CanonicalRecordings.Add(new CanonicalRecordingRecord
+            {
+                Id = canonicalId,
+                TenantId = _tenantId,
+                CreatedByUserId = _userA,
+                Title = "Song",
+                IsProvisional = true,
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var input = Input() with
+        {
+            CanonicalRecordingId = canonicalId,
+            AcceptedDecisionVersion = 1
+        };
+        await _service.UpsertAsync(Context(_userA, "principal-a", "music"), input);
+        await _service.UpsertAsync(Context(_userB, "principal-b", "music"), input);
+
+        await using var verification = await _factory.CreateDbContextAsync();
+        Assert.Equal(2, await verification.LibraryTracks.CountAsync());
+        var alias = Assert.Single(await verification.CanonicalCatalogAliases.ToListAsync());
+        Assert.Equal(
+            CanonicalCatalogKeys.NativeTrackNamespace("jellyfin", "backend"),
+            alias.Namespace);
+        Assert.Equal("local-item", alias.ExternalId);
+        Assert.Equal(canonicalId, alias.CanonicalEntityId);
+    }
+
+    [Fact]
     public async Task IndexRejectsSignedUrlsAndSecretLikeProviderIds()
     {
         var context = Context(_userA, "principal-a", "music");

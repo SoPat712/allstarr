@@ -22,6 +22,9 @@ public sealed class CanonicalAliasMigrationTests
         var now = new DateTimeOffset(2026, 9, 22, 12, 0, 0, TimeSpan.Zero);
         var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
+        var secondUserId = Guid.CreateVersion7();
+        var backendIdentityId = Guid.CreateVersion7();
+        var secondBackendIdentityId = Guid.CreateVersion7();
         var accountId = Guid.CreateVersion7();
         var provisionalRecordingId = Guid.CreateVersion7();
         var musicBrainzRecordingId = Guid.CreateVersion7();
@@ -47,6 +50,39 @@ public sealed class CanonicalAliasMigrationTests
                     Status = PlatformUserStatus.Active,
                     CreatedAt = now,
                     UpdatedAt = now
+                },
+                new PlatformUserRecord
+                {
+                    Id = secondUserId,
+                    TenantId = tenantId,
+                    DisplayName = "Second catalog user",
+                    Status = PlatformUserStatus.Active,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                },
+                new BackendIdentityRecord
+                {
+                    Id = backendIdentityId,
+                    TenantId = tenantId,
+                    UserId = userId,
+                    BackendType = "jellyfin",
+                    BackendInstanceId = "home",
+                    PrincipalId = "catalog-owner",
+                    DisplayName = "Catalog owner",
+                    CreatedAt = now,
+                    LastSeenAt = now
+                },
+                new BackendIdentityRecord
+                {
+                    Id = secondBackendIdentityId,
+                    TenantId = tenantId,
+                    UserId = secondUserId,
+                    BackendType = "jellyfin",
+                    BackendInstanceId = "home",
+                    PrincipalId = "second-catalog-user",
+                    DisplayName = "Second catalog user",
+                    CreatedAt = now,
+                    LastSeenAt = now
                 },
                 new ProviderAccountRecord
                 {
@@ -87,7 +123,9 @@ public sealed class CanonicalAliasMigrationTests
                 Identity(
                     musicBrainzRecordingId,
                     accountId,
-                    ProviderIdentityScope.Account));
+                    ProviderIdentityScope.Account),
+                LibraryTrack(userId, backendIdentityId, "owner.flac"),
+                LibraryTrack(secondUserId, secondBackendIdentityId, "second.flac"));
             await seed.SaveChangesAsync();
         }
 
@@ -106,7 +144,7 @@ public sealed class CanonicalAliasMigrationTests
         var aliases = await verification.CanonicalCatalogAliases
             .OrderBy(item => item.Namespace)
             .ToListAsync();
-        Assert.Equal(4, aliases.Count);
+        Assert.Equal(5, aliases.Count);
         Assert.Contains(aliases, alias =>
             alias.Namespace == "isrc" &&
             alias.ExternalId == isrc &&
@@ -129,6 +167,10 @@ public sealed class CanonicalAliasMigrationTests
             alias.Namespace == accountNamespace &&
             alias.ExternalId == externalId &&
             alias.CanonicalEntityId == musicBrainzRecordingId);
+        Assert.Contains(aliases, alias =>
+            alias.Namespace == CanonicalCatalogKeys.NativeTrackNamespace("jellyfin", "home") &&
+            alias.ExternalId == "native-item" &&
+            alias.CanonicalEntityId == provisionalRecordingId);
 
         ProviderTrackIdentityRecord Identity(
             Guid canonicalRecordingId,
@@ -150,6 +192,29 @@ public sealed class CanonicalAliasMigrationTests
                 DecisionVersion = 1,
                 VerifiedAt = now,
                 CreatedAt = now,
+                UpdatedAt = now
+            };
+
+        LibraryTrackRecord LibraryTrack(
+            Guid ownerUserId,
+            Guid backendIdentity,
+            string fileName) => new()
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = tenantId,
+                OwnerUserId = ownerUserId,
+                BackendIdentityId = backendIdentity,
+                CanonicalRecordingId = provisionalRecordingId,
+                LibraryScopeId = "music",
+                Protocol = "jellyfin",
+                BackendInstanceId = "home",
+                BackendItemId = "native-item",
+                FilePath = $"/media/{fileName}",
+                Title = "Provider-only recording",
+                Artist = "Fixture artist",
+                ProviderIdsJson = "{}",
+                IndexedAt = now,
+                SourceModifiedAt = now,
                 UpdatedAt = now
             };
     }

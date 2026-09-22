@@ -152,6 +152,13 @@ public sealed class LibraryIndexService : ILibraryIndexService
             db.LibraryTracks.Add(record);
         }
 
+        await CanonicalCatalogIdentityProjection.ProjectLibraryTrackAsync(
+            db,
+            executionContext.RequireActor(),
+            record,
+            now,
+            cancellationToken);
+
         db.AuditEvents.Add(new AuditEventRecord
         {
             Id = Guid.CreateVersion7(),
