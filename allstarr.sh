@@ -200,9 +200,10 @@ update() {
   if [[ "$(deployment_mode)" == source ]]; then
     need git
     [[ -d "$ROOT/.git" ]] || die "source mode requires a Git checkout"
-    git diff --quiet && git diff --cached --quiet ||
+    git -c "safe.directory=$ROOT" diff --quiet &&
+      git -c "safe.directory=$ROOT" diff --cached --quiet ||
       die "tracked source files have local changes; commit or stash them before updating"
-    git pull --ff-only
+    git -c "safe.directory=$ROOT" pull --ff-only
     docker image prune --force
     docker builder prune --force --min-free-space 8GB
     docker compose "${COMPOSE[@]}" build allstarr

@@ -154,8 +154,9 @@ public sealed class ComposeContractTests
         Assert.Contains("Duplicate .env key", controller, StringComparison.Ordinal);
         Assert.Contains("--profile spotify-lyrics", controller, StringComparison.Ordinal);
         Assert.Contains("--profile apple", controller, StringComparison.Ordinal);
-        Assert.Contains("git diff --quiet && git diff --cached --quiet", controller, StringComparison.Ordinal);
-        Assert.Contains("git pull --ff-only", controller, StringComparison.Ordinal);
+        Assert.Contains("git -c \"safe.directory=$ROOT\" diff --quiet", controller, StringComparison.Ordinal);
+        Assert.Contains("git -c \"safe.directory=$ROOT\" diff --cached --quiet", controller, StringComparison.Ordinal);
+        Assert.Contains("git -c \"safe.directory=$ROOT\" pull --ff-only", controller, StringComparison.Ordinal);
         Assert.Contains("docker builder prune --force --min-free-space 8GB", controller, StringComparison.Ordinal);
         Assert.Contains("tracked source files have local changes", controller, StringComparison.Ordinal);
         Assert.Contains("prepare-apple) prepare_apple \"$@\" ;;", controller, StringComparison.Ordinal);
