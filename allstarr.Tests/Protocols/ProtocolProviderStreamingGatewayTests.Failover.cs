@@ -1,9 +1,12 @@
 using System.Net;
+using System.Collections.Immutable;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
 using allstarr.Core.Protocols;
 using allstarr.Core.Protocols.Jellyfin;
 using allstarr.Core.Routing;
+using allstarr.Core.Settings;
+using allstarr.Core.Downloads;
 using allstarr.Services;
 using allstarr.Services.Common;
 using allstarr.Services.Local;
@@ -59,8 +62,11 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         using var response = opened.Response;
         Assert.Equal("qobuz", opened.ServingProviderId);
         Assert.Equal("qobuz-track", opened.ServingExternalId);
+        Assert.StartsWith("fallback-", opened.SelectionReason, StringComparison.Ordinal);
         Assert.Equal([1, 2, 3, 4], await response.Content.ReadAsByteArrayAsync());
         Assert.Equal("qobuz", Assert.Single(response.Headers.GetValues("X-Allstarr-Provider")));
+        Assert.Equal(opened.SelectionReason,
+            Assert.Single(response.Headers.GetValues("X-Allstarr-Route-Reason")));
         router.Verify(item => item.EvaluateFallback(It.IsAny<ProviderRoutePlan<IProviderStreamingCapability>>(), 0,
             It.Is<ProviderError>(error => error.Kind == kind)), Times.Once);
         if (failure is not ("transport" or "timeout" or "body")) Assert.True(content.Disposed);
@@ -95,6 +101,135 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         router.Verify(item => item.PlanAsync<IProviderStreamingCapability>(It.Is<ProviderRouteRequest>(request =>
             request.ProviderPriority.SequenceEqual(new[] { "qobuz", "deezer" }))), Times.Once);
         catalog.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
+            It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task OpenStream_DoesNotLetALowerPriorityCacheHitJumpTheProviderOrder()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var cachedPath = Path.Combine(root, "cached.flac");
+        await File.WriteAllBytesAsync(cachedPath, [9, 9, 9]);
+        try
+        {
+            var context = Context();
+            var local = new Mock<ILocalLibraryService>(MockBehavior.Strict);
+            local.Setup(item => item.GetLocalPathForExternalSongAsync(
+                    It.Is<DownloadedSongMappingScope>(scope =>
+                        scope.TenantId == context.RequireActor().TenantId),
+                    "qobuz",
+                    "qobuz-track"))
+                .ReturnsAsync((string?)null);
+            local.Setup(item => item.GetLocalPathForExternalSongAsync(
+                    It.IsAny<DownloadedSongMappingScope>(),
+                    "deezer",
+                    "source-track"))
+                .ReturnsAsync(cachedPath);
+            var cache = new ManagedTrackCacheService(
+                new ConfigurationBuilder().Build(),
+                Options.Create(new SubsonicSettings()),
+                local.Object,
+                NullLogger<ManagedTrackCacheService>.Instance);
+            var preferred = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+            var cachedFallback = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
+            var (gateway, _) = FailoverGateway(
+                preferred,
+                cachedFallback,
+                managedTrackCache: cache);
+
+            var opened = await gateway.OpenStreamAsync(
+                context, "deezer", "source-track", ProviderAudioQuality.Any, null);
+
+            using var response = Assert.IsType<ProtocolProviderStream>(opened).Response;
+            Assert.Equal("qobuz", opened.ServingProviderId);
+            Assert.False(opened.IsCached);
+            Assert.Equal("provider-priority:account-free:remote", opened.SelectionReason);
+            local.Verify(item => item.GetLocalPathForExternalSongAsync(
+                It.IsAny<DownloadedSongMappingScope>(), "deezer", "source-track"), Times.Never);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task OpenStream_UsesTenantPolicyInsteadOfProcessConfiguration()
+    {
+        var configuredFirst = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
+        var tenantFirst = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+        var (gateway, router) = FailoverGateway(
+            configuredFirst,
+            tenantFirst,
+            tenantStreamingOrder: ["qobuz", "deezer"]);
+
+        var opened = await gateway.OpenStreamAsync(
+            Context(),
+            "deezer",
+            "source-track",
+            ProviderAudioQuality.Any,
+            null);
+
+        using var response = Assert.IsType<ProtocolProviderStream>(opened).Response;
+        Assert.Equal("qobuz", opened.ServingProviderId);
+        router.Verify(item => item.PlanAsync<IProviderStreamingCapability>(
+            It.Is<ProviderRouteRequest>(request =>
+                request.ProviderPriority.SequenceEqual(new[] { "qobuz", "deezer" }))), Times.Once);
+    }
+
+    [Fact]
+    public async Task OpenStream_UsesTenantQualityWhenTheClientDoesNotSetALowerCap()
+    {
+        var preferred = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+        var fallback = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
+        var (gateway, router) = FailoverGateway(
+            preferred,
+            fallback,
+            tenantStreamingOrder: ["qobuz", "deezer"],
+            tenantAudioQuality: "High");
+
+        using var response = (await gateway.OpenStreamAsync(
+            Context(),
+            "deezer",
+            "source-track",
+            ProviderAudioQuality.Any,
+            null))!.Response;
+
+        router.Verify(item => item.PlanAsync<IProviderStreamingCapability>(
+            It.Is<ProviderRouteRequest>(request =>
+                request.Policy.Quality.Maximum == ProviderAudioQuality.Lossy)), Times.Once);
+        preferred.Verify(item => item.GetStreamLeaseAsync(
+            It.IsAny<ProviderExecutionContext>(),
+            It.Is<ProviderStreamLeaseRequest>(request =>
+                request.RequestedQuality == ProviderAudioQuality.Lossy)), Times.Once);
+    }
+
+    [Fact]
+    public async Task OpenStream_ExcludesProvidersDisabledForTheTenant()
+    {
+        var disabled = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+        var available = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
+        var (gateway, router) = FailoverGateway(
+            disabled,
+            available,
+            tenantStreamingOrder: ["qobuz", "deezer"],
+            tenantDisabledProviders: ["qobuz"]);
+
+        var opened = await gateway.OpenStreamAsync(
+            Context(),
+            "deezer",
+            "source-track",
+            ProviderAudioQuality.Any,
+            null);
+
+        using var response = Assert.IsType<ProtocolProviderStream>(opened).Response;
+        Assert.Equal("deezer", opened.ServingProviderId);
+        router.Verify(item => item.PlanAsync<IProviderStreamingCapability>(
+            It.Is<ProviderRouteRequest>(request =>
+                request.ProviderPriority.SequenceEqual(new[] { "deezer" }))), Times.Once);
+        disabled.Verify(item => item.GetStreamLeaseAsync(
+            It.IsAny<ProviderExecutionContext>(),
             It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
     }
 
@@ -266,13 +401,20 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
 
     private static (ProtocolProviderGateway Gateway, Mock<IProviderRouter> Router) FailoverGateway(
         Mock<IProviderStreamingCapability> first, Mock<IProviderStreamingCapability> second,
-        PlaybackDeliveryActivityStore? activity = null)
+        PlaybackDeliveryActivityStore? activity = null,
+        IReadOnlyList<string>? tenantStreamingOrder = null,
+        IReadOnlyList<string>? tenantDisabledProviders = null,
+        string tenantAudioQuality = AudioQualityPolicy.DefaultStep,
+        ManagedTrackCacheService? managedTrackCache = null)
     {
         var registry = Registry(first.Object, second.Object);
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
         router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()))
             .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry,
-                new[] { first.Object, second.Object }.Where(item => request.ProviderPriority.Contains(item.ProviderId)).ToArray()));
+                new[] { first.Object, second.Object }
+                    .Where(item => request.ProviderPriority.Contains(item.ProviderId))
+                    .OrderBy(item => request.ProviderPriority.ToList().IndexOf(item.ProviderId))
+                    .ToArray()));
         router.Setup(item => item.EvaluateFallback(It.IsAny<ProviderRoutePlan<IProviderStreamingCapability>>(),
                 It.IsAny<int>(), It.IsAny<ProviderError>()))
             .Returns((ProviderRoutePlan<IProviderStreamingCapability> plan, int index, ProviderError error) =>
@@ -284,9 +426,27 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         {
             ["Providers:StreamingOrder"] = $"{first.Object.ProviderId},{second.Object.ProviderId}"
         }).Build();
+        IEffectiveProviderPolicyResolver? policies = null;
+        if (tenantStreamingOrder != null)
+        {
+            var resolver = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+            resolver.Setup(item => item.ResolveAsync(
+                    It.IsAny<Guid>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new EffectiveProviderPolicySnapshot(
+                    Context().RequireActor().TenantId,
+                    new Dictionary<ProviderCapabilityKind, System.Collections.Immutable.ImmutableArray<string>>
+                    {
+                        [ProviderCapabilityKind.Streaming] = tenantStreamingOrder.ToImmutableArray()
+                    }.ToImmutableDictionary(),
+                    (tenantDisabledProviders ?? []).ToImmutableHashSet(StringComparer.OrdinalIgnoreCase),
+                    tenantAudioQuality,
+                    0.07));
+            policies = resolver.Object;
+        }
         return (new ProtocolProviderGateway(router.Object, registry, Mock.Of<IProviderRouteAccountResolver>(),
             Mock.Of<IMusicMetadataService>(MockBehavior.Strict), new HttpClientFactory(), configuration,
-            playbackActivity: activity), router);
+            managedTrackCache: managedTrackCache, playbackActivity: activity, effectivePolicies: policies), router);
     }
 
     private static ProtocolExecutionContext ClientContext(CancellationToken cancellationToken = default)

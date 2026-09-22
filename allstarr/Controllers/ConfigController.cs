@@ -293,6 +293,65 @@ public class ConfigController : ControllerBase
         });
     }
 
+    [HttpGet("config/effective-provider-policy")]
+    public async Task<IActionResult> GetEffectiveProviderPolicy(CancellationToken cancellationToken = default)
+    {
+        var adminCheck = RequireAdministratorForSensitiveOperation("effective provider policy inspection");
+        if (adminCheck != null)
+        {
+            return adminCheck;
+        }
+
+        var session = GetAdminSession();
+        if (session?.TenantId is not { } tenantId)
+        {
+            return Conflict(new
+            {
+                error = "The administrator session is not linked to an Allstarr tenant.",
+                code = "tenant_required"
+            });
+        }
+
+        var services = HttpContext.RequestServices;
+        var policy = await services.GetRequiredService<IEffectiveProviderPolicyResolver>()
+            .ResolveAsync(tenantId, cancellationToken);
+        var contextFactory = services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var eligibleAccounts = await db.ProviderAccounts.AsNoTracking()
+            .Where(item => item.Enabled && (item.TenantId == null || item.TenantId == tenantId))
+            .Select(item => new { item.ProviderId, item.Scope })
+            .ToArrayAsync(cancellationToken);
+        var accountScopes = eligibleAccounts
+            .GroupBy(item => new { item.ProviderId, item.Scope })
+            .Select(group => new
+            {
+                providerId = group.Key.ProviderId,
+                scope = group.Key.Scope.ToString().ToLowerInvariant(),
+                count = group.Count()
+            })
+            .OrderBy(item => item.providerId)
+            .ThenBy(item => item.scope)
+            .ToArray();
+
+        return Ok(new
+        {
+            audioQuality = policy.AudioQuality,
+            disabledProviders = policy.DisabledProviders.Order(StringComparer.Ordinal).ToArray(),
+            providerOrders = ProviderOrderPolicyCatalog.Definitions.Select(definition => new
+            {
+                capability = definition.Capability.ToString().ToLowerInvariant(),
+                order = policy.GetProviderOrder(definition.Capability)
+            }),
+            accountScopes,
+            routeSelection = new
+            {
+                localPreferencePercent = policy.LocalPreferenceWindow * 100d,
+                localReason = "Prefer a playable local route when its score is within the configured local preference window.",
+                externalReason = "Otherwise choose the first available provider in effective order that satisfies the requested quality."
+            }
+        });
+    }
+
     [HttpPost("config")]
     public async Task<IActionResult> UpdateConfig([FromBody] ConfigUpdateRequest request)
     {

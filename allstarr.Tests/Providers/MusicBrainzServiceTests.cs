@@ -92,6 +92,83 @@ public sealed class MusicBrainzServiceTests
     }
 
     [Fact]
+    public async Task BrainzMashSource_IsolatedAndLoadsCanonicalHierarchy()
+    {
+        const string artistId = "11e68c1d-31f9-432c-a3a4-13aef4a53833";
+        const string releaseGroupId = "21e68c1d-31f9-432c-a3a4-13aef4a53833";
+        const string releaseId = "31e68c1d-31f9-432c-a3a4-13aef4a53833";
+        var handler = new QueueHandler(
+            _ => Json($$$"""{"id":"{{{artistId}}}","name":"Artist","sort-name":"Artist"}"""),
+            _ => Json($$$"""{"id":"{{{releaseGroupId}}}","title":"Album","primary-type":"Album","artist-credit":[{"name":"Artist","artist":{"id":"{{{artistId}}}","name":"Artist"}}]}"""),
+            _ => Json($$$"""{"id":"{{{releaseId}}}","title":"Album","release-group":{"id":"{{{releaseGroupId}}}","title":"Album"},"media":[{"position":1,"track-count":1,"tracks":[{"id":"41e68c1d-31f9-432c-a3a4-13aef4a53833","position":1,"title":"Song","recording":{"id":"51e68c1d-31f9-432c-a3a4-13aef4a53833","title":"Song"}}]}]}"""));
+        var service = Create(
+            new RecordingFactory(handler),
+            new MusicBrainzSettings
+            {
+                Enabled = true,
+                SourceId = "BrainzMash",
+                BaseUrl = "https://api.brainzmash.test/ws/2",
+                RateLimitMs = 1000
+            });
+
+        Assert.Equal("Artist", (await service.LookupArtistByMbidAsync(artistId))!.Name);
+        Assert.Equal("Album", (await service.LookupReleaseGroupByMbidAsync(releaseGroupId))!.Title);
+        var release = await service.LookupReleaseByMbidAsync(releaseId);
+
+        Assert.Equal("brainzmash", service.ConfiguredSourceId);
+        Assert.Equal("brainzmash:ws2", service.ConfiguredSourceRevision);
+        Assert.Equal("Song", Assert.Single(Assert.Single(release!.Media!).Tracks!).Recording!.Title);
+        Assert.Collection(
+            handler.RequestUris,
+            uri => Assert.EndsWith($"/artist/{artistId}", uri.AbsolutePath, StringComparison.Ordinal),
+            uri => Assert.EndsWith($"/release-group/{releaseGroupId}", uri.AbsolutePath, StringComparison.Ordinal),
+            uri => Assert.EndsWith($"/release/{releaseId}", uri.AbsolutePath, StringComparison.Ordinal));
+        Assert.All(handler.RequestUris, uri => Assert.Equal("api.brainzmash.test", uri.Host));
+        Assert.Equal(
+            $"Allstarr/{AppVersion.Version} (+https://github.com/SoPat712/allstarr)",
+            MusicBrainzService.UserAgent);
+        Assert.All(handler.UserAgents, userAgent => Assert.Equal(MusicBrainzService.UserAgent, userAgent));
+    }
+
+    [Fact]
+    public async Task AuthorizedUserAgentOverride_ReplacesFactoryHeaderWithoutChangingSourceIdentity()
+    {
+        const string temporaryIdentity = "DroppedNeedleApp/backend-test";
+        var handler = new QueueHandler(_ => Json("""{"recordings":[]}"""));
+        var factory = new RecordingFactory(handler);
+        factory.Client.DefaultRequestHeaders.UserAgent.ParseAdd("stale/header");
+        var service = Create(
+            factory,
+            new MusicBrainzSettings
+            {
+                Enabled = true,
+                SourceId = "brainzmash",
+                BaseUrl = "https://api.brainzmash.test/ws/2",
+                AuthorizedUserAgentOverride = temporaryIdentity
+            });
+
+        Assert.Empty(await service.SearchRecordingsAsync("Missing song", "Missing artist"));
+
+        Assert.Equal(temporaryIdentity, service.ConfiguredUserAgent);
+        Assert.Equal("brainzmash:ws2", service.ConfiguredSourceRevision);
+        Assert.Equal(temporaryIdentity, Assert.Single(handler.UserAgents));
+    }
+
+    [Theory]
+    [InlineData("bad\rheader")]
+    [InlineData("bad\nheader")]
+    public void AuthorizedUserAgentOverride_RejectsHeaderInjection(string value)
+    {
+        Assert.Throws<InvalidOperationException>(() => Create(
+            new RecordingFactory(new QueueHandler(_ => Json("{}"))),
+            new MusicBrainzSettings
+            {
+                Enabled = true,
+                AuthorizedUserAgentOverride = value
+            }));
+    }
+
+    [Fact]
     public async Task AmbiguousTextCandidatesRemainUnresolvedWithoutDetailLookup()
     {
         var handler = new QueueHandler(_ => Json("""
@@ -132,7 +209,7 @@ public sealed class MusicBrainzServiceTests
             Create(new RecordingFactory(new QueueHandler(_ => oversized)))
                 .LookupByMbidAsync("31e68c1d-31f9-432c-a3a4-13aef4a53833"));
         Assert.False(oversizedError.Retryable);
-        Assert.Equal("musicbrainz_response_too_large", oversizedError.Code);
+        Assert.Equal("catalog_source_response_too_large", oversizedError.Code);
 
         var unavailable = new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
         unavailable.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(7));
@@ -140,7 +217,30 @@ public sealed class MusicBrainzServiceTests
             Create(new RecordingFactory(new QueueHandler(_ => unavailable)))
                 .LookupByMbidAsync("41e68c1d-31f9-432c-a3a4-13aef4a53833"));
         Assert.True(retryError.Retryable);
+        Assert.Equal("catalog_source_temporarily_unavailable", retryError.Code);
         Assert.Equal(TimeSpan.FromSeconds(7), retryError.RetryAfter);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task CatalogSourceAccessDenial_IsExplicitAndNotRetryable(HttpStatusCode statusCode)
+    {
+        var service = Create(
+            new RecordingFactory(new QueueHandler(_ => new HttpResponseMessage(statusCode))),
+            new MusicBrainzSettings
+            {
+                Enabled = true,
+                SourceId = "brainzmash",
+                BaseUrl = "https://api.brainzmash.test/ws/2"
+            });
+
+        var error = await Assert.ThrowsAsync<MusicBrainzLookupException>(() =>
+            service.LookupByMbidAsync("31e68c1d-31f9-432c-a3a4-13aef4a53833"));
+
+        Assert.Equal("catalog_source_access_denied", error.Code);
+        Assert.False(error.Retryable);
+        Assert.Contains("brainzmash", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -213,9 +313,28 @@ public sealed class MusicBrainzServiceTests
         Assert.Equal("Accepted title", occurrence.Title);
     }
 
-    private static MusicBrainzService Create(RecordingFactory factory) => new(
+    [Fact]
+    public void DurableResult_PreservesConfiguredCatalogSourceRevision()
+    {
+        var occurrence = new ListeningEventRecord();
+
+        MusicBrainzListeningEnrichmentJobHandler.ApplyResult(
+            occurrence,
+            new(new MusicBrainzRecording
+            {
+                Id = "31e68c1d-31f9-432c-a3a4-13aef4a53833",
+                Title = "Song"
+            }, 1, "brainzmash:ws2"),
+            DateTimeOffset.UtcNow);
+
+        Assert.Equal("brainzmash:ws2", occurrence.MusicBrainzSourceRevision);
+    }
+
+    private static MusicBrainzService Create(
+        RecordingFactory factory,
+        MusicBrainzSettings? settings = null) => new(
         factory,
-        Options.Create(new MusicBrainzSettings
+        Options.Create(settings ?? new MusicBrainzSettings
         {
             Enabled = true,
             BaseUrl = "https://musicbrainz.test/ws/2",

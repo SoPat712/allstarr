@@ -41,10 +41,12 @@ using allstarr.Core.Intelligence;
 using allstarr.Core.Downloads;
 using allstarr.Core.Playback;
 using allstarr.Core.Settings;
+using allstarr.Core.Configuration;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Http;
 using System.Net;
 using System.IO;
+using System.Reflection;
 
 var builder = WebApplication.CreateBuilder(args);
 RuntimeEnvConfiguration.AddDotEnvOverrides(builder.Configuration, builder.Environment);
@@ -73,6 +75,8 @@ if (isStorageOperatorCommand)
 }
 
 builder.Services.AddPlatformIdentity(builder.Configuration);
+var releaseComposition = ReleaseComposition.Resolve(builder.Configuration);
+builder.Services.AddSingleton(releaseComposition);
 builder.Services.AddSingleton<TrackMatchPolicy>();
 builder.Services.AddHostedService<DefaultTenantRuntimeSettingsProjector>();
 builder.Services.AddProtocolExecution(builder.Configuration);
@@ -86,12 +90,16 @@ builder.Services.AddMetadataEnrichment();
 builder.Services.AddManagedFilePlacement();
 builder.Services.AddProviderDownloadArtifacts(builder.Configuration);
 builder.Services.AddFavoriteActions(builder.Configuration);
-builder.Services.AddIntelligenceCore();
-builder.Services.AddListeningHistoryImport(builder.Configuration);
-builder.Services.AddGeneratedSetMaterializers();
-builder.Services.AddBuiltInRecommendationSources();
-builder.Services.AddAudioMuseIntelligenceCapability();
-builder.Services.AddDurablePlaybackSignals();
+builder.Services.AddSingleton<IScopedRecommendationAccountAccessor, ScopedRecommendationAccountAccessor>();
+if (releaseComposition.IntelligenceEnabled)
+{
+    builder.Services.AddIntelligenceCore();
+    builder.Services.AddListeningHistoryImport(builder.Configuration);
+    builder.Services.AddGeneratedSetMaterializers();
+    builder.Services.AddBuiltInRecommendationSources();
+    builder.Services.AddAudioMuseIntelligenceCapability();
+}
+builder.Services.AddDurablePlaybackSignals(releaseComposition.IntelligenceEnabled);
 builder.Services.AddPlaylistOrchestration();
 builder.Services.AddExtensionControlPlane();
 builder.Services.AddPlatformOperations(builder.Configuration);
@@ -226,7 +234,7 @@ builder.Services.AddControllers()
         {
             manager.FeatureProviders.Remove(defaultProvider);
         }
-        manager.FeatureProviders.Add(new BackendControllerFeatureProvider(backendType));
+        manager.FeatureProviders.Add(new BackendControllerFeatureProvider(backendType, releaseComposition));
     });
 
 builder.Services.AddHttpClient();
@@ -458,7 +466,7 @@ builder.Services.Configure<ScrobblingSettings>(builder.Configuration.GetSection(
 // Last.fm requires an identifying User-Agent.
 builder.Services.AddHttpClient("LastFm", client =>
 {
-    client.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0 (https://github.com/sopat712/allstarr)");
+    client.DefaultRequestHeaders.UserAgent.ParseAdd(allstarr.AppIdentity.UserAgent);
     client.Timeout = TimeSpan.FromSeconds(30);
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 
@@ -468,13 +476,13 @@ builder.Services.AddSingleton<ScrobblingHelper>();
 builder.Services.Configure<MusicBrainzSettings>(builder.Configuration.GetSection("MusicBrainz"));
 builder.Services.AddHttpClient(allstarr.Services.MusicBrainz.MusicBrainzService.HttpClientName, client =>
 {
-    client.DefaultRequestHeaders.UserAgent.ParseAdd(
-        allstarr.Services.MusicBrainz.MusicBrainzService.UserAgent);
     client.DefaultRequestHeaders.Accept.Add(
         new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
     client.Timeout = TimeSpan.FromSeconds(15);
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<allstarr.Services.MusicBrainz.MusicBrainzService>();
+builder.Services.AddSingleton<allstarr.Services.MusicBrainz.IMusicBrainzCatalogClient>(provider =>
+    provider.GetRequiredService<allstarr.Services.MusicBrainz.MusicBrainzService>());
 
 builder.Services.AddCors(options =>
 {
@@ -637,16 +645,24 @@ public partial class Program
 class BackendControllerFeatureProvider : Microsoft.AspNetCore.Mvc.Controllers.ControllerFeatureProvider
 {
     private readonly BackendType _backendType;
+    private readonly ReleaseComposition _releaseComposition;
 
-    public BackendControllerFeatureProvider(BackendType backendType)
+    public BackendControllerFeatureProvider(BackendType backendType, ReleaseComposition releaseComposition)
     {
         _backendType = backendType;
+        _releaseComposition = releaseComposition;
     }
 
     protected override bool IsController(System.Reflection.TypeInfo typeInfo)
     {
         var isController = base.IsController(typeInfo);
         if (!isController) return false;
+
+        var releaseFeature = typeInfo.GetCustomAttribute<ReleaseFeatureAttribute>();
+        if (releaseFeature != null && !_releaseComposition.Includes(releaseFeature.Feature))
+        {
+            return false;
+        }
 
         // Only protocol catch-alls and their admin surfaces are conditional; an
         // allowlist would send future admin routes into the selected catch-all.

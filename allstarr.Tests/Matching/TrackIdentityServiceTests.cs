@@ -1,10 +1,12 @@
 using System.Security.Cryptography;
 using System.Text;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Jobs;
 using allstarr.Core.Matching;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -84,6 +86,35 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
         Assert.Equal(3, links.Count);
         Assert.All(links, link => Assert.Matches("^[0-9a-f]{64}$", link.ExternalIdHash));
         Assert.Single(await context.CanonicalRecordings.ToListAsync());
+    }
+
+    [Fact]
+    public async Task RecordingWithMusicBrainzIdentity_QueuesIdempotentCatalogDiscovery()
+    {
+        const string recordingMbid = "11111111-1111-4111-8111-111111111111";
+        var actor = Actor(_tenantA, _userA);
+        var queue = new Mock<IMusicBrainzCatalogRefreshQueue>(MockBehavior.Strict);
+        queue.Setup(item => item.EnqueueRecordingAsync(
+                actor,
+                recordingMbid,
+                "catalog-discovery",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DurableJobEnqueueResult(Guid.CreateVersion7(), true));
+        var service = new TrackIdentityService(_factory, _storageState, _clock, queue.Object);
+
+        var first = await service.CreateRecordingAsync(
+            actor, "catalog-discovery", musicBrainzRecordingId: recordingMbid);
+        var repeated = await service.CreateRecordingAsync(
+            actor, "catalog-discovery", musicBrainzRecordingId: recordingMbid);
+
+        Assert.True(first.Created);
+        Assert.False(repeated.Created);
+        Assert.Equal(first.Recording.Id, repeated.Recording.Id);
+        queue.Verify(item => item.EnqueueRecordingAsync(
+            actor,
+            recordingMbid,
+            "catalog-discovery",
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     [Fact]

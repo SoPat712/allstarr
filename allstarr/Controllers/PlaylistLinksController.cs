@@ -11,6 +11,7 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
 using allstarr.Core.Secrets;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using allstarr.Filters;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
@@ -43,7 +44,8 @@ public sealed class PlaylistLinksController(
     IPlaylistVirtualizationService virtualization,
     IPlaylistTrackRetentionQueue retentionQueue,
     IConfiguration configuration,
-    ApplicationCacheRequestCoalescer requestCoalescer) : ControllerBase
+    ApplicationCacheRequestCoalescer requestCoalescer,
+    IEffectiveProviderPolicyResolver? effectivePolicies = null) : ControllerBase
 {
     [HttpGet("/api/admin/playlist-sources")]
     public async Task<IActionResult> ListPlaylistSources(CancellationToken cancellationToken)
@@ -82,10 +84,22 @@ public sealed class PlaylistLinksController(
                                    session.AllstarrUserId, "playlist", session.IsAdministrator))
                 .ToArray();
             var blockedAccounts = capableAccounts.Except(availableAccounts).ToArray();
-            var configuredProviderOrder = (configuration["Providers:PlaylistOrder"] ??
-                                           configuration["MULTI_PROVIDER_PLAYLIST_ORDER"] ??
-                                           "spotify,deezer,qobuz")
+            var effectivePolicy = effectivePolicies == null || !session.TenantId.HasValue
+                ? null
+                : await effectivePolicies.ResolveAsync(session.TenantId.Value, cancellationToken);
+            var playlistOrderDefinition = ProviderOrderPolicyCatalog.Find(ProviderCapabilityKind.Playlist)!;
+            var bootstrapOrder = (configuration[playlistOrderDefinition.SettingKey] ??
+                                  configuration[playlistOrderDefinition.BootstrapKey] ??
+                                  playlistOrderDefinition.DefaultValue)
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Concat(supportedProviders.Keys.Order(StringComparer.Ordinal))
+                .Where(supportedProviders.ContainsKey)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var configuredProviderOrder = (effectivePolicy?.ApplyProviderAvailability(
+                                               ProviderCapabilityKind.Playlist,
+                                               supportedProviders.Keys) ??
+                                           bootstrapOrder)
                 .Select((id, index) => (id: id.ToLowerInvariant(), index))
                 .GroupBy(item => item.id)
                 .ToDictionary(group => group.Key, group => group.First().index);

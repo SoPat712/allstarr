@@ -11,6 +11,7 @@ using allstarr.Core.Playlists.Sources;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Playlists;
@@ -180,9 +181,15 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         TrackMatchDecisionEngine matcher,
         ITrackMatchRepository trackMatches,
         IPlatformClock clock,
-        ILogger<PlaylistOrchestrationService>? logger = null) =>
+        ILogger<PlaylistOrchestrationService>? logger = null,
+        IEffectiveProviderPolicyResolver? effectivePolicies = null)
+    {
         (_factory, _source, _targets, _planner, _matcher, _trackMatches, _clock, _logger) =
-        (factory, source, targets, planner, matcher, trackMatches, clock, logger);
+            (factory, source, targets, planner, matcher, trackMatches, clock, logger);
+        _effectivePolicies = effectivePolicies;
+    }
+
+    private readonly IEffectiveProviderPolicyResolver? _effectivePolicies;
 
     public async Task<PlaylistOrchestrationResult> RunAsync(
         ProtocolExecutionContext execution,
@@ -764,6 +771,10 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         Func<int, int, string, CancellationToken, Task>? progress,
         CancellationToken cancellationToken)
     {
+        var effectiveMatcher = _effectivePolicies == null
+            ? _matcher
+            : _matcher.WithLocalPriorityWindow(
+                (await _effectivePolicies.ResolveAsync(link.TenantId, cancellationToken)).LocalPreferenceWindow);
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         var entries = await db.PlaylistSourceEntries.AsNoTracking().Where(item =>
             item.TenantId == link.TenantId && item.PlaylistSourceSnapshotId == snapshot.Id)
@@ -846,7 +857,6 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 group => group.First().CanonicalRecordingId,
                 StringComparer.OrdinalIgnoreCase);
 
-        // Optimization: Map candidates once outside the loop instead of doing it N times
         var mappedCandidates = candidates.Select(ToCandidate)
             .Select(candidate =>
             {
@@ -934,7 +944,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                         new HashSet<Guid> { manual.LibraryTrackId.Value })
                     : null;
 
-            var match = _matcher.Decide(
+            var match = effectiveMatcher.Decide(
                 new TrackMatchScope(link.TenantId, link.OwnerUserId, link.TargetBackendInstanceId, link.LibraryScopeId, link.ProviderAccountId, 1, snapshot.SnapshotVersion),
                 source,
                 candidateSet,

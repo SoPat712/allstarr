@@ -6,7 +6,6 @@ public static class RecommendationSourceRegistration
 {
     public static IServiceCollection AddBuiltInRecommendationSources(this IServiceCollection services)
     {
-        services.AddSingleton<IScopedRecommendationAccountAccessor, ScopedRecommendationAccountAccessor>();
         services.AddSingleton<IJellyfinInstantMixClient, JellyfinInstantMixClient>();
         services.AddSingleton<ILocalRecommendationCatalog, LocalRecommendationCatalog>();
         services.AddHttpClient<ILastFmRecommendationClient, LastFmRecommendationClient>(client =>

@@ -224,7 +224,11 @@ public sealed class PlaylistLinksControllerContractTests
         Assert.Contains("applicationCache.SetAsync(", source, StringComparison.Ordinal);
         Assert.Contains("ImageConditionalRequestHelper.ComputeStrongETag(asset.Bytes)", source, StringComparison.Ordinal);
         Assert.Contains("ImageConditionalRequestHelper.MatchesIfNoneMatch(Request.Headers, etag)", source, StringComparison.Ordinal);
-        Assert.Contains("configuration[\"Providers:PlaylistOrder\"]", source, StringComparison.Ordinal);
+        Assert.Contains("ProviderOrderPolicyCatalog.Find(ProviderCapabilityKind.Playlist)", source,
+            StringComparison.Ordinal);
+        Assert.Contains("effectivePolicies.ResolveAsync(session.TenantId.Value", source,
+            StringComparison.Ordinal);
+        Assert.Contains("effectivePolicy?.ApplyProviderAvailability(", source, StringComparison.Ordinal);
         Assert.Contains("configuredProviderOrder.GetValueOrDefault", source, StringComparison.Ordinal);
         Assert.DoesNotContain("value.Artwork?.PublicUri", source, StringComparison.Ordinal);
         Assert.Equal(2, source.Split("new MediaAssetIdentity(", StringSplitOptions.None).Length - 1);

@@ -166,7 +166,7 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
             ExpiresAtUtc = DateTime.UtcNow.AddMinutes(5)
         };
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(3));
 
         await controller.Stream(cancellation.Token);
 

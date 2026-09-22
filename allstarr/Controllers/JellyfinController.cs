@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using allstarr.Models.Domain;
 using allstarr.Models.Scrobbling;
@@ -1450,18 +1451,34 @@ public partial class JellyfinController : ControllerBase
     [HttpGet("System/Info/Public")]
     public async Task<IActionResult> GetPublicSystemInfo()
     {
-        var (success, serverName, version) = await _proxyService.TestConnectionAsync();
-
-        return _responseBuilder.CreateJsonResponse(new
+        var (upstream, statusCode) = await _proxyService.GetJsonAsync(
+            "System/Info/Public",
+            clientHeaders: Request.Headers);
+        using (upstream)
         {
-            LocalAddress = Request.Host.ToString(),
-            ServerName = serverName ?? "Allstarr",
-            Version = version ?? AppVersion.Version,
-            ProductName = "Allstarr (Jellyfin Proxy)",
-            OperatingSystem = Environment.OSVersion.Platform.ToString(),
-            Id = _settings.DeviceId,
-            StartupWizardCompleted = true
-        });
+            if (statusCode == StatusCodes.Status200OK && upstream != null &&
+                JsonNode.Parse(upstream.RootElement.GetRawText()) is JsonObject publicInfo)
+            {
+                // Clients must connect back through Allstarr, but every Jellyfin-owned
+                // identity and capability field remains authoritative.
+                publicInfo["LocalAddress"] = $"{Request.Scheme}://{Request.Host}{Request.PathBase}";
+                return Content(publicInfo.ToJsonString(), "application/json");
+            }
+
+            _logger.LogWarning(
+                "Jellyfin public system information returned {StatusCode}; using the configured proxy identity",
+                statusCode);
+            return _responseBuilder.CreateJsonResponse(new
+            {
+                LocalAddress = $"{Request.Scheme}://{Request.Host}{Request.PathBase}",
+                ServerName = "Allstarr",
+                Version = AppVersion.Version,
+                ProductName = "Allstarr (Jellyfin Proxy)",
+                OperatingSystem = Environment.OSVersion.Platform.ToString(),
+                Id = _settings.DeviceId,
+                StartupWizardCompleted = true
+            });
+        }
     }
 
     [HttpGet("", Order = 99)]

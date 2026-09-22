@@ -14,6 +14,7 @@ public sealed class ComposeContractTests
 
         Assert.Contains("postgres:18.4-alpine3.23@sha256:", compose, StringComparison.Ordinal);
         Assert.Contains("Storage__Provider: Postgres", compose, StringComparison.Ordinal);
+        Assert.Contains("Release__Profile: \"${ALLSTARR_RELEASE_PROFILE:-core}\"", compose, StringComparison.Ordinal);
         Assert.Contains("Storage__PasswordFile: \"/run/secrets/postgres_password\"", compose, StringComparison.Ordinal);
         Assert.Contains("Secrets__KeyRingPath: \"/run/secrets/allstarr_keyring\"", compose, StringComparison.Ordinal);
         Assert.Contains("${ADMIN_PORT:-5275}:5275", compose, StringComparison.Ordinal);
@@ -67,6 +68,7 @@ public sealed class ComposeContractTests
             "ADMIN_TRUSTED_SUBNETS",
             "ALLSTARR_IMAGE",
             "ALLSTARR_KEYRING_FILE",
+            "ALLSTARR_RELEASE_PROFILE",
             "APPLE_UPLOAD_PATH",
             "BACKEND_TYPE",
             "CORS_ALLOWED_ORIGINS",
@@ -74,6 +76,10 @@ public sealed class ComposeContractTests
             "DOWNLOAD_PATH",
             "EXTENSIONS_ALLOW_REMOTE_INSTALL",
             "KEPT_PATH",
+            "MUSICBRAINZ_AUTHORIZED_USER_AGENT_OVERRIDE",
+            "MUSICBRAINZ_BASE_URL",
+            "MUSICBRAINZ_RATE_LIMIT_MS",
+            "MUSICBRAINZ_SOURCE_ID",
             "POSTGRES_DB",
             "POSTGRES_PASSWORD_FILE",
             "POSTGRES_USER",

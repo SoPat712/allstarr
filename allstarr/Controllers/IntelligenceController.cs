@@ -1,5 +1,6 @@
 using System.Text.Json;
 using allstarr.Core.Intelligence;
+using allstarr.Core.Configuration;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Playback;
@@ -12,6 +13,7 @@ using Microsoft.EntityFrameworkCore;
 namespace allstarr.Controllers;
 
 [ApiController]
+[ReleaseFeature(ReleaseFeatureKind.Intelligence)]
 [Route("api/admin/intelligence")]
 [ServiceFilter(typeof(AdminPortFilter))]
 public sealed partial class IntelligenceController(

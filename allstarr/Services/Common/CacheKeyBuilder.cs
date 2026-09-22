@@ -169,20 +169,27 @@ public static class CacheKeyBuilder
 
     #region MusicBrainz Keys
 
-    public static string BuildMusicBrainzIsrcKey(string isrc)
+    public static string BuildMusicBrainzIsrcKey(string isrc, string sourceId = "musicbrainz")
     {
-        return $"musicbrainz:isrc:v2:{Normalize(isrc)}";
+        return $"musicbrainz:isrc:v3:{Normalize(sourceId)}:{Normalize(isrc)}";
     }
 
-    public static string BuildMusicBrainzSearchKey(string title, string artist, int limit)
+    public static string BuildMusicBrainzSearchKey(
+        string title,
+        string artist,
+        int limit,
+        string sourceId = "musicbrainz")
     {
-        return $"musicbrainz:search:v2:{DigestIdentity(title, artist, limit)}";
+        return $"musicbrainz:search:v3:{Normalize(sourceId)}:{DigestIdentity(title, artist, limit)}";
     }
 
-    public static string BuildMusicBrainzMbidKey(string mbid)
+    public static string BuildMusicBrainzMbidKey(string mbid, string sourceId = "musicbrainz")
     {
-        return $"musicbrainz:mbid:v2:{Normalize(mbid)}";
+        return BuildMusicBrainzResourceKey(sourceId, "recording", mbid);
     }
+
+    public static string BuildMusicBrainzResourceKey(string sourceId, string resourceKind, string mbid) =>
+        $"musicbrainz:{Normalize(resourceKind)}:v3:{Normalize(sourceId)}:{Normalize(mbid)}";
 
     public static string BuildMusicBrainzNegativeKey(string positiveKey) =>
         $"negative:{positiveKey}";

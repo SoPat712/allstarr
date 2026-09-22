@@ -83,6 +83,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         ConfigureJobs(modelBuilder);
         ConfigureProviderHealth(modelBuilder);
         ConfigureTrackIdentity(modelBuilder);
+        ConfigureCanonicalCatalog(modelBuilder);
         ConfigureLibraryAndPlaylists(modelBuilder);
         ConfigureExtensions(modelBuilder);
         FavoriteModelConfiguration.Configure(modelBuilder);
@@ -399,11 +400,14 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.HasKey(item => item.Id);
             entity.HasAlternateKey(item => new { item.TenantId, item.Id });
             entity.Property(item => item.Id).ValueGeneratedNever();
+            entity.Property(item => item.Title).HasMaxLength(500).IsRequired();
+            entity.Property(item => item.Disambiguation).HasMaxLength(500);
             entity.Property(item => item.Isrc).HasMaxLength(32);
             entity.Property(item => item.MusicBrainzRecordingId).HasMaxLength(100);
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new { item.TenantId, item.Isrc }).IsUnique();
             entity.HasIndex(item => new { item.TenantId, item.MusicBrainzRecordingId }).IsUnique();
+            entity.HasIndex(item => new { item.TenantId, item.Title, item.Id });
             entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<PlatformUserRecord>().WithMany()
@@ -591,18 +595,33 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         {
             Playlists.PersistenceGuard.ValidateSafeJson(entry.Entity.DetailsJson, nameof(PlaylistSyncEntryResultRecord.DetailsJson));
         }
+        foreach (var entry in ChangeTracker.Entries<CanonicalReleaseGroupRecord>()
+                     .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
+        {
+            Playlists.PersistenceGuard.ValidateSafeJson(
+                entry.Entity.SecondaryTypesJson,
+                nameof(CanonicalReleaseGroupRecord.SecondaryTypesJson));
+        }
+        foreach (var entry in ChangeTracker.Entries<CatalogFactRecord>()
+                     .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
+        {
+            Playlists.PersistenceGuard.ValidateSafeJson(entry.Entity.ValueJson, nameof(CatalogFactRecord.ValueJson));
+        }
         var changed = ChangeTracker.Entries()
             .FirstOrDefault(entry =>
                 (entry.State is EntityState.Modified or EntityState.Deleted) &&
                 (entry.Entity is ExternalMetadataSnapshotRecord or
                     PlaylistSourceSnapshotRecord or
-                    PlaylistSourceEntryRecord) &&
+                    PlaylistSourceEntryRecord or
+                    CatalogFactRecord) &&
                 !(entry.State == EntityState.Modified &&
                   entry.Properties.Where(property => property.IsModified).All(property =>
                       entry.Entity is PlaylistSourceSnapshotRecord &&
                       property.Metadata.Name == nameof(PlaylistSourceSnapshotRecord.PublishedAt) ||
                       entry.Entity is PlaylistSourceEntryRecord &&
-                      property.Metadata.Name == nameof(PlaylistSourceEntryRecord.PublishedTrackMatchId))));
+                      property.Metadata.Name == nameof(PlaylistSourceEntryRecord.PublishedTrackMatchId) ||
+                      entry.Entity is CatalogFactRecord &&
+                      property.Metadata.Name == nameof(CatalogFactRecord.SupersededAt))));
         if (changed != null)
         {
             throw new InvalidOperationException(

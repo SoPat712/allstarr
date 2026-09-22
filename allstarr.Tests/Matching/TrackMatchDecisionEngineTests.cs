@@ -101,6 +101,22 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void TenantLocalPreferenceCreatesAnIndependentMatcher()
+    {
+        var scope = Scope();
+        var source = Source();
+        var local = Candidate(scope);
+        var shared = new TrackMatchDecisionEngine();
+        var tenant = shared.WithLocalPriorityWindow(0.20);
+
+        var tenantWindow = tenant.ScoreCandidates(source, [local]).Single().Components!["priorityWindow"];
+        var sharedWindow = shared.ScoreCandidates(source, [local]).Single().Components!["priorityWindow"];
+
+        Assert.Equal(0.20, tenantWindow);
+        Assert.Equal(0.07, sharedWindow);
+    }
+
+    [Fact]
     public void LibraryIndexRevision_IsStableAndChangesWithMatchableMetadata()
     {
         var scope = Scope();

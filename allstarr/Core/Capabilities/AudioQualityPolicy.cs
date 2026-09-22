@@ -18,6 +18,15 @@ public static class AudioQualityPolicy
         _ => throw new ArgumentException($"Audio quality step '{step}' is not supported.", nameof(step))
     };
 
+    public static ProviderAudioQuality RequestedQuality(string step) => step switch
+    {
+        "DataSaver" => ProviderAudioQuality.DataSaver,
+        "High" => ProviderAudioQuality.Lossy,
+        "CdLossless" => ProviderAudioQuality.Lossless,
+        "HiResLossless" or DefaultStep => ProviderAudioQuality.HighResolution,
+        _ => throw new ArgumentException($"Audio quality step '{step}' is not supported.", nameof(step))
+    };
+
     public static string FromProviderCeilings(string? apple, string? deezer, string? qobuz)
     {
         var rank = Math.Min(AppleRank(apple), Math.Min(DeezerRank(deezer), QobuzRank(qobuz)));

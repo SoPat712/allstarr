@@ -22,7 +22,6 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
     private readonly ScrobblingSettings _scrobbling;
     private readonly JellyfinSettings _jellyfin;
     private readonly SubsonicSettings _subsonic;
-    private readonly TrackMatchPolicy _matching;
     private readonly ILogger<DefaultTenantRuntimeSettingsProjector> _logger;
     private readonly string? _bootstrapAppleBaseUrl;
     private readonly SemaphoreSlim _refresh = new(0, 1);
@@ -34,7 +33,6 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
         IOptions<SpotifyApiSettings> spotifyApi, IOptions<SpotifyImportSettings> spotifyImport,
         IOptions<MusicBrainzSettings> musicBrainz, IOptions<ScrobblingSettings> scrobbling,
         IOptions<JellyfinSettings> jellyfin, IOptions<SubsonicSettings> subsonic,
-        TrackMatchPolicy matching,
         ILogger<DefaultTenantRuntimeSettingsProjector> logger)
     {
         (_settings, _signal, _configuration, _logger) = (settings, signal, configuration, logger);
@@ -44,7 +42,6 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
         (_spotifyApi, _spotifyImport, _musicBrainz, _scrobbling) =
             (spotifyApi.Value, spotifyImport.Value, musicBrainz.Value, scrobbling.Value);
         (_jellyfin, _subsonic) = (jellyfin.Value, subsonic.Value);
-        _matching = matching;
     }
 
     public override async Task StartAsync(CancellationToken cancellationToken)
@@ -89,17 +86,17 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
                 Apply(setting);
 
             var audio = values[AudioQualityPolicy.SettingKey];
-            if (audio.Origin == RuntimeSettingOrigin.Durable || _configuration[AudioQualityPolicy.SettingKey] != null)
+            if (audio.Origin != RuntimeSettingOrigin.Durable &&
+                _configuration[AudioQualityPolicy.SettingKey] == null &&
+                LegacyQualityIsDurable(values))
             {
-                ApplyAudioQuality((string)audio.Value);
-            }
-            else if (LegacyQualityIsDurable(values))
-            {
-                var migrated = AudioQualityPolicy.FromProviderCeilings(_apple.Quality, _deezer.Quality, _qobuz.Quality);
+                var migrated = AudioQualityPolicy.FromProviderCeilings(
+                    LegacyQuality(values, "AppleDownload:Quality", _apple.Quality),
+                    LegacyQuality(values, "Deezer:Quality", _deezer.Quality),
+                    LegacyQuality(values, "Qobuz:Quality", _qobuz.Quality));
                 await _settings.ApplyBatchAsync(_tenantId,
                     [new RuntimeSettingWrite(AudioQualityPolicy.SettingKey, migrated)],
                     "audio-quality-migration", cancellationToken: cancellationToken);
-                ApplyAudioQuality(migrated);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -113,11 +110,11 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
         values["Deezer:Quality"].Origin == RuntimeSettingOrigin.Durable ||
         values["Qobuz:Quality"].Origin == RuntimeSettingOrigin.Durable;
 
-    private void ApplyAudioQuality(string step)
-    {
-        var quality = AudioQualityPolicy.ProviderCeilings(step);
-        (_apple.Quality, _deezer.Quality, _qobuz.Quality) = (quality.Apple, quality.Deezer, quality.Qobuz);
-    }
+    private static string? LegacyQuality(
+        IReadOnlyDictionary<string, EffectiveRuntimeSetting> values,
+        string key,
+        string? bootstrap) =>
+        values[key].Origin == RuntimeSettingOrigin.Durable ? values[key].NormalizedValue : bootstrap;
 
     private void Apply(EffectiveRuntimeSetting setting)
     {
@@ -132,14 +129,11 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
             case "Cache:OdesliLookupDays": _cache.OdesliLookupDays = (int)value; break;
             case "Cache:ProxyImagesDays": _cache.ProxyImagesDays = (int)value; break;
             case "Cache:TranscodeCacheMinutes": _cache.TranscodeCacheMinutes = (int)value; break;
-            case "Deezer:Quality": _deezer.Quality = (string)value; break;
             case "Deezer:MinRequestIntervalMs": _deezer.MinRequestIntervalMs = (int)value; break;
-            case "Qobuz:Quality": _qobuz.Quality = (string)value; break;
             case "Qobuz:MinRequestIntervalMs": _qobuz.MinRequestIntervalMs = (int)value; break;
             case "AppleDownload:BaseUrl":
                 if (string.IsNullOrWhiteSpace(_bootstrapAppleBaseUrl)) _apple.BaseUrl = (string)value;
                 break;
-            case "AppleDownload:Quality": _apple.Quality = (string)value; break;
             case "MusicBrainz:Enabled": _musicBrainz.Enabled = (bool)value; break;
             case "SpotifyApi:Enabled": _spotifyApi.Enabled = (bool)value; break;
             case "SpotifyApi:CacheDurationMinutes": _spotifyApi.CacheDurationMinutes = (int)value; break;
@@ -155,23 +149,13 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
             case "Scrobbling:LastFm:Enabled": _scrobbling.LastFm.Enabled = (bool)value; break;
             case "Scrobbling:ListenBrainz:Enabled": _scrobbling.ListenBrainz.Enabled = (bool)value; break;
             case "Library:EnableExternalPlaylists": SetBoth(item => item.EnableExternalPlaylists = (bool)value, item => item.EnableExternalPlaylists = (bool)value); break;
-            case "Matching:LocalPreferencePercent": _matching.LocalPriorityWindow = (int)value / 100d; break;
             case "Library:PlaylistsDirectory": SetBoth(item => item.PlaylistsDirectory = (string)value, item => item.PlaylistsDirectory = (string)value); break;
             case "Library:ExplicitFilter": SetBoth(item => item.ExplicitFilter = Enum.Parse<ExplicitFilter>((string)value), item => item.ExplicitFilter = Enum.Parse<ExplicitFilter>((string)value)); break;
             case "Library:DownloadMode": SetBoth(item => item.DownloadMode = Enum.Parse<DownloadMode>((string)value), item => item.DownloadMode = Enum.Parse<DownloadMode>((string)value)); break;
             case "Library:StorageMode": SetBoth(item => item.StorageMode = Enum.Parse<StorageMode>((string)value), item => item.StorageMode = Enum.Parse<StorageMode>((string)value)); break;
             case "Library:CacheDurationHours": SetBoth(item => item.CacheDurationHours = (int)value, item => item.CacheDurationHours = (int)value); break;
-            case "Providers:MetadataOrder": SetRouting("MULTI_PROVIDER_METADATA_ORDER", setting.NormalizedValue); break;
-            case "Providers:DownloadOrder": SetRouting("MULTI_PROVIDER_DOWNLOAD_ORDER", setting.NormalizedValue); break;
-            case "Providers:StreamingOrder": SetRouting("MULTI_PROVIDER_STREAMING_ORDER", setting.NormalizedValue); break;
-            case "Providers:PlaylistOrder": SetRouting("MULTI_PROVIDER_PLAYLIST_ORDER", setting.NormalizedValue); break;
-            case "Providers:LyricsOrder": SetRouting("MULTI_PROVIDER_LYRICS_ORDER", setting.NormalizedValue); break;
-            case "Providers:EnabledSearch": SetRouting("MULTI_PROVIDER_ENABLED_SEARCH", setting.NormalizedValue); break;
-            case "Providers:EnabledPlaylist": SetRouting("MULTI_PROVIDER_ENABLED_PLAYLIST", setting.NormalizedValue); break;
-            case "Providers:Disabled": SetRouting("MULTI_PROVIDER_DISABLED_PROVIDERS", setting.NormalizedValue); break;
         }
     }
 
     private void SetBoth(Action<JellyfinSettings> jellyfin, Action<SubsonicSettings> subsonic) { jellyfin(_jellyfin); subsonic(_subsonic); }
-    private void SetRouting(string key, string value) => _configuration[key] = value;
 }

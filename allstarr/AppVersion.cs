@@ -12,6 +12,12 @@ public static class AppVersion
     public const string Version = "3.1.0-beta.1";
 }
 
+public static class AppIdentity
+{
+    public const string RepositoryUrl = "https://github.com/SoPat712/allstarr";
+    public static readonly string UserAgent = $"Allstarr/{AppVersion.Version} (+{RepositoryUrl})";
+}
+
 /// <summary>
 /// Compatibility retained for v3.0. Removal requires an explicit release decision no earlier than v3.1.
 /// </summary>

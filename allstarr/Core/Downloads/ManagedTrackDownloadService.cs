@@ -1,6 +1,7 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Operations;
 using allstarr.Core.Routing;
+using allstarr.Core.Settings;
 
 namespace allstarr.Core.Downloads;
 
@@ -47,7 +48,8 @@ public sealed class ManagedTrackDownloadService(
     IProviderRegistry providers,
     ProviderDownloadArtifactResolver artifacts,
     IPlatformClock clock,
-    IProviderRouteDecisionStore routeDecisions)
+    IProviderRouteDecisionStore routeDecisions,
+    IEffectiveProviderPolicyResolver? effectivePolicies = null)
 {
     public async Task<ManagedTrackDownloadResult> ExecuteAsync(
         ManagedTrackDownloadCommand command,
@@ -75,10 +77,19 @@ public sealed class ManagedTrackDownloadService(
             command.ProviderId,
             ProviderResourceKind.Track,
             command.ExternalTrackId);
-        var priority = providers.FindByCapability(ProviderCapabilityKind.Download, includeNonOperational: true)
+        var availableProviders = providers.FindByCapability(
+                ProviderCapabilityKind.Download,
+                includeNonOperational: true)
             .Select(item => item.Id)
             .ToArray();
-        if (priority.Length == 0)
+        var effectivePolicy = effectivePolicies == null
+            ? null
+            : await effectivePolicies.ResolveAsync(command.TenantId, cancellationToken);
+        var priority = effectivePolicy?.ApplyProviderAvailability(
+                           ProviderCapabilityKind.Download,
+                           availableProviders)
+                       ?? availableProviders;
+        if (priority.Count == 0)
         {
             return ManagedTrackDownloadResult.Failure(
                 "managed_download_provider_unavailable",
@@ -92,6 +103,9 @@ public sealed class ManagedTrackDownloadService(
             durableJobId: command.DurableJobId,
             actingForUserId: command.OwnerUserId);
         var quality = Enum.GetValues<ProviderAudioQuality>();
+        var requestedQuality = effectivePolicy == null
+            ? ProviderAudioQuality.Any
+            : AudioQualityPolicy.RequestedQuality(effectivePolicy.AudioQuality);
         ProviderRoutePlan<IProviderDownloadCapability> plan;
         try
         {
@@ -101,7 +115,9 @@ public sealed class ManagedTrackDownloadService(
                 new ProviderExecutionPolicy(
                     new ProviderQualityPolicy(
                         ProviderAudioQuality.Any,
-                        ProviderAudioQuality.HighResolution,
+                        requestedQuality == ProviderAudioQuality.Any
+                            ? ProviderAudioQuality.HighResolution
+                            : requestedQuality,
                         allowTranscode: false),
                     ProviderExplicitContentPolicy.Allow,
                     allowFallback: true,
@@ -211,7 +227,7 @@ public sealed class ManagedTrackDownloadService(
                         candidateTrack,
                         command.DurableJobId,
                         workspace.Reference,
-                        ProviderAudioQuality.Any));
+                        requestedQuality));
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {

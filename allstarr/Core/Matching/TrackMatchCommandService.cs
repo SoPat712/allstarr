@@ -9,6 +9,7 @@ using allstarr.Core.Operations;
 using allstarr.Core.Playlists;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using allstarr.Models.Domain;
 using allstarr.Services.Spotify;
 using Microsoft.EntityFrameworkCore;
@@ -267,7 +268,8 @@ public sealed class TrackMatchCommandService(
     TrackMatchDecisionEngine decisionEngine,
     ProviderAccountResolver accountResolver,
     IPlatformClock clock,
-    PlaylistPlayableSearchService? playableSearch = null) : ITrackMatchRepository
+    PlaylistPlayableSearchService? playableSearch = null,
+    IEffectiveProviderPolicyResolver? effectivePolicies = null) : ITrackMatchRepository
 {
     private const int ConcurrentWriteRetries = 3;
     private readonly ConcurrentDictionary<
@@ -275,6 +277,13 @@ public sealed class TrackMatchCommandService(
         Lazy<Task<TrackRematchCommandResult>>> _rematches = [];
 
     public bool SupportsExternalMatching => playableSearch != null;
+
+    private async Task<TrackMatchDecisionEngine> DecisionEngineAsync(
+        Guid tenantId,
+        CancellationToken cancellationToken) => effectivePolicies == null
+        ? decisionEngine
+        : decisionEngine.WithLocalPriorityWindow(
+            (await effectivePolicies.ResolveAsync(tenantId, cancellationToken)).LocalPreferenceWindow);
 
     public async Task<ExternalMetadataSnapshotRecord> CaptureSnapshotAsync(
         ProtocolExecutionContext context,
@@ -975,9 +984,12 @@ public sealed class TrackMatchCommandService(
         IReadOnlyList<LibraryTrackRecord> indexed = source == null
             ? []
             : await tracks.ToListAsync(cancellationToken);
+        var effectiveEngine = source == null
+            ? decisionEngine
+            : await DecisionEngineAsync(actor.TenantId, cancellationToken);
         HashSet<Guid> automatic = source == null
             ? []
-            : decisionEngine.PrepareCandidates(indexed.Select(ToLocalCandidate))
+            : effectiveEngine.PrepareCandidates(indexed.Select(ToLocalCandidate))
                 .Select(source)
                 .Select(item => item.LibraryTrackId)
                 .ToHashSet();
@@ -993,7 +1005,7 @@ public sealed class TrackMatchCommandService(
             .ToListAsync(cancellationToken);
         if (automatic.Count == 0) return searched;
         var indexedById = indexed.ToDictionary(item => item.Id);
-        var selected = decisionEngine.ScoreCandidates(
+        var selected = effectiveEngine.ScoreCandidates(
                 source!,
                 indexed.Where(item => automatic.Contains(item.Id)).Select(ToLocalCandidate))
             .Select(item => indexedById[item.LibraryTrackId]);
@@ -1403,6 +1415,7 @@ public sealed class TrackMatchCommandService(
 
         var results = new List<AutomatedSourceMatchResult>(snapshots.Length);
         var now = DateTimeOffset.UtcNow;
+        var tenantEngines = new Dictionary<Guid, TrackMatchDecisionEngine>();
         foreach (var snapshot in snapshots)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1471,7 +1484,12 @@ public sealed class TrackMatchCommandService(
                         null,
                         new HashSet<Guid> { manual.LibraryTrackId.Value })
                     : null;
-            var decision = decisionEngine.Decide(
+            if (!tenantEngines.TryGetValue(snapshot.TenantId, out var effectiveEngine))
+            {
+                effectiveEngine = await DecisionEngineAsync(snapshot.TenantId, cancellationToken);
+                tenantEngines.Add(snapshot.TenantId, effectiveEngine);
+            }
+            var decision = effectiveEngine.Decide(
                 scope, source, candidates, rejectedOverride);
             var selected = decision.SelectedLibraryTrackId is { } selectedId
                 ? library.ById[selectedId]
@@ -1728,14 +1746,15 @@ public sealed class TrackMatchCommandService(
                     null,
                     new HashSet<Guid> { manual.LibraryTrackId.Value })
                 : null;
-        var decision = decisionEngine.Decide(scope, sourceTrack, localCandidates, rejectedOverride);
+        var effectiveEngine = await DecisionEngineAsync(actor.TenantId, cancellationToken);
+        var decision = effectiveEngine.Decide(scope, sourceTrack, localCandidates, rejectedOverride);
         PlayableTrackMatch? playable = null;
         if (execution != null &&
             playableSearch != null &&
             manual?.Decision is not ManualOverrideDecision.Pin &&
             !(manual?.Decision == ManualOverrideDecision.Reject && !manual.LibraryTrackId.HasValue) &&
             decision.State != TrackMatchReviewState.Pinned &&
-            !decisionEngine.CanSkipProviderComparison(decision))
+            !effectiveEngine.CanSkipProviderComparison(decision))
         {
             var cachedRoutes = source == null
                 ? []
@@ -2230,7 +2249,8 @@ public sealed class TrackMatchCommandService(
                     TrackMatchCommandFailure.Invalid,
                     "ExternalProvider and ExternalId are required for a provider match");
             if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(providerId) ||
-                playableSearch?.CanUseProvider(providerId) == false)
+                playableSearch != null &&
+                !await playableSearch.CanUseProviderAsync(actor.TenantId, providerId, cancellationToken))
                 return TrackMatchCommandResult.Fail(
                     TrackMatchCommandFailure.Invalid,
                     "That provider cannot supply playback audio");

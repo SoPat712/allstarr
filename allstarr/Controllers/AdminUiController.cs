@@ -14,6 +14,7 @@ using allstarr.Services.Common;
 using allstarr.Services.Admin;
 using allstarr.Services.Spotify;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -36,6 +37,7 @@ public class AdminUiController : ControllerBase
     private readonly ProviderAccountManagementMode _providerAccountManagementMode;
     private readonly IProviderRegistry? _providerRegistry;
     private readonly IProtocolProviderGateway? _providerGateway;
+    private readonly IEffectiveProviderPolicyResolver? _effectivePolicies;
     private readonly ITrackMatchRepository _trackMatches;
 
     public AdminUiController(
@@ -50,7 +52,8 @@ public class AdminUiController : ControllerBase
         ProviderAccountManagementOptions providerAccountManagementOptions,
         ITrackMatchRepository trackMatches,
         IProviderRegistry? providerRegistry = null,
-        IProtocolProviderGateway? providerGateway = null)
+        IProtocolProviderGateway? providerGateway = null,
+        IEffectiveProviderPolicyResolver? effectivePolicies = null)
     {
         _configuration = configuration;
         _spotifyApiSettings = spotifyApiSettings.Value;
@@ -64,19 +67,22 @@ public class AdminUiController : ControllerBase
         _trackMatches = trackMatches;
         _providerRegistry = providerRegistry;
         _providerGateway = providerGateway;
+        _effectivePolicies = effectivePolicies;
     }
 
     [HttpGet("schema")]
-    public IActionResult GetSchema()
+    public async Task<IActionResult> GetSchema(CancellationToken cancellationToken = default)
     {
         var activeBackend = _configuration.GetValue<string>("Backend:Type") ?? "Jellyfin";
+        var policy = await TryEffectivePolicyAsync(cancellationToken);
+        var disabledProviders = policy?.DisabledProviders;
         if (!IsAdministratorSession())
         {
             return Ok(new AdminUiSchemaResponse
             {
                 ActiveBackend = activeBackend,
                 ProviderAccountManagementMode = _providerAccountManagementMode.ToString(),
-                Providers = BuildProviders().Select(item => new AdminUiProvider
+                Providers = BuildProviders(disabledProviders).Select(item => new AdminUiProvider
                 {
                     Id = item.Id,
                     Name = item.Name,
@@ -107,10 +113,10 @@ public class AdminUiController : ControllerBase
             ProviderAccountManagementMode = _providerAccountManagementMode.ToString(),
             Routes = BuildRoutes(),
             Backends = BuildBackends(),
-            Providers = BuildProviders(),
+            Providers = BuildProviders(disabledProviders),
             ProviderSupportMatrix = CurrentProviderSupportCatalog.All.ToList(),
             MultiProviderCategories = ["metadata", "streaming", "download", "playlist", "lyrics", "enrichment"],
-            PriorityGroups = BuildPriorityGroups(),
+            PriorityGroups = BuildPriorityGroups(policy),
             ConfigSections = BuildConfigSections(),
             ExtensionStore = new AdminUiExtensionStore
             {
@@ -153,6 +159,23 @@ public class AdminUiController : ControllerBase
         };
 
         return Ok(schema);
+    }
+
+    private async Task<EffectiveProviderPolicySnapshot?> TryEffectivePolicyAsync(
+        CancellationToken cancellationToken)
+    {
+        if (_effectivePolicies == null ||
+            !HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
+            value is not AdminAuthSession { TenantId: { } tenantId })
+            return null;
+        try
+        {
+            return await _effectivePolicies.ResolveAsync(tenantId, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return null;
+        }
     }
 
     [HttpGet("provider-summaries")]
@@ -224,7 +247,7 @@ public class AdminUiController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden, new { error = "A linked Allstarr user is required" });
         }
 
-        var schema = (GetSchema() as OkObjectResult)?.Value as AdminUiSchemaResponse;
+        var schema = (await GetSchema(cancellationToken) as OkObjectResult)?.Value as AdminUiSchemaResponse;
         if (schema == null) return StatusCode(StatusCodes.Status500InternalServerError);
         var services = HttpContext.RequestServices;
         var contextFactory = services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
@@ -503,13 +526,22 @@ public class AdminUiController : ControllerBase
                     ? null
                     : PlaylistArtworkUrl(link.ProviderAccountId, link.SourcePlaylistId));
         }));
+        var effectivePolicy = _effectivePolicies == null
+            ? null
+            : await _effectivePolicies.ResolveAsync(tenantId, cancellationToken);
         var routeProviderPriority = _providerGateway == null
             ? null
-            : _providerGateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
-                .Concat(_providerGateway.GetProviderOrder(ProviderCapabilityKind.Download))
+            : ProviderOrder(ProviderCapabilityKind.Streaming)
+                .Concat(ProviderOrder(ProviderCapabilityKind.Download))
                 .Select(ExternalTrackPlaybackPolicy.Normalize)
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
+
+        IReadOnlyList<string> ProviderOrder(ProviderCapabilityKind capability)
+        {
+            var available = _providerGateway.GetProviderOrder(capability);
+            return effectivePolicy?.ApplyProviderAvailability(capability, available) ?? available;
+        }
         activity.AddRange(matches.Select(item =>
         {
             externalSnapshots.TryGetValue(item.ExternalSnapshotId, out var snapshot);
@@ -993,7 +1025,7 @@ public class AdminUiController : ControllerBase
         }
     ];
 
-    private List<AdminUiProvider> BuildProviders()
+    private List<AdminUiProvider> BuildProviders(IReadOnlySet<string>? disabledProviders = null)
     {
         List<AdminUiProvider> providers =
         [
@@ -1004,7 +1036,7 @@ public class AdminUiController : ControllerBase
             Icon = "spotify",
             Status = ProviderStatus("spotify", _spotifyApiSettings.Enabled
                 ? (!string.IsNullOrWhiteSpace(_spotifyApiSettings.SessionCookie) ? "configured" : "needs_config")
-                : "disabled"),
+                : "disabled", disabledProviders),
             Categories = ["playlist", "lyrics"],
             ConfigSchema =
             [
@@ -1018,7 +1050,7 @@ public class AdminUiController : ControllerBase
             Id = "apple-download",
             Name = "Apple Music – GAMDL",
             Icon = "applemusic",
-            Status = ProviderStatus("apple-download", string.IsNullOrWhiteSpace(_appleMusicSettings.BaseUrl) ? "needs_config" : "unknown"),
+            Status = ProviderStatus("apple-download", string.IsNullOrWhiteSpace(_appleMusicSettings.BaseUrl) ? "needs_config" : "unknown", disabledProviders),
             Categories = ["metadata", "streaming", "download", "lyrics"],
             ConnectionKind = "operator_managed",
             Audience = "everyone",
@@ -1066,7 +1098,7 @@ public class AdminUiController : ControllerBase
             Id = "deezer",
             Name = "Deezer",
             Icon = "deezer",
-            Status = ProviderStatus("deezer", string.IsNullOrWhiteSpace(_deezerSettings.Arl) ? "needs_config" : "configured"),
+            Status = ProviderStatus("deezer", string.IsNullOrWhiteSpace(_deezerSettings.Arl) ? "needs_config" : "configured", disabledProviders),
             Categories = ["metadata", "download", "streaming", "playlist"],
             ConfigSchema =
             [
@@ -1079,7 +1111,7 @@ public class AdminUiController : ControllerBase
             Name = "Qobuz",
             Icon = "qobuz",
             LogoUrl = "/images/providers/qobuz.webp",
-            Status = ProviderStatus("qobuz", string.IsNullOrWhiteSpace(_qobuzSettings.UserAuthToken) ? "needs_config" : "configured"),
+            Status = ProviderStatus("qobuz", string.IsNullOrWhiteSpace(_qobuzSettings.UserAuthToken) ? "needs_config" : "configured", disabledProviders),
             Categories = ["metadata", "download", "streaming", "playlist"],
             ConfigSchema =
             [
@@ -1217,13 +1249,13 @@ public class AdminUiController : ControllerBase
             var statuses = runtimeStatuses
                 .Where(status => status.Provider.Equals(provider.Id, StringComparison.OrdinalIgnoreCase))
                 .ToList();
-            if (statuses.Count == 0)
+            if (statuses.Count > 0)
             {
-                continue;
+                provider.RuntimeCapabilities = statuses.Select(ToAdminRuntimeCapability).ToList();
+                provider.Status = AggregateProviderStatus(statuses);
             }
-
-            provider.RuntimeCapabilities = statuses.Select(ToAdminRuntimeCapability).ToList();
-            provider.Status = AggregateProviderStatus(statuses);
+            if (disabledProviders?.Contains(provider.Id) == true)
+                provider.Status = "disabled";
         }
 
         return providers;
@@ -1292,52 +1324,52 @@ public class AdminUiController : ControllerBase
         return "available";
     }
 
-    private List<AdminUiPriorityGroup> BuildPriorityGroups()
+    private List<AdminUiPriorityGroup> BuildPriorityGroups(EffectiveProviderPolicySnapshot? policy)
     {
         var activeBackend = _configuration.GetValue<string>("Backend:Type") ?? "Jellyfin";
         var pinnedLocalProvider = BuildPinnedLocalProvider(activeBackend);
         return
         [
             Priority(
+                ProviderCapabilityKind.Metadata,
                 "metadata",
                 "Metadata search order",
                 "Used only for discovery (titles, artists, albums, ISRCs). Playback uses Streaming and Download order below.",
-                "MULTI_PROVIDER_METADATA_ORDER",
                 "MULTI_PROVIDER_ENABLED_SEARCH",
-                "apple-download,deezer,qobuz",
-                pinnedProvider: null),
+                pinnedProvider: null,
+                policy: policy),
             Priority(
+                ProviderCapabilityKind.Download,
                 "download",
                 "Download priority",
                 "Download routes after the local library. Drag to change which source fills a missing track.",
-                "MULTI_PROVIDER_DOWNLOAD_ORDER",
                 null,
-                "apple-download,deezer,qobuz",
-                pinnedProvider: pinnedLocalProvider),
+                pinnedProvider: pinnedLocalProvider,
+                policy: policy),
             Priority(
+                ProviderCapabilityKind.Streaming,
                 "streaming",
                 "Streaming priority",
                 "Stream routes after the local library. Drag to change which source plays a missing track.",
-                "MULTI_PROVIDER_STREAMING_ORDER",
                 null,
-                "apple-download,deezer,qobuz",
-                pinnedProvider: pinnedLocalProvider),
+                pinnedProvider: pinnedLocalProvider,
+                policy: policy),
             Priority(
+                ProviderCapabilityKind.Playlist,
                 "playlist",
                 "Playlist discovery priority",
                 "Order used when fetching playlists and playlist tracks from each source.",
-                "MULTI_PROVIDER_PLAYLIST_ORDER",
                 "MULTI_PROVIDER_ENABLED_PLAYLIST",
-                "spotify,deezer,qobuz",
-                pinnedProvider: null),
+                pinnedProvider: null,
+                policy: policy),
             Priority(
+                ProviderCapabilityKind.Lyrics,
                 "lyrics",
                 "Lyrics priority",
                 "Order used for lyrics lookup when a song is played or requested.",
-                "MULTI_PROVIDER_LYRICS_ORDER",
                 null,
-                "spotify,apple-download,lrclib",
-                pinnedProvider: pinnedLocalProvider)
+                pinnedProvider: pinnedLocalProvider,
+                policy: policy)
         ];
     }
 
@@ -1364,20 +1396,22 @@ public class AdminUiController : ControllerBase
     }
 
     private AdminUiPriorityGroup Priority(
+        ProviderCapabilityKind capability,
         string id,
         string label,
         string description,
-        string envKey,
         string? enabledEnvKey,
-        string fallback,
-        AdminUiPinnedProvider? pinnedProvider)
+        AdminUiPinnedProvider? pinnedProvider,
+        EffectiveProviderPolicySnapshot? policy)
     {
-        var value = _configuration[envKey] ?? fallback;
-        var providers = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        var definition = ProviderOrderPolicyCatalog.Find(capability)!;
+        var providers = (policy?.GetProviderOrder(capability) ??
+                (_configuration[definition.BootstrapKey] ?? definition.DefaultValue)
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             .Select(p => p.ToLowerInvariant())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        if (_providerRegistry != null && Enum.TryParse<ProviderCapabilityKind>(id, true, out var capability))
+        if (_providerRegistry != null)
         {
             providers.AddRange(_providerRegistry.FindByCapability(capability, includeNonOperational: true)
                 .Select(provider => provider.Id)
@@ -1389,18 +1423,22 @@ public class AdminUiController : ControllerBase
             Id = id,
             Label = label,
             Description = description,
-            EnvKey = envKey,
+            EnvKey = definition.BootstrapKey,
             EnabledEnvKey = enabledEnvKey,
             Providers = providers,
             PinnedProvider = pinnedProvider
         };
     }
 
-    private string ProviderStatus(string id, string configuredStatus)
+    private string ProviderStatus(
+        string id,
+        string configuredStatus,
+        IReadOnlySet<string>? disabledProviders)
     {
-        var disabled = (_configuration["MULTI_PROVIDER_DISABLED_PROVIDERS"] ?? string.Empty)
+        var disabled = disabledProviders?.Contains(id) ??
+            (_configuration["MULTI_PROVIDER_DISABLED_PROVIDERS"] ?? string.Empty)
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Any(p => p.Equals(id, StringComparison.OrdinalIgnoreCase));
+            .Contains(id, StringComparer.OrdinalIgnoreCase);
         return disabled ? "disabled" : configuredStatus;
     }
 

@@ -7,6 +7,7 @@ using allstarr.Core.Matching;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using allstarr.Filters;
 using allstarr.Models.Domain;
 using allstarr.Services.Admin;
@@ -32,7 +33,8 @@ public sealed class TrackMatchesController(
     IHttpClientFactory httpClients,
     IMediaAssetResolver mediaAssets,
     TrackMatchDecisionEngine matcher,
-    TrackRematchAllService bulkRematches) : ControllerBase
+    TrackRematchAllService bulkRematches,
+    IEffectiveProviderPolicyResolver? effectivePolicies = null) : ControllerBase
 {
     public sealed record ResolveTrackMatchRequest(
         string TargetType,
@@ -301,8 +303,12 @@ public sealed class TrackMatchesController(
                 .ToArray(), StringComparer.Ordinal);
         var identities = review.ProviderIdentities
             .GroupBy(item => item.CanonicalRecordingId).ToDictionary(group => group.Key, group => group.ToArray());
-        var playableProviders = providerGateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
-            .Concat(providerGateway.GetProviderOrder(ProviderCapabilityKind.Download))
+        var streamingOrder = await ProviderOrderAsync(
+            tenantId, ProviderCapabilityKind.Streaming, cancellationToken);
+        var downloadOrder = await ProviderOrderAsync(
+            tenantId, ProviderCapabilityKind.Download, cancellationToken);
+        var playableProviders = streamingOrder
+            .Concat(downloadOrder)
             .Select(ExternalTrackPlaybackPolicy.Normalize)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
@@ -415,9 +421,10 @@ public sealed class TrackMatchesController(
             limit,
             sourceCandidates,
             cancellationToken);
+        var effectiveMatcher = await MatchingEngineAsync(tenantId, cancellationToken);
         var scores = source == null
             ? []
-            : matcher.ScoreCandidates(source, tracks.Select(ToCandidate))
+            : effectiveMatcher.ScoreCandidates(source, tracks.Select(ToCandidate))
                 .ToDictionary(item => item.LibraryTrackId);
         var values = tracks.Select(item => new
         {
@@ -453,8 +460,13 @@ public sealed class TrackMatchesController(
         if (provider.Length > 128) return BadRequest(new { error = "The playback provider is invalid" });
         limit = Math.Clamp(limit, 1, 50);
 
-        var playableProviders = providerGateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
-            .Concat(providerGateway.GetProviderOrder(ProviderCapabilityKind.Download))
+        var tenantId = session!.TenantId!.Value;
+        var streamingOrder = await ProviderOrderAsync(
+            tenantId, ProviderCapabilityKind.Streaming, cancellationToken);
+        var downloadOrder = await ProviderOrderAsync(
+            tenantId, ProviderCapabilityKind.Download, cancellationToken);
+        var playableProviders = streamingOrder
+            .Concat(downloadOrder)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         if (provider.Length > 0 &&
@@ -484,19 +496,20 @@ public sealed class TrackMatchesController(
             .Take(limit)
             .ToArray();
         var source = await ReviewSourceAsync(session!, externalSnapshotId, cancellationToken);
+        var effectiveMatcher = await MatchingEngineAsync(tenantId, cancellationToken);
         var candidates = songs.Select(song => new
         {
             Song = song,
             Candidate = ToCandidate(
                 song,
-                session!.TenantId!.Value,
+                tenantId,
                 session.AllstarrUserId!.Value,
                 libraryScopeId ?? string.Empty)
         }).ToArray();
         var scores = source == null
             ? []
-            : matcher.ScoreCandidates(source, candidates.Select(item => item.Candidate),
-                    providerGateway.GetProviderOrder(ProviderCapabilityKind.Streaming))
+            : effectiveMatcher.ScoreCandidates(source, candidates.Select(item => item.Candidate),
+                    streamingOrder)
                 .ToDictionary(item => item.LibraryTrackId);
         var ranked = candidates
             .Select(item => new
@@ -1191,6 +1204,21 @@ public sealed class TrackMatchesController(
         root.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
             ? value.GetBoolean()
             : null;
+
+    private async Task<IReadOnlyList<string>> ProviderOrderAsync(
+        Guid tenantId,
+        ProviderCapabilityKind capability,
+        CancellationToken cancellationToken) => effectivePolicies == null
+        ? providerGateway.GetProviderOrder(capability)
+        : (await effectivePolicies.ResolveAsync(tenantId, cancellationToken))
+            .ApplyProviderAvailability(capability, providerGateway.GetProviderOrder(capability));
+
+    private async Task<TrackMatchDecisionEngine> MatchingEngineAsync(
+        Guid tenantId,
+        CancellationToken cancellationToken) => effectivePolicies == null
+        ? matcher
+        : matcher.WithLocalPriorityWindow(
+            (await effectivePolicies.ResolveAsync(tenantId, cancellationToken)).LocalPreferenceWindow);
 
     private bool TrySession(out AdminAuthSession? session, out IActionResult? error)
     {

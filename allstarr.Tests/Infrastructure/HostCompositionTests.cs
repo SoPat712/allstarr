@@ -14,11 +14,18 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
+using allstarr.Core.Configuration;
+using allstarr.Core.Intelligence;
+using allstarr.Core.Jobs;
+using allstarr.Core.Playback;
 using allstarr.Filters;
 using allstarr.Services.Common;
 using allstarr.Services;
 using Microsoft.AspNetCore.Mvc.Routing;
 using Moq;
+using System.Reflection;
+using System.Collections.Immutable;
+using allstarr.Core.Settings;
 
 namespace allstarr.Tests;
 
@@ -56,7 +63,7 @@ public sealed class HostCompositionTests
     [Theory]
     [InlineData("Jellyfin", typeof(JellyfinController), typeof(SubsonicController))]
     [InlineData("Subsonic", typeof(SubsonicController), typeof(JellyfinController))]
-    public void SelectedBackend_RegistersOneProtocolSurfaceAndActivatesEveryController(
+    public void CoreRelease_RegistersOneProtocolSurfaceAndOmitsDeferredControllers(
         string backend,
         Type expectedProtocolController,
         Type excludedProtocolController)
@@ -77,16 +84,27 @@ public sealed class HostCompositionTests
         Assert.Equal(
             backend.Equals("Jellyfin", StringComparison.OrdinalIgnoreCase),
             controllerTypes.Contains(typeof(JellyfinAdminController)));
+        Assert.DoesNotContain(typeof(IntelligenceController), controllerTypes);
+        Assert.DoesNotContain(typeof(ListenBrainzIntakeController), controllerTypes);
 
         var backendNeutralControllers = typeof(Program).Assembly.DefinedTypes
             .Where(type => !type.IsAbstract && typeof(ControllerBase).IsAssignableFrom(type))
             .Where(type => type.AsType() != typeof(JellyfinController) &&
                            type.AsType() != typeof(SubsonicController) &&
-                           type.AsType() != typeof(JellyfinAdminController))
+                           type.AsType() != typeof(JellyfinAdminController) &&
+                           type.GetCustomAttribute<ReleaseFeatureAttribute>() == null)
             .Select(type => type.AsType())
             .ToArray();
         Assert.All(backendNeutralControllers, controllerType =>
             Assert.Contains(controllerType, controllerTypes));
+
+        var handlers = factory.Services.GetServices<IDurableJobHandler>().Select(item => item.GetType()).ToArray();
+        Assert.DoesNotContain(typeof(RecommendationRunJobHandler), handlers);
+        Assert.DoesNotContain(typeof(GeneratedSetMaterializationJobHandler), handlers);
+        Assert.DoesNotContain(typeof(ListeningHistoryImportJobHandler), handlers);
+        Assert.DoesNotContain(typeof(MusicBrainzListeningEnrichmentJobHandler), handlers);
+        Assert.Contains(typeof(PlaybackSignalJobHandler), handlers);
+        Assert.Empty(factory.Services.GetServices<IRecommendationProvider>());
 
         var startupValidators = factory.Services.GetServices<IStartupValidator>().ToList();
         Assert.Single(startupValidators);
@@ -99,6 +117,27 @@ public sealed class HostCompositionTests
                 ActivatorUtilities.CreateInstance(scope.ServiceProvider, controllerType));
             Assert.True(exception == null, $"{backend} could not activate {controllerType.Name}: {exception}");
         }
+    }
+
+    [Fact]
+    public void DevelopmentRelease_ComposesDeferredIntelligenceSurface()
+    {
+        using var factory = new AllstarrFactory("Jellyfin", releaseProfile: "development");
+        var controllerTypes = factory.Services
+            .GetRequiredService<IActionDescriptorCollectionProvider>()
+            .ActionDescriptors.Items
+            .OfType<ControllerActionDescriptor>()
+            .Select(item => item.ControllerTypeInfo.AsType())
+            .Distinct()
+            .ToArray();
+
+        Assert.Contains(typeof(IntelligenceController), controllerTypes);
+        Assert.Contains(typeof(ListenBrainzIntakeController), controllerTypes);
+        Assert.NotEmpty(factory.Services.GetServices<IRecommendationProvider>());
+        Assert.Contains(factory.Services.GetServices<IDurableJobHandler>(),
+            handler => handler is RecommendationRunJobHandler);
+        Assert.Contains(factory.Services.GetServices<IDurableJobHandler>(),
+            handler => handler is MusicBrainzListeningEnrichmentJobHandler);
     }
 
     [Theory]
@@ -151,7 +190,7 @@ public sealed class HostCompositionTests
     [InlineData("AdminManaged")]
     [InlineData("UserManaged")]
     [InlineData("Hybrid")]
-    public void NonAdministratorSchema_ExposesOnlyReadyAccountSelfService(
+    public async Task NonAdministratorSchema_ExposesOnlyReadyAccountSelfService(
         string managementMode)
     {
         using var factory = new AllstarrFactory("Jellyfin", managementMode);
@@ -159,7 +198,7 @@ public sealed class HostCompositionTests
         var controller = ActivatorUtilities.CreateInstance<AdminUiController>(scope.ServiceProvider);
         controller.ControllerContext = Context(administrator: false);
 
-        var result = Assert.IsType<OkObjectResult>(controller.GetSchema());
+        var result = Assert.IsType<OkObjectResult>(await controller.GetSchema());
         var schema = Assert.IsType<AdminUiSchemaResponse>(result.Value);
 
         Assert.Equal(managementMode, schema.ProviderAccountManagementMode);
@@ -175,14 +214,14 @@ public sealed class HostCompositionTests
     }
 
     [Fact]
-    public void AdministratorSchema_RetainsFullManagementSurface()
+    public async Task AdministratorSchema_RetainsFullManagementSurface()
     {
         using var factory = new AllstarrFactory("Jellyfin");
         using var scope = factory.Services.CreateScope();
         var controller = ActivatorUtilities.CreateInstance<AdminUiController>(scope.ServiceProvider);
         controller.ControllerContext = Context(administrator: true);
 
-        var result = Assert.IsType<OkObjectResult>(controller.GetSchema());
+        var result = Assert.IsType<OkObjectResult>(await controller.GetSchema());
         var schema = Assert.IsType<AdminUiSchemaResponse>(result.Value);
 
         Assert.Contains(schema.Routes, route => route.Id == "settings");
@@ -190,6 +229,34 @@ public sealed class HostCompositionTests
         Assert.NotEmpty(schema.ProviderSupportMatrix);
         Assert.NotEmpty(schema.ConfigSections);
         Assert.Equal("/api/admin/extensions/packages", schema.ExtensionStore.InstalledEndpoint);
+    }
+
+    [Fact]
+    public async Task AdministratorSchema_UsesTheSessionTenantProviderPolicy()
+    {
+        var tenantId = Guid.CreateVersion7();
+        var orders = ProviderOrderPolicyCatalog.Definitions.ToImmutableDictionary(
+            item => item.Capability,
+            item => (item.Capability == ProviderCapabilityKind.Streaming
+                ? new[] { "qobuz", "deezer" }
+                : item.DefaultValue.Split(',')).ToImmutableArray());
+        var policy = new EffectiveProviderPolicySnapshot(
+            tenantId,
+            orders,
+            ImmutableHashSet.Create(StringComparer.OrdinalIgnoreCase, "deezer"),
+            "CdLossless",
+            0.07);
+        using var factory = new AllstarrFactory("Jellyfin", effectivePolicy: policy);
+        using var scope = factory.Services.CreateScope();
+        var controller = ActivatorUtilities.CreateInstance<AdminUiController>(scope.ServiceProvider);
+        controller.ControllerContext = Context(administrator: true, tenantId: tenantId);
+
+        var result = Assert.IsType<OkObjectResult>(await controller.GetSchema());
+        var schema = Assert.IsType<AdminUiSchemaResponse>(result.Value);
+        var streaming = Assert.Single(schema.PriorityGroups, item => item.Id == "streaming");
+
+        Assert.Equal(["qobuz", "deezer"], streaming.Providers.Take(2));
+        Assert.Equal("disabled", Assert.Single(schema.Providers, item => item.Id == "deezer").Status);
     }
 
     [Fact]
@@ -212,7 +279,7 @@ public sealed class HostCompositionTests
     }
 
     [Fact]
-    public void AdministratorSchema_IncludesActiveExtensionCapabilities()
+    public async Task AdministratorSchema_IncludesActiveExtensionCapabilities()
     {
         using var factory = new AllstarrFactory("Jellyfin");
         using var scope = factory.Services.CreateScope();
@@ -228,7 +295,7 @@ public sealed class HostCompositionTests
         var controller = ActivatorUtilities.CreateInstance<AdminUiController>(scope.ServiceProvider);
         controller.ControllerContext = Context(administrator: true);
 
-        var result = Assert.IsType<OkObjectResult>(controller.GetSchema());
+        var result = Assert.IsType<OkObjectResult>(await controller.GetSchema());
         var schema = Assert.IsType<AdminUiSchemaResponse>(result.Value);
         var provider = Assert.Single(schema.Providers, item => item.Id == "fixture-extension");
         Assert.Equal("Fixture provider", provider.Description);
@@ -288,7 +355,7 @@ public sealed class HostCompositionTests
             Assert.Equal(TimeSpan.FromSeconds(5), clients.CreateClient(name).Timeout));
     }
 
-    private static ControllerContext Context(bool administrator)
+    private static ControllerContext Context(bool administrator, Guid? tenantId = null)
     {
         var httpContext = new DefaultHttpContext();
         httpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
@@ -297,6 +364,7 @@ public sealed class HostCompositionTests
             UserId = "fixture",
             UserName = "fixture",
             IsAdministrator = administrator,
+            TenantId = tenantId,
             JellyfinAccessToken = "fixture",
             ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
             LastSeenUtc = DateTime.UtcNow
@@ -416,6 +484,8 @@ public sealed class HostCompositionTests
     {
         private readonly string _backend;
         private readonly string _providerAccountManagementMode;
+        private readonly string _releaseProfile;
+        private readonly EffectiveProviderPolicySnapshot? _effectivePolicy;
         private readonly string _extensionDirectory = Path.Combine(
             Path.GetTempPath(),
             "allstarr-tests",
@@ -424,16 +494,21 @@ public sealed class HostCompositionTests
 
         public AllstarrFactory(
             string backend,
-            string providerAccountManagementMode = "Hybrid")
+            string providerAccountManagementMode = "Hybrid",
+            string releaseProfile = "core",
+            EffectiveProviderPolicySnapshot? effectivePolicy = null)
         {
             _backend = backend;
             _providerAccountManagementMode = providerAccountManagementMode;
+            _releaseProfile = releaseProfile;
+            _effectivePolicy = effectivePolicy;
         }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Testing");
             builder.UseSetting("Backend:Type", _backend);
+            builder.UseSetting("Release:Profile", _releaseProfile);
             builder.UseSetting(
                 "ProviderAccounts:ManagementMode",
                 _providerAccountManagementMode);
@@ -442,6 +517,7 @@ public sealed class HostCompositionTests
                 configuration.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["Backend:Type"] = _backend,
+                    ["Release:Profile"] = _releaseProfile,
                     ["ProviderAccounts:ManagementMode"] = _providerAccountManagementMode,
                     ["SpotifyApi:Enabled"] = "false",
                     ["SpotifyImport:Enabled"] = "false",
@@ -453,7 +529,18 @@ public sealed class HostCompositionTests
                     ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = "applemusic,deezer,qobuz,spotify"
                 });
             });
-            builder.ConfigureServices(services => services.RemoveAll<IHostedService>());
+            builder.ConfigureServices(services =>
+            {
+                services.RemoveAll<IHostedService>();
+                if (_effectivePolicy == null) return;
+                services.RemoveAll<IEffectiveProviderPolicyResolver>();
+                var resolver = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+                resolver.Setup(item => item.ResolveAsync(
+                        _effectivePolicy.TenantId,
+                        It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(_effectivePolicy);
+                services.AddSingleton(resolver.Object);
+            });
         }
 
         protected override void Dispose(bool disposing)

@@ -279,6 +279,11 @@ public sealed class CanonicalRecordingRecord
     public Guid Id { get; set; }
     public Guid TenantId { get; set; }
     public Guid CreatedByUserId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string? Disambiguation { get; set; }
+    public long? DurationMilliseconds { get; set; }
+    public bool? IsExplicit { get; set; }
+    public bool IsProvisional { get; set; }
     public string? Isrc { get; set; }
     public string? MusicBrainzRecordingId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

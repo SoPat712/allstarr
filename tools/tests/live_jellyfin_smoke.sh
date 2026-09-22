@@ -1264,6 +1264,10 @@ check_external_provider_case() {
 echo "functional-and-security-checks"
 check_dashboard_session
 check_public_code "public bootstrap" "200" "$ALLSTARR_BASE/System/Info/Public"
+compare_projection "public identity parity" \
+    "$DIRECT_BASE/System/Info/Public" \
+    "$ALLSTARR_BASE/System/Info/Public" \
+    'del(.LocalAddress)'
 direct_version="$(curl -fsS --max-time "$TIMEOUT_SECONDS" "$DIRECT_BASE/System/Info/Public" |
     jq -r '.Version // empty' || true)"
 allstarr_version="$(curl -fsS --max-time "$TIMEOUT_SECONDS" "$ALLSTARR_BASE/System/Info/Public" |

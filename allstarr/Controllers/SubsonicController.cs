@@ -262,9 +262,9 @@ public partial class SubsonicController : ControllerBase
                     {
                         await _managedTrackCache.WrapAsync(
                             routed,
+                            CurrentProtocolContext,
                             routed.ServingProviderId,
                             routed.ServingExternalId ?? externalId!,
-                            requestedQuality,
                             HttpMethods.IsHead(Request.Method),
                             () => _providerGateway.GetSongAsync(CurrentProtocolContext, routed.ServingProviderId,
                                 routed.ServingExternalId ?? externalId!),

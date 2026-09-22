@@ -2,8 +2,11 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
+using System.Collections.Immutable;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Routing;
+using allstarr.Core.Settings;
+using allstarr.Core.Downloads;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
@@ -96,7 +99,9 @@ public sealed record ProtocolProviderStream(
     string ServingProviderId,
     string? ServingExternalId = null,
     Guid? ServingAccountId = null,
-    bool IsCached = false);
+    bool IsCached = false,
+    ProviderAudioQuality EffectiveQuality = ProviderAudioQuality.Any,
+    string SelectionReason = "provider-priority");
 
 public sealed class ProtocolProviderGateway(
     IProviderRouter router,
@@ -108,7 +113,8 @@ public sealed class ProtocolProviderGateway(
     IApplicationCache? applicationCache = null,
     ILogger<ProtocolProviderGateway>? logger = null,
     ManagedTrackCacheService? managedTrackCache = null,
-    PlaybackDeliveryActivityStore? playbackActivity = null) : IProtocolProviderGateway
+    PlaybackDeliveryActivityStore? playbackActivity = null,
+    IEffectiveProviderPolicyResolver? effectivePolicies = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
     private const int ProviderSearchConcurrency = 4;
@@ -151,15 +157,18 @@ public sealed class ProtocolProviderGateway(
                  NormalizeProvider(itemProvider) == requestedProviderId);
         }
         var actor = protocol.RequireActor();
+        var effectivePolicy = effectivePolicies == null
+            ? null
+            : await effectivePolicies.ResolveAsync(actor.TenantId, protocol.CancellationToken);
         var playableProviders = songLimit > 0
             ? (await ResolvePlayableProviderOrderAsync(
                     protocol,
                     actor,
-                    ResolveProviderOrder(ProviderCapabilityKind.Streaming)))
+                    ResolveProviderOrder(ProviderCapabilityKind.Streaming, effectivePolicy)))
                 .ToHashSet(StringComparer.Ordinal)
             : [];
         var fetchLimit = Math.Clamp(Math.Max(songLimit, Math.Max(albumLimit, artistLimit)), 1, 200);
-        var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Metadata)
+        var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Metadata, effectivePolicy)
             .Where(item => requestedProviderId == null || item == requestedProviderId)
             .ToArray();
         if (providerOrder.Length == 0) return new SearchResult();
@@ -256,6 +265,18 @@ public sealed class ProtocolProviderGateway(
         }
 
         var actor = protocol.RequireActor();
+        if (effectivePolicies != null)
+        {
+            var effectivePolicy = await effectivePolicies.ResolveAsync(
+                actor.TenantId,
+                protocol.CancellationToken);
+            configuredProviderOrder = ResolveProviderOrder(
+                    ProviderCapabilityKind.Streaming,
+                    effectivePolicy)
+                .Select(NormalizeProvider)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+        }
         var providerOrder = await ResolvePlayableProviderOrderAsync(
             protocol, actor, configuredProviderOrder);
         if (providerOrder.Count == 0) return [];
@@ -495,7 +516,10 @@ public sealed class ProtocolProviderGateway(
         if (protocol.Actor is null) return [];
 
         var actor = protocol.RequireActor();
-        var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Playlist);
+        var effectivePolicy = effectivePolicies == null
+            ? null
+            : await effectivePolicies.ResolveAsync(actor.TenantId, protocol.CancellationToken);
+        var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Playlist, effectivePolicy);
         var plan = await router.PlanAsync<IProviderPlaylistCapability>(Request(
             protocol,
             actor,
@@ -650,6 +674,13 @@ public sealed class ProtocolProviderGateway(
             protocol.Deadline, opening.Token, protocol.Client, protocol.LibraryScopeId);
         providerId = NormalizeProvider(providerId);
         var actor = protocol.RequireActor();
+        var effectivePolicy = effectivePolicies == null
+            ? null
+            : await effectivePolicies.ResolveAsync(actor.TenantId, protocol.CancellationToken);
+        if (quality == ProviderAudioQuality.Any && effectivePolicy != null)
+        {
+            quality = AudioQualityPolicy.RequestedQuality(effectivePolicy.AudioQuality);
+        }
         var exactRouteMissKey = CacheKeyBuilder.BuildPlaybackRouteNegativeKey(
             actor.TenantId,
             actor.EffectiveUserId,
@@ -670,22 +701,29 @@ public sealed class ProtocolProviderGateway(
         var rangeStart = parsedRange?.Ranges.Single().From;
         var trackId = new ProviderExternalResourceId(
             providerId, ProviderResourceKind.Track, externalId);
-        var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Streaming)
-            .Append(providerId)
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+        var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Streaming, effectivePolicy);
+        if (effectivePolicy?.DisabledProviders.Contains(providerId) != true)
+        {
+            providerOrder = providerOrder.Append(providerId).Distinct(StringComparer.Ordinal).ToArray();
+        }
         var itemId = ProtocolItemId(trackId);
         var previous = playbackActivity?.StreamFor(protocol, itemId, quality);
         var resuming = parsedRange != null && rangeStart != 0;
         var hasPlaybackIdentity = !string.IsNullOrWhiteSpace(protocol.Client.DeviceId);
-        if (!hasPlaybackIdentity) providerOrder = [providerId];
+        if (!hasPlaybackIdentity)
+        {
+            if (!providerOrder.Contains(providerId, StringComparer.Ordinal)) return null;
+            providerOrder = [providerId];
+        }
         if (resuming)
         {
             // Byte offsets cannot be transferred between two encodings of the same recording.
             if (hasPlaybackIdentity && playbackActivity != null && previous == null)
                 throw new HttpRequestException("Restart playback before seeking this external track.", null,
                     HttpStatusCode.RequestedRangeNotSatisfiable);
-            providerOrder = [previous?.ProviderId ?? providerId];
+            var resumeProvider = previous?.ProviderId ?? providerId;
+            if (!providerOrder.Contains(resumeProvider, StringComparer.Ordinal)) return null;
+            providerOrder = [resumeProvider];
         }
         var plan = await router.PlanAsync<IProviderStreamingCapability>(Request(
             protocol,
@@ -721,24 +759,28 @@ public sealed class ProtocolProviderGateway(
             return null;
         }
 
-        foreach (var candidate in plan.Candidates)
-        {
-            protocol.CancellationToken.ThrowIfCancellationRequested();
-            var servingTrack = candidate.TrackId ?? trackId;
-            if (resuming && previous != null &&
-                (servingTrack.Value != previous.ExternalId || candidate.Context.Account?.AccountId != previous.AccountId))
-                throw new HttpRequestException("The previous playback source is no longer available. Restart playback.", null,
-                    HttpStatusCode.RequestedRangeNotSatisfiable);
-            var cached = managedTrackCache == null ? null : await managedTrackCache.TryOpenAsync(
-                servingTrack, candidate.Context.Account?.AccountId, quality, protocol.CancellationToken);
-            if (cached != null) return Opened(cached);
-        }
-
+        string? fallbackReason = null;
         for (var candidateIndex = 0; candidateIndex < plan.Candidates.Count; candidateIndex++)
         {
             protocol.CancellationToken.ThrowIfCancellationRequested();
             var candidate = plan.Candidates[candidateIndex];
             var servingTrack = candidate.TrackId ?? trackId;
+            if (resuming && previous != null &&
+                (servingTrack.Value != previous.ExternalId || candidate.Context.Account?.AccountId != previous.AccountId))
+                throw new HttpRequestException("The previous playback source is no longer available. Restart playback.", null,
+                    HttpStatusCode.RequestedRangeNotSatisfiable);
+            var routeReason = string.Join(':',
+                fallbackReason ?? "provider-priority",
+                candidate.Context.Account?.ResolutionReason ?? "account-free");
+            var cacheScope = new DownloadedSongMappingScope(
+                actor.TenantId,
+                candidate.Context.Account?.AccountId,
+                protocol.LibraryScopeId,
+                quality);
+            var cached = managedTrackCache == null ? null : await managedTrackCache.TryOpenAsync(
+                servingTrack, cacheScope, protocol.CancellationToken);
+            if (cached != null)
+                return Opened(cached with { SelectionReason = $"{routeReason}:managed-cache" });
             var leaseRequest = new ProviderStreamLeaseRequest(
                 servingTrack,
                 quality,
@@ -773,13 +815,18 @@ public sealed class ProtocolProviderGateway(
             {
                 var (response, lease) = outcome.RequireValue();
                 return Opened(new ProtocolProviderStream(response, lease, candidate.Provider.Id,
-                    servingTrack.Value, candidate.Context.Account?.AccountId));
+                    servingTrack.Value, candidate.Context.Account?.AccountId,
+                    EffectiveQuality: quality,
+                    SelectionReason: $"{routeReason}:remote"));
             }
-            if (!resuming && router.EvaluateFallback(plan, candidateIndex, outcome.Error!).Disposition ==
-                ProviderFallbackDisposition.Advance)
+            var fallback = resuming ? null : router.EvaluateFallback(plan, candidateIndex, outcome.Error!);
+            if (fallback?.Disposition == ProviderFallbackDisposition.Advance)
             {
                 logger?.LogInformation("Playback advanced from {Provider} after {FailureCode}",
                     candidate.Provider.Id, outcome.Error!.Code);
+                fallbackReason = fallback.ReasonCode.StartsWith("fallback-", StringComparison.Ordinal)
+                    ? fallback.ReasonCode
+                    : $"fallback-{fallback.ReasonCode}";
                 continue;
             }
             ThrowRouteFailure(outcome.Error!);
@@ -791,6 +838,8 @@ public sealed class ProtocolProviderGateway(
         {
             stream.Response.Headers.Remove("X-Allstarr-Provider");
             stream.Response.Headers.Add("X-Allstarr-Provider", stream.ServingProviderId);
+            stream.Response.Headers.Remove("X-Allstarr-Route-Reason");
+            stream.Response.Headers.Add("X-Allstarr-Route-Reason", stream.SelectionReason);
             if (!headOnly) playbackActivity?.StreamOpened(protocol, itemId, quality, stream);
             logger?.LogInformation("Opened external playback from {Provider} (cached: {Cached})",
                 stream.ServingProviderId, stream.IsCached);
@@ -1020,27 +1069,39 @@ public sealed class ProtocolProviderGateway(
                                    .AccountRequirement == ProviderAccountRequirement.None);
     }
 
-    private IReadOnlyList<string> ResolveProviderOrder(ProviderCapabilityKind capability)
+    private IReadOnlyList<string> ResolveProviderOrder(
+        ProviderCapabilityKind capability,
+        EffectiveProviderPolicySnapshot? effectivePolicy = null)
     {
-        var (settingKey, environmentKey, fallback) = capability switch
+        var definition = ProviderOrderPolicyCatalog.Find(capability);
+        if (definition == null) return [];
+        var availableProviders = registry.FindByCapability(capability, includeNonOperational: true)
+            .Select(provider => NormalizeProvider(provider.Id))
+            .ToArray();
+        if (effectivePolicy != null)
         {
-            ProviderCapabilityKind.Metadata => ("Providers:MetadataOrder", "MULTI_PROVIDER_METADATA_ORDER", "apple-download,deezer,qobuz"),
-            ProviderCapabilityKind.Playlist => ("Providers:PlaylistOrder", "MULTI_PROVIDER_PLAYLIST_ORDER", "spotify,apple-download,deezer,qobuz"),
-            ProviderCapabilityKind.Lyrics => ("Providers:LyricsOrder", "MULTI_PROVIDER_LYRICS_ORDER", "spotify,apple-download,lrclib"),
-            ProviderCapabilityKind.Streaming => ("Providers:StreamingOrder", "MULTI_PROVIDER_STREAMING_ORDER", "apple-download,deezer,qobuz"),
-            ProviderCapabilityKind.Download => ("Providers:DownloadOrder", "MULTI_PROVIDER_DOWNLOAD_ORDER", "apple-download,deezer,qobuz"),
-            _ => (string.Empty, string.Empty, string.Empty)
-        };
-        var configured = configuration?[settingKey] ?? configuration?[environmentKey] ?? fallback;
-        var ordered = configured.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            return effectivePolicy.ApplyProviderAvailability(capability, availableProviders);
+        }
+        var configured = (configuration?[definition.SettingKey] ??
+                          configuration?[definition.BootstrapKey] ??
+                          definition.DefaultValue)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var disabled = (configuration?["Providers:Disabled"] ??
+                        configuration?["MULTI_PROVIDER_DISABLED_PROVIDERS"] ??
+                        string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(NormalizeProvider)
+            .ToImmutableHashSet(StringComparer.Ordinal);
+        var ordered = configured
+            .Select(NormalizeProvider)
+            .Where(providerId => !disabled.Contains(providerId))
             .Where(providerId => registry.FindByCapability(capability, includeNonOperational: true)
                 .Any(provider => provider.Id.Equals(providerId, StringComparison.Ordinal)))
             .Distinct(StringComparer.Ordinal)
             .ToList();
-        ordered.AddRange(registry.FindByCapability(capability, includeNonOperational: true)
-            .Select(provider => provider.Id)
-            .Where(providerId => !ordered.Contains(providerId, StringComparer.Ordinal))
+        ordered.AddRange(availableProviders
+            .Where(providerId => !disabled.Contains(providerId) &&
+                                 !ordered.Contains(providerId, StringComparer.Ordinal))
             .OrderBy(providerId => providerId, StringComparer.Ordinal));
         return ordered;
     }

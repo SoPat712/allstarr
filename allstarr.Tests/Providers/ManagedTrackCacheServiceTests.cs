@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Headers;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Downloads;
+using allstarr.Core.Identity;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
@@ -27,11 +29,14 @@ public sealed class ManagedTrackCacheServiceTests
             var provider = fallback ? "qobuz" : "deezer";
             var externalId = fallback ? "other-track" : "track-1";
             var local = new Mock<ILocalLibraryService>(MockBehavior.Strict);
-            local.Setup(item => item.GetLocalPathForExternalSongAsync(provider, externalId))
+            local.Setup(item => item.GetLocalPathForExternalSongAsync(
+                    It.IsAny<DownloadedSongMappingScope>(), provider, externalId))
                 .ReturnsAsync((string?)null);
-            local.Setup(item => item.RegisterDownloadedSongAsync(It.IsAny<Song>(), It.IsAny<string>()))
-                .Callback<Song, string>((song, path) =>
+            local.Setup(item => item.RegisterDownloadedSongAsync(
+                    It.IsAny<DownloadedSongMappingScope>(), It.IsAny<Song>(), It.IsAny<string>()))
+                .Callback<DownloadedSongMappingScope, Song, string>((scope, song, path) =>
                 {
+                    Assert.Equal(ProviderAudioQuality.Lossless, scope.AudioQuality);
                     Assert.Equal(provider, song.ExternalProvider);
                     Assert.Equal(externalId, song.ExternalId);
                     registeredPath = path;
@@ -42,10 +47,15 @@ public sealed class ManagedTrackCacheServiceTests
             response.Content.Headers.ContentRange = new ContentRangeHeaderValue(0, 3, 4);
 
             await service.WrapAsync(
-                ProviderStream(response) with { ServingProviderId = provider, ServingExternalId = externalId },
+                ProviderStream(response) with
+                {
+                    ServingProviderId = provider,
+                    ServingExternalId = externalId,
+                    EffectiveQuality = ProviderAudioQuality.Lossless
+                },
+                Context(),
                 "deezer",
                 "track-1",
-                ProviderAudioQuality.Any,
                 headOnly: false,
                 () => Task.FromResult<Song?>(new Song
                 {
@@ -80,9 +90,9 @@ public sealed class ManagedTrackCacheServiceTests
 
             await service.WrapAsync(
                 ProviderStream(response),
+                Context(),
                 "deezer",
                 "track-2",
-                ProviderAudioQuality.Any,
                 headOnly: false,
                 () => Task.FromResult<Song?>(null),
                 CancellationToken.None);
@@ -94,7 +104,7 @@ public sealed class ManagedTrackCacheServiceTests
                 ? Directory.GetFiles(root, "*", SearchOption.AllDirectories)
                 : []);
             local.Verify(item => item.RegisterDownloadedSongAsync(
-                It.IsAny<Song>(), It.IsAny<string>()), Times.Never);
+                It.IsAny<DownloadedSongMappingScope>(), It.IsAny<Song>(), It.IsAny<string>()), Times.Never);
         }
         finally
         {
@@ -120,9 +130,9 @@ public sealed class ManagedTrackCacheServiceTests
 
                 await service.WrapAsync(
                     ProviderStream(response),
+                    Context(),
                     "deezer",
                     "track-3",
-                    ProviderAudioQuality.Any,
                     headOnly: false,
                     () => Task.FromResult<Song?>(null),
                     CancellationToken.None);
@@ -177,6 +187,24 @@ public sealed class ManagedTrackCacheServiceTests
             new ProviderMediaFormat("audio/flac", "flac", "flac"),
             ProviderStreamRetryBehavior.DoNotRetry),
         "deezer");
+
+    private static ProtocolExecutionContext Context() => new(
+        ProtocolKind.Jellyfin,
+        "backend",
+        "principal",
+        new AllstarrPrincipal(
+            Guid.Parse("10000000-0000-0000-0000-000000000001"),
+            Guid.Parse("20000000-0000-0000-0000-000000000001"),
+            "jellyfin",
+            "backend",
+            "principal",
+            "User",
+            false),
+        "cache-test",
+        DateTimeOffset.UtcNow.AddMinutes(1),
+        CancellationToken.None,
+        new ProtocolClientDescriptor("client", "device"),
+        libraryScopeId: "music");
 
     private static string CreateRoot()
     {

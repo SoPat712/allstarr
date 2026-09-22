@@ -37,6 +37,7 @@ services:
     - host.docker.internal:host-gateway
     environment:
       ASPNETCORE_ENVIRONMENT: Production
+      Release__Profile: "${ALLSTARR_RELEASE_PROFILE:-core}"
       Admin__Containerized: 'true'
       Admin__ContainerGateway: auto
       Storage__Provider: Postgres

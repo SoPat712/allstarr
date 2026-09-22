@@ -79,6 +79,7 @@ public class DownloadActivityController : ControllerBase
             var position = (int)Math.Max(0, state.PositionTicks / TimeSpan.TicksPerSecond);
             deliveryState.TryGetValue(DeliveryKey(state.UserId, itemId), out var delivery);
             var streamSource = _playbackDeliveries?.StreamFor(state.TenantId, state.UserId, state.DeviceId, itemId);
+            var externalIdentity = ExternalPlaybackMetadataResolver.ParseTrackIdentity(itemId);
             var threshold = duration is >= 30 ? Math.Min(duration.Value / 2d, 240d) : (double?)null;
             items.Add(new NowPlayingEntry
             {
@@ -96,8 +97,10 @@ public class DownloadActivityController : ControllerBase
                 Album = metadata?.Album,
                 ProviderId = streamSource?.ProviderId ?? ResolvePlaybackProvider(itemId),
                 CatalogProviderId = ResolvePlaybackProvider(itemId),
-                SourceConfirmed = streamSource != null || ExternalPlaybackMetadataResolver.ParseTrackIdentity(itemId) == null,
+                SourceConfirmed = streamSource != null || externalIdentity == null,
                 Cached = streamSource?.Cached ?? false,
+                RouteReason = streamSource?.SelectionReason ??
+                    (externalIdentity == null ? "native-local-library" : null),
                 ProviderAccountName = streamSource?.AccountId == delivery?.Event.ProviderAccountId
                     ? delivery?.ProviderAccountName : null,
                 ArtworkUrl = string.IsNullOrWhiteSpace(metadata?.CoverArtUrl) ? null : ArtworkUrl(itemId),
@@ -429,6 +432,7 @@ public class DownloadActivityController : ControllerBase
         public required string CatalogProviderId { get; init; }
         public bool SourceConfirmed { get; init; }
         public bool Cached { get; init; }
+        public string? RouteReason { get; init; }
         public string? ProviderAccountName { get; init; }
         public string? ArtworkUrl { get; init; }
         public int PositionSeconds { get; init; }

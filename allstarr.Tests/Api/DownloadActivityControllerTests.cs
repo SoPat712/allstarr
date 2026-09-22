@@ -157,12 +157,34 @@ public sealed class DownloadActivityControllerTests
         Assert.Equal(confirmed ? "qobuz" : "deezer", item.GetProperty("ProviderId").GetString());
         Assert.Equal("deezer", item.GetProperty("CatalogProviderId").GetString());
         Assert.Equal(confirmed, item.GetProperty("SourceConfirmed").GetBoolean());
+        Assert.Equal(confirmed ? "provider-priority" : null,
+            item.GetProperty("RouteReason").GetString());
         Assert.Equal(0.25, item.GetProperty("Progress").GetDouble());
         Assert.True(item.GetProperty("Scrobbled").GetBoolean());
         Assert.Equal(60, item.GetProperty("ScrobbleThresholdSeconds").GetDouble());
         Assert.False(item.GetProperty("ScrobbleEligible").GetBoolean());
         Assert.Empty(item.GetProperty("ScrobbleDeliveries").EnumerateArray());
         Assert.Equal("/api/admin/ui/users/backend-user-1/avatar", item.GetProperty("AvatarUrl").GetString());
+    }
+
+    [Fact]
+    public async Task NowPlaying_IdentifiesNativeLocalPlaybackWithoutAProviderLease()
+    {
+        var tenantId = Guid.CreateVersion7();
+        var source = new StubPlaybackSource(new PlaybackActivityState(
+            "device-1", "local-item", 0, DateTime.UtcNow, TenantId: tenantId));
+        var controller = CreateController([], [source],
+            [new StubMetadataResolver(new PlaybackTrackMetadata("Local", "Artist", null, null))]);
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = AdministratorSession(tenantId);
+
+        var result = await controller.GetNowPlaying(CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var item = Assert.Single(document.RootElement.GetProperty("items").EnumerateArray());
+        Assert.Equal("jellyfin", item.GetProperty("ProviderId").GetString());
+        Assert.Equal("native-local-library", item.GetProperty("RouteReason").GetString());
+        Assert.True(item.GetProperty("SourceConfirmed").GetBoolean());
     }
 
     [Fact]

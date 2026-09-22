@@ -3,6 +3,8 @@ using allstarr.Core.Identity;
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
+using System.Collections.Immutable;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
 using allstarr.Services.Spotify;
@@ -34,6 +36,37 @@ public sealed class PlaylistPlayableSearchServiceTests
         Assert.False(service.CanUseProvider("download_extension"));
         Assert.False(service.CanUseProvider("musicbrainz"));
         Assert.False(service.CanUseProvider("metadata-extension"));
+    }
+
+    [Fact]
+    public async Task Provider_eligibility_uses_the_tenant_snapshot()
+    {
+        var tenantId = Guid.CreateVersion7();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
+            .Returns(["qobuz", "deezer"]);
+        var policies = new Mock<IEffectiveProviderPolicyResolver>();
+        policies.Setup(item => item.ResolveAsync(tenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new EffectiveProviderPolicySnapshot(
+                tenantId,
+                new Dictionary<ProviderCapabilityKind, ImmutableArray<string>>
+                {
+                    [ProviderCapabilityKind.Streaming] = ["qobuz", "deezer"]
+                }.ToImmutableDictionary(),
+                new[] { "qobuz" }.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase),
+                AudioQualityPolicy.DefaultStep,
+                0.07));
+        var service = new PlaylistPlayableSearchService(
+            gateway.Object,
+            new TrackMatchDecisionEngine(),
+            null!,
+            new IdentityOptions(),
+            Options.Create(new JellyfinSettings()),
+            NullLogger<PlaylistPlayableSearchService>.Instance,
+            policies.Object);
+
+        Assert.False(await service.CanUseProviderAsync(tenantId, "qobuz"));
+        Assert.True(await service.CanUseProviderAsync(tenantId, "deezer"));
     }
 
     [Fact]

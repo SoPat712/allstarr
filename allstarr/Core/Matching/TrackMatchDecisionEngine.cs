@@ -107,7 +107,7 @@ public sealed record TrackMatchDecision(
 
 public sealed class TrackMatchPolicy
 {
-    public double LocalPriorityWindow { get; set; } = 0.07;
+    public double LocalPriorityWindow { get; init; } = 0.07;
 
     public IReadOnlyList<double> ProviderPriorityWindows { get; init; } = [0.05, 0.03, 0.01];
 
@@ -147,6 +147,16 @@ public sealed class TrackMatchDecisionEngine
         _policy = policy ?? new TrackMatchPolicy();
         _policy.Validate();
     }
+
+    public TrackMatchDecisionEngine WithLocalPriorityWindow(double value) => new(new TrackMatchPolicy
+    {
+        LocalPriorityWindow = value,
+        ProviderPriorityWindows = _policy.ProviderPriorityWindows,
+        AcceptThreshold = _policy.AcceptThreshold,
+        SuggestThreshold = _policy.SuggestThreshold,
+        AmbiguityDelta = _policy.AmbiguityDelta,
+        DurationToleranceSeconds = _policy.DurationToleranceSeconds
+    });
 
     public static long LibraryIndexRevision(IEnumerable<LocalTrackMatchCandidate> candidates)
     {

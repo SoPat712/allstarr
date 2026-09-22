@@ -6,6 +6,9 @@ on:
     tags: ["v*"]
     branches: [main, beta]
 
+permissions:
+  contents: read
+
 env:
   DOTNET_VERSION: "10.0.301"
   NODE_VERSION: "22.23.1"

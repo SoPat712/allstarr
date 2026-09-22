@@ -1,5 +1,6 @@
 using allstarr.Services.Local;
 using allstarr.Core.Downloads;
+using allstarr.Core.Capabilities;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
 using allstarr.Models.Download;
@@ -128,6 +129,38 @@ public class LocalLibraryServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ScopedDownloadedSong_IsVisibleOnlyToTheExactPlaybackScope()
+    {
+        var tenant = Guid.CreateVersion7();
+        var account = Guid.CreateVersion7();
+        var scope = new DownloadedSongMappingScope(
+            tenant, account, "music", ProviderAudioQuality.Lossless);
+        var song = new Song
+        {
+            Id = "ext-deezer-song-private",
+            Title = "Scoped song",
+            Artist = "Artist",
+            Album = "Album",
+            ExternalProvider = "deezer",
+            ExternalId = "private"
+        };
+        var localPath = Path.Combine(_testDownloadPath, "scoped.flac");
+        await File.WriteAllTextAsync(localPath, "audio");
+
+        await _service.RegisterDownloadedSongAsync(scope, song, localPath);
+
+        Assert.Equal(localPath, await _service.GetLocalPathForExternalSongAsync(
+            scope, "deezer", "private"));
+        Assert.Null(await _service.GetLocalPathForExternalSongAsync(
+            scope with { TenantId = Guid.CreateVersion7() }, "deezer", "private"));
+        Assert.Null(await _service.GetLocalPathForExternalSongAsync(
+            scope with { ProviderAccountId = Guid.CreateVersion7() }, "deezer", "private"));
+        Assert.Null(await _service.GetLocalPathForExternalSongAsync(
+            scope with { AudioQuality = ProviderAudioQuality.Lossy }, "deezer", "private"));
+        Assert.Null(await _service.GetLocalPathForExternalSongAsync("deezer", "private"));
+    }
+
+    [Fact]
     public async Task GetLocalPathForExternalSongAsync_WhenFileDeleted_ReturnsNull()
     {
         var song = new Song
@@ -216,14 +249,24 @@ public class LocalLibraryServiceTests : IDisposable
 
         public Task<DownloadedSongMappingEntity?> FindAsync(string providerId, string externalId, CancellationToken cancellationToken = default)
         {
-            var key = $"{providerId}:{externalId}";
+            var key = $"{DownloadedSongMappingScope.LegacyKey}:{providerId}:{externalId}";
             _items.TryGetValue(key, out var mapping);
+            return Task.FromResult(mapping);
+        }
+
+        public Task<DownloadedSongMappingEntity?> FindAsync(
+            DownloadedSongMappingScope scope,
+            string providerId,
+            string externalId,
+            CancellationToken cancellationToken = default)
+        {
+            _items.TryGetValue($"{scope.Key}:{providerId}:{externalId}", out var mapping);
             return Task.FromResult(mapping);
         }
 
         public Task UpsertAsync(DownloadedSongMappingEntity mapping, CancellationToken cancellationToken = default)
         {
-            var key = $"{mapping.ProviderId}:{mapping.ExternalId}";
+            var key = $"{mapping.ScopeKey}:{mapping.ProviderId}:{mapping.ExternalId}";
             _items[key] = mapping;
             return Task.CompletedTask;
         }

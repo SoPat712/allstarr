@@ -1,5 +1,6 @@
 using System.Text.Json;
 using allstarr.Core.Intelligence;
+using allstarr.Core.Configuration;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Playlists;
@@ -116,6 +117,41 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
         Assert.Equal(0, (await _engine.TickAsync()).Claimed);
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Empty(await db.Jobs.ToListAsync());
+    }
+
+    [Fact]
+    public async Task CoreRelease_LeavesDeferredRecommendationScheduleUntouched()
+    {
+        await ConfigureRecommendationSchedule();
+        _clock.UtcNow = _clock.UtcNow.AddMinutes(1);
+        DateTimeOffset? nextRun;
+        long revision;
+        await using (var before = await _factory.CreateDbContextAsync())
+        {
+            var schedule = await before.JobSchedules.SingleAsync();
+            nextRun = schedule.NextRunAt;
+            revision = schedule.Revision;
+        }
+        var options = new DurableJobOptions();
+        var queue = new DurableJobQueue(
+            _factory,
+            options,
+            new JobPayloadPolicy(options),
+            _clock);
+        var core = new DurableScheduleEngine(
+            _factory,
+            queue,
+            _clock,
+            ReleaseComposition.Core);
+
+        var result = await core.TickAsync();
+
+        Assert.Equal(new DurableScheduleTickResult(0, 0, 0, 0), result);
+        await using var after = await _factory.CreateDbContextAsync();
+        var unchanged = await after.JobSchedules.SingleAsync();
+        Assert.Equal(nextRun, unchanged.NextRunAt);
+        Assert.Equal(revision, unchanged.Revision);
+        Assert.Empty(await after.Jobs.ToListAsync());
     }
 
     [Fact]

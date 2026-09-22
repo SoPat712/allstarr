@@ -1,6 +1,9 @@
 export type Session = {
   authenticated: boolean;
   backend: string;
+  features?: {
+    intelligence: boolean;
+  };
   user?: {
     id: string;
     name: string;
@@ -152,6 +155,7 @@ export type NowPlayingItem = {
   catalogProviderId?: string;
   sourceConfirmed?: boolean;
   cached?: boolean;
+  routeReason?: string | null;
   artworkUrl?: string | null;
   positionSeconds: number;
   durationSeconds?: number | null;

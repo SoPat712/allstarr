@@ -162,6 +162,7 @@ const schema = {
 const responses: Record<string, unknown> = {
   "/api/admin/auth/me": {
     authenticated: true, backend: "Jellyfin",
+    features: { intelligence: true },
     user: {
       id: "user", name: "Tester", isAdministrator: true,
       avatarUrl: "/api/admin/auth/me/avatar?user=user",
@@ -514,6 +515,7 @@ async function mockApi(page: Page, options: {
   fail?: string[];
   audioMuseUnavailable?: boolean;
   audioMuseDisabledAccount?: boolean;
+  intelligenceEnabled?: boolean;
 } = {}) {
   await page.route("**/fonts/**", (route) => route.fulfill({ status: 204 }));
   await page.route("**/images/providers/**", (route) => route.fulfill({
@@ -541,6 +543,12 @@ async function mockApi(page: Page, options: {
       return;
     }
     let body = responses[`${url.pathname}${url.search}`] ?? responses[url.pathname];
+    if (url.pathname === "/api/admin/auth/me" && options.intelligenceEnabled === false) {
+      body = {
+        ...(structuredClone(body) as Record<string, unknown>),
+        features: { intelligence: false },
+      };
+    }
     if (url.pathname === "/api/admin/provider-accounts" && route.request().method() === "GET" &&
         options.audioMuseDisabledAccount) {
       const accountResponse = structuredClone(body) as typeof responses["/api/admin/provider-accounts"];
@@ -896,6 +904,21 @@ const stateRoutes = [
   ["#/integrations/services", "Integrations", "Loading Services", "/api/admin/provider-accounts", ["/api/admin/ui/schema", "/api/admin/provider-accounts"]],
   ["#/settings/general", "Settings", "Loading Settings", "/api/admin/ui/schema", ["/api/admin/ui/schema"]],
 ] as const;
+
+test("core release does not expose the deferred Intelligence route", async ({ page }) => {
+  const intelligenceRequests: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.startsWith("/api/admin/intelligence")) {
+      intelligenceRequests.push(request.url());
+    }
+  });
+  await mockApi(page, { intelligenceEnabled: false });
+
+  await page.goto("#/intelligence");
+
+  await expect(page.getByRole("heading", { name: "This Allstarr view does not exist." })).toBeVisible();
+  expect(intelligenceRequests).toEqual([]);
+});
 
 for (const viewport of viewports) {
   test.describe(`${viewport.width}x${viewport.height}`, () => {

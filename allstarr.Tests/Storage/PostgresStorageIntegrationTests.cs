@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Configuration;
+using allstarr.Core.Downloads;
 using allstarr.Core.Favorites;
 using allstarr.Core.Jobs;
 using allstarr.Core.Identity;
@@ -26,6 +27,46 @@ namespace allstarr.Tests;
 
 public sealed class PostgresStorageIntegrationTests
 {
+    [Fact]
+    [Trait("Category", "Postgres")]
+    public async Task DownloadedTrackCache_SeparatesTenantsAccountsLibrariesAndQuality()
+    {
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        var store = new EfDownloadedSongMappingStore(new TestDbContextFactory(database.Options));
+        var tenant = Guid.CreateVersion7();
+        var otherTenant = Guid.CreateVersion7();
+        var account = Guid.CreateVersion7();
+        var scope = new DownloadedSongMappingScope(
+            tenant, account, "music", ProviderAudioQuality.Lossless);
+        await store.UpsertAsync(new DownloadedSongMappingEntity
+        {
+            Id = Guid.CreateVersion7(),
+            ScopeKey = scope.Key,
+            TenantId = tenant,
+            ProviderAccountId = account,
+            LibraryScopeId = "music",
+            AudioQuality = ProviderAudioQuality.Lossless,
+            ProviderId = "deezer",
+            ExternalId = "track",
+            LocalPath = "/managed/cache/track.flac",
+            Title = "Track",
+            Artist = "Artist",
+            Album = "Album",
+            DownloadedAt = DateTimeOffset.UtcNow
+        });
+
+        Assert.NotNull(await store.FindAsync(scope, "deezer", "track"));
+        Assert.Null(await store.FindAsync(
+            scope with { TenantId = otherTenant }, "deezer", "track"));
+        Assert.Null(await store.FindAsync(
+            scope with { ProviderAccountId = Guid.CreateVersion7() }, "deezer", "track"));
+        Assert.Null(await store.FindAsync(
+            scope with { LibraryScopeId = "other" }, "deezer", "track"));
+        Assert.Null(await store.FindAsync(
+            scope with { AudioQuality = ProviderAudioQuality.HighResolution }, "deezer", "track"));
+        Assert.Null(await store.FindAsync("deezer", "track"));
+    }
+
     [Fact]
     [Trait("Category", "Postgres")]
     public async Task NativePostgresLineageConstraints_RejectCrossTenantFavoriteJob()

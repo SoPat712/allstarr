@@ -3,6 +3,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Playlists;
@@ -128,7 +129,8 @@ public static class PlaylistProjectionSelector
 
 public sealed class DurablePlaylistProjectionReader(
     IDbContextFactory<AllstarrDbContext> factory,
-    IProtocolProviderGateway? providerGateway = null)
+    IProtocolProviderGateway? providerGateway = null,
+    IEffectiveProviderPolicyResolver? effectivePolicies = null)
 {
     public async Task<DurablePlaylistProjection?> ReadByNameAsync(
         Guid tenantId,
@@ -286,15 +288,24 @@ public sealed class DurablePlaylistProjectionReader(
                            (item.Verification == ProviderIdentityVerification.Verified ||
                             item.Verification == ProviderIdentityVerification.Pinned))
             .ToListAsync(cancellationToken);
+        var effectivePolicy = effectivePolicies == null
+            ? null
+            : await effectivePolicies.ResolveAsync(tenantId, cancellationToken);
         var providerOrder = providerGateway == null
             ? identities.Select(item => item.ProviderId)
                 .Distinct(StringComparer.Ordinal)
                 .Order(StringComparer.Ordinal)
                 .ToArray()
-            : (providerGateway.GetProviderOrder(ProviderCapabilityKind.Streaming) ?? [])
-                .Concat(providerGateway.GetProviderOrder(ProviderCapabilityKind.Download) ?? [])
+            : ProviderOrder(ProviderCapabilityKind.Streaming)
+                .Concat(ProviderOrder(ProviderCapabilityKind.Download))
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
+
+        IReadOnlyList<string> ProviderOrder(ProviderCapabilityKind capability)
+        {
+            var available = providerGateway.GetProviderOrder(capability);
+            return effectivePolicy?.ApplyProviderAvailability(capability, available) ?? available;
+        }
         var publishedMatchIds = entries
             .Where(item => item.PublishedTrackMatchId.HasValue)
             .Select(item => item.PublishedTrackMatchId!.Value)

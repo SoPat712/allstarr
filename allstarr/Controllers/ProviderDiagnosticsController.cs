@@ -1,4 +1,5 @@
 using allstarr.Core.Capabilities;
+using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Services.Admin;
@@ -14,7 +15,8 @@ namespace allstarr.Controllers;
 [ServiceFilter(typeof(AdminPortFilter))]
 public sealed class ProviderDiagnosticsController(
     IDbContextFactory<AllstarrDbContext> contextFactory,
-    ProviderCtsDiagnosticRunner diagnosticRunner) : ControllerBase
+    ProviderCtsDiagnosticRunner diagnosticRunner,
+    IEffectiveProviderPolicyResolver providerPolicy) : ControllerBase
 {
     [HttpGet("deep-stream/latest")]
     public async Task<IActionResult> LatestDeepStream(CancellationToken cancellationToken)
@@ -109,11 +111,17 @@ public sealed class ProviderDiagnosticsController(
 
         try
         {
+            var quality = request.Quality;
+            if (quality == ProviderAudioQuality.Any)
+            {
+                var policy = await providerPolicy.ResolveAsync(session.TenantId.Value, cancellationToken);
+                quality = AudioQualityPolicy.RequestedQuality(policy.AudioQuality);
+            }
             var result = await diagnosticRunner.MeasureAsync(
                 actor,
                 providerId,
                 request.ProviderAccountId,
-                request.Quality,
+                quality,
                 correlationId,
                 request.TrackId,
                 cancellationToken);

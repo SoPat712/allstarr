@@ -4,6 +4,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Models.Domain;
 using allstarr.Models.Lyrics;
 using allstarr.Services.Common;
+using allstarr.Core.Settings;
 
 namespace allstarr.Core.Protocols;
 
@@ -21,7 +22,8 @@ public interface IProtocolLyricsResolver
 public sealed class ProtocolLyricsResolver(
     IProtocolProviderGateway providers,
     ILogger<ProtocolLyricsResolver> logger,
-    OdesliService? odesli = null) : IProtocolLyricsResolver
+    OdesliService? odesli = null,
+    IEffectiveProviderPolicyResolver? effectivePolicies = null) : IProtocolLyricsResolver
 {
     public async Task<LyricsInfo?> FindAsync(
         ProtocolExecutionContext protocol,
@@ -37,6 +39,15 @@ public sealed class ProtocolLyricsResolver(
         var artists = song.Artists.Count > 0 ? song.Artists : [song.Artist];
 
         var order = providers.GetProviderOrder(ProviderCapabilityKind.Lyrics);
+        if (effectivePolicies != null && protocol.Actor is { } actor)
+        {
+            var effectivePolicy = await effectivePolicies.ResolveAsync(
+                actor.TenantId,
+                protocol.CancellationToken);
+            order = effectivePolicy.ApplyProviderAvailability(
+                ProviderCapabilityKind.Lyrics,
+                order);
+        }
         if (!string.IsNullOrWhiteSpace(sourceProvider) &&
             order.Contains(sourceProvider, StringComparer.OrdinalIgnoreCase))
             order = [sourceProvider, .. order];

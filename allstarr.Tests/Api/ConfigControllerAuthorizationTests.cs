@@ -100,6 +100,30 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task EffectiveProviderPolicy_WithoutAdminSession_ReturnsForbidden()
+    {
+        var controller = CreateController(CreateHttpContextWithSession(isAdmin: false));
+
+        AssertForbidden(await controller.GetEffectiveProviderPolicy());
+    }
+
+    [Fact]
+    public async Task EffectiveProviderPolicy_ReturnsTenantPolicyWithoutSecretsOrAccountIds()
+    {
+        var controller = CreateController(CreateHttpContextWithSession(isAdmin: true));
+
+        var result = Assert.IsType<OkObjectResult>(await controller.GetEffectiveProviderPolicy());
+        var json = JsonSerializer.Serialize(result.Value);
+
+        Assert.Contains("\"audioQuality\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"providerOrders\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"accountScopes\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"routeSelection\"", json, StringComparison.Ordinal);
+        Assert.DoesNotContain(_providerAccountId.ToString(), json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Secrets", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task RestartContainer_WithoutAdminSession_ReturnsForbidden()
     {
         var controller = CreateController(CreateHttpContextWithSession(isAdmin: false));
@@ -515,12 +539,14 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         var clock = new SystemPlatformClock();
         var signal = new RuntimeSettingsChangeSignal();
         var durableSettings = new DurableRuntimeSettingsService(_factory, configuration, clock, signal);
+        var effectiveProviderPolicies = new EffectiveProviderPolicyResolver(durableSettings);
         var migration = new LegacyEnvMigrationService(_factory, durableSettings, effectiveSecretStore, clock);
         var services = new ServiceCollection()
             .AddSingleton(providerStatusManager)
             .AddSingleton<IDbContextFactory<AllstarrDbContext>>(_factory)
             .AddSingleton(durableSettings)
             .AddSingleton<IDurableRuntimeSettings>(durableSettings)
+            .AddSingleton<IEffectiveProviderPolicyResolver>(effectiveProviderPolicies)
             .AddSingleton(migration)
             .AddSingleton(effectiveSecretStore);
         httpContext.RequestServices = services.BuildServiceProvider();

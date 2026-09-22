@@ -32,6 +32,9 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<int>("AudioQuality")
+                        .HasColumnType("integer");
+
                     b.Property<long>("DownloadedAt")
                         .HasColumnType("bigint");
 
@@ -40,10 +43,17 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<string>("LibraryScopeId")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
                     b.Property<string>("LocalPath")
                         .IsRequired()
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
+
+                    b.Property<Guid?>("ProviderAccountId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("ProviderId")
                         .IsRequired()
@@ -54,6 +64,14 @@ namespace allstarr.Core.Storage.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");
 
+                    b.Property<string>("ScopeKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid?>("TenantId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(500)
@@ -61,7 +79,7 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ProviderId", "ExternalId")
+                    b.HasIndex("ScopeKey", "ProviderId", "ExternalId")
                         .IsUnique()
                         .HasDatabaseName("IX_downloaded_song_mapping_identity");
 
@@ -817,11 +835,11 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<long?>("ListenedAt")
                         .HasColumnType("bigint");
 
-                    b.Property<double?>("MusicBrainzEnrichmentConfidence")
-                        .HasColumnType("double precision");
-
                     b.Property<long?>("MusicBrainzEnrichedAt")
                         .HasColumnType("bigint");
+
+                    b.Property<double?>("MusicBrainzEnrichmentConfidence")
+                        .HasColumnType("double precision");
 
                     b.Property<string>("MusicBrainzEnrichmentState")
                         .IsRequired()
@@ -893,13 +911,13 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<int?>("TrackNumber")
+                        .HasColumnType("integer");
+
                     b.Property<string>("TrackReference")
                         .IsRequired()
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
-
-                    b.Property<int?>("TrackNumber")
-                        .HasColumnType("integer");
 
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("bigint");
@@ -921,7 +939,7 @@ namespace allstarr.Core.Storage.Migrations
                     b.HasIndex("TenantId", "OwnerUserId", "Protocol", "BackendInstanceId", "LibraryScopeId", "State", "ListenedAt", "Id")
                         .HasDatabaseName("IX_listening_event_scope_history");
 
-                    b.ToTable("listening_events", t =>
+                    b.ToTable("listening_events", null, t =>
                         {
                             t.HasCheckConstraint("CK_listening_event_duration", "\"DurationMilliseconds\" IS NULL OR \"DurationMilliseconds\" > 0");
 
@@ -933,56 +951,6 @@ namespace allstarr.Core.Storage.Migrations
 
                             t.HasCheckConstraint("CK_listening_event_track_number", "\"TrackNumber\" IS NULL OR \"TrackNumber\" > 0");
                         });
-                });
-
-            modelBuilder.Entity("allstarr.Core.Intelligence.ListeningIntakeTokenRecord", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("BackendInstanceId")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("LibraryScopeId")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("character varying(300)");
-
-                    b.Property<Guid>("OwnerUserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Protocol")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<bool>("RelayExternally")
-                        .HasColumnType("boolean");
-
-                    b.Property<long?>("RevokedAt")
-                        .HasColumnType("bigint");
-
-                    b.Property<Guid>("SecretReferenceId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("SecretReferenceId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_listening_intake_token_secret");
-
-                    b.HasIndex("TenantId", "OwnerUserId", "Protocol", "BackendInstanceId", "LibraryScopeId", "CreatedAt")
-                        .HasDatabaseName("IX_listening_intake_token_scope");
-
-                    b.ToTable("listening_intake_tokens", (string)null);
                 });
 
             modelBuilder.Entity("allstarr.Core.Intelligence.ListeningHistoryImportRecord", b =>
@@ -1099,6 +1067,56 @@ namespace allstarr.Core.Storage.Migrations
 
                             t.HasCheckConstraint("CK_listening_history_import_state", "\"State\" IN ('Previewed', 'Pending', 'Running', 'Completed', 'Cancelled', 'Failed', 'Expired')");
                         });
+                });
+
+            modelBuilder.Entity("allstarr.Core.Intelligence.ListeningIntakeTokenRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BackendInstanceId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("LibraryScopeId")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Protocol")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<bool>("RelayExternally")
+                        .HasColumnType("boolean");
+
+                    b.Property<long?>("RevokedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("SecretReferenceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SecretReferenceId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_listening_intake_token_secret");
+
+                    b.HasIndex("TenantId", "OwnerUserId", "Protocol", "BackendInstanceId", "LibraryScopeId", "CreatedAt")
+                        .HasDatabaseName("IX_listening_intake_token_scope");
+
+                    b.ToTable("listening_intake_tokens", (string)null);
                 });
 
             modelBuilder.Entity("allstarr.Core.Intelligence.ListeningProfileRecord", b =>
@@ -1674,7 +1692,7 @@ namespace allstarr.Core.Storage.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_playback_delivery_idempotency");
 
-                    b.ToTable("playback_delivery_checkpoints", t =>
+                    b.ToTable("playback_delivery_checkpoints", null, t =>
                         {
                             t.HasCheckConstraint("CK_playback_delivery_checkpoint_state", "\"State\" IN ('Delivered', 'Ignored', 'Retrying', 'PermanentFailure')");
                         });
@@ -2082,6 +2100,138 @@ namespace allstarr.Core.Storage.Migrations
                     b.ToTable("backups", (string)null);
                 });
 
+            modelBuilder.Entity("allstarr.Core.Storage.CanonicalArtistRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Disambiguation")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<bool>("IsProvisional")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("MusicBrainzArtistId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("SortName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "MusicBrainzArtistId")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId", "SortName", "Id");
+
+                    b.ToTable("canonical_artists", (string)null);
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.CanonicalCatalogAliasRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CanonicalEntityId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("EntityKind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("ExternalId")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("ExternalIdHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long>("LastSeenAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Namespace")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "EntityKind", "CanonicalEntityId");
+
+                    b.HasIndex("TenantId", "Namespace", "EntityKind", "ExternalIdHash")
+                        .IsUnique();
+
+                    b.ToTable("canonical_catalog_aliases", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_canonical_catalog_alias_hash", "length(\"ExternalIdHash\") = 64");
+                        });
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.CanonicalRecordingArtistRecord", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CanonicalRecordingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("CanonicalArtistId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CreditName")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("JoinPhrase")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.HasKey("TenantId", "CanonicalRecordingId", "Position");
+
+                    b.HasIndex("TenantId", "CanonicalArtistId", "CanonicalRecordingId");
+
+                    b.ToTable("canonical_recording_artists", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_canonical_recording_artist_position", "\"Position\" >= 0");
+                        });
+                });
+
             modelBuilder.Entity("allstarr.Core.Storage.CanonicalRecordingRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2092,6 +2242,19 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.Property<Guid>("CreatedByUserId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("Disambiguation")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<long?>("DurationMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool?>("IsExplicit")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsProvisional")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("Isrc")
                         .HasMaxLength(32)
@@ -2108,6 +2271,11 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("bigint");
 
@@ -2121,7 +2289,282 @@ namespace allstarr.Core.Storage.Migrations
                     b.HasIndex("TenantId", "MusicBrainzRecordingId")
                         .IsUnique();
 
+                    b.HasIndex("TenantId", "Title", "Id");
+
                     b.ToTable("canonical_recordings", (string)null);
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.CanonicalReleaseGroupArtistRecord", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CanonicalReleaseGroupId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("CanonicalArtistId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CreditName")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("JoinPhrase")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.HasKey("TenantId", "CanonicalReleaseGroupId", "Position");
+
+                    b.HasIndex("TenantId", "CanonicalArtistId", "CanonicalReleaseGroupId");
+
+                    b.ToTable("canonical_release_group_artists", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_canonical_release_group_artist_position", "\"Position\" >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.CanonicalReleaseGroupRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("FirstReleaseDate")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<bool>("IsProvisional")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("MusicBrainzReleaseGroupId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("PrimaryType")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("SecondaryTypesJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "MusicBrainzReleaseGroupId")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId", "Title", "Id");
+
+                    b.ToTable("canonical_release_groups", (string)null);
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.CanonicalReleaseRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Barcode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("CanonicalReleaseGroupId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CountryCode")
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Disambiguation")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<bool>("IsProvisional")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("MusicBrainzReleaseId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ReleaseDate")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Status")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "MusicBrainzReleaseId")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId", "CanonicalReleaseGroupId", "ReleaseDate");
+
+                    b.ToTable("canonical_releases", (string)null);
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.CanonicalReleaseTrackRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CanonicalRecordingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CanonicalReleaseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("DurationMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("MediumPosition")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("MusicBrainzTrackId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int>("TrackPosition")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasAlternateKey("TenantId", "Id");
+
+                    b.HasIndex("TenantId", "CanonicalRecordingId");
+
+                    b.HasIndex("TenantId", "MusicBrainzTrackId")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId", "CanonicalReleaseId", "MediumPosition", "TrackPosition")
+                        .IsUnique();
+
+                    b.ToTable("canonical_release_tracks", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_canonical_release_track_position", "\"MediumPosition\" > 0 AND \"TrackPosition\" > 0");
+                        });
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.CatalogFactRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CanonicalEntityId")
+                        .HasColumnType("uuid");
+
+                    b.Property<double>("Confidence")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("EntityKind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("FieldName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<long>("ObservedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("PayloadSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long?>("RefreshAfter")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("SourceId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("SourceRevision")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<long?>("SupersededAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ValueJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "SourceId", "RefreshAfter");
+
+                    b.HasIndex("TenantId", "EntityKind", "CanonicalEntityId", "FieldName");
+
+                    b.ToTable("catalog_facts", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_catalog_fact_confidence", "\"Confidence\" >= 0 AND \"Confidence\" <= 1");
+
+                            t.HasCheckConstraint("CK_catalog_fact_payload_hash", "length(\"PayloadSha256\") = 64");
+                        });
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.DurableJobRecord", b =>
@@ -3402,15 +3845,15 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("TrackRetention")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasDefaultValue("OnDemand");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uuid");
 
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("bigint");
@@ -4494,6 +4937,24 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Intelligence.ListeningEventRecord", b =>
                 {
+                    b.HasOne("allstarr.Core.Storage.ProviderAccountRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProviderAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_listening_event_provider_account");
+
+                    b.HasOne("allstarr.Core.Storage.ProviderTrackIdentityRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProviderTrackIdentityId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_listening_event_provider_identity");
+
+                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
                         .WithMany()
                         .HasForeignKey("TenantId", "CanonicalRecordingId")
@@ -4508,18 +4969,16 @@ namespace allstarr.Core.Storage.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_listening_event_library_track");
 
-                    b.HasOne("allstarr.Core.Storage.ProviderAccountRecord", null)
+                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
                         .WithMany()
-                        .HasForeignKey("ProviderAccountId")
+                        .HasForeignKey("TenantId", "OwnerUserId")
+                        .HasPrincipalKey("TenantId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_listening_event_provider_account");
+                        .IsRequired();
+                });
 
-                    b.HasOne("allstarr.Core.Storage.ProviderTrackIdentityRecord", null)
-                        .WithMany()
-                        .HasForeignKey("ProviderTrackIdentityId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_listening_event_provider_identity");
-
+            modelBuilder.Entity("allstarr.Core.Intelligence.ListeningHistoryImportRecord", b =>
+                {
                     b.HasOne("allstarr.Core.Storage.TenantRecord", null)
                         .WithMany()
                         .HasForeignKey("TenantId")
@@ -4543,22 +5002,6 @@ namespace allstarr.Core.Storage.Migrations
                         .IsRequired()
                         .HasConstraintName("FK_listening_intake_token_secret");
 
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("allstarr.Core.Intelligence.ListeningHistoryImportRecord", b =>
-                {
                     b.HasOne("allstarr.Core.Storage.TenantRecord", null)
                         .WithMany()
                         .HasForeignKey("TenantId")
@@ -4828,6 +5271,41 @@ namespace allstarr.Core.Storage.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("allstarr.Core.Storage.CanonicalArtistRecord", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.CanonicalCatalogAliasRecord", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.CanonicalRecordingArtistRecord", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.CanonicalArtistRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "CanonicalArtistId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "CanonicalRecordingId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("allstarr.Core.Storage.CanonicalRecordingRecord", b =>
                 {
                     b.HasOne("allstarr.Core.Storage.TenantRecord", null)
@@ -4840,6 +5318,80 @@ namespace allstarr.Core.Storage.Migrations
                         .WithMany()
                         .HasForeignKey("TenantId", "CreatedByUserId")
                         .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.CanonicalReleaseGroupArtistRecord", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.CanonicalArtistRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "CanonicalArtistId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("allstarr.Core.Storage.CanonicalReleaseGroupRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "CanonicalReleaseGroupId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.CanonicalReleaseGroupRecord", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.CanonicalReleaseRecord", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("allstarr.Core.Storage.CanonicalReleaseGroupRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "CanonicalReleaseGroupId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.CanonicalReleaseTrackRecord", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "CanonicalRecordingId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("allstarr.Core.Storage.CanonicalReleaseRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "CanonicalReleaseId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.CatalogFactRecord", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

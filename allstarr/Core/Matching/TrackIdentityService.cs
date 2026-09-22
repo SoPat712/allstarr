@@ -129,15 +129,18 @@ public sealed class TrackIdentityService : ITrackIdentityService
     private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
     private readonly DurableStorageState _storageState;
     private readonly IPlatformClock _clock;
+    private readonly IMusicBrainzCatalogRefreshQueue? _catalogRefreshQueue;
 
     public TrackIdentityService(
         IDbContextFactory<AllstarrDbContext> contextFactory,
         DurableStorageState storageState,
-        IPlatformClock clock)
+        IPlatformClock clock,
+        IMusicBrainzCatalogRefreshQueue? catalogRefreshQueue = null)
     {
         _contextFactory = contextFactory;
         _storageState = storageState;
         _clock = clock;
+        _catalogRefreshQueue = catalogRefreshQueue;
     }
 
     public async Task<CanonicalRecordingCreationResult> CreateRecordingAsync(
@@ -183,7 +186,8 @@ public sealed class TrackIdentityService : ITrackIdentityService
                     hasMusicBrainzRecordingId = normalizedMusicBrainzId != null
                 });
             await context.SaveChangesAsync(cancellationToken);
-            return new CanonicalRecordingCreationResult(ToIdentity(existing), Created: false);
+            return await CompleteCreationAsync(
+                actor, correlationId, existing, created: false, cancellationToken);
         }
 
         var now = _clock.UtcNow;
@@ -214,7 +218,8 @@ public sealed class TrackIdentityService : ITrackIdentityService
         try
         {
             await context.SaveChangesAsync(cancellationToken);
-            return new CanonicalRecordingCreationResult(ToIdentity(record), Created: true);
+            return await CompleteCreationAsync(
+                actor, correlationId, record, created: true, cancellationToken);
         }
         catch (DbUpdateException)
         {
@@ -239,8 +244,25 @@ public sealed class TrackIdentityService : ITrackIdentityService
                 "concurrent-existing",
                 new { canonicalRecordingId = existing.Id });
             await context.SaveChangesAsync(cancellationToken);
-            return new CanonicalRecordingCreationResult(ToIdentity(existing), Created: false);
+            return await CompleteCreationAsync(
+                actor, correlationId, existing, created: false, cancellationToken);
         }
+    }
+
+    private async Task<CanonicalRecordingCreationResult> CompleteCreationAsync(
+        ProviderActorContext actor,
+        string correlationId,
+        CanonicalRecordingRecord recording,
+        bool created,
+        CancellationToken cancellationToken)
+    {
+        if (_catalogRefreshQueue != null && recording.MusicBrainzRecordingId is { } mbid)
+        {
+            await _catalogRefreshQueue.EnqueueRecordingAsync(
+                actor, mbid, correlationId, cancellationToken);
+        }
+
+        return new CanonicalRecordingCreationResult(ToIdentity(recording), created);
     }
 
     public async Task<TrackIdentityLinkResult> LinkAsync(

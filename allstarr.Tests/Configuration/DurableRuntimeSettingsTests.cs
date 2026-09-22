@@ -150,7 +150,7 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task DefaultTenantProjector_AppliesDurableOptionsAndRoutingWithoutTouchingSecrets()
+    public async Task DefaultTenantProjector_AppliesOperationalOptionsWithoutProjectingTenantPolicyOrSecrets()
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -172,19 +172,22 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
             new("SpotifyApi:LyricsApiUrl", "http://spotify-lyrics:8080"),
             new("SpotifyImport:Playlists", "[[\"Discover Weekly\",\"source-id\",\"target-id\",\"last\",\"0 8 * * *\"]]")
         ], "webui", _userId);
-        var cache = new CacheSettings(); var deezer = new DeezerSettings { Arl = "bootstrap-secret" };
-        var qobuz = new QobuzSettings();
-        var apple = new AppleDownloadSettings { BaseUrl = "http://compose-apple-gateway:8000" };
+        var cache = new CacheSettings();
+        var deezer = new DeezerSettings { Arl = "bootstrap-secret", Quality = "MP3_128" };
+        var qobuz = new QobuzSettings { Quality = "MP3_320" };
+        var apple = new AppleDownloadSettings
+        {
+            BaseUrl = "http://compose-apple-gateway:8000",
+            Quality = "aac-96"
+        };
         var spotifyApi = new SpotifyApiSettings();
         var spotifyImport = new SpotifyImportSettings();
         var jellyfin = new JellyfinSettings(); var subsonic = new SubsonicSettings();
         var identity = new IdentityOptions { DefaultTenantId = _tenantId.ToString() };
-        var matching = new TrackMatchPolicy();
         var projector = new DefaultTenantRuntimeSettingsProjector(service, signal, identity, configuration,
             Options.Create(cache), Options.Create(deezer), Options.Create(qobuz), Options.Create(apple),
             Options.Create(spotifyApi), Options.Create(spotifyImport),
             Options.Create(new MusicBrainzSettings()), Options.Create(new ScrobblingSettings()), Options.Create(jellyfin), Options.Create(subsonic),
-            matching,
             NullLogger<DefaultTenantRuntimeSettingsProjector>.Instance);
         await projector.StartAsync(CancellationToken.None);
         for (var attempt = 0; attempt < 50 && cache.SearchResultsMinutes != 15; attempt++) await Task.Delay(10);
@@ -194,16 +197,15 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         await service.ApplyBatchAsync(_tenantId,
             [new("Cache:SearchResultsMinutes", "22", 1), new(AudioQualityPolicy.SettingKey, "CdLossless", migrated.Revision)],
             "webui", _userId);
-        for (var attempt = 0; attempt < 50 && (cache.SearchResultsMinutes != 22 || apple.Quality != "alac-16-44"); attempt++) await Task.Delay(10);
+        for (var attempt = 0; attempt < 50 && cache.SearchResultsMinutes != 22; attempt++) await Task.Delay(10);
         await projector.StopAsync(CancellationToken.None);
 
-        Assert.Equal(22, cache.SearchResultsMinutes); Assert.Equal("FLAC", deezer.Quality);
+        Assert.Equal(22, cache.SearchResultsMinutes); Assert.Equal("MP3_128", deezer.Quality);
         Assert.Equal("bootstrap-secret", deezer.Arl);
-        Assert.Equal("deezer,qobuz", configuration["MULTI_PROVIDER_STREAMING_ORDER"]);
+        Assert.Equal("qobuz", configuration["MULTI_PROVIDER_STREAMING_ORDER"]);
         Assert.Equal("http://compose-apple-gateway:8000", apple.BaseUrl);
-        Assert.Equal("alac-16-44", apple.Quality);
-        Assert.Equal("FLAC_16", qobuz.Quality);
-        Assert.Equal(0.11, matching.LocalPriorityWindow);
+        Assert.Equal("aac-96", apple.Quality);
+        Assert.Equal("MP3_320", qobuz.Quality);
         Assert.Equal("http://spotify-lyrics:8080", spotifyApi.LyricsApiUrl);
         var importedPlaylist = Assert.Single(spotifyImport.Playlists);
         Assert.Equal("Discover Weekly", importedPlaylist.Name);

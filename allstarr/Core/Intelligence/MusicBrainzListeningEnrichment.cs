@@ -179,12 +179,12 @@ public sealed class MusicBrainzListeningEnrichmentJobHandler(
             facts = JsonSerializer.Serialize(match.Recording);
             if (Encoding.UTF8.GetByteCount(facts) > MusicBrainzService.MaximumResponseBytes)
                 throw new MusicBrainzLookupException(
-                    "musicbrainz_response_too_large",
-                    "MusicBrainz returned more metadata than Allstarr can safely process.",
+                    "catalog_source_response_too_large",
+                    "The canonical metadata source returned more data than Allstarr can safely process.",
                     false);
         }
 
-        occurrence.MusicBrainzSourceRevision = MusicBrainzService.SourceRevision;
+        occurrence.MusicBrainzSourceRevision = match?.SourceRevision ?? MusicBrainzService.SourceRevision;
         occurrence.MusicBrainzEnrichedAt = enrichedAt;
         occurrence.MusicBrainzEnrichmentState = match == null
             ? MusicBrainzEnrichmentState.Unresolved

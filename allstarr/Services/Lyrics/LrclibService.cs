@@ -25,7 +25,7 @@ public class LrclibService
         ILogger<LrclibService> logger)
     {
         _httpClient = httpClientFactory.CreateClient("Lrclib");
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.3 (https://github.com/SoPat712/allstarr)");
+        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(AppIdentity.UserAgent);
         _cache = cache;
         _mappingStore = mappingStore;
         _lyricsTtl = cacheSettings.Value.LyricsTTL;

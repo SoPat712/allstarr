@@ -358,7 +358,15 @@ public sealed class ProtocolSupportMatrixTests
             ["Key"],
             root.GetProperty("clientDtoRequirements").GetProperty("userDataRequired")
                 .EnumerateArray().Select(value => value.GetString()!).ToArray());
-        Assert.NotEmpty(root.GetProperty("intentionalDifferences").EnumerateArray());
+        var differences = root.GetProperty("intentionalDifferences").EnumerateArray().ToArray();
+        Assert.NotEmpty(differences);
+        var publicInfo = Assert.Single(differences, difference =>
+            difference.GetProperty("area").GetString() == "public server info");
+        Assert.Equal("transformed", publicInfo.GetProperty("class").GetString());
+        Assert.Equal(
+            "Only LocalAddress changes so clients reconnect through Allstarr. " +
+            "Server identity, product, version, operating system, capabilities, and unknown fields remain Jellyfin-owned.",
+            publicInfo.GetProperty("difference").GetString());
         Assert.Contains(root.GetProperty("liveModes").EnumerateArray(),
             mode => mode.GetProperty("status").GetString() == "blocked-without-explicit-opt-in");
     }

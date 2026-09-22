@@ -7,6 +7,7 @@ using allstarr.Models.Settings;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using allstarr.Core.Identity;
+using allstarr.Core.Configuration;
 
 namespace allstarr.Controllers;
 
@@ -24,6 +25,7 @@ public sealed class AdminAuthController : ControllerBase
     private readonly BackendIdentityResolver? _identityResolver;
     private readonly ProviderAccountManagementMode _providerAccountManagementMode;
     private readonly IMediaAssetResolver _mediaAssets;
+    private readonly ReleaseComposition _releaseComposition;
 
     public AdminAuthController(
         IOptions<JellyfinSettings> jellyfinSettings,
@@ -34,7 +36,8 @@ public sealed class AdminAuthController : ControllerBase
         ILogger<AdminAuthController> logger,
         IMediaAssetResolver mediaAssets,
         BackendIdentityResolver? identityResolver = null,
-        ProviderAccountManagementOptions? providerAccountManagementOptions = null)
+        ProviderAccountManagementOptions? providerAccountManagementOptions = null,
+        ReleaseComposition? releaseComposition = null)
     {
         _jellyfinSettings = jellyfinSettings.Value;
         _subsonicSettings = subsonicSettings.Value;
@@ -51,6 +54,7 @@ public sealed class AdminAuthController : ControllerBase
         _identityResolver = identityResolver;
         _providerAccountManagementMode = (providerAccountManagementOptions ?? new())
             .ParseManagementMode();
+        _releaseComposition = releaseComposition ?? ReleaseComposition.Core;
     }
 
     [HttpPost("login")]
@@ -176,7 +180,8 @@ public sealed class AdminAuthController : ControllerBase
             {
                 authenticated = false,
                 backend = _backendType.ToString(),
-                providerAccountManagementMode = _providerAccountManagementMode.ToString()
+                providerAccountManagementMode = _providerAccountManagementMode.ToString(),
+                features = ReleaseFeatures()
             });
         }
 
@@ -459,7 +464,13 @@ public sealed class AdminAuthController : ControllerBase
         rememberMe = session.IsPersistent,
         backend = session.BackendType,
         providerAccountManagementMode = _providerAccountManagementMode.ToString(),
+        features = ReleaseFeatures(),
         expiresAtUtc = session.ExpiresAtUtc
+    };
+
+    private object ReleaseFeatures() => new
+    {
+        intelligence = _releaseComposition.IntelligenceEnabled
     };
 
     private readonly record struct SubsonicIdentity(string UserName, bool IsAdministrator);

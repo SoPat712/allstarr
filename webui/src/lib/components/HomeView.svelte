@@ -218,7 +218,7 @@
                   <ProviderMark id={item.providerId} definition={providerDefinition(item.providerId)} />
                   <span>
                     <strong>{providerName(item.providerId)}</strong>
-                    <small>{item.sourceConfirmed ? (item.cached ? "Cached from" : "Playing from") : "Catalog source · playback unconfirmed"}{item.sourceConfirmed && item.providerAccountName ? ` · ${item.providerAccountName}` : ""}</small>
+                    <small title={item.routeReason ?? undefined}>{item.sourceConfirmed ? (item.cached ? "Cached from" : "Playing from") : "Catalog source · playback unconfirmed"}{item.sourceConfirmed && item.providerAccountName ? ` · ${item.providerAccountName}` : ""}</small>
                   </span>
                 </span>
                 <span class="scrobble-state" class:complete={item.scrobbled}>

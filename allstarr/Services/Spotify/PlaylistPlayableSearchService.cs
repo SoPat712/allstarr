@@ -5,6 +5,7 @@ using allstarr.Core.Identity;
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
@@ -19,7 +20,8 @@ public sealed class PlaylistPlayableSearchService(
     BackendIdentityResolver identities,
     IdentityOptions identityOptions,
     IOptions<JellyfinSettings> jellyfinSettings,
-    ILogger<PlaylistPlayableSearchService> logger)
+    ILogger<PlaylistPlayableSearchService> logger,
+    IEffectiveProviderPolicyResolver? effectivePolicies = null)
 {
     private readonly SemaphoreSlim _principalLock = new(1, 1);
     private AllstarrPrincipal? _principal;
@@ -43,8 +45,9 @@ public sealed class PlaylistPlayableSearchService(
             $"playlist-match-{Guid.NewGuid():N}",
             DateTimeOffset.UtcNow.AddSeconds(30),
             cancellationToken);
+        var providerOrder = await ProviderOrderAsync(principal.TenantId, cancellationToken);
         return (await gateway.SearchPlayableSongsAsync(context, query, limit))
-            .Where(IsPlayable)
+            .Where(song => IsPlayable(song, providerOrder))
             .Take(limit)
             .ToList();
     }
@@ -71,15 +74,16 @@ public sealed class PlaylistPlayableSearchService(
             .Select(query => query!.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var (providerOrder, effectiveMatcher) = await MatchingPolicyAsync(scope.TenantId, cancellationToken);
         var songs = (await Task.WhenAll(queries.Select(SearchAsync)))
             .SelectMany(result => result)
             .DistinctBy(song => $"{song.ExternalProvider}:{song.ExternalId}", StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        return DecideMatch(source, scope, songs, localCandidates, manualOverride);
+        return DecideMatch(source, scope, songs, localCandidates, manualOverride, providerOrder, effectiveMatcher);
 
         async Task<Song[]> SearchAsync(string query) =>
             ((await gateway.SearchPlayableSongsAsync(context, query, 60)) ?? [])
-            .Where(IsPlayable)
+            .Where(song => IsPlayable(song, providerOrder))
             .Where(song => !string.IsNullOrWhiteSpace(song.ExternalProvider) &&
                            !string.IsNullOrWhiteSpace(song.ExternalId))
             .Where(song => !song.ExternalProvider!.Equals(source.ProviderId, StringComparison.OrdinalIgnoreCase) ||
@@ -100,7 +104,8 @@ public sealed class PlaylistPlayableSearchService(
         ScopedTrackMatchOverride? manualOverride,
         CancellationToken cancellationToken)
     {
-        var order = ProviderRanks();
+        var (providerOrder, effectiveMatcher) = await MatchingPolicyAsync(scope.TenantId, cancellationToken);
+        var order = ProviderRanks(providerOrder);
         var cachedRoutes = identities
             .Where(identity => identity.VerificationMethod != "automatic-suggestion")
             .Where(identity => order.ContainsKey(
@@ -123,9 +128,10 @@ public sealed class PlaylistPlayableSearchService(
                     cached.ExternalId);
                 continue;
             }
-            if (song == null || !IsPlayable(song) || string.IsNullOrWhiteSpace(song.ExternalId)) continue;
+            if (song == null || !IsPlayable(song, providerOrder) || string.IsNullOrWhiteSpace(song.ExternalId)) continue;
 
-            var match = DecideMatch(source, scope, [song], localCandidates, manualOverride);
+            var match = DecideMatch(
+                source, scope, [song], localCandidates, manualOverride, providerOrder, effectiveMatcher);
             if (match.Decision.State is TrackMatchReviewState.Accepted or TrackMatchReviewState.Pinned)
                 return match;
         }
@@ -137,16 +143,18 @@ public sealed class PlaylistPlayableSearchService(
         TrackMatchScope scope,
         IReadOnlyList<Song> songs,
         IReadOnlyList<LocalTrackMatchCandidate> localCandidates,
-        ScopedTrackMatchOverride? manualOverride)
+        ScopedTrackMatchOverride? manualOverride,
+        IReadOnlyList<string> providerOrder,
+        TrackMatchDecisionEngine effectiveMatcher)
     {
-        var groups = GroupEquivalent(songs, scope);
+        var groups = GroupEquivalent(songs, scope, providerOrder);
         return new(
-            matcher.Decide(
+            effectiveMatcher.Decide(
                 scope,
                 source,
                 localCandidates.Concat(songs.Select(song => ToCandidate(song, scope))).ToArray(),
                 manualOverride,
-                gateway.GetProviderOrder(ProviderCapabilityKind.Streaming)),
+                providerOrder),
             songs.ToDictionary(song => CandidateId(song.ExternalProvider!, song.ExternalId!)),
             groups.SelectMany(group => group.Select(song => (
                     Id: CandidateId(song.ExternalProvider!, song.ExternalId!), Group: (IReadOnlyList<Song>)group)))
@@ -161,10 +169,22 @@ public sealed class PlaylistPlayableSearchService(
                    .Any(provider => ExternalTrackPlaybackPolicy.Normalize(provider) == normalized);
     }
 
-    private bool IsPlayable(Song song)
+    public async Task<bool> CanUseProviderAsync(
+        Guid tenantId,
+        string? providerId,
+        CancellationToken cancellationToken = default)
+    {
+        var normalized = ExternalTrackPlaybackPolicy.Normalize(providerId);
+        return normalized.Length > 0 &&
+               (await ProviderOrderAsync(tenantId, cancellationToken))
+               .Any(provider => ExternalTrackPlaybackPolicy.Normalize(provider) == normalized);
+    }
+
+    private static bool IsPlayable(Song song, IReadOnlyList<string> providerOrder)
     {
         return ExternalTrackPlaybackPolicy.CanUseForPlayback(song) &&
-               CanUseProvider(song.ExternalProvider);
+               providerOrder.Any(provider => ExternalTrackPlaybackPolicy.Normalize(provider) ==
+                                             ExternalTrackPlaybackPolicy.Normalize(song.ExternalProvider));
     }
 
     private LocalTrackMatchCandidate ToCandidate(Song song, TrackMatchScope scope) => new(
@@ -198,9 +218,12 @@ public sealed class PlaylistPlayableSearchService(
         new(SHA256.HashData(Encoding.UTF8.GetBytes(
             $"{provider.Trim().ToLowerInvariant()}:{externalId.Trim()}"))[..16]);
 
-    private List<Song[]> GroupEquivalent(IEnumerable<Song> songs, TrackMatchScope scope)
+    private List<Song[]> GroupEquivalent(
+        IEnumerable<Song> songs,
+        TrackMatchScope scope,
+        IReadOnlyList<string> providerOrder)
     {
-        var order = ProviderRanks();
+        var order = ProviderRanks(providerOrder);
         var groups = new List<List<Song>>();
         foreach (var song in songs.OrderBy(song =>
                      order.GetValueOrDefault(
@@ -220,13 +243,36 @@ public sealed class PlaylistPlayableSearchService(
         return groups.Select(group => group.ToArray()).ToList();
     }
 
-    private Dictionary<string, int> ProviderRanks() =>
-        gateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
+    private static Dictionary<string, int> ProviderRanks(IReadOnlyList<string> providerOrder) =>
+        providerOrder
             .Select((provider, index) => (
                 Provider: ExternalTrackPlaybackPolicy.Normalize(provider),
                 Index: index))
             .GroupBy(item => item.Provider, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Min(item => item.Index), StringComparer.Ordinal);
+
+    private async Task<IReadOnlyList<string>> ProviderOrderAsync(
+        Guid tenantId,
+        CancellationToken cancellationToken) => effectivePolicies == null
+        ? gateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
+        : (await effectivePolicies.ResolveAsync(tenantId, cancellationToken))
+            .ApplyProviderAvailability(
+                ProviderCapabilityKind.Streaming,
+                gateway.GetProviderOrder(ProviderCapabilityKind.Streaming));
+
+    private async Task<(IReadOnlyList<string> ProviderOrder, TrackMatchDecisionEngine Matcher)> MatchingPolicyAsync(
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        if (effectivePolicies == null)
+            return (gateway.GetProviderOrder(ProviderCapabilityKind.Streaming), matcher);
+        var policy = await effectivePolicies.ResolveAsync(tenantId, cancellationToken);
+        return (
+            policy.ApplyProviderAvailability(
+                ProviderCapabilityKind.Streaming,
+                gateway.GetProviderOrder(ProviderCapabilityKind.Streaming)),
+            matcher.WithLocalPriorityWindow(policy.LocalPreferenceWindow));
+    }
 
     private async Task<AllstarrPrincipal?> ResolvePrincipalAsync(CancellationToken cancellationToken)
     {

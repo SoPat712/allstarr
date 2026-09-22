@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using allstarr.Models.Settings;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Settings;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -1095,25 +1096,28 @@ public class ProviderStatusManager
     }
 
     private List<string> GetMetadataOrder() =>
-        GetProviderOrder("MULTI_PROVIDER_METADATA_ORDER", "apple-download,deezer,qobuz");
+        GetProviderOrder(ProviderCapabilityKind.Metadata);
 
     private List<string> GetDownloadOrder() =>
-        GetProviderOrder("MULTI_PROVIDER_DOWNLOAD_ORDER", "apple-download,deezer,qobuz");
+        GetProviderOrder(ProviderCapabilityKind.Download);
 
     private List<string> GetStreamingOrder() =>
-        GetProviderOrder("MULTI_PROVIDER_STREAMING_ORDER", "apple-download,deezer,qobuz");
+        GetProviderOrder(ProviderCapabilityKind.Streaming);
 
     private List<string> GetPlaylistOrder() =>
-        GetProviderOrder("MULTI_PROVIDER_PLAYLIST_ORDER", "spotify,deezer,qobuz");
+        GetProviderOrder(ProviderCapabilityKind.Playlist);
 
     private List<string> GetLyricsOrder() =>
-        GetProviderOrder("MULTI_PROVIDER_LYRICS_ORDER", "spotify,apple-download,lrclib")
+        GetProviderOrder(ProviderCapabilityKind.Lyrics)
             .Where(provider => provider != "lyricsplus")
             .ToList();
 
-    private List<string> GetProviderOrder(string key, string fallback)
+    private List<string> GetProviderOrder(ProviderCapabilityKind capability)
     {
-        var value = _configuration[key] ?? fallback;
+        var definition = ProviderOrderPolicyCatalog.Find(capability)!;
+        var value = _configuration[definition.SettingKey] ??
+                    _configuration[definition.BootstrapKey] ??
+                    definition.DefaultValue;
         return value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(Normalize)
             .ToList();
@@ -1126,7 +1130,10 @@ public class ProviderStatusManager
         GetProviderSet("MULTI_PROVIDER_ENABLED_PLAYLIST", "spotify");
 
     private HashSet<string> GetProviderSet(string key, string fallback) =>
-        GetProviderOrder(key, fallback).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        (_configuration[key] ?? fallback)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(Normalize)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private HashSet<string> GetDisabledProviders() =>
         GetProviderSet("MULTI_PROVIDER_DISABLED_PROVIDERS", string.Empty);

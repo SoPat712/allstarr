@@ -20,6 +20,17 @@ public sealed class AudioQualityPolicyTests
     }
 
     [Theory]
+    [InlineData("DataSaver", ProviderAudioQuality.DataSaver)]
+    [InlineData("High", ProviderAudioQuality.Lossy)]
+    [InlineData("CdLossless", ProviderAudioQuality.Lossless)]
+    [InlineData("HiResLossless", ProviderAudioQuality.HighResolution)]
+    [InlineData("BestAvailable", ProviderAudioQuality.HighResolution)]
+    public void RequestedQuality_MapsEverySharedStep(
+        string step,
+        ProviderAudioQuality expected) =>
+        Assert.Equal(expected, AudioQualityPolicy.RequestedQuality(step));
+
+    [Theory]
     [InlineData("128", ProviderAudioQuality.DataSaver)]
     [InlineData("191", ProviderAudioQuality.DataSaver)]
     [InlineData("192", ProviderAudioQuality.Lossy)]

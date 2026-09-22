@@ -25,6 +25,32 @@ public sealed class RuntimeEnvConfigurationTests : IDisposable
     }
 
     [Fact]
+    public void MapEnvVarToConfiguration_MapsReleaseProfile()
+    {
+        var mapping = Assert.Single(RuntimeEnvConfiguration
+            .MapEnvVarToConfiguration("ALLSTARR_RELEASE_PROFILE", "development"));
+
+        Assert.Equal("Release:Profile", mapping.Key);
+        Assert.Equal("development", mapping.Value);
+    }
+
+    [Theory]
+    [InlineData("MUSICBRAINZ_SOURCE_ID", "MusicBrainz:SourceId")]
+    [InlineData("MUSICBRAINZ_BASE_URL", "MusicBrainz:BaseUrl")]
+    [InlineData("MUSICBRAINZ_RATE_LIMIT_MS", "MusicBrainz:RateLimitMs")]
+    [InlineData("MUSICBRAINZ_AUTHORIZED_USER_AGENT_OVERRIDE", "MusicBrainz:AuthorizedUserAgentOverride")]
+    public void MapEnvVarToConfiguration_MapsCanonicalCatalogSource(
+        string environmentKey,
+        string configurationKey)
+    {
+        var mapping = Assert.Single(RuntimeEnvConfiguration
+            .MapEnvVarToConfiguration(environmentKey, "value"));
+
+        Assert.Equal(configurationKey, mapping.Key);
+        Assert.Equal("value", mapping.Value);
+    }
+
+    [Fact]
     public void MapEnvVarToConfiguration_MapsSharedBackendKeysToBothSections()
     {
         var mappings = RuntimeEnvConfiguration

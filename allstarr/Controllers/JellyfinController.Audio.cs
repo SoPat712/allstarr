@@ -151,9 +151,9 @@ public partial class JellyfinController
                     {
                         await _managedTrackCache.WrapAsync(
                             routed,
+                            protocol,
                             routed.ServingProviderId,
                             routed.ServingExternalId ?? externalId,
-                            requestedQuality,
                             HttpMethods.IsHead(Request.Method),
                             () => _providerGateway.GetSongAsync(protocol, routed.ServingProviderId,
                                 routed.ServingExternalId ?? externalId),

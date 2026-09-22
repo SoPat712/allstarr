@@ -18,7 +18,7 @@
     { href: "#/activity", label: "Activity", mobileLabel: "Activity", icon: "activity", mobile: true },
     { href: "#/settings", label: "Settings", mobileLabel: "Settings", icon: "settings", mobile: false },
   ];
-  // Keep existing Intelligence deep links usable while deferring its release navigation.
+  // Intelligence remains available only in the explicit development composition.
   const navigationDestinations = destinations.filter((item) => item.href !== "#/intelligence");
   const mobileDestinations = navigationDestinations.filter((item) => item.mobile);
   const moreDestinations = navigationDestinations.filter((item) => !item.mobile);
@@ -163,7 +163,9 @@
       return import("$lib/components/DownloadsView.svelte");
     }
     if (path === "/activity") return import("$lib/components/EventLogView.svelte");
-    if (path === "/intelligence") return import("$lib/components/IntelligenceView.svelte");
+    if (path === "/intelligence" && session?.features?.intelligence === true) {
+      return import("$lib/components/IntelligenceView.svelte");
+    }
     if (path.startsWith("/integrations")) return import("$lib/components/IntegrationsView.svelte");
     if (path.startsWith("/settings")) return import("$lib/components/SettingsView.svelte");
   }
@@ -178,6 +180,7 @@
 
   $effect(() => {
     const path = route;
+    session?.features?.intelligence;
     const loader = viewLoader(path);
     const key = viewKey(path);
     if (ActiveView && loadedViewKey === key) {

@@ -48,21 +48,19 @@ public class LocalLibraryService : ILocalLibraryService
         var mapping = await _downloadedSongs.FindAsync(
             NormalizeProvider(externalProvider),
             externalId.Trim());
-        if (mapping is not null)
-        {
-            if (File.Exists(mapping.LocalPath))
-            {
-                return mapping.LocalPath;
-            }
+        return await ExistingPathAsync(mapping);
+    }
 
-            await _downloadedSongs.RemoveAsync(mapping.Id, mapping.Revision);
-            _logger.LogDebug(
-                "Removed stale downloaded-song mapping for {ProviderId}:{ExternalId} because its file is missing",
-                mapping.ProviderId,
-                mapping.ExternalId);
-        }
-
-        return null;
+    public async Task<string?> GetLocalPathForExternalSongAsync(
+        DownloadedSongMappingScope scope,
+        string externalProvider,
+        string externalId)
+    {
+        var mapping = await _downloadedSongs.FindAsync(
+            scope,
+            NormalizeProvider(externalProvider),
+            externalId.Trim());
+        return await ExistingPathAsync(mapping);
     }
 
     public async Task RegisterDownloadedSongAsync(Song song, string localPath)
@@ -81,6 +79,45 @@ public class LocalLibraryService : ILocalLibraryService
             DownloadedAt = DateTimeOffset.UtcNow,
             Revision = 1
         });
+    }
+
+    public async Task RegisterDownloadedSongAsync(
+        DownloadedSongMappingScope scope,
+        Song song,
+        string localPath)
+    {
+        if (song.ExternalProvider == null || song.ExternalId == null) return;
+
+        await _downloadedSongs.UpsertAsync(new DownloadedSongMappingEntity
+        {
+            Id = Guid.CreateVersion7(),
+            ScopeKey = scope.Key,
+            TenantId = scope.TenantId,
+            ProviderAccountId = scope.ProviderAccountId,
+            LibraryScopeId = scope.LibraryScopeId,
+            AudioQuality = scope.AudioQuality,
+            ProviderId = NormalizeProvider(song.ExternalProvider),
+            ExternalId = song.ExternalId.Trim(),
+            LocalPath = Path.GetFullPath(localPath),
+            Title = song.Title,
+            Artist = song.Artist,
+            Album = song.Album,
+            DownloadedAt = DateTimeOffset.UtcNow,
+            Revision = 1
+        });
+    }
+
+    private async Task<string?> ExistingPathAsync(DownloadedSongMappingEntity? mapping)
+    {
+        if (mapping == null) return null;
+        if (File.Exists(mapping.LocalPath)) return mapping.LocalPath;
+
+        await _downloadedSongs.RemoveAsync(mapping.Id, mapping.Revision);
+        _logger.LogDebug(
+            "Removed stale downloaded-song mapping for {ProviderId}:{ExternalId} because its file is missing",
+            mapping.ProviderId,
+            mapping.ExternalId);
+        return null;
     }
 
     public (bool isExternal, string? provider, string? externalId) ParseSongId(string songId)

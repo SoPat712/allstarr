@@ -82,7 +82,7 @@ public sealed class RuntimeSettingsChangeSignal : IRuntimeSettingsChangeSignal
 public sealed record RuntimeSettingDefinition(
     string Key, RuntimeSettingValueType ValueType, string BootstrapKey,
     int? Minimum = null, int? Maximum = null, IReadOnlySet<string>? Choices = null,
-    bool AllowEmpty = false, int MaximumLength = 500);
+    bool AllowEmpty = false, int MaximumLength = 500, string? DefaultValue = null);
 
 public static class RuntimeSettingCatalog
 {
@@ -120,11 +120,11 @@ public static class RuntimeSettingCatalog
         Int("Qobuz:MinRequestIntervalMs", 0, 60000);
         items.Add(new("AppleDownload:BaseUrl", RuntimeSettingValueType.String, "AppleDownload:BaseUrl", AllowEmpty: true));
         items.Add(new("AppleDownload:Quality", RuntimeSettingValueType.String, "AppleDownload:Quality", AllowEmpty: true));
-        items.Add(new("Providers:MetadataOrder", RuntimeSettingValueType.StringList, "MULTI_PROVIDER_METADATA_ORDER"));
-        items.Add(new("Providers:DownloadOrder", RuntimeSettingValueType.StringList, "MULTI_PROVIDER_DOWNLOAD_ORDER"));
-        items.Add(new("Providers:StreamingOrder", RuntimeSettingValueType.StringList, "MULTI_PROVIDER_STREAMING_ORDER"));
-        items.Add(new("Providers:PlaylistOrder", RuntimeSettingValueType.StringList, "MULTI_PROVIDER_PLAYLIST_ORDER"));
-        items.Add(new("Providers:LyricsOrder", RuntimeSettingValueType.StringList, "MULTI_PROVIDER_LYRICS_ORDER"));
+        items.AddRange(ProviderOrderPolicyCatalog.Definitions.Select(item => new RuntimeSettingDefinition(
+            item.SettingKey,
+            RuntimeSettingValueType.StringList,
+            item.BootstrapKey,
+            DefaultValue: item.DefaultValue)));
         items.Add(new("Providers:EnabledSearch", RuntimeSettingValueType.StringList, "MULTI_PROVIDER_ENABLED_SEARCH"));
         items.Add(new("Providers:EnabledPlaylist", RuntimeSettingValueType.StringList, "MULTI_PROVIDER_ENABLED_PLAYLIST"));
         items.Add(new("Providers:Disabled", RuntimeSettingValueType.StringList, "MULTI_PROVIDER_DISABLED_PROVIDERS"));
@@ -364,7 +364,7 @@ public sealed class DurableRuntimeSettingsService : IDurableRuntimeSettings
         { throw new InvalidOperationException($"Runtime setting '{definition.Key}' has an invalid stored value.", ex); }
     }
 
-    private static string DefaultRaw(RuntimeSettingDefinition definition) => definition.ValueType switch
+    private static string DefaultRaw(RuntimeSettingDefinition definition) => definition.DefaultValue ?? definition.ValueType switch
     {
         RuntimeSettingValueType.String when definition.Key == AudioQualityPolicy.SettingKey => AudioQualityPolicy.DefaultStep,
         RuntimeSettingValueType.Boolean => "false",
@@ -387,6 +387,7 @@ public static class DurableRuntimeSettingsRegistration
         services.AddSingleton<IRuntimeSettingsChangeSignal>(sp => sp.GetRequiredService<RuntimeSettingsChangeSignal>());
         services.AddSingleton<DurableRuntimeSettingsService>();
         services.AddSingleton<IDurableRuntimeSettings>(sp => sp.GetRequiredService<DurableRuntimeSettingsService>());
+        services.AddSingleton<IEffectiveProviderPolicyResolver, EffectiveProviderPolicyResolver>();
         return services;
     }
 }

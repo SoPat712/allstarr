@@ -1,6 +1,8 @@
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Settings;
 using Microsoft.Extensions.Logging;
 
 namespace allstarr.Services.Common;
@@ -592,14 +594,16 @@ public class MultiProviderMetadataService : IMusicMetadataService
 
     private IReadOnlyList<string> ConfiguredSearchOrder(bool playbackOnly)
     {
-        IEnumerable<string> values = playbackOnly
-            ? [
-                _configuration["Providers:StreamingOrder"] ?? _configuration["MULTI_PROVIDER_STREAMING_ORDER"] ?? "apple-download,deezer,qobuz",
-                _configuration["Providers:DownloadOrder"] ?? _configuration["MULTI_PROVIDER_DOWNLOAD_ORDER"] ?? "apple-download,deezer,qobuz"
-              ]
-            : [
-                _configuration["Providers:MetadataOrder"] ?? _configuration["MULTI_PROVIDER_METADATA_ORDER"] ?? "apple-download,deezer,qobuz"
-              ];
+        var capabilities = playbackOnly
+            ? new[] { ProviderCapabilityKind.Streaming, ProviderCapabilityKind.Download }
+            : [ProviderCapabilityKind.Metadata];
+        var values = capabilities.Select(capability =>
+        {
+            var definition = ProviderOrderPolicyCatalog.Find(capability)!;
+            return _configuration[definition.SettingKey] ??
+                   _configuration[definition.BootstrapKey] ??
+                   definition.DefaultValue;
+        });
 
         var configuredOrder = values
             .SelectMany(value => value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))

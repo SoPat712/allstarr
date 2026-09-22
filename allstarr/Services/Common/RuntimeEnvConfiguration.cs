@@ -21,6 +21,7 @@ public static class RuntimeEnvConfiguration
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
             ["BACKEND_TYPE"] = ["Backend:Type"],
+            ["ALLSTARR_RELEASE_PROFILE"] = ["Release:Profile"],
             ["ADMIN_BIND_ANY_IP"] = ["Admin:BindAnyIp"],
             ["ADMIN_TRUSTED_SUBNETS"] = ["Admin:TrustedSubnets"],
             ["ADMIN_ENABLE_ENV_EXPORT"] = ["Admin:EnableEnvExport"],
@@ -102,6 +103,10 @@ public static class RuntimeEnvConfiguration
             ["MUSICBRAINZ_ENABLED"] = ["MusicBrainz:Enabled"],
             ["MUSICBRAINZ_USERNAME"] = ["MusicBrainz:Username"],
             ["MUSICBRAINZ_PASSWORD"] = ["MusicBrainz:Password"],
+            ["MUSICBRAINZ_SOURCE_ID"] = ["MusicBrainz:SourceId"],
+            ["MUSICBRAINZ_BASE_URL"] = ["MusicBrainz:BaseUrl"],
+            ["MUSICBRAINZ_RATE_LIMIT_MS"] = ["MusicBrainz:RateLimitMs"],
+            ["MUSICBRAINZ_AUTHORIZED_USER_AGENT_OVERRIDE"] = ["MusicBrainz:AuthorizedUserAgentOverride"],
 
             ["MULTI_PROVIDER_METADATA_ORDER"] = ["MULTI_PROVIDER_METADATA_ORDER"],
             ["MULTI_PROVIDER_DOWNLOAD_ORDER"] = ["MULTI_PROVIDER_DOWNLOAD_ORDER"],

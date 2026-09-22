@@ -1,4 +1,28 @@
-# Jellyfin compatibility qualification
+# Live qualification tools
+
+## BrainzMash catalog qualification
+
+`live_brainzmash_qualification.py` exercises only Allstarr's selected read-only
+MusicBrainz-compatible contract. It checks representative base/edition,
+featured-credit, and versioned-title searches; follows one result through its
+recording, artist, release, release-group, medium, and track hierarchy; verifies
+404 behavior; enforces HTTPS, the approved host/path, a one-megabyte response
+limit, no redirects, bounded timeouts, and a conservative request interval.
+Output contains case names, status, latency, byte counts, and entity counts—not
+query text or payloads.
+
+Supply only an identity explicitly authorized by the BrainzMash operator:
+
+```bash
+BRAINZMASH_USER_AGENT='DroppedNeedleApp/backend-test' \
+  python3 tools/tests/live_brainzmash_qualification.py
+```
+
+The temporary identity is not a deployment default. Once BrainzMash admits
+Allstarr, rerun with `Allstarr/<current version> (+https://github.com/SoPat712/allstarr)`
+and remove `MUSICBRAINZ_AUTHORIZED_USER_AGENT_OVERRIDE` from the deployment.
+
+## Jellyfin compatibility qualification
 
 The reusable Jellyfin kit has deterministic and live layers:
 
@@ -12,6 +36,7 @@ The reusable Jellyfin kit has deterministic and live layers:
   12.0, including legacy audio HLS and query-form artist instant-mix routes.
 - `live_jellyfin_smoke.sh` compares a real Jellyfin instance directly with
   Allstarr. It covers bootstrap and authentication, exact native profile,
+  public server identity apart from the required proxy `LocalAddress`,
   browse, detail, search, filter, playlist, artwork, and lyrics parity; stable
   remote-session parity; non-empty virtual playlist projections with client-indexable
   track/artist/album fields, exact full-object parity between every matched

@@ -3,6 +3,7 @@ using allstarr.Models.Settings;
 using allstarr.Models.Download;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
+using allstarr.Core.Downloads;
 
 namespace allstarr.Services.Local;
 
@@ -16,10 +17,20 @@ public interface ILocalLibraryService
     /// </summary>
     Task<string?> GetLocalPathForExternalSongAsync(string externalProvider, string externalId);
 
+    Task<string?> GetLocalPathForExternalSongAsync(
+        DownloadedSongMappingScope scope,
+        string externalProvider,
+        string externalId);
+
     /// <summary>
     /// Registers a downloaded song in the local library
     /// </summary>
     Task RegisterDownloadedSongAsync(Song song, string localPath);
+
+    Task RegisterDownloadedSongAsync(
+        DownloadedSongMappingScope scope,
+        Song song,
+        string localPath);
 
     /// <summary>
     /// Parses a song ID to determine if it is external or local

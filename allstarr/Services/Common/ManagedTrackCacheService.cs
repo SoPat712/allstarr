@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Downloads;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
@@ -18,11 +19,11 @@ public sealed class ManagedTrackCacheService(
     private readonly ConcurrentDictionary<string, byte> active = new(StringComparer.OrdinalIgnoreCase);
 
     public async Task<ProtocolProviderStream?> TryOpenAsync(ProviderExternalResourceId track,
-        Guid? accountId, ProviderAudioQuality quality, CancellationToken cancellationToken)
+        DownloadedSongMappingScope scope, CancellationToken cancellationToken)
     {
-        if (quality != ProviderAudioQuality.Any) return null;
         cancellationToken.ThrowIfCancellationRequested();
-        var path = await localLibrary.GetLocalPathForExternalSongAsync(track.ProviderId, track.Value);
+        var path = await localLibrary.GetLocalPathForExternalSongAsync(
+            scope, track.ProviderId, track.Value);
         if (path == null) return null;
         try
         {
@@ -46,7 +47,8 @@ public sealed class ManagedTrackCacheService(
             return new ProtocolProviderStream(response, new ProviderStreamLease("managed-cache",
                 new Uri("https://allstarr.invalid/managed-cache"), DateTimeOffset.UtcNow.AddHours(1),
                 true, true, new ProviderMediaFormat(mime, extension, extension),
-                ProviderStreamRetryBehavior.DoNotRetry), track.ProviderId, track.Value, accountId, IsCached: true);
+                ProviderStreamRetryBehavior.DoNotRetry), track.ProviderId, track.Value,
+                scope.ProviderAccountId, IsCached: true, EffectiveQuality: scope.AudioQuality);
         }
         catch (IOException) { return null; }
         catch (UnauthorizedAccessException) { return null; }
@@ -54,24 +56,30 @@ public sealed class ManagedTrackCacheService(
 
     public async Task WrapAsync(
         ProtocolProviderStream stream,
+        ProtocolExecutionContext protocol,
         string providerId,
         string externalId,
-        ProviderAudioQuality requestedQuality,
         bool headOnly,
         Func<Task<Song?>> metadataFactory,
         CancellationToken cancellationToken)
     {
         if (stream.IsCached || !IsCacheMode() ||
             headOnly ||
-            requestedQuality != ProviderAudioQuality.Any ||
             !IsCompleteResponse(stream.Response)) return;
+        var actor = protocol.Actor;
+        if (actor == null) return;
+        var scope = new DownloadedSongMappingScope(
+            actor.TenantId,
+            stream.ServingAccountId,
+            protocol.LibraryScopeId,
+            stream.EffectiveQuality);
 
         // Older callers without a resolved identity must never cache fallback bytes as the requested track.
         if (stream.ServingExternalId == null && stream.ServingProviderId != providerId) return;
         providerId = stream.ServingProviderId;
         externalId = stream.ServingExternalId ?? externalId;
 
-        var key = $"{providerId}\n{externalId}";
+        var key = $"{scope.Key}\n{providerId}\n{externalId}";
         if (!active.TryAdd(key, 0)) return;
 
         var cacheRoot = Path.Combine(
@@ -139,7 +147,8 @@ public sealed class ManagedTrackCacheService(
                 originalContent.Dispose();
                 try
                 {
-                    var existing = await localLibrary.GetLocalPathForExternalSongAsync(providerId, externalId);
+                    var existing = await localLibrary.GetLocalPathForExternalSongAsync(
+                        scope, providerId, externalId);
                     if (existing != null && File.Exists(existing))
                     {
                         TryDelete(partialPath);
@@ -180,7 +189,7 @@ public sealed class ManagedTrackCacheService(
                     try
                     {
                         song.LocalPath = finalPath;
-                        await localLibrary.RegisterDownloadedSongAsync(song, finalPath);
+                        await localLibrary.RegisterDownloadedSongAsync(scope, song, finalPath);
                     }
                     catch
                     {

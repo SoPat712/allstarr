@@ -128,20 +128,84 @@ public sealed class ProtocolRouteFixtureTests
     [Fact]
     public async Task JellyfinPublicSystemInfo_BypassesCurrentUserVerification()
     {
+        const string upstream = """
+            {
+              "LocalAddress":"http://jellyfin:8096",
+              "Id":"fixture-server-id",
+              "ServerName":"Fixture Server",
+              "Version":"12.0.0",
+              "ProductName":"Jellyfin Server",
+              "OperatingSystem":"Linux",
+              "StartupWizardCompleted":true,
+              "UnknownFutureField":{"Keep":[1,2,3]}
+            }
+            """;
         var observedRequests = new List<string>();
         using var factory = new ProtocolFactory("Jellyfin", request =>
         {
             observedRequests.Add(request.RequestUri!.AbsolutePath);
-            return Json(
-                StatusCodes.Status200OK,
-                """{"ServerName":"Fixture Server","Version":"12.0.0"}""");
+            return Json(StatusCodes.Status200OK, upstream);
         });
         using var client = factory.CreateClient();
 
         using var response = await client.GetAsync("/System/Info/Public");
+        using var payload = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        using var expected = JsonDocument.Parse(upstream);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("http://localhost", payload.RootElement.GetProperty("LocalAddress").GetString());
+        foreach (var property in expected.RootElement.EnumerateObject().Where(property =>
+                     property.Name != "LocalAddress"))
+        {
+            Assert.True(payload.RootElement.TryGetProperty(property.Name, out var actual), property.Name);
+            Assert.Equal(property.Value.GetRawText(), actual.GetRawText());
+        }
+        Assert.Equal(expected.RootElement.EnumerateObject().Count(),
+            payload.RootElement.EnumerateObject().Count());
         Assert.Equal(["/System/Info/Public"], observedRequests);
+    }
+
+    [Theory]
+    [InlineData("/Items/00112233445566778899aabbccddeeff?api_key=fixture-key")]
+    [InlineData("/Users/user-1/Items/00112233445566778899aabbccddeeff?api_key=fixture-key")]
+    public async Task JellyfinNativeAudioDetail_PreservesEveryUpstreamField(string path)
+    {
+        const string audio = """
+            {
+              "Id":"00112233445566778899aabbccddeeff",
+              "Name":"Fixture Track",
+              "Type":"Audio",
+              "MediaType":"Audio",
+              "AlbumId":"ffeeddccbbaa99887766554433221100",
+              "Artists":["Fixture Artist"],
+              "ProviderIds":{"MusicBrainzTrack":"recording-1"},
+              "UserData":{"IsFavorite":true,"PlayCount":7},
+              "MediaSources":[{"Id":"source-1","Container":"flac"}],
+              "UnknownFutureField":{"Keep":[1,2,3]}
+            }
+            """;
+        var observedRequests = new List<string>();
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            observedRequests.Add(request.RequestUri!.PathAndQuery);
+            return request.RequestUri.AbsolutePath switch
+            {
+                "/Items" => ItemLookup(audio),
+                "/Users/Me" => Json(StatusCodes.Status200OK, """{"Id":"user-1"}"""),
+                _ => Json(StatusCodes.Status200OK, audio)
+            };
+        });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(path);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(audio), JsonNode.Parse(body)));
+        Assert.Equal(3, observedRequests.Count);
+        Assert.Equal("/Items?ids=00112233445566778899aabbccddeeff&limit=1", observedRequests[0]);
+        Assert.Equal("/Users/Me?ApiKey=fixture-key", observedRequests[1]);
+        Assert.Equal(ModernJellyfinPath(path), observedRequests[2]);
     }
 
     [Fact]

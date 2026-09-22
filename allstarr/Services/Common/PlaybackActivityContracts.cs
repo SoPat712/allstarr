@@ -54,7 +54,8 @@ public sealed record PlaybackStreamSource(
     string BackendInstanceId,
     string? LibraryScopeId,
     bool Cached,
-    DateTimeOffset OpenedAt)
+    DateTimeOffset OpenedAt,
+    string SelectionReason)
 {
     public bool Matches(string protocol, string backendInstanceId, string? libraryScopeId) =>
         Protocol == protocol && BackendInstanceId == backendInstanceId &&
@@ -96,7 +97,8 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
             string.IsNullOrWhiteSpace(context.Client.DeviceId) || stream.ServingExternalId == null) return;
         var source = new PlaybackStreamSource(stream.ServingProviderId, stream.ServingExternalId,
             stream.ServingAccountId, context.Protocol.ToString().ToLowerInvariant(),
-            context.BackendInstanceId, context.LibraryScopeId, stream.IsCached, DateTimeOffset.UtcNow);
+            context.BackendInstanceId, context.LibraryScopeId, stream.IsCached, DateTimeOffset.UtcNow,
+            stream.SelectionReason);
         var key = (context.Actor.TenantId, userId, context.Client.DeviceId, StreamItemKey(itemId));
         Set(key, source);
         Set((key, context.Protocol, context.BackendInstanceId, context.LibraryScopeId, quality), source);

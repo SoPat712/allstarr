@@ -7,7 +7,9 @@ namespace allstarr.Core.Playback;
 
 public static class PlaybackRegistration
 {
-    public static IServiceCollection AddDurablePlaybackSignals(this IServiceCollection services)
+    public static IServiceCollection AddDurablePlaybackSignals(
+        this IServiceCollection services,
+        bool includeIntelligenceEnrichment)
     {
         services.AddSingleton<PlaybackDeliveryActivityStore>();
         services.AddSingleton<IPlaybackDeliveryActivitySource>(provider =>
@@ -17,13 +19,31 @@ public static class PlaybackRegistration
         services.AddSingleton<IPlaybackLyricsPrefetch, PlaybackLyricsPrefetch>();
         services.AddSingleton<IScopedPlaybackScrobbleDelivery, ScopedPlaybackScrobbleDelivery>();
         services.AddSingleton<IPlaybackDeliveryCheckpointStore, EfPlaybackDeliveryCheckpointStore>();
-        services.AddSingleton<MusicBrainzListeningEnrichmentQueue>();
-        services.AddSingleton<IDurableJobHandler, MusicBrainzListeningEnrichmentJobHandler>();
+        if (includeIntelligenceEnrichment)
+        {
+            services.AddSingleton<MusicBrainzListeningEnrichmentQueue>();
+            services.AddSingleton<IDurableJobHandler, MusicBrainzListeningEnrichmentJobHandler>();
+        }
+        else
+        {
+            services.AddSingleton<IRecommendationSignalWriter, DisabledRecommendationSignalWriter>();
+        }
         services.AddHttpClient<IExactScopePlaybackScrobbleTarget, LastFmScopedPlaybackScrobbleTarget>(client => client.Timeout = TimeSpan.FromSeconds(10))
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddHttpClient<IExactScopePlaybackScrobbleTarget, ListenBrainzScopedPlaybackScrobbleTarget>(client => client.Timeout = TimeSpan.FromSeconds(10))
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddSingleton<IDurableJobHandler, PlaybackSignalJobHandler>();
         return services;
+    }
+
+    private sealed class DisabledRecommendationSignalWriter : IRecommendationSignalWriter
+    {
+        public Task<bool> WriteAsync(
+            IntelligenceScope scope,
+            string signalType,
+            string trackReference,
+            double value,
+            DateTimeOffset observedAt,
+            CancellationToken cancellationToken = default) => Task.FromResult(false);
     }
 }

@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using allstarr.Core.Intelligence;
+using allstarr.Core.Configuration;
 using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
 using Microsoft.AspNetCore.Mvc;
@@ -7,6 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace allstarr.Controllers;
 
 [ApiController]
+[ReleaseFeature(ReleaseFeatureKind.Intelligence)]
 [Route("apis/listenbrainz/1")]
 public sealed class ListenBrainzIntakeController(
     ListeningIntakeTokenService tokens,

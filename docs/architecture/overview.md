@@ -71,13 +71,47 @@ Built-in and extension capabilities meet at `ProviderRegistry`. Extension IDs ma
 
 `ProviderAccountOwnership.OwnedBy` is the shared management predicate: a private account belongs to its tenant/user owner; a global account remains managed by its recorded creator. Global records retain null tenant/user/library scope, so sharing needs no duplicate account or secret store. Audience changes rebind the encrypted secret in the same database transaction and invalidate account discovery caches. Routing distinguishes management from consumption: eligible shared capabilities may serve other users, but personal capabilities stay creator-only unless explicit operator policy permits sharing. The owner’s private account is preferred, then their own shared account, before other eligible library/global accounts. Administrator-assigned private accounts cannot be reshared by the recipient or reclaimed by the original creator.
 
+## Native-server compatibility
+
+Jellyfin and Subsonic/OpenSubsonic remain the behavioral and data authorities for native objects. Allstarr relays native authentication, browse, item detail, artwork, playlists, playback metadata, streams, user data, and session traffic without reshaping their responses. Unknown upstream fields are part of this contract and pass through unchanged.
+
+Allstarr changes a native response only when a documented feature requires it: external search results, provider-neutral matching and routes, virtual or linked playlists, external playback, lyrics fallback, music-only surface enforcement, or the proxy address used during server discovery. Each changed surface must preserve native rows and identities, declare its added or filtered fields, and have a direct-server-versus-Allstarr parity test. A new interception without that contract is a regression.
+
 ## Track identity and matching
 
 `TrackIdentityService`, backend library indexing, persisted provider routes, and the playlist orchestration layer are the shared path. Accepted decisions are reusable by automatic matching, interactive matching, synchronization, playback, and event projections. Candidates that satisfy confidence and artist-evidence requirements are selected by local-first/configured streaming priority, not relative confidence windows. Only tentative selection retains preference windows. Cached provider reuse passes through the same decision engine with current local candidates and rejections; it does not force acceptance or overwrite confidence. Matching-algorithm changes enqueue owner-scoped `track-match.rematch-all` jobs that replace stale automatic decisions in bounded batches while preserving manual authority and append-only history. Playlist refresh and materialization run through durable playlist links and the `playlist.materialize` job; there is no provider-specific matching coordinator. A one-time import reuses its first published source snapshot and no longer requires the source account for later projection or rebuilds. Keep-all retention fans resolved external routes into idempotent `playlist.retain-track` jobs, reauthorizes download accounts for the exact owner and library at execution time, and publishes verified files through the managed-file owner.
 
+## Canonical catalog ingestion
+
+`MusicBrainzService` is the single bounded client for MusicBrainz-compatible
+catalog sources. Public MusicBrainz and BrainzMash use the same `/ws/2`
+contract and feed the same validation, ingestion, matching, and reconciliation
+path. A deployment selects one endpoint without changing catalog semantics;
+source IDs and revisions keep caches and provenance separate.
+`MusicBrainzCatalogIngestService` turns a validated source hierarchy into
+tenant-scoped artists, release groups, editions, release tracks, recordings,
+and ordered credits in one serializable PostgreSQL transaction.
+`CanonicalCatalogEvidenceStore` remains the only writer for external aliases and
+source-stamped facts, whether called independently or inside graph ingestion.
+Repeated source payloads preserve IDs and do not create duplicate facts.
+`MusicBrainzCatalogDiscoveryJobHandler` expands one known recording into a
+validated, deduplicated set of no more than 50 editions. It enqueues one
+idempotent release-refresh job per edition; each refresh fetches a bounded
+hierarchy and passes it to the ingester through the existing durable worker.
+Metadata discovery, refresh, and reconciliation run outside playback; a source
+outage never invalidates an already accepted route.
+
 ## External playback selection
 
 `ProtocolProviderGateway.OpenStreamAsync` owns both protocol surfaces' external selection. The existing `ProviderRouter` authorizes candidates and translates only verified canonical identities. Authorized managed-cache hits are checked before remote opens; `ManagedTrackCacheService` publishes remote bytes under the actual serving provider/track. Controllers no longer open a warm external file before routing, nor fall through to legacy global credentials after an actor-scoped route miss.
+
+`EffectiveProviderPolicyResolver` reads provider order, disabled providers, audio quality, and local-preference policy for one tenant in one durable-settings query and returns an immutable snapshot. Authenticated protocol search, playlist discovery, matching, projection, lyrics, activity, playback selection, and admin presentation use that snapshot. Process configuration is only the bootstrap fallback and is never rewritten from tenant policy. Provider-order keys and defaults are defined once in `ProviderOrderPolicyCatalog`. A provider disabled in the tenant snapshot cannot be restored merely because it was the catalog source of the requested track.
+
+Protocol playback and managed downloads pass the shared tenant quality ceiling through the provider contract. A protocol client's explicit bandwidth or codec constraint may lower that request, but an unspecified client quality no longer falls back to a process-wide provider setting.
+
+Completed streaming-cache references are keyed by tenant, resolved provider account, library, effective quality, provider, and track. The shared gateway authorizes the route before consulting that reference. Physical audio bytes may occupy the same managed cache root, but a mapping from one private account or tenant cannot authorize another listener.
+
+Provider priority is evaluated one candidate at a time: an available cache entry for a lower-priority provider cannot jump ahead of a higher-priority remote route. The opened stream carries a redacted reason code describing priority or fallback, account-resolution class, and cache or remote delivery. That reason is retained in the scoped playback observation and exposed to administrators without account identifiers.
 
 Remote opening honors the protocol deadline and the lease's single-retry policy. The gateway verifies media headers and prefetches one byte before returning a response, allowing bounded pre-response failover without buffering the song. Cancellation and authorization failures stop selection. Native backend streaming does not enter this path.
 

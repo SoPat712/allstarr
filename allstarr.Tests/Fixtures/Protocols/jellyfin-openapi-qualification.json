@@ -250,7 +250,7 @@
     {
       "area": "public server info",
       "class": "transformed",
-      "difference": "ProductName, LocalAddress, server Id, and operating system describe Allstarr while Version and ServerName reflect the backend connection."
+      "difference": "Only LocalAddress changes so clients reconnect through Allstarr. Server identity, product, version, operating system, capabilities, and unknown fields remain Jellyfin-owned."
     },
     {
       "area": "music browse and search",

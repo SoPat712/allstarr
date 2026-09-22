@@ -4,6 +4,8 @@ Assessment date: 2026-09-12. Reference commit: `adf3c585a3b97b025dfa65f99a33b470
 
 This is a dated engineering assessment and proposed plan, not a statement that every described feature is released or qualified. It inventories the working tree, examines Git churn, and traces the main listening, acquisition, playlist, account, and recovery paths. It is a repository-wide inventory with focused code review of those paths, not a line-by-line review of every file. The 2026-09-13 addendum records the maintainer's Intelligence scope decision, the multi-source routing proposal, a WebUI audit, and a small navigation implementation. No deployment was performed for either assessment.
 
+Planning note (2026-09-14): the later [unified music service plan](architecture/unified-music-service-plan.md) supersedes this assessment's narrow “no unified catalog in the first public release” scope decision. This document remains the dated implementation and code-churn evidence; the newer plan owns future product scope and sequencing.
+
 ## Product contract
 
 **Allstarr should help people listen to and grow their own music library.** It preserves their existing Jellyfin or Subsonic client, supplies missing recordings through secondary providers, and lets them explicitly acquire music into storage their media server can index.
@@ -61,7 +63,7 @@ Lidarr is a possible later acquisition and file-organization adapter, not the re
 
 **First-release sequence:** (1) specify source-set/manual-authority semantics and regressions; (2) finish scoped pre-commit failover in the existing gateway; (3) complete acquisition-to-native reconciliation; (4) qualify the accepted [Jellyfin and provider routing plan](architecture/jellyfin-provider-routing-plan.md) on the maintainer's deployment. Existing IDs remain aliases throughout migration.
 
-**Maintainer scope decision:** the RC target is one proven Jellyfin deployment plus its connected providers, not a global catalog. BrainzMash, SkyHook/Lidarr Metadata, a required MusicBrainz mirror, and merged provider-neutral artist/discography pages are deferred. Recording identity still remains provider-neutral: each candidate must independently pass match acceptance, local Jellyfin wins when accepted, and accepted external identities play in configured streaming order. Provider adapters choose the closest allowed audio representation without reordering providers. Live/remix/clean/explicit versions must not merge merely because names resemble each other. See the [audited reference ledger](architecture/reference-projects.md) for research that is explicitly not a dependency list.
+**Maintainer scope decision:** the RC target is one proven Jellyfin deployment plus its connected providers, backed by Allstarr's local canonical projection. Public MusicBrainz and BrainzMash are equivalent `/ws/2` catalog sources behind the same bounded client. BrainzMash requires operator approval for Allstarr's user agent; public MusicBrainz uses its published limits. Neither source is a playback dependency, and an outage uses cached or provisional metadata. Self-hosting BrainzMash, SkyHook/Lidarr Metadata, and a local MusicBrainz mirror remain deferred. Recording identity is provider-neutral: each candidate must pass match acceptance independently, an accepted local Jellyfin route wins, and accepted external routes follow configured streaming order. Provider adapters choose the closest allowed representation without reordering providers. Live, remix, clean, and explicit versions remain distinct. See the [audited reference ledger](architecture/reference-projects.md) for reviewed boundaries.
 
 ## Current feature inventory
 
@@ -169,15 +171,15 @@ Reproduce the scope with `git status --short`, `git diff HEAD --numstat`, `git l
 
 **Action:** inventory the outstanding edits into coherent changes, retain or explicitly defer each, and validate a clean candidate. Record its commit, application image digest, optional sidecar versions, migrations, and support matrix. Do not use a checkout SHA as evidence that an older application container contains the same code. Source updates also require a clean tree in the documented updater.
 
-### R2 — External cache hits bypass the account-aware provider route
+### R2 — External cache ownership and authorization
 
-**Confirmed control-flow and schema gap; no cross-user live exploit test was performed.** [`DownloadedSongMappingEntity`](../allstarr/Core/Downloads/DownloadedSongMappingPersistence.cs) has a unique `(ProviderId, ExternalId)` key without tenant, owner, library, or account. [`LocalLibraryService.GetLocalPathForExternalSongAsync`](../allstarr/Services/Local/LocalLibraryService.cs) resolves that key without a caller. Both [`JellyfinController.Audio`](../allstarr/Controllers/JellyfinController.Audio.cs) and [`SubsonicController`](../allstarr/Controllers/SubsonicController.cs) return the cached file before entering `OpenStreamAsync`. Native authentication still runs; the missing boundary is authorization to reuse that external artifact.
+**Working-tree fix implemented; live two-client qualification remains.** External cache lookup follows candidate authorization in the shared protocol gateway. `DownloadedSongMappingEntity` now separates warmed files by an opaque scope derived from tenant, resolved provider account, library, and effective audio quality. Fallback audio is published under its actual provider/track and scoped mapping; existing provider-only permanent-download mappings remain in the explicit legacy scope rather than being silently reclassified.
 
-**Impact:** personal account policy and revocation cannot be assumed to cover warmed files. A shared physical cache can be valid, but it needs an explicit authorized-sharing policy and scoped references.
+The PostgreSQL regression matrix exercises exact-scope visibility across tenant, provider account, library, and quality plus explicit legacy separation. It must pass against an isolated database before deployment; the live application database is not a test target.
 
-**Action:** authorize artifact access in the shared playback owner before opening a cached file. Test user A/user B, revoked access, different libraries, same external ID, and explicit shared-library policy on both protocols. Preserve legitimate playback of music already acquired into an authorized local library when the external account later disappears.
+**Result:** a private account's warmed reference cannot satisfy another account, tenant, library, or quality lookup. Users intentionally sharing one authorized account within the same tenant and library can reuse its warmed file. Account revocation prevents the gateway from reaching the scoped cache lookup at all.
 
-**Working-tree update:** external cache lookup now follows candidate authorization in the shared gateway, and fallback audio is published under its actual provider/track. Actor-scoped misses no longer fall through to legacy global playback. This fixes the two controller shortcuts described above; it does not replace the provider-keyed artifact schema or complete the scoped artifact-ownership and native-acquisition lifecycle qualification.
+**Remaining qualification:** run user A/user B, revoked access, different libraries, same external ID, and explicit shared-account scenarios through both Jellyfin and Subsonic clients against an isolated migrated database. Preserve legitimate playback of music already acquired into an authorized native library when the external account later disappears; that is the retained-file lifecycle in R3, not a cache exception.
 
 ### R3 — “Kept” has conflicting roots, records, and mutation paths
 
@@ -376,6 +378,14 @@ Remaining account work, in release order:
 3. Define account-owner disable/deletion behavior and expose account usage/audit records to its owner without leaking other listeners' private history.
 4. Add scoped listener connection probes and clear readiness, usage limits, and provider concurrency guidance. Do not enable an operator-wide diagnostics endpoint as a shortcut.
 5. Keep per-user provider preference, per-capability sharing, and share expiry as follow-up refinements after those safety and daily-use gates, not prerequisites for another routing rewrite.
+
+### Deterministic policy and cache-scope checkpoint
+
+Stage 1 of the unified-service plan is implemented in the working tree, not deployed. Authenticated routing, matching, playlists, lyrics, activity, downloads, playback, and admin presentation now resolve the same immutable tenant policy. Provider order, disabled capabilities, audio quality, local preference, and authorized account scope no longer depend on mutable singleton provider settings. Warmed media references include tenant, provider account, library, and effective quality; permanent managed downloads remain a separate legacy-compatible path.
+
+Verification on 2026-09-14 used a disposable PostgreSQL 18.4 instance and did not connect to or mutate the live database. Two focused runs passed **39 tests with zero failures**: exact cache isolation across tenant/account/library/quality, identity and provider-account sharing behavior, durable runtime settings, migration consistency, and PostgreSQL identity/job/outbox transactions. The disposable database and its tunnel were removed after the run. Release build, focused unit/controller suites, WebUI type checking, formatting verification, and diff whitespace checks also passed. A broad run without `ALLSTARR_TEST_POSTGRES` reported PostgreSQL fixtures as dynamic skips; that run is not counted as database qualification.
+
+Stage 2 is partly implemented in the working tree and is not deployed. The existing recording graph now includes canonical artists, ordered credits, release groups, editions, release tracks, legacy/protocol aliases, and source-stamped facts. One evidence writer makes repeated payloads idempotent, preserves superseded facts, and rejects alias remapping and hash collisions. Atomic graph ingestion, bounded discovery, and durable refresh are implemented and covered by isolated PostgreSQL tests. Public MusicBrainz and BrainzMash share one source-neutral `/ws/2` client with source-scoped caches and provenance. Catalog-backed search, legacy projection, relationship/image reads, and provisional reconciliation remain release work and must not be advertised as complete.
 
 ### Provider-neutral playback implementation and qualification
 

@@ -1,6 +1,7 @@
 using System.Data;
 using System.Text.Json;
 using allstarr.Core.Intelligence;
+using allstarr.Core.Configuration;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Cronos;
@@ -35,15 +36,26 @@ public sealed class DurableScheduleEngine
     private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
     private readonly DurableJobQueue _queue;
     private readonly IPlatformClock _clock;
+    private readonly ReleaseComposition _releaseComposition;
+
+    public DurableScheduleEngine(
+        IDbContextFactory<AllstarrDbContext> contextFactory,
+        DurableJobQueue queue,
+        IPlatformClock clock,
+        ReleaseComposition releaseComposition)
+    {
+        _contextFactory = contextFactory;
+        _queue = queue;
+        _clock = clock;
+        _releaseComposition = releaseComposition;
+    }
 
     public DurableScheduleEngine(
         IDbContextFactory<AllstarrDbContext> contextFactory,
         DurableJobQueue queue,
         IPlatformClock clock)
+        : this(contextFactory, queue, clock, ReleaseComposition.Development)
     {
-        _contextFactory = contextFactory;
-        _queue = queue;
-        _clock = clock;
     }
 
     public static DateTimeOffset? GetNextOccurrence(string expression, string timeZoneId, DateTimeOffset after)
@@ -63,9 +75,14 @@ public sealed class DurableScheduleEngine
     {
         var now = _clock.UtcNow;
         await using var scan = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        var dueIds = await scan.JobSchedules.AsNoTracking()
+        var dueSchedules = scan.JobSchedules.AsNoTracking()
             .Where(item => item.Enabled && item.NextRunAt != null && item.NextRunAt <= now)
-            .OrderBy(item => item.NextRunAt).ThenBy(item => item.Id)
+            .AsQueryable();
+        if (!_releaseComposition.IncludesScheduledJob(RecommendationJobType))
+        {
+            dueSchedules = dueSchedules.Where(item => item.JobType != RecommendationJobType);
+        }
+        var dueIds = await dueSchedules.OrderBy(item => item.NextRunAt).ThenBy(item => item.Id)
             .Select(item => item.Id).ToListAsync(cancellationToken);
 
         var claimed = 0;

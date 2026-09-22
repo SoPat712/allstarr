@@ -76,9 +76,18 @@ public class CacheKeyBuilderTests
     [Fact]
     public void MusicBrainzAndOdesliKeys_ShouldMatchExpectedFormats()
     {
-        Assert.Equal("musicbrainz:isrc:v2:usabc123", CacheKeyBuilder.BuildMusicBrainzIsrcKey("USABC123"));
-        Assert.StartsWith("musicbrainz:search:v2:", CacheKeyBuilder.BuildMusicBrainzSearchKey("Title", "Artist", 5));
-        Assert.Equal("musicbrainz:mbid:v2:abc-def", CacheKeyBuilder.BuildMusicBrainzMbidKey("abc-def"));
+        Assert.Equal(
+            "musicbrainz:isrc:v3:musicbrainz:usabc123",
+            CacheKeyBuilder.BuildMusicBrainzIsrcKey("USABC123"));
+        Assert.StartsWith(
+            "musicbrainz:search:v3:musicbrainz:",
+            CacheKeyBuilder.BuildMusicBrainzSearchKey("Title", "Artist", 5));
+        Assert.Equal(
+            "musicbrainz:recording:v3:musicbrainz:abc-def",
+            CacheKeyBuilder.BuildMusicBrainzMbidKey("abc-def"));
+        Assert.NotEqual(
+            CacheKeyBuilder.BuildMusicBrainzMbidKey("abc-def"),
+            CacheKeyBuilder.BuildMusicBrainzMbidKey("abc-def", "brainzmash"));
 
         Assert.StartsWith("odesli:tidal-to-spotify:v2:", CacheKeyBuilder.BuildOdesliTidalToSpotifyKey("123"));
         var urlKey = CacheKeyBuilder.BuildOdesliUrlToSpotifyKey("https://example.com/track?token=secret");
