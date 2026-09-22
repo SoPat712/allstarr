@@ -25,6 +25,35 @@ public class AuthHeaderHelperTests
     }
 
     [Fact]
+    public void BuildForwardedAuthorization_ShouldPreferModernAuthorization()
+    {
+        var headers = new HeaderDictionary
+        {
+            ["Authorization"] = "MediaBrowser DeviceId=\"modern\", Token=\"new\"",
+            ["X-Emby-Authorization"] = "MediaBrowser DeviceId=\"legacy\", Token=\"old\""
+        };
+
+        Assert.Equal(
+            "MediaBrowser DeviceId=\"modern\", Token=\"new\"",
+            AuthHeaderHelper.BuildForwardedAuthorization(headers));
+        Assert.Equal("modern", AuthHeaderHelper.ExtractDeviceId(headers));
+    }
+
+    [Fact]
+    public void BuildForwardedAuthorization_ShouldNormalizeLegacyAuthorization()
+    {
+        var headers = new HeaderDictionary
+        {
+            ["X-Emby-Authorization"] =
+                "MediaBrowser DeviceId=\"legacy-device\", Token=\"legacy-token\""
+        };
+
+        Assert.Equal(
+            "MediaBrowser DeviceId=\"legacy-device\", Token=\"legacy-token\"",
+            AuthHeaderHelper.BuildForwardedAuthorization(headers));
+    }
+
+    [Fact]
     public void ForwardAuthHeaders_ShouldPreserveMediaBrowserAuthorization()
     {
         var headers = new HeaderDictionary
@@ -68,6 +97,23 @@ public class AuthHeaderHelperTests
         Assert.True(request.Headers.TryGetValues("Authorization", out var values));
         Assert.Contains(values, value => value.Contains("Token=\"abc\"", StringComparison.Ordinal));
         Assert.False(request.Headers.Contains("X-Emby-Token"));
+    }
+
+    [Fact]
+    public void BuildForwardedAuthorization_ShouldUpgradeTokenWithCallerDeviceId()
+    {
+        var headers = new HeaderDictionary
+        {
+            ["X-Emby-Token"] = "abc"
+        };
+
+        var authorization = AuthHeaderHelper.BuildForwardedAuthorization(headers, "client-device");
+
+        Assert.NotNull(authorization);
+        Assert.StartsWith("MediaBrowser ", authorization, StringComparison.Ordinal);
+        Assert.Contains("DeviceId=\"client-device\"", authorization, StringComparison.Ordinal);
+        Assert.Contains($"Version=\"{allstarr.AppVersion.Version}\"", authorization, StringComparison.Ordinal);
+        Assert.Contains("Token=\"abc\"", authorization, StringComparison.Ordinal);
     }
 
     [Fact]

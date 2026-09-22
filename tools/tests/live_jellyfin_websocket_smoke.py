@@ -32,14 +32,26 @@ def socket_url(base_url: str, device_id: str) -> str:
     )
 
 
-def resolve_user_id(base_url: str, token: str) -> str:
+def authorization_header(token: str, device_id: str, user_id: str = "") -> str:
+    user = f', UserId="{user_id}"' if user_id else ""
+    return (
+        'MediaBrowser Client="AllstarrLiveSmoke", Device="Qualification", '
+        f'DeviceId="{device_id}", Version="1"{user}, Token="{token}"'
+    )
+
+
+def resolve_user_id(base_url: str, token: str, run_id: str) -> str:
     configured = os.environ.get("JELLYFIN_USER_ID", "").strip()
     if configured:
         user_id = configured
     else:
         request = urllib.request.Request(
             f"{base_url.rstrip('/')}/Users",
-            headers={"X-Emby-Token": token},
+            headers={
+                "Authorization": authorization_header(
+                    token, f"allstarr-ws-{run_id}-resolve"
+                )
+            },
         )
         with urllib.request.urlopen(request, timeout=10) as response:
             users = json.load(response)
@@ -62,15 +74,12 @@ def qualify(
     label: str, base_url: str, token: str, user_id: str, run_id: str
 ) -> set[str]:
     device_id = f"allstarr-ws-{run_id}-{label}"
-    authorization = (
-        'MediaBrowser Client="AllstarrLiveSmoke", Device="Qualification", '
-        f'DeviceId="{device_id}", Version="1", UserId="{user_id}", Token="{token}"'
-    )
+    authorization = authorization_header(token, device_id, user_id)
     started = time.monotonic()
     message_types: set[str] = set()
     with connect(
         socket_url(base_url, device_id),
-        additional_headers={"X-Emby-Authorization": authorization},
+        additional_headers={"Authorization": authorization},
         open_timeout=10,
         close_timeout=5,
     ) as socket:
@@ -90,7 +99,7 @@ def qualify(
             ).encode(),
             headers={
                 "Content-Type": "application/json",
-                "X-Emby-Authorization": authorization,
+                "Authorization": authorization,
             },
             method="POST",
         )
@@ -121,14 +130,13 @@ def qualify(
 
 
 def reject_invalid_token(label: str, base_url: str, run_id: str) -> None:
-    authorization = (
-        'MediaBrowser Client="AllstarrLiveSmoke", Device="Qualification", '
-        f'DeviceId="allstarr-ws-{run_id}-invalid", Version="1", Token="invalid"'
+    authorization = authorization_header(
+        "invalid", f"allstarr-ws-{run_id}-invalid"
     )
     try:
         with connect(
             socket_url(base_url, f"allstarr-ws-{run_id}-invalid"),
-            additional_headers={"X-Emby-Authorization": authorization},
+            additional_headers={"Authorization": authorization},
             open_timeout=10,
         ):
             pass
@@ -149,7 +157,7 @@ def main() -> int:
     direct_base = os.environ.get("DIRECT_BASE", "https://jellyfin.joshpatra.me")
     allstarr_base = os.environ.get("ALLSTARR_BASE", "https://jfm.joshpatra.me")
     run_id = secrets.token_hex(6)
-    user_id = resolve_user_id(direct_base, token)
+    user_id = resolve_user_id(direct_base, token, run_id)
 
     direct_types = qualify("direct", direct_base, token, user_id, run_id)
     allstarr_types = qualify("allstarr", allstarr_base, token, user_id, run_id)

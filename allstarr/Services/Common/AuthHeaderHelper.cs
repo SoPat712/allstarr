@@ -11,31 +11,33 @@ public static class AuthHeaderHelper
 
     public static bool ForwardAuthHeaders(IHeaderDictionary sourceHeaders, HttpRequestMessage targetRequest)
     {
-        if (sourceHeaders.TryGetValue("Authorization", out var authorization))
+        var authorization = BuildForwardedAuthorization(sourceHeaders);
+        return authorization is not null &&
+               targetRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
+    }
+
+    public static string? BuildForwardedAuthorization(
+        IHeaderDictionary sourceHeaders,
+        string? fallbackDeviceId = null)
+    {
+        if (FirstValue(sourceHeaders, "Authorization") is { } authorization)
         {
-            targetRequest.Headers.TryAddWithoutValidation("Authorization", authorization.ToString());
-            return true;
+            return authorization;
         }
 
-        if (sourceHeaders.TryGetValue("X-Emby-Authorization", out var mediaBrowser))
+        if (FirstValue(sourceHeaders, "X-Emby-Authorization") is { } legacyAuthorization)
         {
-            targetRequest.Headers.TryAddWithoutValidation("Authorization", mediaBrowser.ToString());
-            return true;
+            return legacyAuthorization;
         }
 
-        if (sourceHeaders.TryGetValue("X-Emby-Token", out var directToken))
-        {
-            var token = directToken.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
-            if (!string.IsNullOrWhiteSpace(token))
-            {
-                targetRequest.Headers.TryAddWithoutValidation(
-                    "Authorization",
-                    CreateAuthHeader(token, "Allstarr", "Proxy", "allstarr-proxy", "1"));
-                return true;
-            }
-        }
-
-        return false;
+        return FirstValue(sourceHeaders, "X-Emby-Token") is { } token
+            ? CreateAuthHeader(
+                token,
+                "Allstarr",
+                "Proxy",
+                string.IsNullOrWhiteSpace(fallbackDeviceId) ? "allstarr-proxy" : fallbackDeviceId,
+                AppVersion.Version)
+            : null;
     }
 
     public static string? ExtractDeviceId(IHeaderDictionary headers) =>
@@ -157,17 +159,17 @@ public static class AuthHeaderHelper
 
     private static string? MediaBrowserAuthorization(IHeaderDictionary headers)
     {
-        if (headers.TryGetValue("X-Emby-Authorization", out var native))
+        if (FirstValue(headers, "Authorization") is { } authorization &&
+            authorization.Contains("MediaBrowser", StringComparison.OrdinalIgnoreCase))
         {
-            return native.ToString();
+            return authorization;
         }
 
-        if (headers.TryGetValue("Authorization", out var authorization) &&
-            authorization.ToString().Contains("MediaBrowser", StringComparison.OrdinalIgnoreCase))
-        {
-            return authorization.ToString();
-        }
-
-        return null;
+        return FirstValue(headers, "X-Emby-Authorization");
     }
+
+    private static string? FirstValue(IHeaderDictionary headers, string name) =>
+        headers.TryGetValue(name, out var values)
+            ? values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))
+            : null;
 }

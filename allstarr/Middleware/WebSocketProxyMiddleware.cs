@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
+using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 
 namespace allstarr.Middleware;
@@ -81,20 +82,10 @@ public class WebSocketProxyMiddleware
 
         try
         {
-            // Extract device ID from query string or headers for session tracking
             deviceId = context.Request.Query["deviceId"].ToString();
-            if (string.IsNullOrEmpty(deviceId))
+            if (string.IsNullOrWhiteSpace(deviceId))
             {
-                // Try to extract from X-Emby-Authorization header
-                if (context.Request.Headers.TryGetValue("X-Emby-Authorization", out var authHeader))
-                {
-                    var authValue = authHeader.ToString();
-                    var deviceIdMatch = System.Text.RegularExpressions.Regex.Match(authValue, @"DeviceId=""([^""]+)""");
-                    if (deviceIdMatch.Success)
-                    {
-                        deviceId = deviceIdMatch.Groups[1].Value;
-                    }
-                }
+                deviceId = AuthHeaderHelper.ExtractDeviceId(context.Request.Headers);
             }
 
             if (!string.IsNullOrEmpty(deviceId))
@@ -121,36 +112,16 @@ public class WebSocketProxyMiddleware
             // Connect to Jellyfin WebSocket
             serverWebSocket = new ClientWebSocket();
 
-            // Forward authentication headers - check X-Emby-Authorization FIRST
-            // Most Jellyfin clients use X-Emby-Authorization, not Authorization
-            if (context.Request.Headers.TryGetValue("X-Emby-Authorization", out var embyAuthHeader))
+            var authorization = AuthHeaderHelper.BuildForwardedAuthorization(
+                context.Request.Headers,
+                deviceId);
+            if (authorization is not null)
             {
-                serverWebSocket.Options.SetRequestHeader("X-Emby-Authorization", embyAuthHeader.ToString());
-                _logger.LogDebug("🔑 WEBSOCKET: Forwarded X-Emby-Authorization header");
-            }
-            else if (context.Request.Headers.TryGetValue("X-Emby-Token", out var tokenHeader))
-            {
-                serverWebSocket.Options.SetRequestHeader("X-Emby-Token", tokenHeader.ToString());
-                _logger.LogDebug("🔑 WEBSOCKET: Forwarded X-Emby-Token header");
-            }
-            else if (context.Request.Headers.TryGetValue("Authorization", out var authHeader2))
-            {
-                var authValue = authHeader2.ToString();
-                // If it's a MediaBrowser auth header, use X-Emby-Authorization
-                if (authValue.Contains("MediaBrowser", StringComparison.OrdinalIgnoreCase))
-                {
-                    serverWebSocket.Options.SetRequestHeader("X-Emby-Authorization", authValue);
-                    _logger.LogDebug("🔑 WEBSOCKET: Converted Authorization to X-Emby-Authorization header");
-                }
-                else
-                {
-                    serverWebSocket.Options.SetRequestHeader("Authorization", authValue);
-                    _logger.LogDebug("🔑 WEBSOCKET: Forwarded Authorization header");
-                }
+                serverWebSocket.Options.SetRequestHeader("Authorization", authorization);
+                _logger.LogDebug("WEBSOCKET: Forwarded normalized Authorization header");
             }
 
-            // Set user agent
-            serverWebSocket.Options.SetRequestHeader("User-Agent", "Allstarr/1.0.3");
+            serverWebSocket.Options.SetRequestHeader("User-Agent", AppIdentity.UserAgent);
 
             await serverWebSocket.ConnectAsync(new Uri(jellyfinWsUrl), context.RequestAborted);
             _logger.LogInformation("✓ WEBSOCKET: Connected to Jellyfin WebSocket");
