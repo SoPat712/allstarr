@@ -80,6 +80,7 @@ def qualify(
     with connect(
         socket_url(base_url, device_id),
         additional_headers={"Authorization": authorization},
+        proxy=None,
         open_timeout=10,
         close_timeout=5,
     ) as socket:
@@ -137,6 +138,7 @@ def reject_invalid_token(label: str, base_url: str, run_id: str) -> None:
         with connect(
             socket_url(base_url, f"allstarr-ws-{run_id}-invalid"),
             additional_headers={"Authorization": authorization},
+            proxy=None,
             open_timeout=10,
         ):
             pass
