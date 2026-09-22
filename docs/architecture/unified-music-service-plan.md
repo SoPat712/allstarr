@@ -28,6 +28,8 @@ Intelligence and recommendations are separate milestones. Extension distribution
 
 Search is a primary product feature, not a provider result aggregator. It needs enough canonical metadata to describe artists, releases, release tracks, and recordings, then overlays the routes the current user may use.
 
+Canonical means that Allstarr owns the stable identity. It does not mean that MusicBrainz or BrainzMash already has the music. A native-backend or connected-provider result can create a provisional Allstarr artist, release, release track, or recording immediately. That entity is complete enough to search, browse, match, save, and play while later evidence improves it.
+
 The current search implementation is a useful federation baseline: its protocol surfaces query the selected native backend and typed provider capabilities, preserve native data, and rank local results well. It does not yet form a unified catalog. Provider results keep provider-shaped IDs, identical recordings are only deduplicated within a provider identity, and external artist browsing remains tied to the provider that produced the result.
 
 Required behavior:
@@ -39,8 +41,34 @@ Required behavior:
 - Show availability separately from identity: local, Apple Music, Deezer, Qobuz, or another qualified provider.
 - Resolve aliases from existing `ext-{provider}-...` IDs during migration so saved clients and playlists do not break.
 - Search a local PostgreSQL projection first. Refresh catalog facts asynchronously; do not place a public metadata service or fuzzy provider search in the Play request path.
+- Fan out each listener search to the native backend and every authorized metadata provider within a bounded search deadline. Merge successful provider results into the response even when the selected MusicBrainz-compatible source has no result or is unavailable.
+- Materialize every previously unknown provider result as a provisional Allstarr entity before returning it. Persist the provider namespace and external ID as an alias, retain the provider payload as source-stamped facts, and attach an authorized playable route when one exists.
+- Never suppress a provider result merely because it lacks an MBID or ISRC. Exact aliases, compatible identifiers, and accepted match evidence may merge results; uncertain candidates remain separate and reviewable instead of being hidden by an unsafe deduplication.
 - Continue serving cached catalog facts when the catalog source is stale or unavailable, with observable freshness and refresh failures.
 - Treat provider catalog search as discovery and route availability, not as canonical truth.
+
+#### Provider-only identity and reconciliation
+
+Search follows one identity pipeline for native, MusicBrainz-backed, and provider-only music:
+
+1. Resolve an exact provider alias to its existing Allstarr entity when one exists.
+2. Otherwise, use a compatible recording identifier such as ISRC only after version, artist, duration, and explicitness safeguards pass.
+3. Otherwise, attach the route to an already accepted match when the normal matching policy proves that it is the same recording.
+4. If none of those checks succeeds, create a new provisional Allstarr entity. The result remains visible and playable; it does not wait for MusicBrainz.
+5. Store each provider observation as evidence with its source, account/catalog scope, observed time, and refresh state. Provider facts can improve display metadata without becoming identity authority by themselves.
+6. Reconciliation runs outside playback. A later MusicBrainz result or another provider route enriches the existing Allstarr entity when the evidence is safe. It must retain the Allstarr ID, saved state, playlist membership, manual decisions, and route history.
+7. A conflict creates a reviewable merge candidate. It must not silently replace or remove either entity.
+
+A provisional entity is a supported catalog state, not an error or a second-class search result. The app may show that metadata is provider-sourced or still being reconciled, but this state cannot disable normal playback from an authorized route.
+
+Protocol title markers describe presentation, not identity or routing:
+
+- `[A]` means the client is seeing an Allstarr-injected object rather than an unchanged native object.
+- `[A]/[E]` adds the explicit-content marker.
+- Do not use `[AM]`, `[D]`, `[Q]`, or another provider code in the title. One Allstarr recording may have several routes, and the serving provider can change during fallback.
+- Show route icons or names in Allstarr song information. Now-playing and playback diagnostics show the provider that actually served the current stream.
+
+Regression coverage must prove that a provider-only recording with no MBID or ISRC appears in search, receives the same Allstarr ID on repeated searches, opens and plays through its authorized route, survives a MusicBrainz miss or outage, and retains its ID when later reconciled. Cross-provider tests must also prove that exact accepted matches gain multiple routes, ambiguous versions remain separate, unauthorized accounts do not leak availability, and one provider's timeout does not erase successful results from another provider.
 
 ### 2. Playlist ingestion and matching
 
