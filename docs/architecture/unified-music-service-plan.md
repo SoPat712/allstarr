@@ -348,6 +348,8 @@ Checkpoint as of 2026-09-22; the alias projection changes are not yet deployed:
 
 ### Stage 3: Replace provider-shaped search with catalog search
 
+Current increment: authenticated search isolates provider/category failures and collapses external results with the same accepted, account-authorized recording link. It retains existing provider IDs for client compatibility and leaves unknown, tentative, and pinned results separate. This does not satisfy the Stage 3 exit condition: stable canonical protocol IDs, native representative merging, and coherent artist/release browse are still pending. Do not describe the unified catalog as shipped or remove legacy aliases on the strength of this increment.
+
 - Query canonical projections and overlay user-authorized route availability.
 - Return stable Allstarr IDs and resolve legacy aliases.
 - Implement coherent artist, release, track, and discography browse.

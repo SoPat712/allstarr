@@ -4,7 +4,9 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Collections.Immutable;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Matching;
 using allstarr.Core.Routing;
+using allstarr.Core.Storage;
 using allstarr.Core.Settings;
 using allstarr.Core.Downloads;
 using allstarr.Models.Domain;
@@ -114,7 +116,8 @@ public sealed class ProtocolProviderGateway(
     ILogger<ProtocolProviderGateway>? logger = null,
     ManagedTrackCacheService? managedTrackCache = null,
     PlaybackDeliveryActivityStore? playbackActivity = null,
-    IEffectiveProviderPolicyResolver? effectivePolicies = null) : IProtocolProviderGateway
+    IEffectiveProviderPolicyResolver? effectivePolicies = null,
+    ITrackIdentityService? identities = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
     private const int ProviderSearchConcurrency = 4;
@@ -160,13 +163,13 @@ public sealed class ProtocolProviderGateway(
         var effectivePolicy = effectivePolicies == null
             ? null
             : await effectivePolicies.ResolveAsync(actor.TenantId, protocol.CancellationToken);
-        var playableProviders = songLimit > 0
-            ? (await ResolvePlayableProviderOrderAsync(
-                    protocol,
-                    actor,
-                    ResolveProviderOrder(ProviderCapabilityKind.Streaming, effectivePolicy)))
-                .ToHashSet(StringComparer.Ordinal)
+        var playableOrder = songLimit > 0
+            ? await ResolvePlayableProviderOrderAsync(
+                protocol,
+                actor,
+                ResolveProviderOrder(ProviderCapabilityKind.Streaming, effectivePolicy))
             : [];
+        var playableProviders = playableOrder.ToHashSet(StringComparer.Ordinal);
         var fetchLimit = Math.Clamp(Math.Max(songLimit, Math.Max(albumLimit, artistLimit)), 1, 200);
         var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Metadata, effectivePolicy)
             .Where(item => requestedProviderId == null || item == requestedProviderId)
@@ -181,6 +184,7 @@ public sealed class ProtocolProviderGateway(
             sourceTrackId: null));
 
         var routed = new SearchResult();
+        var trackLookups = new List<(Song Song, TrackIdentityLookup Lookup)>();
         using var metadataSearchGate = new SemaphoreSlim(ProviderSearchConcurrency);
         var searchTasks = plan.Candidates.Select(async candidate =>
         {
@@ -188,13 +192,20 @@ public sealed class ProtocolProviderGateway(
             try
             {
                 var request = new ProviderMetadataSearchRequest(query, new ProviderPageRequest(fetchLimit));
-                var songsTask = candidate.Implementation.SearchTracksAsync(candidate.Context, request);
-                var albumsTask = candidate.Implementation.SearchAlbumsAsync(candidate.Context, request);
-                var artistsTask = candidate.Implementation.SearchArtistsAsync(candidate.Context, request);
+                var songsTask = TrySearchAsync(
+                    () => candidate.Implementation.SearchTracksAsync(candidate.Context, request),
+                    protocol.CancellationToken);
+                var albumsTask = TrySearchAsync(
+                    () => candidate.Implementation.SearchAlbumsAsync(candidate.Context, request),
+                    protocol.CancellationToken);
+                var artistsTask = TrySearchAsync(
+                    () => candidate.Implementation.SearchArtistsAsync(candidate.Context, request),
+                    protocol.CancellationToken);
                 await Task.WhenAll(songsTask, albumsTask, artistsTask);
                 return new
                 {
                     ProviderId = NormalizeProvider(candidate.Provider.Id),
+                    Context = candidate.Context,
                     SongsResult = await songsTask,
                     AlbumsResult = await albumsTask,
                     ArtistsResult = await artistsTask
@@ -210,33 +221,113 @@ public sealed class ProtocolProviderGateway(
 
         foreach (var outcome in searchOutcomes)
         {
-            var albums = outcome.AlbumsResult.IsSuccess
+            var albums = outcome.AlbumsResult?.IsSuccess == true
                 ? outcome.AlbumsResult.RequireValue().Items
                 : [];
-            var artists = outcome.ArtistsResult.IsSuccess
+            var artists = outcome.ArtistsResult?.IsSuccess == true
                 ? outcome.ArtistsResult.RequireValue().Items
                 : [];
-            if (playableProviders.Contains(outcome.ProviderId) && outcome.SongsResult.IsSuccess)
+            if (playableProviders.Contains(outcome.ProviderId) && outcome.SongsResult?.IsSuccess == true)
             {
-                routed.Songs.AddRange(outcome.SongsResult.RequireValue().Items
-                    .Select(item => EnrichRelationships(Map(item), albums, artists)));
+                foreach (var item in outcome.SongsResult.RequireValue().Items)
+                {
+                    var song = EnrichRelationships(Map(item), albums, artists);
+                    routed.Songs.Add(song);
+                    trackLookups.Add((song, new TrackIdentityLookup(outcome.Context, item.Id)));
+                }
             }
-            if (outcome.AlbumsResult.IsSuccess)
+            if (outcome.AlbumsResult?.IsSuccess == true)
             {
                 routed.Albums.AddRange(outcome.AlbumsResult.RequireValue().Items.Select(Map));
             }
-            if (outcome.ArtistsResult.IsSuccess)
+            if (outcome.ArtistsResult?.IsSuccess == true)
             {
                 routed.Artists.AddRange(outcome.ArtistsResult.RequireValue().Items.Select(Map));
             }
         }
 
+        var songs = await CollapseVerifiedSearchTracksAsync(
+            routed.Songs, trackLookups, playableOrder, protocol.CancellationToken);
         return new SearchResult
         {
-            Songs = Merge(routed.Songs, [], songLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider),
+            Songs = Merge(songs, [], songLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider, playableOrder),
             Albums = Merge(routed.Albums, [], albumLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider),
             Artists = Merge(routed.Artists, [], artistLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider)
         };
+    }
+
+    private async Task<IReadOnlyList<Song>> CollapseVerifiedSearchTracksAsync(
+        IReadOnlyList<Song> songs,
+        IReadOnlyList<(Song Song, TrackIdentityLookup Lookup)> trackLookups,
+        IReadOnlyList<string> providerOrder,
+        CancellationToken cancellationToken)
+    {
+        if (identities == null || trackLookups.Select(item => item.Lookup.Context.ProviderId).Distinct().Count() < 2)
+        {
+            return songs;
+        }
+
+        IReadOnlyList<TrackIdentityResolution?> resolved;
+        try
+        {
+            resolved = await identities.ResolveManyAsync(
+                trackLookups.Select(item => item.Lookup).ToArray(), cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            logger?.LogDebug("Verified search identity lookup failed; preserving provider results");
+            return songs;
+        }
+
+        var verified = trackLookups.Select((entry, index) => (entry.Song, Identity: resolved[index]))
+            .Where(item => item.Identity?.Verification == ProviderIdentityVerification.Verified &&
+                           item.Identity.VerificationMethod is not (
+                               "automatic-suggestion" or
+                               ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod or
+                               ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod))
+            .ToArray();
+        var bestByRecording = verified
+            .GroupBy(item => item.Identity!.CanonicalRecordingId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderBy(item =>
+                    ProviderPriority(providerOrder, item.Song.ExternalProvider)).First().Song);
+        var selected = new HashSet<Song>(bestByRecording.Values);
+        var eligible = new HashSet<Song>(verified.Select(item => item.Song));
+        return songs
+            .Where(song => !eligible.Contains(song) || selected.Contains(song))
+            .ToArray();
+    }
+
+    private static int ProviderPriority(IReadOnlyList<string> order, string? provider)
+    {
+        for (var index = 0; index < order.Count; index++)
+        {
+            if (order[index] == provider) return index;
+        }
+        return int.MaxValue;
+    }
+
+    private static async Task<ProviderOutcome<ProviderPage<T>>?> TrySearchAsync<T>(
+        Func<Task<ProviderOutcome<ProviderPage<T>>>> search,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await search();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     public async Task<IReadOnlyList<Song>> SearchPlayableSongsAsync(
@@ -293,17 +384,11 @@ public sealed class ProtocolProviderGateway(
             await searchGate.WaitAsync(protocol.CancellationToken);
             try
             {
-                return await candidate.Implementation.SearchTracksAsync(
-                    candidate.Context,
-                    new ProviderMetadataSearchRequest(query, new ProviderPageRequest(limit)));
-            }
-            catch (OperationCanceledException) when (protocol.CancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch
-            {
-                return null;
+                return await TrySearchAsync(
+                    () => candidate.Implementation.SearchTracksAsync(
+                        candidate.Context,
+                        new ProviderMetadataSearchRequest(query, new ProviderPageRequest(limit))),
+                    protocol.CancellationToken);
             }
             finally
             {

@@ -557,6 +557,10 @@ public sealed class ProviderRouterTests
             ProviderExternalResourceId externalId,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+        public Task<IReadOnlyList<TrackIdentityResolution?>> ResolveManyAsync(
+            IReadOnlyList<TrackIdentityLookup> lookups,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
         public Task<TrackIdentityTranslationResult> TranslateAsync(
             ProviderExecutionContext sourceContext,
             ProviderExternalResourceId sourceId,

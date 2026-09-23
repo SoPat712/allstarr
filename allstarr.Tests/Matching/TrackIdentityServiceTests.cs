@@ -100,6 +100,36 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task BatchResolution_PrefersAuthorizedAccountScopeWithoutLeakingOtherAccounts()
+    {
+        var actorA = Actor(_tenantA, _userA);
+        var actorB = Actor(_tenantA, _userB);
+        var accountA = await SeedUserAccount("deezer", _tenantA, _userA);
+        var accountB = await SeedUserAccount("deezer", _tenantA, _userB);
+        var catalogRecording = (await _service.CreateRecordingAsync(actorA, "catalog-recording")).Recording.Id;
+        var accountRecording = (await _service.CreateRecordingAsync(actorA, "account-recording")).Recording.Id;
+        var catalogContext = Context(actorA, "deezer");
+        var contextA = Context(actorA, "deezer", accountA);
+        var contextB = Context(actorB, "deezer", accountB);
+        await Link(catalogRecording, catalogContext, "shared-track");
+        await Link(accountRecording, contextA, "shared-track", ProviderIdentityScope.Account);
+
+        var forA = await _service.ResolveManyAsync([
+            new(contextA, Track("deezer", "shared-track")),
+            new(contextA, Track("deezer", "missing-track"))]);
+        var forB = await _service.ResolveManyAsync([
+            new(contextB, Track("deezer", "shared-track"))]);
+
+        Assert.Equal(accountRecording, forA[0]?.CanonicalRecordingId);
+        Assert.Null(forA[1]);
+        Assert.Equal(catalogRecording, forB[0]?.CanonicalRecordingId);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _service.ResolveManyAsync([
+                new(contextA, Track("deezer", "shared-track")),
+                new(contextB, Track("deezer", "shared-track"))]));
+    }
+
+    [Fact]
     public async Task RecordingWithMusicBrainzIdentity_QueuesIdempotentCatalogDiscovery()
     {
         const string recordingMbid = "11111111-1111-4111-8111-111111111111";

@@ -1,10 +1,12 @@
 using System.Net;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
+using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
 using allstarr.Services;
+using Microsoft.Extensions.Configuration;
 using Moq;
 
 namespace allstarr.Tests;
@@ -238,6 +240,146 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Empty(result.Songs);
         metadata.VerifyAll();
         router.VerifyAll();
+    }
+
+    [Fact]
+    public async Task MetadataSearch_ProviderAndCategoryFailuresPreserveSuccessfulSongs()
+    {
+        var failed = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        failed.SetupGet(item => item.ProviderId).Returns("apple-download");
+        failed.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        failed.Setup(item => item.SearchTracksAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderMetadataSearchRequest>()))
+            .ThrowsAsync(new HttpRequestException("unavailable"));
+        failed.Setup(item => item.SearchAlbumsAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderMetadataSearchRequest>()))
+            .ThrowsAsync(new TimeoutException());
+        failed.Setup(item => item.SearchArtistsAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderMetadataSearchRequest>()))
+            .ThrowsAsync(new TimeoutException());
+
+        var healthy = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        healthy.SetupGet(item => item.ProviderId).Returns("deezer");
+        healthy.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        healthy.Setup(item => item.SearchTracksAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new(
+                "deezer", [new ProviderTrackMetadata(
+                    new("deezer", ProviderResourceKind.Track, "track-1"),
+                    "Track", [new("Artist")])])));
+        healthy.Setup(item => item.SearchAlbumsAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderMetadataSearchRequest>()))
+            .ThrowsAsync(new TimeoutException());
+        healthy.Setup(item => item.SearchArtistsAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderArtistMetadata>>.Success(
+                new("deezer", [])));
+
+        var registry = MetadataRegistry(failed.Object, healthy.Object);
+        var streaming = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
+        streaming.SetupGet(item => item.ProviderId).Returns("deezer");
+        streaming.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(
+                It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) =>
+                Plan(request, registry, streaming.Object));
+        router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(
+                It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) =>
+                MetadataPlan(request, registry, failed.Object, healthy.Object));
+        var gateway = new ProtocolProviderGateway(
+            router.Object, registry, Mock.Of<IProviderRouteAccountResolver>(),
+            Mock.Of<IMusicMetadataService>(), new HttpClientFactory());
+
+        var song = Assert.Single((await gateway.SearchAsync(Context(), "Track", 10, 10, 10)).Songs);
+
+        Assert.Equal("track-1", song.ExternalId);
+        failed.VerifyAll();
+        healthy.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData(ProviderIdentityVerification.Verified, "automatic-match", 2, "apple-download", null)]
+    [InlineData(ProviderIdentityVerification.Verified, "automatic-match", 2, "deezer", "deezer,apple-download,qobuz")]
+    [InlineData(ProviderIdentityVerification.Verified, "automatic-suggestion", 3, null, null)]
+    [InlineData(ProviderIdentityVerification.Pinned, "manual", 3, null, null)]
+    public async Task MetadataSearch_CollapsesOnlyVerifiedRoutes(
+        ProviderIdentityVerification verification, string method,
+        int expectedCount, string? preferredProvider, string? streamingOrder)
+    {
+        var providerIds = new[] { "apple-download", "deezer", "qobuz" };
+        var metadata = providerIds.Select(providerId =>
+        {
+            var capability = new Mock<IProviderMetadataCapability>();
+            capability.SetupGet(item => item.ProviderId).Returns(providerId);
+            capability.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+            capability.Setup(item => item.SearchTracksAsync(
+                    It.IsAny<ProviderExecutionContext>(),
+                    It.IsAny<ProviderMetadataSearchRequest>()))
+                .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new(
+                    providerId, [new ProviderTrackMetadata(
+                        new(providerId, ProviderResourceKind.Track, $"{providerId}-track"),
+                        "Shared title", [new("Artist")])])));
+            capability.Setup(item => item.SearchAlbumsAsync(
+                    It.IsAny<ProviderExecutionContext>(),
+                    It.IsAny<ProviderMetadataSearchRequest>()))
+                .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Success(
+                    new(providerId, [])));
+            capability.Setup(item => item.SearchArtistsAsync(
+                    It.IsAny<ProviderExecutionContext>(),
+                    It.IsAny<ProviderMetadataSearchRequest>()))
+                .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderArtistMetadata>>.Success(
+                    new(providerId, [])));
+            return capability.Object;
+        }).ToArray();
+        var registry = MetadataRegistry(metadata);
+        var streaming = providerIds.Select(providerId =>
+        {
+            var capability = new Mock<IProviderStreamingCapability>();
+            capability.SetupGet(item => item.ProviderId).Returns(providerId);
+            capability.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+            return capability.Object;
+        }).ToArray();
+        var router = new Mock<IProviderRouter>();
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(
+                It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry, streaming));
+        router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(
+                It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => MetadataPlan(request, registry, metadata));
+        var recordingId = Guid.CreateVersion7();
+        var identities = new Mock<ITrackIdentityService>();
+        identities.Setup(item => item.ResolveManyAsync(
+                It.IsAny<IReadOnlyList<TrackIdentityLookup>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<TrackIdentityLookup> lookups, CancellationToken _) =>
+                (IReadOnlyList<TrackIdentityResolution?>)lookups.Select(lookup =>
+                    lookup.ExternalId.ProviderId == "qobuz"
+                        ? null
+                        : new TrackIdentityResolution(
+                            recordingId, Guid.CreateVersion7(), lookup.ExternalId,
+                            ProviderIdentityScope.Catalog, null,
+                            verification, method, 1))
+                    .ToArray());
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Providers:StreamingOrder"] = streamingOrder }).Build();
+        var gateway = new ProtocolProviderGateway(
+            router.Object, registry, Mock.Of<IProviderRouteAccountResolver>(),
+            Mock.Of<IMusicMetadataService>(), new HttpClientFactory(), configuration,
+            identities: identities.Object);
+
+        var songs = (await gateway.SearchAsync(Context(), "Shared title", 10, 0, 0)).Songs;
+
+        Assert.Equal(expectedCount, songs.Count);
+        Assert.Contains(songs, song => song.ExternalProvider == "qobuz");
+        if (preferredProvider != null) Assert.Contains(songs, song => song.ExternalProvider == preferredProvider);
+        identities.VerifyAll();
     }
 
     [Fact]

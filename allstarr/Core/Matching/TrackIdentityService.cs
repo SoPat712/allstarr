@@ -90,6 +90,10 @@ public sealed record TrackIdentityTranslationResult(
     TrackIdentityResolution? Source,
     TrackIdentityResolution? Target);
 
+public sealed record TrackIdentityLookup(
+    ProviderExecutionContext Context,
+    ProviderExternalResourceId ExternalId);
+
 public interface ITrackIdentityService
 {
     Task<CanonicalRecordingCreationResult> CreateRecordingAsync(
@@ -107,6 +111,10 @@ public interface ITrackIdentityService
     Task<TrackIdentityResolution?> ResolveAsync(
         ProviderExecutionContext executionContext,
         ProviderExternalResourceId externalId,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<TrackIdentityResolution?>> ResolveManyAsync(
+        IReadOnlyList<TrackIdentityLookup> lookups,
         CancellationToken cancellationToken = default);
 
     Task<TrackIdentityTranslationResult> TranslateAsync(
@@ -416,6 +424,77 @@ public sealed class TrackIdentityService : ITrackIdentityService
             externalId,
             account?.Id,
             cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<TrackIdentityResolution?>> ResolveManyAsync(
+        IReadOnlyList<TrackIdentityLookup> lookups,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(lookups);
+        if (lookups.Count == 0) return [];
+        EnsureStorageReady();
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(lookups[0].Context);
+        var actor = lookups[0].Context.Actor;
+        foreach (var lookup in lookups)
+        {
+            ArgumentNullException.ThrowIfNull(lookup.Context);
+            ArgumentNullException.ThrowIfNull(lookup.ExternalId);
+            RequireSameActor(actor, lookup.Context.Actor);
+            RequireTrack(lookup.ExternalId);
+            lookup.ExternalId.RequireOwner(lookup.Context.ProviderId, ProviderResourceKind.Track);
+            ThrowIfUnavailable(lookup.Context, cancellationToken);
+        }
+
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var accountIds = new Dictionary<ProviderExecutionContext, Guid?>();
+        foreach (var execution in lookups.Select(item => item.Context).Distinct())
+        {
+            accountIds[execution] = (await ValidateExecutionContextAsync(
+                context, execution, cancellationToken))?.Id;
+        }
+
+        var keys = lookups.Select(item => ExactKey(item.ExternalId)).ToArray();
+        var providers = keys.Select(item => item.ProviderId).Distinct().ToArray();
+        var catalogs = keys.Select(item => item.Catalog).Distinct().ToArray();
+        var hashes = keys.Select(item => item.ExternalIdHash).Distinct().ToArray();
+        var candidates = await context.ProviderTrackIdentities.AsNoTracking()
+            .Where(item => item.TenantId == actor.TenantId &&
+                           item.ResourceKind == ProviderResourceKind.Track &&
+                           providers.Contains(item.ProviderId) &&
+                           catalogs.Contains(item.CatalogNamespace) &&
+                           hashes.Contains(item.ExternalIdHash))
+            .ToListAsync(cancellationToken);
+
+        var results = new TrackIdentityResolution?[lookups.Count];
+        for (var index = 0; index < lookups.Count; index++)
+        {
+            var lookup = lookups[index];
+            var key = keys[index];
+            var accountId = accountIds[lookup.Context];
+            var exact = candidates.Where(item =>
+                item.ProviderId == key.ProviderId &&
+                item.CatalogNamespace == key.Catalog &&
+                item.ExternalIdHash == key.ExternalIdHash &&
+                (item.Scope == ProviderIdentityScope.Catalog ||
+                 item.Scope == ProviderIdentityScope.Account &&
+                 item.ProviderAccountId == accountId)).ToArray();
+            foreach (var candidate in exact)
+            {
+                EnsureExactExternalId(candidate, lookup.ExternalId.Value);
+            }
+
+            var preferred = PreferAccountScope(exact, accountId);
+            if (preferred.Count > 1)
+            {
+                throw new InvalidOperationException(
+                    "More than one accepted track identity exists in the same exact scope.");
+            }
+
+            if (preferred.Count == 1) results[index] = ToResolution(preferred[0]);
+        }
+
+        return results;
     }
 
     public async Task<TrackIdentityTranslationResult> TranslateAsync(
