@@ -42,7 +42,8 @@ public sealed class BackendLibraryIndexingTests
         Assert.Equal("USABC1234567", track.Isrc);
         Assert.Equal("16ba7915-2acf-42b2-8c87-ed67090dca91", track.MusicBrainzRecordingId);
         Assert.Equal("jellyfin-cover:song-1:cover-v1", track.CoverArtReference);
-        Assert.Equal("ephemeral-key", handler.LastRequest!.Headers.GetValues("X-Emby-Token").Single());
+        Assert.Contains("Token=\"ephemeral-key\"", handler.LastRequest!.Headers.GetValues("Authorization").Single());
+        Assert.False(handler.LastRequest.Headers.Contains("X-Emby-Token"));
         Assert.DoesNotContain("Audio", handler.LastRequest.RequestUri!.AbsolutePath, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(
             "IncludeItemTypes=Audio",
