@@ -18,6 +18,7 @@ SAMPLES="${SAMPLES:-3}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-20}"
 CONSISTENCY_TIMEOUT_SECONDS="${CONSISTENCY_TIMEOUT_SECONDS:-5}"
 TEST_EXTERNAL_STREAM="${TEST_EXTERNAL_STREAM:-0}"
+TEST_FULL_AUDIO="${TEST_FULL_AUDIO:-0}"
 TEST_PLAYLIST_WRITES="${TEST_PLAYLIST_WRITES:-0}"
 PLAYLIST_WRITE_CONFIRM="${PLAYLIST_WRITE_CONFIRM:-}"
 INJECTED_PLAYLIST_ID="${INJECTED_PLAYLIST_ID:-}"
@@ -50,6 +51,13 @@ fi
     { echo "CONSISTENCY_TIMEOUT_SECONDS must be a positive integer" >&2; exit 1; }
 [[ "$TEST_EXTERNAL_STREAM" == 0 || "$TEST_EXTERNAL_STREAM" == 1 ]] ||
     { echo "TEST_EXTERNAL_STREAM must be 0 or 1" >&2; exit 1; }
+[[ "$TEST_FULL_AUDIO" == 0 || "$TEST_FULL_AUDIO" == 1 ]] ||
+    { echo "TEST_FULL_AUDIO must be 0 or 1" >&2; exit 1; }
+if [[ "$TEST_FULL_AUDIO" == 1 ]]; then
+    for command in python3 ffmpeg ffprobe; do
+        command -v "$command" >/dev/null || { echo "Missing required command: $command" >&2; exit 1; }
+    done
+fi
 [[ "$TEST_PLAYLIST_WRITES" == 0 || "$TEST_PLAYLIST_WRITES" == 1 ]] ||
     { echo "TEST_PLAYLIST_WRITES must be 0 or 1" >&2; exit 1; }
 [[ "$REQUIRE_EXTERNAL" == 0 || "$REQUIRE_EXTERNAL" == 1 ]] ||
@@ -198,7 +206,7 @@ if [[ -z "$JELLYFIN_TOKEN" ]]; then
 fi
 auth=(-H "Authorization: $client_auth, Token=\"$JELLYFIN_TOKEN\"" \
       -H "User-Agent: AllstarrLiveSmoke/$run_id")
-echo "live-smoke-start=$started_at samples=$SAMPLES range_bytes=65536 external_stream=$TEST_EXTERNAL_STREAM playlist_writes=$TEST_PLAYLIST_WRITES"
+echo "live-smoke-start=$started_at samples=$SAMPLES range_bytes=65536 external_stream=$TEST_EXTERNAL_STREAM full_audio=$TEST_FULL_AUDIO playlist_writes=$TEST_PLAYLIST_WRITES"
 
 best_user_id=""
 best_audio_count=-1
@@ -1144,17 +1152,11 @@ item_contract='
                 (.Id | nonempty) and
                 (.DirectStreamUrl | nonempty) and
                 (.RunTimeTicks == $runtime) and
-                (.Bitrate | type == "number" and . > 0) and
-                (.Bitrate as $bitrate |
-                    (.MediaStreams | type == "array" and length > 0 and
-                        all(.[]; .Type == "Audio" and .BitRate == $bitrate)) and
-                    (if $runtime > 0
-                     then .Size == (($runtime / 10000000 | floor) * ($bitrate / 8 | floor))
-                     else .Size == null
-                     end)) and
+                .Bitrate == null and .Size == null and
                 (.SupportsDirectPlay | type == "boolean") and
                 (.SupportsDirectStream | type == "boolean") and
-                (.MediaStreams | type == "array" and length > 0)));
+                (.MediaStreams | type == "array" and length > 0 and
+                    all(.[]; .Type == "Audio" and .BitRate == null))));
 '
 
 check_external_provider_case() {
@@ -1749,6 +1751,18 @@ else
         echo "FAIL external item checks required but no provider-backed audio result was found"
     else
         block "external-item-live=no provider-backed audio result; set EXTERNAL_SONG_ID and REQUIRE_EXTERNAL=1"
+    fi
+fi
+
+if [[ "$TEST_FULL_AUDIO" == 1 ]]; then
+    checks=$((checks + 1))
+    if JELLYFIN_TOKEN="$JELLYFIN_TOKEN" JELLYFIN_USER_ID="$best_user_id" \
+       NATIVE_SONG_ID="$media_id" EXTERNAL_SONG_ID="${external_song_id:-}" \
+       python3 "$(dirname "$0")/live_jellyfin_audio.py"; then
+        echo 'PASS full-song transport qualification'
+    else
+        echo 'FAIL full-song transport qualification'
+        failures=$((failures + 1))
     fi
 fi
 

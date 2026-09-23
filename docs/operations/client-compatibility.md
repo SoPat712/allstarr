@@ -50,6 +50,8 @@ The administrator Home page distinguishes **Playing from**, **Cached from**, and
 
 Byte-range continuation stays on the opened provider, identity, account, and requested quality. If the short-lived selection is unavailable (for example after a restart), the client must restart playback before seeking. Clients without a device identifier—including standard Subsonic requests that identify only the application name—retain exact-provider playback and seeking; they do not participate in cross-provider failover yet. HEAD probes do not change the reported playback source.
 
+An uncached external song can start progressively before its final encoded size is known; it does not claim a guessed `Content-Length` or byte-range support. Once a complete copy is in the managed cache, both Jellyfin and Subsonic clients receive its exact length and can request byte ranges. External Jellyfin item metadata does not advertise an estimated media size or bitrate as though it were the delivered file. A client that requires random access on the very first cold play may still need a completed cache copy; this is not a guaranteed Musiver-specific fix.
+
 ## Known Limitation
 
 [Symfonium](https://symfonium.app/) uses an offline-first local index for search. It may not send the live search requests Allstarr needs in order to merge provider results, so provider discovery through that client is not considered compatible. Local backend playback can still be a separate question from integrated provider search.

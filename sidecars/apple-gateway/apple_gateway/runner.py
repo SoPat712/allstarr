@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import math
 import os
 import signal
 from dataclasses import dataclass
@@ -125,6 +127,8 @@ class BoundedProcessRunner:
                     yield chunk
             return
 
+        duration = await self._audio_duration(source)
+
         async with self._semaphore:
             process = await asyncio.create_subprocess_exec(
                 self._settings.ffmpeg_path,
@@ -144,6 +148,17 @@ class BoundedProcessRunner:
             try:
                 if process.stdout is None:
                     raise ProcessFailure("transcode_failed")
+                try:
+                    header = await asyncio.wait_for(
+                        process.stdout.readexactly(26),
+                        timeout=max(0, deadline - asyncio.get_running_loop().time()),
+                    )
+                except asyncio.IncompleteReadError as exc:
+                    header = exc.partial
+                except (TimeoutError, asyncio.TimeoutError) as exc:
+                    raise ProcessFailure("process_timeout") from exc
+                if header:
+                    yield self._flac_header_with_duration(header, duration)
                 while True:
                     remaining = deadline - asyncio.get_running_loop().time()
                     if remaining <= 0:
@@ -173,3 +188,34 @@ class BoundedProcessRunner:
                 if not stderr_task.done():
                     stderr_task.cancel()
                 await asyncio.gather(stderr_task, return_exceptions=True)
+
+    async def _audio_duration(self, source: Path) -> float | None:
+        try:
+            result = await self.execute([
+                str(Path(self._settings.ffmpeg_path).with_name("ffprobe")),
+                "-v", "error", "-select_streams", "a:0",
+                "-show_entries", "stream=duration:format=duration",
+                "-of", "json", str(source),
+            ], source.parent)
+            payload = json.loads(result.stdout) if result.return_code == 0 else {}
+            stream = (payload.get("streams") or [{}])[0]
+            duration = float(stream.get("duration") or payload.get("format", {}).get("duration"))
+            return duration if math.isfinite(duration) and duration > 0 else None
+        except (FileNotFoundError, ValueError, TypeError, ProcessFailure, KeyError):
+            return None
+
+    @staticmethod
+    def _flac_header_with_duration(header: bytes, duration: float | None) -> bytes:
+        if (duration is None or len(header) < 26 or header[:4] != b"fLaC" or
+                header[4] & 0x7f != 0 or int.from_bytes(header[5:8], "big") < 34):
+            return header
+        packed = int.from_bytes(header[18:26], "big")
+        sample_rate = packed >> 44
+        if sample_rate == 0 or packed & ((1 << 36) - 1):
+            return header
+        samples = round(duration * sample_rate)
+        if not 0 < samples < 1 << 36:
+            return header
+        patched = bytearray(header)
+        patched[18:26] = (packed | samples).to_bytes(8, "big")
+        return bytes(patched)

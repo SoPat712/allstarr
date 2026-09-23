@@ -138,6 +138,21 @@ intended:
 TEST_EXTERNAL_STREAM=1 SAMPLES=5 bash tools/tests/live_jellyfin_smoke.sh
 ```
 
+`TEST_FULL_AUDIO=1` is a separate, opt-in qualification that downloads complete
+songs (up to 160 MiB each). It compares a native Jellyfin song byte-for-byte
+through Allstarr, decodes the full song, and checks exact prefix and suffix
+ranges. With `TEST_EXTERNAL_STREAM=1` and an external song available, it also
+consumes a full external stream, replays the completed cache, verifies its
+actual `Content-Length`, decodes both copies, and checks exact cached ranges.
+Run this only against a test account with access to the songs and a deployment
+using managed cache mode. It requires `python3`, `ffmpeg`, and `ffprobe` on the
+test host. The check verifies protocol behavior, not a particular client's UI:
+
+```bash
+TEST_EXTERNAL_STREAM=1 TEST_FULL_AUDIO=1 SAMPLES=5 \
+  bash tools/tests/live_jellyfin_smoke.sh
+```
+
 Playlist editing is an explicit stateful mode. It creates one uniquely named
 throwaway native playlist, verifies direct visibility, rename, add, reorder,
 remove, ACL read/share/unshare, instant mix, and deletes that exact playlist.

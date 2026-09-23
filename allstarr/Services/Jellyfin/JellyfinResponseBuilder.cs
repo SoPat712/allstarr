@@ -11,7 +11,6 @@ namespace allstarr.Services.Jellyfin;
 
 public class JellyfinResponseBuilder
 {
-    private const int DefaultExternalBitrate = 1_337_000;
     private readonly string _serverId;
 
     public JellyfinResponseBuilder(IOptions<JellyfinSettings>? settings = null)
@@ -308,10 +307,6 @@ public class JellyfinResponseBuilder
             : artistName;
         var albumName = song.Album;
         var runTimeTicks = Math.Max(0, song.Duration ?? 0) * TimeSpan.TicksPerSecond;
-        var externalBitrate = song.Bitrate is > 0 ? song.Bitrate.Value : DefaultExternalBitrate;
-        var estimatedSize = song.Duration is > 0
-            ? song.Duration.Value * (externalBitrate / 8L)
-            : (long?)null;
 
         if (!song.IsLocal)
         {
@@ -463,7 +458,7 @@ public class JellyfinResponseBuilder
                     ["TranscodingUrl"] = $"/Audio/{Uri.EscapeDataString(song.Id)}/universal?container=flac&audioCodec=flac",
                     ["Type"] = "Default",
                     ["Container"] = "flac",
-                    ["Size"] = estimatedSize,
+                    ["Size"] = null,
                     ["Name"] = "Allstarr · Automatic source",
                     ["IsRemote"] = false,
                     ["ETag"] = song.Id,
@@ -496,7 +491,7 @@ public class JellyfinResponseBuilder
                             ["IsInterlaced"] = false,
                             ["IsAVC"] = false,
                             ["ChannelLayout"] = "stereo",
-                            ["BitRate"] = externalBitrate,
+                            ["BitRate"] = null,
                             ["BitDepth"] = 16,
                             ["Channels"] = 2,
                             ["SampleRate"] = 44100,
@@ -513,7 +508,7 @@ public class JellyfinResponseBuilder
                     },
                     ["MediaAttachments"] = new List<object>(),
                     ["Formats"] = new List<string>(),
-                    ["Bitrate"] = externalBitrate,
+                    ["Bitrate"] = null,
                     ["RequiredHttpHeaders"] = new Dictionary<string, string>(),
                     ["TranscodingSubProtocol"] = "http",
                     ["DefaultAudioStreamIndex"] = 0,

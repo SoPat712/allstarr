@@ -106,7 +106,7 @@ public class JellyfinResponseBuilderTests
         Assert.True(Assert.IsType<bool>(result["HasLyrics"]));
         var mediaSource = Assert.IsType<Dictionary<string, object?>>(
             Assert.IsAssignableFrom<object[]>(result["MediaSources"])[0]);
-        Assert.Equal(1_337_000, mediaSource["Bitrate"]);
+        Assert.Null(mediaSource["Bitrate"]);
     }
 
     [Fact]
@@ -130,7 +130,7 @@ public class JellyfinResponseBuilderTests
     }
 
     [Fact]
-    public void ConvertSongToJellyfinItem_ExternalSong_PreservesRealBitrate()
+    public void ConvertSongToJellyfinItem_ExternalSong_DoesNotPresentSourceBitrateAsServedFlacBitrate()
     {
         var result = _builder.ConvertSongToJellyfinItem(new Song
         {
@@ -148,9 +148,9 @@ public class JellyfinResponseBuilderTests
             Assert.IsAssignableFrom<object[]>(result["MediaSources"])[0]);
         var mediaStream = Assert.IsType<Dictionary<string, object?>>(
             Assert.IsAssignableFrom<object[]>(mediaSource["MediaStreams"])[0]);
-        Assert.Equal(320_000, mediaSource["Bitrate"]);
-        Assert.Equal(320_000, mediaStream["BitRate"]);
-        Assert.Equal(7_200_000L, mediaSource["Size"]);
+        Assert.Null(mediaSource["Bitrate"]);
+        Assert.Null(mediaStream["BitRate"]);
+        Assert.Null(mediaSource["Size"]);
     }
 
     [Fact]

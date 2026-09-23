@@ -101,8 +101,8 @@ class JellyfinSmokeTests(unittest.TestCase):
             "UserData": {"Key": "key", "ItemId": "ext-qobuz-song-1"},
             "MediaSources": [{
                 "Id": "source", "DirectStreamUrl": "/Audio/fixture/stream", "RunTimeTicks": 10000000,
-                "Bitrate": 1000, "Size": 125, "SupportsDirectPlay": True, "SupportsDirectStream": True,
-                "MediaStreams": [{"Type": "Audio", "Index": 0, "BitRate": 1000}],
+                "Bitrate": None, "Size": None, "SupportsDirectPlay": True, "SupportsDirectStream": True,
+                "MediaStreams": [{"Type": "Audio", "Index": 0, "BitRate": None}],
             }],
         }
         for title, expected in (("Fixture [A]", True), ("Fixture [A]/[E]", True),

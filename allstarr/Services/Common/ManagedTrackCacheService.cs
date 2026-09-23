@@ -27,6 +27,12 @@ public sealed class ManagedTrackCacheService(
         if (path == null) return null;
         try
         {
+            if (Path.GetExtension(path).Equals(".flac", StringComparison.OrdinalIgnoreCase) &&
+                IsOwnedCachePath(path) && HasId3Prefix(path))
+            {
+                File.Move(path, path + $".legacy-id3-{Guid.NewGuid():N}");
+                return null;
+            }
             var file = File.OpenRead(path);
             if (file.Length == 0) { file.Dispose(); return null; }
             var extension = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
@@ -174,6 +180,9 @@ public sealed class ManagedTrackCacheService(
                     song.ExternalProvider = providerId;
                     song.ExternalId = externalId;
 
+                    if (string.Equals(mediaType, "audio/flac", StringComparison.OrdinalIgnoreCase))
+                        await StripFlacId3PrefixAsync(partialPath);
+
                     var finalPath = PathHelper.BuildTrackPath(
                         cacheRoot,
                         song.AlbumArtist ?? song.Artist,
@@ -221,6 +230,21 @@ public sealed class ManagedTrackCacheService(
 
     private bool IsCacheMode() => settings.Value.StorageMode == StorageMode.Cache;
 
+    private bool IsOwnedCachePath(string path)
+    {
+        var cacheRoot = Path.GetFullPath(Path.Combine(
+            configuration["Library:DownloadPath"] ?? "./downloads", "cache"));
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return Path.GetFullPath(path).StartsWith(cacheRoot + Path.DirectorySeparatorChar, comparison);
+    }
+
+    private static bool HasId3Prefix(string path)
+    {
+        using var file = File.OpenRead(path);
+        Span<byte> marker = stackalloc byte[3];
+        return file.Read(marker) == marker.Length && marker.SequenceEqual("ID3"u8);
+    }
+
     private static bool IsCompleteResponse(HttpResponseMessage response)
     {
         if (response.StatusCode == HttpStatusCode.OK) return response.Content.Headers.ContentLength != 0;
@@ -242,6 +266,44 @@ public sealed class ManagedTrackCacheService(
             "ogg" or "vorbis" => ".ogg",
             _ => media.MimeType.Contains("flac", StringComparison.OrdinalIgnoreCase) ? ".flac" : ".mp3"
         };
+
+    private static async Task StripFlacId3PrefixAsync(string path)
+    {
+        var normalized = path + ".normalized";
+        try
+        {
+            await using (var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None,
+                81920, FileOptions.Asynchronous | FileOptions.SequentialScan))
+            {
+                if (input.Length < 14) return;
+                var header = new byte[10];
+                await input.ReadExactlyAsync(header);
+                if (!header.AsSpan(0, 3).SequenceEqual("ID3"u8) ||
+                    header[3] is < 2 or > 4 ||
+                    ((header[6] | header[7] | header[8] | header[9]) & 0x80) != 0) return;
+
+                var tagSize = 10L + (header[6] << 21) + (header[7] << 14) +
+                    (header[8] << 7) + header[9] +
+                    (header[3] == 4 && (header[5] & 0x10) != 0 ? 10 : 0);
+                if (tagSize > 1024 * 1024 || tagSize + 4 > input.Length) return;
+                input.Position = tagSize;
+                var marker = new byte[4];
+                await input.ReadExactlyAsync(marker);
+                if (!marker.AsSpan().SequenceEqual("fLaC"u8)) return;
+
+                input.Position = tagSize;
+                await using var output = new FileStream(normalized, FileMode.CreateNew, FileAccess.Write,
+                    FileShare.None, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                await input.CopyToAsync(output);
+                await output.FlushAsync();
+            }
+            File.Move(normalized, path, overwrite: true);
+        }
+        finally
+        {
+            TryDelete(normalized);
+        }
+    }
 
     private static void TryDelete(string path)
     {

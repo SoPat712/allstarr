@@ -78,6 +78,106 @@ public sealed class ManagedTrackCacheServiceTests
         }
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(65536)]
+    public async Task CompletedFlacStream_PublishesSeekableFileWithoutGuidanceTag(int tagPayloadBytes)
+    {
+        var root = CreateRoot();
+        try
+        {
+            string? registeredPath = null;
+            var local = new Mock<ILocalLibraryService>(MockBehavior.Strict);
+            local.Setup(item => item.GetLocalPathForExternalSongAsync(
+                    It.IsAny<DownloadedSongMappingScope>(), "apple-download", "song-1"))
+                .ReturnsAsync(() => registeredPath);
+            local.Setup(item => item.RegisterDownloadedSongAsync(
+                    It.IsAny<DownloadedSongMappingScope>(), It.IsAny<Song>(), It.IsAny<string>()))
+                .Callback<DownloadedSongMappingScope, Song, string>((_, _, path) => registeredPath = path)
+                .Returns(Task.CompletedTask);
+            var tag = new byte[10 + tagPayloadBytes];
+            "ID3"u8.CopyTo(tag);
+            tag[3] = 4;
+            tag[6] = (byte)((tagPayloadBytes >> 21) & 0x7f);
+            tag[7] = (byte)((tagPayloadBytes >> 14) & 0x7f);
+            tag[8] = (byte)((tagPayloadBytes >> 7) & 0x7f);
+            tag[9] = (byte)(tagPayloadBytes & 0x7f);
+            var flac = "fLaCtest-frames"u8.ToArray();
+            var payload = tag.Concat(flac).ToArray();
+            var service = CreateService(root, "Cache", local.Object);
+            using var response = Response(HttpStatusCode.OK, payload);
+
+            await service.WrapAsync(
+                ProviderStream(response) with
+                {
+                    ServingProviderId = "apple-download",
+                    ServingExternalId = "song-1"
+                },
+                Context(), "apple-download", "song-1", headOnly: false,
+                () => Task.FromResult<Song?>(new Song
+                {
+                    Title = "Song",
+                    Artist = "Artist",
+                    Album = "Album"
+                }),
+                CancellationToken.None);
+
+            Assert.Equal(payload, await response.Content.ReadAsByteArrayAsync());
+            Assert.NotNull(registeredPath);
+            Assert.Equal(flac, await File.ReadAllBytesAsync(registeredPath));
+            var cached = await service.TryOpenAsync(
+                new ProviderExternalResourceId("apple-download", ProviderResourceKind.Track, "song-1"),
+                new DownloadedSongMappingScope(
+                    Context().Actor!.TenantId, null, "music", ProviderAudioQuality.Any),
+                CancellationToken.None);
+            Assert.NotNull(cached);
+            Assert.True(cached.IsCached);
+            Assert.True((await cached.Response.Content.ReadAsStreamAsync()).CanSeek);
+            cached.Response.Dispose();
+            local.VerifyAll();
+        }
+        finally
+        {
+            DeleteRoot(root);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LegacyId3CacheIsRetiredWithoutTouchingUnownedFiles(bool ownedCache)
+    {
+        var root = CreateRoot();
+        try
+        {
+            var directory = Path.Combine(root, ownedCache ? "cache" : "permanent");
+            Directory.CreateDirectory(directory);
+            var path = Path.Combine(directory, "song.flac");
+            await File.WriteAllBytesAsync(path, "ID3\x04\0\0\0\0\0\0fLaCold"u8.ToArray());
+            var local = new Mock<ILocalLibraryService>(MockBehavior.Strict);
+            local.Setup(item => item.GetLocalPathForExternalSongAsync(
+                    It.IsAny<DownloadedSongMappingScope>(), "apple-download", "song-1"))
+                .ReturnsAsync(path);
+            var service = CreateService(root, "Cache", local.Object);
+            var cached = await service.TryOpenAsync(
+                new ProviderExternalResourceId("apple-download", ProviderResourceKind.Track, "song-1"),
+                new DownloadedSongMappingScope(
+                    Context().Actor!.TenantId, null, "music", ProviderAudioQuality.Any),
+                CancellationToken.None);
+
+            Assert.Equal(!ownedCache, cached != null);
+            Assert.Equal(!ownedCache, File.Exists(path));
+            if (ownedCache)
+                Assert.Single(Directory.GetFiles(directory, "*.legacy-id3-*"));
+            cached?.Response.Dispose();
+            local.VerifyAll();
+        }
+        finally
+        {
+            DeleteRoot(root);
+        }
+    }
+
     [Fact]
     public async Task InterruptedStream_DeletesPartialFileAndDoesNotRegister()
     {

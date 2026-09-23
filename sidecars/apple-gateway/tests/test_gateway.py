@@ -539,6 +539,51 @@ async def test_process_runner_streams_exact_flac_stdout(settings: Settings, tmp_
 
 
 @pytest.mark.asyncio
+async def test_process_runner_stamps_piped_flac_duration_without_changing_frames(
+    settings: Settings, tmp_path: Path
+):
+    packed = (48_000 << 44) | (1 << 41) | (15 << 36)
+    header = b"fLaC\x00\x00\x00\x22" + b"\x00" * 10 + packed.to_bytes(8, "big")
+    producer = tmp_path / "fake-ffmpeg"
+    producer.write_text(
+        "#!/usr/bin/env python3\n"
+        f"import sys; sys.stdout.buffer.write({(header + b'unchanged-frames')!r})\n",
+        encoding="utf-8",
+    )
+    producer.chmod(0o750)
+    probe = tmp_path / "ffprobe"
+    probe.write_text(
+        "#!/usr/bin/env python3\n"
+        "print('{\"streams\":[{}],\"format\":{\"duration\":\"2.5\"}}')\n",
+        encoding="utf-8",
+    )
+    probe.chmod(0o750)
+    source = tmp_path / "source.m4a"
+    source.write_bytes(b"source")
+    runner = BoundedProcessRunner(replace(settings, ffmpeg_path=str(producer)))
+
+    output = b"".join([chunk async for chunk in runner.stream_flac(source)])
+
+    assert output[:18] == header[:18]
+    assert int.from_bytes(output[18:26], "big") & ((1 << 36) - 1) == 120_000
+    assert output[26:] == b"unchanged-frames"
+
+
+def test_piped_flac_header_only_stamps_unknown_valid_duration():
+    packed = (44_100 << 44) | (1 << 41) | (15 << 36)
+    header = b"fLaC\x00\x00\x00\x22" + b"\x00" * 10 + packed.to_bytes(8, "big")
+
+    assert BoundedProcessRunner._flac_header_with_duration(header, 2) == (
+        header[:18] + (packed | 88_200).to_bytes(8, "big")
+    )
+    assert BoundedProcessRunner._flac_header_with_duration(header, None) == header
+    assert BoundedProcessRunner._flac_header_with_duration(header[:11], 2) == header[:11]
+    assert BoundedProcessRunner._flac_header_with_duration(header[:18] + (packed | 1).to_bytes(8, "big"), 2) == (
+        header[:18] + (packed | 1).to_bytes(8, "big")
+    )
+
+
+@pytest.mark.asyncio
 async def test_process_runner_relays_existing_flac_without_reencoding(settings: Settings, tmp_path: Path):
     source = tmp_path / "source.flac"
     source.write_bytes(b"fLaCready")
