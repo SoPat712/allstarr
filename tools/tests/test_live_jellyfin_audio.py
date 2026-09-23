@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from live_jellyfin_audio import audio_url, flac_samples
+from live_jellyfin_audio import audio_url, flac_samples, parse_headers
 
 
 class LiveJellyfinAudioTests(unittest.TestCase):
@@ -39,6 +39,14 @@ class LiveJellyfinAudioTests(unittest.TestCase):
             path.write_bytes(b"not flac")
             with self.assertRaises(AssertionError):
                 flac_samples(path)
+
+    def test_headers_reject_redirects(self):
+        self.assertEqual(
+            parse_headers("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n"),
+            {"content-length": "4"},
+        )
+        with self.assertRaises(AssertionError):
+            parse_headers("HTTP/1.1 302 Found\r\n\r\nHTTP/1.1 200 OK\r\n\r\n")
 
 
 if __name__ == "__main__":

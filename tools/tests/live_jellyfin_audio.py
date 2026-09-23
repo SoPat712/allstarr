@@ -11,9 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import urllib.error
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,11 +28,6 @@ class Received:
 
     def header(self, name: str) -> str:
         return self.headers.get(name.lower(), "")
-
-
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, request, fp, code, msg, headers, newurl):
-        raise ValueError("unexpected media redirect")
 
 
 def audio_url(base: str, song_id: str, user_id: str) -> str:
@@ -54,29 +47,45 @@ def receive(url: str, token: str, path: Path, byte_range: str | None = None) -> 
         'MediaBrowser Client="AllstarrLiveAudio", Device="Qualification", '
         'DeviceId="allstarr-live-audio", Version="1", Token="' + token + '"'
     )
-    headers = {"Authorization": authorization}
+    if not IDENTIFIER.fullmatch(token):
+        raise ValueError("invalid test token")
+    headers = [f"Authorization: {authorization}"]
     if byte_range:
-        headers["Range"] = f"bytes={byte_range}"
-    request = urllib.request.Request(url, headers=headers)
-    opener = urllib.request.build_opener(NoRedirect())
-    try:
-        response = opener.open(request, timeout=180)
-    except urllib.error.HTTPError as error:
-        raise AssertionError(f"audio request returned HTTP {error.code}") from None
+        headers.append(f"Range: bytes={byte_range}")
     limit = RANGE_BYTES if byte_range else MAX_BYTES
-    with response, path.open("wb") as output:
-        expected = response.headers.get("Content-Length")
-        if expected and int(expected) > limit:
-            raise AssertionError("audio response exceeds the bounded test size")
-        size = 0
-        while chunk := response.read(64 * 1024):
-            size += len(chunk)
-            if size > limit:
-                raise AssertionError("audio response exceeded the bounded test size")
-            output.write(chunk)
-        if expected and int(expected) != size:
-            raise AssertionError(f"Content-Length {expected} did not match {size} delivered bytes")
-        return Received(response.status, {key.lower(): value for key, value in response.headers.items()}, size)
+    header_path = path.with_name(path.name + ".headers")
+    try:
+        result = subprocess.run(
+            ["curl", "--silent", "--show-error", "--max-time", "180",
+             "--max-filesize", str(limit), "--header", "@-", "--dump-header",
+             str(header_path), "--output", str(path), "--write-out", "%{http_code}", url],
+            input="\n".join(headers) + "\n", capture_output=True, text=True, timeout=190,
+        )
+        if result.returncode:
+            raise AssertionError(f"bounded audio request failed (curl exit {result.returncode})")
+        status = int(result.stdout)
+        if status != (206 if byte_range else 200):
+            raise AssertionError(f"audio request returned HTTP {status}")
+        response_headers = parse_headers(header_path.read_text())
+        size = path.stat().st_size
+        expected = response_headers.get("content-length")
+        if size > limit or (expected and int(expected) != size):
+            raise AssertionError("audio response size differs from its bounded length")
+        return Received(status, response_headers, size)
+    finally:
+        header_path.unlink(missing_ok=True)
+
+
+def parse_headers(raw: str) -> dict[str, str]:
+    blocks = [block for block in raw.replace("\r\n", "\n").split("\n\n") if block.strip()]
+    if len(blocks) != 1 or not blocks[0].startswith("HTTP/"):
+        raise AssertionError("audio request redirected or returned invalid headers")
+    return {
+        key.lower().strip(): value.strip()
+        for line in blocks[0].splitlines()[1:]
+        if ":" in line
+        for key, value in [line.split(":", 1)]
+    }
 
 
 def flac_samples(path: Path) -> tuple[int, int, int]:
