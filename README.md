@@ -213,6 +213,10 @@ Choose your preferred provider via the `MUSIC_SERVICE` environment variable. Add
    JELLYFIN_LIBRARY_ID=
    ```
 
+   Jellyfin 12 requires the standard `Authorization: MediaBrowser ...` header.
+   Allstarr forwards a client's login identity separately from its optional
+   server-side API key, and uses the standard header for API-key requests.
+
    `localhost` inside the Allstarr container points to Allstarr itself, not to
    Jellyfin. The Compose file maps `host.docker.internal` on Linux, macOS, and
    Windows for a Jellyfin server running on the Docker host.

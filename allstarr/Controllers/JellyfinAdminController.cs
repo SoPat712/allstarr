@@ -95,8 +95,7 @@ public class JellyfinAdminController : ControllerBase
         var request = new HttpRequestMessage(method, url);
         var authHeader =
             $"MediaBrowser Client=\"AllstarrAdmin\", Device=\"WebUI\", DeviceId=\"allstarr-admin-webui\", Version=\"{AppVersion.Version}\", Token=\"{session.JellyfinAccessToken}\"";
-        request.Headers.TryAddWithoutValidation("X-Emby-Authorization", authHeader);
-        request.Headers.TryAddWithoutValidation("X-Emby-Token", session.JellyfinAccessToken);
+        request.Headers.TryAddWithoutValidation("Authorization", authHeader);
         return request;
     }
 

@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
+using allstarr.Services.Common;
 
 namespace allstarr.Services.Jellyfin;
 
@@ -503,9 +504,7 @@ public class JellyfinSessionManager : IDisposable
             var jellyfinHost = jellyfinUrl.Replace("https://", "").Replace("http://", "");
             var jellyfinWsUrl = $"{wsScheme}{jellyfinHost}/socket";
 
-            // IMPORTANT: Do NOT add api_key to URL - we want to authenticate as the CLIENT, not the server
-            // The client's token is passed via X-Emby-Authorization header
-            // Using api_key would create a session for the server/admin, not the actual user's client
+            // Use the client's identity when available; URL query credentials are not needed.
 
             webSocket = new ClientWebSocket();
             session.WebSocket = webSocket;
@@ -517,44 +516,25 @@ public class JellyfinSessionManager : IDisposable
             _logger.LogDebug("🔍 WEBSOCKET: Available headers for {DeviceId}: {Headers}",
                 deviceId, string.Join(", ", sessionHeaders.Keys));
 
-            // Forward authentication headers from the CLIENT - this is critical for session to appear under the right user
-            bool authFound = false;
-            if (sessionHeaders.TryGetValue("X-Emby-Authorization", out var embyAuth))
+            // Keep the same client identity used for proxied HTTP requests.
+            var auth = AuthHeaderHelper.GetForwardAuthHeader(sessionHeaders);
+            if (auth is { } selected)
             {
-                webSocket.Options.SetRequestHeader("X-Emby-Authorization", embyAuth.ToString());
-                _logger.LogDebug("🔑 WEBSOCKET: Using X-Emby-Authorization for {DeviceId}", deviceId);
-                authFound = true;
-            }
-            else if (sessionHeaders.TryGetValue("X-Emby-Token", out var token))
-            {
-                webSocket.Options.SetRequestHeader("X-Emby-Token", token.ToString());
-                _logger.LogDebug("🔑 WEBSOCKET: Using X-Emby-Token for {DeviceId}", deviceId);
-                authFound = true;
-            }
-            else if (sessionHeaders.TryGetValue("Authorization", out var auth))
-            {
-                var authValue = auth.ToString();
-                if (authValue.Contains("MediaBrowser", StringComparison.OrdinalIgnoreCase))
-                {
-                    webSocket.Options.SetRequestHeader("X-Emby-Authorization", authValue);
-                    _logger.LogDebug("🔑 WEBSOCKET: Converted Authorization to X-Emby-Authorization for {DeviceId}",
-                        deviceId);
-                    authFound = true;
-                }
-                else
-                {
-                    webSocket.Options.SetRequestHeader("Authorization", authValue);
-                    _logger.LogDebug("🔑 WEBSOCKET: Using Authorization for {DeviceId}", deviceId);
-                    authFound = true;
-                }
+                webSocket.Options.SetRequestHeader(selected.Name, selected.Value);
+                _logger.LogDebug("🔑 WEBSOCKET: Using {HeaderName} for {DeviceId}", selected.Name, deviceId);
             }
 
-            if (!authFound)
+            if (auth is null)
             {
-                // No client auth found - fall back to server API key as last resort
+                // Preserve the existing server-key fallback without a legacy query credential.
                 if (!string.IsNullOrEmpty(_settings.ApiKey))
                 {
-                    jellyfinWsUrl += $"?api_key={_settings.ApiKey}";
+                    webSocket.Options.SetRequestHeader("Authorization", AuthHeaderHelper.CreateAuthHeader(
+                        _settings.ApiKey,
+                        _settings.ClientName,
+                        _settings.DeviceName,
+                        _settings.DeviceId,
+                        _settings.ClientVersion));
                     _logger.LogWarning("WEBSOCKET: No client auth found in headers, falling back to server API key for {DeviceId}", deviceId);
                 }
                 else

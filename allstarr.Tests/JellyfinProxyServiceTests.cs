@@ -147,6 +147,28 @@ public class JellyfinProxyServiceTests
     }
 
     [Fact]
+    public async Task GetJsonAsyncInternal_WithServerApiKey_UsesStandardAuthorization()
+    {
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{}")
+            });
+
+        await _service.GetJsonAsyncInternal("Items");
+
+        Assert.NotNull(captured);
+        Assert.Contains("Client=\"TestClient\"", captured!.Headers.GetValues("Authorization").Single());
+        Assert.Contains("Token=\"test-api-key-12345\"", captured.Headers.GetValues("Authorization").Single());
+        Assert.False(captured.Headers.Contains("X-Emby-Authorization"));
+    }
+
+    [Fact]
     public async Task GetBytesAsync_ReturnsBodyAndContentType()
     {
         // Arrange
@@ -367,8 +389,9 @@ public class JellyfinProxyServiceTests
 
         // Assert
         Assert.NotNull(captured);
-        Assert.True(captured!.Headers.TryGetValues("X-Emby-Authorization", out var values));
+        Assert.True(captured!.Headers.TryGetValues("Authorization", out var values));
         Assert.Contains("MediaBrowser Token=\"abc\"", values);
+        Assert.False(captured.Headers.Contains("X-Emby-Authorization"));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 

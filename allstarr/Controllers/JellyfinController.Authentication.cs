@@ -49,7 +49,12 @@ public partial class JellyfinController
                 }
 
                 // Return Jellyfin's exact response
-                return Content(responseJson, "application/json");
+                return new ContentResult
+                {
+                    Content = responseJson,
+                    ContentType = "application/json",
+                    StatusCode = statusCode
+                };
             }
 
             // No response body from Jellyfin - return status code only

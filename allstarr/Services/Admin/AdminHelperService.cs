@@ -582,7 +582,7 @@ public class AdminHelperService
     public HttpRequestMessage CreateJellyfinRequest(HttpMethod method, string url)
     {
         var request = new HttpRequestMessage(method, url);
-        request.Headers.Add("X-Emby-Authorization", GetJellyfinAuthHeader());
+        request.Headers.Add("Authorization", GetJellyfinAuthHeader());
         return request;
     }
 

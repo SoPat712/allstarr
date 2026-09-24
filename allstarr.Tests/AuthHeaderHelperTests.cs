@@ -7,25 +7,27 @@ namespace allstarr.Tests;
 public class AuthHeaderHelperTests
 {
     [Fact]
-    public void ForwardAuthHeaders_ShouldPreferXEmbyAuthorization()
+    public void ForwardAuthHeaders_ShouldPreferStandardAuthorization()
     {
         var headers = new HeaderDictionary
         {
-            ["X-Emby-Authorization"] = "MediaBrowser Token=\"abc\"",
-            ["Authorization"] = "Bearer xyz"
+            ["X-Emby-Authorization"] = "MediaBrowser Token=\"old\"",
+            ["X-Emby-Token"] = "old",
+            ["Authorization"] = "MediaBrowser Client=\"Yuzic\", Device=\"Phone\", DeviceId=\"device-1\", Version=\"2.0\""
         };
 
         using var request = new HttpRequestMessage();
         var forwarded = AuthHeaderHelper.ForwardAuthHeaders(headers, request);
 
         Assert.True(forwarded);
-        Assert.True(request.Headers.TryGetValues("X-Emby-Authorization", out var values));
-        Assert.Contains("MediaBrowser Token=\"abc\"", values);
-        Assert.False(request.Headers.Contains("Authorization"));
+        Assert.True(request.Headers.TryGetValues("Authorization", out var values));
+        Assert.Contains("MediaBrowser Client=\"Yuzic\", Device=\"Phone\", DeviceId=\"device-1\", Version=\"2.0\"", values);
+        Assert.False(request.Headers.Contains("X-Emby-Authorization"));
+        Assert.False(request.Headers.Contains("X-Emby-Token"));
     }
 
     [Fact]
-    public void ForwardAuthHeaders_ShouldMapMediaBrowserAuthorizationToXEmby()
+    public void ForwardAuthHeaders_ShouldPreserveMediaBrowserAuthorization()
     {
         var headers = new HeaderDictionary
         {
@@ -36,7 +38,36 @@ public class AuthHeaderHelperTests
         var forwarded = AuthHeaderHelper.ForwardAuthHeaders(headers, request);
 
         Assert.True(forwarded);
-        Assert.True(request.Headers.Contains("X-Emby-Authorization"));
+        Assert.Equal(headers["Authorization"].ToString(), request.Headers.GetValues("Authorization").Single());
+        Assert.False(request.Headers.Contains("X-Emby-Authorization"));
+    }
+
+    [Fact]
+    public void ForwardAuthHeaders_ShouldUpgradeLegacyMediaBrowserHeader()
+    {
+        var headers = new HeaderDictionary
+        {
+            ["X-Emby-Authorization"] = "MediaBrowser Client=\"OlderClient\", Device=\"Phone\", DeviceId=\"device-2\", Version=\"1.0\""
+        };
+
+        using var request = new HttpRequestMessage();
+        Assert.True(AuthHeaderHelper.ForwardAuthHeaders(headers, request));
+        Assert.Equal(headers["X-Emby-Authorization"].ToString(), request.Headers.GetValues("Authorization").Single());
+        Assert.False(request.Headers.Contains("X-Emby-Authorization"));
+    }
+
+    [Fact]
+    public void ForwardAuthHeaders_ShouldKeepLegacyEmbySchemeForOlderServers()
+    {
+        var headers = new HeaderDictionary
+        {
+            ["X-Emby-Authorization"] = "Emby Client=\"OlderClient\""
+        };
+
+        using var request = new HttpRequestMessage();
+        Assert.True(AuthHeaderHelper.ForwardAuthHeaders(headers, request));
+        Assert.Equal(headers["X-Emby-Authorization"].ToString(), request.Headers.GetValues("X-Emby-Authorization").Single());
+        Assert.False(request.Headers.Contains("Authorization"));
     }
 
     [Fact]

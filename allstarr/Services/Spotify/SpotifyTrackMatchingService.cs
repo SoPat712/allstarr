@@ -1499,7 +1499,7 @@ public class SpotifyTrackMatchingService : BackgroundService
             var headers = new HeaderDictionary();
             if (!string.IsNullOrEmpty(jellyfinSettings.ApiKey))
             {
-                headers["X-Emby-Authorization"] = $"MediaBrowser Token=\"{jellyfinSettings.ApiKey}\"";
+                headers["Authorization"] = $"MediaBrowser Client=\"Allstarr\", Device=\"Server\", DeviceId=\"allstarr-playlists\", Version=\"{AppVersion.Version}\", Token=\"{jellyfinSettings.ApiKey}\"";
             }
 
             // Request all fields that clients typically need (not just MediaSources)

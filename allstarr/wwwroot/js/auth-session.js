@@ -122,6 +122,7 @@ function patchFetchForAuthRecovery() {
 
     if (
       response.status === 401 &&
+      response.headers.get("X-Allstarr-Session-Expired") === "true" &&
       url.includes("/api/admin") &&
       !url.includes("/api/admin/auth/") &&
       !authRecoveryInProgress

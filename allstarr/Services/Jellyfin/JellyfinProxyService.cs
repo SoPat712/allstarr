@@ -1013,7 +1013,7 @@ public class JellyfinProxyService
 
         // Use server's API key for authentication
         var authHeader = GetAuthorizationHeader();
-        request.Headers.TryAddWithoutValidation("X-Emby-Authorization", authHeader);
+        request.Headers.TryAddWithoutValidation("Authorization", authHeader);
 
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 

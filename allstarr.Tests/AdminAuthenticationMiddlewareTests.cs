@@ -32,6 +32,7 @@ public class AdminAuthenticationMiddlewareTests
 
         Assert.False(nextInvoked);
         Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+        Assert.Equal("true", context.Response.Headers["X-Allstarr-Session-Expired"]);
 
         var body = await ReadResponseBodyAsync(context);
         Assert.Contains("Authentication required", body);
@@ -70,6 +71,7 @@ public class AdminAuthenticationMiddlewareTests
         Assert.True(nextInvoked);
         Assert.Equal(StatusCodes.Status204NoContent, context.Response.StatusCode);
         Assert.True(context.Items.ContainsKey(AdminAuthSessionService.HttpContextSessionItemKey));
+        Assert.False(context.Response.Headers.ContainsKey("X-Allstarr-Session-Expired"));
     }
 
     [Fact]

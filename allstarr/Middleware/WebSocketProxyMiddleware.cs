@@ -2,6 +2,7 @@ using System.Net.WebSockets;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
 using allstarr.Services.Jellyfin;
+using allstarr.Services.Common;
 
 namespace allstarr.Middleware;
 
@@ -113,32 +114,11 @@ public class WebSocketProxyMiddleware
             // Connect to Jellyfin WebSocket
             serverWebSocket = new ClientWebSocket();
 
-            // Forward authentication headers - check X-Emby-Authorization FIRST
-            // Most Jellyfin clients use X-Emby-Authorization, not Authorization
-            if (context.Request.Headers.TryGetValue("X-Emby-Authorization", out var embyAuthHeader))
+            var auth = AuthHeaderHelper.GetForwardAuthHeader(context.Request.Headers);
+            if (auth is { } selected)
             {
-                serverWebSocket.Options.SetRequestHeader("X-Emby-Authorization", embyAuthHeader.ToString());
-                _logger.LogDebug("🔑 WEBSOCKET: Forwarded X-Emby-Authorization header");
-            }
-            else if (context.Request.Headers.TryGetValue("X-Emby-Token", out var tokenHeader))
-            {
-                serverWebSocket.Options.SetRequestHeader("X-Emby-Token", tokenHeader.ToString());
-                _logger.LogDebug("🔑 WEBSOCKET: Forwarded X-Emby-Token header");
-            }
-            else if (context.Request.Headers.TryGetValue("Authorization", out var authHeader2))
-            {
-                var authValue = authHeader2.ToString();
-                // If it's a MediaBrowser auth header, use X-Emby-Authorization
-                if (authValue.Contains("MediaBrowser", StringComparison.OrdinalIgnoreCase))
-                {
-                    serverWebSocket.Options.SetRequestHeader("X-Emby-Authorization", authValue);
-                    _logger.LogDebug("🔑 WEBSOCKET: Converted Authorization to X-Emby-Authorization header");
-                }
-                else
-                {
-                    serverWebSocket.Options.SetRequestHeader("Authorization", authValue);
-                    _logger.LogDebug("🔑 WEBSOCKET: Forwarded Authorization header");
-                }
+                serverWebSocket.Options.SetRequestHeader(selected.Name, selected.Value);
+                _logger.LogDebug("🔑 WEBSOCKET: Forwarded {HeaderName} header", selected.Name);
             }
 
             // Set user agent

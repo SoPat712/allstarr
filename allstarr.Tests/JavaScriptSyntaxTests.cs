@@ -142,6 +142,7 @@ public class JavaScriptSyntaxTests
         Assert.Contains("window.openEditSetting", settingsContent);
         Assert.Contains("window.saveEditSetting", settingsContent);
         Assert.Contains("window.logoutAdminSession", authContent);
+        Assert.Contains("response.headers.get(\"X-Allstarr-Session-Expired\") === \"true\"", authContent);
         Assert.Contains("window.restartContainer", operationsContent);
         Assert.Contains("window.linkPlaylist", playlistContent);
         Assert.Contains("window.loadScrobblingConfig", scrobblingContent);

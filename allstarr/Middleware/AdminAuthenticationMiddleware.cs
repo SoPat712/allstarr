@@ -103,6 +103,7 @@ public class AdminAuthenticationMiddleware
             context.Request.Path);
 
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        context.Response.Headers["X-Allstarr-Session-Expired"] = "true";
         context.Response.ContentType = "application/json";
         await context.Response.WriteAsync(JsonSerializer.Serialize(new
         {
