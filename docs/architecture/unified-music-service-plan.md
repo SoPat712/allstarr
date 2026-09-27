@@ -343,7 +343,7 @@ Checkpoint as of 2026-09-27; the catalog and alias projection changes are deploy
 - **Source reconciliation:** Automatic rematching now moves a provisional source identity and its catalog alias together when it reuses an existing provider recording. A source anchored by an ISRC, MusicBrainz ID, confirmed recording, or manual identity cannot be reassigned by this path. The operation preserves old recordings and historical decisions, records an audit event, and retries concurrent identity writes. A forward migration repairs unanchored stale aliases, removes redundant aliases with identical targets, and normalizes legacy hashes; conflicting targets remain untouched. Isolated PostgreSQL regressions cover converging sources, repeated rematches, protected evidence, and migration replay. Generic evidence ingestion still rejects arbitrary alias reassignment. This is not a general-purpose recording merge.
 - **Remaining:** Project remaining legacy source-snapshot and protocol identities into the catalog; add the relationship and image request shapes needed by Stage 3; and reconcile provisional records that begin without an MBID.
 
-| Stage 2 checkpoint measure | Stage start | Current | Interpretation |
+| Stage 2 checkpoint measure | Stage start | Identity-projection checkpoint | Interpretation |
 | --- | ---: | ---: | --- |
 | Production source in the established C#/WebUI/Python scope | 135,882 | 137,000 | +1,118 lines implement the catalog graph, evidence owner, bounded client, ingestion/refresh jobs, and exact identity projection; migrations and tests are excluded, and no consolidation saving is claimed yet |
 | Accepted provider-identity alias writers | none | 1 shared evidence path | New links, repeat links, conflict checks, and the forward migration use the same namespace and hashing rules |
@@ -435,6 +435,22 @@ served audio; this does not qualify every provider, account tier, or client.
 The three-sample native stream run measured 34.7 ms mean Allstarr first-byte
 latency against 20.4 ms direct. OIDC remains disabled pending operator setup;
 its real identity-provider flow is not live-qualified.
+
+Follow-up on 2026-09-27: `5584ff42` passed 2,515 standard and 105
+release-critical tests against isolated PostgreSQL databases, plus GitHub CI.
+Its deployed migration repaired 12 stale source aliases and normalized 1,242
+legacy alias hashes; the post-migration audit found neither inconsistency.
+The live suite ran 203 checks with one failure and seven blocked checks.
+Native and external full-song decoding and exact cached ranges passed, as did
+creation, rename, add, reorder, removal, and deletion of a throwaway playlist.
+The SoundCloud extension's track lookup succeeded, but its upstream stream
+endpoint returned 404. Allstarr returned 502, including on a targeted retry.
+SoundCloud playback remains unqualified and needs an extension/upstream fix;
+the passing metadata checks do not establish playability. The blocked checks
+cover cold external byte ranges, an omitted SoundCloud album relationship,
+an injected playlist not visible to the test account, sharing without a second
+user, and mutations requiring exact state restoration. No clean live-release
+qualification is claimed for this build.
 
 ## Code-reduction rules
 
