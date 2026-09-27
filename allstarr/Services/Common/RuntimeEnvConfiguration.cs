@@ -23,6 +23,13 @@ public static class RuntimeEnvConfiguration
             ["BACKEND_TYPE"] = ["Backend:Type"],
             ["ALLSTARR_RELEASE_PROFILE"] = ["Release:Profile"],
             ["ADMIN_BIND_ANY_IP"] = ["Admin:BindAnyIp"],
+            ["ADMIN_BASE_PATH"] = ["Admin:BasePath"],
+            ["ADMIN_OIDC_ENABLED"] = ["Admin:Oidc:Enabled"],
+            ["ADMIN_OIDC_AUTHORITY"] = ["Admin:Oidc:Authority"],
+            ["ADMIN_OIDC_CLIENT_ID"] = ["Admin:Oidc:ClientId"],
+            ["ADMIN_OIDC_CLIENT_SECRET"] = ["Admin:Oidc:ClientSecret"],
+            ["ADMIN_OIDC_PUBLIC_URL"] = ["Admin:Oidc:PublicUrl"],
+            ["ADMIN_OIDC_DISPLAY_NAME"] = ["Admin:Oidc:DisplayName"],
             ["ADMIN_TRUSTED_SUBNETS"] = ["Admin:TrustedSubnets"],
             ["ADMIN_ENABLE_ENV_EXPORT"] = ["Admin:EnableEnvExport"],
 

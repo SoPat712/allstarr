@@ -53,7 +53,7 @@ public class AdminAuthenticationMiddleware
         var session = await _sessionService.GetValidSessionAsync(context.Request, context.RequestAborted);
         if (session is null)
         {
-            DeleteSessionCookies(context.Response);
+            AdminSessionCookies.Delete(context);
             await WriteUnauthorizedResponse(context);
             return;
         }
@@ -193,13 +193,6 @@ public class AdminAuthenticationMiddleware
             error = "Authentication required",
             message = "Please sign in with your configured media-server account."
         }));
-    }
-
-    private static void DeleteSessionCookies(HttpResponse response)
-    {
-        response.Cookies.Delete(AdminAuthSessionService.SessionCookieName, new CookieOptions { Path = "/" });
-        response.Cookies.Delete(AdminAuthSessionService.LegacySessionCookieName, new CookieOptions { Path = "/" });
-        response.Cookies.Delete(AdminAuthSessionService.LegacySessionCookieName, new CookieOptions { Path = "/api/admin/auth" });
     }
 
     private async Task WriteForbiddenResponse(HttpContext context)

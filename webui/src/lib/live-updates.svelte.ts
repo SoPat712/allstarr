@@ -1,3 +1,5 @@
+import { adminUrl } from "./admin-url";
+
 export type LiveState = "connecting" | "live" | "reconnecting" | "stale";
 
 type UpdateEvent = {
@@ -81,7 +83,7 @@ export const liveUpdates = {
     if (source) return;
 
     state.status = "connecting";
-    source = new EventSource("/api/admin/updates/stream");
+    source = new EventSource(adminUrl("/api/admin/updates/stream"));
     source.addEventListener("stream-status", () => {
       if (staleTimer) clearTimeout(staleTimer);
       state.status = "live";

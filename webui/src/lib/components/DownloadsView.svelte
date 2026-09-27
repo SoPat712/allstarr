@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { ChevronDown } from "@lucide/svelte";
+  import { adminUrl } from "$lib/admin-url";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { Badge } from "$lib/components/ui/badge";
@@ -246,7 +247,7 @@
                 <span class="media-art download-art">
                   <ProviderMark id={file.provider || "file"} definition={provider(file.provider)} label={providerName(file.provider)} />
                   {#if file.artworkUrl}
-                    <img src={file.artworkUrl} alt="" loading="lazy" onerror={(event) => event.currentTarget.remove()} />
+                    <img src={adminUrl(file.artworkUrl)} alt="" loading="lazy" onerror={(event) => event.currentTarget.remove()} />
                   {/if}
                 </span>
                 <span>

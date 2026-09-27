@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { adminUrl } from "$lib/admin-url";
   import { differenceHash, hashSimilarity, percent } from "$lib/mappings";
 
   let { source, candidate }: { source: string; candidate: string } = $props();
@@ -16,7 +17,7 @@
   });
 
   async function fingerprint(url: string) {
-    const response = await fetch(url);
+    const response = await fetch(adminUrl(url));
     if (!response.ok) throw new Error("Artwork unavailable");
     const bitmap = await createImageBitmap(await response.blob());
     try {

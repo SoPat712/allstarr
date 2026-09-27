@@ -46,11 +46,11 @@ public static partial class SafeOperationalText
     [GeneratedRegex("https?://[^\\s,;\\\"'<>]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex UrlPattern();
 
-    [GeneratedRegex("token|password|secret|cookie|authorization|api.?key|client.?id|private.?key|arl|signature|sig|expires", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex("token|password|secret|cookie|authorization|api.?key|client.?id|private.?key|arl|signature|sig|expires|^code$|^state$|nonce|code_verifier", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SensitiveQueryKey();
 
     [GeneratedRegex(
-        @"\b(token|password|secret|cookie|authorization|api[_-]?key|arl)\s*[=:]\s*[^\s,;]+",
+        @"\b(token|password|secret|cookie|authorization|api[_-]?key|arl|code|state|nonce|code_verifier|client_secret)\s*[=:]\s*[^\s,;]+",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex CredentialPattern();
 }

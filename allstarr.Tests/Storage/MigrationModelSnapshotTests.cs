@@ -14,6 +14,6 @@ public sealed class MigrationModelSnapshotTests
         using var context = new AllstarrDbContext(options);
 
         Assert.False(context.Database.HasPendingModelChanges());
-        Assert.Equal("20260922000030_ProjectNativeTrackAliases", context.Database.GetMigrations().Last());
+        Assert.Equal("20260927214131_AddAdminOidcLinks", context.Database.GetMigrations().Last());
     }
 }

@@ -10,6 +10,7 @@ using allstarr.Services.Subsonic;
 using allstarr.Core.Protocols.Subsonic;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Common;
+using allstarr.Services.Admin;
 using allstarr.Services.Lyrics;
 using allstarr.Services.Scrobbling;
 using allstarr.Services.Spotify;
@@ -313,6 +314,8 @@ builder.Services.AddScoped<allstarr.Filters.AdminPortFilter>();
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminHelperService>();
 builder.Services.AddSingleton<allstarr.Services.Admin.IAdminAuthSessionStore, allstarr.Services.Admin.EfAdminAuthSessionStore>();
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminAuthSessionService>();
+builder.Services.AddSingleton<allstarr.Services.Admin.AdminBasePath>();
+builder.Services.AddAdminOidc(builder.Configuration);
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminProtocolExecutionContextFactory>();
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminUpdateFeed>();
 
@@ -585,6 +588,10 @@ if (builder.Configuration.GetValue<bool>("HttpsRedirection:Enabled"))
 
 // Keep admin assets and authentication on the admin listener.
 app.UseMiddleware<allstarr.Middleware.AdminNetworkAllowlistMiddleware>();
+app.UseMiddleware<allstarr.Middleware.AdminBasePathMiddleware>();
+// Select endpoints after stripping the admin prefix, before authentication.
+app.UseRouting();
+app.UseAuthentication();
 app.UseMiddleware<allstarr.Middleware.AdminStaticFilesMiddleware>();
 app.UseMiddleware<allstarr.Middleware.AdminAuthenticationMiddleware>();
 

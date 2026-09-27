@@ -1906,6 +1906,31 @@ namespace allstarr.Core.Storage.Migrations
                     b.ToTable("admin_auth_sessions", (string)null);
                 });
 
+            modelBuilder.Entity("allstarr.Core.Storage.AdminOidcLinkRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("BackendIdentityId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("SecretReferenceId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BackendIdentityId")
+                        .IsUnique();
+
+                    b.HasIndex("SecretReferenceId");
+
+                    b.ToTable("admin_oidc_links", (string)null);
+                });
+
             modelBuilder.Entity("allstarr.Core.Storage.ApplicationCacheEntryRecord", b =>
                 {
                     b.Property<string>("Key")
@@ -5241,6 +5266,21 @@ namespace allstarr.Core.Storage.Migrations
                         .HasForeignKey("TenantId", "UpdatedByUserId")
                         .HasPrincipalKey("TenantId", "Id")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.AdminOidcLinkRecord", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.BackendIdentityRecord", null)
+                        .WithMany()
+                        .HasForeignKey("BackendIdentityId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("allstarr.Core.Storage.SecretReferenceRecord", null)
+                        .WithMany()
+                        .HasForeignKey("SecretReferenceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.AuditEventRecord", b =>

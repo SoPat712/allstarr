@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
   import { flip } from "svelte/animate";
   import { ArrowRight, ChevronRight } from "@lucide/svelte";
+  import { adminUrl } from "$lib/admin-url";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
@@ -273,7 +274,7 @@
             <span class="event-kind-icon" data-severity={severityState} data-kind={first.kind} aria-hidden="true">
               <span><ActivityIcon kind={first.kind} /></span>
               {#if first.artworkUrl}
-                <img src={first.artworkUrl} alt="" loading="lazy" onerror={(event) => event.currentTarget.remove()} />
+                <img src={adminUrl(first.artworkUrl)} alt="" loading="lazy" onerror={(event) => event.currentTarget.remove()} />
               {/if}
             </span>
             <span class="event-summary-copy">

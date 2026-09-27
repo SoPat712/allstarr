@@ -46,7 +46,7 @@ public class AdminAuthControllerTests
 
         var sessionService = AdminAuthSessionTestSupport.Create();
         var httpContext = new DefaultHttpContext();
-        httpContext.Request.Headers["X-Forwarded-Proto"] = "https";
+        httpContext.Request.Scheme = "https";
 
         var controller = CreateController(handler, sessionService, httpContext);
         var result = await controller.Login(new AdminAuthController.LoginRequest
