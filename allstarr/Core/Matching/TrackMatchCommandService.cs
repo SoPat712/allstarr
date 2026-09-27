@@ -1862,6 +1862,9 @@ public sealed class TrackMatchCommandService(
                 latestVersion + 1,
                 clock.UtcNow,
                 cancellationToken);
+            if (!canonicalRecordingId.HasValue)
+                return new(false, TrackMatchCommandFailure.Conflict,
+                    "The source recording has conflicting identity evidence; review the match before merging it.");
         }
         var input = externalRoutable && canonicalRecordingId.HasValue
             ? MatchDecisionInput.FromExternalDecision(
@@ -1968,7 +1971,7 @@ public sealed class TrackMatchCommandService(
                    cancellationToken);
     }
 
-    private static async Task<Guid> LinkExternalIdentitiesAsync(
+    private static async Task<Guid?> LinkExternalIdentitiesAsync(
         AllstarrDbContext db,
         ProviderActorContext actor,
         ProviderTrackIdentityRecord source,
@@ -1985,18 +1988,20 @@ public sealed class TrackMatchCommandService(
         var canonicalRecordingId = await LinkExternalIdentityAsync(
             db, actor, source, selected, source.CanonicalRecordingId, true, verificationMethod,
             decisionVersion, now, cancellationToken);
+        if (!canonicalRecordingId.HasValue)
+            return null;
         foreach (var alternate in routable.Where(song =>
                      !string.Equals(song.ExternalProvider, selected.ExternalProvider, StringComparison.OrdinalIgnoreCase) ||
                      !string.Equals(song.ExternalId, selected.ExternalId, StringComparison.Ordinal)))
         {
             await LinkExternalIdentityAsync(
-                db, actor, source, alternate, canonicalRecordingId, false, verificationMethod,
+                db, actor, source, alternate, canonicalRecordingId.Value, false, verificationMethod,
                 decisionVersion, now, cancellationToken);
         }
         return canonicalRecordingId;
     }
 
-    private static async Task<Guid> LinkExternalIdentityAsync(
+    private static async Task<Guid?> LinkExternalIdentityAsync(
         AllstarrDbContext db,
         ProviderActorContext actor,
         ProviderTrackIdentityRecord source,
@@ -2027,11 +2032,9 @@ public sealed class TrackMatchCommandService(
         {
             if (primary)
                 canonicalRecordingId = identity.CanonicalRecordingId;
-            if (source.CanonicalRecordingId != canonicalRecordingId)
-            {
-                source.CanonicalRecordingId = canonicalRecordingId;
-                source.UpdatedAt = now;
-            }
+            if (primary && !await CanonicalCatalogEvidenceStore.ReconcileSourceIdentityAsync(
+                    db, actor, source, canonicalRecordingId, now, cancellationToken))
+                return null;
             if (identity.VerificationMethod == ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod ||
                 verificationMethod == "automatic-match" &&
                 identity.VerificationMethod == "automatic-suggestion")
@@ -2537,6 +2540,8 @@ public sealed class TrackMatchCommandService(
 
     private static bool IsConcurrentMatchWrite(Exception exception)
     {
+        if (exception is DbUpdateConcurrencyException)
+            return true;
         for (var current = exception; current != null; current = current.InnerException)
         {
             if (current is Npgsql.PostgresException

@@ -903,6 +903,51 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     }
 
     [Fact]
+    public async Task Two_source_tracks_converge_on_existing_provider_without_stale_aliases()
+    {
+        _source.Snapshot = Snapshot("shared-provider",
+            Entry(0, "first", "unindexed-first", "Shared source"),
+            Entry(1, "second", "unindexed-second", "Shared source"));
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
+        gateway.Setup(item => item.SearchPlayableSongsAsync(
+                It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 60))
+            .ReturnsAsync([new Song
+            {
+                ExternalProvider = "deezer", ExternalId = "shared-provider-track",
+                Title = "Shared source", Artist = "Artist", Duration = 180
+            }]);
+        var matcher = new TrackMatchDecisionEngine();
+        var matches = new TrackMatchCommandService(
+            _factory, matcher, new ProviderAccountResolver(_factory, new ProviderPolicyOptions()), new Clock(_now),
+            new PlaylistPlayableSearchService(gateway.Object, matcher, null!, new IdentityOptions(),
+                Options.Create(new JellyfinSettings()), NullLogger<PlaylistPlayableSearchService>.Instance));
+        var service = new PlaylistOrchestrationService(
+            _factory, _source, new FakeTargetResolver(_target), new PlaylistMaterializationPlanner(), matcher,
+            matches, new Clock(_now));
+
+        await service.RefreshAsync(Context(), _link);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var provider = await db.ProviderTrackIdentities.SingleAsync(item => item.ProviderId == "deezer");
+        var sources = await db.ProviderTrackIdentities.Where(item =>
+            item.VerificationMethod == "source-snapshot-hash").ToArrayAsync();
+        Assert.Equal(2, sources.Length);
+        Assert.All(sources, item => Assert.Equal(provider.CanonicalRecordingId, item.CanonicalRecordingId));
+        var aliases = await db.CanonicalCatalogAliases.ToArrayAsync();
+        Assert.Equal(3, aliases.Length);
+        Assert.All(aliases, item => Assert.Equal(provider.CanonicalRecordingId, item.CanonicalEntityId));
+        Assert.Single(await db.AuditEvents.Where(item => item.Action == "source-identity.reconcile").ToArrayAsync());
+        Assert.Equal(2, await db.TrackMatches.CountAsync(item => item.State == TrackMatchState.Accepted));
+        foreach (var source in sources)
+            await matches.RematchSnapshotAsync(Context(),
+                (await db.ExternalMetadataSnapshots.SingleAsync(item => item.ExternalIdHash == source.ExternalIdHash)).Id,
+                "repeated-source-rematch", "test");
+        Assert.Equal(3, await db.CanonicalCatalogAliases.CountAsync());
+        Assert.Single(await db.AuditEvents.Where(item => item.Action == "source-identity.reconcile").ToArrayAsync());
+    }
+
+    [Fact]
     public async Task Concurrent_external_rematches_coalesce_identity_and_decision_writes()
     {
         var sourceHash = Hash("concurrent-external-source");

@@ -208,6 +208,76 @@ public sealed class CanonicalCatalogEvidenceStore(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     DurableStorageState storageState) : ICanonicalCatalogEvidenceStore
 {
+    internal static async Task<bool> ReconcileSourceIdentityAsync(
+        AllstarrDbContext db,
+        ProviderActorContext actor,
+        ProviderTrackIdentityRecord identity,
+        Guid targetRecordingId,
+        DateTimeOffset observedAt,
+        CancellationToken cancellationToken)
+    {
+        if (identity.TenantId != actor.TenantId)
+            throw new UnauthorizedAccessException("The source identity is outside the actor tenant.");
+        await ValidateActorAndTargetAsync(
+            db, actor, new(CanonicalCatalogEntityKind.Recording, targetRecordingId), cancellationToken);
+        var aliasNamespace = CanonicalCatalogKeys.ProviderTrackNamespace(
+            identity.ProviderId, identity.ResourceKind, identity.CatalogNamespace,
+            identity.Scope, identity.ProviderAccountId);
+        var hash = CanonicalCatalogKeys.Hash(identity.ExternalId);
+        var alias = db.CanonicalCatalogAliases.Local.SingleOrDefault(item =>
+                item.TenantId == actor.TenantId && item.Namespace == aliasNamespace &&
+                item.EntityKind == CanonicalCatalogEntityKind.Recording && item.ExternalIdHash == hash) ??
+            await db.CanonicalCatalogAliases.SingleOrDefaultAsync(item =>
+                item.TenantId == actor.TenantId && item.Namespace == aliasNamespace &&
+                item.EntityKind == CanonicalCatalogEntityKind.Recording && item.ExternalIdHash == hash,
+                cancellationToken);
+        if (alias != null && alias.ExternalId != identity.ExternalId)
+            throw new InvalidOperationException("A catalog alias hash collision was detected.");
+
+        var previousIds = new[] { identity.CanonicalRecordingId, alias?.CanonicalEntityId }
+            .OfType<Guid>().Where(id => id != targetRecordingId).Distinct().ToArray();
+        if (previousIds.Length > 0)
+        {
+            if (identity.Verification != ProviderIdentityVerification.Verified ||
+                identity.VerificationMethod is not ("source-snapshot" or "source-snapshot-hash"))
+                return false;
+            foreach (var id in previousIds)
+            {
+                var previous = db.CanonicalRecordings.Local.SingleOrDefault(item =>
+                        item.TenantId == actor.TenantId && item.Id == id) ??
+                    await db.CanonicalRecordings.SingleOrDefaultAsync(item =>
+                        item.TenantId == actor.TenantId && item.Id == id, cancellationToken);
+                if (previous is not { IsProvisional: true, Isrc: null, MusicBrainzRecordingId: null })
+                    return false;
+            }
+
+            db.AuditEvents.Add(new AuditEventRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = actor.TenantId,
+                ActorUserId = actor.UserId,
+                Category = "canonical-catalog",
+                Action = "source-identity.reconcile",
+                Outcome = "updated",
+                CorrelationId = $"catalog:source-identity:{identity.Id:N}",
+                DetailsJson = JsonSerializer.Serialize(new { identityId = identity.Id, previousIds, targetRecordingId }),
+                CreatedAt = observedAt
+            });
+            identity.CanonicalRecordingId = targetRecordingId;
+            identity.UpdatedAt = observedAt;
+            identity.Revision++;
+            if (alias != null)
+            {
+                alias.CanonicalEntityId = targetRecordingId;
+                alias.LastSeenAt = observedAt;
+            }
+        }
+
+        await CanonicalCatalogIdentityProjection.ProjectProviderIdentityAsync(
+            db, actor, identity, observedAt, cancellationToken);
+        return true;
+    }
+
     public async Task<CanonicalCatalogEvidenceResult> RecordAsync(
         ProviderActorContext actor,
         CanonicalCatalogEntityReference target,
