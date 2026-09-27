@@ -8,6 +8,7 @@ using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Models.Settings;
+using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -75,7 +76,7 @@ public sealed class JellyfinLibraryCatalogScanner : JsonLibraryCatalogScanner, I
             var uri = new Uri(new Uri(_settings.Url.TrimEnd('/') + "/"),
                 $"Items?Recursive=true&IncludeItemTypes=Audio&StartIndex={offset}&Limit={request.PageSize}&Fields=Path,ProviderIds,DateModified,DateCreated,Album,AlbumArtist,Artists,RunTimeTicks,ImageTags");
             using var message = new HttpRequestMessage(HttpMethod.Get, uri);
-            message.Headers.TryAddWithoutValidation("X-Emby-Token", _settings.ApiKey);
+            message.Headers.TryAddWithoutValidation("Authorization", AuthHeaderHelper.CreateAuthHeader(_settings.ApiKey, "Allstarr", "Server", "allstarr-server", AppVersion.Version));
             using var response = await _http.SendAsync(message, cancellationToken);
             response.EnsureSuccessStatusCode();
             using var document = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(cancellationToken));

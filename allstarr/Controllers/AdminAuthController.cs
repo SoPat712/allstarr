@@ -245,7 +245,7 @@ public sealed class AdminAuthController : ControllerBase
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get,
                     $"{_jellyfinSettings.Url!.TrimEnd('/')}/Users/{Uri.EscapeDataString(userId)}/Images/Primary?width=96&quality=90");
-                request.Headers.TryAddWithoutValidation("X-Emby-Token", session.JellyfinAccessToken);
+                request.Headers.TryAddWithoutValidation("Authorization", AuthHeaderHelper.CreateAuthHeader(session.JellyfinAccessToken, "AllstarrAdmin", "WebUI", "allstarr-admin-webui", AppVersion.Version));
                 using var response = await _httpClient.SendAsync(request, token);
                 var contentType = response.Content.Headers.ContentType?.MediaType;
                 if (!response.IsSuccessStatusCode ||

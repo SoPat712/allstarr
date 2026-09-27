@@ -7,6 +7,7 @@ using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Models.Settings;
+using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -59,7 +60,7 @@ public sealed class JellyfinLibraryRefresher : IBackendLibraryRefresher
             throw new InvalidOperationException("Jellyfin library refresh is not configured.");
         using var message = new HttpRequestMessage(HttpMethod.Post,
             new Uri(new Uri(_settings.Url.TrimEnd('/') + "/"), "Library/Refresh"));
-        message.Headers.TryAddWithoutValidation("X-Emby-Token", _settings.ApiKey);
+        message.Headers.TryAddWithoutValidation("Authorization", AuthHeaderHelper.CreateAuthHeader(_settings.ApiKey, "Allstarr", "Server", "allstarr-server", AppVersion.Version));
         using var response = await _http.SendAsync(message, cancellationToken);
         response.EnsureSuccessStatusCode();
         return new(true);
