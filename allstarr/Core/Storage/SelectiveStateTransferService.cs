@@ -779,13 +779,15 @@ public sealed class SelectiveStateTransferService
                 }
             case "secret-references":
                 {
-                    var rows = await context.SecretReferences.AsNoTracking().ToListAsync(cancellationToken);
+                    var rows = await context.SecretReferences.AsNoTracking()
+                        .Where(item => item.Purpose != AdminOidcLinkRecord.SecretPurpose).ToListAsync(cancellationToken);
                     await WriteJsonAsync(archive, entry, rows, cancellationToken);
                     return rows.Count;
                 }
             case "secret-versions":
                 {
-                    var rows = await context.SecretVersions.AsNoTracking().ToListAsync(cancellationToken);
+                    var rows = await context.SecretVersions.AsNoTracking().Where(item => context.SecretReferences.Any(
+                        secret => secret.Id == item.SecretReferenceId && secret.Purpose != AdminOidcLinkRecord.SecretPurpose)).ToListAsync(cancellationToken);
                     await WriteJsonAsync(archive, entry, rows, cancellationToken);
                     return rows.Count;
                 }

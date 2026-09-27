@@ -8,6 +8,8 @@ using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using allstarr.Core.Identity;
 using allstarr.Core.Configuration;
+using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Authentication;
 
 namespace allstarr.Controllers;
 
@@ -26,6 +28,10 @@ public sealed class AdminAuthController : ControllerBase
     private readonly ProviderAccountManagementMode _providerAccountManagementMode;
     private readonly IMediaAssetResolver _mediaAssets;
     private readonly ReleaseComposition _releaseComposition;
+    private readonly AdminOidcOptions? _oidcOptions;
+    private readonly AdminOidcLinks? _oidcLinks;
+    private readonly IAntiforgery? _antiforgery;
+    private string? _pendingOidcKey;
 
     public AdminAuthController(
         IOptions<JellyfinSettings> jellyfinSettings,
@@ -37,7 +43,10 @@ public sealed class AdminAuthController : ControllerBase
         IMediaAssetResolver mediaAssets,
         BackendIdentityResolver? identityResolver = null,
         ProviderAccountManagementOptions? providerAccountManagementOptions = null,
-        ReleaseComposition? releaseComposition = null)
+        ReleaseComposition? releaseComposition = null,
+        AdminOidcOptions? oidcOptions = null,
+        AdminOidcLinks? oidcLinks = null,
+        IAntiforgery? antiforgery = null)
     {
         _jellyfinSettings = jellyfinSettings.Value;
         _subsonicSettings = subsonicSettings.Value;
@@ -55,11 +64,25 @@ public sealed class AdminAuthController : ControllerBase
         _providerAccountManagementMode = (providerAccountManagementOptions ?? new())
             .ParseManagementMode();
         _releaseComposition = releaseComposition ?? ReleaseComposition.Core;
+        _oidcOptions = oidcOptions;
+        _oidcLinks = oidcLinks;
+        _antiforgery = antiforgery;
     }
 
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
+        if (request.LinkOidc)
+        {
+            if (!Request.IsHttps) return BadRequest(new { error = "SSO linking requires HTTPS." });
+            if (_oidcOptions?.Enabled != true || _oidcLinks == null || _antiforgery == null)
+                return BadRequest(new { error = "SSO is not enabled." });
+            if (!await _antiforgery.IsRequestValidAsync(HttpContext))
+                return BadRequest(new { error = "Reload the page before linking SSO." });
+            var pending = await HttpContext.AuthenticateAsync(AdminOidcOptions.PendingScheme);
+            _pendingOidcKey = pending.Principal == null ? null : AdminOidcLinks.IdentityKey(pending.Principal, _oidcOptions.ClientId);
+            if (_pendingOidcKey == null) return Unauthorized(new { error = "Sign in through SSO again before linking." });
+        }
         if (_backendType == BackendType.Subsonic)
         {
             return await LoginWithSubsonicAsync(request);
@@ -150,7 +173,7 @@ public sealed class AdminAuthController : ControllerBase
                 isAdministrator,
                 accessToken,
                 serverId,
-                request.RememberMe);
+                request);
         }
         catch (JsonException)
         {
@@ -185,9 +208,7 @@ public sealed class AdminAuthController : ControllerBase
             });
         }
 
-        // Re-issue the canonical root-scoped cookie while validating the session.
-        // Older Allstarr builds could leave a more narrowly scoped cookie behind,
-        // causing /auth/me to succeed while sibling admin APIs received a stale ID.
+        // Renew the cookie at the configured admin path, shared by all admin APIs.
         SetSessionCookie(session.SessionId, session.ExpiresAtUtc);
 
         return Ok(AuthenticatedSessionResponse(session));
@@ -276,32 +297,14 @@ public sealed class AdminAuthController : ControllerBase
         }
 
         DeleteSessionCookies();
+        if (_oidcOptions?.Enabled == true) await HttpContext.SignOutAsync(AdminOidcOptions.PendingScheme);
         return Ok(new { success = true });
     }
 
-    private void DeleteSessionCookies()
-    {
-        Response.Cookies.Delete(AdminAuthSessionService.SessionCookieName, new CookieOptions { Path = "/" });
-        Response.Cookies.Delete(AdminAuthSessionService.LegacySessionCookieName, new CookieOptions { Path = "/" });
-        Response.Cookies.Delete(AdminAuthSessionService.LegacySessionCookieName, new CookieOptions { Path = "/api/admin/auth" });
-    }
+    private void DeleteSessionCookies() => AdminSessionCookies.Delete(HttpContext);
 
     private void SetSessionCookie(string sessionId, DateTime expiresAtUtc)
-    {
-        var secure = Request.IsHttps ||
-                     string.Equals(Request.Headers["X-Forwarded-Proto"], "https",
-                         StringComparison.OrdinalIgnoreCase);
-
-        Response.Cookies.Append(AdminAuthSessionService.SessionCookieName, sessionId, new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = secure,
-            SameSite = SameSiteMode.Strict,
-            Path = "/",
-            IsEssential = true,
-            Expires = expiresAtUtc
-        });
-    }
+        => AdminSessionCookies.Write(HttpContext, sessionId, expiresAtUtc);
 
     private async Task<IActionResult> LoginWithSubsonicAsync(LoginRequest request)
     {
@@ -350,19 +353,19 @@ public sealed class AdminAuthController : ControllerBase
             using var document = await JsonDocument.ParseAsync(
                 await response.Content.ReadAsStreamAsync(HttpContext.RequestAborted),
                 cancellationToken: HttpContext.RequestAborted);
-            if (!TryReadSubsonicIdentity(document.RootElement, username, out var identity))
+            if (!AdminBackendIdentity.TryReadSubsonic(document.RootElement, username, out var identity, allowMissingUserName: true))
             {
                 return Unauthorized(new { error = "Invalid Subsonic credentials" });
             }
 
             return await CompleteLoginAsync(
                 BackendType.Subsonic,
-                identity.UserName,
-                identity.UserName,
+                identity.UserId,
+                identity.Name,
                 identity.IsAdministrator,
                 string.Empty,
                 null,
-                request.RememberMe);
+                request);
         }
         catch (JsonException)
         {
@@ -381,35 +384,6 @@ public sealed class AdminAuthController : ControllerBase
         }
     }
 
-    private static bool TryReadSubsonicIdentity(
-        JsonElement root,
-        string requestedUserName,
-        out SubsonicIdentity identity)
-    {
-        identity = default;
-        if (!root.TryGetProperty("subsonic-response", out var envelope) ||
-            !envelope.TryGetProperty("status", out var status) ||
-            !string.Equals(status.GetString(), "ok", StringComparison.OrdinalIgnoreCase) ||
-            !envelope.TryGetProperty("user", out var user))
-        {
-            return false;
-        }
-
-        var returnedUserName = user.TryGetProperty("username", out var username)
-            ? username.GetString()
-            : requestedUserName;
-        if (string.IsNullOrWhiteSpace(returnedUserName) ||
-            !returnedUserName.Equals(requestedUserName, StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        var isAdministrator = user.TryGetProperty("adminRole", out var adminRole) &&
-                              adminRole.ValueKind == JsonValueKind.True;
-        identity = new SubsonicIdentity(returnedUserName, isAdministrator);
-        return true;
-    }
-
     private async Task<IActionResult> CompleteLoginAsync(
         BackendType backend,
         string userId,
@@ -417,7 +391,7 @@ public sealed class AdminAuthController : ControllerBase
         bool isAdministrator,
         string accessToken,
         string? serverId,
-        bool isPersistent)
+        LoginRequest request)
     {
         var backendName = backend.ToString();
         var principal = _identityResolver == null
@@ -425,13 +399,29 @@ public sealed class AdminAuthController : ControllerBase
             : await _identityResolver.ResolveAsync(
                 new BackendIdentityDescriptor(backendName, userId, userName, isAdministrator),
                 HttpContext.RequestAborted);
+        if (_pendingOidcKey != null)
+        {
+            if (principal == null) return StatusCode(503, new { error = "Native account identity is unavailable. SSO was not linked." });
+            try
+            {
+                await _oidcLinks!.LinkAsync(_pendingOidcKey, principal,
+                    new(backendName.ToLowerInvariant(),
+                        (backend == BackendType.Jellyfin ? _jellyfinSettings.Url : _subsonicSettings.Url)!.TrimEnd('/'),
+                        userId, backend == BackendType.Jellyfin ? accessToken : request.Password!), HttpContext.RequestAborted);
+            }
+            catch (Exception exception) when (exception is UnauthorizedAccessException or Microsoft.EntityFrameworkCore.DbUpdateException)
+            {
+                return Conflict(new { error = "This SSO identity or media account is already linked. Disconnect its existing link first." });
+            }
+            await HttpContext.SignOutAsync(AdminOidcOptions.PendingScheme);
+        }
         var session = await _sessionService.CreateSessionAsync(
             userId,
             userName,
             isAdministrator,
             accessToken,
             serverId,
-            isPersistent,
+            request.RememberMe,
             backendName,
             principal?.TenantId,
             principal?.UserId,
@@ -473,13 +463,12 @@ public sealed class AdminAuthController : ControllerBase
         intelligence = _releaseComposition.IntelligenceEnabled
     };
 
-    private readonly record struct SubsonicIdentity(string UserName, bool IsAdministrator);
-
     public sealed class LoginRequest
     {
         public string? Username { get; set; }
         public string? Password { get; set; }
         public bool RememberMe { get; set; }
+        public bool LinkOidc { get; set; }
     }
 
     private sealed class JellyfinAuthenticateRequest

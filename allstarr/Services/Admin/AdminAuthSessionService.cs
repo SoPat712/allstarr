@@ -15,6 +15,9 @@ public sealed class AdminAuthSession
     public string BackendType { get; init; } = "Jellyfin";
     public Guid? TenantId { get; init; }
     public Guid? AllstarrUserId { get; init; }
+    public Guid? OidcSecretReferenceId { get; init; }
+    public string? OidcBackendEndpoint { get; init; }
+    public string? OidcBackendInstanceId { get; init; }
     public required string JellyfinAccessToken { get; init; }
     public string? JellyfinServerId { get; init; }
     public bool IsPersistent { get; init; }
@@ -74,7 +77,11 @@ public sealed class EfAdminAuthSessionStore(IDbContextFactory<AllstarrDbContext>
 public sealed class AdminAuthSessionService(
     IAdminAuthSessionStore store,
     IDataProtectionProvider dataProtectionProvider,
-    ILogger<AdminAuthSessionService> logger)
+    ILogger<AdminAuthSessionService> logger,
+    IDbContextFactory<AllstarrDbContext>? contextFactory = null,
+    AdminOidcOptions? oidcOptions = null,
+    AdminOidcBackendAuthentication? oidcBackend = null,
+    allstarr.Core.Identity.IdentityOptions? identityOptions = null)
 {
     public const string SessionCookieName = "allstarr_admin_session_v3";
     public const string LegacySessionCookieName = "allstarr_admin_session";
@@ -97,7 +104,10 @@ public sealed class AdminAuthSessionService(
         string backendType = "Jellyfin",
         Guid? tenantId = null,
         Guid? allstarrUserId = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Guid? oidcSecretReferenceId = null,
+        string? oidcBackendEndpoint = null,
+        string? oidcBackendInstanceId = null)
     {
         var now = DateTime.UtcNow;
         var session = new AdminAuthSession
@@ -109,6 +119,9 @@ public sealed class AdminAuthSessionService(
             BackendType = backendType,
             TenantId = tenantId,
             AllstarrUserId = allstarrUserId,
+            OidcSecretReferenceId = oidcSecretReferenceId,
+            OidcBackendEndpoint = oidcBackendEndpoint,
+            OidcBackendInstanceId = oidcBackendInstanceId,
             JellyfinAccessToken = jellyfinAccessToken,
             JellyfinServerId = jellyfinServerId,
             IsPersistent = isPersistent,
@@ -157,6 +170,27 @@ public sealed class AdminAuthSessionService(
             }
 
             var now = DateTime.UtcNow;
+            if (session.OidcSecretReferenceId is { } secretId)
+            {
+                if (oidcOptions?.Enabled != true || contextFactory == null || oidcBackend == null ||
+                    !session.BackendType.Equals(oidcBackend.Backend, StringComparison.OrdinalIgnoreCase) || session.OidcBackendEndpoint != oidcBackend.Endpoint ||
+                    session.OidcBackendInstanceId != identityOptions?.BackendInstanceId) return null;
+                await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+                if (!await (from link in db.AdminOidcLinks
+                            join identity in db.BackendIdentities on link.BackendIdentityId equals identity.Id
+                            join secret in db.SecretReferences on link.SecretReferenceId equals secret.Id
+                            where secret.Id == secretId && secret.RevokedAt == null &&
+                                  secret.BackendIdentityId == identity.Id && secret.TenantId == session.TenantId &&
+                                  secret.Purpose == AdminOidcLinkRecord.SecretPurpose &&
+                                  identity.TenantId == session.TenantId && identity.UserId == session.AllstarrUserId &&
+                                  identity.BackendType == oidcBackend.Backend && identity.BackendInstanceId == session.OidcBackendInstanceId &&
+                                  identity.PrincipalId == session.UserId
+                            select link).AnyAsync(cancellationToken))
+                {
+                    await store.RemoveAsync(sessionId, cancellationToken);
+                    return null;
+                }
+            }
             session.LastSeenUtc = now;
             if (record.LastSeenAt <= DateTimeOffset.UtcNow.AddMinutes(-5))
             {

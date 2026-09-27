@@ -169,8 +169,10 @@ public sealed class DurableStateTransferService
             await WriteEntryAsync(archive, "users.json", await context.Users.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "backend-identities.json", await context.BackendIdentities.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "onboarding-states.json", await context.OnboardingStates.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
-            await WriteEntryAsync(archive, "secret-references.json", await context.SecretReferences.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
-            await WriteEntryAsync(archive, "secret-versions.json", await context.SecretVersions.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
+            var portableSecrets = context.SecretReferences.AsNoTracking().Where(item => item.Purpose != AdminOidcLinkRecord.SecretPurpose);
+            await WriteEntryAsync(archive, "secret-references.json", await portableSecrets.ToListAsync(cancellationToken), cancellationToken);
+            await WriteEntryAsync(archive, "secret-versions.json", await context.SecretVersions.AsNoTracking()
+                .Where(item => portableSecrets.Any(secret => secret.Id == item.SecretReferenceId)).ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "provider-accounts.json", await context.ProviderAccounts.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "canonical-recordings.json", await context.CanonicalRecordings.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "provider-track-identities.json", await context.ProviderTrackIdentities.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);

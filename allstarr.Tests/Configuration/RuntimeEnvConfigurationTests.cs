@@ -35,6 +35,21 @@ public sealed class RuntimeEnvConfigurationTests : IDisposable
     }
 
     [Theory]
+    [InlineData("ADMIN_BASE_PATH", "Admin:BasePath")]
+    [InlineData("ADMIN_OIDC_ENABLED", "Admin:Oidc:Enabled")]
+    [InlineData("ADMIN_OIDC_AUTHORITY", "Admin:Oidc:Authority")]
+    [InlineData("ADMIN_OIDC_CLIENT_ID", "Admin:Oidc:ClientId")]
+    [InlineData("ADMIN_OIDC_CLIENT_SECRET", "Admin:Oidc:ClientSecret")]
+    [InlineData("ADMIN_OIDC_PUBLIC_URL", "Admin:Oidc:PublicUrl")]
+    [InlineData("ADMIN_OIDC_DISPLAY_NAME", "Admin:Oidc:DisplayName")]
+    public void MapEnvVarToConfiguration_MapsAdminBootstrap(string environmentKey, string configurationKey)
+    {
+        var mapping = Assert.Single(RuntimeEnvConfiguration.MapEnvVarToConfiguration(environmentKey, "value"));
+        Assert.Equal(configurationKey, mapping.Key);
+        Assert.Equal("value", mapping.Value);
+    }
+
+    [Theory]
     [InlineData("MUSICBRAINZ_SOURCE_ID", "MusicBrainz:SourceId")]
     [InlineData("MUSICBRAINZ_BASE_URL", "MusicBrainz:BaseUrl")]
     [InlineData("MUSICBRAINZ_RATE_LIMIT_MS", "MusicBrainz:RateLimitMs")]

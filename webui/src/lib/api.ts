@@ -1,3 +1,5 @@
+import { adminUrl } from "./admin-url";
+
 export type Session = {
   authenticated: boolean;
   backend: string;
@@ -1201,7 +1203,8 @@ export type ListeningHistoryImport = {
 };
 
 async function request(input: RequestInfo | URL, init?: RequestInit) {
-  const response = await fetch(input, {
+  const requestInput = typeof input === "string" ? adminUrl(input) : input;
+  const response = await fetch(requestInput, {
     cache: "no-store",
     credentials: "same-origin",
     ...init,
@@ -1377,7 +1380,7 @@ export const intelligence = {
     json<void>(`/api/admin/intelligence/history/${encodeURIComponent(id)}`,
       intelligenceBody({ ...scope, expectedRevision, confirmed: true }, "DELETE")),
   historyExportUrl: (scope: IntelligenceScope) =>
-    `/api/admin/intelligence/history/export?${intelligenceQuery(scope)}`,
+    adminUrl(`/api/admin/intelligence/history/export?${intelligenceQuery(scope)}`),
   previewHistoryImport: (scope: IntelligenceScope, file: File) => {
     const body = new FormData();
     body.append("file", file);
@@ -1736,7 +1739,7 @@ export const downloads = {
       { method: "DELETE" },
     ),
   fileUrl: (path: string, storage: "cache" | "kept") =>
-    `/api/admin/downloads/file?path=${encodeURIComponent(path)}&storage=${storage}`,
+    adminUrl(`/api/admin/downloads/file?path=${encodeURIComponent(path)}&storage=${storage}`),
 };
 
 export const playlistLinks = {

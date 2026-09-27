@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { adminUrl } from "$lib/admin-url";
   import { Dialog } from "$lib/components/ui/dialog";
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { X } from "@lucide/svelte";
@@ -218,7 +219,7 @@
 
         <section class="mapping-source">
           <span class="media-art mapping-art">
-            {#if match.sourceArtworkUrl}<img src={match.sourceArtworkUrl} alt="" />{:else}<ProviderMark id={match.providerId} definition={provider(match.providerId)} />{/if}
+            {#if match.sourceArtworkUrl}<img src={adminUrl(match.sourceArtworkUrl)} alt="" />{:else}<ProviderMark id={match.providerId} definition={provider(match.providerId)} />{/if}
           </span>
           <div>
             <small>Source track</small>

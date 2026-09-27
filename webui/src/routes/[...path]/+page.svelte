@@ -2,6 +2,8 @@
   import { onMount, type Component } from "svelte";
   import { page } from "$app/state";
   import { auth, onboarding, type OnboardingState, type Session } from "$lib/api";
+  import { adminUrl } from "$lib/admin-url";
+  import { adminOidc, type OidcStatus } from "$lib/admin-oidc";
   import { liveUpdates } from "$lib/live-updates.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -35,6 +37,7 @@
   ];
 
   let session = $state<Session | null>(null);
+  let oidc = $state<OidcStatus>({ enabled: false });
   let loading = $state(true);
   let bootstrapFailed = $state(false);
   let bootMessageIndex = $state(0);
@@ -231,6 +234,10 @@
     bootMessageIndex = 0;
     try {
       session = await auth.session();
+      oidc = await adminOidc.status().catch(() => ({ enabled: false }));
+      if (new URLSearchParams(window.location.search).get("oidc") === "failed") {
+        error = "SSO sign-in failed. Try again, or use your media-server account.";
+      }
       if (session.authenticated) {
         await loadOnboarding(session);
         liveUpdates.connect();
@@ -274,7 +281,10 @@
     authBusy = true;
     error = "";
     try {
-      session = await auth.login(username, password, rememberMe);
+      session = oidc.linkPending
+        ? await adminOidc.link(username, password, rememberMe, oidc.csrfToken ?? "")
+        : await auth.login(username, password, rememberMe);
+      oidc = await adminOidc.status().catch(() => ({ enabled: false }));
       avatarFailed = false;
       password = "";
       await loadOnboarding(session);
@@ -296,8 +306,36 @@
       onboardingState = null;
       onboardingOpen = false;
       session = await auth.session();
+      oidc = await adminOidc.status().catch(() => ({ enabled: false }));
     } catch (cause) {
       authError = cause instanceof Error ? cause.message : "You are still signed in. Try again.";
+    } finally {
+      authBusy = false;
+    }
+  }
+
+  async function disconnectSso() {
+    if (authBusy || !confirm("Disconnect SSO? You can still sign in with your media-server account.")) return;
+    authBusy = true;
+    authError = "";
+    try {
+      await adminOidc.unlink(oidc.csrfToken ?? "");
+      await bootstrap();
+    } catch (cause) {
+      authError = cause instanceof Error ? cause.message : "Could not disconnect SSO.";
+    } finally {
+      authBusy = false;
+    }
+  }
+
+  async function cancelSsoLink() {
+    if (authBusy) return;
+    authBusy = true;
+    try {
+      await adminOidc.cancel(oidc.csrfToken ?? "");
+      oidc = await adminOidc.status();
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : "Could not cancel SSO linking.";
     } finally {
       authBusy = false;
     }
@@ -341,15 +379,25 @@
       <button class="auth-submit mt-6 w-full" type="button" onclick={() => void bootstrap()}>Try again</button>
     </section>
   </main>
-{:else if !session?.authenticated}
+{:else if !session?.authenticated || oidc.linkPending}
   <main class="grid min-h-screen place-items-center p-6">
     <section class="panel w-full max-w-sm p-6 sm:p-8" aria-labelledby="login-title">
       <div class="brand-mark mb-6" aria-hidden="true">A</div>
       <p class="eyebrow">Allstarr</p>
       <h1 id="login-title" class="mt-2 text-3xl font-semibold tracking-tight">Your music, connected.</h1>
       <p class="mt-3 text-sm leading-6 text-ink-muted">
-        Sign in with your {session?.backend ?? "media server"} account.
+        {#if oidc.linkPending}
+          Link your {session?.backend ?? "media server"} account to SSO. Your media server still controls your access.
+          {#if session?.backend?.toLowerCase() === "subsonic"}
+            Allstarr will keep your media-server credential encrypted to verify future SSO logins.
+          {/if}
+        {:else}
+          Sign in with your {session?.backend ?? "media server"} account.
+        {/if}
       </p>
+      {#if oidc.enabled && !oidc.linkPending && oidc.loginUrl}
+        <a class="button mt-4 w-full" href={adminUrl(oidc.loginUrl)}>Continue with {oidc.displayName}</a>
+      {/if}
 
       <form class="mt-8 space-y-4" aria-busy={authBusy} onsubmit={(event) => { event.preventDefault(); void login(); }}>
         <label class="field">
@@ -365,7 +413,10 @@
           Keep me signed in
         </label>
         {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
-        <button class="auth-submit w-full" type="submit" disabled={authBusy}>{authBusy ? "Signing in…" : "Sign in"}</button>
+        <button class="auth-submit w-full" type="submit" disabled={authBusy}>{authBusy ? "Signing in…" : oidc.linkPending ? "Link account and sign in" : "Sign in"}</button>
+        {#if oidc.linkPending}
+          <button class="button w-full" type="button" disabled={authBusy} onclick={() => void cancelSsoLink()}>Continue without linking</button>
+        {/if}
       </form>
     </section>
   </main>
@@ -435,7 +486,7 @@
         <span class="avatar" aria-hidden="true">
           {#if session.user?.avatarUrl && !avatarFailed}
             <img
-              src={session.user.avatarUrl}
+              src={adminUrl(session.user.avatarUrl)}
               alt=""
               onerror={() => {
                 avatarFailed = true;
@@ -460,6 +511,12 @@
     </aside>
 
     <main class="workspace" id="main-workspace">
+      {#if oidc.linked}
+        <div class="flex items-center justify-end gap-3 p-2 text-sm">
+          <span class="text-ink-muted">{oidc.displayName} connected</span>
+          <button class="button" disabled={authBusy} onclick={() => void disconnectSso()}>Disconnect SSO</button>
+        </div>
+      {/if}
       <header class="workspace-header">
         <div class="workspace-title">
           <h1>{activeDestination.label}</h1>
@@ -554,7 +611,7 @@
           <section class="mobile-sheet-profile" aria-label="Signed-in account">
             <span class="avatar" aria-hidden="true">
               {#if session.user?.avatarUrl && !avatarFailed}
-                <img src={session.user.avatarUrl} alt="" onerror={() => avatarFailed = true} />
+                <img src={adminUrl(session.user.avatarUrl)} alt="" onerror={() => avatarFailed = true} />
               {:else}
                 <span>{initials}</span>
               {/if}

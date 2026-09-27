@@ -1,3 +1,8 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
+using allstarr.Services.Admin;
+
 namespace allstarr.Middleware;
 
 /// <summary>
@@ -6,18 +11,43 @@ namespace allstarr.Middleware;
 /// </summary>
 public class AdminStaticFilesMiddleware
 {
+    private const long MaxIndexBytes = 4 * 1024 * 1024;
     private readonly RequestDelegate _next;
     private readonly IWebHostEnvironment _env;
+    private readonly string _adminBasePath;
     private const int AdminPort = 5275;
     private readonly string _webRootPath;
     private readonly string _webRootPathWithSeparator;
+    private static readonly Regex BasePathMetaTag = new(
+        @"<meta\b(?=[^>]*\bname\s*=\s*[""']allstarr-base-path[""'])[^>]*>",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex MetaContentAttribute = new(
+        @"(?<prefix>\bcontent\s*=\s*)(?<quote>[""'])(?<value>.*?)\k<quote>",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.Singleline);
+    private static readonly Regex GeneratedAssetUrl = new(
+        @"(?<quote>[""'])/(?<asset>_app/|favicon\.svg(?=[?#""']))",
+        RegexOptions.Compiled);
+    private static readonly Regex InlineScript = new(
+        @"<script\b(?<attributes>[^>]*)>(?<body>.*?)</script\s*>",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.Singleline);
+    private static readonly Regex CspMetaTag = new(
+        @"<meta\b(?=[^>]*\bhttp-equiv\s*=\s*[""']content-security-policy[""'])[^>]*>",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex CspContentAttribute = new(
+        @"(?<prefix>\bcontent\s*=\s*)(?<quote>[""'])(?<value>.*?)\k<quote>",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.Singleline);
+    private static readonly Regex CspScriptDirective = new(
+        @"(?<directive>\bscript-src\b)(?<spacing>\s+)(?<sources>[^;]*)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public AdminStaticFilesMiddleware(
         RequestDelegate next,
-        IWebHostEnvironment env)
+        IWebHostEnvironment env,
+        AdminBasePath? basePath = null)
     {
         _next = next;
         _env = env;
+        _adminBasePath = basePath?.Value ?? string.Empty;
         var webRoot = string.IsNullOrWhiteSpace(_env.WebRootPath)
             ? Path.Combine(_env.ContentRootPath, "wwwroot")
             : _env.WebRootPath;
@@ -48,7 +78,24 @@ public class AdminStaticFilesMiddleware
                 {
                     SetRevalidationHeaders(context.Response);
                     context.Response.ContentType = "text/html";
-                    await context.Response.SendFileAsync(indexPath);
+                    if (_adminBasePath.Length == 0)
+                    {
+                        await context.Response.SendFileAsync(indexPath);
+                    }
+                    else
+                    {
+                        var html = await ReadBoundedTextAsync(indexPath, context.RequestAborted);
+                        if (html is null)
+                        {
+                            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+                            return;
+                        }
+
+                        var transformed = TransformIndexHtml(html, _adminBasePath);
+                        context.Response.ContentLength = Encoding.UTF8.GetByteCount(transformed);
+                        if (HttpMethods.IsGet(context.Request.Method))
+                            await context.Response.WriteAsync(transformed, Encoding.UTF8, context.RequestAborted);
+                    }
                     return;
                 }
             }
@@ -82,6 +129,113 @@ public class AdminStaticFilesMiddleware
         // Not admin port or file not found - continue pipeline
         await _next(context);
     }
+
+    internal static string TransformIndexHtml(string html, string adminBasePath)
+    {
+        ArgumentNullException.ThrowIfNull(html);
+        ArgumentException.ThrowIfNullOrEmpty(adminBasePath);
+
+        var transformed = BasePathMetaTag.Replace(
+            html,
+            match => MetaContentAttribute.Replace(
+                match.Value,
+                content => $"{content.Groups["prefix"].Value}{content.Groups["quote"].Value}{adminBasePath}{content.Groups["quote"].Value}",
+                1),
+            1);
+        transformed = GeneratedAssetUrl.Replace(
+            transformed,
+            match => $"{match.Groups["quote"].Value}{adminBasePath}/{match.Groups["asset"].Value}");
+
+        return ReplaceChangedInlineScriptHashes(html, transformed);
+    }
+
+    private static async Task<string?> ReadBoundedTextAsync(string path, CancellationToken cancellationToken)
+    {
+        var length = new FileInfo(path).Length;
+        if (length > MaxIndexBytes)
+            return null;
+
+        await using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 16 * 1024,
+            options: FileOptions.Asynchronous | FileOptions.SequentialScan);
+        using var reader = new StreamReader(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), detectEncodingFromByteOrderMarks: true);
+        var builder = new StringBuilder((int)Math.Min(length, MaxIndexBytes));
+        var buffer = new char[16 * 1024];
+        var characterLimit = (int)MaxIndexBytes;
+        while (true)
+        {
+            var read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken);
+            if (read == 0)
+                break;
+            if (builder.Length > characterLimit - read)
+                return null;
+            builder.Append(buffer, 0, read);
+        }
+
+        return builder.ToString();
+    }
+
+    private static string ReplaceChangedInlineScriptHashes(string original, string transformed)
+    {
+        var originalScripts = InlineScript.Matches(original)
+            .Cast<Match>()
+            .Where(match => !HasScriptSource(match.Groups["attributes"].Value))
+            .Select(match => match.Groups["body"].Value)
+            .ToArray();
+        var transformedScripts = InlineScript.Matches(transformed)
+            .Cast<Match>()
+            .Where(match => !HasScriptSource(match.Groups["attributes"].Value))
+            .Select(match => match.Groups["body"].Value)
+            .ToArray();
+
+        var changed = new List<(string OldHash, string NewHash)>();
+        for (var index = 0; index < Math.Min(originalScripts.Length, transformedScripts.Length); index++)
+        {
+            if (string.Equals(originalScripts[index], transformedScripts[index], StringComparison.Ordinal))
+                continue;
+
+            changed.Add((Sha256Base64(originalScripts[index]), Sha256Base64(transformedScripts[index])));
+        }
+
+        if (changed.Count == 0)
+            return transformed;
+
+        return CspMetaTag.Replace(
+            transformed,
+            meta => CspContentAttribute.Replace(
+                meta.Value,
+                content =>
+                {
+                    var csp = content.Groups["value"].Value;
+                    csp = CspScriptDirective.Replace(csp, directive =>
+                    {
+                        var sources = directive.Groups["sources"].Value;
+                        foreach (var (oldHash, newHash) in changed)
+                        {
+                            var oldToken = $"'sha256-{oldHash}'";
+                            var newToken = $"'sha256-{newHash}'";
+                            if (sources.Contains(oldToken, StringComparison.Ordinal))
+                                sources = sources.Replace(oldToken, newToken, StringComparison.Ordinal);
+                        }
+
+                        return $"{directive.Groups["directive"].Value}{directive.Groups["spacing"].Value}{sources}";
+                    },
+                    1);
+                    return $"{content.Groups["prefix"].Value}{content.Groups["quote"].Value}{csp}{content.Groups["quote"].Value}";
+                },
+                1),
+            1);
+    }
+
+    private static bool HasScriptSource(string attributes) =>
+        Regex.IsMatch(attributes, @"\bsrc\s*=", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static string Sha256Base64(string value) =>
+        Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 
     private static void SetRevalidationHeaders(HttpResponse response)
     {

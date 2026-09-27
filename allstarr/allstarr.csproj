@@ -24,6 +24,7 @@
         <PackageReference Include="Cronos" Version="0.11.1" />
         <PackageReference Include="Jint" Version="4.11.0" />
         <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.9" />
+        <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.9" />
         <!-- Keep the OpenAPI object model on the current compatible 2.x security line used by Swashbuckle. -->
         <PackageReference Include="Microsoft.OpenApi" Version="2.10.0" />
         <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.9" />

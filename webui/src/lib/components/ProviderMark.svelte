@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { adminUrl } from "$lib/admin-url";
   import type { ProviderDefinition } from "$lib/api";
   import { providerColor } from "$lib/playlists";
 
@@ -13,7 +14,7 @@
       ? definition.icon
       : label.toLowerCase().replace(/[^a-z0-9]/g, ""),
   );
-  const source = $derived(definition?.logoUrl || `/images/providers/${encodeURIComponent(icon || id.toLowerCase())}.svg`);
+  const source = $derived(adminUrl(definition?.logoUrl || `/images/providers/${encodeURIComponent(icon || id.toLowerCase())}.svg`));
 
   $effect(() => {
     source;

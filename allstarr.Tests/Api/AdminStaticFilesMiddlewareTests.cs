@@ -1,5 +1,9 @@
+using System.Security.Cryptography;
+using System.Text;
 using allstarr.Middleware;
+using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Moq;
 
 namespace allstarr.Tests;
@@ -22,6 +26,64 @@ public class AdminStaticFilesMiddlewareTests
             Assert.False(nextInvoked());
             Assert.Equal("text/html", context.Response.ContentType);
             Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+            Assert.Equal("no-store", context.Response.Headers.CacheControl);
+        }
+        finally
+        {
+            DeleteTempWebRoot(webRoot);
+        }
+    }
+
+    [Fact]
+    public void PrefixTransformationDoesNotAuthorizePreviouslyBlockedInlineScripts()
+    {
+        const string html = "<meta http-equiv=\"content-security-policy\" content=\"script-src 'self'\"><script>import(\"/_app/app.js\")</script>";
+        var transformed = AdminStaticFilesMiddleware.TransformIndexHtml(html, "/admin");
+        Assert.DoesNotContain("sha256-", transformed);
+        Assert.Contains("import(\"/admin/_app/app.js\")", transformed);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_ConfiguredPrefix_TransformsIndexAssetsAndCsp()
+    {
+        const string bootstrap = "import(\"/_app/immutable/entry/app.js\")";
+        var oldHash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(bootstrap)));
+        var html = $"""
+            <meta name="allstarr-base-path" content="" />
+            <meta http-equiv="content-security-policy" content="default-src 'self'; script-src 'self' 'sha256-{oldHash}';">
+            <script>{bootstrap}</script>
+            <link rel="modulepreload" href="/_app/immutable/entry/start.js">
+            <link rel="icon" href="/favicon.svg">
+            """;
+        var webRoot = CreateTempWebRoot();
+        await File.WriteAllTextAsync(Path.Combine(webRoot, "index.html"), html);
+
+        try
+        {
+            var configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    [AdminBasePath.ConfigurationKey] = "/admin/",
+                })
+                .Build();
+            var basePath = new AdminBasePath(configuration);
+            var middleware = CreateMiddleware(webRoot, out var nextInvoked, basePath);
+            var context = CreateContext(localPort: 5275, path: "/");
+
+            await middleware.InvokeAsync(context);
+
+            context.Response.Body.Position = 0;
+            using var reader = new StreamReader(context.Response.Body, Encoding.UTF8);
+            var transformed = await reader.ReadToEndAsync();
+            var newHash = Convert.ToBase64String(SHA256.HashData(
+                Encoding.UTF8.GetBytes("import(\"/admin/_app/immutable/entry/app.js\")")));
+
+            Assert.False(nextInvoked());
+            Assert.Contains("name=\"allstarr-base-path\" content=\"/admin\"", transformed);
+            Assert.Contains("href=\"/admin/_app/immutable/entry/start.js\"", transformed);
+            Assert.Contains("href=\"/admin/favicon.svg\"", transformed);
+            Assert.Contains($"'sha256-{newHash}'", transformed);
+            Assert.DoesNotContain($"'sha256-{oldHash}'", transformed);
             Assert.Equal("no-store", context.Response.Headers.CacheControl);
         }
         finally
@@ -161,7 +223,8 @@ public class AdminStaticFilesMiddlewareTests
 
     private static AdminStaticFilesMiddleware CreateMiddleware(
         string webRootPath,
-        out Func<bool> nextInvoked)
+        out Func<bool> nextInvoked,
+        AdminBasePath? basePath = null)
     {
         var invoked = false;
         nextInvoked = () => invoked;
@@ -176,7 +239,8 @@ public class AdminStaticFilesMiddlewareTests
                 context.Response.StatusCode = StatusCodes.Status204NoContent;
                 return Task.CompletedTask;
             },
-            environment.Object);
+            environment.Object,
+            basePath);
     }
 
     private static DefaultHttpContext CreateContext(int localPort, string path)

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { FileUp, Heart, History, LayoutDashboard, ListMusic, SlidersHorizontal, Sparkles, X } from "@lucide/svelte";
+  import { adminUrl } from "$lib/admin-url";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
   import { Checkbox } from "$lib/components/ui/checkbox";
@@ -558,7 +559,7 @@
             <ol class="recommendation-list">
               {#each visibleCandidates as item}
                 <li>
-                  <span class="track-art">{#if item.artworkUrl}<img src={item.artworkUrl} alt="" loading="lazy" />{:else}<span aria-hidden="true">♪</span>{/if}</span>
+                  <span class="track-art">{#if item.artworkUrl}<img src={adminUrl(item.artworkUrl)} alt="" loading="lazy" />{:else}<span aria-hidden="true">♪</span>{/if}</span>
                   <div class="track-copy"><strong>{item.title || item.trackKey}</strong><small>{item.artist || item.providerId}{item.album ? ` · ${item.album}` : ""}</small><details><summary class="disclosure-summary compact"><DisclosureLabel title="Why this track" /></summary><ul>{#each item.explanations as reason}<li>{reason.explanation}</li>{/each}</ul></details></div>
                   <div class="track-actions"><span class="score">{Math.round(item.score * 100)}%</span><Button variant="outline" size="xs" disabled={Boolean(action)} onclick={() => void perform(`similar:${item.id}`, () => intelligence.run(activeScope, [item.trackKey]))}>Similar</Button><Button variant={item.feedback?.kind === "like" ? "secondary" : "ghost"} size="icon-xs" aria-label={`${item.feedback?.kind === "like" ? "Liked" : "Like"} ${item.title || item.trackKey}`} aria-pressed={item.feedback?.kind === "like"} disabled={Boolean(action) || item.feedback?.kind === "like"} onclick={() => void perform(`like:${item.id}`, () => intelligence.feedback(activeScope, item.id, "like", item.feedback?.revision ?? 0))}><Heart size={16} fill={item.feedback?.kind === "like" ? "currentColor" : "none"} aria-hidden="true" /></Button><Button variant="ghost" size="icon-xs" aria-label={`Dismiss ${item.title || item.trackKey}`} disabled={Boolean(action)} onclick={() => void perform(`dismiss:${item.id}`, () => intelligence.feedback(activeScope, item.id, "dismiss", item.feedback?.revision ?? 0))}><X size={16} aria-hidden="true" /></Button></div>
                 </li>

@@ -62,8 +62,15 @@ public sealed class ComposeContractTests
             .ToArray();
         Assert.Equal(
         [
+            "ADMIN_BASE_PATH",
             "ADMIN_BIND_ADDRESS",
             "ADMIN_BIND_ANY_IP",
+            "ADMIN_OIDC_AUTHORITY",
+            "ADMIN_OIDC_CLIENT_ID",
+            "ADMIN_OIDC_CLIENT_SECRET",
+            "ADMIN_OIDC_DISPLAY_NAME",
+            "ADMIN_OIDC_ENABLED",
+            "ADMIN_OIDC_PUBLIC_URL",
             "ADMIN_PORT",
             "ADMIN_TRUSTED_SUBNETS",
             "ALLSTARR_IMAGE",

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { Activity, CircleCheck, CircleDashed, HardDrive, Headphones, KeyRound, ListMusic, Mic2, Route, Server, TrendingUp } from "@lucide/svelte";
+  import { adminUrl } from "$lib/admin-url";
   import { home } from "$lib/api";
   import { humanize, relativeTime } from "$lib/activity";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
@@ -190,7 +191,7 @@
                 <span class="listener-avatar" aria-label={`${item.userName} profile`}>
                   <span aria-hidden="true">{initials(item.userName)}</span>
                   {#if item.avatarUrl}
-                    <img src={item.avatarUrl} alt="" onerror={(event) => event.currentTarget.remove()} />
+                    <img src={adminUrl(item.avatarUrl)} alt="" onerror={(event) => event.currentTarget.remove()} />
                   {/if}
                 </span>
                 <span>
@@ -202,7 +203,7 @@
               <div class="now-playing-track">
                 <span class="now-playing-artwork">
                   {#if item.artworkUrl}
-                    <img src={item.artworkUrl} alt="" />
+                    <img src={adminUrl(item.artworkUrl)} alt="" />
                   {:else}
                     <span aria-hidden="true">♫</span>
                   {/if}

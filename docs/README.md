@@ -16,6 +16,7 @@ User and operator guides describe shipped behavior. Contributor assessments expl
 
 ## Operator guides
 
+- [WebUI proxy and SSO setup](operations/webui-access.md)
 - [Legacy `.env` import](operations/legacy-env-import.md)
 - [Apple download provider](operations/apple-download-provider.md)
 - [Spotify lyrics service](operations/spotify-lyrics-sidecar.md)

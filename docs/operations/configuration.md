@@ -14,6 +14,8 @@ Allstarr separates deployment bootstrap, durable application settings, and encry
 | Image and media mounts | `ALLSTARR_IMAGE`, `DOWNLOAD_PATH`, `KEPT_PATH`, `APPLE_UPLOAD_PATH` |
 | Public listeners | `PROXY_BIND_ADDRESS`, `PROXY_PORT`, `ADMIN_BIND_ADDRESS`, `ADMIN_PORT` |
 | Admin network policy | `ADMIN_BIND_ANY_IP`, `ADMIN_TRUSTED_SUBNETS` |
+| Admin URL prefix | `ADMIN_BASE_PATH` (empty by default) |
+| WebUI SSO | `ADMIN_OIDC_ENABLED`, `ADMIN_OIDC_AUTHORITY`, `ADMIN_OIDC_CLIENT_ID`, `ADMIN_OIDC_CLIENT_SECRET`, `ADMIN_OIDC_PUBLIC_URL`, `ADMIN_OIDC_DISPLAY_NAME` |
 | Extension install policy | `EXTENSIONS_ALLOW_REMOTE_INSTALL` |
 | Browser origin policy | `CORS_ALLOWED_ORIGINS`, `CORS_ALLOW_CREDENTIALS` |
 | Optional Spotify lyrics bootstrap | `SPOTIFY_API_SESSION_COOKIE` |
@@ -22,6 +24,8 @@ Allstarr separates deployment bootstrap, durable application settings, and encry
 The Compose file translates these values into ASP.NET configuration. Changing one requires recreating the affected container. Allstarr does not hot-edit its own Compose deployment.
 
 PostgreSQL is mandatory. There is no SQLite, Redis, or Valkey runtime option.
+
+For a dashboard mounted under a reverse-proxy path or optional OIDC login, see [WebUI proxy and SSO setup](webui-access.md). Neither setting changes music-client authentication on port 5274.
 
 ## Protected files
 

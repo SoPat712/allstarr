@@ -78,6 +78,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         ConfigureTenant(modelBuilder);
         ConfigureOnboarding(modelBuilder);
         ConfigureAdminAuthSessions(modelBuilder);
+        ConfigureAdminOidcLinks(modelBuilder);
         ConfigureProviderAccounts(modelBuilder);
         ConfigureSecrets(modelBuilder);
         ConfigureJobs(modelBuilder);
