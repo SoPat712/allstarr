@@ -90,6 +90,8 @@ public sealed class ConcurrentRematchDecisionTests
                 ProviderAccountId = providerAccountId,
                 LibraryScopeId = "music",
                 BackendInstanceId = "backend",
+                BackendPrincipalId = "principal",
+                Protocol = "jellyfin",
                 ProviderId = "spotify",
                 ResourceKind = "track",
                 ExternalIdHash = hash,
