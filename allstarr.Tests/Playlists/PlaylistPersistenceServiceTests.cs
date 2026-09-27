@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
 using allstarr.Core.Matching;
 using allstarr.Core.Operations;
@@ -119,6 +120,121 @@ public sealed class PlaylistPersistenceServiceTests : IAsyncLifetime
 
         Assert.Equal(_localTrack, Assert.Single(tracks).Id);
         Assert.Equal(_localTrack, Assert.Single(sourceAware).Id);
+    }
+
+    [Theory]
+    [InlineData("tenant")]
+    [InlineData("provider")]
+    [InlineData("account")]
+    [InlineData("hash")]
+    [InlineData("catalog")]
+    [InlineData("missing")]
+    [InlineData("snapshot-kind")]
+    public async Task SnapshotIdentity_MustMatchTheExactSourceScope(string mismatch)
+    {
+        var identity = await SeedSourceIdentityAsync(mismatch);
+        var input = Snapshot(1, "track-safe") with
+        {
+            ProviderTrackIdentityId = mismatch == "missing" ? Guid.CreateVersion7() : identity.Id,
+            ResourceKind = mismatch == "snapshot-kind" ? "album" : "track"
+        };
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _matches.CaptureSnapshotAsync(Context(_userA, "principal-a"), input));
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Empty(await db.ExternalMetadataSnapshots.ToListAsync());
+        var existing = await _matches.CaptureSnapshotAsync(
+            Context(_userA, "principal-a"), input with { ProviderTrackIdentityId = null });
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _matches.CaptureSnapshotAsync(Context(_userA, "principal-a"), input));
+        Assert.Equal(existing.Id, (await db.ExternalMetadataSnapshots.SingleAsync()).Id);
+    }
+
+    [Theory]
+    [InlineData("valid")]
+    [InlineData("catalog-scope")]
+    public async Task SnapshotIdentity_AllowsAuthorizedAccountAndCatalogLinks(string scope)
+    {
+        var identity = await SeedSourceIdentityAsync(scope);
+        var input = Snapshot(1, "track-safe") with { ProviderTrackIdentityId = identity.Id };
+        var context = Context(_userA, "principal-a");
+        var first = await _matches.CaptureSnapshotAsync(context, input);
+        var repeated = await _matches.CaptureSnapshotAsync(context, input with { ResourceKind = " Track " });
+
+        Assert.Equal(identity.Id, first.ProviderTrackIdentityId);
+        Assert.Equal(first.Id, repeated.Id);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _matches.CaptureSnapshotAsync(
+            context, input with { ProviderTrackIdentityId = null }));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _matches.CaptureSnapshotAsync(
+            Context(_userA, "different-principal"), input));
+    }
+
+    private async Task<ProviderTrackIdentityRecord> SeedSourceIdentityAsync(string variant)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var tenant = _tenant;
+        var owner = _userA;
+        if (variant == "tenant")
+        {
+            tenant = Guid.CreateVersion7();
+            owner = Guid.CreateVersion7();
+            db.Tenants.Add(new TenantRecord { Id = tenant, Slug = "foreign", Name = "Foreign", CreatedAt = _now });
+            var user = User(owner, "Foreign");
+            user.TenantId = tenant;
+            db.Users.Add(user);
+        }
+
+        var account = _accountA;
+        if (variant is "account" or "tenant")
+        {
+            account = Guid.CreateVersion7();
+            db.ProviderAccounts.Add(new ProviderAccountRecord
+            {
+                Id = account,
+                TenantId = tenant,
+                OwnerUserId = variant == "account" ? _userB : owner,
+                ProviderId = "fixture",
+                DisplayName = "Other account",
+                Scope = ProviderAccountScope.User,
+                Enabled = true,
+                CreatedAt = _now,
+                UpdatedAt = _now
+            });
+        }
+
+        var recording = new CanonicalRecordingRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenant,
+            CreatedByUserId = owner,
+            IsProvisional = true,
+            CreatedAt = _now,
+            UpdatedAt = _now
+        };
+        db.CanonicalRecordings.Add(recording);
+        var identity = new ProviderTrackIdentityRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenant,
+            CanonicalRecordingId = recording.Id,
+            ProviderId = variant == "provider" ? "other" : "fixture",
+            ProviderAccountId = variant is "catalog-scope" or "provider" ? null : account,
+            Scope = variant is "catalog-scope" or "provider" ? ProviderIdentityScope.Catalog : ProviderIdentityScope.Account,
+            ResourceKind = ProviderResourceKind.Track,
+            CatalogNamespace = variant == "catalog" ? "other" : "default",
+            ExternalId = variant == "hash" ? "different-track" : "track-safe",
+            ExternalIdHash = Hash(variant == "hash" ? "different-track" : "track-safe"),
+            Verification = ProviderIdentityVerification.Verified,
+            VerificationMethod = "source-snapshot",
+            DecisionVersion = 1,
+            VerifiedAt = _now,
+            CreatedAt = _now,
+            UpdatedAt = _now
+        };
+        db.ProviderTrackIdentities.Add(identity);
+        await db.SaveChangesAsync();
+        return identity;
     }
 
     [Fact]
