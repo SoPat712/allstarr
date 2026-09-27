@@ -331,7 +331,7 @@ Exit: representative Jellyfin, Navidrome/OpenSubsonic, and provider entities con
 
 #### Stage 2 status
 
-Checkpoint as of 2026-09-22; the alias projection changes are not yet deployed:
+Checkpoint as of 2026-09-27; the catalog and alias projection changes are deployed on the testing server:
 
 - **Storage:** The tenant-scoped recording stores provider-neutral title, version/disambiguation, duration, explicitness, and provisional status. The same graph owns artists, ordered credits, release groups, editions, release tracks, compatibility aliases, and append-only source facts. Composite tenant foreign keys block cross-tenant edges. A forward migration preserves existing IDs and routes.
 - **Evidence:** `CanonicalCatalogEvidenceStore` is the only writer for aliases and source facts. It validates actor scope, normalizes source IDs and JSON, rejects remapping and hash collisions, treats repeated payloads as idempotent, and supersedes changed facts without erasing provenance. PostgreSQL qualification round-tripped the complete artist → release group → edition → release track → recording graph.
@@ -339,6 +339,8 @@ Checkpoint as of 2026-09-22; the alias projection changes are not yet deployed:
 - **Atomic ingestion:** `MusicBrainzCatalogIngestService` validates the full payload before a serializable transaction, preserves separate editions, replaces provisional fields with canonical facts, and writes provenance through the shared evidence owner. Repeated input preserves IDs and creates no duplicate facts. A disposable PostgreSQL run passed 54 catalog, client, environment, migration-snapshot, and storage tests, including rollback of malformed media.
 - **Discovery and refresh:** `MusicBrainzCatalogRefreshQueue` creates seven-day idempotency generations scoped by tenant, user, source, and revision. Recording discovery accepts at most 50 distinct editions. Release refresh accepts one release hierarchy and at most 64 credited artists before atomic ingestion. Both jobs preserve upstream retry delays, separate permanent hierarchy failures from transient failures, and stay outside search and playback requests. The focused lane passes 62/62 tests; a separate PostgreSQL run passes all 21 selected identity, discovery, and ingestion tests.
 - **Identity projection:** Creating a recording now projects exact ISRC and MusicBrainz aliases through the shared evidence owner. Both the identity service and matching commands project accepted provider identities transactionally with account- or catalog-scoped namespaces, so the same provider ID cannot leak or collide across account boundaries. Indexed Jellyfin and Subsonic/OpenSubsonic items use a protocol-and-backend-instance namespace; two users seeing the same native item converge only when their canonical assignments agree. Conflicting historical native assignments remain unaliased rather than being silently merged. Concurrent match writers treat an alias insert race as a retryable identity write. Forward migrations backfill provider, signal, and consistent native aliases and mark recordings without an MBID provisional. The isolated PostgreSQL lanes pass all 22 unique selected identity, migration, native-index, manual-selection, automatic-fallback, concurrency, and model-snapshot tests.
+- **Snapshot scope:** Snapshot capture validates a supplied provider identity against the tenant, source provider, track hash, catalog, and resolved account. Repeated captures must preserve the identity link and backend principal. PostgreSQL regressions cover foreign identities, both permitted identity scopes, and immutable retries.
+- **Next reconciliation work:** Automatic rematching can move a source identity to an existing provider recording while leaving its catalog alias attached to the old recording. Fix this atomically before issuing stable canonical protocol IDs. Preserve historical decisions and manual authority; qualify two source tracks converging on one provider recording, concurrent rematches, and repeated source refresh. Generic evidence ingestion must continue to reject arbitrary alias reassignment.
 - **Remaining:** Project remaining legacy source-snapshot and protocol identities into the catalog; add the relationship and image request shapes needed by Stage 3; and reconcile provisional records that begin without an MBID.
 
 | Stage 2 checkpoint measure | Stage start | Current | Interpretation |
@@ -419,6 +421,20 @@ Exit: desktop and mobile browser suites cover the full real-API journeys with ke
 - Pilot upgrade and rollback on a copy of real data before the public image is promoted.
 
 Exit: every primary journey has a reproducible automated regression and a recorded live qualification, and the release commit meets the code-scanning gate. Missing credentials or skipped providers are reported as unqualified, not passed.
+
+Live checkpoint on 2026-09-27: `6fdd20bb` passed 173 smoke checks against
+Jellyfin 12.1.0 with zero failures using a listener test account. The contract
+fixtures remain pinned to 12.0.0; this run does not qualify every new 12.1
+operation. The run covered dashboard and
+protocol login, native object parity, external search and browse, artwork,
+full-song decoding, exact native audio bytes, and cached external prefix/suffix
+ranges. Six checks remained blocked: three initial external range checks,
+injected playlists absent from that account, playlist writes, and other
+state-restoration tests. Deezer and the configured YouTube Music extension
+served audio; this does not qualify every provider, account tier, or client.
+The three-sample native stream run measured 34.7 ms mean Allstarr first-byte
+latency against 20.4 ms direct. OIDC remains disabled pending operator setup;
+its real identity-provider flow is not live-qualified.
 
 ## Code-reduction rules
 

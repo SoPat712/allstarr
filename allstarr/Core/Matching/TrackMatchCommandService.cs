@@ -309,10 +309,24 @@ public sealed class TrackMatchCommandService(
             cancellationToken) ?? throw new UnauthorizedAccessException("The provider account is unavailable.");
 
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var resourceKind = input.ResourceKind.Trim().ToLowerInvariant();
+        if (input.ProviderTrackIdentityId.HasValue &&
+            (resourceKind != "track" || !await db.ProviderTrackIdentities.AnyAsync(item =>
+                item.Id == input.ProviderTrackIdentityId.Value &&
+                item.TenantId == actor.TenantId &&
+                item.ProviderId == account.Account.ProviderId &&
+                item.ResourceKind == ProviderResourceKind.Track &&
+                item.CatalogNamespace == "default" &&
+                item.ExternalIdHash == input.ExternalIdHash &&
+                (item.Scope == ProviderIdentityScope.Catalog && item.ProviderAccountId == null ||
+                 item.Scope == ProviderIdentityScope.Account && item.ProviderAccountId == account.Account.Id),
+                cancellationToken)))
+            throw new UnauthorizedAccessException("The source identity is outside the snapshot scope.");
+
         var existing = await db.ExternalMetadataSnapshots.AsNoTracking().SingleOrDefaultAsync(item =>
             item.TenantId == actor.TenantId &&
             item.ProviderAccountId == account.Account.Id &&
-            item.ResourceKind == input.ResourceKind &&
+            item.ResourceKind == resourceKind &&
             item.ExternalIdHash == input.ExternalIdHash &&
             item.SnapshotVersion == input.SnapshotVersion,
             cancellationToken);
@@ -320,7 +334,11 @@ public sealed class TrackMatchCommandService(
         {
             if (!existing.PayloadSha256.Equals(input.PayloadSha256, StringComparison.Ordinal) ||
                 existing.OwnerUserId != actor.EffectiveUserId ||
-                existing.LibraryScopeId != input.LibraryScopeId)
+                existing.LibraryScopeId != input.LibraryScopeId ||
+                existing.ProviderTrackIdentityId != input.ProviderTrackIdentityId ||
+                existing.BackendInstanceId != context.BackendInstanceId ||
+                existing.BackendPrincipalId != context.VerifiedBackendPrincipalId ||
+                existing.Protocol != context.Protocol.ToString().ToLowerInvariant())
                 throw new InvalidOperationException(
                     "The snapshot version already exists with different immutable content or scope.");
             return existing;
@@ -339,7 +357,7 @@ public sealed class TrackMatchCommandService(
             BackendPrincipalId = context.VerifiedBackendPrincipalId,
             Protocol = context.Protocol.ToString().ToLowerInvariant(),
             ProviderId = account.Account.ProviderId,
-            ResourceKind = input.ResourceKind.Trim().ToLowerInvariant(),
+            ResourceKind = resourceKind,
             ExternalIdHash = input.ExternalIdHash,
             SnapshotVersion = input.SnapshotVersion,
             ProviderRevision = input.ProviderRevision.Trim(),
