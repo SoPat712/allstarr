@@ -341,7 +341,7 @@ Checkpoint as of 2026-09-27; the catalog and alias projection changes are deploy
 - **Identity projection:** Creating a recording now projects exact ISRC and MusicBrainz aliases through the shared evidence owner. Both the identity service and matching commands project accepted provider identities transactionally with account- or catalog-scoped namespaces, so the same provider ID cannot leak or collide across account boundaries. Indexed Jellyfin and Subsonic/OpenSubsonic items use a protocol-and-backend-instance namespace; two users seeing the same native item converge only when their canonical assignments agree. Conflicting historical native assignments remain unaliased rather than being silently merged. Concurrent match writers treat an alias insert race as a retryable identity write. Forward migrations backfill provider, signal, and consistent native aliases and mark recordings without an MBID provisional. The isolated PostgreSQL lanes pass all 22 unique selected identity, migration, native-index, manual-selection, automatic-fallback, concurrency, and model-snapshot tests.
 - **Snapshot scope:** Snapshot capture validates a supplied provider identity against the tenant, source provider, track hash, catalog, and resolved account. Repeated captures must preserve the identity link and backend principal. PostgreSQL regressions cover foreign identities, both permitted identity scopes, and immutable retries.
 - **Source reconciliation:** Automatic rematching now moves a provisional source identity and its catalog alias together when it reuses an existing provider recording. A source anchored by an ISRC, MusicBrainz ID, confirmed recording, or manual identity cannot be reassigned by this path. The operation preserves old recordings and historical decisions, records an audit event, and retries concurrent identity writes. A forward migration repairs unanchored stale aliases, removes redundant aliases with identical targets, and normalizes legacy hashes; conflicting targets remain untouched. Isolated PostgreSQL regressions cover converging sources, repeated rematches, protected evidence, and migration replay. Generic evidence ingestion still rejects arbitrary alias reassignment. This is not a general-purpose recording merge.
-- **Native indexing:** The shared Jellyfin/Subsonic index now connects valid native recording MBIDs to the identity service. A compatible new ISRC or MBID enriches the existing recording without changing its ID or pinned provider routes. Rescans preserve canonical assignments and decision versions, and recover missing assignments from existing native aliases. Conflicting or malformed signals leave the native item indexed without merging recordings. Catalog discovery remains a durable job and is not queued when MusicBrainz is disabled. Reindexing an already linked MBID can request refresh after the setting is enabled. Native IDs, display metadata, and media files remain unchanged. Forty focused tests cover identity races, conflicts, ingestion, both scanners, and reindex preservation; deployment qualification is pending for this increment.
+- **Native indexing:** The shared Jellyfin/Subsonic index now connects valid native recording MBIDs to the identity service. A compatible new ISRC or MBID enriches the existing recording without changing its ID or pinned provider routes. Rescans preserve canonical assignments and decision versions, and recover missing assignments from existing native aliases. Conflicting or malformed signals leave the native item indexed without merging recordings. Catalog discovery remains a durable job and is not queued when MusicBrainz is disabled. Reindexing an already linked MBID can request refresh after the setting is enabled. Native IDs, display metadata, and media files remain unchanged. Forty focused tests cover identity races, conflicts, ingestion, both scanners, and reindex preservation. This increment is deployed; the live native-alias audit found no mismatches. Handling native rows no longer returned by a backend scan remains separate work.
 - **Remaining:** Project remaining legacy source-snapshot and protocol identities into the catalog; add the relationship and image request shapes needed by Stage 3; and reconcile provisional records that begin without an MBID.
 
 | Stage 2 checkpoint measure | Stage start | Identity-projection checkpoint | Interpretation |
@@ -452,6 +452,19 @@ cover cold external byte ranges, an omitted SoundCloud album relationship,
 an injected playlist not visible to the test account, sharing without a second
 user, and mutations requiring exact state restoration. No clean live-release
 qualification is claimed for this build.
+
+Native-index follow-up on 2026-09-27: `e9641ac6` passed 2,530 standard and
+105 release-critical tests, formatting, Compose validation, and GitHub CI.
+The deployed library scan linked native recording identities and preserved the
+server's disabled MusicBrainz setting: no remote catalog jobs were created.
+The live suite passed 187 of 188 checks, including full-song decoding, native
+object parity, and exact cached ranges. SoundCloud streaming still failed.
+Five checks were blocked: a cold Deezer byte range, SoundCloud's missing album
+relationship, an injected playlist absent from the test account, and the two
+stateful modes not enabled for this run. Previously tested playlist mutations
+were not rerun. The three-sample native stream mean was 30.7 ms through
+Allstarr versus 24.0 ms direct. This is a backend identity/indexing increment;
+stable canonical client IDs and unified artist/album browsing remain unfinished.
 
 ## Code-reduction rules
 
