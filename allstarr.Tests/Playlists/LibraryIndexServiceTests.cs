@@ -1,9 +1,12 @@
 using allstarr.Core.Identity;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Jobs;
 using allstarr.Core.Matching;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -18,6 +21,8 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
     private Guid _identityA;
     private Guid _identityB;
     private FakeClock _clock = null!;
+    private TrackIdentityService _identities = null!;
+    private readonly Mock<IMusicBrainzCatalogRefreshQueue> _catalogQueue = new(MockBehavior.Strict);
 
     public async Task InitializeAsync()
     {
@@ -53,7 +58,8 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         var state = new DurableStorageState(options);
         state.Set(DurableStorageReadiness.Ready, "fixture");
         _clock = new FakeClock(now);
-        _service = new LibraryIndexService(_factory, state, _clock);
+        _identities = new TrackIdentityService(_factory, state, _clock, _catalogQueue.Object);
+        _service = new LibraryIndexService(_factory, state, _clock, _identities);
     }
 
     [Fact]
@@ -132,6 +138,11 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         };
         await _service.UpsertAsync(Context(_userA, "principal-a", "music"), input);
         await _service.UpsertAsync(Context(_userB, "principal-b", "music"), input);
+        var rescanned = await _service.UpsertAsync(Context(_userA, "principal-a", "music"), Input() with
+        {
+            MusicBrainzRecordingId = "16ba7915-2acf-42b2-8c87-ed67090dca91"
+        });
+        Assert.Equal(canonicalId, rescanned.CanonicalRecordingId);
 
         await using var verification = await _factory.CreateDbContextAsync();
         Assert.Equal(2, await verification.LibraryTracks.CountAsync());
@@ -141,6 +152,106 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
             alias.Namespace);
         Assert.Equal("local-item", alias.ExternalId);
         Assert.Equal(canonicalId, alias.CanonicalEntityId);
+        Assert.All(await verification.LibraryTracks.ToListAsync(), track => Assert.Equal(1, track.AcceptedDecisionVersion));
+        Assert.Null((await verification.CanonicalRecordings.FindAsync(canonicalId))!.MusicBrainzRecordingId);
+        _catalogQueue.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task NativeAlias_RecoversAssignmentLostByLegacyRescan()
+    {
+        var context = Context(_userA, "principal-a", "music");
+        var canonical = await _identities.CreateRecordingAsync(context.RequireActor(), "existing-native");
+        var indexed = await _service.UpsertAsync(context, Input() with { CanonicalRecordingId = canonical.Recording.Id });
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var track = await db.LibraryTracks.FindAsync(indexed.Id);
+            track!.CanonicalRecordingId = null;
+            await db.SaveChangesAsync();
+        }
+
+        var rescanned = await _service.UpsertAsync(context, Input());
+        Assert.Equal(canonical.Recording.Id, rescanned.CanonicalRecordingId);
+        await using var verification = await _factory.CreateDbContextAsync();
+        Assert.Single(await verification.CanonicalRecordings.ToListAsync());
+        Assert.Single(await verification.CanonicalCatalogAliases.ToListAsync());
+        _catalogQueue.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task NativeRecording_EnrichesProviderIdentityAndQueuesCatalogWithoutChangingNativeMetadata()
+    {
+        const string mbid = "16ba7915-2acf-42b2-8c87-ed67090dca91";
+        var context = Context(_userA, "principal-a", "music");
+        var original = await _identities.CreateRecordingAsync(context.RequireActor(), "provider-first", Input().Isrc);
+        _catalogQueue.Setup(queue => queue.EnqueueRecordingAsync(
+                It.Is<ProviderActorContext>(actor => actor.TenantId == _tenantId && actor.UserId == _userA),
+                mbid, context.CorrelationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DurableJobEnqueueResult(Guid.CreateVersion7(), true));
+
+        var indexed = await _service.UpsertAsync(context, Input() with { MusicBrainzRecordingId = mbid });
+        var rescanned = await _service.UpsertAsync(context, Input() with { MusicBrainzRecordingId = mbid });
+        Assert.Equal(original.Recording.Id, indexed.CanonicalRecordingId);
+        Assert.Equal(indexed.CanonicalRecordingId, rescanned.CanonicalRecordingId);
+        Assert.Equal(Input().BackendItemId, indexed.BackendItemId);
+        Assert.Equal(Input().Title, indexed.Title);
+        Assert.Equal(Input().FilePath, indexed.FilePath);
+        await using var db = await _factory.CreateDbContextAsync();
+        var canonical = Assert.Single(await db.CanonicalRecordings.ToListAsync());
+        Assert.Equal(mbid, canonical.MusicBrainzRecordingId);
+        Assert.False(canonical.IsProvisional);
+        Assert.Equal(3, await db.CanonicalCatalogAliases.CountAsync());
+        Assert.All(await db.CanonicalCatalogAliases.ToListAsync(), alias => Assert.Equal(canonical.Id, alias.CanonicalEntityId));
+        _catalogQueue.Verify(queue => queue.EnqueueRecordingAsync(
+            It.IsAny<ProviderActorContext>(), mbid, context.CorrelationId, It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task NativeRecording_ConflictingSignalsRemainIndexedWithoutMergingOrQueuing()
+    {
+        var context = Context(_userA, "principal-a", "music");
+        var first = await _identities.CreateRecordingAsync(context.RequireActor(), "isrc-first", Input().Isrc);
+        var secondId = Guid.CreateVersion7();
+        const string mbid = "16ba7915-2acf-42b2-8c87-ed67090dca91";
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.CanonicalRecordings.Add(new CanonicalRecordingRecord
+            {
+                Id = secondId,
+                TenantId = _tenantId,
+                CreatedByUserId = _userA,
+                MusicBrainzRecordingId = mbid,
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var indexed = await _service.UpsertAsync(context, Input() with { MusicBrainzRecordingId = mbid });
+        Assert.Null(indexed.CanonicalRecordingId);
+        Assert.Equal(mbid, indexed.MusicBrainzRecordingId);
+        Assert.Single(await _service.GetMatchCandidatesAsync(context, "music"));
+        await using var verification = await _factory.CreateDbContextAsync();
+        Assert.Equal(2, await verification.CanonicalRecordings.CountAsync());
+        Assert.Null((await verification.CanonicalRecordings.FindAsync(first.Recording.Id))!.MusicBrainzRecordingId);
+        var audit = await verification.AuditEvents.SingleAsync(item => item.Category == "library-index");
+        Assert.Contains("\"canonicalEnrichment\":\"deferred\"", audit.DetailsJson);
+        _catalogQueue.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("not-a-mbid")]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
+    public async Task NativeRecording_WithoutValidMbidStillIndexes(string? mbid)
+    {
+        var indexed = await _service.UpsertAsync(Context(_userA, "principal-a", "music"),
+            Input() with { MusicBrainzRecordingId = mbid });
+        Assert.Null(indexed.CanonicalRecordingId);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Empty(await db.CanonicalRecordings.ToListAsync());
+        Assert.Single(await db.LibraryTracks.ToListAsync());
+        _catalogQueue.VerifyNoOtherCalls();
     }
 
     [Fact]

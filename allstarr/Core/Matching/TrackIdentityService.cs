@@ -3,7 +3,9 @@ using System.Text.RegularExpressions;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
+using allstarr.Models.Settings;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Matching;
 
@@ -136,17 +138,20 @@ public sealed class TrackIdentityService : ITrackIdentityService
     private readonly DurableStorageState _storageState;
     private readonly IPlatformClock _clock;
     private readonly IMusicBrainzCatalogRefreshQueue? _catalogRefreshQueue;
+    private readonly IOptions<MusicBrainzSettings>? _catalogSettings;
 
     public TrackIdentityService(
         IDbContextFactory<AllstarrDbContext> contextFactory,
         DurableStorageState storageState,
         IPlatformClock clock,
-        IMusicBrainzCatalogRefreshQueue? catalogRefreshQueue = null)
+        IMusicBrainzCatalogRefreshQueue? catalogRefreshQueue = null,
+        IOptions<MusicBrainzSettings>? catalogSettings = null)
     {
         _contextFactory = contextFactory;
         _storageState = storageState;
         _clock = clock;
         _catalogRefreshQueue = catalogRefreshQueue;
+        _catalogSettings = catalogSettings;
     }
 
     public async Task<CanonicalRecordingCreationResult> CreateRecordingAsync(
@@ -168,111 +173,80 @@ public sealed class TrackIdentityService : ITrackIdentityService
         var userId = actor.UserId ?? throw new UnauthorizedAccessException(
             "Creating a canonical recording requires a user actor.");
 
-        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        await ValidateActorAsync(context, actor, cancellationToken);
-        var existing = await FindCanonicalByExactSignalsAsync(
-            context,
-            actor.TenantId,
-            normalizedIsrc,
-            normalizedMusicBrainzId,
-            cancellationToken);
-        if (existing != null)
+        for (var attempt = 0; ; attempt++)
         {
-            EnsureSignalsCompatible(existing, normalizedIsrc, normalizedMusicBrainzId);
-            await CanonicalCatalogIdentityProjection.ProjectRecordingSignalsAsync(
-                context,
-                actor,
-                existing,
-                _clock.UtcNow,
-                cancellationToken);
-            AddAudit(
-                context,
-                actor,
-                correlationId,
-                "canonical-recording.create",
-                "already-exists",
-                new
-                {
-                    canonicalRecordingId = existing.Id,
-                    hasIsrc = normalizedIsrc != null,
-                    hasMusicBrainzRecordingId = normalizedMusicBrainzId != null
-                });
-            await context.SaveChangesAsync(cancellationToken);
-            return await CompleteCreationAsync(
-                actor, correlationId, existing, created: false, cancellationToken);
-        }
-
-        var now = _clock.UtcNow;
-        var record = new CanonicalRecordingRecord
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = actor.TenantId,
-            CreatedByUserId = userId,
-            Isrc = normalizedIsrc,
-            MusicBrainzRecordingId = normalizedMusicBrainzId,
-            IsProvisional = normalizedMusicBrainzId == null,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-        context.CanonicalRecordings.Add(record);
-        await CanonicalCatalogIdentityProjection.ProjectRecordingSignalsAsync(
-            context,
-            actor,
-            record,
-            now,
-            cancellationToken);
-        AddAudit(
-            context,
-            actor,
-            correlationId,
-            "canonical-recording.create",
-            "created",
-            new
-            {
-                canonicalRecordingId = record.Id,
-                hasIsrc = normalizedIsrc != null,
-                hasMusicBrainzRecordingId = normalizedMusicBrainzId != null
-            });
-
-        try
-        {
-            await context.SaveChangesAsync(cancellationToken);
-            return await CompleteCreationAsync(
-                actor, correlationId, record, created: true, cancellationToken);
-        }
-        catch (DbUpdateException)
-        {
-            context.ChangeTracker.Clear();
-            existing = await FindCanonicalByExactSignalsAsync(
+            await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+            await ValidateActorAsync(context, actor, cancellationToken);
+            var record = await FindCanonicalByExactSignalsAsync(
                 context,
                 actor.TenantId,
                 normalizedIsrc,
                 normalizedMusicBrainzId,
                 cancellationToken);
-            if (existing == null)
+            var created = record == null;
+            var enriched = false;
+            var now = _clock.UtcNow;
+            if (record == null)
             {
-                throw;
+                record = new CanonicalRecordingRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    TenantId = actor.TenantId,
+                    CreatedByUserId = userId,
+                    Isrc = normalizedIsrc,
+                    MusicBrainzRecordingId = normalizedMusicBrainzId,
+                    IsProvisional = normalizedMusicBrainzId == null,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+                context.CanonicalRecordings.Add(record);
             }
-
-            EnsureSignalsCompatible(existing, normalizedIsrc, normalizedMusicBrainzId);
+            else
+            {
+                EnsureSignalsCompatible(record, normalizedIsrc, normalizedMusicBrainzId);
+                enriched = record.Isrc == null && normalizedIsrc != null ||
+                           record.MusicBrainzRecordingId == null && normalizedMusicBrainzId != null;
+                if (enriched)
+                {
+                    record.Isrc ??= normalizedIsrc;
+                    record.MusicBrainzRecordingId ??= normalizedMusicBrainzId;
+                    record.IsProvisional = record.MusicBrainzRecordingId == null;
+                    record.UpdatedAt = now;
+                    record.Revision++;
+                }
+            }
             await CanonicalCatalogIdentityProjection.ProjectRecordingSignalsAsync(
-                context,
-                actor,
-                existing,
-                _clock.UtcNow,
-                cancellationToken);
+                context, actor, record, now, cancellationToken);
             AddAudit(
-                context,
-                actor,
-                correlationId,
+                context, actor, correlationId,
                 "canonical-recording.create",
-                "concurrent-existing",
-                new { canonicalRecordingId = existing.Id });
-            await context.SaveChangesAsync(cancellationToken);
+                created ? "created" : enriched ? "enriched" : "already-exists",
+                new
+                {
+                    canonicalRecordingId = record.Id,
+                    hasIsrc = normalizedIsrc != null,
+                    hasMusicBrainzRecordingId = normalizedMusicBrainzId != null
+                });
+            try
+            {
+                await context.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException error) when (attempt < 2 && IsConcurrentRecordingWrite(error))
+            {
+                continue;
+            }
             return await CompleteCreationAsync(
-                actor, correlationId, existing, created: false, cancellationToken);
+                actor, correlationId, record, created, cancellationToken);
         }
     }
+
+    private static bool IsConcurrentRecordingWrite(DbUpdateException error) =>
+        error is DbUpdateConcurrencyException || error.InnerException is Npgsql.PostgresException
+        {
+            SqlState: Npgsql.PostgresErrorCodes.UniqueViolation
+        } postgres && (postgres.ConstraintName is "IX_canonical_recordings_TenantId_Isrc" or
+            "IX_canonical_recordings_TenantId_MusicBrainzRecordingId" ||
+            postgres.ConstraintName?.StartsWith("IX_canonical_catalog_aliases_", StringComparison.Ordinal) == true);
 
     private async Task<CanonicalRecordingCreationResult> CompleteCreationAsync(
         ProviderActorContext actor,
@@ -281,7 +255,8 @@ public sealed class TrackIdentityService : ITrackIdentityService
         bool created,
         CancellationToken cancellationToken)
     {
-        if (_catalogRefreshQueue != null && recording.MusicBrainzRecordingId is { } mbid)
+        if (_catalogRefreshQueue != null && _catalogSettings?.Value.Enabled != false &&
+            recording.MusicBrainzRecordingId is { } mbid)
         {
             await _catalogRefreshQueue.EnqueueRecordingAsync(
                 actor, mbid, correlationId, cancellationToken);
@@ -759,7 +734,7 @@ public sealed class TrackIdentityService : ITrackIdentityService
             return null;
         }
 
-        var candidates = await context.CanonicalRecordings.AsNoTracking()
+        var candidates = await context.CanonicalRecordings
             .Where(item => item.TenantId == tenantId &&
                 ((isrc != null && item.Isrc == isrc) ||
                  (musicBrainzRecordingId != null &&

@@ -1,8 +1,10 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
+using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using allstarr.Services.MusicBrainz;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -260,8 +262,10 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
         Assert.Equal("fixture", facts[1].SourceId);
     }
 
-    [Fact]
-    public async Task BrainzMashGraphIngest_IsAtomicIdempotentAndPreservesEditionIdentity()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BrainzMashGraphIngest_IsAtomicIdempotentAndPreservesEditionIdentity(bool enrichExisting)
     {
         var now = new DateTimeOffset(2026, 9, 15, 12, 0, 0, TimeSpan.Zero);
         var tenantId = Guid.CreateVersion7();
@@ -324,6 +328,17 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
         var graph = new MusicBrainzCatalogGraph(release, releaseGroup, [artist]);
         var source = new MusicBrainzCatalogSource(
             "BrainzMash", "brainzmash:ws2", now, now.AddDays(7));
+        Guid? originalRecordingId = null;
+        if (enrichExisting)
+        {
+            var identities = new TrackIdentityService(new TestDbContextFactory(_database.Options),
+                ReadyStorage(), Mock.Of<IPlatformClock>(item => item.UtcNow == now));
+            var original = await identities.CreateRecordingAsync(actor, "provider-first", "USRC17607839");
+            originalRecordingId = original.Recording.Id;
+            var identified = await identities.CreateRecordingAsync(actor, "catalog-evidence", "USRC17607839",
+                "55555555-5555-4555-8555-555555555555");
+            Assert.Equal(originalRecordingId, identified.Recording.Id);
+        }
 
         var first = await service.IngestAsync(actor, graph, source);
         var repeated = await service.IngestAsync(
@@ -333,9 +348,9 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
 
         Assert.Equal(first.ReleaseGroupId, repeated.ReleaseGroupId);
         Assert.Equal(first.ReleaseId, repeated.ReleaseId);
-        Assert.Equal(7, first.EntitiesCreated);
+        Assert.Equal(enrichExisting ? 6 : 7, first.EntitiesCreated);
         Assert.Equal(0, repeated.EntitiesCreated);
-        Assert.Equal(7, first.Evidence.AliasesCreated);
+        Assert.Equal(enrichExisting ? 6 : 7, first.Evidence.AliasesCreated);
         Assert.Equal(7, first.Evidence.FactsCreated);
         Assert.Equal(7, repeated.Evidence.AliasesSeen);
         Assert.Equal(0, repeated.Evidence.FactsCreated);
@@ -348,11 +363,20 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
             Assert.Single(await verification.CanonicalReleases.Where(item => item.TenantId == tenantId).ToListAsync());
             Assert.Equal(2, await verification.CanonicalRecordings.CountAsync(item => item.TenantId == tenantId));
             Assert.Equal(2, await verification.CanonicalReleaseTracks.CountAsync(item => item.TenantId == tenantId));
-            Assert.Equal(7, await verification.CanonicalCatalogAliases.CountAsync(item => item.TenantId == tenantId));
+            Assert.Equal(enrichExisting ? 8 : 7, await verification.CanonicalCatalogAliases.CountAsync(item => item.TenantId == tenantId));
             Assert.Equal(7, await verification.CatalogFacts.CountAsync(item => item.TenantId == tenantId));
             Assert.All(
                 await verification.CanonicalRecordings.Where(item => item.TenantId == tenantId).ToListAsync(),
                 item => Assert.False(item.IsProvisional));
+            if (originalRecordingId.HasValue)
+            {
+                var preserved = await verification.CanonicalRecordings.SingleAsync(item => item.Id == originalRecordingId.Value);
+                Assert.Equal("Sunroof", preserved.Title);
+                Assert.Equal("USRC17607839", preserved.Isrc);
+                Assert.Equal(163_000, preserved.DurationMilliseconds);
+                Assert.Equal(originalRecordingId.Value, (await verification.CanonicalReleaseTracks.SingleAsync(item =>
+                    item.TenantId == tenantId && item.MusicBrainzTrackId == "44444444-4444-4444-8444-444444444444")).CanonicalRecordingId);
+            }
         }
 
         var invalidTenantId = Guid.CreateVersion7();

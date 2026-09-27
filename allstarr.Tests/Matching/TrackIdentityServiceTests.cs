@@ -5,7 +5,10 @@ using allstarr.Core.Jobs;
 using allstarr.Core.Matching;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
+using allstarr.Models.Settings;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace allstarr.Tests;
@@ -54,6 +57,19 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
         _storageState.Set(DurableStorageReadiness.Ready, "fixture");
         _clock = new FakeClock(new DateTimeOffset(2026, 7, 11, 14, 0, 0, TimeSpan.Zero));
         _service = new TrackIdentityService(_factory, _storageState, _clock);
+    }
+
+    [Fact]
+    public async Task DisabledCatalog_CreatesIdentityWithoutEnqueuingRemoteWork()
+    {
+        var queue = new Mock<IMusicBrainzCatalogRefreshQueue>(MockBehavior.Strict);
+        var service = new TrackIdentityService(_factory, _storageState, _clock, queue.Object,
+            Options.Create(new MusicBrainzSettings { Enabled = false }));
+        var created = await service.CreateRecordingAsync(Actor(_tenantA, _userA), "disabled-catalog",
+            musicBrainzRecordingId: "16ba7915-2acf-42b2-8c87-ed67090dca91");
+        Assert.True(created.Created);
+        Assert.NotNull(created.Recording.MusicBrainzRecordingId);
+        queue.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -156,6 +172,129 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
             recordingMbid,
             "catalog-discovery",
             It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AdditionalExactSignal_EnrichesSameRecordingAndPreservesPinnedRoutes(bool isrcFirst)
+    {
+        const string isrc = "USRC17607839";
+        const string mbid = "11111111-1111-4111-8111-111111111111";
+        var actor = Actor(_tenantA, _userA);
+        var first = await _service.CreateRecordingAsync(actor, "initial-signal",
+            isrcFirst ? isrc : null, isrcFirst ? null : mbid);
+        var link = await _service.LinkAsync(Context(actor, "deezer"), new(
+            first.Recording.Id, Track("deezer", "pinned-track"), ProviderIdentityScope.Catalog,
+            ProviderIdentityVerification.Pinned, "manual-review", 1));
+        var queue = new Mock<IMusicBrainzCatalogRefreshQueue>(MockBehavior.Strict);
+        queue.Setup(item => item.EnqueueRecordingAsync(actor, mbid, "enrich", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DurableJobEnqueueResult(Guid.CreateVersion7(), true));
+        var service = new TrackIdentityService(_factory, _storageState, _clock, queue.Object);
+
+        var enriched = await service.CreateRecordingAsync(actor, "enrich", isrc, mbid);
+        var repeated = await service.CreateRecordingAsync(actor, "enrich", isrc, mbid);
+
+        Assert.False(enriched.Created);
+        Assert.Equal(first.Recording.Id, enriched.Recording.Id);
+        Assert.Equal(isrc, enriched.Recording.Isrc);
+        Assert.Equal(mbid, enriched.Recording.MusicBrainzRecordingId);
+        Assert.Equal(first.Recording.Revision + 1, enriched.Recording.Revision);
+        Assert.Equal(enriched.Recording, repeated.Recording);
+        queue.Verify(item => item.EnqueueRecordingAsync(actor, mbid, "enrich", It.IsAny<CancellationToken>()), Times.Exactly(2));
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.False((await db.CanonicalRecordings.SingleAsync()).IsProvisional);
+        var pinned = await db.ProviderTrackIdentities.SingleAsync();
+        Assert.Equal(link.LinkId, pinned.Id);
+        Assert.Equal(first.Recording.Id, pinned.CanonicalRecordingId);
+        Assert.Equal(ProviderIdentityVerification.Pinned, pinned.Verification);
+        Assert.Equal(3, await db.CanonicalCatalogAliases.CountAsync());
+        Assert.Single(await db.AuditEvents.Where(item => item.Outcome == "enriched").ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task AdditionalExactSignal_AliasConflictDoesNotPartiallyEnrichRecording()
+    {
+        const string isrc = "USRC17607839";
+        const string mbid = "11111111-1111-4111-8111-111111111111";
+        var actor = Actor(_tenantA, _userA);
+        var first = await _service.CreateRecordingAsync(actor, "first", isrc);
+        var other = await _service.CreateRecordingAsync(actor, "other");
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.CanonicalCatalogAliases.Add(new CanonicalCatalogAliasRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = _tenantA,
+                EntityKind = CanonicalCatalogEntityKind.Recording,
+                CanonicalEntityId = other.Recording.Id,
+                Namespace = "musicbrainz",
+                ExternalId = mbid,
+                ExternalIdHash = CanonicalCatalogKeys.Hash(mbid),
+                CreatedAt = _clock.UtcNow,
+                LastSeenAt = _clock.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _service.CreateRecordingAsync(actor, "conflicting-alias", isrc, mbid));
+
+        await using var verification = await _factory.CreateDbContextAsync();
+        var unchanged = await verification.CanonicalRecordings.SingleAsync(item => item.Id == first.Recording.Id);
+        Assert.Null(unchanged.MusicBrainzRecordingId);
+        Assert.True(unchanged.IsProvisional);
+        Assert.Equal(first.Recording.Revision, unchanged.Revision);
+        Assert.Empty(await verification.AuditEvents.Where(item => item.Outcome == "enriched").ToArrayAsync());
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ConcurrentExactSignals_CoalesceCompatibleWritesAndRejectConflicts(bool existing, bool conflicting)
+    {
+        const string isrc = "USRC17607839";
+        const string mbid = "11111111-1111-4111-8111-111111111111";
+        var actor = Actor(_tenantA, _userA);
+        var original = existing ? await _service.CreateRecordingAsync(actor, "seed", isrc) : null;
+        var options = new DbContextOptionsBuilder<AllstarrDbContext>(_database.Options)
+            .AddInterceptors(new ConcurrentSaveGate()).Options;
+        var service = new TrackIdentityService(new TestDbContextFactory(options), _storageState, _clock);
+        async Task<CanonicalRecordingCreationResult?> Create(string recordingMbid)
+        {
+            try { return await service.CreateRecordingAsync(actor, "concurrent", isrc, recordingMbid); }
+            catch (InvalidOperationException) { return null; }
+        }
+
+        var results = await Task.WhenAll(Create(mbid), Create(conflicting
+            ? "22222222-2222-4222-8222-222222222222" : mbid));
+
+        var succeeded = results.OfType<CanonicalRecordingCreationResult>().ToArray();
+        Assert.Equal(conflicting ? 1 : 2, succeeded.Length);
+        await using var db = await _factory.CreateDbContextAsync();
+        var recording = await db.CanonicalRecordings.SingleAsync();
+        Assert.All(succeeded, item => Assert.Equal(recording.Id, item.Recording.Id));
+        if (original != null) Assert.Equal(original.Recording.Id, recording.Id);
+        Assert.Equal(2, await db.CanonicalCatalogAliases.CountAsync());
+        Assert.All(await db.CanonicalCatalogAliases.ToArrayAsync(), item => Assert.Equal(recording.Id, item.CanonicalEntityId));
+        Assert.Equal(existing ? 1 : 0, await db.AuditEvents.CountAsync(item => item.Outcome == "enriched"));
+    }
+
+    private sealed class ConcurrentSaveGate : SaveChangesInterceptor
+    {
+        private int _arrivals;
+        private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            var arrival = Interlocked.Increment(ref _arrivals);
+            if (arrival == 2) _ready.TrySetResult();
+            if (arrival <= 2) await _ready.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+            return result;
+        }
     }
 
     [Fact]
