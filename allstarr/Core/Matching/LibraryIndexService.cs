@@ -74,15 +74,18 @@ public sealed class LibraryIndexService : ILibraryIndexService
     private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
     private readonly DurableStorageState _storageState;
     private readonly IPlatformClock _clock;
+    private readonly ITrackIdentityService _identities;
 
     public LibraryIndexService(
         IDbContextFactory<AllstarrDbContext> contextFactory,
         DurableStorageState storageState,
-        IPlatformClock clock)
+        IPlatformClock clock,
+        ITrackIdentityService identities)
     {
         _contextFactory = contextFactory;
         _storageState = storageState;
         _clock = clock;
+        _identities = identities;
     }
 
     public async Task<IndexedLibraryTrack> UpsertAsync(
@@ -141,8 +144,8 @@ public sealed class LibraryIndexService : ILibraryIndexService
         record.MusicBrainzReleaseId = NormalizeGuid(input.MusicBrainzReleaseId);
         record.MusicBrainzArtistId = NormalizeGuid(input.MusicBrainzArtistId);
         record.ProviderIdsJson = JsonSerializer.Serialize(providerIds, JsonOptions);
-        record.CanonicalRecordingId = input.CanonicalRecordingId;
-        record.AcceptedDecisionVersion = input.AcceptedDecisionVersion;
+        record.CanonicalRecordingId = input.CanonicalRecordingId ?? record.CanonicalRecordingId;
+        record.AcceptedDecisionVersion = input.AcceptedDecisionVersion ?? record.AcceptedDecisionVersion;
         record.CoverArtReference = ValidateReference(input.CoverArtReference);
         record.SourceModifiedAt = input.SourceModifiedAt;
         record.IndexedAt = now;
@@ -150,6 +153,34 @@ public sealed class LibraryIndexService : ILibraryIndexService
         if (created)
         {
             db.LibraryTracks.Add(record);
+        }
+
+        var enrichment = "unchanged";
+        if (!record.CanonicalRecordingId.HasValue)
+        {
+            var aliasNamespace = CanonicalCatalogKeys.NativeTrackNamespace(record.Protocol, record.BackendInstanceId);
+            var itemHash = CanonicalCatalogKeys.Hash(record.BackendItemId);
+            record.CanonicalRecordingId = await db.CanonicalCatalogAliases.AsNoTracking()
+                .Where(alias => alias.TenantId == principal.TenantId && alias.Namespace == aliasNamespace &&
+                    alias.EntityKind == CanonicalCatalogEntityKind.Recording &&
+                    alias.ExternalIdHash == itemHash && alias.ExternalId == record.BackendItemId)
+                .Select(alias => (Guid?)alias.CanonicalEntityId).SingleOrDefaultAsync(cancellationToken);
+        }
+        if (Guid.TryParse(record.MusicBrainzRecordingId, out var mbid) && mbid != Guid.Empty &&
+            (!record.CanonicalRecordingId.HasValue || await db.CanonicalRecordings.AsNoTracking().AnyAsync(
+                item => item.TenantId == principal.TenantId && item.Id == record.CanonicalRecordingId &&
+                    item.MusicBrainzRecordingId == mbid.ToString("D"), cancellationToken)))
+        {
+            try
+            {
+                var identity = await _identities.CreateRecordingAsync(
+                    executionContext.RequireActor(), executionContext.CorrelationId,
+                    record.Isrc, mbid.ToString("D"), cancellationToken);
+                record.CanonicalRecordingId ??= identity.Recording.Id;
+                enrichment = "linked";
+            }
+            catch (ArgumentException) { enrichment = "invalid-signals"; }
+            catch (InvalidOperationException) { enrichment = "deferred"; }
         }
 
         await CanonicalCatalogIdentityProjection.ProjectLibraryTrackAsync(
@@ -173,7 +204,8 @@ public sealed class LibraryIndexService : ILibraryIndexService
                 libraryTrackId = record.Id,
                 libraryScopeId = input.LibraryScopeId,
                 backendInstanceId = principal.BackendInstanceId,
-                hasCanonicalRecording = input.CanonicalRecordingId.HasValue
+                hasCanonicalRecording = record.CanonicalRecordingId.HasValue,
+                canonicalEnrichment = enrichment
             }),
             CreatedAt = now
         });
