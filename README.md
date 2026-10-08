@@ -81,7 +81,7 @@ Intelligence is deferred from the first release and hidden from navigation. Its 
 - Routes streaming, download, lyrics, and artwork through typed, account-aware capabilities.
 - Runs imports, matching, downloads, playlist changes, scrobbling, and other long work as durable inspectable jobs.
 - The deferred Intelligence workspace supports opt-in history, history imports, and explained recommendations, including optional self-hosted AudioMuse-AI integration; these are not first-release commitments.
-- Installs verified third-party provider extensions through an explicit registry, permission review, staged activation, and rollback boundary.
+- Installs verified third-party provider extensions through an explicit registry, permission review, staged activation.
 
 Provider availability depends on connected accounts, optional sidecars, permissions, and health. Missing optional services reduce only the affected capability.
 

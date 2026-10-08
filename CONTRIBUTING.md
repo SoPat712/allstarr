@@ -63,7 +63,7 @@ Migration work must be checked against an explicitly isolated disposable Postgre
 
 ## Provider Extensions
 
-Provider SDK packages live outside the core implementation boundary and must declare their hooks, scope, network access, and secret permissions. Use the packaging and verification workflow documented in [docs/extensions/sdk-v1.md](docs/extensions/sdk-v1.md). Do not add an activation shortcut that bypasses checksum, permission review, staged lifecycle, or rollback.
+Provider SDK packages live outside the core implementation boundary and must declare their hooks, scope, network access, and secret permissions. Use the packaging and verification workflow documented in [docs/extensions/sdk-v1.md](docs/extensions/sdk-v1.md). Do not add an activation shortcut that bypasses checksum, permission review, or staged activation.
 
 Do not bundle provider packages or auto-enroll users in an external registry.
 

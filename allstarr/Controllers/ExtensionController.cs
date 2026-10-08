@@ -215,20 +215,6 @@ public sealed class ExtensionController(
                     packageId, request.ExpectedRevision, cancellationToken))));
     }
 
-    [HttpPost("packages/{packageId:guid}/staging/cancel")]
-    public async Task<IActionResult> CancelStaging(
-        Guid packageId,
-        [FromBody] RevisionRequest request,
-        CancellationToken cancellationToken)
-    {
-        if (RequireAdministrator() is { } error) return error;
-        return await ControlPlaneAsync(async () => Ok(PackageResponse(_runtime == null
-                ? await _controlPlane.CancelStagingAsync(
-                    packageId, request.ExpectedRevision, cancellationToken)
-                : await _runtime.CancelStagingAsync(
-                    packageId, request.ExpectedRevision, cancellationToken))));
-    }
-
     [HttpGet("packages/{packageId:guid}/session")]
     public IActionResult SignedSessionStatus(Guid packageId)
     {
@@ -264,15 +250,6 @@ public sealed class ExtensionController(
         if (_runtime == null) return Conflict(new { error = "The extension runtime is unavailable." });
         try { return Ok(_runtime.ClearSignedSession(packageId)); }
         catch (Exception exception) when (IsControlPlaneException(exception)) { return ControlPlaneError(exception); }
-    }
-
-    [HttpPost("packages/{packageId:guid}/rollback")]
-    public async Task<IActionResult> Rollback(Guid packageId, [FromBody] RevisionRequest request, CancellationToken cancellationToken)
-    {
-        if (RequireAdministrator() is { } error) return error;
-        return await ControlPlaneAsync(async () => Ok(PackageResponse(_runtime == null
-            ? await _controlPlane.RollbackAsync(packageId, request.ExpectedRevision, cancellationToken)
-            : await _runtime.RollbackAsync(packageId, request.ExpectedRevision, cancellationToken))));
     }
 
     [HttpPost("packages/{packageId:guid}/disable")]

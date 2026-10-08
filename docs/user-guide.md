@@ -53,7 +53,7 @@ Subsonic users may see **Connect background access** the first time they open In
 
 - **Services** lists every built-in or extension-backed capability and its readiness.
 - **Accounts** stores encrypted personal or shared credentials and audience policy.
-- **Extensions** installs, updates, reviews permissions, disables, rolls back, and removes provider packages.
+- **Extensions** installs, updates, reviews permissions, disables, and removes provider packages.
 - **Routing** orders the eligible fallback services for metadata, streaming, download, lyrics, playlists, scrobbling, and other typed capabilities.
 
 A Service is an implementation. An Account is a credential and access policy for that Service. An Extension is an optional package that can add Services. Routing decides which ready Service/account pair is tried for a capability. These are related but not interchangeable settings.

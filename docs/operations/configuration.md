@@ -49,7 +49,7 @@ Provider credentials are encrypted and persisted as provider accounts with expli
 
 `ProviderPolicy:AllowGlobalAccounts` controls whether routing may use global accounts (default `true`). `ProviderPolicy:AllowGlobalPersonalAccounts` defaults to `false`: sharing an account does not implicitly share its personal playlists, favorites, personal library, or scrobbling identity. Its creator retains personal access; administrators can explicitly select a global personal account under the existing policy. These are ASP.NET configuration keys, not new WebUI toggles or automatically added Compose variables. A permitted audience is not a guarantee of a provider's concurrent-use allowance.
 
-Extensions are package implementations, not a second account system. Their install, update, permission, rollback, and removal lifecycle lives under **Integrations > Extensions**. Once active, their Services and Accounts use the same Integrations surfaces as built-in providers.
+Extensions are package implementations, not a second account system. Their install, update, permission, and removal lifecycle lives under **Integrations > Extensions**. Once active, their Services and Accounts use the same Integrations surfaces as built-in providers.
 
 AudioMuse-AI is a built-in Intelligence integration rather than an extension. It is composed only when `ALLSTARR_RELEASE_PROFILE=development`; its persisted configuration and data remain intact while the core profile is active.
 

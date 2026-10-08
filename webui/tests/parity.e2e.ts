@@ -2192,6 +2192,11 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
       previousPackageId: "old", revision: 2,
     }),
   }));
+  let cancellationRequests = 0;
+  await page.route("**/packages/new/staging/cancel", (route) => {
+    cancellationRequests++;
+    return route.fulfill({ status: 410 });
+  });
   let activationRequests = 0;
   let releaseActivation = () => {};
   const activationResponse = new Promise<void>((resolve) => {
@@ -2222,6 +2227,11 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
   await expect(review).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(review).toBeHidden();
+  await page.getByRole("button", { name: "Review permissions" }).click();
+  review = page.getByRole("dialog", { name: "Review permissions" });
+  await review.getByRole("button", { name: "Close review" }).click();
+  await expect(review).toBeHidden();
+  expect(cancellationRequests).toBe(0);
   await page.getByRole("button", { name: "Review permissions" }).click();
   review = page.getByRole("dialog", { name: "Review permissions" });
   await expect(review.getByText("Update 1.0.0 → 2.0.0. Capability and permission changes are shown below.")).toBeVisible();
@@ -2300,7 +2310,7 @@ test("extension updates stay beside the shared management menu", async ({ page }
   await expect(actions.getByRole("button", { name: "Update" })).toBeInViewport();
   await actions.getByRole("button", { name: "Manage extension" }).click();
   await expect(page.getByRole("menuitem", { name: "Disable" })).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: "Rollback" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Rollback" })).toHaveCount(0);
   await expect(page.getByRole("menuitem", { name: "Review access" })).toBeVisible();
   await page.getByRole("menuitem", { name: "Review access" }).click();
   const access = page.getByRole("alertdialog", { name: "Review access for Lumen Audio?" });
