@@ -314,7 +314,7 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
                 CreatedAt = _clock.UtcNow,
                 UpdatedAt = _clock.UtcNow
             });
-            db.ProviderAccounts.Add(Account(otherAccount, ProviderAccountScope.User, otherUser));
+            db.ProviderAccounts.Add(Account(otherAccount, ProviderAccountScope.Personal, otherUser));
             db.ProviderTrackIdentities.Add(new()
             {
                 Id = Guid.CreateVersion7(),
@@ -730,11 +730,11 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RecommendationAccountsPreferExactUserAndNeverCrossOwnerOrLibrary()
+    public async Task RecommendationAccountsPreferExactUserThenSharedAndNeverCrossOwner()
     {
         var otherUser = Guid.CreateVersion7();
         var userAccount = Guid.CreateVersion7();
-        var libraryAccount = Guid.CreateVersion7();
+        var sharedAccount = Guid.CreateVersion7();
         await using (var db = await _factory.CreateDbContextAsync())
         {
             db.Users.Add(new()
@@ -747,10 +747,9 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
                 UpdatedAt = _clock.UtcNow
             });
             db.ProviderAccounts.AddRange(
-                Account(userAccount, ProviderAccountScope.User, _user),
-                Account(Guid.CreateVersion7(), ProviderAccountScope.User, otherUser),
-                Account(libraryAccount, ProviderAccountScope.Library, null, "music"),
-                Account(Guid.CreateVersion7(), ProviderAccountScope.Library, null, "other"));
+                Account(userAccount, ProviderAccountScope.Personal, _user),
+                Account(Guid.CreateVersion7(), ProviderAccountScope.Personal, otherUser),
+                Account(sharedAccount, ProviderAccountScope.Shared, null));
             await db.SaveChangesAsync();
         }
         var accessor = new ScopedRecommendationAccountAccessor(_factory, null!);
@@ -761,7 +760,12 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
             (await db.ProviderAccounts.SingleAsync(item => item.Id == userAccount)).Enabled = false;
             await db.SaveChangesAsync();
         }
-        Assert.Equal(libraryAccount, (await accessor.FindAccountAsync(_scope, "fixture", default))!.AccountId);
+        Assert.Equal(sharedAccount, (await accessor.FindAccountAsync(_scope, "fixture", default))!.AccountId);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.ProviderAccounts.SingleAsync(item => item.Id == sharedAccount)).Enabled = false;
+            await db.SaveChangesAsync();
+        }
         Assert.Null(await accessor.FindAccountAsync(
             _scope with { OwnerUserId = Guid.CreateVersion7(), LibraryScopeId = "missing" },
             "fixture", default));
@@ -865,12 +869,10 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         Guid? owner, string? library = null) => new()
         {
             Id = id,
-            TenantId = _tenant,
+            TenantId = owner.HasValue ? _tenant : null,
             OwnerUserId = owner,
             ProviderId = "fixture",
             DisplayName = "Fixture",
-            Scope = scope,
-            LibraryScopeId = library,
             Enabled = true,
             CreatedAt = _clock.UtcNow,
             UpdatedAt = _clock.UtcNow,

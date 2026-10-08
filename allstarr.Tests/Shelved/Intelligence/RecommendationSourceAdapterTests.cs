@@ -221,7 +221,7 @@ public sealed class RecommendationSourceAdapterTests
             [new(ProviderCapabilityKind.Intelligence, ProviderCapabilitySupportState.Supported,
                 ProviderAccountRequirement.Required, "1.0", ["startAnalysis", "getAnalysisProgress",
                     "getClusters", "recommend", "search", "findPath", "blend", "getMap"],
-                [ProviderAccountScope.User])],
+                [ProviderAccountScope.Personal])],
             new ProviderPermissionDescriptor(), entryPoint: "index.js");
         var registry = new ProviderRegistry([new ProviderRegistration(descriptor, [capability])]);
         var missingAccount = new AudioMuseRecommendationClient(
@@ -369,7 +369,7 @@ public sealed class RecommendationSourceAdapterTests
             Task.FromResult(configured);
         public Task<ProviderAccountContext?> FindAccountAsync(IntelligenceScope scope, string providerId, CancellationToken token) =>
             Task.FromResult<ProviderAccountContext?>(configured
-                ? new(Guid.CreateVersion7(), providerId, ProviderAccountScope.User, 1,
+                ? new(Guid.CreateVersion7(), providerId, ProviderAccountScope.Personal, 1,
                     tenantId: scope.TenantId, ownerUserId: scope.OwnerUserId)
                 : null);
         public async Task<T> UseAsync<T>(IntelligenceScope scope, string providerId, Func<JsonElement, CancellationToken, Task<T>> operation, CancellationToken token)

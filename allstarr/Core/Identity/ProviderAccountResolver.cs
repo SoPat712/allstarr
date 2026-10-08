@@ -3,132 +3,55 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Identity;
 
-public sealed class ProviderPolicyOptions
-{
-    public const string SectionName = "ProviderPolicy";
-    private static readonly IReadOnlySet<string> PersonalCapabilities =
-        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "playlist", "personal-library", "scrobbling", "favorites"
-        };
-
-    public bool AllowGlobalAccounts { get; set; } = true;
-    public bool AllowGlobalPersonalAccounts { get; set; }
-    public Guid? SharedDownloaderAccountId { get; set; }
-
-    public bool AllowsGlobalAccount(Guid? creatorId, Guid? userId, string capability,
-        bool administratorSelection = false) =>
-        AllowGlobalAccounts &&
-        (!PersonalCapabilities.Contains(capability) ||
-         userId.HasValue && creatorId == userId ||
-         AllowGlobalPersonalAccounts || administratorSelection);
-}
-
 public sealed record ProviderAccountResolutionRequest(
     AllstarrPrincipal Principal,
     string ProviderId,
     string Capability,
     Guid? RequestedAccountId = null,
-    string? LibraryScopeId = null);
+    string? LibraryScopeId = null,
+    IReadOnlyCollection<ProviderAccountScope>? AllowedScopes = null,
+    bool AllowSharedAccount = true);
 
-public sealed record ResolvedProviderAccount(
-    ProviderAccountRecord Account,
-    string Reason);
+public sealed record ResolvedProviderAccount(ProviderAccountRecord Account, string Reason);
 
-public sealed class ProviderAccountResolver
+public sealed class ProviderAccountResolver(IDbContextFactory<AllstarrDbContext> contextFactory)
 {
-    private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
-    private readonly ProviderPolicyOptions _policy;
-
-    public ProviderAccountResolver(
-        IDbContextFactory<AllstarrDbContext> contextFactory,
-        ProviderPolicyOptions policy)
-    {
-        _contextFactory = contextFactory;
-        _policy = policy;
-    }
-
     public async Task<ResolvedProviderAccount?> ResolveAsync(
+        ProviderAccountResolutionRequest request,
+        CancellationToken cancellationToken = default) =>
+        (await ResolveCandidatesAsync(request, cancellationToken)).FirstOrDefault();
+
+    public async Task<IReadOnlyList<ResolvedProviderAccount>> ResolveCandidatesAsync(
         ProviderAccountResolutionRequest request,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(request.ProviderId) ||
-            string.IsNullOrWhiteSpace(request.Capability))
-        {
+        if (string.IsNullOrWhiteSpace(request.ProviderId) || string.IsNullOrWhiteSpace(request.Capability))
             throw new ArgumentException("Provider and capability are required.", nameof(request));
-        }
 
-        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var providerId = request.ProviderId.Trim().ToLowerInvariant();
+        var allowPersonal = request.AllowedScopes == null || request.AllowedScopes.Contains(ProviderAccountScope.Personal);
+        var allowShared = request.AllowSharedAccount &&
+            (request.AllowedScopes == null || request.AllowedScopes.Contains(ProviderAccountScope.Shared));
         var accounts = await context.ProviderAccounts.AsNoTracking()
-            .Where(item => item.Enabled && item.ProviderId == request.ProviderId.Trim().ToLowerInvariant())
+            .Where(item => item.Enabled && item.ProviderId == providerId &&
+                (allowPersonal && item.OwnerUserId == request.Principal.UserId && item.TenantId == request.Principal.TenantId ||
+                 allowShared && item.OwnerUserId == null && item.TenantId == null))
+            .Where(item => !item.SecretReferenceId.HasValue || context.SecretReferences.Any(secret =>
+                secret.Id == item.SecretReferenceId && secret.RevokedAt == null))
+            .OrderByDescending(item => item.OwnerUserId.HasValue)
+            .ThenBy(item => item.CreatedAt)
+            .ThenBy(item => item.Id)
             .ToListAsync(cancellationToken);
-        var eligible = accounts
-            .Where(account => IsEligible(account, request))
-            .ToList();
 
         if (request.RequestedAccountId.HasValue)
         {
-            var requested = eligible.SingleOrDefault(item => item.Id == request.RequestedAccountId.Value);
-            if (requested == null)
-            {
-                throw new UnauthorizedAccessException(
-                    "The requested provider account is outside the caller scope or policy.");
-            }
-
-            return new ResolvedProviderAccount(requested, "explicit_account");
+            var requested = accounts.SingleOrDefault(item => item.Id == request.RequestedAccountId.Value)
+                ?? throw new UnauthorizedAccessException("The requested provider account is unavailable to this user.");
+            return [new(requested, "explicit_account")];
         }
 
-        if (request.Capability.Equals("download", StringComparison.OrdinalIgnoreCase) &&
-            _policy.SharedDownloaderAccountId.HasValue)
-        {
-            var shared = eligible.SingleOrDefault(item => item.Id == _policy.SharedDownloaderAccountId.Value);
-            if (shared != null)
-            {
-                return new ResolvedProviderAccount(shared, "policy_shared_downloader");
-            }
-        }
-
-        var user = eligible.FirstOrDefault(item =>
-            item.Scope == ProviderAccountScope.User &&
-            item.OwnerUserId == request.Principal.UserId);
-        if (user != null)
-        {
-            return new ResolvedProviderAccount(user, "user_account");
-        }
-
-        var connected = eligible.FirstOrDefault(item =>
-            item.Scope == ProviderAccountScope.Global && item.CreatedByUserId == request.Principal.UserId);
-        if (connected != null)
-            return new ResolvedProviderAccount(connected, "own_shared_account");
-
-        var library = eligible.FirstOrDefault(item => item.Scope == ProviderAccountScope.Library);
-        if (library != null)
-        {
-            return new ResolvedProviderAccount(library, "library_account");
-        }
-
-        var global = eligible.FirstOrDefault(item => item.Scope == ProviderAccountScope.Global);
-        return global == null ? null : new ResolvedProviderAccount(global, "global_account");
-    }
-
-    private bool IsEligible(
-        ProviderAccountRecord account,
-        ProviderAccountResolutionRequest request)
-    {
-        return account.Scope switch
-        {
-            ProviderAccountScope.User =>
-                account.TenantId == request.Principal.TenantId &&
-                account.OwnerUserId == request.Principal.UserId,
-            ProviderAccountScope.Library =>
-                account.TenantId == request.Principal.TenantId &&
-                !string.IsNullOrWhiteSpace(request.LibraryScopeId) &&
-                account.LibraryScopeId == request.LibraryScopeId,
-            ProviderAccountScope.Global =>
-                account.TenantId == null &&
-                _policy.AllowsGlobalAccount(account.CreatedByUserId, request.Principal.UserId,
-                    request.Capability, request.Principal.IsAdministrator && request.RequestedAccountId == account.Id),
-            _ => false
-        };
+        return accounts.Select(account => new ResolvedProviderAccount(account,
+            account.OwnerUserId.HasValue ? "personal_account" : "shared_account")).ToArray();
     }
 }

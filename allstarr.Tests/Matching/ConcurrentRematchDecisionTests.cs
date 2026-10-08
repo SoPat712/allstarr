@@ -57,7 +57,6 @@ public sealed class ConcurrentRematchDecisionTests
                 OwnerUserId = userId,
                 ProviderId = "spotify",
                 DisplayName = "Spotify",
-                Scope = ProviderAccountScope.User,
                 Enabled = true,
                 CreatedAt = now,
                 UpdatedAt = now
@@ -144,7 +143,7 @@ public sealed class ConcurrentRematchDecisionTests
         new(
             factory,
             new TrackMatchDecisionEngine(),
-            new ProviderAccountResolver(factory, new ProviderPolicyOptions()),
+            new ProviderAccountResolver(factory),
             new Clock(now));
 
     private sealed class DbFactory(DbContextOptions<AllstarrDbContext> options)

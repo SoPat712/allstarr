@@ -27,7 +27,7 @@ public sealed class ProviderAccountCreatorIdentityContractTests
     {
         Assert.Contains("account.CreatedByUserId", controller, StringComparison.Ordinal);
         Assert.Contains("creatorDisplayName", controller, StringComparison.Ordinal);
-        Assert.Contains("sourceDisplayName = SourceDisplayName(account, creatorDisplayName)", controller, StringComparison.Ordinal);
+        Assert.Contains("sourceDisplayName = SourceDisplayName(account, canManage ? creatorDisplayName : null)", controller, StringComparison.Ordinal);
         Assert.Contains("$\"{name} · {creatorDisplayName}\"", controller, StringComparison.Ordinal);
     }
 

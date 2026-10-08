@@ -8,7 +8,9 @@ public sealed record ProviderRouteAccountRequest(
     string ProviderId,
     ProviderCapabilityKind Capability,
     Guid? RequestedAccountId,
-    string? LibraryScopeId);
+    string? LibraryScopeId,
+    IReadOnlyCollection<ProviderAccountScope>? AllowedScopes = null,
+    bool AllowSharedAccount = true);
 
 public sealed record ProviderRouteAccountResolution(
     ProviderAccountContext Account,

@@ -32,7 +32,7 @@ public sealed class LibraryPlaylistStorageModelTests
             new TenantRecord { Id = tenantId, Slug = "tenant", Name = "Tenant", CreatedAt = now },
             new PlatformUserRecord { Id = userId, TenantId = tenantId, DisplayName = "User", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now },
             new BackendIdentityRecord { Id = backendIdentityId, TenantId = tenantId, UserId = userId, BackendType = "jellyfin", BackendInstanceId = "home", PrincipalId = "principal", CreatedAt = now, LastSeenAt = now },
-            new ProviderAccountRecord { Id = accountId, TenantId = tenantId, OwnerUserId = userId, ProviderId = "spotify", DisplayName = "Mine", Scope = ProviderAccountScope.User, Enabled = true, CreatedAt = now, UpdatedAt = now },
+            new ProviderAccountRecord { Id = accountId, TenantId = tenantId, OwnerUserId = userId, ProviderId = "spotify", DisplayName = "Mine", Enabled = true, CreatedAt = now, UpdatedAt = now },
             new CanonicalRecordingRecord { Id = recordingId, TenantId = tenantId, CreatedByUserId = userId, CreatedAt = now, UpdatedAt = now });
         await context.SaveChangesAsync();
 

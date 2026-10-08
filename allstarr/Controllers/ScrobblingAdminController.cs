@@ -32,7 +32,6 @@ public sealed class ScrobblingAdminController : ControllerBase
     private readonly IDbContextFactory<AllstarrDbContext>? _contextFactory;
     private readonly IProviderAccountSecretAccessor? _accountSecrets;
     private readonly EncryptedSecretStore? _secretStore;
-    private readonly ProviderAccountManagementOptions _accountManagement;
 
     public ScrobblingAdminController(
         IOptions<ScrobblingSettings> settings,
@@ -41,7 +40,7 @@ public sealed class ScrobblingAdminController : ControllerBase
         IDbContextFactory<AllstarrDbContext>? contextFactory = null,
         IProviderAccountSecretAccessor? accountSecrets = null,
         EncryptedSecretStore? secretStore = null,
-        ProviderAccountManagementOptions? accountManagement = null)
+        ProviderAccountOptions? accountManagement = null)
     {
         _settings = settings.Value;
         _logger = logger;
@@ -49,7 +48,6 @@ public sealed class ScrobblingAdminController : ControllerBase
         _contextFactory = contextFactory;
         _accountSecrets = accountSecrets;
         _secretStore = secretStore;
-        _accountManagement = accountManagement ?? new ProviderAccountManagementOptions();
     }
 
     [HttpGet("status")]
@@ -94,9 +92,6 @@ public sealed class ScrobblingAdminController : ControllerBase
         [FromBody] LastFmAuthenticationRequest? request = null,
         CancellationToken cancellationToken = default)
     {
-        if (_accountManagement.ParseManagementMode() == ProviderAccountManagementMode.AdminManaged &&
-            HttpContext?.Items[AdminAuthSessionService.HttpContextSessionItemKey] is not AdminAuthSession { IsAdministrator: true })
-            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Provider accounts are managed by administrators." });
         var managed = request?.AccountId is { } accountId
             ? await ReadOwnedLastFmAccountAsync(accountId, cancellationToken)
             : null;
@@ -469,7 +464,7 @@ public sealed class ScrobblingAdminController : ControllerBase
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
         var account = await db.ProviderAccounts.AsNoTracking().OwnedBy(tenant, user)
             .Where(item => item.ProviderId == providerId && item.Enabled && item.SecretReferenceId != null)
-            .OrderByDescending(item => item.Scope == ProviderAccountScope.User)
+            .OrderByDescending(item => item.OwnerUserId != null)
             .ThenBy(item => item.UpdatedAt)
             .FirstOrDefaultAsync(cancellationToken);
         if (account == null)
@@ -485,7 +480,7 @@ public sealed class ScrobblingAdminController : ControllerBase
             account.Enabled,
             account.TenantId,
             account.OwnerUserId,
-            account.LibraryScopeId,
+            null,
             "scrobbling-admin",
             account.SecretReferenceId);
         return await _accountSecrets.UseAsync(
@@ -511,7 +506,10 @@ public sealed class ScrobblingAdminController : ControllerBase
         }
 
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        var account = await db.ProviderAccounts.AsNoTracking().OwnedBy(tenant, user).SingleOrDefaultAsync(item =>
+        var manageable = session.IsAdministrator
+            ? db.ProviderAccounts.AsNoTracking()
+            : db.ProviderAccounts.AsNoTracking().OwnedBy(tenant, user);
+        var account = await manageable.SingleOrDefaultAsync(item =>
             item.Id == accountId && item.ProviderId == "lastfm" &&
             item.SecretReferenceId != null,
             cancellationToken);
@@ -525,7 +523,7 @@ public sealed class ScrobblingAdminController : ControllerBase
             account.Enabled,
             account.TenantId,
             account.OwnerUserId,
-            account.LibraryScopeId,
+            null,
             "lastfm-authentication",
             account.SecretReferenceId);
         var secrets = await _accountSecrets.UseAsync(

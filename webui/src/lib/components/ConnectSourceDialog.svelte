@@ -14,6 +14,7 @@
     administrator,
     testConnection = false,
     account = null,
+    users = [],
     initialProviderId = "",
     onSaved,
   }: {
@@ -22,12 +23,14 @@
     administrator: boolean;
     testConnection?: boolean;
     account?: ProviderAccount | null;
+    users?: { id: string; displayName: string }[];
     initialProviderId?: string;
     onSaved: (message: string) => void | Promise<void>;
   } = $props();
 
   let providerId = $state("");
-  let scope = $state("User");
+  let scope = $state<"Personal" | "Shared">("Personal");
+  let ownerUserId = $state("");
   let saving = $state(false);
   let error = $state("");
 
@@ -41,7 +44,7 @@
 
   $effect(() => {
     if (open && choices[0]) providerId = account?.providerId || initialProviderId || choices[0].id;
-    if (!open) { error = ""; scope = "User"; }
+    if (!open) { error = ""; scope = "Personal"; ownerUserId = ""; }
   });
 
   async function create(event: SubmitEvent) {
@@ -52,8 +55,8 @@
     const form = event.currentTarget as HTMLFormElement;
     const data = new FormData(form);
     try {
-      if (!account && scope === "Global" && !data.has("confirmShare"))
-        throw new Error("Confirm that every Allstarr user may use this connection.");
+      if (!account && scope === "Shared" && !data.has("confirmShare"))
+        throw new Error("Confirm that household users may use this connection.");
       let saved: ProviderAccount;
       if (account) {
         const replacement = await sources.replaceSecret(account, secretFromForm(selected, data));
@@ -64,8 +67,8 @@
         saved = await sources.create({
           providerId: selected.id,
           displayName: String(data.get("displayName") || "").trim() || `My ${selected.name} connection`,
-          scope: String(data.get("scope") || "User"),
-          libraryScopeId: String(data.get("libraryScopeId") || "").trim() || null,
+          scope,
+          ...(administrator && scope === "Personal" && ownerUserId ? { ownerUserId } : {}),
           enabled: true,
           secret: secretFromForm(selected, data),
         });
@@ -125,20 +128,20 @@
                 <SelectField bind:value={providerId} label="Source" options={choices.map((provider) => ({ value: provider.id, label: provider.name }))} />
               </span>
             </label>
+            {#if administrator && scope === "Personal" && users.length > 0}
+              <label class="field"><span>Account owner</span><SelectField bind:value={ownerUserId} label="Account owner" options={users.map((user) => ({ value: user.id, label: user.displayName }))} /></label>
+            {/if}
             <label class="field"><span>Connection name</span><input name="displayName" placeholder={`My ${selected.name} connection`} /></label>
             <label class="field">
               <span>Who can use it?</span>
               <SelectField name="scope" label="Who can use it?" bind:value={scope} options={[
-                { value: "User", label: "Private" },
-                { value: "Global", label: "Global" },
-                ...(administrator ? [{ value: "Library", label: "One library" }] : []),
+                { value: "Personal", label: "Personal" },
+                ...(administrator ? [{ value: "Shared", label: "Shared" }] : []),
               ]} />
-              <small>{scope === "Global" ? "Shared provider use for everyone on this Allstarr server, subject to server policy. You keep control of this connection." : scope === "Library" ? "Only requests in the selected media library may use this connection." : "Only you can use this connection unless you choose to share it."}</small>
+              <small>{scope === "Shared" ? "Household users can use this provider connection. Administrators manage it." : administrator ? "Only the selected owner can use this provider connection." : "Only you can use this provider connection."}</small>
             </label>
-            {#if scope === "Global"}
-              <label class="toggle-line"><Checkbox name="confirmShare" required /><span>I agree to share provider access with every Allstarr user.<small>Other users may consume this account’s provider limits. Credentials stay hidden; personal playlists and scrobbling are not shared by default.</small></span></label>
-            {:else if scope === "Library" && administrator}
-              <label class="field"><span>Library ID</span><input name="libraryScopeId" required /></label>
+            {#if scope === "Shared"}
+              <label class="toggle-line"><Checkbox name="confirmShare" required /><span>I agree to share provider access with household users.<small>Other users may consume this account’s provider limits. Credentials stay hidden. Supported capabilities may include playlists and scrobbling.</small></span></label>
             {/if}
           {/if}
 

@@ -39,12 +39,10 @@ public static class AudioMuseCapabilityRegistration
                 new(ProviderCapabilityKind.Intelligence, ProviderCapabilitySupportState.Supported,
                     ProviderAccountRequirement.Required, "1.0",
                     ["startAnalysis", "getAnalysisProgress", "getClusters", "recommend", "search", "findPath", "blend", "getMap", "disconnect"],
-                    [Core.Storage.ProviderAccountScope.Global, Core.Storage.ProviderAccountScope.User,
-                        Core.Storage.ProviderAccountScope.Library]),
+                    [Core.Storage.ProviderAccountScope.Shared, Core.Storage.ProviderAccountScope.Personal]),
                 new(ProviderCapabilityKind.Health, ProviderCapabilitySupportState.Supported,
                     ProviderAccountRequirement.Required, "1.0", ["probeIntelligence"],
-                    [Core.Storage.ProviderAccountScope.Global, Core.Storage.ProviderAccountScope.User,
-                        Core.Storage.ProviderAccountScope.Library])
+                    [Core.Storage.ProviderAccountScope.Shared, Core.Storage.ProviderAccountScope.Personal])
             ],
             new ProviderPermissionDescriptor(secretSettingKeys: ["apiToken"]),
             [

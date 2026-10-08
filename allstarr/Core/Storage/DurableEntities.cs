@@ -10,9 +10,8 @@ public enum PlatformUserStatus
 
 public enum ProviderAccountScope
 {
-    Global,
-    User,
-    Library
+    Shared,
+    Personal
 }
 
 public enum DurableJobState
@@ -117,8 +116,9 @@ public sealed class ProviderAccountRecord
     public Guid? CreatedByUserId { get; set; }
     public string ProviderId { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
-    public ProviderAccountScope Scope { get; set; }
-    public string? LibraryScopeId { get; set; }
+    public ProviderAccountScope Scope => OwnerUserId.HasValue
+        ? ProviderAccountScope.Personal
+        : ProviderAccountScope.Shared;
     public Guid? SecretReferenceId { get; set; }
     public bool Enabled { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

@@ -676,10 +676,7 @@ public sealed class TrackIdentityService : ITrackIdentityService
                               account.Scope == executionContext.Account.Scope &&
                               account.TenantId == executionContext.Account.TenantId &&
                               account.OwnerUserId == executionContext.Account.OwnerUserId &&
-                              string.Equals(
-                                  account.LibraryScopeId,
-                                  executionContext.Account.LibraryScopeId,
-                                  StringComparison.Ordinal) &&
+                              executionContext.Account.LibraryScopeId == null &&
                               account.Revision == executionContext.Account.Revision;
         if (!snapshotMatches)
         {
@@ -687,7 +684,7 @@ public sealed class TrackIdentityService : ITrackIdentityService
                 "The provider account context is stale or outside the actor scope.");
         }
 
-        if (account.Scope != ProviderAccountScope.Global &&
+        if (account.Scope != ProviderAccountScope.Shared &&
             account.TenantId != executionContext.Actor.TenantId)
         {
             throw new UnauthorizedAccessException("The provider account belongs to another tenant.");

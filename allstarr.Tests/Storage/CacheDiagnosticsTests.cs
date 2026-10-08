@@ -220,7 +220,6 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
                     OwnerUserId = userId,
                     ProviderId = "spotify",
                     DisplayName = "Cache scope",
-                    Scope = ProviderAccountScope.User,
                     Enabled = true,
                     Revision = 2,
                     CreatedAt = _clock.UtcNow,

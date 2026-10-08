@@ -294,10 +294,12 @@ public static partial class ExtensionSdkV1
             if (hooks.Length == 0 || hooks.Distinct(StringComparer.Ordinal).Count() != hooks.Length ||
                 hooks.Any(hook => !allowed.Contains(hook)))
                 throw new ExtensionSdkValidationException("Capability hooks do not match the declared kind.");
-            var scopes = StringArray(value, "accountScopes").Select(scope =>
-                Enum.TryParse<ProviderAccountScope>(scope, true, out var parsed) && Enum.IsDefined(parsed)
-                    ? parsed
-                    : throw new ExtensionSdkValidationException("Capability account scope is unsupported.")).ToArray();
+            var scopes = StringArray(value, "accountScopes").Select(scope => scope.ToLowerInvariant() switch
+            {
+                "user" or "personal" => ProviderAccountScope.Personal,
+                "global" or "shared" => ProviderAccountScope.Shared,
+                _ => throw new ExtensionSdkValidationException("Capability account scope must be Personal or Shared.")
+            }).ToArray();
             var accountRequired = !value.TryGetProperty("accountRequired", out var required) || required.ValueKind switch
             {
                 JsonValueKind.True => true,

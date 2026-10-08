@@ -55,7 +55,7 @@ public sealed class TrackRematchAllIntegrationTests
             jobOptions,
             new JobPayloadPolicy(jobOptions),
             new Clock(now),
-            new DurableJobContextAuthorizer(factory, new ProviderPolicyOptions()));
+            new DurableJobContextAuthorizer(factory));
         var rematches = new TrackRematchAllService(factory, queue, new Clock(now));
 
         var tenantPreview = await rematches.PreviewAsync(tenantId, null);
@@ -122,7 +122,6 @@ public sealed class TrackRematchAllIntegrationTests
                 OwnerUserId = userId,
                 ProviderId = "spotify",
                 DisplayName = "Spotify",
-                Scope = ProviderAccountScope.User,
                 Enabled = true,
                 CreatedAt = now,
                 UpdatedAt = now
@@ -212,7 +211,7 @@ public sealed class TrackRematchAllIntegrationTests
             jobOptions,
             new JobPayloadPolicy(jobOptions),
             clock,
-            new DurableJobContextAuthorizer(factory, new ProviderPolicyOptions()));
+            new DurableJobContextAuthorizer(factory));
         var rematches = new TrackRematchAllService(factory, queue, clock);
         var preview = await rematches.PreviewAsync(tenantId, userId);
 
@@ -258,7 +257,7 @@ public sealed class TrackRematchAllIntegrationTests
         var commands = new TrackMatchCommandService(
             factory,
             new TrackMatchDecisionEngine(),
-            new ProviderAccountResolver(factory, new ProviderPolicyOptions()),
+            new ProviderAccountResolver(factory),
             clock);
         var handler = new TrackRematchAllJobHandler(factory, rematches, commands, clock);
 
@@ -356,7 +355,6 @@ public sealed class TrackRematchAllIntegrationTests
             OwnerUserId = ownerUserId,
             ProviderId = "spotify",
             DisplayName = "Spotify",
-            Scope = ProviderAccountScope.User,
             Enabled = true,
             CreatedAt = now,
             UpdatedAt = now

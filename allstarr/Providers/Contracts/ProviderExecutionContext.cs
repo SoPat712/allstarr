@@ -128,15 +128,12 @@ public sealed record ProviderAccountContext
             300);
         var validScope = scope switch
         {
-            ProviderAccountScope.Global =>
+            ProviderAccountScope.Shared =>
                 tenantId == null && ownerUserId == null && libraryScopeId == null,
-            ProviderAccountScope.User =>
+            ProviderAccountScope.Personal =>
                 tenantId is { } tenant && tenant != Guid.Empty &&
                 ownerUserId is { } owner && owner != Guid.Empty &&
                 libraryScopeId == null,
-            ProviderAccountScope.Library =>
-                tenantId is { } tenant && tenant != Guid.Empty &&
-                ownerUserId == null && libraryScopeId != null,
             _ => false
         };
         if (!validScope)
@@ -329,17 +326,17 @@ public sealed record ProviderExecutionContext
                 throw new ArgumentException("The provider account belongs to another provider.", nameof(account));
             }
 
-            if (account.Scope == ProviderAccountScope.Global && !policy.AllowSharedAccount)
+            if (account.Scope == ProviderAccountScope.Shared && !policy.AllowSharedAccount)
             {
                 throw new UnauthorizedAccessException("The execution policy does not allow a shared account.");
             }
 
-            if (account.Scope != ProviderAccountScope.Global && account.TenantId != actor.TenantId)
+            if (account.Scope != ProviderAccountScope.Shared && account.TenantId != actor.TenantId)
             {
                 throw new UnauthorizedAccessException("The provider account belongs to another tenant.");
             }
 
-            if (account.Scope == ProviderAccountScope.User && account.OwnerUserId != actor.EffectiveUserId)
+            if (account.Scope == ProviderAccountScope.Personal && account.OwnerUserId != actor.EffectiveUserId)
             {
                 throw new UnauthorizedAccessException("The provider account belongs to another user.");
             }
@@ -352,15 +349,6 @@ public sealed record ProviderExecutionContext
                 throw new UnauthorizedAccessException("The library belongs to another tenant.");
             }
 
-            if (account?.Scope == ProviderAccountScope.Library &&
-                !account.LibraryScopeId!.Equals(library.ScopeId, StringComparison.Ordinal))
-            {
-                throw new UnauthorizedAccessException("The provider account belongs to another library.");
-            }
-        }
-        else if (account?.Scope == ProviderAccountScope.Library)
-        {
-            throw new ArgumentException("A library-scoped account requires library context.", nameof(library));
         }
 
         if (deadline == default)

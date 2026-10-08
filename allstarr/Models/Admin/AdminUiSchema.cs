@@ -13,8 +13,8 @@ public sealed class AdminUiSchemaResponse
     [JsonPropertyName("activeBackend")]
     public string ActiveBackend { get; set; } = "Jellyfin";
 
-    [JsonPropertyName("providerAccountManagementMode")]
-    public string ProviderAccountManagementMode { get; set; } = "Hybrid";
+    [JsonPropertyName("listenersCanConnectOwnAccounts")]
+    public bool ListenersCanConnectOwnAccounts { get; set; } = true;
 
     [JsonPropertyName("providers")]
     public List<AdminUiProvider> Providers { get; set; } = [];

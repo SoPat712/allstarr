@@ -22,20 +22,20 @@ public sealed partial class ProviderAccountsController : ControllerBase
     private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
     private readonly EncryptedSecretStore _secretStore;
     private readonly IApplicationCache _cache;
-    private readonly ProviderAccountManagementMode _managementMode;
+    private readonly ProviderAccountOptions _accountOptions;
     private readonly IProviderRegistry? _providerRegistry;
 
     public ProviderAccountsController(
         IDbContextFactory<AllstarrDbContext> contextFactory,
         EncryptedSecretStore secretStore,
         IApplicationCache cache,
-        ProviderAccountManagementOptions managementOptions,
+        ProviderAccountOptions managementOptions,
         IProviderRegistry? providerRegistry = null)
     {
         _contextFactory = contextFactory;
         _secretStore = secretStore;
         _cache = cache;
-        _managementMode = managementOptions.ParseManagementMode();
+        _accountOptions = managementOptions;
         _providerRegistry = providerRegistry;
     }
 
@@ -53,7 +53,9 @@ public sealed partial class ProviderAccountsController : ControllerBase
         }
 
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        var query = ApplyManagementScope(context.ProviderAccounts.AsNoTracking(), session);
+        var query = CanManageAllAccounts(session)
+            ? context.ProviderAccounts.AsNoTracking()
+            : context.ProviderAccounts.AsNoTracking().AvailableTo(session.TenantId, session.AllstarrUserId);
 
         var accounts = await query
             .OrderBy(item => item.ProviderId)
@@ -86,14 +88,14 @@ public sealed partial class ProviderAccountsController : ControllerBase
                 .ToListAsync(cancellationToken)
             : [];
         var configurations = await ReadAccountConfigurationsAsync(
-            accounts.Where(account => account.SecretReferenceId.HasValue &&
+            accounts.Where(account => CanManageAccount(account, session) && account.SecretReferenceId.HasValue &&
                                       secrets.TryGetValue(account.SecretReferenceId.Value, out var secret) &&
                                       !secret.RevokedAt.HasValue)
                 .ToList(),
             cancellationToken);
         return Ok(new
         {
-            managementMode = _managementMode.ToString(),
+            listenersCanConnectOwnAccounts = _accountOptions.ListenersCanConnectOwnAccounts,
             audienceUsers,
             accounts = accounts.Select(account => AccountResponse(
                 account,
@@ -104,7 +106,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
                 account.OwnerUserId.HasValue ? users.GetValueOrDefault(account.OwnerUserId.Value) : null,
                 account.CreatedByUserId.HasValue ? users.GetValueOrDefault(account.CreatedByUserId.Value) : null,
                 configurations.GetValueOrDefault(account.Id),
-                CanChangeAudience(account, session)))
+                CanChangeAudience(account, session),
+                CanManageAccount(account, session)))
         });
     }
 
@@ -122,6 +125,12 @@ public sealed partial class ProviderAccountsController : ControllerBase
         {
             return accessError;
         }
+
+        if (!session.IsAdministrator && !_accountOptions.ListenersCanConnectOwnAccounts)
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                error = "An administrator has turned off new Personal account connections."
+            });
 
         if (!TryNormalizeRequest(
                 request,
@@ -148,8 +157,6 @@ public sealed partial class ProviderAccountsController : ControllerBase
             CreatedByUserId = session.AllstarrUserId,
             ProviderId = normalized.ProviderId,
             DisplayName = normalized.DisplayName,
-            Scope = normalized.Scope,
-            LibraryScopeId = normalized.LibraryScopeId,
             Enabled = false,
             CreatedAt = now,
             UpdatedAt = now
@@ -388,15 +395,9 @@ public sealed partial class ProviderAccountsController : ControllerBase
     {
         if (!TryGetSession(out var session, out var error)) return error!;
         if (GetManagementAccessError(session) is { } accessError) return accessError;
-        if (!Enum.TryParse<ProviderAccountScope>(request.Scope, true, out var scope) || !Enum.IsDefined(scope))
-            return BadRequest(new { error = "Audience must be Private, Global, or One library." });
-        if (!CanManageAllAccounts(session) &&
-            (scope == ProviderAccountScope.Library ||
-             request.OwnerUserId.HasValue && request.OwnerUserId != session.AllstarrUserId))
-            return BadRequest(new { error = "Choose Private or Global for your own connection." });
-        var libraryScopeId = string.IsNullOrWhiteSpace(request.LibraryScopeId) ? null : request.LibraryScopeId.Trim();
-        if (scope == ProviderAccountScope.Library && libraryScopeId == null)
-            return BadRequest(new { error = "Choose a library for this audience." });
+        if (!session.IsAdministrator) return ManagementForbidden();
+        if (!TryAccountScope(request.Scope, out var scope))
+            return BadRequest(new { error = "Choose Personal or Shared access." });
 
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
         var account = await ApplyManagementScope(context.ProviderAccounts, session)
@@ -411,7 +412,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             return Conflict(new { error = "The provider account changed. Reload and try again." });
 
         PlatformUserRecord? owner = null;
-        if (scope == ProviderAccountScope.User)
+        if (scope == ProviderAccountScope.Personal)
         {
             var ownerUserId = request.OwnerUserId ?? session.AllstarrUserId;
             var tenantId = account.TenantId ?? session.TenantId;
@@ -427,8 +428,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
         await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
         var targetTenantId = scope switch
         {
-            ProviderAccountScope.Global => null,
-            ProviderAccountScope.User => owner!.TenantId,
+            ProviderAccountScope.Shared => null,
+            ProviderAccountScope.Personal => owner!.TenantId,
             _ => account.TenantId ?? session.TenantId
         };
         if (account.SecretReferenceId.HasValue)
@@ -438,10 +439,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
                 new SecretAccessContext(account.TenantId, account.TenantId == null),
                 targetTenantId,
                 cancellationToken);
-        account.Scope = scope;
         account.TenantId = targetTenantId;
         account.OwnerUserId = owner?.Id;
-        account.LibraryScopeId = scope == ProviderAccountScope.Library ? libraryScopeId : null;
         account.UpdatedAt = DateTimeOffset.UtcNow;
         account.Revision++;
         AddAudit(context, session, "provider-account.audience-updated", "succeeded", new
@@ -449,8 +448,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             accountId = account.Id,
             account.ProviderId,
             audience = scope.ToString(),
-            account.OwnerUserId,
-            account.LibraryScopeId
+            account.OwnerUserId
         });
         await context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -505,80 +503,43 @@ public sealed partial class ProviderAccountsController : ControllerBase
             return false;
         }
 
-        if (!Enum.TryParse<ProviderAccountScope>(request.Scope, ignoreCase: true, out var scope) || !Enum.IsDefined(scope))
+        if (!TryAccountScope(request.Scope, out var scope))
         {
-            error = "Scope must be Global, User, or Library";
+            error = "Scope must be Personal or Shared";
             return false;
         }
-
-        Guid? tenantId;
-        Guid? ownerUserId;
-        string? libraryScopeId = request.LibraryScopeId?.Trim();
-        if (canManageAllAccounts)
+        if (!canManageAllAccounts && scope != ProviderAccountScope.Personal)
         {
-            tenantId = scope == ProviderAccountScope.Global ? null : request.TenantId ?? session.TenantId;
-            ownerUserId = scope == ProviderAccountScope.User ? request.OwnerUserId ?? session.AllstarrUserId : null;
-        }
-        else
-        {
-            if (scope is not (ProviderAccountScope.User or ProviderAccountScope.Global) ||
-                !session.TenantId.HasValue ||
-                !session.AllstarrUserId.HasValue)
-            {
-                error = "Users may create Private or Global connections under their own identity";
-                return false;
-            }
-
-            tenantId = scope == ProviderAccountScope.Global ? null : session.TenantId;
-            ownerUserId = scope == ProviderAccountScope.Global ? null : session.AllstarrUserId;
-            libraryScopeId = null;
-        }
-
-        if (scope is ProviderAccountScope.Global or ProviderAccountScope.User)
-        {
-            libraryScopeId = null;
-        }
-
-        if (scope != ProviderAccountScope.Global && !tenantId.HasValue)
-        {
-            error = "TenantId is required for non-global accounts";
+            error = "Only administrators can create Shared accounts";
             return false;
         }
-
-        if (scope == ProviderAccountScope.User && !ownerUserId.HasValue)
+        var tenantId = scope == ProviderAccountScope.Shared ? null : session.TenantId;
+        var ownerUserId = scope == ProviderAccountScope.Shared ? null
+            : canManageAllAccounts ? request.OwnerUserId ?? session.AllstarrUserId : session.AllstarrUserId;
+        if (scope == ProviderAccountScope.Personal && (!tenantId.HasValue || !ownerUserId.HasValue))
         {
-            error = "OwnerUserId is required for user accounts";
+            error = "A verified user is required for a Personal account";
             return false;
         }
-
-        if (scope == ProviderAccountScope.Library && string.IsNullOrWhiteSpace(libraryScopeId))
-        {
-            error = "LibraryScopeId is required for library accounts";
-            return false;
-        }
-
-        normalized = new NormalizedAccountRequest(
-            providerId,
-            displayName,
-            scope,
-            tenantId,
-            ownerUserId,
-            libraryScopeId);
+        normalized = new(providerId, displayName, scope, tenantId, ownerUserId);
         return true;
     }
+
+    private static bool TryAccountScope(string value, out ProviderAccountScope scope) =>
+        Enum.TryParse(value, true, out scope) && Enum.IsDefined(scope) &&
+        string.Equals(value.Trim(), scope.ToString(), StringComparison.OrdinalIgnoreCase);
 
     private async Task<string?> ValidateAccountScopeAsync(
         NormalizedAccountRequest request,
         CancellationToken cancellationToken)
     {
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        if (request.Scope == ProviderAccountScope.Global)
+        if (request.Scope == ProviderAccountScope.Shared)
         {
             return request.TenantId == null &&
-                   request.OwnerUserId == null &&
-                   request.LibraryScopeId == null
+                   request.OwnerUserId == null
                 ? null
-                : "Global accounts cannot have a tenant, owner, or library scope";
+                : "Shared accounts cannot have an owner or tenant";
         }
 
         if (!request.TenantId.HasValue ||
@@ -587,13 +548,6 @@ public sealed partial class ProviderAccountsController : ControllerBase
                 cancellationToken))
         {
             return "The selected tenant does not exist";
-        }
-
-        if (request.Scope == ProviderAccountScope.Library)
-        {
-            return request.OwnerUserId == null && !string.IsNullOrWhiteSpace(request.LibraryScopeId)
-                ? null
-                : "Library accounts require a library scope and cannot have a user owner";
         }
 
         if (!request.OwnerUserId.HasValue)
@@ -611,24 +565,17 @@ public sealed partial class ProviderAccountsController : ControllerBase
             : "The selected account owner is inactive or belongs to another tenant";
     }
 
-    private bool CanAccessManagement(AdminAuthSession session) =>
-        _managementMode != ProviderAccountManagementMode.AdminManaged || session.IsAdministrator;
+    private static bool CanManageAllAccounts(AdminAuthSession session) => session.IsAdministrator;
 
-    private bool CanManageAllAccounts(AdminAuthSession session) =>
-        session.IsAdministrator &&
-        _managementMode is ProviderAccountManagementMode.AdminManaged or ProviderAccountManagementMode.Hybrid;
+    private static bool CanManageAccount(ProviderAccountRecord account, AdminAuthSession session) =>
+        session.IsAdministrator || session.AllstarrUserId.HasValue &&
+        account.OwnerUserId == session.AllstarrUserId && account.TenantId == session.TenantId;
 
-    private bool CanChangeAudience(ProviderAccountRecord account, AdminAuthSession session) =>
-        CanManageAllAccounts(session) ||
-        session.AllstarrUserId.HasValue && account.CreatedByUserId == session.AllstarrUserId;
+    private static bool CanChangeAudience(ProviderAccountRecord account, AdminAuthSession session) =>
+        session.IsAdministrator;
 
     private IActionResult? GetManagementAccessError(AdminAuthSession session)
     {
-        if (!CanAccessManagement(session))
-        {
-            return ManagementForbidden();
-        }
-
         if (!CanManageAllAccounts(session) &&
             (!session.TenantId.HasValue || !session.AllstarrUserId.HasValue))
         {
@@ -682,22 +629,23 @@ public sealed partial class ProviderAccountsController : ControllerBase
         string? ownerDisplayName = null,
         string? creatorDisplayName = null,
         AccountConfigurationSummary? configuration = null,
-        bool canChangeAudience = false) => new
+        bool canChangeAudience = false,
+        bool canManage = true) => new
         {
             account.Id,
             account.ProviderId,
             displayName = FriendlyDisplayName(account),
-            sourceDisplayName = SourceDisplayName(account, creatorDisplayName),
+            sourceDisplayName = SourceDisplayName(account, canManage ? creatorDisplayName : null),
             scope = account.Scope.ToString(),
             account.TenantId,
             account.OwnerUserId,
             ownerDisplayName,
-            account.CreatedByUserId,
-            creatorDisplayName,
-            account.LibraryScopeId,
+            createdByUserId = canManage ? account.CreatedByUserId : null,
+            creatorDisplayName = canManage ? creatorDisplayName : null,
             account.Enabled,
             account.Revision,
             canChangeAudience,
+            canManage,
             configuration = configuration?.Values ?? new Dictionary<string, JsonElement>(),
             configuredFields = configuration?.ConfiguredFields ?? [],
             secret = new
@@ -792,7 +740,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
     }
 
     private static SecretAccessContext SecretAccess(ProviderAccountRecord account) =>
-        account.Scope == ProviderAccountScope.Global
+        account.Scope == ProviderAccountScope.Shared
             ? new SecretAccessContext(null, AllowGlobal: true)
             : new SecretAccessContext(account.TenantId);
 
@@ -828,7 +776,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             "spotify" => "Spotify",
             _ => account.ProviderId
         };
-        return account.Scope == ProviderAccountScope.User
+        return account.Scope == ProviderAccountScope.Personal
             ? $"My {provider} account"
             : $"Shared {provider} account";
     }
@@ -840,10 +788,9 @@ public sealed partial class ProviderAccountsController : ControllerBase
     {
         public string? ProviderId { get; set; }
         public string? DisplayName { get; set; }
-        public string Scope { get; set; } = nameof(ProviderAccountScope.User);
+        public string Scope { get; set; } = nameof(ProviderAccountScope.Personal);
         public Guid? TenantId { get; set; }
         public Guid? OwnerUserId { get; set; }
-        public string? LibraryScopeId { get; set; }
         public bool Enabled { get; set; } = true;
         public JsonElement? Secret { get; set; }
     }
@@ -856,9 +803,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
 
     public sealed class UpdateProviderAccountAudienceRequest
     {
-        public string Scope { get; set; } = nameof(ProviderAccountScope.User);
+        public string Scope { get; set; } = nameof(ProviderAccountScope.Personal);
         public Guid? OwnerUserId { get; set; }
-        public string? LibraryScopeId { get; set; }
         public long? ExpectedRevision { get; set; }
     }
 
@@ -872,6 +818,5 @@ public sealed partial class ProviderAccountsController : ControllerBase
         string DisplayName,
         ProviderAccountScope Scope,
         Guid? TenantId,
-        Guid? OwnerUserId,
-        string? LibraryScopeId);
+        Guid? OwnerUserId);
 }

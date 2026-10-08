@@ -83,7 +83,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         {
             ProviderId = "qobuz",
             DisplayName = "My Qobuz",
-            Scope = "User",
+            Scope = "Personal",
             TenantId = Guid.CreateVersion7(),
             OwnerUserId = _otherUserId,
             Secret = secret.RootElement.Clone()
@@ -96,7 +96,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         var account = await context.ProviderAccounts.SingleAsync();
         Assert.Equal(_tenantId, account.TenantId);
         Assert.Equal(_userId, account.OwnerUserId);
-        Assert.Equal(ProviderAccountScope.User, account.Scope);
+        Assert.Equal(ProviderAccountScope.Personal, account.Scope);
         Assert.True(account.Enabled);
         Assert.NotNull(account.SecretReferenceId);
         Assert.Single(await context.AuditEvents.ToListAsync());
@@ -136,7 +136,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
             {
                 ProviderId = "spotiflac-apple-music",
                 DisplayName = "Apple Music",
-                Scope = "User",
+                Scope = "Personal",
                 Secret = secret.RootElement.Clone()
             }));
         using var createdJson = JsonDocument.Parse(JsonSerializer.Serialize(created.Value));
@@ -223,7 +223,6 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
             ProviderId = "deezer",
             DisplayName = "Shared",
             Scope = "Library",
-            LibraryScopeId = "library"
         });
         var replace = await controller.ReplaceSecret(
             other.Id,
@@ -237,19 +236,19 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData(ProviderAccountManagementMode.AdminManaged)]
-    [InlineData(ProviderAccountManagementMode.Hybrid)]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task AdministratorControlModes_CanListCreateReplaceAndRevokeGlobalAccount(
-        ProviderAccountManagementMode mode)
+        bool allowConnections)
     {
-        var controller = Controller(Session(_userId, administrator: true), mode);
+        var controller = Controller(Session(_userId, administrator: true), allowConnections);
         using var secret = JsonDocument.Parse("""{"apiKey":"global-fixture"}""");
         var created = Assert.IsType<CreatedAtActionResult>(await controller.Create(
             new ProviderAccountsController.CreateProviderAccountRequest
             {
                 ProviderId = "lastfm",
                 DisplayName = "Shared Last.fm",
-                Scope = "Global",
+                Scope = "Shared",
                 Secret = secret.RootElement.Clone()
             }));
         using var createdJson = JsonDocument.Parse(JsonSerializer.Serialize(created.Value));
@@ -257,7 +256,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
 
         var listed = Assert.IsType<OkObjectResult>(await controller.List());
         using var listedJson = JsonDocument.Parse(JsonSerializer.Serialize(listed.Value));
-        Assert.Equal(mode.ToString(), listedJson.RootElement.GetProperty("managementMode").GetString());
+        Assert.Equal(allowConnections, listedJson.RootElement.GetProperty("listenersCanConnectOwnAccounts").GetBoolean());
         Assert.Single(listedJson.RootElement.GetProperty("accounts").EnumerateArray());
 
         using var replacement = JsonDocument.Parse("""{"apiKey":"updated-global-fixture"}""");
@@ -279,113 +278,46 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AdminManaged_RejectsEveryUserAccountOperation()
+    public async Task ConnectionsDisabled_BlocksCreationButPreservesExistingUseAndRemoval()
     {
-        var account = await CreateUserAccount(_userId, "deezer", "Managed by admin");
-        var controller = Controller(Session(_userId), ProviderAccountManagementMode.AdminManaged);
-        using var secret = JsonDocument.Parse("""{"token":"user-must-not-write"}""");
-
-        AssertForbidden(await controller.List());
-        AssertForbidden(await controller.Create(new ProviderAccountsController.CreateProviderAccountRequest
-        {
-            ProviderId = "qobuz",
-            DisplayName = "Blocked self-service",
-            Scope = "User",
-            Secret = secret.RootElement.Clone()
-        }));
-        AssertForbidden(await controller.ReplaceSecret(
-            account.Id,
-            new ProviderAccountsController.ReplaceProviderSecretRequest
-            {
-                Secret = secret.RootElement.Clone()
-            }));
-        AssertForbidden(await controller.Revoke(account.Id));
-        AssertForbidden(await controller.SetEnabled(account.Id, new() { Enabled = false }));
-        AssertForbidden(await controller.UpdateAudience(account.Id, new() { Scope = "Global" }));
-    }
-
-    [Theory]
-    [InlineData(ProviderAccountManagementMode.UserManaged, "User")]
-    [InlineData(ProviderAccountManagementMode.Hybrid, "User")]
-    [InlineData(ProviderAccountManagementMode.UserManaged, "Global")]
-    [InlineData(ProviderAccountManagementMode.Hybrid, "Global")]
-    public async Task SelfServiceModes_UserCanListCreateReplaceAndRevokeOwnAccount(
-        ProviderAccountManagementMode mode, string scope)
-    {
-        var controller = Controller(Session(_userId), mode);
-        using var secret = JsonDocument.Parse("""{"token":"user-owned"}""");
-        var created = Assert.IsType<CreatedAtActionResult>(await controller.Create(
-            new ProviderAccountsController.CreateProviderAccountRequest
-            {
-                ProviderId = "qobuz",
-                DisplayName = "My account",
-                Scope = scope,
-                TenantId = Guid.CreateVersion7(),
-                OwnerUserId = _otherUserId,
-                Secret = secret.RootElement.Clone()
-            }));
-        using var createdJson = JsonDocument.Parse(JsonSerializer.Serialize(created.Value));
-        var accountId = createdJson.RootElement.GetProperty("Id").GetGuid();
-
-        var listed = Assert.IsType<OkObjectResult>(await controller.List());
-        using var listedJson = JsonDocument.Parse(JsonSerializer.Serialize(listed.Value));
-        Assert.Equal(mode.ToString(), listedJson.RootElement.GetProperty("managementMode").GetString());
-        var account = Assert.Single(listedJson.RootElement.GetProperty("accounts").EnumerateArray());
-        Assert.Equal(scope, account.GetProperty("scope").GetString());
-        Assert.Equal(_userId, account.GetProperty("CreatedByUserId").GetGuid());
-        Assert.True(account.GetProperty("canChangeAudience").GetBoolean());
-        if (scope == "User")
-        {
-            Assert.Equal(_tenantId, account.GetProperty("TenantId").GetGuid());
-            Assert.Equal(_userId, account.GetProperty("OwnerUserId").GetGuid());
-        }
-        else
-        {
-            Assert.Equal(JsonValueKind.Null, account.GetProperty("TenantId").ValueKind);
-            Assert.Equal(JsonValueKind.Null, account.GetProperty("OwnerUserId").ValueKind);
-        }
-
-        using var replacement = JsonDocument.Parse("""{"token":"user-owned-updated"}""");
-        Assert.IsType<OkObjectResult>(await controller.ReplaceSecret(
-            accountId,
-            new ProviderAccountsController.ReplaceProviderSecretRequest
-            {
-                Secret = replacement.RootElement.Clone()
-            }));
-        Assert.IsType<NoContentResult>(await controller.Revoke(accountId));
+        var account = await CreateUserAccount(_userId, "deezer", "Personal");
+        var controller = Controller(Session(_userId), false);
+        Assert.IsType<OkObjectResult>(await controller.List());
+        AssertForbidden(await controller.Create(new() { ProviderId = "qobuz", DisplayName = "New account" }));
+        var principal = new AllstarrPrincipal(_tenantId, _userId, "Jellyfin", "fixture", "a", "A", false);
+        Assert.Equal(account.Id, (await new ProviderAccountResolver(_factory).ResolveAsync(new(principal, "deezer", "streaming")))!.Account.Id);
+        Assert.IsType<NoContentResult>(await controller.Revoke(account.Id));
     }
 
     [Fact]
-    public async Task UserManaged_AdministratorCannotManageAnotherUsersAccount()
+    public async Task Listener_CanManageOwnPersonalAccountButCannotCreateSharedOrChangeAudience()
     {
-        var own = await CreateUserAccount(_userId, "deezer", "Administrator personal account");
-        var other = await CreateUserAccount(_otherUserId, "qobuz", "Other user account");
-        var controller = Controller(
-            Session(_userId, administrator: true),
-            ProviderAccountManagementMode.UserManaged);
+        var account = await CreateUserAccount(_userId, "qobuz", "Personal");
+        var controller = Controller(Session(_userId));
+        using var secret = JsonDocument.Parse("""{"token":"replacement"}""");
+        Assert.IsType<OkObjectResult>(await controller.ReplaceSecret(account.Id, new() { Secret = secret.RootElement.Clone() }));
+        Assert.IsType<BadRequestObjectResult>(await controller.Create(new() { ProviderId = "qobuz", DisplayName = "Shared", Scope = "Shared" }));
+        AssertForbidden(await controller.UpdateAudience(account.Id, new() { Scope = "Shared" }));
+        using var list = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await controller.List()).Value));
+        var row = Assert.Single(list.RootElement.GetProperty("accounts").EnumerateArray());
+        Assert.Equal("Personal", row.GetProperty("scope").GetString());
+        Assert.True(row.GetProperty("canManage").GetBoolean());
+        Assert.False(row.GetProperty("canChangeAudience").GetBoolean());
+        Assert.IsType<NoContentResult>(await controller.Revoke(account.Id));
+    }
 
-        var listed = Assert.IsType<OkObjectResult>(await controller.List());
-        using var listedJson = JsonDocument.Parse(JsonSerializer.Serialize(listed.Value));
-        var listedAccount = Assert.Single(listedJson.RootElement.GetProperty("accounts").EnumerateArray());
-        Assert.Equal(own.Id, listedAccount.GetProperty("Id").GetGuid());
-
-        var global = await controller.Create(new ProviderAccountsController.CreateProviderAccountRequest
-        {
-            ProviderId = "lastfm",
-            DisplayName = "Self-connected shared account",
-            Scope = "Global"
-        });
-        Assert.IsType<CreatedAtActionResult>(global);
-
-        using var replacement = JsonDocument.Parse("""{"token":"must-not-cross-user-boundary"}""");
-        Assert.IsType<NotFoundResult>(await controller.ReplaceSecret(
-            other.Id,
-            new ProviderAccountsController.ReplaceProviderSecretRequest
-            {
-                Secret = replacement.RootElement.Clone()
-            }));
-        Assert.IsType<NotFoundResult>(await controller.Revoke(other.Id));
-        Assert.IsType<NoContentResult>(await controller.Revoke(own.Id));
+    [Fact]
+    public async Task Administrator_CanManageOtherAccountsButCannotUseTheirPersonalCredentials()
+    {
+        var other = await CreateUserAccount(_otherUserId, "qobuz", "Other personal account");
+        var controller = Controller(Session(_userId, administrator: true), false);
+        Assert.IsType<OkObjectResult>(await controller.List());
+        var actor = new AllstarrPrincipal(_tenantId, _userId, "Jellyfin", "fixture", "admin", "Admin", true);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => new ProviderAccountResolver(_factory)
+            .ResolveAsync(new(actor, "qobuz", "streaming", other.Id)));
+        using var secret = JsonDocument.Parse("""{"token":"admin-managed"}""");
+        Assert.IsType<OkObjectResult>(await controller.ReplaceSecret(other.Id, new() { Secret = secret.RootElement.Clone() }));
+        Assert.IsType<NoContentResult>(await controller.Revoke(other.Id));
     }
 
     [Fact]
@@ -419,7 +351,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         {
             ProviderId = "deezer",
             DisplayName = "Invalid cross-tenant account",
-            Scope = "User",
+            Scope = "Personal",
             TenantId = _tenantId,
             OwnerUserId = crossTenantUserId
         });
@@ -442,7 +374,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
             account.Id,
             new ProviderAccountsController.UpdateProviderAccountAudienceRequest
             {
-                Scope = "User",
+                Scope = "Personal",
                 OwnerUserId = _otherUserId,
                 ExpectedRevision = account.Revision
             }));
@@ -466,7 +398,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
             {
                 ProviderId = "spotify",
                 DisplayName = "Shared Spotify",
-                Scope = "Global",
+                Scope = "Shared",
                 Secret = secret.RootElement.Clone()
             }));
         ProviderAccountRecord account;
@@ -478,7 +410,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
             account.Id,
             new ProviderAccountsController.UpdateProviderAccountAudienceRequest
             {
-                Scope = "User",
+                Scope = "Personal",
                 OwnerUserId = _userId,
                 ExpectedRevision = account.Revision
             }));
@@ -492,91 +424,52 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
             new SecretAccessContext(null, AllowGlobal: true)));
     }
 
-    [Theory]
-    [InlineData(ProviderAccountManagementMode.UserManaged)]
-    [InlineData(ProviderAccountManagementMode.Hybrid)]
-    public async Task UserSharing_RoundTripsWithoutSharingSecretsOrPersonalData(ProviderAccountManagementMode mode)
+    [Fact]
+    public async Task AdministratorSharing_PreservesOwnerIsolationAndExposesOnlySafeSharedDescriptions()
     {
-        var account = await CreateUserAccount(_userId, "qobuz", "My connection");
-        var owner = Controller(Session(_userId), mode);
-        var other = Controller(Session(_otherUserId), mode);
-        var resolver = new ProviderAccountResolver(_factory, new ProviderPolicyOptions());
-        ProviderAccountResolutionRequest Request(Guid user, string capability, Guid? selected = null) => new(
-            new AllstarrPrincipal(_tenantId, user, "Jellyfin", "fixture", user.ToString(), "Listener", false),
-            "qobuz", capability, selected);
-
-        Assert.Null(await resolver.ResolveAsync(Request(_otherUserId, "streaming")));
-        Assert.IsType<OkObjectResult>(await owner.UpdateAudience(account.Id, new()
-        {
-            Scope = "Global",
-            ExpectedRevision = account.Revision
-        }));
-        Assert.Equal(account.Id, (await resolver.ResolveAsync(Request(_otherUserId, "streaming")))?.Account.Id);
-        Assert.Equal(account.Id, (await resolver.ResolveAsync(Request(_userId, "playlist")))?.Account.Id);
-        Assert.Null(await resolver.ResolveAsync(Request(_otherUserId, "playlist")));
-        Assert.Null(await resolver.ResolveAsync(Request(_otherUserId, "scrobbling")));
-        Assert.Null(await resolver.ResolveAsync(Request(_otherUserId, "favorites")));
-        Assert.Null(await resolver.ResolveAsync(Request(_otherUserId, "personal-library")));
-        var noSharing = new ProviderAccountResolver(_factory, new ProviderPolicyOptions { AllowGlobalAccounts = false });
-        Assert.Null(await noSharing.ResolveAsync(Request(_otherUserId, "streaming")));
-        Assert.Null(await noSharing.ResolveAsync(Request(_userId, "playlist")));
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            resolver.ResolveAsync(Request(_otherUserId, "playlist", account.Id)));
-
-        var listed = Assert.IsType<OkObjectResult>(await owner.List());
-        using var payload = JsonDocument.Parse(JsonSerializer.Serialize(listed.Value));
-        Assert.True(Assert.Single(payload.RootElement.GetProperty("accounts").EnumerateArray())
-            .GetProperty("canChangeAudience").GetBoolean());
-        Assert.DoesNotContain("\"encrypted\"", payload.RootElement.GetRawText(), StringComparison.Ordinal);
-        using var otherPayload = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await other.List()).Value));
-        Assert.Empty(otherPayload.RootElement.GetProperty("accounts").EnumerateArray());
-        using var replacement = JsonDocument.Parse("""{"token":"not-the-owner"}""");
-        Assert.IsType<NotFoundResult>(await other.ReplaceSecret(account.Id, new() { Secret = replacement.RootElement.Clone() }));
-        Assert.IsType<NotFoundResult>(await other.SetEnabled(account.Id, new() { Enabled = false }));
-        Assert.IsType<NotFoundResult>(await other.Revoke(account.Id));
-        Assert.IsType<NotFoundResult>(await other.UpdateAudience(account.Id, new() { Scope = "User" }));
-        Assert.IsType<BadRequestObjectResult>(await owner.UpdateAudience(account.Id, new() { Scope = "User", OwnerUserId = _otherUserId }));
-        Assert.IsType<BadRequestObjectResult>(await owner.UpdateAudience(account.Id, new() { Scope = "Library", LibraryScopeId = "music" }));
-        Assert.IsType<ConflictObjectResult>(await owner.UpdateAudience(account.Id, new() { Scope = "User", ExpectedRevision = account.Revision }));
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            _secretStore.OpenAsync(account.SecretReferenceId!.Value, new SecretAccessContext(_tenantId)));
-        using (var sharedSecret = await _secretStore.OpenAsync(account.SecretReferenceId!.Value, new SecretAccessContext(null, AllowGlobal: true)))
-            Assert.Contains("secretReferenceFixture", sharedSecret.ReadUtf8(), StringComparison.Ordinal);
-
-        Assert.IsType<OkObjectResult>(await owner.SetEnabled(account.Id, new() { Enabled = false }));
-        Assert.Null(await resolver.ResolveAsync(Request(_otherUserId, "streaming")));
-        Assert.IsType<OkObjectResult>(await owner.SetEnabled(account.Id, new() { Enabled = true }));
-
-        Assert.IsType<OkObjectResult>(await owner.UpdateAudience(account.Id, new()
-        {
-            Scope = "User",
-            ExpectedRevision = account.Revision + 3
-        }));
-        Assert.Null(await resolver.ResolveAsync(Request(_otherUserId, "streaming")));
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            resolver.ResolveAsync(Request(_otherUserId, "streaming", account.Id)));
-        using var privateSecret = await _secretStore.OpenAsync(account.SecretReferenceId.Value, new SecretAccessContext(_tenantId));
-        Assert.Contains("secretReferenceFixture", privateSecret.ReadUtf8(), StringComparison.Ordinal);
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            _secretStore.OpenAsync(account.SecretReferenceId.Value, new SecretAccessContext(null, AllowGlobal: true)));
+        var account = await CreateUserAccount(_userId, "qobuz", "Personal connection");
+        var admin = Controller(Session(_userId, administrator: true));
+        var listener = Controller(Session(_otherUserId));
+        var resolver = new ProviderAccountResolver(_factory);
+        var actor = new AllstarrPrincipal(_tenantId, _otherUserId, "Jellyfin", "fixture", "b", "B", false);
+        Assert.Null(await resolver.ResolveAsync(new(actor, "qobuz", "streaming")));
+        Assert.IsType<OkObjectResult>(await admin.UpdateAudience(account.Id, new() { Scope = "Shared", ExpectedRevision = account.Revision }));
+        Assert.Equal(account.Id, (await resolver.ResolveAsync(new(actor, "qobuz", "playlist")))!.Account.Id);
+        using var listed = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await listener.List()).Value));
+        var row = Assert.Single(listed.RootElement.GetProperty("accounts").EnumerateArray());
+        Assert.Equal("Shared", row.GetProperty("scope").GetString());
+        Assert.False(row.GetProperty("canManage").GetBoolean());
+        Assert.False(row.GetProperty("canChangeAudience").GetBoolean());
+        Assert.Empty(row.GetProperty("configuration").EnumerateObject());
+        Assert.DoesNotContain("encrypted", row.GetRawText(), StringComparison.Ordinal);
+        using var secret = JsonDocument.Parse("""{"token":"forbidden"}""");
+        Assert.IsType<NotFoundResult>(await listener.ReplaceSecret(account.Id, new() { Secret = secret.RootElement.Clone() }));
+        Assert.IsType<NotFoundResult>(await listener.SetEnabled(account.Id, new() { Enabled = false }));
+        Assert.IsType<NotFoundResult>(await listener.Revoke(account.Id));
+        AssertForbidden(await listener.UpdateAudience(account.Id, new() { Scope = "Personal" }));
+        Assert.IsType<ConflictObjectResult>(await admin.UpdateAudience(account.Id, new() { Scope = "Personal", ExpectedRevision = account.Revision }));
+        using (var shared = await _secretStore.OpenAsync(account.SecretReferenceId!.Value, new(null, AllowGlobal: true)))
+            Assert.Contains("secretReferenceFixture", shared.ReadUtf8(), StringComparison.Ordinal);
+        Assert.IsType<OkObjectResult>(await admin.UpdateAudience(account.Id, new() { Scope = "Personal", OwnerUserId = _userId, ExpectedRevision = account.Revision + 1 }));
+        Assert.Null(await resolver.ResolveAsync(new(actor, "qobuz", "streaming")));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => resolver.ResolveAsync(new(actor, "qobuz", "streaming", account.Id)));
     }
 
     [Fact]
-    public async Task SharedLastFmAccount_OnlyCreatorCanAuthenticateAndReadPersonalStatus()
+    public async Task PersonalLastFmAccount_OnlyOwnerCanAuthenticateAndReadPersonalStatus()
     {
         var account = await CreateUserAccount(_userId, "lastfm", "Shared Last.fm");
-        Assert.IsType<OkObjectResult>(await Controller(Session(_userId)).UpdateAudience(account.Id, new() { Scope = "Global" }));
         using var handler = new LastFmSessionHandler();
         using var http = new HttpClient(handler);
         var clients = new Mock<IHttpClientFactory>();
         clients.Setup(item => item.CreateClient(It.IsAny<string>())).Returns(http);
-        ScrobblingAdminController Scrobbling(Guid user, ProviderAccountManagementMode mode = ProviderAccountManagementMode.Hybrid) => new(
+        ScrobblingAdminController Scrobbling(Guid user) => new(
             Options.Create(new ScrobblingSettings
             {
                 LastFm = new LastFmSettings { ApiKey = "fixture-key", SharedSecret = "fixture-secret" }
             }), clients.Object, NullLogger<ScrobblingAdminController>.Instance,
             _factory, new EncryptedProviderAccountSecretAccessor(_secretStore), _secretStore,
-            new ProviderAccountManagementOptions { ManagementMode = mode.ToString() })
+            new ProviderAccountOptions { ListenersCanConnectOwnAccounts = false })
         {
             ControllerContext = Controller(Session(user)).ControllerContext
         };
@@ -587,7 +480,6 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
             Password = "fixture-password"
         };
         Assert.IsType<NotFoundObjectResult>(await Scrobbling(_otherUserId).AuthenticateLastFm(request));
-        AssertForbidden(await Scrobbling(_userId, ProviderAccountManagementMode.AdminManaged).AuthenticateLastFm(request));
         Assert.Equal(0, handler.Calls);
         var owner = Scrobbling(_userId);
         var authenticated = Assert.IsType<OkObjectResult>(await owner.AuthenticateLastFm(request));
@@ -618,10 +510,10 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
     {
         var account = await CreateUserAccount(_userId, "qobuz", "Assigned connection");
         Assert.IsType<OkObjectResult>(await Controller(Session(_userId, administrator: true)).UpdateAudience(account.Id,
-            new() { Scope = "User", OwnerUserId = _otherUserId }));
+            new() { Scope = "Personal", OwnerUserId = _otherUserId }));
         var recipient = Controller(Session(_otherUserId));
-        AssertForbidden(await recipient.UpdateAudience(account.Id, new() { Scope = "Global" }));
-        Assert.IsType<NotFoundResult>(await Controller(Session(_userId)).UpdateAudience(account.Id, new() { Scope = "Global" }));
+        AssertForbidden(await recipient.UpdateAudience(account.Id, new() { Scope = "Shared" }));
+        AssertForbidden(await Controller(Session(_userId)).UpdateAudience(account.Id, new() { Scope = "Shared" }));
         using var payload = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await recipient.List()).Value));
         Assert.False(Assert.Single(payload.RootElement.GetProperty("accounts").EnumerateArray())
             .GetProperty("canChangeAudience").GetBoolean());
@@ -643,7 +535,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
 
     private ProviderAccountsController Controller(
         AdminAuthSession session,
-        ProviderAccountManagementMode mode = ProviderAccountManagementMode.Hybrid,
+        bool allowConnections = true,
         IProviderRegistry? providerRegistry = null)
     {
         var context = new DefaultHttpContext();
@@ -653,7 +545,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
             _factory,
             _secretStore,
             _cache,
-            new ProviderAccountManagementOptions { ManagementMode = mode.ToString() },
+            new ProviderAccountOptions { ListenersCanConnectOwnAccounts = allowConnections },
             providerRegistry)
         {
             ControllerContext = new ControllerContext { HttpContext = context }
@@ -720,7 +612,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
             {
                 ProviderId = provider,
                 DisplayName = name,
-                Scope = "User",
+                Scope = "Personal",
                 Secret = secret.RootElement.Clone()
             }));
         using var payload = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));

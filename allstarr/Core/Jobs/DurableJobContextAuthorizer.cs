@@ -42,25 +42,10 @@ public sealed class DurableJobContextAuthorizer
 {
     private const int SnapshotVersion = 1;
 
-    private static readonly IReadOnlySet<string> PersonalCapabilities =
-        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "playlist",
-            "personal-library",
-            "scrobbling",
-            "favorites"
-        };
-
     private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
-    private readonly ProviderPolicyOptions _providerPolicy;
 
-    public DurableJobContextAuthorizer(
-        IDbContextFactory<AllstarrDbContext> contextFactory,
-        ProviderPolicyOptions providerPolicy)
-    {
+    public DurableJobContextAuthorizer(IDbContextFactory<AllstarrDbContext> contextFactory) =>
         _contextFactory = contextFactory;
-        _providerPolicy = providerPolicy;
-    }
 
     public async Task<DurableJobSavedContext> AuthorizeEnqueueAsync(
         Guid? tenantId,
@@ -227,16 +212,7 @@ public sealed class DurableJobContextAuthorizer
                 null);
         }
 
-        var authorizationRule = account.Scope switch
-        {
-            ProviderAccountScope.User => "user_account",
-            ProviderAccountScope.Library => "library_account",
-            ProviderAccountScope.Global when
-                capability!.Equals("download", StringComparison.OrdinalIgnoreCase) &&
-                _providerPolicy.SharedDownloaderAccountId == account.Id => "policy_shared_downloader",
-            ProviderAccountScope.Global => "global_account",
-            _ => throw new InvalidOperationException("Unsupported provider account scope.")
-        };
+        var authorizationRule = account.OwnerUserId.HasValue ? "personal_account" : "shared_account";
         return new DurableJobPolicySnapshot(
             SnapshotVersion,
             authorizationRule,
@@ -257,21 +233,9 @@ public sealed class DurableJobContextAuthorizer
             return false;
         }
 
-        return account.Scope switch
-        {
-            ProviderAccountScope.User =>
-                account.TenantId == tenantId && account.OwnerUserId == ownerUserId,
-            ProviderAccountScope.Library =>
-                account.TenantId == tenantId &&
-                !string.IsNullOrWhiteSpace(libraryScopeId) &&
-                string.Equals(account.LibraryScopeId, libraryScopeId, StringComparison.Ordinal),
-            ProviderAccountScope.Global =>
-                account.TenantId == null &&
-                _providerPolicy.AllowGlobalAccounts &&
-                (!PersonalCapabilities.Contains(capability) ||
-                 _providerPolicy.AllowGlobalPersonalAccounts),
-            _ => false
-        };
+        return account.OwnerUserId.HasValue
+            ? account.TenantId == tenantId && account.OwnerUserId == ownerUserId
+            : account.TenantId == null;
     }
 
     private static string? NormalizeLibraryScope(string? value)

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Operations;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Secrets;
 using allstarr.Core.Storage;
@@ -44,6 +45,93 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
             CreatedAt = DateTimeOffset.UtcNow
         });
         await context.SaveChangesAsync();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AccountLease_RequiresCurrentOwnerRevisionAndExactPurpose(bool shared)
+    {
+        var store = CreateStore();
+        var accountId = Guid.CreateVersion7();
+        var owner = Guid.CreateVersion7();
+        var otherOwner = Guid.CreateVersion7();
+        Guid? accountTenant = shared ? null : _tenantId;
+        Guid? accountOwner = shared ? null : owner;
+        var secret = await store.StoreAsync(accountTenant,
+            $"provider-account:fixture:{accountId:N}", Encoding.UTF8.GetBytes("owned-fixture"));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            foreach (var id in new[] { owner, otherOwner })
+                db.Users.Add(new()
+                {
+                    Id = id,
+                    TenantId = _tenantId,
+                    DisplayName = "Listener",
+                    Status = PlatformUserStatus.Active,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    UpdatedAt = DateTimeOffset.UtcNow
+                });
+            db.ProviderAccounts.Add(new()
+            {
+                Id = accountId,
+                TenantId = accountTenant,
+                OwnerUserId = accountOwner,
+                ProviderId = "fixture",
+                DisplayName = "Fixture",
+                Enabled = true,
+                Revision = 1,
+                SecretReferenceId = secret.Id,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        ProviderAccountContext Snapshot(long revision = 1, Guid? secretId = null,
+            string provider = "fixture", Guid? ownerOverride = null) => new(
+                accountId, provider, shared ? ProviderAccountScope.Shared : ProviderAccountScope.Personal,
+                revision, tenantId: accountTenant, ownerUserId: ownerOverride ?? accountOwner,
+                secretReferenceId: secretId ?? secret.Id);
+        using (var lease = await store.OpenProviderAccountAsync(Snapshot()))
+            Assert.Equal("owned-fixture", lease.ReadUtf8());
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.OpenProviderAccountAsync(Snapshot(revision: 0)));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.OpenProviderAccountAsync(Snapshot(provider: "other")));
+        if (!shared)
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.OpenProviderAccountAsync(Snapshot(ownerOverride: otherOwner)));
+        var foreignSecret = await store.StoreAsync(accountTenant,
+            $"provider-account:fixture:{Guid.CreateVersion7():N}", Encoding.UTF8.GetBytes("foreign-fixture"));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.OpenProviderAccountAsync(Snapshot(secretId: foreignSecret.Id)));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var account = await db.ProviderAccounts.SingleAsync();
+            account.SecretReferenceId = foreignSecret.Id;
+            await db.SaveChangesAsync();
+        }
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.OpenProviderAccountAsync(Snapshot(secretId: foreignSecret.Id)));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var account = await db.ProviderAccounts.SingleAsync();
+            account.SecretReferenceId = secret.Id;
+            account.Revision++;
+            await db.SaveChangesAsync();
+        }
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.OpenProviderAccountAsync(Snapshot()));
+        using (var lease = await store.OpenProviderAccountAsync(Snapshot(revision: 2)))
+            Assert.Equal("owned-fixture", lease.ReadUtf8());
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var account = await db.ProviderAccounts.SingleAsync();
+            account.Enabled = false;
+            await db.SaveChangesAsync();
+        }
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.OpenProviderAccountAsync(Snapshot(revision: 2)));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.ProviderAccounts.SingleAsync()).Enabled = true;
+            await db.SaveChangesAsync();
+        }
+        await store.RevokeAsync(secret.Id, new SecretAccessContext(accountTenant, AllowGlobal: shared));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.OpenProviderAccountAsync(Snapshot(revision: 2)));
     }
 
     [Fact]

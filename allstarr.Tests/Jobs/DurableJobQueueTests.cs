@@ -270,7 +270,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         Assert.NotNull(snapshot);
         Assert.Equal("deezer", snapshot.ProviderId);
         Assert.Equal("download", snapshot.Capability);
-        Assert.Equal("user_account", snapshot.AuthorizationRule);
+        Assert.Equal("personal_account", snapshot.AuthorizationRule);
 
         var claim = await _queue.ClaimNextAsync("worker-a");
         Assert.NotNull(claim);
@@ -683,7 +683,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             OwnerUserId = ownerUserId,
             ProviderId = providerId,
             DisplayName = $"{providerId} fixture",
-            Scope = ProviderAccountScope.User,
             Enabled = true,
             CreatedAt = _clock.UtcNow,
             UpdatedAt = _clock.UtcNow

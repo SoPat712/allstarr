@@ -41,7 +41,7 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
             CreatedAt = now,
             LastSeenAt = now
         });
-        db.ProviderAccounts.Add(new ProviderAccountRecord { Id = _account, TenantId = _tenant, OwnerUserId = _user, ProviderId = "spotify", DisplayName = "Source", Scope = ProviderAccountScope.User, Enabled = true, CreatedAt = now, UpdatedAt = now });
+        db.ProviderAccounts.Add(new ProviderAccountRecord { Id = _account, TenantId = _tenant, OwnerUserId = _user, ProviderId = "spotify", DisplayName = "Source", Enabled = true, CreatedAt = now, UpdatedAt = now });
         db.JobSchedules.Add(NewSchedule(now));
         db.PlaylistLinks.Add(new PlaylistLinkRecord
         {

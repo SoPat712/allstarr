@@ -98,8 +98,7 @@ public sealed class DurableJobQueue
         _payloadPolicy = payloadPolicy;
         _clock = clock;
         _contextAuthorizer = contextAuthorizer ?? new DurableJobContextAuthorizer(
-            contextFactory,
-            new ProviderPolicyOptions());
+            contextFactory);
     }
 
     public async Task<DurableJobEnqueueResult> EnqueueAsync<T>(

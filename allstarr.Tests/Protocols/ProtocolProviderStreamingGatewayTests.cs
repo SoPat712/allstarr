@@ -480,9 +480,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         metadata.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
         var requiredScopes = new[]
         {
-            ProviderAccountScope.Global,
-            ProviderAccountScope.User,
-            ProviderAccountScope.Library
+            ProviderAccountScope.Shared,
+            ProviderAccountScope.Personal
         };
         var registry = new ProviderRegistry(
         [

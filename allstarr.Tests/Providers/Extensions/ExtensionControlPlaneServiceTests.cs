@@ -230,7 +230,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         Assert.True(registry.TryGet(package.ExtensionId, out var descriptor));
         Assert.Equal(ProviderOrigin.Extension, descriptor!.Origin);
         Assert.Equal(ProviderAccountRequirement.Required, descriptor.Capabilities.Single().AccountRequirement);
-        Assert.Contains(ProviderAccountScope.User, descriptor.Capabilities.Single().AllowedAccountScopes);
+        Assert.Contains(ProviderAccountScope.Personal, descriptor.Capabilities.Single().AllowedAccountScopes);
         Assert.True(registry.TryGetCapability<IProviderMetadataCapability>(package.ExtensionId,
             ProviderCapabilityKind.Metadata, out _));
         var previous = package;
@@ -318,7 +318,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         var packageRoot = Path.Combine(_root, "extensions", ".staging", suffix);
         Directory.CreateDirectory(packageRoot);
         var manifest = new ExtensionSdkManifest("fixture-provider", "Fixture", version, "1", "index.js",
-            [new(ProviderCapabilityKind.Metadata, ["searchTracks", "getTrack"], [ProviderAccountScope.User])],
+            [new(ProviderCapabilityKind.Metadata, ["searchTracks", "getTrack"], [ProviderAccountScope.Personal])],
             [new(ExtensionPermissionKind.Network, "https://api.example.test/", true), new(ExtensionPermissionKind.Secret, "accountToken", true)]);
         File.WriteAllText(Path.Combine(packageRoot, "manifest.json"), JsonSerializer.Serialize(new
         {

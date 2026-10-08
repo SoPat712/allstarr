@@ -68,7 +68,7 @@
   let summaries = $state<ProviderSummary[]>([]);
   let measurements = $state<CtsMeasurement[]>([]);
   let config = $state<Record<string, unknown>>({});
-  let managementMode = $state("");
+  let listenersCanConnectOwnAccounts = $state(true);
   let loading = $state(true);
   let refreshing = $state(false);
   let error = $state("");
@@ -103,10 +103,8 @@
         left.name.localeCompare(right.name);
     }),
   );
-  const canManage = $derived(
-    managementMode !== "AdminManaged" || administrator,
-  );
-  const canManageAllAccounts = $derived(administrator && managementMode !== "UserManaged");
+  const canConnectAccounts = $derived(administrator || listenersCanConnectOwnAccounts);
+  const canManageAllAccounts = $derived(administrator);
 
   function provider(id: string) {
     return providers.find((item) => item.id.toLowerCase() === id.toLowerCase());
@@ -140,15 +138,15 @@
     if (results[0].status === "fulfilled") schema = results[0].value as UiSchema;
     if (results[1].status === "fulfilled") {
       const response = results[1].value as {
-        managementMode: string;
+        listenersCanConnectOwnAccounts?: boolean;
         audienceUsers?: { id: string; displayName: string }[];
         accounts: ProviderAccount[];
       };
       accounts = response.accounts;
       audienceUsers = response.audienceUsers ?? [];
-      managementMode = response.managementMode;
+      listenersCanConnectOwnAccounts = response.listenersCanConnectOwnAccounts ?? true;
     } else if (!administrator) {
-      managementMode = schema?.providerAccountManagementMode ?? "AdminManaged";
+      listenersCanConnectOwnAccounts = schema?.listenersCanConnectOwnAccounts ?? true;
     }
     if (administrator) {
       if (results[2]?.status === "fulfilled")
@@ -206,7 +204,7 @@
       provider.id.toLowerCase() === initialSource.toLowerCase());
     if (!item) return;
     consumedSourceLink = link;
-    if (initialConnect && mode === "accounts" && canManage) {
+    if (initialConnect && mode === "accounts" && canConnectAccounts) {
       connectProviderId = item.id;
       connectOpen = true;
       return;
@@ -383,7 +381,7 @@
         <div><p class="eyebrow">Provider-neutral services</p><h2>Services</h2><p>Capabilities describe what a Service can do. Latency appears after a health or click-to-stream check reports timing.</p></div>
         <div class="panel-heading-actions sources-heading-actions">
           <Button variant="secondary" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Refreshing…" : "Refresh"}</Button>
-          {#if canManage}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</Button>{/if}
+          {#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</Button>{/if}
         </div>
       </header>
       {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
@@ -440,8 +438,11 @@
     {#if mode === "accounts"}
     <section class="panel connections-panel">
       <header class="panel-heading connections-heading">
-        <div><p class="eyebrow">Encrypted account access</p><h2>Accounts</h2><p>{managementMode || schema.providerAccountManagementMode || "Managed"} · credentials are never returned to the browser.</p></div>
-        <span aria-label={`${accounts.length} account${accounts.length === 1 ? "" : "s"}`}>{accounts.length}</span>
+        <div><p class="eyebrow">Encrypted account access</p><h2>Accounts</h2><p>Personal accounts belong to one user; Shared accounts are available to the household. Credentials are never returned to the browser.</p></div>
+        <div class="panel-heading-actions sources-heading-actions">
+          <span aria-label={`${accounts.length} account${accounts.length === 1 ? "" : "s"}`}>{accounts.length}</span>
+          {#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</Button>{/if}
+        </div>
       </header>
       <div class="operational-table-scroll">
         <table class="operational-table accounts-table">
@@ -473,26 +474,28 @@
                 <td><Badge state={account.enabled ? "healthy" : "disabled"}>{account.enabled ? "Enabled" : "Disabled"}</Badge></td>
                 <td><Badge state={readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready</Badge>{#if cts} · <Badge state={cts.health === "healthy" ? "healthy" : "degraded"}>CTS {ctsMeasurementLabel(cts)}</Badge>{/if}</td>
                 <td>
+                  {#if account.canManage || account.canChangeAudience}
                   <DropdownMenu.Root>
                     <DropdownMenu.Trigger class="icon-button" disabled={Boolean(action)} aria-label={`Actions for ${account.displayName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
                     <DropdownMenu.Portal>
                       <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
-                        {#if account.canChangeAudience || canManageAllAccounts}
+                        {#if account.canChangeAudience}
                           <DropdownMenu.Item class="bits-menu-item" onSelect={() => manageAccess(account)}>Edit access</DropdownMenu.Item>
                         {/if}
-                        <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void toggle(account)}>{account.enabled ? "Disable" : "Enable"}</DropdownMenu.Item>
+                        {#if account.canManage}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void toggle(account)}>{account.enabled ? "Disable" : "Enable"}</DropdownMenu.Item>{/if}
                         <DropdownMenu.Separator />
-                        <DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action)} onSelect={() => { removal = account; removeOpen = true; }}>Remove</DropdownMenu.Item>
+                        {#if account.canManage}<DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action)} onSelect={() => { removal = account; removeOpen = true; }}>Remove</DropdownMenu.Item>{/if}
                       </DropdownMenu.Content>
                     </DropdownMenu.Portal>
                   </DropdownMenu.Root>
+                  {:else}<span class="credential-safety">Read only</span>{/if}
                 </td>
               </tr>
             {:else}
               <tr><td colspan="7"><div class="compact-empty connections-empty">
-                <strong>{canManage ? "No Source accounts yet" : "Accounts are administrator-managed"}</strong>
-                <p>{canManage ? "Connect an account to activate personal or shared Source capabilities." : "Available shared Sources appear without exposing credentials."}</p>
-                {#if canManage}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</Button>{/if}
+                <strong>No Source accounts yet</strong>
+                <p>Connect an account to activate Personal or Shared Source capabilities.</p>
+                {#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</Button>{/if}
               </div></td></tr>
             {/each}
           </tbody>
@@ -612,14 +615,14 @@
                             </div>
                           {/each}
                         </dl>
-                        <footer><Button onclick={() => configure(account)}>Edit configuration</Button></footer>
+                        {#if account.canManage}<footer><Button onclick={() => configure(account)}>Edit configuration</Button></footer>{/if}
                       </section>
                     {:else}
                       <p class="credential-safety">These settings are saved on an encrypted Source account. Connect one to configure them.</p>
                     {/each}
                   </div>
                   <div class="source-detail-actions">
-                    <Button disabled={!canManage} onclick={() => { connectProviderId = selectedSource!.id; detailOpen = false; connectOpen = true; }}>{sourceAccounts.length ? "Connect another account" : "Connect account"}</Button>
+                    {#if canConnectAccounts}<Button onclick={() => { connectProviderId = selectedSource!.id; detailOpen = false; connectOpen = true; }}>{sourceAccounts.length ? "Connect another account" : "Connect account"}</Button>{/if}
                   </div>
                 {/if}
                 {#if selectedSource.connectionKind === "operator_managed" && selectedSource.configSchema?.length}
@@ -658,12 +661,12 @@
             {:else if detailTab === "configuration" && selectedAccount}
               {@const capabilities = health.filter((item) => item.providerAccountId === selectedAccount?.id)}
               <div class="source-detail-actions">
-                <Button variant="secondary" disabled={Boolean(action)} onclick={() => void toggle(selectedAccount!)}>{selectedAccount.enabled ? "Disable" : "Enable"} account</Button>
-                <Button variant="secondary" disabled={!selectedAccount.enabled || Boolean(action)} onclick={() => void test(selectedAccount!)}>Test connection</Button>
-                {#if administrator && supportsPlaybackDiagnostic(capabilities)}
+                {#if selectedAccount.canManage}<Button variant="secondary" disabled={Boolean(action)} onclick={() => void toggle(selectedAccount!)}>{selectedAccount.enabled ? "Disable" : "Enable"} account</Button>
+                {#if administrator}<Button variant="secondary" disabled={!selectedAccount.enabled || Boolean(action)} onclick={() => void test(selectedAccount!)}>Test connection</Button>{/if}{/if}
+                {#if administrator && selectedAccount.canManage && selectedSource?.categories?.some((item) => ["streaming", "download"].includes(item.toLowerCase()))}
                   <Button variant="secondary" disabled={!selectedAccount.enabled || Boolean(action)} onclick={() => void measure(selectedAccount!)}>Measure CTS</Button>
                 {/if}
-                <Button onclick={() => configure(selectedAccount!)}>Edit configuration</Button>
+                {#if selectedAccount.canManage}<Button onclick={() => configure(selectedAccount!)}>Edit configuration</Button>{/if}
               </div>
               <div class="source-detail-capabilities">
                 {#each capabilities as capability}
@@ -672,7 +675,7 @@
                     <strong>{humanize(capability.capability)}</strong>
                     <Badge state={readinessClass(capability.ready, capability.health)}>{capability.ready ? "Ready" : humanize(capability.reasonCode || capability.configuration)}</Badge>
                     {#if result?.bars != null}<ConnectivityBars bars={result.healthy ?? result.success ? result.bars : 0} latency={result.latencyMs} />{/if}
-                    {#if capability.canTest}<Button variant="secondary" disabled={!selectedAccount.enabled || Boolean(action)} onclick={() => void test(selectedAccount!, capability.capability)}>Test</Button>{/if}
+                    {#if administrator && capability.canTest && selectedAccount.canManage}<Button variant="secondary" disabled={!selectedAccount.enabled || Boolean(action)} onclick={() => void test(selectedAccount!, capability.capability)}>Test</Button>{/if}
                   </span>
                 {/each}
               </div>
@@ -682,7 +685,7 @@
                 <div><dt>Owner</dt><dd>{selectedAccount.ownerDisplayName || "Current user"}</dd></div>
                 <div><dt>Scope</dt><dd>{selectedAccount.scope}</dd></div>
               </dl>
-              {#if selectedAccount.canChangeAudience || canManageAllAccounts}<Button onclick={() => manageAccess(selectedAccount!)}>Edit access</Button>{/if}
+              {#if selectedAccount.canChangeAudience}<Button onclick={() => manageAccess(selectedAccount!)}>Edit access</Button>{/if}
             {/if}
           </div>
         {/if}
@@ -690,10 +693,10 @@
     </Dialog.Portal>
   </Dialog.Root>
 
-  <ConnectSourceDialog bind:open={connectOpen} {providers} administrator={canManageAllAccounts} testConnection={administrator} initialProviderId={connectProviderId} onSaved={completed} />
-  <ConnectSourceDialog bind:open={configureOpen} {providers} administrator={canManageAllAccounts} testConnection={administrator} account={selectedAccount} onSaved={completed} />
+  <ConnectSourceDialog bind:open={connectOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} testConnection={administrator} initialProviderId={connectProviderId} onSaved={completed} />
+  <ConnectSourceDialog bind:open={configureOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} testConnection={administrator} account={selectedAccount} onSaved={completed} />
   <AppleDownloadDialog bind:open={appleDownloadOpen} />
-  <AccountAccessDialog bind:open={accessOpen} account={selectedAccount} administrator={canManageAllAccounts} users={audienceUsers} onSaved={completed} />
+  <AccountAccessDialog bind:open={accessOpen} account={selectedAccount} users={audienceUsers} onSaved={completed} />
 
   <ConfirmDialog
     bind:open={removeOpen}

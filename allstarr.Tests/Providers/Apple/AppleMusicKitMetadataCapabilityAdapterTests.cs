@@ -69,7 +69,7 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
         Assert.Equal([ProviderCapabilityKind.Metadata, ProviderCapabilityKind.Playlist],
             registration.Descriptor.Capabilities.Select(item => item.Capability));
         Assert.All(registration.Descriptor.Capabilities,
-            item => Assert.Equal([ProviderAccountScope.User], item.AllowedAccountScopes));
+            item => Assert.Equal([ProviderAccountScope.Personal], item.AllowedAccountScopes));
         Assert.Equal(2, registration.Implementations.Count);
         Assert.Same(metadata, registration.Implementations[0]);
         Assert.Same(playlist, registration.Implementations[1]);
@@ -135,7 +135,7 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
                 new("jellyfin", "backend", "principal")),
             "apple-musickit",
             new(Guid.Parse("33333333-3333-3333-3333-333333333333"), "apple-musickit",
-                ProviderAccountScope.User, 1, tenantId: tenant, ownerUserId: owner,
+                ProviderAccountScope.Personal, 1, tenantId: tenant, ownerUserId: owner,
                 secretReferenceId: Guid.Parse("44444444-4444-4444-4444-444444444444")),
             null,
             new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),

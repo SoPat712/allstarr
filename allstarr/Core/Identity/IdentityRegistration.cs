@@ -10,15 +10,10 @@ public static class IdentityRegistration
                            .Get<IdentityOptions>()
                        ?? new IdentityOptions();
         _ = identity.ParseMode();
-        var policy = configuration.GetSection(ProviderPolicyOptions.SectionName)
-                         .Get<ProviderPolicyOptions>()
-                     ?? new ProviderPolicyOptions();
-        var providerAccounts = configuration.GetSection(ProviderAccountManagementOptions.SectionName)
-                                   .Get<ProviderAccountManagementOptions>()
-                               ?? new ProviderAccountManagementOptions();
-        _ = providerAccounts.ParseManagementMode();
+        var providerAccounts = configuration.GetSection(ProviderAccountOptions.SectionName)
+                                   .Get<ProviderAccountOptions>()
+                               ?? new ProviderAccountOptions();
         services.AddSingleton(identity);
-        services.AddSingleton(policy);
         services.AddSingleton(providerAccounts);
         services.AddSingleton<BackendIdentityResolver>();
         services.AddSingleton<ProviderAccountResolver>();

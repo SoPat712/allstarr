@@ -53,4 +53,25 @@ describe("API response normalization", () => {
       }),
     }));
   });
+
+  it("creates a Personal or Shared provider account without a library scope", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      Id: "account-1", ProviderId: "qobuz", Scope: "Personal", CanManage: true,
+      Enabled: true, Revision: 1, Secret: { Configured: true, Revoked: false },
+    }), { status: 201 }));
+    vi.stubGlobal("fetch", fetch);
+
+    await sources.create({
+      providerId: "qobuz", displayName: "My Qobuz", scope: "Personal", enabled: true,
+      secret: { userId: "listener" },
+    });
+
+    expect(fetch).toHaveBeenCalledWith("/api/admin/provider-accounts", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        providerId: "qobuz", displayName: "My Qobuz", scope: "Personal", enabled: true,
+        secret: { userId: "listener" },
+      }),
+    }));
+  });
 });

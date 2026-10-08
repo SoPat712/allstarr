@@ -25,7 +25,7 @@ public sealed class AdminAuthController : ControllerBase
     private readonly AdminAuthSessionService _sessionService;
     private readonly ILogger<AdminAuthController> _logger;
     private readonly BackendIdentityResolver? _identityResolver;
-    private readonly ProviderAccountManagementMode _providerAccountManagementMode;
+    private readonly ProviderAccountOptions _providerAccountOptions;
     private readonly IMediaAssetResolver _mediaAssets;
     private readonly ReleaseComposition _releaseComposition;
     private readonly AdminOidcOptions? _oidcOptions;
@@ -42,7 +42,7 @@ public sealed class AdminAuthController : ControllerBase
         ILogger<AdminAuthController> logger,
         IMediaAssetResolver mediaAssets,
         BackendIdentityResolver? identityResolver = null,
-        ProviderAccountManagementOptions? providerAccountManagementOptions = null,
+        ProviderAccountOptions? providerAccountManagementOptions = null,
         ReleaseComposition? releaseComposition = null,
         AdminOidcOptions? oidcOptions = null,
         AdminOidcLinks? oidcLinks = null,
@@ -61,8 +61,7 @@ public sealed class AdminAuthController : ControllerBase
         _logger = logger;
         _mediaAssets = mediaAssets;
         _identityResolver = identityResolver;
-        _providerAccountManagementMode = (providerAccountManagementOptions ?? new())
-            .ParseManagementMode();
+        _providerAccountOptions = providerAccountManagementOptions ?? new();
         _releaseComposition = releaseComposition ?? ReleaseComposition.Core;
         _oidcOptions = oidcOptions;
         _oidcLinks = oidcLinks;
@@ -203,7 +202,7 @@ public sealed class AdminAuthController : ControllerBase
             {
                 authenticated = false,
                 backend = _backendType.ToString(),
-                providerAccountManagementMode = _providerAccountManagementMode.ToString(),
+                listenersCanConnectOwnAccounts = _providerAccountOptions.ListenersCanConnectOwnAccounts,
                 features = ReleaseFeatures()
             });
         }
@@ -453,7 +452,7 @@ public sealed class AdminAuthController : ControllerBase
         },
         rememberMe = session.IsPersistent,
         backend = session.BackendType,
-        providerAccountManagementMode = _providerAccountManagementMode.ToString(),
+        listenersCanConnectOwnAccounts = _providerAccountOptions.ListenersCanConnectOwnAccounts,
         features = ReleaseFeatures(),
         expiresAtUtc = session.ExpiresAtUtc
     };

@@ -84,13 +84,13 @@ public sealed class ProviderRouterTests
         var wrongScope = new ProviderAccountContext(
             Guid.CreateVersion7(),
             "wrong-scope",
-            ProviderAccountScope.Global,
+            ProviderAccountScope.Shared,
             1,
             resolutionReason: "global-account");
         var disabled = new ProviderAccountContext(
             Guid.CreateVersion7(),
             "disabled",
-            ProviderAccountScope.User,
+            ProviderAccountScope.Personal,
             1,
             enabled: false,
             tenantId: tenant,
@@ -104,10 +104,10 @@ public sealed class ProviderRouterTests
         });
         var router = Router(
             [
-                Metadata("wrong-scope", ProviderAccountRequirement.Required, [ProviderAccountScope.User]),
-                Metadata("disabled", ProviderAccountRequirement.Required, [ProviderAccountScope.User]),
-                Metadata("stale", ProviderAccountRequirement.Required, [ProviderAccountScope.User]),
-                Metadata("valid", ProviderAccountRequirement.Required, [ProviderAccountScope.User])
+                Metadata("wrong-scope", ProviderAccountRequirement.Required, [ProviderAccountScope.Personal]),
+                Metadata("disabled", ProviderAccountRequirement.Required, [ProviderAccountScope.Personal]),
+                Metadata("stale", ProviderAccountRequirement.Required, [ProviderAccountScope.Personal]),
+                Metadata("valid", ProviderAccountRequirement.Required, [ProviderAccountScope.Personal])
             ],
             accounts: accounts);
 
@@ -176,7 +176,7 @@ public sealed class ProviderRouterTests
         });
         var router = Router(
             [
-                Metadata("circuit", ProviderAccountRequirement.Required, [ProviderAccountScope.User]),
+                Metadata("circuit", ProviderAccountRequirement.Required, [ProviderAccountScope.Personal]),
                 Metadata("sidecar", sidecar: "sidecar-runtime"),
                 Metadata("ready", sidecar: "ready-runtime")
             ],
@@ -487,7 +487,7 @@ public sealed class ProviderRouterTests
         long revision = 1) => new(
         Guid.CreateVersion7(),
         providerId,
-        ProviderAccountScope.User,
+        ProviderAccountScope.Personal,
         revision,
         tenantId: tenantId,
         ownerUserId: userId);

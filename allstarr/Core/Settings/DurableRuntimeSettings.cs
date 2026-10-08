@@ -135,6 +135,8 @@ public static class RuntimeSettingCatalog
         items.Add(new("Library:DownloadMode", RuntimeSettingValueType.String, "Jellyfin:DownloadMode", Choices: new HashSet<string>(["Track", "Album"], Comparer)));
         items.Add(new("Library:StorageMode", RuntimeSettingValueType.String, "Jellyfin:StorageMode", Choices: new HashSet<string>(["Cache", "Permanent"], Comparer)));
         Int("Library:CacheDurationHours", 1, 8760, "Jellyfin:CacheDurationHours");
+        items.Add(new("ProviderAccounts:ListenersCanConnectOwnAccounts", RuntimeSettingValueType.Boolean,
+            "ProviderAccounts:ListenersCanConnectOwnAccounts", DefaultValue: "true"));
         Bool("MusicBrainz:Enabled"); Bool("SpotifyApi:Enabled");
         Int("SpotifyApi:CacheDurationMinutes", 1, 10080); Int("SpotifyApi:RateLimitDelayMs", 0, 60000);
         items.Add(new("SpotifyApi:LyricsApiUrl", RuntimeSettingValueType.String,

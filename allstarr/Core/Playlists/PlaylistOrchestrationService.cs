@@ -74,24 +74,22 @@ public sealed class ProviderPlaylistSourceGateway(
         var account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item =>
             item.Id == link.ProviderAccountId && item.ProviderId == link.SourceProviderId && item.Enabled,
             cancellationToken) ?? throw new UnauthorizedAccessException("The selected playlist account is unavailable.");
-        if (account.Scope == ProviderAccountScope.User &&
-            (account.TenantId != actor.TenantId || account.OwnerUserId != link.OwnerUserId) ||
-            account.Scope == ProviderAccountScope.Library &&
-            (account.TenantId != actor.TenantId || account.LibraryScopeId != link.LibraryScopeId))
+        if (account.Scope == ProviderAccountScope.Personal &&
+            (account.TenantId != actor.TenantId || account.OwnerUserId != link.OwnerUserId))
             throw new UnauthorizedAccessException("The playlist account is outside the link scope.");
 
         var capability = registry.GetRequiredCapability<IProviderPlaylistCapability>(
             link.SourceProviderId, ProviderCapabilityKind.Playlist);
         var accountContext = new ProviderAccountContext(
             account.Id, account.ProviderId, account.Scope, account.Revision, account.Enabled,
-            account.TenantId, account.OwnerUserId, account.LibraryScopeId,
+            account.TenantId, account.OwnerUserId, null,
             "playlist-link", account.SecretReferenceId);
         var providerContext = new ProviderExecutionContext(
             actor, account.ProviderId, accountContext,
             new ProviderLibraryContext(actor.TenantId, link.LibraryScopeId),
             new ProviderExecutionPolicy(
                 new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
-                ProviderExplicitContentPolicy.Allow, false, account.Scope == ProviderAccountScope.Global, false,
+                ProviderExplicitContentPolicy.Allow, false, account.Scope == ProviderAccountScope.Shared, false,
                 [account.ProviderId]),
             "playlist-snapshot", context.CorrelationId, clock.UtcNow.AddMinutes(5), cancellationToken);
         var result = await collector.CollectAsync(
@@ -113,21 +111,19 @@ public sealed class ProviderPlaylistSourceGateway(
             item.Id == link.ProviderAccountId && item.ProviderId == link.SourceProviderId && item.Enabled,
             cancellationToken);
         if (account == null) return ProviderOutcome<ProviderPlaylistArtwork>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration));
-        if (account.Scope == ProviderAccountScope.User &&
-            (account.TenantId != actor.TenantId || account.OwnerUserId != link.OwnerUserId) ||
-            account.Scope == ProviderAccountScope.Library &&
-            (account.TenantId != actor.TenantId || account.LibraryScopeId != link.LibraryScopeId))
+        if (account.Scope == ProviderAccountScope.Personal &&
+            (account.TenantId != actor.TenantId || account.OwnerUserId != link.OwnerUserId))
             return ProviderOutcome<ProviderPlaylistArtwork>.Failure(new(ProviderErrorKind.Forbidden));
         var capability = registry.GetRequiredCapability<IProviderPlaylistCapability>(
             link.SourceProviderId, ProviderCapabilityKind.Playlist);
         var accountContext = new ProviderAccountContext(account.Id, account.ProviderId, account.Scope,
-            account.Revision, account.Enabled, account.TenantId, account.OwnerUserId, account.LibraryScopeId,
+            account.Revision, account.Enabled, account.TenantId, account.OwnerUserId, null,
             "playlist-link-artwork", account.SecretReferenceId);
         var providerContext = new ProviderExecutionContext(actor, account.ProviderId, accountContext,
             new ProviderLibraryContext(actor.TenantId, link.LibraryScopeId),
             new ProviderExecutionPolicy(new ProviderQualityPolicy(ProviderAudioQuality.Any,
                     ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow, false,
-                account.Scope == ProviderAccountScope.Global, false, [account.ProviderId]),
+                account.Scope == ProviderAccountScope.Shared, false, [account.ProviderId]),
             "playlist-artwork", context.CorrelationId, clock.UtcNow.AddMinutes(2), cancellationToken);
         return await capability.ResolveArtworkAsync(providerContext, request);
     }

@@ -42,6 +42,26 @@ public sealed class ExtensionSdkV1Tests : IDisposable
         Assert.Contains(manifest.Permissions, item => item is { Kind: ExtensionPermissionKind.Secret, Value: "accountToken", Required: true });
     }
 
+    [Theory]
+    [InlineData("user", ProviderAccountScope.Personal)]
+    [InlineData("personal", ProviderAccountScope.Personal)]
+    [InlineData("global", ProviderAccountScope.Shared)]
+    [InlineData("shared", ProviderAccountScope.Shared)]
+    public void Manifest_MapsAccountScopeAtTheCompatibilityBoundary(string scope, ProviderAccountScope expected)
+    {
+        var manifest = ExtensionSdkV1.ParseManifest(Manifest().Replace(
+            "\"accountScopes\":[\"user\"]", $"\"accountScopes\":[\"{scope}\"]"));
+        Assert.Equal(expected, Assert.Single(Assert.Single(manifest.Capabilities).AccountScopes));
+    }
+
+    [Fact]
+    public void Manifest_RejectsLibraryAccountScope()
+    {
+        var error = Assert.Throws<ExtensionSdkValidationException>(() => ExtensionSdkV1.ParseManifest(
+            Manifest().Replace("\"accountScopes\":[\"user\"]", "\"accountScopes\":[\"library\"]")));
+        Assert.Contains("account scope", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Manifest_AllowsPublicCapabilityToOptOutOfAccountRequirement()
     {
@@ -148,7 +168,7 @@ public sealed class ExtensionSdkV1Tests : IDisposable
         Assert.All(verified.Manifest.Capabilities, capability =>
         {
             Assert.True(capability.AccountRequired);
-            Assert.Contains(ProviderAccountScope.User, capability.AccountScopes);
+            Assert.Contains(ProviderAccountScope.Personal, capability.AccountScopes);
         });
         Assert.Equal("icon.jpg", verified.Manifest.IconPath);
         Assert.Equal("Example", verified.Manifest.Author);

@@ -195,7 +195,7 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
                  context.ProviderAccounts.Any(account =>
                      account.Id == item.ProviderAccountId &&
                      account.TenantId == scope.TenantId &&
-                     (account.Scope != ProviderAccountScope.User || account.OwnerUserId == scope.UserId))) &&
+                     account.OwnerUserId == scope.UserId)) &&
                 (item.ObservedAt > cursor.OccurredAt ||
                  item.ObservedAt == cursor.OccurredAt &&
                  (ProviderHealthSource > cursor.Source ||
