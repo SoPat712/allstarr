@@ -3329,7 +3329,7 @@ test("More restores keyboard focus and closes when returning to desktop", async 
   const sheet = page.getByRole("dialog", { name: "More", exact: true });
   await expect(sheet).toBeVisible();
   await expect(page.locator(".mobile-navigation button")).toHaveAttribute("aria-expanded", "true");
-  await expect(sheet.getByRole("link")).toHaveCount(2);
+  await expect(sheet.getByRole("link")).toHaveCount(3);
   await page.keyboard.press("Escape");
   await expect(sheet).toBeHidden();
   await expect(more).toBeFocused();
