@@ -140,6 +140,15 @@ public sealed class DurableStorageTests : IAsyncLifetime
         Assert.Equal(rejected, DurableStorageInitializer.IsNetworkFileSystem(type, format));
 
     [Fact]
+    public async Task NativeSqliteLibraryIncludesTheAggregateMemorySafetyFix()
+    {
+        await using var context = new AllstarrDbContext(_database.Options);
+        var version = await context.Database.SqlQueryRaw<string>("SELECT sqlite_version() AS Value").SingleAsync();
+        Assert.True(Version.Parse(version) >= new Version(3, 50, 2),
+            $"SQLite {version} predates the aggregate memory safety fix.");
+    }
+
+    [Fact]
     public void CheckedInMigration_GeneratesNativeSqliteSql()
     {
         using var context = new AllstarrDbContext(_database.Options);
