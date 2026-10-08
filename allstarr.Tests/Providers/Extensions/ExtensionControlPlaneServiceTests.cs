@@ -202,8 +202,10 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
             _service.ActivateAsync(package.Id, package.Revision));
     }
 
-    [Fact]
-    public async Task RuntimeUpdatePreservesActiveVersionWhenPreviousPackageIsUninstalled()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RuntimeUpdatePreservesActiveVersionWhenPreviousPackageIsUninstalled(bool concurrentUninstall)
     {
         var package = await _service.StageAsync(Package("4.0.0", "runtime"));
         package = await _service.ReviewAsync(package.Id, _reviewer, package.Revision,
@@ -212,9 +214,10 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
             new("secret", "accountToken", true)
         ]);
         var registry = new ProviderRegistry([]);
+        var registrationGate = new PausedProviderRegistration(registry);
         var clients = new Mock<IHttpClientFactory>();
         clients.Setup(item => item.CreateClient(It.IsAny<string>())).Returns(new HttpClient());
-        var coordinator = new ExtensionRuntimeCoordinator(_factory, _service, registry, registry, clients.Object,
+        var coordinator = new ExtensionRuntimeCoordinator(_factory, _service, registrationGate, registry, clients.Object,
             Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
             new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(),
                 new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") }),
@@ -237,11 +240,44 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
             new("network", "https://api.example.test/", true),
             new("secret", "accountToken", true)
         ]);
-        package = await coordinator.ActivateAsync(package.Id, package.Revision);
-        Assert.True(registry.TryGetCapability<IProviderMetadataCapability>(package.ExtensionId,
-            ProviderCapabilityKind.Metadata, out var activeCapability));
-        previous = (await _service.ListPackagesAsync()).Single(item => item.Id == previous.Id);
-        await coordinator.UninstallAsync(previous.Id, previous.Revision);
+        IProviderMetadataCapability? activeCapability;
+        if (concurrentUninstall)
+        {
+            registrationGate.PauseNextRegistration = true;
+            var activation = Task.Run(() => coordinator.ActivateAsync(package.Id, package.Revision));
+            Task<ExtensionPackageRecord>? uninstall = null;
+            try
+            {
+                await registrationGate.Registered.Task.WaitAsync(TimeSpan.FromSeconds(20));
+                Assert.True(registry.TryGetCapability(package.ExtensionId,
+                    ProviderCapabilityKind.Metadata, out activeCapability));
+                previous = (await _service.ListPackagesAsync()).Single(item => item.Id == previous.Id);
+                uninstall = Task.Run(() => coordinator.UninstallAsync(previous.Id, previous.Revision));
+                for (var attempt = 0; attempt < 100; attempt++)
+                {
+                    var stored = (await _service.ListPackagesAsync()).Single(item => item.Id == previous.Id);
+                    if (stored.State == ExtensionPackageState.Uninstalled) break;
+                    await Task.Delay(10);
+                }
+                Assert.Equal(ExtensionPackageState.Uninstalled,
+                    (await _service.ListPackagesAsync()).Single(item => item.Id == previous.Id).State);
+                await Task.WhenAny(uninstall, Task.Delay(TimeSpan.FromSeconds(1)));
+            }
+            finally
+            {
+                registrationGate.Resume.TrySetResult();
+                package = await activation.WaitAsync(TimeSpan.FromSeconds(20));
+                if (uninstall != null) await uninstall.WaitAsync(TimeSpan.FromSeconds(20));
+            }
+        }
+        else
+        {
+            package = await coordinator.ActivateAsync(package.Id, package.Revision);
+            Assert.True(registry.TryGetCapability(package.ExtensionId,
+                ProviderCapabilityKind.Metadata, out activeCapability));
+            previous = (await _service.ListPackagesAsync()).Single(item => item.Id == previous.Id);
+            await coordinator.UninstallAsync(previous.Id, previous.Revision);
+        }
         Assert.False(Directory.Exists(previous.PackagePath));
         Assert.True(Directory.Exists(package.PackagePath));
         Assert.True(registry.TryGetCapability<IProviderMetadataCapability>(package.ExtensionId,
@@ -257,6 +293,24 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         var reinstalled = await _service.StageAsync(Package("4.0.0", "runtime"));
         Assert.NotEqual(package.Id, reinstalled.Id);
         Assert.Equal(ExtensionPackageState.ReviewRequired, reinstalled.State);
+    }
+
+    private sealed class PausedProviderRegistration(ProviderRegistry registry) : IDynamicProviderRegistry
+    {
+        public bool PauseNextRegistration { get; set; }
+        public TaskCompletionSource Registered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void RegisterOrReplaceExtension(ProviderRegistration registration)
+        {
+            registry.RegisterOrReplaceExtension(registration);
+            if (!PauseNextRegistration) return;
+            PauseNextRegistration = false;
+            Registered.TrySetResult();
+            Resume.Task.WaitAsync(TimeSpan.FromSeconds(20)).GetAwaiter().GetResult();
+        }
+
+        public bool RemoveExtension(string providerId) => registry.RemoveExtension(providerId);
     }
 
     private VerifiedExtensionPackage Package(string version, string suffix)
