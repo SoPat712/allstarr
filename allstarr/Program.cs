@@ -325,8 +325,7 @@ builder.Services.Configure<SpotifyImportSettings>(options =>
     }
 });
 
-builder.Services.AddSingleton<DatabaseApplicationCache>();
-builder.Services.AddSingleton<BoundedHotApplicationCache>();
+builder.Services.AddSingleton<MemoryApplicationCache>();
 builder.Services.AddSingleton<FileMediaApplicationCache>();
 builder.Services.AddSingleton<ApplicationCacheActivityMetrics>();
 builder.Services.AddSingleton<ApplicationCacheRequestCoalescer>();

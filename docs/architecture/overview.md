@@ -6,9 +6,9 @@ Allstarr is a music middleware service. It presents a Jellyfin or Subsonic-compa
 
 - Exactly one backend protocol is selected for a deployment: Jellyfin or Subsonic/OpenSubsonic.
 - SQLite is the only durable database and is required before state-changing workers run.
-- Media bytes live on mounted filesystems. SQLite stores identity, ownership, lifecycle, and cache metadata.
+- Media bytes live on mounted filesystems. SQLite stores identity, ownership, and durable lifecycle records.
 - Provider credentials are encrypted before persistence. The encryption key ring is a separate deployment secret.
-- Redis, Valkey, SQLite, mapping JSON files, and cache files are not authorities for runtime state.
+- Redis, Valkey, mapping JSON files, and cache files are not authorities for runtime state.
 - One Allstarr process owns the SQLite file. Optional upstream services are enabled explicitly through `allstarr.sh`.
 - Extensions are installed from administrator-approved registries. Allstarr does not ship a bundled extension registry or third-party extension packages.
 
@@ -16,9 +16,9 @@ Allstarr is a music middleware service. It presents a Jellyfin or Subsonic-compa
 
 | Owner | Authoritative state | Allowed payloads and limits | Never owns |
 | --- | --- | --- | --- |
-| SQLite | Accounts and encrypted secret references; tenant runtime settings; admin sessions; playlist links, snapshots, source entries, sync runs and memberships; canonical identities, matches and overrides; jobs, schedules and attempts; health, circuits and audit events; extension registries, packages and permission state; playback, favorites, intelligence, managed-file and cache metadata | Durable business and lifecycle records with tenant/user scope, revisions, constraints and migrations | Audio/artwork bytes, extension package bytes, backup archives or encryption key material |
+| SQLite | Accounts and encrypted secret references; tenant runtime settings; admin sessions; playlist links, snapshots, source entries, sync runs and memberships; canonical identities, matches and overrides; jobs, schedules and attempts; health, circuits and audit events; extension registries, packages and permission state; playback, favorites, intelligence and managed-file metadata | Durable business and lifecycle records with tenant/user scope, revisions, constraints and migrations | Audio/artwork bytes, extension package bytes, backup archives or encryption key material |
 | Filesystem | Managed audio and artwork; target playlist files; kept lyrics sidecars; installed extension package payloads; the encryption key ring; verified backup artifacts | Rebuildable media cache with bounded size/TTL; atomic staging files beside an allowed final payload | Accounts, sessions, settings, mappings, accepted decisions, playlist membership/order, sync timestamps, health, jobs or events |
-| Environment / deployment secrets | Process-start bootstrap, security policy and deployment topology: database connection/password-file location, backend selection/endpoints, mounted paths, bind/trust policy, optional service profiles and initial defaults | Read once into startup configuration; secret values may come from mounted secret files | WebUI mutations, per-user credentials, live playlist configuration or any restart-reconciled business state |
+| Environment / deployment secrets | Process-start bootstrap, security policy and deployment topology: data-directory location, backend selection/endpoints, mounted paths, bind/trust policy, optional service profiles and initial defaults | Read once into startup configuration; secret values may come from mounted secret files | WebUI mutations, per-user credentials, live playlist configuration or any restart-reconciled business state |
 
 The database row is authoritative whenever a filesystem payload has lifecycle metadata. Deleting a cache payload may cause a rebuild; deleting a durable row may not be repaired from cache. Legacy `.env` input is accepted only through the explicit preview/apply migration boundary and is never reread as live application state.
 
@@ -129,7 +129,7 @@ Startup opens the SQLite file on local disk, enables WAL, applies the baseline m
 
 ## Cache and media
 
-The application cache combines SQLite metadata, a bounded in-process hot tier, and filesystem media/artwork storage. Cache entries are disposable; durable mappings, accounts, jobs, events, and managed-file ownership are not.
+Application cache metadata lives only in bounded process memory (16 MiB, 10,000 entries, 1 MiB per entry). Artwork, its descriptors, and lyrics use the bounded file cache. Restarting clears memory entries; file entries retain their absolute expiry. Neither cache tier owns durable records. Settings reports memory and disk usage and supports category-specific cleanup.
 
 Media assets should be resolved through shared cache policy and key namespaces. Provider tokens, credentials, and signed URLs must not appear in keys, logs, or diagnostics.
 
@@ -137,12 +137,11 @@ The complete application-cache key inventory is:
 
 | Key namespace | Rebuildable value | Invalidation |
 | --- | --- | --- |
-| `admin:playlists:summary:*` | Admin read projection | Five-minute TTL and playlist-link/settings changes |
 | `search:*` | Provider search response | Short TTL and provider/account revision |
-| `{provider}:album:*`, `{provider}:artist:*`, `musicbrainz:*`, `genre:*`, `odesli:*` | Provider metadata or translation response | Bounded TTL and provider/account revision |
+| `metadata:album:*`, `metadata:artist:*`, `musicbrainz:*`, `odesli:*` | Provider metadata or translation response | Bounded TTL and provider/account revision |
 | `playback:metadata:*`, `jellyfin:item-type:*` | Backend metadata projection | Bounded TTL and backend/library revision |
 | `lyrics:*` | Provider lyrics response | Bounded TTL and provider/track revision |
-| `image:*`, `playlist:image:*`, `artwork:*` | Artwork bytes or descriptor | Bounded media size/TTL and resource revision |
+| `media:descriptor:*`, `playlist:artwork-descriptor:*`, `artwork:payload:*` | Artwork bytes or descriptor | Bounded media size/TTL and resource revision |
 | `playback:signal:dedupe:*` | Short-lived duplicate-signal marker | Five-minute maximum TTL |
 
 Playlist source entries, order, matches, decisions, sync timestamps, sessions, and health never use cache keys. Their read models are rebuilt from SQLite.

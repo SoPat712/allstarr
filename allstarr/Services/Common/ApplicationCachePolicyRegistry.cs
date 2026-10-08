@@ -60,7 +60,8 @@ public static class ApplicationCachePolicyRegistry
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
         category = default;
 
-        if (CacheKeyBuilder.IsMediaAssetPayloadKey(key))
+        if (CacheKeyBuilder.IsMediaAssetPayloadKey(key) ||
+            StartsWithAny(key, "media:descriptor:v3:", "playlist:artwork-descriptor:v1:"))
             category = ApplicationCacheCategory.Artwork;
         if (StartsWithAny(key, "lyrics:v2:", "lyrics:id:v2:"))
             category = ApplicationCacheCategory.Lyrics;
@@ -74,8 +75,6 @@ public static class ApplicationCachePolicyRegistry
             category = ApplicationCacheCategory.Coordination;
         if (StartsWithAny(
                 key,
-                "media:descriptor:v3:",
-                "playlist:artwork-descriptor:v1:",
                 "metadata:album:v1:",
                 "metadata:artist:v1:",
                 "musicbrainz:isrc:v2:",
@@ -137,7 +136,7 @@ public static class ApplicationCachePolicyRegistry
             ApplicationCacheCategory.DerivedProjection => new(
                 category, "admin-read-model", ApplicationCacheStorageTier.Metadata,
                 TimeSpan.FromMinutes(5), TimeSpan.Zero, 16 * Megabyte, 10_000,
-                ApplicationCacheWarmingRule.VisibleOrSelected, "postgres-revision"),
+                ApplicationCacheWarmingRule.VisibleOrSelected, "database-revision"),
             ApplicationCacheCategory.CanonicalMetadata => new(
                 category, "canonical-media", ApplicationCacheStorageTier.Metadata,
                 settings.MetadataTTL, TimeSpan.FromHours(12), 96 * Megabyte, 100_000,
@@ -153,7 +152,7 @@ public static class ApplicationCachePolicyRegistry
                 Math.Max(1, settings.MediaCleanupFileLimit),
                 ApplicationCacheWarmingRule.VisibleOrSelected, "resource-or-artwork-revision"),
             ApplicationCacheCategory.Lyrics => new(
-                category, "lyrics-routing", ApplicationCacheStorageTier.Metadata,
+                category, "lyrics-routing", ApplicationCacheStorageTier.Media,
                 settings.LyricsTTL, TimeSpan.FromDays(1), 96 * Megabyte, 100_000,
                 ApplicationCacheWarmingRule.OnDemand, "provider-or-track-revision"),
             ApplicationCacheCategory.TemporaryAudio => new(

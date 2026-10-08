@@ -52,7 +52,6 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
     public DbSet<ProviderDownloadArtifactEntity> ProviderDownloadArtifacts => Set<ProviderDownloadArtifactEntity>();
     public DbSet<DownloadedSongMappingEntity> DownloadedSongMappings => Set<DownloadedSongMappingEntity>();
     public DbSet<PlaybackDeliveryCheckpointEntity> PlaybackDeliveryCheckpoints => Set<PlaybackDeliveryCheckpointEntity>();
-    public DbSet<ApplicationCacheEntryRecord> ApplicationCacheEntries => Set<ApplicationCacheEntryRecord>();
     public DbSet<ManualLyricsMappingRecord> ManualLyricsMappings => Set<ManualLyricsMappingRecord>();
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
@@ -92,7 +91,6 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         modelBuilder.ConfigurePlaybackDeliveryCheckpoints();
         ConfigureOperations(modelBuilder);
         ConfigureRuntimeSettings(modelBuilder);
-        ConfigureApplicationCache(modelBuilder);
         modelBuilder.ConfigureManualLyricsMappings();
         ConfigurePortableDateTimeOffsets(modelBuilder);
         // Durable identifiers are assigned explicitly; omit provider-specific identifier limits.

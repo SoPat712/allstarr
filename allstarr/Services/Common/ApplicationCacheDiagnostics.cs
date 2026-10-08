@@ -18,8 +18,7 @@ public sealed record ApplicationCacheTierUsage(
 }
 
 public sealed record ApplicationCacheDiagnosticsSnapshot(
-    ApplicationCacheTierUsage Database,
-    ApplicationCacheTierUsage Hot,
+    ApplicationCacheTierUsage Memory,
     ApplicationCacheTierUsage Media,
     IReadOnlyList<ApplicationCacheCategoryDiagnostics> Categories,
     ApplicationCacheActivitySnapshot Activity,
@@ -67,7 +66,7 @@ public sealed record ApplicationCacheCategoryUsage(
     long EntryCount,
     long PayloadBytes);
 
-public sealed record DatabaseCacheMaintenancePreview(
+public sealed record CacheMetadataMaintenancePreview(
     int ScannedEntries,
     bool ScanLimitReached,
     int ExpiredEntries,
@@ -81,7 +80,7 @@ public sealed record DatabaseCacheMaintenancePreview(
     DateTimeOffset CapturedAt);
 
 public sealed record ApplicationCacheMaintenancePreview(
-    DatabaseCacheMaintenancePreview Metadata,
+    CacheMetadataMaintenancePreview Metadata,
     FileMediaCacheMaintenancePreview Media,
     int UnreferencedArtworkPayloads,
     long UnreferencedArtworkBytes,
@@ -123,3 +122,9 @@ public sealed record ApplicationCacheCategoryDiagnostics(
         policy.WarmingRule.ToString(),
         policy.InvalidationTrigger);
 }
+
+internal sealed record ApplicationCacheEntryInfo(
+    string Key, long PayloadBytes, DateTimeOffset? ExpiresAt, DateTimeOffset UpdatedAt,
+    ApplicationCacheStorageTier Tier, bool InvalidDescriptor = false);
+
+internal sealed record FileCacheEntrySnapshot(IReadOnlyList<ApplicationCacheEntryInfo> Entries, bool ScanLimitReached);

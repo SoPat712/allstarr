@@ -116,7 +116,7 @@ public sealed class RuntimeFileOwnershipContractTests
                      "kept lyrics sidecars", "installed extension package payloads",
                      "encryption key ring", "verified backup artifacts",
                      "Rebuildable media cache with bounded size/TTL",
-                     "atomic staging files", "password-file location"
+                     "atomic staging files", "data-directory location"
                  })
             Assert.Contains(allowed, architecture, StringComparison.OrdinalIgnoreCase);
     }

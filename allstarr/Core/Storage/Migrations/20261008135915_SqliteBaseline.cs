@@ -26,24 +26,6 @@ namespace allstarr.Core.Storage.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "application_cache_entries",
-                columns: table => new
-                {
-                    Key = table.Column<string>(type: "TEXT", maxLength: 512, nullable: false),
-                    Category = table.Column<string>(type: "TEXT", maxLength: 50, nullable: false),
-                    Value = table.Column<string>(type: "TEXT", nullable: false),
-                    PayloadBytes = table.Column<int>(type: "INTEGER", nullable: false),
-                    CreatedAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    UpdatedAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    ExpiresAt = table.Column<long>(type: "INTEGER", nullable: true)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_application_cache_entries", x => x.Key);
-                    table.CheckConstraint("CK_application_cache_payload_bytes", "\"PayloadBytes\" >= 0 AND \"PayloadBytes\" <= 1048576");
-                });
-
-            migrationBuilder.CreateTable(
                 name: "backups",
                 columns: table => new
                 {
@@ -2547,16 +2529,6 @@ namespace allstarr.Core.Storage.Migrations
                 column: "SecretReferenceId");
 
             migrationBuilder.CreateIndex(
-                name: "IX_application_cache_category_updated",
-                table: "application_cache_entries",
-                columns: new[] { "Category", "UpdatedAt" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_application_cache_expires_at",
-                table: "application_cache_entries",
-                column: "ExpiresAt");
-
-            migrationBuilder.CreateIndex(
                 name: "IX_audit_event_updates",
                 table: "audit_events",
                 columns: new[] { "TenantId", "CreatedAt", "Id" });
@@ -3541,9 +3513,6 @@ namespace allstarr.Core.Storage.Migrations
 
             migrationBuilder.DropTable(
                 name: "admin_oidc_links");
-
-            migrationBuilder.DropTable(
-                name: "application_cache_entries");
 
             migrationBuilder.DropTable(
                 name: "backups");

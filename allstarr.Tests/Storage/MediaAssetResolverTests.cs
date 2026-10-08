@@ -7,10 +7,10 @@ namespace allstarr.Tests;
 public sealed class MediaAssetResolverTests
 {
     [Fact]
-    public void ScopedDescriptorsUseMetadataTierAndPayloadsUseMediaTier()
+    public void ScopedDescriptorsAndPayloadsUsePersistentMediaTier()
     {
         Assert.Equal(
-            ApplicationCacheStorageTier.Metadata,
+            ApplicationCacheStorageTier.Media,
             ApplicationCachePolicyRegistry.Resolve(
                 CacheKeyBuilder.BuildMediaAssetDescriptorKey(Identity(Guid.CreateVersion7()))).StorageTier);
         Assert.Equal(
