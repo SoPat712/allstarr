@@ -26,6 +26,7 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Core/ManagedFiles/PhysicalManagedFileOperations.cs"] = "managed audio and artwork",
             ["Core/Operations/PlatformReadinessService.cs"] = "temporary readiness probe",
             ["Core/Storage/DurableBackupService.cs"] = "backup archive",
+            ["Core/Secrets/FileSecretKeyRingProvider.cs"] = "private encryption key ring",
             ["Providers/Apple/AppleMusicDownloadService.cs"] = "managed audio",
             ["Services/Common/BaseDownloadService.cs"] = "managed audio and artwork",
             ["Providers/Extensions/ExtensionManager.cs"] = "extension packages",
@@ -58,7 +59,7 @@ public sealed class RuntimeFileOwnershipContractTests
     }
 
     [Fact]
-    public void RuntimeJsonWriters_AreOnlyCachePackageOrBackupArtifacts()
+    public void RuntimeJsonWriters_HaveExplicitArtifactOrKeyRingOwners()
     {
         var productionRoot = Path.Combine(FindRepositoryRoot(), "allstarr");
         var jsonWriters = Directory.GetFiles(productionRoot, "*.cs", SearchOption.AllDirectories)
@@ -81,6 +82,7 @@ public sealed class RuntimeFileOwnershipContractTests
             "Core/Enrichment/TagLibManagedMetadataWriter.cs",
             "Core/ManagedFiles/FilePlacementService.cs",
             "Core/Storage/DurableBackupService.cs",
+            "Core/Secrets/FileSecretKeyRingProvider.cs",
             "Providers/Extensions/ExtensionManager.cs",
             "Services/Common/FileMediaApplicationCache.cs"
         };

@@ -4,7 +4,7 @@ public sealed class SecretStoreOptions
 {
     public const string SectionName = "Secrets";
 
-    public string KeyRingPath { get; set; } = "/run/secrets/allstarr-keyring.json";
+    public string KeyRingPath { get; set; } = "/app/data/keyring.json";
 
     public int MaxSecretBytes { get; set; } = 64 * 1024;
 
