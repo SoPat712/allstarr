@@ -246,7 +246,7 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
         Assert.Equal(new CanonicalCatalogEvidenceResult(1, 0, 1, 0), first);
         Assert.Equal(new CanonicalCatalogEvidenceResult(0, 1, 0, 0), repeated);
         Assert.Equal(new CanonicalCatalogEvidenceResult(0, 1, 1, 1), changed);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => store.RecordAsync(
+        await Assert.ThrowsAsync<CanonicalCatalogAliasConflictException>(() => store.RecordAsync(
             actor,
             target with { Id = otherRecordingId },
             initial,

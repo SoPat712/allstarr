@@ -237,7 +237,7 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<CanonicalCatalogAliasConflictException>(() =>
             _service.CreateRecordingAsync(actor, "conflicting-alias", isrc, mbid));
 
         await using var verification = await _factory.CreateDbContextAsync();

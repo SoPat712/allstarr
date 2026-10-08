@@ -1008,9 +1008,12 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                     }
                 ];
             });
+        var overlap = new ConcurrentIdentityLookup(Hash("apple-concurrent"));
+        var concurrentFactory = new DbFactory(new DbContextOptionsBuilder<AllstarrDbContext>(_database.Options)
+            .AddInterceptors(overlap).Options);
         var matcher = new TrackMatchDecisionEngine();
         var trackMatches = new TrackMatchCommandService(
-            _factory,
+            concurrentFactory,
             matcher,
             new ProviderAccountResolver(_factory, new ProviderPolicyOptions()),
             new Clock(_now),
@@ -1022,12 +1025,17 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 Options.Create(new JellyfinSettings()),
                 NullLogger<PlaylistPlayableSearchService>.Instance));
 
-        var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(index =>
-            trackMatches.RematchSnapshotAsync(
+        var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(async index =>
+        {
+            var result = await trackMatches.RematchSnapshotAsync(
                 Context(),
                 snapshotIds[index % snapshotIds.Length],
                 $"concurrent-external-{index}",
-                "concurrent-policy")));
+                "concurrent-policy");
+            overlap.ReleaseAfterFirstSave();
+            return result;
+        }));
+        Assert.True(overlap.LookupCount >= 3, "The overlapping lookup must retry against committed identity state.");
 
         Assert.All(results, result =>
         {
@@ -1859,6 +1867,37 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         public AllstarrDbContext CreateDbContext() => new(options);
         public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(CreateDbContext());
     }
+    private sealed class ConcurrentIdentityLookup(string externalHash) : DbCommandInterceptor
+    {
+        private readonly TaskCompletionSource bothLookups = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource firstSaved = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int lookupCount;
+        public int LookupCount => Volatile.Read(ref lookupCount);
+        public void ReleaseAfterFirstSave() => firstSaved.TrySetResult();
+
+        public override async ValueTask<DbDataReader> ReaderExecutedAsync(
+            DbCommand command,
+            CommandExecutedEventData eventData,
+            DbDataReader result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.TrimStart().StartsWith("SELECT ", StringComparison.Ordinal) &&
+                command.CommandText.Contains("provider_track_identities", StringComparison.Ordinal) &&
+                command.Parameters.Cast<DbParameter>().Any(parameter => Equals(parameter.Value, externalHash)))
+            {
+                var lookup = Interlocked.Increment(ref lookupCount);
+                if (lookup == 2) bothLookups.TrySetResult();
+                if (lookup <= 2)
+                {
+                    await bothLookups.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+                    if (lookup == 2)
+                        await firstSaved.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+                }
+            }
+            return result;
+        }
+    }
+
     private sealed class CommandCounter : DbCommandInterceptor
     {
         private int _count;

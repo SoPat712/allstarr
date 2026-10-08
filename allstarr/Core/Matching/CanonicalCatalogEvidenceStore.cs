@@ -33,6 +33,9 @@ public sealed record CanonicalCatalogEvidenceResult(
     int FactsCreated,
     int FactsSuperseded);
 
+internal sealed class CanonicalCatalogAliasConflictException() : InvalidOperationException(
+    "The catalog alias already identifies another canonical entity.");
+
 public static class CanonicalCatalogKeys
 {
     private const string DefaultCatalog = "default";
@@ -343,7 +346,7 @@ public sealed class CanonicalCatalogEvidenceStore(
 
                 if (existing.CanonicalEntityId != target.Id)
                 {
-                    throw new InvalidOperationException("The catalog alias already identifies another canonical entity.");
+                    throw new CanonicalCatalogAliasConflictException();
                 }
 
                 existing.LastSeenAt = source.ObservedAt;
