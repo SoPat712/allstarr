@@ -671,13 +671,8 @@ class BackendControllerFeatureProvider : Microsoft.AspNetCore.Mvc.Controllers.Co
             return false;
         }
 
-        // Only protocol catch-alls and their admin surfaces are conditional; an
-        // allowlist would send future admin routes into the selected catch-all.
-        if (typeInfo.Name == "JellyfinAdminController")
-        {
-            return _backendType == BackendType.Jellyfin;
-        }
-
+        // Only protocol catch-alls are conditional; an allowlist would send
+        // future controllers into the selected catch-all.
         if (typeInfo.Name != "JellyfinController" && typeInfo.Name != "SubsonicController")
         {
             return true;

@@ -1,11 +1,7 @@
-using allstarr.Controllers;
 using allstarr.Core.Favorites;
 using allstarr.Core.Identity;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
-using allstarr.Services.Admin;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Tests;
@@ -75,43 +71,6 @@ public sealed class FavoriteActionPolicyTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task UserApi_WritesOnlyCallerScopeAndAdminManagedModeDeniesOverride()
-    {
-        var allowed = Controller(Session(_user, false), ProviderAccountManagementMode.Hybrid);
-        var result = await allowed.PutMine(new() { Protocol = "jellyfin", BackendInstanceId = "main", AutoDownload = true }, default);
-        Assert.IsType<OkObjectResult>(result);
-        await using (var db = await _factory.CreateDbContextAsync())
-        {
-            var record = await db.FavoriteActionPolicies.SingleAsync();
-            Assert.Equal(_user, record.OwnerUserId);
-            Assert.True(record.AutoDownload);
-        }
-
-        var denied = Controller(Session(_other, false), ProviderAccountManagementMode.AdminManaged);
-        Assert.IsType<ObjectResult>(await denied.PutMine(new() { Protocol = "jellyfin", BackendInstanceId = "main" }, default));
-        await using var verify = await _factory.CreateDbContextAsync();
-        Assert.Single(await verify.FavoriteActionPolicies.ToListAsync());
-    }
-
-    [Fact]
-    public async Task GlobalApi_RequiresAdministratorAndUsesSessionTenant()
-    {
-        var nonAdmin = Controller(Session(_user, false), ProviderAccountManagementMode.Hybrid);
-        var forbidden = Assert.IsType<StatusCodeResult>(await nonAdmin.PutGlobal(
-            GlobalRequest(), default));
-        Assert.Equal(403, forbidden.StatusCode);
-
-        var admin = Controller(Session(_user, true), ProviderAccountManagementMode.Hybrid);
-        Assert.IsType<BadRequestObjectResult>(await admin.PutGlobal(
-            new() { Protocol = "jellyfin", BackendInstanceId = "main", RefreshBackendLibrary = true }, default));
-        Assert.IsType<OkObjectResult>(await admin.PutGlobal(
-            GlobalRequest(), default));
-        await using var db = await _factory.CreateDbContextAsync();
-        var record = await db.FavoriteActionPolicies.SingleAsync();
-        Assert.Equal(_tenant, record.TenantId); Assert.Null(record.OwnerUserId); Assert.True(record.RefreshBackendLibrary);
-    }
-
-    [Fact]
     public async Task SubsonicRefresh_RequiresAndResolvesOnlyExactTenantCredentialReference()
     {
         var credential = Guid.CreateVersion7();
@@ -167,26 +126,6 @@ public sealed class FavoriteActionPolicyTests : IAsyncLifetime
             new(_tenant, null, "jellyfin", "main", null), FavoriteActionPolicyScope.Global,
             new(true, false, false, false, false, true, foreignCredential), _user));
     }
-    private static FavoriteActionPolicyUpdateRequest GlobalRequest() => new()
-    {
-        Protocol = "jellyfin",
-        BackendInstanceId = "main",
-        AddToVirtualLiked = true,
-        MatchLocalLibrary = false,
-        AutoDownload = false,
-        EnrichMetadata = false,
-        PlaceManagedFile = false,
-        RefreshBackendLibrary = true
-    };
-
-    private FavoriteActionPoliciesController Controller(AdminAuthSession session, ProviderAccountManagementMode mode)
-    {
-        var controller = new FavoriteActionPoliciesController(_factory, _store, _resolver,
-            new ProviderAccountManagementOptions { ManagementMode = mode.ToString() });
-        controller.ControllerContext = new() { HttpContext = new DefaultHttpContext() };
-        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = session;
-        return controller;
-    }
     private PlatformUserRecord User(Guid id, string name) => new()
     {
         Id = id,
@@ -206,18 +145,6 @@ public sealed class FavoriteActionPolicyTests : IAsyncLifetime
         PrincipalId = principal,
         CreatedAt = Clock.Now,
         LastSeenAt = Clock.Now
-    };
-    private AdminAuthSession Session(Guid user, bool admin) => new()
-    {
-        SessionId = "session",
-        UserId = "backend",
-        UserName = "User",
-        IsAdministrator = admin,
-        TenantId = _tenant,
-        AllstarrUserId = user,
-        JellyfinAccessToken = "fixture",
-        ExpiresAtUtc = Clock.Now.UtcDateTime.AddHours(1),
-        LastSeenUtc = Clock.Now.UtcDateTime
     };
     public async Task DisposeAsync()
     {

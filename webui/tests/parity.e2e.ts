@@ -190,7 +190,6 @@ const responses: Record<string, unknown> = {
     migration: { available: true, completed: false, firstRun: true },
   },
   "/api/admin/ui/schema": schema,
-  "/api/admin/status": { version: "test", backendType: "Jellyfin" },
   "/api/admin/playlists": { playlists: [], inventory: { managed: 0, unmanaged: 0 } },
   "/api/admin/jobs?limit=100": {
     jobs: [{

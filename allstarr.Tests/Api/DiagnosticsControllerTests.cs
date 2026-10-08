@@ -2,13 +2,10 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using allstarr.Controllers;
-using allstarr.Core.Storage;
 using allstarr.Models.Settings;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
-using allstarr.Services.Spotify;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -19,44 +16,8 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class DiagnosticsControllerTests : IDisposable
+public sealed class DiagnosticsControllerTests
 {
-    private readonly string _root = Path.Combine(
-        Path.GetTempPath(),
-        "allstarr-tests",
-        Guid.NewGuid().ToString("N"));
-
-    public DiagnosticsControllerTests()
-    {
-        Directory.CreateDirectory(Path.Combine(_root, "app"));
-    }
-
-    [Fact]
-    public async Task Status_DoesNotReturnConfiguredJellyfinAddress()
-    {
-        const string privateJellyfinUrl = "http://private-jellyfin.internal:8096";
-        var controller = CreateController(
-            new JellyfinSettings { Url = privateJellyfinUrl });
-
-        var result = Assert.IsType<OkObjectResult>(await controller.GetStatus());
-        var json = JsonSerializer.Serialize(result.Value);
-
-        Assert.Contains("Configured", json, StringComparison.Ordinal);
-        Assert.DoesNotContain(privateJellyfinUrl, json, StringComparison.Ordinal);
-        Assert.DoesNotContain("private-jellyfin.internal", json, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task ScrobblingSessions_RequiresDurableCheckpointStore()
-    {
-        var controller = CreateController();
-
-        var result = Assert.IsType<BadRequestObjectResult>(
-            await controller.GetScrobblingSessions(CancellationToken.None));
-
-        Assert.Contains("Durable scrobble status", JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
-    }
-
     [Fact]
     public async Task MediaProbe_VerifiesMetadataAndArtworkThroughInternalProxy()
     {
@@ -149,28 +110,14 @@ public sealed class DiagnosticsControllerTests : IDisposable
         JellyfinSettings? jellyfinSettings = null,
         IServiceProvider? requestServices = null)
     {
-        var spotifySettings = new SpotifyApiSettings();
-        var cookieService = new SpotifySessionCookieService(Options.Create(spotifySettings));
-        var storageOptions = new DurableStorageOptions
-        {
-            Provider = "Postgres",
-            ConnectionString = "Host=database;Database=allstarr;Username=allstarr;Password=not-used"
-        };
-        var storageState = new DurableStorageState(storageOptions);
-        storageState.Set(DurableStorageReadiness.Ready, "fixture");
         var controller = new DiagnosticsController(
             NullLogger<DiagnosticsController>.Instance,
             new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Backend:Type"] = "Jellyfin"
             }).Build(),
-            Options.Create(spotifySettings),
             Options.Create(new SpotifyImportSettings()),
-            Options.Create(jellyfinSettings ?? new JellyfinSettings()),
-            Options.Create(new DeezerSettings()),
-            Options.Create(new QobuzSettings()),
-            cookieService,
-            storageState)
+            Options.Create(jellyfinSettings ?? new JellyfinSettings()))
         {
             ControllerContext = new ControllerContext
             {
@@ -181,14 +128,6 @@ public sealed class DiagnosticsControllerTests : IDisposable
             }
         };
         return controller;
-    }
-
-    public void Dispose()
-    {
-        if (Directory.Exists(_root))
-        {
-            Directory.Delete(_root, recursive: true);
-        }
     }
 
     private sealed class StubHandler(

@@ -2,14 +2,9 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
 using allstarr.Filters;
-using allstarr.Models.Admin;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Common;
 using allstarr.Services.Admin;
-using allstarr.Services.Spotify;
-using Microsoft.EntityFrameworkCore;
-using allstarr.Core.Storage;
-using allstarr.Core.Operations;
 
 namespace allstarr.Controllers;
 
@@ -19,37 +14,20 @@ namespace allstarr.Controllers;
 public class DiagnosticsController : ControllerBase
 {
     private readonly ILogger<DiagnosticsController> _logger;
-    private readonly IConfiguration _configuration;
-    private readonly SpotifyApiSettings _spotifyApiSettings;
     private readonly SpotifyImportSettings _spotifyImportSettings;
     private readonly JellyfinSettings _jellyfinSettings;
-    private readonly DeezerSettings _deezerSettings;
-    private readonly QobuzSettings _qobuzSettings;
-    private readonly SpotifySessionCookieService _spotifySessionCookieService;
-    private readonly DurableStorageState _storageState;
     private readonly BackendSelectionAuthority _backendSelection;
 
     public DiagnosticsController(
         ILogger<DiagnosticsController> logger,
         IConfiguration configuration,
-        IOptions<SpotifyApiSettings> spotifyApiSettings,
         IOptions<SpotifyImportSettings> spotifyImportSettings,
         IOptions<JellyfinSettings> jellyfinSettings,
-        IOptions<DeezerSettings> deezerSettings,
-        IOptions<QobuzSettings> qobuzSettings,
-        SpotifySessionCookieService spotifySessionCookieService,
-        DurableStorageState storageState,
         BackendSelectionAuthority? backendSelection = null)
     {
         _logger = logger;
-        _configuration = configuration;
-        _spotifyApiSettings = spotifyApiSettings.Value;
         _spotifyImportSettings = spotifyImportSettings.Value;
         _jellyfinSettings = jellyfinSettings.Value;
-        _deezerSettings = deezerSettings.Value;
-        _qobuzSettings = qobuzSettings.Value;
-        _spotifySessionCookieService = spotifySessionCookieService;
-        _storageState = storageState;
         _backendSelection = backendSelection ?? new BackendSelectionAuthority(
             Enum.TryParse<BackendType>(
                 configuration["Backend:Type"],
@@ -62,100 +40,6 @@ public class DiagnosticsController : ControllerBase
             false,
             false,
             null);
-    }
-
-    [HttpGet("status")]
-    public async Task<IActionResult> GetStatus()
-    {
-        // This frequently polled endpoint must not call Spotify.
-        var spotifyAuthStatus = "not_configured";
-        string? spotifyUser = null;
-        var sessionUserId = GetAuthenticatedUserId();
-        var cookieStatus = await _spotifySessionCookieService.GetCookieStatusAsync(sessionUserId);
-        var userCookieSetDate = !string.IsNullOrWhiteSpace(sessionUserId)
-            ? await _spotifySessionCookieService.GetCookieSetDateAsync(sessionUserId)
-            : null;
-        var effectiveCookieSetDate = userCookieSetDate?.ToString("o");
-
-        if (string.IsNullOrWhiteSpace(effectiveCookieSetDate) && cookieStatus.UsingGlobalFallback)
-        {
-            effectiveCookieSetDate = _spotifyApiSettings.SessionCookieSetDate;
-        }
-
-        if (_spotifyApiSettings.Enabled && cookieStatus.HasCookie)
-        {
-            spotifyAuthStatus = "configured";
-            spotifyUser = cookieStatus.UsingGlobalFallback ? "(global fallback cookie set)" : "(user cookie set)";
-        }
-        else if (_spotifyApiSettings.Enabled)
-        {
-            spotifyAuthStatus = "missing_cookie";
-        }
-
-        var storage = _storageState.GetSnapshot();
-        return Ok(new
-        {
-            version = AppVersion.Version,
-            backendType = _backendSelection.EffectiveValue,
-            backendSelection = new
-            {
-                effective = _backendSelection.EffectiveValue,
-                source = _backendSelection.Source,
-                deploymentOwned = _backendSelection.IsExplicitDeploymentValue,
-                conflict = _backendSelection.HasConflictingDotEnvValue,
-                conflictingDotEnvValue = _backendSelection.ConflictingDotEnvValue
-            },
-            durableStorage = new
-            {
-                provider = storage.Provider.ToString(),
-                readiness = storage.Readiness.ToString(),
-                storage.SchemaVersion,
-                storage.ErrorCode,
-                storage.CheckedAt
-            },
-            jellyfinUrl = string.IsNullOrWhiteSpace(_jellyfinSettings.Url)
-                ? "Not configured"
-                : "Configured",
-            spotify = new
-            {
-                apiEnabled = _spotifyApiSettings.Enabled,
-                authStatus = spotifyAuthStatus,
-                user = spotifyUser,
-                hasCookie = cookieStatus.HasCookie,
-                usingGlobalFallback = cookieStatus.UsingGlobalFallback,
-                cookieSetDate = effectiveCookieSetDate,
-                cacheDurationMinutes = _spotifyApiSettings.CacheDurationMinutes,
-                preferIsrcMatching = _spotifyApiSettings.PreferIsrcMatching
-            },
-            spotifyImport = new
-            {
-                enabled = _spotifyImportSettings.Enabled,
-                matchingIntervalHours = _spotifyImportSettings.MatchingIntervalHours,
-                playlistCount = _spotifyImportSettings.Playlists.Count
-            },
-            deezer = new
-            {
-                hasArl = !string.IsNullOrEmpty(_deezerSettings.Arl),
-                quality = _deezerSettings.Quality ?? "FLAC"
-            },
-            qobuz = new
-            {
-                hasToken = !string.IsNullOrEmpty(_qobuzSettings.UserAuthToken),
-                quality = _qobuzSettings.Quality ?? "FLAC"
-            }
-        });
-    }
-
-    private string? GetAuthenticatedUserId()
-    {
-        if (HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var sessionObj) &&
-            sessionObj is AdminAuthSession session &&
-            !string.IsNullOrWhiteSpace(session.UserId))
-        {
-            return session.UserId;
-        }
-
-        return null;
     }
 
     [HttpGet("media-probe")]
@@ -409,129 +293,5 @@ public class DiagnosticsController : ControllerBase
                 reasonCode = configured.Count == 0 ? null : "provider_account_required"
             }
         });
-    }
-
-    [HttpGet("sessions")]
-    public IActionResult GetActiveSessions()
-    {
-        try
-        {
-            var sessionManager = HttpContext.RequestServices.GetService<JellyfinSessionManager>();
-            if (sessionManager == null)
-            {
-                return BadRequest(new { error = "Session manager not available" });
-            }
-
-            var sessionInfo = sessionManager.GetSessionsInfo();
-            return Ok(sessionInfo);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get active sessions");
-            return BadRequest(new { error = "Failed to get active sessions" });
-        }
-    }
-
-    [HttpGet("scrobbling-sessions")]
-    public async Task<IActionResult> GetScrobblingSessions(CancellationToken cancellationToken)
-    {
-        try
-        {
-            var factory = HttpContext.RequestServices.GetService<IDbContextFactory<AllstarrDbContext>>();
-            if (factory == null)
-            {
-                return BadRequest(new { error = "Durable scrobble status is not available" });
-            }
-
-            await using var context = await factory.CreateDbContextAsync(cancellationToken);
-            var rows = await context.PlaybackDeliveryCheckpoints.AsNoTracking()
-                .OrderByDescending(item => item.UpdatedAt)
-                .Take(200)
-                .ToListAsync(cancellationToken);
-            return Ok(new
-            {
-                mode = "durable",
-                count = rows.Count,
-                deliveries = rows.Select(item => new
-                {
-                    item.TenantId,
-                    item.OwnerUserId,
-                    item.OccurrenceKey,
-                    item.TargetId,
-                    kind = item.Kind.ToString(),
-                    state = item.State.ToString(),
-                    item.ProviderCode,
-                    item.SafeMessage,
-                    item.DetailsJson,
-                    item.RetryAfter,
-                    item.RequiresReauthentication,
-                    item.UpdatedAt
-                })
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get scrobbling sessions");
-            return BadRequest(new { error = "Failed to get scrobbling sessions" });
-        }
-    }
-
-    [HttpGet("debug/endpoint-usage")]
-    public async Task<IActionResult> GetEndpointUsage(
-        [FromQuery] int top = 100,
-        [FromQuery] string? since = null)
-    {
-        try
-        {
-            DateTimeOffset? sinceDate = null;
-            if (!string.IsNullOrWhiteSpace(since))
-            {
-                if (!DateTimeOffset.TryParse(since, out var parsedDate))
-                    return BadRequest(new { error = "since must be a valid timestamp" });
-                sinceDate = parsedDate;
-            }
-            var summary = await HttpContext.RequestServices
-                .GetRequiredService<EndpointUsageAudit>()
-                .SummarizeAsync(top, sinceDate, HttpContext.RequestAborted);
-
-            return Ok(new
-            {
-                summary.TotalEndpoints,
-                summary.TotalRequests,
-                since,
-                top = Math.Clamp(top, 1, 1000),
-                summary.Endpoints
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting endpoint usage");
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
-
-    [HttpDelete("debug/endpoint-usage")]
-    public async Task<IActionResult> ClearEndpointUsage()
-    {
-        try
-        {
-            var deleted = await HttpContext.RequestServices
-                .GetRequiredService<EndpointUsageAudit>()
-                .ClearAsync(HttpContext.RequestAborted);
-            _logger.LogDebug("Cleared {Count} endpoint usage events via admin endpoint", deleted);
-            return Ok(new
-            {
-                message = deleted == 0
-                    ? "No endpoint usage data found"
-                    : "Endpoint usage data cleared successfully",
-                deleted,
-                timestamp = DateTime.UtcNow
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error clearing endpoint usage log");
-            return StatusCode(500, new { error = "Internal server error" });
-        }
     }
 }

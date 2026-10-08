@@ -13,7 +13,6 @@ using allstarr.Core.Settings;
 using allstarr.Core.Capabilities;
 using allstarr.Middleware;
 using System.Text.Json;
-using System.Net.Sockets;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Controllers;
@@ -34,7 +33,6 @@ public class ConfigController : ControllerBase
     private readonly MusicBrainzSettings _musicBrainzSettings;
     private readonly SpotifyImportSettings _spotifyImportSettings;
     private readonly ScrobblingSettings _scrobblingSettings;
-    private readonly string _envFilePath;
     private readonly SpotifySessionCookieService _spotifySessionCookieService;
     private readonly IApplicationCache _cache;
 
@@ -50,7 +48,6 @@ public class ConfigController : ControllerBase
         IOptions<MusicBrainzSettings> musicBrainzSettings,
         IOptions<SpotifyImportSettings> spotifyImportSettings,
         IOptions<ScrobblingSettings> scrobblingSettings,
-        IWebHostEnvironment environment,
         SpotifySessionCookieService spotifySessionCookieService,
         IApplicationCache cache)
     {
@@ -65,7 +62,6 @@ public class ConfigController : ControllerBase
         _musicBrainzSettings = musicBrainzSettings.Value;
         _spotifyImportSettings = spotifyImportSettings.Value;
         _scrobblingSettings = scrobblingSettings.Value;
-        _envFilePath = RuntimeEnvConfiguration.ResolveEnvFilePath(environment);
         _spotifySessionCookieService = spotifySessionCookieService;
         _cache = cache;
     }
@@ -174,7 +170,6 @@ public class ConfigController : ControllerBase
             {
                 bindAnyIp = AdminNetworkBindingPolicy.ShouldBindAdminAnyIp(_configuration),
                 trustedSubnets = _configuration.GetValue<string>("Admin:TrustedSubnets") ?? string.Empty,
-                allowEnvExport = IsEnvExportEnabled(),
                 redactSensitiveValues = _configuration.GetValue<bool>("Admin:RedactSensitiveValues", false)
             },
             spotifyApi = new
@@ -293,65 +288,6 @@ public class ConfigController : ControllerBase
         });
     }
 
-    [HttpGet("config/effective-provider-policy")]
-    public async Task<IActionResult> GetEffectiveProviderPolicy(CancellationToken cancellationToken = default)
-    {
-        var adminCheck = RequireAdministratorForSensitiveOperation("effective provider policy inspection");
-        if (adminCheck != null)
-        {
-            return adminCheck;
-        }
-
-        var session = GetAdminSession();
-        if (session?.TenantId is not { } tenantId)
-        {
-            return Conflict(new
-            {
-                error = "The administrator session is not linked to an Allstarr tenant.",
-                code = "tenant_required"
-            });
-        }
-
-        var services = HttpContext.RequestServices;
-        var policy = await services.GetRequiredService<IEffectiveProviderPolicyResolver>()
-            .ResolveAsync(tenantId, cancellationToken);
-        var contextFactory = services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
-        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var eligibleAccounts = await db.ProviderAccounts.AsNoTracking()
-            .Where(item => item.Enabled && (item.TenantId == null || item.TenantId == tenantId))
-            .Select(item => new { item.ProviderId, item.Scope })
-            .ToArrayAsync(cancellationToken);
-        var accountScopes = eligibleAccounts
-            .GroupBy(item => new { item.ProviderId, item.Scope })
-            .Select(group => new
-            {
-                providerId = group.Key.ProviderId,
-                scope = group.Key.Scope.ToString().ToLowerInvariant(),
-                count = group.Count()
-            })
-            .OrderBy(item => item.providerId)
-            .ThenBy(item => item.scope)
-            .ToArray();
-
-        return Ok(new
-        {
-            audioQuality = policy.AudioQuality,
-            disabledProviders = policy.DisabledProviders.Order(StringComparer.Ordinal).ToArray(),
-            providerOrders = ProviderOrderPolicyCatalog.Definitions.Select(definition => new
-            {
-                capability = definition.Capability.ToString().ToLowerInvariant(),
-                order = policy.GetProviderOrder(definition.Capability)
-            }),
-            accountScopes,
-            routeSelection = new
-            {
-                localPreferencePercent = policy.LocalPreferenceWindow * 100d,
-                localReason = "Prefer a playable local route when its score is within the configured local preference window.",
-                externalReason = "Otherwise choose the first available provider in effective order that satisfies the requested quality."
-            }
-        });
-    }
-
     [HttpPost("config")]
     public async Task<IActionResult> UpdateConfig([FromBody] ConfigUpdateRequest request)
     {
@@ -459,149 +395,6 @@ public class ConfigController : ControllerBase
         {
             message = "Cache cleared successfully",
             cacheEntriesDeleted = clearedCacheEntries
-        });
-    }
-
-    [HttpPost("restart")]
-    public async Task<IActionResult> RestartContainer()
-    {
-        var adminCheck = RequireAdministratorForSensitiveOperation("container restart");
-        if (adminCheck != null)
-        {
-            return adminCheck;
-        }
-
-        _logger.LogDebug("Container restart requested from admin UI");
-
-        try
-        {
-            var socketPath = "/var/run/docker.sock";
-
-            if (!System.IO.File.Exists(socketPath))
-            {
-                _logger.LogWarning("Docker socket not available at {Path}", socketPath);
-                return StatusCode(503, new
-                {
-                    error = "Docker socket not available",
-                    message = "Please restart manually: docker restart allstarr"
-                });
-            }
-
-            var containerId = Environment.MachineName;
-            var containerName = "allstarr";
-
-            _logger.LogDebug("Attempting to restart container {ContainerId} / {ContainerName}", containerId, containerName);
-
-            var handler = new SocketsHttpHandler
-            {
-                ConnectCallback = async (context, cancellationToken) =>
-                {
-                    var socket = new System.Net.Sockets.Socket(
-                        System.Net.Sockets.AddressFamily.Unix,
-                        System.Net.Sockets.SocketType.Stream,
-                        System.Net.Sockets.ProtocolType.Unspecified);
-
-                    var endpoint = new System.Net.Sockets.UnixDomainSocketEndPoint(socketPath);
-                    await socket.ConnectAsync(endpoint, cancellationToken);
-
-                    return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
-                }
-            };
-
-            using var dockerClient = new HttpClient(handler)
-            {
-                BaseAddress = new Uri("http://localhost")
-            };
-
-            var restartResponse = await dockerClient.PostAsync($"/containers/{containerName}/restart?t=5", null);
-
-            if (!restartResponse.IsSuccessStatusCode)
-            {
-                restartResponse.Dispose();
-                restartResponse = await dockerClient.PostAsync($"/containers/{containerId}/restart?t=5", null);
-            }
-
-            using var response = restartResponse;
-
-            if (response.IsSuccessStatusCode)
-            {
-                _logger.LogInformation("Container restart initiated successfully");
-                return Ok(new { message = "Restarting container...", success = true });
-            }
-            else
-            {
-                var errorBody = await response.Content.ReadAsStringAsync();
-                _logger.LogError("Failed to restart container: {StatusCode} - {Body}", response.StatusCode, errorBody);
-                return StatusCode((int)response.StatusCode, new
-                {
-                    error = "Failed to restart container",
-                    message = "Please restart manually: docker restart allstarr"
-                });
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error restarting container");
-            return StatusCode(500, new
-            {
-                error = "Failed to restart container",
-                message = "Please restart manually: docker restart allstarr"
-            });
-        }
-    }
-
-    [HttpGet("export-env")]
-    public IActionResult ExportEnv()
-    {
-        var adminCheck = RequireAdministratorForSensitiveOperation("export env");
-        if (adminCheck != null)
-        {
-            return adminCheck;
-        }
-
-        if (!IsEnvExportEnabled())
-        {
-            _logger.LogWarning("Blocked export-env request because ADMIN__ENABLE_ENV_EXPORT is disabled");
-            return NotFound(new
-            {
-                error = "Export endpoint is disabled by default",
-                message = "Set ADMIN__ENABLE_ENV_EXPORT=true to temporarily enable .env export."
-            });
-        }
-
-        try
-        {
-            if (!System.IO.File.Exists(_envFilePath))
-            {
-                return NotFound(new { error = ".env file not found" });
-            }
-
-            var envContent = System.IO.File.ReadAllText(_envFilePath);
-            var bytes = System.Text.Encoding.UTF8.GetBytes(envContent);
-
-            return File(bytes, "text/plain", ".env");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to export .env file");
-            return StatusCode(500, new { error = "Failed to export .env file" });
-        }
-    }
-
-    [HttpPost("import-env")]
-    public async Task<IActionResult> ImportEnv([FromForm] IFormFile file)
-    {
-        var adminCheck = RequireAdministratorForSensitiveOperation("import env");
-        if (adminCheck != null)
-        {
-            return adminCheck;
-        }
-
-        await Task.CompletedTask;
-        return StatusCode(StatusCodes.Status410Gone, new
-        {
-            error = "The wholesale .env import endpoint has been retired.",
-            message = "Use /api/admin/config/migration/preview and explicitly confirm /api/admin/config/migration/apply."
         });
     }
 
@@ -967,21 +760,6 @@ public class ConfigController : ControllerBase
             error = "Administrator permissions required",
             message = "This operation is restricted to Jellyfin administrators."
         });
-    }
-
-    private bool IsEnvExportEnabled()
-    {
-        if (_configuration.GetValue<bool>("Admin:EnableEnvExport"))
-        {
-            return true;
-        }
-
-        if (_configuration.GetValue<bool>("ADMIN__ENABLE_ENV_EXPORT"))
-        {
-            return true;
-        }
-
-        return _configuration.GetValue<bool>("ADMIN_ENABLE_ENV_EXPORT");
     }
 
     [HttpGet("providers/status")]

@@ -81,17 +81,25 @@ public sealed class HostCompositionTests
 
         Assert.Contains(expectedProtocolController, controllerTypes);
         Assert.DoesNotContain(excludedProtocolController, controllerTypes);
-        Assert.Equal(
-            backend.Equals("Jellyfin", StringComparison.OrdinalIgnoreCase),
-            controllerTypes.Contains(typeof(JellyfinAdminController)));
         Assert.DoesNotContain(typeof(IntelligenceController), controllerTypes);
         Assert.DoesNotContain(typeof(ListenBrainzIntakeController), controllerTypes);
+
+        var routes = descriptors.Select(item => item.AttributeRouteInfo?.Template).OfType<string>().ToArray();
+        Assert.Contains("api/admin/config", routes);
+        Assert.Contains("api/admin/config/migration/preview", routes);
+        Assert.Contains("api/admin/media-probe", routes);
+        Assert.Contains("api/admin/playlist-readiness", routes);
+        Assert.Contains("api/admin/ui/now-playing", routes);
+        Assert.Contains("api/admin/downloads/artwork/{itemId}", routes);
+        Assert.DoesNotContain(routes, route => route is
+            "api/admin/status" or "api/admin/sessions" or "api/admin/scrobbling-sessions" or
+            "api/admin/debug/endpoint-usage" or "api/admin/restart" or "api/admin/export-env" or
+            "api/admin/import-env" or "api/admin/config/effective-provider-policy" or "api/admin/downloads/queue");
 
         var backendNeutralControllers = typeof(Program).Assembly.DefinedTypes
             .Where(type => !type.IsAbstract && typeof(ControllerBase).IsAssignableFrom(type))
             .Where(type => type.AsType() != typeof(JellyfinController) &&
                            type.AsType() != typeof(SubsonicController) &&
-                           type.AsType() != typeof(JellyfinAdminController) &&
                            type.GetCustomAttribute<ReleaseFeatureAttribute>() == null)
             .Select(type => type.AsType())
             .ToArray();
