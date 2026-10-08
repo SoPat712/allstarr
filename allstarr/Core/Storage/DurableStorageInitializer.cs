@@ -6,7 +6,8 @@ public sealed class DurableStorageInitializer(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     StorageOptions options,
     DurableStorageState state,
-    ILogger<DurableStorageInitializer> logger) : IHostedService
+    ILogger<DurableStorageInitializer> logger,
+    DurableBackupService backups) : IHostedService
 {
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -28,6 +29,7 @@ public sealed class DurableStorageInitializer(
                 return;
             }
 
+            await backups.ApplyPendingRestoreAsync(cancellationToken);
             await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
             await context.Database.OpenConnectionAsync(cancellationToken);
             await context.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;", cancellationToken);
@@ -63,8 +65,9 @@ public sealed class DurableStorageInitializer(
         }
         catch (Exception exception)
         {
-            state.Set(DurableStorageReadiness.Unavailable, errorCode: "database_initialization_failed");
-            logger.LogError("SQLite storage initialization failed ({ExceptionType})", exception.GetType().Name);
+            var restoring = backups.HasPendingRestore;
+            state.Set(DurableStorageReadiness.Unavailable, errorCode: restoring ? "restore_application_failed" : "database_initialization_failed");
+            logger.LogError("SQLite storage initialization failed ({ExceptionType}); restore pending: {RestorePending}", exception.GetType().Name, restoring);
         }
     }
 

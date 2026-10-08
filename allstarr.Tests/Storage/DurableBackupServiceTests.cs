@@ -13,7 +13,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Tests;
 
-public sealed class DurableBackupServiceTests : IAsyncLifetime
+public sealed partial class DurableBackupServiceTests : IAsyncLifetime
 {
     private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
@@ -183,6 +183,7 @@ public sealed class DurableBackupServiceTests : IAsyncLifetime
         Assert.Equal(expected, Assert.IsAssignableFrom<ObjectResult>(await controller.Get()).StatusCode);
         Assert.Equal(expected, Assert.IsAssignableFrom<ObjectResult>(await controller.CreateBackup()).StatusCode);
         Assert.Equal(expected, Assert.IsAssignableFrom<ObjectResult>(await controller.DownloadBackup(Guid.NewGuid())).StatusCode);
+        Assert.Equal(expected, Assert.IsAssignableFrom<ObjectResult>(await controller.StageRestore(null)).StatusCode);
         Assert.False(Directory.Exists(_options.BackupDirectory));
     }
 

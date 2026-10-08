@@ -26,6 +26,7 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Core/ManagedFiles/PhysicalManagedFileOperations.cs"] = "managed audio and artwork",
             ["Core/Operations/PlatformReadinessService.cs"] = "temporary readiness probe",
             ["Core/Storage/DurableBackupService.cs"] = "backup archive",
+            ["Core/Storage/DurableBackupService.Restore.cs"] = "staged restore and previous database/key ring",
             ["Core/Secrets/FileSecretKeyRingProvider.cs"] = "private encryption key ring",
             ["Providers/Apple/AppleMusicDownloadService.cs"] = "managed audio",
             ["Services/Common/BaseDownloadService.cs"] = "managed audio and artwork",
@@ -82,6 +83,7 @@ public sealed class RuntimeFileOwnershipContractTests
             "Core/Enrichment/TagLibManagedMetadataWriter.cs",
             "Core/ManagedFiles/FilePlacementService.cs",
             "Core/Storage/DurableBackupService.cs",
+            "Core/Storage/DurableBackupService.Restore.cs",
             "Core/Secrets/FileSecretKeyRingProvider.cs",
             "Providers/Extensions/ExtensionManager.cs",
             "Services/Common/FileMediaApplicationCache.cs"

@@ -1487,8 +1487,14 @@ export const settings = {
   storage: () => json<{
     storage: { provider?: string; readiness?: string; checkedAt?: string };
     backups: StorageBackup[];
+    restorePending: boolean;
   }>("/api/admin/storage"),
   backup: () => json<StorageBackup>("/api/admin/storage/backups", { method: "POST" }),
+  restore: (file: File) => {
+    const body = new FormData();
+    body.append("backup", file);
+    return json<{ restartRequired: true; message: string }>("/api/admin/storage/restore", { method: "POST", body });
+  },
   backupDownloadUrl: (id: string) =>
     adminUrl(`/api/admin/storage/backups/${encodeURIComponent(id)}/download`),
   cache: () => json<CacheDiagnostics>("/api/admin/cache"),

@@ -61,6 +61,9 @@
   let feedback = $state("");
   let purgeTarget = $state("");
   let purgeOpen = $state(false);
+  let restoreOpen = $state(false);
+  let restoreError = $state("");
+  let restoreFile = $state<File | null>(null);
   let loadedSection = $state("");
   let dirtyOwners = $state<string[]>([]);
   let serverChanged = $state(false);
@@ -82,6 +85,7 @@
     Number((config.cache as Record<string, unknown> | undefined)?.mediaMaximumMegabytes ?? 512),
   );
   const storageReady = $derived(storage?.storage.readiness?.toLowerCase() === "ready");
+  const restorePending = $derived(storage?.restorePending === true);
 
   function backupDate(value: string) {
     const date = new Date(value);
@@ -205,6 +209,23 @@
     purgeOpen = false;
   }
 
+  async function restore() {
+    if (!restoreFile || action || restorePending) return;
+    action = "restore";
+    restoreError = "";
+    try {
+      const result = await settings.restore(restoreFile);
+      feedback = result.message;
+      restoreOpen = false;
+      restoreFile = null;
+      await refresh();
+    } catch (cause) {
+      restoreError = cause instanceof Error ? cause.message : "Backup restore could not be staged.";
+    } finally {
+      action = "";
+    }
+  }
+
   onMount(() => {
     themeMode = readThemeMode();
     const unsubscribeTheme = onThemeModeChange((mode) => { themeMode = mode; });
@@ -313,8 +334,11 @@
             <header><div><strong>SQLite</strong><small>Durable application state</small></div><Badge state={storage?.storage.readiness?.toLowerCase() === "ready" ? "healthy" : "degraded"}>{storage?.storage.readiness ?? "Unknown"}</Badge></header>
             <dl><div><dt>Provider</dt><dd>{storage?.storage.provider ?? "SQLite"}</dd></div><div><dt>Verified backups</dt><dd>{storage?.backups.filter((backup) => backup.verifiedAt).length ?? 0}</dd></div></dl>
             <p>Database and encryption key ring. Keep downloaded backups private.</p>
+            {#if restorePending}
+              <p class="notice-info" role="status">A restore is staged. Restart Allstarr to finish replacing saved state and credentials.</p>
+            {/if}
             {#if administrator}
-              <Button disabled={Boolean(action) || !storageReady} onclick={() => void run("backup", settings.backup, "Backup created.")}>{action === "backup" ? "Creating…" : "Create verified backup"}</Button>
+              <Button disabled={Boolean(action) || !storageReady || restorePending} onclick={() => void run("backup", settings.backup, "Backup created.")}>{action === "backup" ? "Creating…" : "Create verified backup"}</Button>
             {/if}
             {#if (storage?.backups.length ?? 0) > 0}
               <ul class="backup-list m-0 grid min-w-0 list-none gap-3 p-0" aria-label="Verified backups">
@@ -327,6 +351,13 @@
               </ul>
             {:else}
               <p class="backup-empty">No backups yet.</p>
+            {/if}
+            {#if administrator}
+              <label class="grid min-w-0 gap-2 text-sm font-medium">
+                Restore from backup ZIP (up to 1 GiB)
+                <input type="file" class="w-full min-w-0" disabled={Boolean(action) || restorePending} accept=".zip,application/zip" aria-label="Backup ZIP file" onchange={(event) => { restoreFile = (event.currentTarget as HTMLInputElement).files?.[0] ?? null; }} />
+              </label>
+              <Button variant="secondary" disabled={!restoreFile || Boolean(action) || restorePending} onclick={() => { restoreError = ""; restoreOpen = true; }}>Restore on restart</Button>
             {/if}
           </article>
           <CacheDiagnosticsCard
@@ -363,5 +394,16 @@
     description="Disposable metadata and media payloads will be removed. Durable business state, accounts, mappings, playlists, and kept audio are not affected."
     confirmLabel="Purge cache"
     onConfirm={purge}
+  />
+  <ConfirmDialog
+    bind:open={restoreOpen}
+    title="Stage backup restore?"
+    description="The next restart replaces saved state and credentials with the contents of this backup. Previous files are preserved. Allstarr will not restart automatically."
+    confirmLabel={action === "restore" ? "Staging…" : "Restore on restart"}
+    confirmVariant="destructive"
+    disabled={action === "restore" || !restoreFile}
+    closeOnConfirm={false}
+    error={restoreError}
+    onConfirm={restore}
   />
 {/if}

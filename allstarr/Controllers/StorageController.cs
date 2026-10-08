@@ -26,7 +26,8 @@ public sealed class StorageController(DurableStorageState storageState, DurableB
                 storage.ErrorCode,
                 storage.CheckedAt
             },
-            backups = await backupService.ListAsync(cancellationToken)
+            backups = await backupService.ListAsync(cancellationToken),
+            restorePending = backupService.HasPendingRestore
         });
     }
 
@@ -62,6 +63,36 @@ public sealed class StorageController(DurableStorageState storageState, DurableB
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "backup_unavailable" });
+        }
+    }
+
+    [HttpPost("restore")]
+    [RequestSizeLimit(DurableBackupService.MaximumArchiveBytes + 64 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = DurableBackupService.MaximumArchiveBytes)]
+    public async Task<IActionResult> StageRestore([FromForm] IFormFile? backup, CancellationToken cancellationToken = default)
+    {
+        if (RequireAdministrator() is { } error) return error;
+        if (backup is null || backup.Length == 0)
+            return BadRequest(new { error = "backup_required", message = "Select a backup ZIP to restore." });
+        if (backup.Length > DurableBackupService.MaximumArchiveBytes)
+            return StatusCode(StatusCodes.Status413PayloadTooLarge, new { error = "backup_too_large", message = "The backup ZIP must be no larger than 1 GiB." });
+        try
+        {
+            await using var input = backup.OpenReadStream();
+            await backupService.StageRestoreAsync(input, cancellationToken);
+            return Ok(new { restartRequired = true, message = "Restart Allstarr to finish restoring." });
+        }
+        catch (RestorePendingException)
+        {
+            return Conflict(new { error = "restore_pending", message = "Restart Allstarr to finish the pending restore." });
+        }
+        catch (Exception exception) when (exception is BackupVerificationException or InvalidDataException or SqliteException or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            return UnprocessableEntity(new { error = "backup_invalid", message = "Backup verification failed. Check the archive, database schema, and key ring." });
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "restore_unavailable", message = "The restore could not be staged. Check available disk space and data-directory access." });
         }
     }
 

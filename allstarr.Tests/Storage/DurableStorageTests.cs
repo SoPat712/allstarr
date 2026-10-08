@@ -183,7 +183,10 @@ public sealed class DurableStorageTests : IAsyncLifetime
     {
         var state = new DurableStorageState(options);
         await new DurableStorageInitializer(new TestDbContextFactory(_database.Options), options,
-            state, NullLogger<DurableStorageInitializer>.Instance).StartAsync(CancellationToken.None);
+            state, NullLogger<DurableStorageInitializer>.Instance,
+            new DurableBackupService(new TestDbContextFactory(_database.Options), options, state,
+                new allstarr.Core.Secrets.SecretStoreOptions { KeyRingPath = Path.Combine(options.DataDirectory, "keyring.json") }))
+            .StartAsync(CancellationToken.None);
         return state;
     }
 
