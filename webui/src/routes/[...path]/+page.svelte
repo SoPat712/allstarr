@@ -30,7 +30,7 @@
   // Intelligence remains available only in the explicit development composition.
   const navigationDestinations = destinations.filter((item) => item.href !== "#/intelligence");
   const mobileDestinations = navigationDestinations.filter((item) => item.mobile);
-  const moreDestinations = navigationDestinations.filter((item) => !item.mobile);
+  const moreDestinations = [preferencesDestination, ...navigationDestinations.filter((item) => !item.mobile)];
   const librarySections = [
     { id: "playlists", label: "Playlists", href: "#/library/playlists" },
     { id: "mappings", label: "Mappings", href: "#/library/mappings" },
@@ -643,17 +643,13 @@
                 <span class="nav-icon"><UiIcon name={destination.icon} /></span>
                 <span>
                   <strong>{destination.label}</strong>
-                  <small>{destination.label === "Integrations" ? "Services, accounts, extensions, and routing" : "Deployment and operator controls"}</small>
+                  <small>{destination.href === "#/preferences" ? "Content and track labels for your account" : destination.label === "Integrations" ? "Services, accounts, extensions, and routing" : "Deployment and operator controls"}</small>
                 </span>
               </a>
             {/each}
           </nav>
 
           <div class="mobile-menu-actions">
-            <button type="button" aria-pressed={route === "/preferences"} onclick={() => { mobileMenuOpen = false; window.location.hash = "/preferences"; }}>
-              <UiIcon name="headphones" />
-              <span><strong>Listening preferences</strong><small>Content and track labels for your account</small></span>
-            </button>
             <button type="button" onclick={cycleTheme}>
               {#if themeMode === "system"}<Monitor aria-hidden="true" />
               {:else if themeMode === "light"}<Sun aria-hidden="true" />

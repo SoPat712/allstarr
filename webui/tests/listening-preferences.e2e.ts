@@ -97,7 +97,7 @@ test("listener saves and resets preferences with the latest returned revision", 
 
   await page.goto("/");
   await page.getByRole("button", { name: "More destinations" }).click();
-  await page.getByRole("button", { name: "Listening preferences" }).click();
+  await page.getByRole("link", { name: /Listening preferences/ }).click();
   await expect(page).toHaveURL(/#\/preferences$/);
   await expect(page.getByRole("heading", { name: "Listening preferences", level: 1 })).toBeVisible();
   await expect(page.getByText("affect only your listener account", { exact: false })).toBeVisible();

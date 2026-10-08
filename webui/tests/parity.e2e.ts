@@ -3271,6 +3271,7 @@ test("Mobile primary navigation stays contained and moves secondary tasks into M
     await expect(sheet).toBeVisible();
     await expect(sheet.getByRole("link", { name: /Integrations/ })).toBeVisible();
     await expect(sheet.getByRole("link", { name: /Settings/ })).toBeVisible();
+    await expect(sheet.getByRole("link", { name: /Listening preferences/ })).toBeVisible();
     await expect(sheet.getByRole("link", { name: /Intelligence|Insights/ })).toHaveCount(0);
     expect(await sheet.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     if (process.env.ALLSTARR_SCREENSHOT_DIR)
