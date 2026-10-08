@@ -1,22 +1,22 @@
 # Architecture overview
 
-Allstarr is a music middleware service. It presents a Jellyfin or Subsonic-compatible surface, resolves tracks through a provider-neutral capability core, and keeps operational state in PostgreSQL. It is not a general media-server replacement or a local-library organizer.
+Allstarr is a music middleware service. It presents a Jellyfin or Subsonic-compatible surface, resolves tracks through a provider-neutral capability core, and keeps operational state in SQLite. It is not a general media-server replacement or a local-library organizer.
 
 ## Runtime invariants
 
 - Exactly one backend protocol is selected for a deployment: Jellyfin or Subsonic/OpenSubsonic.
-- PostgreSQL is the only durable database and is required before state-changing workers run.
-- Media bytes live on mounted filesystems. PostgreSQL stores identity, ownership, lifecycle, and cache metadata.
+- SQLite is the only durable database and is required before state-changing workers run.
+- Media bytes live on mounted filesystems. SQLite stores identity, ownership, lifecycle, and cache metadata.
 - Provider credentials are encrypted before persistence. The encryption key ring is a separate deployment secret.
 - Redis, Valkey, SQLite, mapping JSON files, and cache files are not authorities for runtime state.
-- The default Compose stack contains PostgreSQL and Allstarr. Optional upstream services are enabled explicitly through `allstarr.sh`.
+- One Allstarr process owns the SQLite file. Optional upstream services are enabled explicitly through `allstarr.sh`.
 - Extensions are installed from administrator-approved registries. Allstarr does not ship a bundled extension registry or third-party extension packages.
 
 ## State-ownership matrix
 
 | Owner | Authoritative state | Allowed payloads and limits | Never owns |
 | --- | --- | --- | --- |
-| PostgreSQL | Accounts and encrypted secret references; tenant runtime settings; admin sessions; playlist links, snapshots, source entries, sync runs and memberships; canonical identities, matches, overrides and provider routes; jobs, schedules and attempts; health, circuits and audit events; extension registries, packages and permission state; playback, favorites, intelligence, managed-file and cache metadata | Durable business and lifecycle records with tenant/user scope, revisions, constraints and migrations | Audio/artwork bytes, extension package bytes, backup archives or encryption key material |
+| SQLite | Accounts and encrypted secret references; tenant runtime settings; admin sessions; playlist links, snapshots, source entries, sync runs and memberships; canonical identities, matches, overrides and provider routes; jobs, schedules and attempts; health, circuits and audit events; extension registries, packages and permission state; playback, favorites, intelligence, managed-file and cache metadata | Durable business and lifecycle records with tenant/user scope, revisions, constraints and migrations | Audio/artwork bytes, extension package bytes, backup archives or encryption key material |
 | Filesystem | Managed audio and artwork; target playlist files; kept lyrics sidecars; installed extension package payloads; the encryption key ring; verified backup artifacts | Rebuildable media cache with bounded size/TTL; atomic staging files beside an allowed final payload | Accounts, sessions, settings, mappings, accepted decisions, playlist membership/order, sync timestamps, health, jobs or events |
 | Environment / deployment secrets | Process-start bootstrap, security policy and deployment topology: database connection/password-file location, backend selection/endpoints, mounted paths, bind/trust policy, optional service profiles and initial defaults | Read once into startup configuration; secret values may come from mounted secret files | WebUI mutations, per-user credentials, live playlist configuration or any restart-reconciled business state |
 
@@ -35,7 +35,7 @@ Jellyfin or Subsonic protocol controller
     +--> playlist, matching, playback, lyrics, and artwork orchestration
              |
              +--> provider router --> built-in or extension capability
-             +--> PostgreSQL --> durable state, jobs, accounts, mappings, events
+             +--> SQLite --> durable state, jobs, accounts, mappings, events
              +--> filesystem --> cache, downloads, kept files
 ```
 
@@ -51,7 +51,7 @@ The public protocol controllers preserve client compatibility. New application b
 | Canonical track identity and matching | `allstarr/Core/Matching` |
 | Playlist ownership and synchronization | `allstarr/Core/Playlists` |
 | Durable jobs and schedules | `allstarr/Core/Jobs` |
-| PostgreSQL model and migrations | `allstarr/Core/Storage` |
+| SQLite model and migrations | `allstarr/Core/Storage` |
 | Runtime settings and legacy import | `allstarr/Core/Settings`, `allstarr/Core/Configuration` |
 | Provider accounts and encrypted secrets | `allstarr/Core/Identity`, `allstarr/Core/Secrets` |
 | Extension control plane and SDK | `allstarr/Providers/Extensions` |
@@ -94,7 +94,7 @@ path. A deployment selects one endpoint without changing catalog semantics;
 source IDs and revisions keep caches and provenance separate.
 `MusicBrainzCatalogIngestService` turns a validated source hierarchy into
 tenant-scoped artists, release groups, editions, release tracks, recordings,
-and ordered credits in one serializable PostgreSQL transaction.
+and ordered credits in one serializable SQLite transaction.
 `CanonicalCatalogEvidenceStore` remains the only writer for external aliases and
 source-stamped facts, whether called independently or inside graph ingestion.
 Repeated source payloads preserve IDs and do not create duplicate facts.
@@ -125,11 +125,11 @@ The bounded `PlaybackDeliveryActivityStore` retains disposable, one-hour stream-
 
 State-changing background work uses the durable job queue, schedules, leases, retries, cancellation, and owner authorization under `Core/Jobs`. A process-local task is not an acceptable owner for matching, downloads, playlist synchronization, scrobbling, or extension lifecycle work.
 
-Startup verifies PostgreSQL connectivity and schema compatibility before marking storage ready. Durable workers wait for that state. Run one application process per deployment; restart it after recovering an unavailable database so startup can verify the connection and schema again.
+Startup opens the SQLite file on local disk, enables WAL, applies the baseline migration, and checks schema compatibility and integrity before marking storage ready. Every connection enables foreign keys, normal synchronization, and a five-second busy timeout. Durable workers wait for readiness. Run one application process per deployment; network filesystems are unsupported.
 
 ## Cache and media
 
-The application cache combines PostgreSQL metadata, a bounded in-process hot tier, and filesystem media/artwork storage. Cache entries are disposable; durable mappings, accounts, jobs, events, and managed-file ownership are not.
+The application cache combines SQLite metadata, a bounded in-process hot tier, and filesystem media/artwork storage. Cache entries are disposable; durable mappings, accounts, jobs, events, and managed-file ownership are not.
 
 Media assets should be resolved through shared cache policy and key namespaces. Provider tokens, credentials, and signed URLs must not appear in keys, logs, or diagnostics.
 
@@ -145,7 +145,7 @@ The complete application-cache key inventory is:
 | `image:*`, `playlist:image:*`, `artwork:*` | Artwork bytes or descriptor | Bounded media size/TTL and resource revision |
 | `playback:signal:dedupe:*` | Short-lived duplicate-signal marker | Five-minute maximum TTL |
 
-Playlist source entries, order, matches, decisions, sync timestamps, sessions, and health never use cache keys. Their read models are rebuilt from PostgreSQL.
+Playlist source entries, order, matches, decisions, sync timestamps, sessions, and health never use cache keys. Their read models are rebuilt from SQLite.
 
 ## WebUI
 

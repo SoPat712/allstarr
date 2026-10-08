@@ -3,15 +3,13 @@ using allstarr.Core.Favorites;
 using allstarr.Core.ManagedFiles;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Migrations;
-using Npgsql;
+using Microsoft.Data.Sqlite;
 
 namespace allstarr.Tests;
 
 public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
 {
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private Guid _tenantA;
     private Guid _tenantB;
@@ -25,7 +23,7 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
 
@@ -68,7 +66,7 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PostgresMigration_RejectsCrossScopeJobAndArtifactLineage()
+    public async Task SqliteBaseline_RejectsCrossScopeJobAndArtifactLineage()
     {
         await RejectAsync(db => db.Jobs.Add(Job(
             Guid.CreateVersion7(), _tenantA, _userB, "cross-owner", DateTimeOffset.UtcNow)));
@@ -123,7 +121,7 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PostgresMigration_EnforcesReferenceDmlAndDerivesReferenceCount()
+    public async Task SqliteBaseline_EnforcesReferenceDmlAndDerivesReferenceCount()
     {
         var first = Guid.CreateVersion7();
         var second = Guid.CreateVersion7();
@@ -144,9 +142,18 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
             Assert.Equal(2, await db.ManagedFiles.Where(item => item.Id == _fileA)
                 .Select(item => item.ReferenceCount).SingleAsync());
 
-            await Assert.ThrowsAsync<PostgresException>(() => db.Database.ExecuteSqlInterpolatedAsync($"""
+            await Assert.ThrowsAsync<SqliteException>(() => db.Database.ExecuteSqlInterpolatedAsync($"""
                 UPDATE managed_files SET "ReferenceCount"={9} WHERE "Id"={_fileA}
                 """));
+
+            var removal = await Assert.ThrowsAsync<SqliteException>(() => db.Database.ExecuteSqlInterpolatedAsync($"""
+                UPDATE managed_files SET "RemovedAt"={now} WHERE "Id"={_fileA}
+                """));
+            Assert.Contains("CK_managed_file_removed_references", removal.Message);
+            var rescope = await Assert.ThrowsAsync<SqliteException>(() => db.Database.ExecuteSqlInterpolatedAsync($"""
+                UPDATE managed_files SET "ScopeKey"={"other"} WHERE "Id"={_fileA}
+                """));
+            Assert.Contains("FK_managed_file_saved_reference_lineage", rescope.Message);
 
             await db.Database.ExecuteSqlInterpolatedAsync($"""
                 UPDATE managed_file_references SET "ReleasedAt"={DateTimeOffset.UtcNow.UtcTicks}, "Revision"="Revision"+1 WHERE "Id"={first}
@@ -155,8 +162,16 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
                 .Select(item => item.ReferenceCount).SingleAsync());
         }
 
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM managed_file_references WHERE \"Id\"={second}");
+            Assert.Equal(0, await db.ManagedFiles.Where(item => item.Id == _fileA)
+                .Select(item => item.ReferenceCount).SingleAsync());
+            await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE managed_files SET \"RemovedAt\"={DateTimeOffset.UtcNow.UtcTicks} WHERE \"Id\"={_fileA}");
+        }
+
         await using var crossed = await _factory.CreateDbContextAsync();
-        await Assert.ThrowsAsync<PostgresException>(() => crossed.Database.ExecuteSqlInterpolatedAsync($"""
+        await Assert.ThrowsAsync<SqliteException>(() => crossed.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO managed_file_references
                 ("Id", "ManagedFileId", "TenantId", "OwnerUserId", "ScopeKey", "ReferenceKey", "CreatedAt", "ReleasedAt", "Revision")
             VALUES ({Guid.CreateVersion7()}, {_fileA}, {_tenantB}, {_userB}, {$"{_tenantB:N}:{_userB:N}"}, {"direct:crossed"}, {DateTimeOffset.UtcNow.UtcTicks}, NULL, {1})
@@ -164,37 +179,7 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Lane", "ReleaseCritical")]
-    public async Task PostgresMigration_PreservesEveryLegacyReferenceAcrossUpgradeAndRollback()
-    {
-        const string previous = "20260713225623_Phase2BLegacyEnvImportIdempotency";
-        await using var legacyDatabase = await PostgresTestDatabase.CreateAsync();
-        var options = legacyDatabase.Options;
-        var tenant = Guid.CreateVersion7();
-        var user = Guid.CreateVersion7();
-        var file = Guid.CreateVersion7();
-        var now = DateTimeOffset.UtcNow.UtcTicks;
-
-        await using var db = new AllstarrDbContext(options);
-        var migrator = db.Database.GetService<IMigrator>();
-        await migrator.MigrateAsync(previous);
-        await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO tenants (\"Id\",\"Slug\",\"Name\",\"CreatedAt\") VALUES ({tenant},{"legacy-ref"},{"Legacy refs"},{now})");
-        await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO users (\"Id\",\"TenantId\",\"DisplayName\",\"Status\",\"CreatedAt\",\"UpdatedAt\") VALUES ({user},{tenant},{"Legacy user"},{"Active"},{now},{now})");
-        await db.Database.ExecuteSqlInterpolatedAsync($"""
-            INSERT INTO managed_files
-                ("Id","RootId","TargetRootPath","CanonicalPath","ContentSha256","Length","PlacementMethod","TenantId","OwnerUserId","LibraryScopeId","SourceJobId","ScopeKey","ReferenceCount","IsManaged","CreatedAt","RemovedAt","Revision")
-            VALUES ({file},{Guid.CreateVersion7()},{"/legacy"},{"/legacy/song.flac"},{new string('a', 64)},{1L},{"Copy"},{tenant},{user},{"music"},NULL,{"tenant:user:music"},{3},{true},{now},NULL,{1L})
-            """);
-
-        await migrator.MigrateAsync();
-        var originalIds = await db.ManagedFileReferences.Where(item => item.ManagedFileId == file)
-            .OrderBy(item => item.ReferenceKey).Select(item => item.Id).ToListAsync();
-        Assert.Equal(3, originalIds.Count);
-        Assert.Equal(3, await db.ManagedFiles.Where(item => item.Id == file).Select(item => item.ReferenceCount).SingleAsync());
-    }
-
-    [Fact]
-    public async Task PostgresMigration_RejectsArtifactManagedFileOutsideExactScope()
+    public async Task SqliteBaseline_RejectsArtifactManagedFileOutsideExactScope()
     {
         var workspaceId = Guid.CreateVersion7();
         var workspaceKey = Guid.NewGuid().ToString("N");

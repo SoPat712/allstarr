@@ -13,7 +13,7 @@ namespace allstarr.Tests;
 
 public sealed class CacheDiagnosticsTests : IAsyncLifetime
 {
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private readonly string _mediaPath = Path.Combine(
         Path.GetTempPath(),
         $"allstarr-cache-diagnostics-media-{Guid.CreateVersion7():N}");
@@ -25,7 +25,7 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         var factory = new TestFactory(_database.Options);
         _clock = new TestClock(
             new DateTimeOffset(2026, 7, 24, 12, 0, 0, TimeSpan.Zero));

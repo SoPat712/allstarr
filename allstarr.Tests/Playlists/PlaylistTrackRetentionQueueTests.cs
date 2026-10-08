@@ -14,13 +14,13 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
     private readonly Guid _userId = Guid.CreateVersion7();
     private readonly Guid _providerAccountId = Guid.CreateVersion7();
     private readonly DateTimeOffset _now = new(2026, 8, 25, 12, 0, 0, TimeSpan.Zero);
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private DurableJobQueue _jobs = null!;
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
         await using (var db = await _factory.CreateDbContextAsync())
         {

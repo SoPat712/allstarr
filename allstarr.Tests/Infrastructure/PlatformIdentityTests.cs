@@ -7,17 +7,17 @@ namespace allstarr.Tests;
 
 public sealed class PlatformIdentityTests : IAsyncLifetime
 {
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private DurableStorageState _state = null!;
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
-        var storage = new DurableStorageOptions
+        _database = await SqliteTestDatabase.CreateAsync();
+        var storage = new StorageOptions
         {
-            Provider = "Postgres",
-            ConnectionString = _database.ConnectionString
+            DataDirectory = _database.StorageOptions.DataDirectory,
+            DatabaseFileName = _database.StorageOptions.DatabaseFileName
         };
         _factory = new TestDbContextFactory(_database.Options);
         _state = new DurableStorageState(storage);

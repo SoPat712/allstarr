@@ -104,7 +104,6 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         // Keep the checked-in snapshot provider-neutral. Neither convention is
         // required because Allstarr assigns durable identifiers explicitly.
         modelBuilder.Model.RemoveAnnotation("Relational:MaxIdentifierLength");
-        modelBuilder.Model.RemoveAnnotation("Npgsql:ValueGenerationStrategy");
     }
 
     private static void ConfigureTenant(ModelBuilder modelBuilder)

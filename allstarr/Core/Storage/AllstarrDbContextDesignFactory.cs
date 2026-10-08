@@ -8,9 +8,9 @@ public sealed class AllstarrDbContextDesignFactory : IDesignTimeDbContextFactory
     public AllstarrDbContext CreateDbContext(string[] args)
     {
         var connectionString = Environment.GetEnvironmentVariable("ALLSTARR_DESIGN_CONNECTION_STRING")
-            ?? "Host=localhost;Port=5432;Database=allstarr;Username=allstarr";
+            ?? "Data Source=design.db";
         var options = new DbContextOptionsBuilder<AllstarrDbContext>();
-        options.UseNpgsql(connectionString);
+        options.UseSqlite(connectionString);
 
         return new AllstarrDbContext(options.Options);
     }

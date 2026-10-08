@@ -1,143 +1,79 @@
-using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Storage;
 
-public sealed class DurableStorageInitializer : IHostedService
+public sealed class DurableStorageInitializer(
+    IDbContextFactory<AllstarrDbContext> contextFactory,
+    StorageOptions options,
+    DurableStorageState state,
+    ILogger<DurableStorageInitializer> logger) : IHostedService
 {
-    private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
-    private readonly DurableStorageOptions _options;
-    private readonly DurableStorageState _state;
-    private readonly ILogger<DurableStorageInitializer> _logger;
-
-    public DurableStorageInitializer(
-        IDbContextFactory<AllstarrDbContext> contextFactory,
-        DurableStorageOptions options,
-        DurableStorageState state,
-        ILogger<DurableStorageInitializer> logger)
-    {
-        _contextFactory = contextFactory;
-        _options = options;
-        _state = state;
-        _logger = logger;
-    }
-
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        for (var attempt = 0; ; attempt++)
+        try
         {
-            try
+            options.Validate();
+            Directory.CreateDirectory(options.DataDirectory);
+            var path = Path.GetFullPath(options.DataDirectory);
+            var drive = DriveInfo.GetDrives()
+                .Where(item => path == item.RootDirectory.FullName ||
+                    path.StartsWith(Path.TrimEndingDirectorySeparator(item.RootDirectory.FullName) +
+                                    Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                .OrderByDescending(item => item.RootDirectory.FullName.Length)
+                .FirstOrDefault();
+            if (drive != null && IsNetworkFileSystem(drive.DriveType, drive.DriveFormat))
             {
-                await InitializeOnceAsync(cancellationToken);
+                state.Set(DurableStorageReadiness.Unavailable, errorCode: "database_requires_local_disk");
+                logger.LogError("The database data directory must be on local disk; network filesystems are unsupported");
                 return;
             }
-            catch (Exception ex) when (
-                attempt < _options.ConnectionRetryCount &&
-                IsTransientConnectionFailure(ex) &&
-                !cancellationToken.IsCancellationRequested)
+
+            await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+            await context.Database.OpenConnectionAsync(cancellationToken);
+            await context.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;", cancellationToken);
+            var before = await DurableSchemaCompatibility.InspectAsync(context, cancellationToken);
+            if (before.Status == DurableSchemaCompatibilityStatus.UnsupportedVersion)
             {
-                var delay = TimeSpan.FromSeconds(Math.Min(5, Math.Pow(2, attempt)));
-                _logger.LogWarning(
-                    "Durable storage initialization attempt {Attempt} failed transiently ({ExceptionType}); retrying",
-                    attempt + 1,
-                    ex.GetType().Name);
-                await Task.Delay(delay, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                _state.Set(DurableStorageReadiness.Unavailable, errorCode: "database_initialization_failed");
-                _logger.LogError(
-                    ex,
-                    "Durable storage initialization failed for {StorageProvider} ({ExceptionType}): {Failure}",
-                    _options.ParseProvider(),
-                    ex.GetType().Name,
-                    ex.GetBaseException().Message);
+                SetIncompatible(before);
                 return;
             }
+            if (options.AutoMigrate)
+                await context.Database.MigrateAsync(cancellationToken);
+            var current = await DurableSchemaCompatibility.InspectAsync(context, cancellationToken);
+            if (!current.IsCurrent)
+            {
+                SetIncompatible(current);
+                return;
+            }
+
+            await using var check = context.Database.GetDbConnection().CreateCommand();
+            check.CommandText = "PRAGMA quick_check;";
+            if (!string.Equals(await check.ExecuteScalarAsync(cancellationToken) as string, "ok", StringComparison.Ordinal))
+            {
+                state.Set(DurableStorageReadiness.Unavailable, errorCode: "database_integrity_check_failed");
+                logger.LogError("SQLite startup integrity check failed");
+                return;
+            }
+            state.Set(DurableStorageReadiness.Ready, current.CurrentSchemaVersion);
+            logger.LogInformation("SQLite storage ready at schema {SchemaVersion}", current.CurrentSchemaVersion);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            state.Set(DurableStorageReadiness.Unavailable, errorCode: "database_initialization_failed");
+            logger.LogError("SQLite storage initialization failed ({ExceptionType})", exception.GetType().Name);
         }
     }
 
-    private async Task InitializeOnceAsync(CancellationToken cancellationToken)
-    {
-        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        if (_options.AutoMigrate)
-        {
-            if (!await ApplyMigrationsAsync(context, cancellationToken))
-            {
-                return;
-            }
-        }
-        else
-        {
-            if (!await context.Database.CanConnectAsync(cancellationToken))
-            {
-                _state.Set(DurableStorageReadiness.Unavailable, errorCode: "database_unavailable");
-                return;
-            }
+    internal static bool IsNetworkFileSystem(DriveType type, string format) =>
+        type == DriveType.Network || format.ToLowerInvariant() is "nfs" or "nfs4" or "cifs" or "smb" or "smbfs" or "smb2" or "smb3";
 
-            var compatibility = await DurableSchemaCompatibility.InspectAsync(
-                context,
-                cancellationToken);
-            if (!compatibility.IsCurrent)
-            {
-                SetSchemaIncompatible(compatibility);
-                return;
-            }
-        }
-
-        var current = await DurableSchemaCompatibility.InspectAsync(context, cancellationToken);
-        if (!current.IsCurrent)
-        {
-            SetSchemaIncompatible(current);
-            return;
-        }
-
-        var schemaVersion = current.CurrentSchemaVersion;
-        _state.Set(DurableStorageReadiness.Ready, schemaVersion);
-        _logger.LogInformation(
-            "Durable storage ready using {StorageProvider} at schema {SchemaVersion}",
-            _options.ParseProvider(),
-            schemaVersion);
-    }
-
-    private static bool IsTransientConnectionFailure(Exception exception) =>
-        exception is TimeoutException ||
-        exception is DbException databaseException && databaseException.IsTransient ||
-        exception.InnerException != null && IsTransientConnectionFailure(exception.InnerException);
+    private void SetIncompatible(DurableSchemaCompatibilitySnapshot compatibility) =>
+        state.Set(DurableStorageReadiness.SchemaIncompatible, compatibility.AppliedSchemaVersion,
+            DurableSchemaCompatibility.ErrorCode(compatibility));
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
-    private async Task<bool> ApplyMigrationsAsync(
-        AllstarrDbContext context,
-        CancellationToken cancellationToken)
-    {
-        var compatibility = await DurableSchemaCompatibility.InspectAsync(
-            context,
-            cancellationToken);
-        if (compatibility.Status != DurableSchemaCompatibilityStatus.Current)
-        {
-            _logger.LogWarning(
-                "Durable storage schema compatibility check: Status={Status}, Unknown=[{Unknown}], Missing=[{Missing}]",
-                compatibility.Status,
-                string.Join(", ", compatibility.UnknownMigrations),
-                string.Join(", ", compatibility.MissingMigrations));
-        }
-        if (compatibility.Status == DurableSchemaCompatibilityStatus.UnsupportedVersion)
-        {
-            SetSchemaIncompatible(compatibility);
-            return false;
-        }
-
-        await context.Database.MigrateAsync(cancellationToken);
-        return true;
-    }
-
-    private void SetSchemaIncompatible(DurableSchemaCompatibilitySnapshot compatibility)
-    {
-        _state.Set(
-            DurableStorageReadiness.SchemaIncompatible,
-            compatibility.AppliedSchemaVersion,
-            DurableSchemaCompatibility.ErrorCode(compatibility));
-    }
-
 }

@@ -17,13 +17,13 @@ public sealed class FavoriteDownloadRoutingTests : IAsyncLifetime
     private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
     private readonly Guid _jobId = Guid.CreateVersion7();
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private TestFactory _factory = null!;
     private FakeClock _clock = null!;
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestFactory(_database.Options);
         _clock = new FakeClock(new DateTimeOffset(2026, 7, 14, 20, 0, 0, TimeSpan.Zero));
         await using var db = await _factory.CreateDbContextAsync();

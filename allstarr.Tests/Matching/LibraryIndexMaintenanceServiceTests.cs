@@ -14,14 +14,14 @@ public sealed class LibraryIndexMaintenanceServiceTests : IAsyncLifetime
 {
     private readonly DateTimeOffset _now = new(2026, 8, 26, 18, 0, 0, TimeSpan.Zero);
     private readonly TestClock _clock;
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private TestFactory _factory = null!;
 
     public LibraryIndexMaintenanceServiceTests() => _clock = new TestClock(_now);
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync(useTemplate: false);
+        _database = await SqliteTestDatabase.CreateAsync(useTemplate: false);
         _factory = new TestFactory(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
         await db.Database.MigrateAsync();
@@ -125,11 +125,7 @@ public sealed class LibraryIndexMaintenanceServiceTests : IAsyncLifetime
     {
         var options = new DurableJobOptions();
         var queue = new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), _clock);
-        var storage = new DurableStorageState(new DurableStorageOptions
-        {
-            Provider = "Postgres",
-            ConnectionString = "Host=unused;Database=unused"
-        });
+        var storage = new DurableStorageState(new StorageOptions());
         return new LibraryIndexMaintenanceService(_factory, queue, storage, _clock,
             NullLogger<LibraryIndexMaintenanceService>.Instance);
     }

@@ -34,7 +34,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     private readonly Guid _providerAccountId = Guid.CreateVersion7();
     private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private DurableStorageState _storageState = null!;
     private readonly string _keyRingPath;
@@ -48,12 +48,12 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
-        _storageState = new DurableStorageState(new DurableStorageOptions
+        _storageState = new DurableStorageState(new StorageOptions
         {
-            Provider = "Postgres",
-            ConnectionString = _database.ConnectionString
+            DataDirectory = _database.StorageOptions.DataDirectory,
+            DatabaseFileName = _database.StorageOptions.DatabaseFileName
         });
         _storageState.Set(DurableStorageReadiness.Ready, "fixture");
         await using var context = await _factory.CreateDbContextAsync();

@@ -79,7 +79,7 @@ public class DownloadsControllerLyricsArchiveTests
     [Trait("Category", "Postgres")]
     public async Task DeleteDownload_RemovesAdjacentLyricsSidecar()
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync();
         var testRoot = CreateTestRoot();
         var downloadsRoot = Path.Combine(testRoot, "downloads");
         var artistDir = Path.Combine(downloadsRoot, "kept", "Artist");

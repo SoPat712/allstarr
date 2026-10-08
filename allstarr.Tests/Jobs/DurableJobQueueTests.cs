@@ -13,7 +13,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
 {
     private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private FakeClock _clock = null!;
     private DurableJobOptions _options = null!;
@@ -21,7 +21,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
         context.Tenants.Add(new TenantRecord
@@ -668,10 +668,10 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             _tenantId,
             _userId));
 
-    private DurableStorageOptions StorageOptions() => new()
+    private StorageOptions StorageOptions() => new()
     {
-        Provider = "Postgres",
-        ConnectionString = _database.ConnectionString
+        DataDirectory = _database.StorageOptions.DataDirectory,
+        DatabaseFileName = _database.StorageOptions.DatabaseFileName
     };
 
     private async Task<ProviderAccountRecord> AddProviderAccount(string providerId, Guid ownerUserId)

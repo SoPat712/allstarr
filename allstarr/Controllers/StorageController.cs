@@ -63,17 +63,12 @@ public sealed class StorageController : ControllerBase
     }
 
     [HttpPost("backups")]
-    public async Task<IActionResult> CreateBackup(CancellationToken cancellationToken = default)
+    public Task<IActionResult> CreateBackup(CancellationToken cancellationToken = default)
     {
-        var artifact = await _backupService.CreateAsync(cancellationToken);
-        return Accepted(new
+        return Task.FromResult<IActionResult>(StatusCode(StatusCodes.Status503ServiceUnavailable, new
         {
-            artifact.Id,
-            provider = artifact.Provider.ToString(),
-            artifact.Sha256,
-            artifact.SchemaVersion,
-            artifact.CreatedAt,
-            status = "verified"
-        });
+            error = "backups_unavailable",
+            message = "Backups are being rebuilt."
+        }));
     }
 }

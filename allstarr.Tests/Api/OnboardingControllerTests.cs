@@ -24,7 +24,7 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
     private readonly Guid _firstUserId = Guid.CreateVersion7();
     private readonly Guid _secondTenantId = Guid.CreateVersion7();
     private readonly Guid _secondUserId = Guid.CreateVersion7();
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private TestFactory _factory = null!;
     private DurableRuntimeSettingsService _settings = null!;
     private LegacyEnvMigrationService _migration = null!;
@@ -33,7 +33,7 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(_root);
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestFactory(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
         var now = DateTimeOffset.Parse("2026-07-14T12:00:00Z");

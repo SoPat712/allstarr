@@ -22,14 +22,14 @@ namespace allstarr.Tests;
 public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "allstarr-extension-controller", Guid.NewGuid().ToString("N"));
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private ExtensionControlPlaneService _service = null!;
     private ExtensionManager _manager = null!;
 
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(_root);
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         var factory = new DbFactory(_database.Options);
         await using var db = await factory.CreateDbContextAsync();
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>

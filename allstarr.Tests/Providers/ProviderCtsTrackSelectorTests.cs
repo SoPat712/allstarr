@@ -12,7 +12,7 @@ public sealed class ProviderCtsTrackSelectorTests
     [Fact]
     public async Task Select_UsesOnlyVerifiedCatalogTracksFromTheActorTenant()
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync();
         var tenant = Guid.CreateVersion7();
         var otherTenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();

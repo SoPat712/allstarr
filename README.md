@@ -12,12 +12,12 @@ Allstarr is a self-hosted music gateway for Jellyfin and Subsonic/OpenSubsonic c
 
 ## What Allstarr owns
 
-- PostgreSQL stores users, encrypted account references, jobs, matches, playlist state, intelligence data, health, and audit records.
+- SQLite stores users, encrypted account references, jobs, matches, playlist state, intelligence data, health, and audit records in a local data folder.
 - Audio and artwork remain ordinary files in mounted cache, download, kept, and managed-library folders.
 - The encryption key ring remains a separate file that must be backed up with the database.
 - The original backend library is treated as read-only input.
 
-Allstarr does not put songs in PostgreSQL and is not a replacement for Jellyfin, Navidrome, or another media server.
+Allstarr does not put songs in the database and is not a replacement for Jellyfin, Navidrome, or another media server.
 
 ## Quick start
 
@@ -46,12 +46,7 @@ Read the [user guide](docs/user-guide.md) for the dashboard map, setup order, pl
 
 `allstarr.sh` remembers enabled optional profiles, validates Compose, protects generated secrets, and never deletes volumes during normal operation.
 
-```bash
-./allstarr.sh upgrade
-./allstarr.sh restore /path/to/allstarr-upgrade-….tar.gz --confirm-replace
-```
-
-`upgrade` creates a portable state export before updating. The export includes PostgreSQL state, configuration, key-ring material, provider profiles, mappings, playlist state, and durable work. Downloaded and kept music remain in their mounted folders and need their own backup policy.
+SQLite development builds require a fresh data folder; existing PostgreSQL state is not imported. Preserve the old database and encryption key ring before changing an installation. Database backup and restore are temporarily unavailable while they are rebuilt for SQLite. Downloaded and kept music remain in their mounted folders and need their own backup policy. See the [storage runbook](docs/operations/storage.md).
 
 Beta testers and contributors can run the checked-out source instead of a published image:
 

@@ -20,7 +20,7 @@ public sealed class DurableStorageState
     private readonly object _gate = new();
     private DurableStorageSnapshot _snapshot;
 
-    public DurableStorageState(DurableStorageOptions options)
+    public DurableStorageState(StorageOptions options)
     {
         _snapshot = new DurableStorageSnapshot(
             options.ParseProvider(),

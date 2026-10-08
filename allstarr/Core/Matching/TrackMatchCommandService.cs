@@ -905,8 +905,8 @@ public sealed class TrackMatchCommandService(
         {
             var pattern = $"%{search.Trim().Replace("%", "\\%").Replace("_", "\\_")}%";
             snapshotsQuery = snapshotsQuery.Where(item =>
-                EF.Functions.ILike(item.ProviderId, pattern, "\\") ||
-                EF.Functions.ILike(item.PayloadJson, pattern, "\\"));
+                EF.Functions.Like(item.ProviderId, pattern, "\\") ||
+                EF.Functions.Like(item.PayloadJson, pattern, "\\"));
         }
 
         var snapshots = await snapshotsQuery.OrderByDescending(item => item.RetrievedAt)
@@ -1013,9 +1013,9 @@ public sealed class TrackMatchCommandService(
                 .ToHashSet();
         foreach (var pattern in patterns)
             tracks = tracks.Where(item =>
-                EF.Functions.ILike(item.Title, pattern, "\\") ||
-                EF.Functions.ILike(item.Artist, pattern, "\\") ||
-                item.Album != null && EF.Functions.ILike(item.Album, pattern, "\\"));
+                EF.Functions.Like(item.Title, pattern, "\\") ||
+                EF.Functions.Like(item.Artist, pattern, "\\") ||
+                item.Album != null && EF.Functions.Like(item.Album, pattern, "\\"));
         var searched = await tracks
             .OrderBy(item => item.Artist)
             .ThenBy(item => item.Title)

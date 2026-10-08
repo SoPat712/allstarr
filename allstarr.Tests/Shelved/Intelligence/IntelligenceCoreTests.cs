@@ -13,12 +13,12 @@ namespace allstarr.Tests;
 public sealed class IntelligenceCoreTests : IAsyncLifetime
 {
     private readonly Guid _tenant = Guid.CreateVersion7(); private readonly Guid _user = Guid.CreateVersion7();
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private Factory _factory = null!; private Clock _clock = null!; private IntelligenceScope _scope = null!;
     private IntelligencePolicyService _policies = null!; private DurableJobQueue _jobs = null!;
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new(_database.Options);
         _clock = new(new(2026, 7, 13, 0, 0, 0, TimeSpan.Zero)); _scope = new(_tenant, _user, "jellyfin", "main", "music");
         await using var db = await _factory.CreateDbContextAsync();

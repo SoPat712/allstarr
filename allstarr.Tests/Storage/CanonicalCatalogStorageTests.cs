@@ -10,9 +10,9 @@ namespace allstarr.Tests;
 
 public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
 {
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
 
-    public async Task InitializeAsync() => _database = await PostgresTestDatabase.CreateAsync();
+    public async Task InitializeAsync() => _database = await SqliteTestDatabase.CreateAsync();
 
     [Fact]
     public async Task CanonicalGraph_PersistsRecordingCreditsEditionTrackAliasAndProvenance()
@@ -191,10 +191,10 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
 
-        var storage = new DurableStorageOptions
+        var storage = new StorageOptions
         {
-            Provider = "Postgres",
-            ConnectionString = _database.ConnectionString
+            DataDirectory = _database.StorageOptions.DataDirectory,
+            DatabaseFileName = _database.StorageOptions.DatabaseFileName
         };
         var storageState = new DurableStorageState(storage);
         storageState.Set(DurableStorageReadiness.Ready, "fixture");
@@ -450,10 +450,10 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
 
     private DurableStorageState ReadyStorage()
     {
-        var state = new DurableStorageState(new DurableStorageOptions
+        var state = new DurableStorageState(new StorageOptions
         {
-            Provider = "Postgres",
-            ConnectionString = _database.ConnectionString
+            DataDirectory = _database.StorageOptions.DataDirectory,
+            DatabaseFileName = _database.StorageOptions.DatabaseFileName
         });
         state.Set(DurableStorageReadiness.Ready, "fixture");
         return state;

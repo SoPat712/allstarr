@@ -8,16 +8,16 @@ namespace allstarr.Tests;
 
 public sealed class BoundedHotApplicationCacheTests : IAsyncLifetime
 {
-    private PostgresTestDatabase _testDatabase = null!;
+    private SqliteTestDatabase _testDatabase = null!;
     private TestFactory _factory = null!;
     private DatabaseApplicationCache _database = null!;
     private BoundedHotApplicationCache _cache = null!;
 
     public async Task InitializeAsync()
     {
-        _testDatabase = await PostgresTestDatabase.CreateAsync();
+        _testDatabase = await SqliteTestDatabase.CreateAsync();
         var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseNpgsql(_testDatabase.ConnectionString)
+            .UseSqlite(_testDatabase.ConnectionString)
             .Options;
         _factory = new TestFactory(options);
         _database = new DatabaseApplicationCache(

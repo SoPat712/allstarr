@@ -7,7 +7,7 @@ namespace allstarr.Tests;
 public sealed class ManagedFileReferenceStoreTests : IAsyncLifetime
 {
     private readonly string root = Path.Combine(Path.GetTempPath(), $"allstarr-managed-references-{Guid.NewGuid():N}");
-    private PostgresTestDatabase database = null!;
+    private SqliteTestDatabase database = null!;
     private DbContextOptions<AllstarrDbContext> options = null!;
     private Guid tenantId;
     private Guid userId;
@@ -15,7 +15,7 @@ public sealed class ManagedFileReferenceStoreTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(root);
-        database = await PostgresTestDatabase.CreateAsync();
+        database = await SqliteTestDatabase.CreateAsync();
         options = database.Options;
         await using var db = new AllstarrDbContext(options);
         tenantId = Guid.CreateVersion7();

@@ -9,10 +9,10 @@ namespace allstarr.Tests;
 public sealed class ConcurrentRematchDecisionTests
 {
     [Fact]
-    [Trait("Category", "Postgres")]
+    [Trait("Category", "Sqlite")]
     public async Task ConcurrentCommand_CoalescesDecisionAndSurvivesServiceRestart()
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync();
         var factory = new DbFactory(database.Options);
         var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
@@ -108,8 +108,13 @@ public sealed class ConcurrentRematchDecisionTests
 
         var actor = new TrackMatchActor(tenantId, userId, false);
         var service = CreateService(factory, now);
+        using var gate = new Barrier(8);
         var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(index =>
-            service.RematchSnapshotAsync(actor, externalSnapshotId, $"concurrent-{index}")));
+            Task.Factory.StartNew(() =>
+            {
+                Assert.True(gate.SignalAndWait(TimeSpan.FromSeconds(15)));
+                return service.RematchSnapshotAsync(actor, externalSnapshotId, $"concurrent-{index}");
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap()));
 
         Assert.All(results, result =>
         {

@@ -345,7 +345,7 @@ const responses: Record<string, unknown> = {
     cache: { searchResultsMinutes: 1, mediaMaximumMegabytes: 512, transcodeCacheMinutes: 60 },
     providers: { streamingOrder: "lumen-audio" },
   },
-  "/api/admin/storage": { storage: { provider: "PostgreSQL", readiness: "Ready" }, backups: [] },
+  "/api/admin/storage": { storage: { provider: "Sqlite", readiness: "Ready" }, backups: [] },
   "/api/admin/cache": {
     database: { entryCount: 2, payloadBytes: 2048, hitRatio: .75, hits: 3, misses: 1, writes: 2, evictions: 1 },
     hot: { entryCount: 1, payloadBytes: 1024, maximumBytes: 16_777_216, hitRatio: .75, hits: 3, misses: 1, writes: 1, evictions: 0 },
@@ -1062,7 +1062,8 @@ for (const viewport of viewports) {
       await expect(page.getByRole("button", { name: "Verify package" })).toBeInViewport();
       await page.getByRole("button", { name: "Close installer" }).click();
       await page.goto("#/settings/maintenance");
-      await expect(page.getByRole("button", { name: "Create verified backup" })).toBeVisible();
+      await expect(page.getByText("Backups are being rebuilt.")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Create verified backup" })).toHaveCount(0);
       await expect(page.locator(".transfer-card")).toHaveCount(0);
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);

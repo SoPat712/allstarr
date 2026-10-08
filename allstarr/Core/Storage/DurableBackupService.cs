@@ -23,14 +23,14 @@ public sealed class BackupVerificationException(string message) : InvalidOperati
 public sealed class DurableBackupService
 {
     private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
-    private readonly DurableStorageOptions _options;
+    private readonly StorageOptions _options;
     private readonly DurableStorageState _storageState;
     private readonly IStorageProcessRunner _processRunner;
     private readonly IDurableRestoreTargetVerifier _restoreTargetVerifier;
 
     public DurableBackupService(
         IDbContextFactory<AllstarrDbContext> contextFactory,
-        DurableStorageOptions options,
+        StorageOptions options,
         DurableStorageState storageState,
         IStorageProcessRunner processRunner,
         IDurableRestoreTargetVerifier? restoreTargetVerifier = null)

@@ -76,7 +76,7 @@ public sealed class AdminAuthSessionServiceTests
     [Fact]
     public async Task PostgreSqlSession_SurvivesServiceRestart()
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync();
 
         var factory = new Factory(database.Options);
         var dataProtection = new EphemeralDataProtectionProvider();

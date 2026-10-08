@@ -27,7 +27,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
     private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
     private readonly Guid _otherUserId = Guid.CreateVersion7();
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private EncryptedSecretStore _secretStore = null!;
     private readonly TestMemoryApplicationCache _cache = new();
@@ -51,7 +51,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
             File.SetUnixFileMode(keyPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
 
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
         context.Tenants.Add(new TenantRecord

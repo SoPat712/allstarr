@@ -19,12 +19,12 @@ namespace allstarr.Tests;
 public sealed class IntelligenceControllerTests : IAsyncLifetime
 {
     private readonly Guid _tenant = Guid.CreateVersion7(); private readonly Guid _user = Guid.CreateVersion7();
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private readonly CommandCounter _commands = new();
     private Factory _factory = null!; private FakePolicy _policy = null!; private FakeRuns _runs = null!; private FakeSmart _smart = null!; private FakeReadiness _readiness = null!;
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new(new DbContextOptionsBuilder<AllstarrDbContext>(_database.Options)
             .AddInterceptors(_commands).Options);
         await using var db = await _factory.CreateDbContextAsync();
@@ -358,6 +358,29 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
             IdempotencyKey = "sound-preview-2"
         }, default);
         Assert.IsType<ConflictObjectResult>(crossed);
+    }
+
+    [Fact]
+    public async Task HistorySearch_MatchesAsciiCaseAndEscapesWildcardCharacters()
+    {
+        var listenedAt = DateTimeOffset.UtcNow.AddMinutes(-5);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.ListeningEvents.AddRange(HistoryEvent("Beyonce 100%", listenedAt),
+                HistoryEvent("Beyonce 1000", listenedAt));
+            await db.SaveChangesAsync();
+        }
+        var result = Assert.IsType<OkObjectResult>(await Controller().GetHistory(new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            From = listenedAt.AddMinutes(-1),
+            To = listenedAt.AddMinutes(1),
+            Search = "beyonce 100%"
+        }, default));
+        var items = JsonSerializer.SerializeToElement(result.Value).GetProperty("items").EnumerateArray();
+        Assert.Equal("Beyonce 100%", Assert.Single(items).GetProperty("Title").GetString());
     }
 
     [Fact]

@@ -1,21 +1,23 @@
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
+using Microsoft.Data.Sqlite;
 
 namespace allstarr.Tests;
 
 public sealed class DbErrorsTests
 {
     [Theory]
-    [InlineData(PostgresErrorCodes.UniqueViolation, true, false)]
-    [InlineData(PostgresErrorCodes.SerializationFailure, false, true)]
-    [InlineData(PostgresErrorCodes.DeadlockDetected, false, true)]
-    [InlineData(PostgresErrorCodes.ForeignKeyViolation, false, false)]
-    [InlineData(PostgresErrorCodes.NotNullViolation, false, false)]
-    public void ClassifiesNestedDatabaseErrors(string code, bool unique, bool transient)
+    [InlineData(19, 2067, true, false)]
+    [InlineData(19, 1555, true, false)]
+    [InlineData(5, 5, false, true)]
+    [InlineData(6, 6, false, true)]
+    [InlineData(19, 787, false, false)]
+    [InlineData(19, 1299, false, false)]
+    [InlineData(1, 1, false, false)]
+    public void ClassifiesNestedDatabaseErrors(int code, int extendedCode, bool unique, bool transient)
     {
         var error = new InvalidOperationException("Operation failed",
-            new DbUpdateException("Write failed", new PostgresException("Conflict", "ERROR", "ERROR", code)));
+            new DbUpdateException("Write failed", new SqliteException("Conflict", code, extendedCode)));
         Assert.Equal(unique, DbErrors.IsUniqueViolation(error));
         Assert.Equal(transient, DbErrors.IsTransientConflict(error));
     }

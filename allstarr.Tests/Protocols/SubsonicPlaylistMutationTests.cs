@@ -13,7 +13,7 @@ namespace allstarr.Tests;
 
 public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
 {
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private Factory _factory = null!;
     private Guid _tenantId;
     private Guid _ownerId;
@@ -22,7 +22,7 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new Factory(_database.Options);
         _tenantId = Guid.CreateVersion7();
         _ownerId = Guid.CreateVersion7();

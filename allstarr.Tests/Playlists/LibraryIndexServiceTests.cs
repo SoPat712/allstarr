@@ -12,7 +12,7 @@ namespace allstarr.Tests;
 
 public sealed class LibraryIndexServiceTests : IAsyncLifetime
 {
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private LibraryIndexService _service = null!;
     private Guid _tenantId;
@@ -26,11 +26,11 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
-        var options = new DurableStorageOptions
+        _database = await SqliteTestDatabase.CreateAsync();
+        var options = new StorageOptions
         {
-            Provider = "Postgres",
-            ConnectionString = _database.ConnectionString
+            DataDirectory = _database.StorageOptions.DataDirectory,
+            DatabaseFileName = _database.StorageOptions.DatabaseFileName
         };
         _factory = new TestDbContextFactory(_database.Options);
         var now = new DateTimeOffset(2026, 7, 12, 2, 0, 0, TimeSpan.Zero);

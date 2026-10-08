@@ -12,14 +12,14 @@ namespace allstarr.Tests;
 
 public sealed class GeneratedSetMaterializerTests : IAsyncLifetime
 {
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private readonly Guid _tenant = Guid.CreateVersion7(); private readonly Guid _user = Guid.CreateVersion7();
     private readonly Guid _backendIdentity = Guid.CreateVersion7(); private readonly Guid _set = Guid.CreateVersion7();
     private Factory _factory = null!;
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
         var now = DateTimeOffset.UtcNow; var job = Guid.CreateVersion7(); var run = Guid.CreateVersion7();

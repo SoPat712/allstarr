@@ -300,10 +300,9 @@
         <header class="settings-intro"><p class="eyebrow">Operations</p><h2>Maintenance</h2><p>Readiness, verified backups, bounded cache cleanup, and read-only media diagnostics.</p></header>
         <section class="maintenance-grid">
           <article class="panel maintenance-card">
-            <header><div><strong>PostgreSQL</strong><small>Durable application state</small></div><Badge state={storage?.storage.readiness?.toLowerCase() === "ready" ? "healthy" : "degraded"}>{storage?.storage.readiness ?? "Unknown"}</Badge></header>
-            <dl><div><dt>Provider</dt><dd>{storage?.storage.provider ?? "PostgreSQL"}</dd></div><div><dt>Verified backups</dt><dd>{storage?.backups.filter((backup) => backup.verifiedAt).length ?? 0}</dd></div></dl>
-            <Button disabled={Boolean(action)} onclick={() => void run("backup", settings.backup, "Verified database backup created.")}>{action === "backup" ? "Creating…" : "Create verified backup"}</Button>
-            <p>Restore remains an offline operator procedure and is intentionally unavailable against the active database.</p>
+            <header><div><strong>SQLite</strong><small>Durable application state</small></div><Badge state={storage?.storage.readiness?.toLowerCase() === "ready" ? "healthy" : "degraded"}>{storage?.storage.readiness ?? "Unknown"}</Badge></header>
+            <dl><div><dt>Provider</dt><dd>{storage?.storage.provider ?? "SQLite"}</dd></div><div><dt>Verified backups</dt><dd>{storage?.backups.filter((backup) => backup.verifiedAt).length ?? 0}</dd></div></dl>
+            <p>Backups are being rebuilt.</p>
           </article>
           <CacheDiagnosticsCard
             snapshot={cache}
@@ -336,7 +335,7 @@
   <ConfirmDialog
     bind:open={purgeOpen}
     title={purgeTarget === "all" ? "Purge the application cache?" : `Purge ${humanize(purgeTarget)} cache?`}
-    description="Disposable metadata and media payloads will be removed. PostgreSQL business state, accounts, mappings, playlists, and kept audio are not affected."
+    description="Disposable metadata and media payloads will be removed. Durable business state, accounts, mappings, playlists, and kept audio are not affected."
     confirmLabel="Purge cache"
     onConfirm={purge}
   />

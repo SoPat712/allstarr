@@ -15,7 +15,7 @@ public sealed class ManualAuthorityIntegrationTests
     [Trait("Category", "Postgres")]
     public async Task ClearManualAuthority_UsesExactRevisionAndPreservesHistory()
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync();
         var factory = new DbFactory(database.Options);
         var now = new DateTimeOffset(2026, 8, 25, 12, 0, 0, TimeSpan.Zero);
         var tenantId = Guid.CreateVersion7();

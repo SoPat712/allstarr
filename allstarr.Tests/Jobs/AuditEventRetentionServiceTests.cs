@@ -9,15 +9,15 @@ namespace allstarr.Tests;
 
 public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
 {
-    private PostgresTestDatabase database = null!;
+    private SqliteTestDatabase database = null!;
     private ServiceProvider provider = null!;
 
     public async Task InitializeAsync()
     {
-        database = await PostgresTestDatabase.CreateAsync();
+        database = await SqliteTestDatabase.CreateAsync();
         var services = new ServiceCollection();
         services.AddDbContext<AllstarrDbContext>(options =>
-            options.UseNpgsql(database.ConnectionString));
+            options.UseSqlite(database.ConnectionString));
         provider = services.BuildServiceProvider();
 
     }
