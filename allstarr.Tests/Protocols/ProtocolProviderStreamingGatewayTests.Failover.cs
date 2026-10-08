@@ -430,8 +430,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         if (tenantStreamingOrder != null)
         {
             var resolver = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
-            resolver.Setup(item => item.ResolveAsync(
-                    It.IsAny<Guid>(),
+            resolver.Setup(item => item.ResolveForUserAsync(
+                    It.IsAny<Guid>(), It.IsAny<Guid>(),
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new EffectiveProviderPolicySnapshot(
                     Context().RequireActor().TenantId,

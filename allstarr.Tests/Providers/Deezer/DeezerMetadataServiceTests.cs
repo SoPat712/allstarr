@@ -16,7 +16,6 @@ public class DeezerMetadataServiceTests
 {
     private readonly Mock<IHttpClientFactory> _httpClientFactoryMock;
     private readonly Mock<HttpMessageHandler> _httpMessageHandlerMock;
-    private readonly SubsonicSettings _settings;
     private DeezerMetadataService _service;
 
     public DeezerMetadataServiceTests()
@@ -27,15 +26,13 @@ public class DeezerMetadataServiceTests
         _httpClientFactoryMock = new Mock<IHttpClientFactory>();
         _httpClientFactoryMock.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
 
-        _settings = new SubsonicSettings { ExplicitFilter = ExplicitFilter.ExplicitOnly };
-        _service = CreateService(_settings);
+        _service = CreateService();
     }
 
-    private DeezerMetadataService CreateService(SubsonicSettings settings)
+    private DeezerMetadataService CreateService()
     {
-        var options = Options.Create(settings);
         var deezerOptions = Options.Create(new DeezerSettings { MinRequestIntervalMs = 0 });
-        return new DeezerMetadataService(_httpClientFactoryMock.Object, options, deezerSettings: deezerOptions);
+        return new DeezerMetadataService(_httpClientFactoryMock.Object, deezerSettings: deezerOptions);
     }
 
     [Fact]
@@ -566,108 +563,8 @@ public class DeezerMetadataServiceTests
 
 
     [Fact]
-    public async Task SearchSongsAsync_ExplicitOnlyFilter_ExcludesCleanVersions()
+    public async Task SearchSongsAsync_ReturnsAllExplicitFlagsForViewerPolicy()
     {
-        _service = CreateService(new SubsonicSettings { ExplicitFilter = ExplicitFilter.ExplicitOnly });
-
-        var deezerResponse = new
-        {
-            data = new object[]
-            {
-                new
-                {
-                    id = 1,
-                    title = "Explicit Original",
-                    duration = 180,
-                    explicit_content_lyrics = 1, // Explicit
-                    artist = new { id = 100, name = "Artist" },
-                    album = new { id = 200, title = "Album", cover_medium = "https://example.com/cover.jpg" }
-                },
-                new
-                {
-                    id = 2,
-                    title = "Clean Version",
-                    duration = 180,
-                    explicit_content_lyrics = 3, // Clean/edited - should be excluded
-                    artist = new { id = 100, name = "Artist" },
-                    album = new { id = 200, title = "Album", cover_medium = "https://example.com/cover.jpg" }
-                },
-                new
-                {
-                    id = 3,
-                    title = "Naturally Clean",
-                    duration = 180,
-                    explicit_content_lyrics = 0, // Naturally clean - should be included
-                    artist = new { id = 100, name = "Artist" },
-                    album = new { id = 200, title = "Album", cover_medium = "https://example.com/cover.jpg" }
-                }
-            }
-        };
-
-        SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
-
-        var result = await _service.SearchSongsAsync("test", 20);
-
-        Assert.Equal(2, result.Count);
-        Assert.Contains(result, s => s.Title == "Explicit Original");
-        Assert.Contains(result, s => s.Title == "Naturally Clean");
-        Assert.DoesNotContain(result, s => s.Title == "Clean Version");
-    }
-
-    [Fact]
-    public async Task SearchSongsAsync_CleanOnlyFilter_ExcludesExplicitContent()
-    {
-        _service = CreateService(new SubsonicSettings { ExplicitFilter = ExplicitFilter.CleanOnly });
-
-        var deezerResponse = new
-        {
-            data = new object[]
-            {
-                new
-                {
-                    id = 1,
-                    title = "Explicit Original",
-                    duration = 180,
-                    explicit_content_lyrics = 1, // Explicit - should be excluded
-                    artist = new { id = 100, name = "Artist" },
-                    album = new { id = 200, title = "Album", cover_medium = "https://example.com/cover.jpg" }
-                },
-                new
-                {
-                    id = 2,
-                    title = "Clean Version",
-                    duration = 180,
-                    explicit_content_lyrics = 3, // Clean/edited - should be included
-                    artist = new { id = 100, name = "Artist" },
-                    album = new { id = 200, title = "Album", cover_medium = "https://example.com/cover.jpg" }
-                },
-                new
-                {
-                    id = 3,
-                    title = "Naturally Clean",
-                    duration = 180,
-                    explicit_content_lyrics = 0, // Naturally clean - should be included
-                    artist = new { id = 100, name = "Artist" },
-                    album = new { id = 200, title = "Album", cover_medium = "https://example.com/cover.jpg" }
-                }
-            }
-        };
-
-        SetupHttpResponse(JsonSerializer.Serialize(deezerResponse));
-
-        var result = await _service.SearchSongsAsync("test", 20);
-
-        Assert.Equal(2, result.Count);
-        Assert.Contains(result, s => s.Title == "Clean Version");
-        Assert.Contains(result, s => s.Title == "Naturally Clean");
-        Assert.DoesNotContain(result, s => s.Title == "Explicit Original");
-    }
-
-    [Fact]
-    public async Task SearchSongsAsync_AllFilter_IncludesEverything()
-    {
-        _service = CreateService(new SubsonicSettings { ExplicitFilter = ExplicitFilter.All });
-
         var deezerResponse = new
         {
             data = new object[]
@@ -710,10 +607,8 @@ public class DeezerMetadataServiceTests
     }
 
     [Fact]
-    public async Task SearchSongsAsync_ExplicitOnlyFilter_IncludesTracksWithNoExplicitInfo()
+    public async Task SearchSongsAsync_PreservesUnknownExplicitInfo()
     {
-        _service = CreateService(new SubsonicSettings { ExplicitFilter = ExplicitFilter.ExplicitOnly });
-
         var deezerResponse = new
         {
             data = new object[]
@@ -736,13 +631,12 @@ public class DeezerMetadataServiceTests
 
         Assert.Single(result);
         Assert.Equal("No Explicit Info", result[0].Title);
+        Assert.Null(result[0].ExplicitContentLyrics);
     }
 
     [Fact]
-    public async Task GetAlbumAsync_ExplicitOnlyFilter_FiltersAlbumTracks()
+    public async Task GetAlbumAsync_ReturnsAllExplicitFlagsForViewerPolicy()
     {
-        _service = CreateService(new SubsonicSettings { ExplicitFilter = ExplicitFilter.ExplicitOnly });
-
         var deezerResponse = new
         {
             id = 456789,
@@ -769,7 +663,7 @@ public class DeezerMetadataServiceTests
                         id = 222,
                         title = "Clean Version Track",
                         duration = 200,
-                        explicit_content_lyrics = 3, // Should be excluded
+                        explicit_content_lyrics = 3,
                         artist = new { id = 123, name = "Test Artist" },
                         album = new { id = 456789, title = "Test Album", cover_medium = "https://example.com/album.jpg" }
                     },
@@ -791,10 +685,11 @@ public class DeezerMetadataServiceTests
         var result = await _service.GetAlbumAsync("deezer", "456789");
 
         Assert.NotNull(result);
-        Assert.Equal(2, result.Songs.Count);
+        Assert.Equal(3, result.Songs.Count);
         Assert.Contains(result.Songs, s => s.Title == "Explicit Track");
         Assert.Contains(result.Songs, s => s.Title == "Naturally Clean Track");
-        Assert.DoesNotContain(result.Songs, s => s.Title == "Clean Version Track");
+        Assert.Contains(result.Songs, s => s.Title == "Clean Version Track");
+        Assert.Equal(new int?[] { 1, 3, 0 }, result.Songs.Select(song => song.ExplicitContentLyrics));
     }
 
     [Fact]

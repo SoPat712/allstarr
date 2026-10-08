@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Operations;
@@ -15,6 +17,7 @@ public sealed class TenantRuntimeSettingRecord
 {
     public Guid Id { get; set; }
     public Guid TenantId { get; set; }
+    public Guid? OwnerUserId { get; set; }
     public string Key { get; set; } = string.Empty;
     public RuntimeSettingValueType ValueType { get; set; }
     public string ValueJson { get; set; } = string.Empty;
@@ -50,6 +53,11 @@ public interface IDurableRuntimeSettings
     Task<RuntimeSettingBatchResult> ApplyBatchAsync(
         Guid tenantId, IReadOnlyList<RuntimeSettingWrite> writes, string source,
         Guid? actorUserId = null, CancellationToken cancellationToken = default);
+    Task<PersonalListeningPreferences> GetPreferencesAsync(
+        Guid tenantId, Guid? userId, CancellationToken cancellationToken = default);
+    Task<PersonalListeningPreferences> UpdatePreferencesAsync(
+        Guid tenantId, Guid userId, ListeningPreferences? overrides, string expectedRevision,
+        CancellationToken cancellationToken = default);
 }
 
 public interface IRuntimeSettingsChangeSignal
@@ -131,7 +139,12 @@ public static class RuntimeSettingCatalog
         Bool("Library:EnableExternalPlaylists", "Jellyfin:EnableExternalPlaylists");
         Int("Matching:LocalPreferencePercent", 0, 20);
         items.Add(new("Library:PlaylistsDirectory", RuntimeSettingValueType.String, "Jellyfin:PlaylistsDirectory"));
-        items.Add(new("Library:ExplicitFilter", RuntimeSettingValueType.String, "Jellyfin:ExplicitFilter", Choices: new HashSet<string>(["All", "ExplicitOnly", "CleanOnly"], Comparer)));
+        items.Add(new("Library:ExplicitFilter", RuntimeSettingValueType.String, "Jellyfin:ExplicitFilter",
+            Choices: new HashSet<string>(["All", "ExplicitOnly", "CleanOnly"], Comparer), DefaultValue: "All"));
+        items.Add(new("Playback:ShowExternalLabel", RuntimeSettingValueType.Boolean,
+            "Playback:ShowExternalLabel", DefaultValue: "true"));
+        items.Add(new("Playback:ShowExplicitLabel", RuntimeSettingValueType.Boolean,
+            "Playback:ShowExplicitLabel", DefaultValue: "true"));
         items.Add(new("Library:DownloadMode", RuntimeSettingValueType.String, "Jellyfin:DownloadMode", Choices: new HashSet<string>(["Track", "Album"], Comparer)));
         items.Add(new("Library:StorageMode", RuntimeSettingValueType.String, "Jellyfin:StorageMode", Choices: new HashSet<string>(["Cache", "Permanent"], Comparer)));
         Int("Library:CacheDurationHours", 1, 8760, "Jellyfin:CacheDurationHours");
@@ -172,7 +185,8 @@ public sealed class DurableRuntimeSettingsService : IDurableRuntimeSettings
         var definition = RuntimeSettingCatalog.Require(key);
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         var record = await db.TenantRuntimeSettings.AsNoTracking()
-            .SingleOrDefaultAsync(item => item.TenantId == tenantId && item.Key == definition.Key, cancellationToken);
+            .SingleOrDefaultAsync(item => item.TenantId == tenantId && item.OwnerUserId == null &&
+                                          item.Key == definition.Key, cancellationToken);
         return record == null ? FromBootstrap(definition) : FromRecord(record, definition);
     }
 
@@ -183,7 +197,8 @@ public sealed class DurableRuntimeSettingsService : IDurableRuntimeSettings
         var canonical = definitions.Select(item => item.Key).ToArray();
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         var records = await db.TenantRuntimeSettings.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && canonical.Contains(item.Key)).ToListAsync(cancellationToken);
+            .Where(item => item.TenantId == tenantId && item.OwnerUserId == null && canonical.Contains(item.Key))
+            .ToListAsync(cancellationToken);
         var byKey = records.ToDictionary(item => item.Key, StringComparer.OrdinalIgnoreCase);
         return definitions.ToDictionary(item => item.Key,
             item => byKey.TryGetValue(item.Key, out var record) ? FromRecord(record, item) : FromBootstrap(item),
@@ -213,7 +228,8 @@ public sealed class DurableRuntimeSettingsService : IDurableRuntimeSettings
             CreatedAt = _clock.UtcNow
         });
         try { await db.SaveChangesAsync(cancellationToken); }
-        catch (DbUpdateConcurrencyException ex) { throw new RuntimeSettingConflictException("A runtime setting changed during the update.", ex); }
+        catch (Exception ex) when (IsWriteConflict(ex))
+        { throw new RuntimeSettingConflictException("A runtime setting changed during the update.", ex); }
         await transaction.CommitAsync(cancellationToken);
         var version = _signal.Publish();
         return new(staged.Select(item => FromRecord(item.Record, item.Definition)).ToArray(), version);
@@ -222,6 +238,12 @@ public sealed class DurableRuntimeSettingsService : IDurableRuntimeSettings
     public async Task<IReadOnlyList<StagedRuntimeSetting>> StageBatchAsync(AllstarrDbContext db, Guid tenantId,
         IReadOnlyList<RuntimeSettingWrite> writes, string source, Guid? actorUserId = null,
         CancellationToken cancellationToken = default)
+        => await StageScopedBatchAsync(db, tenantId, null, writes, source, actorUserId, cancellationToken);
+
+    private async Task<IReadOnlyList<StagedRuntimeSetting>> StageScopedBatchAsync(
+        AllstarrDbContext db, Guid tenantId, Guid? ownerUserId,
+        IReadOnlyList<RuntimeSettingWrite> writes, string source, Guid? actorUserId,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(db); ArgumentNullException.ThrowIfNull(writes);
         if (tenantId == Guid.Empty) throw new ArgumentException("A tenant is required.", nameof(tenantId));
@@ -240,8 +262,11 @@ public sealed class DurableRuntimeSettingsService : IDurableRuntimeSettings
             item => (Write: item, Definition: RuntimeSettingCatalog.Require(item.Key)), StringComparer.OrdinalIgnoreCase);
         var normalizedWrites = definitions.ToDictionary(item => item.Key,
             item => Normalize(item.Value.Definition, item.Value.Write.RawValue), StringComparer.OrdinalIgnoreCase);
+        if (ownerUserId.HasValue && definitions.Keys.Any(key => !ListeningPreferenceKeys.All.Contains(key)))
+            throw new ArgumentException("Personal runtime settings contain an unsupported key.", nameof(writes));
         var keys = definitions.Keys.ToArray();
-        var existing = await db.TenantRuntimeSettings.Where(item => item.TenantId == tenantId && keys.Contains(item.Key))
+        var existing = await db.TenantRuntimeSettings
+            .Where(item => item.TenantId == tenantId && item.OwnerUserId == ownerUserId && keys.Contains(item.Key))
             .ToDictionaryAsync(item => item.Key, StringComparer.OrdinalIgnoreCase, cancellationToken);
         var now = _clock.UtcNow;
         var result = new List<StagedRuntimeSetting>(writes.Count);
@@ -251,7 +276,15 @@ public sealed class DurableRuntimeSettingsService : IDurableRuntimeSettings
             if (!existing.TryGetValue(key, out var record))
             {
                 if (pair.Write.ExpectedRevision is not null) throw new RuntimeSettingConflictException($"Runtime setting '{key}' does not exist at the expected revision.");
-                record = new() { Id = Guid.NewGuid(), TenantId = tenantId, Key = key, CreatedAt = now, Revision = 1 };
+                record = new()
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = tenantId,
+                    OwnerUserId = ownerUserId,
+                    Key = key,
+                    CreatedAt = now,
+                    Revision = 1
+                };
                 db.TenantRuntimeSettings.Add(record);
             }
             else
@@ -267,6 +300,165 @@ public sealed class DurableRuntimeSettingsService : IDurableRuntimeSettings
         }
         return result;
     }
+
+    public async Task<PersonalListeningPreferences> GetPreferencesAsync(
+        Guid tenantId, Guid? userId, CancellationToken cancellationToken = default)
+    {
+        if (tenantId == Guid.Empty) throw new ArgumentException("A tenant is required.", nameof(tenantId));
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        await RequirePreferenceScopeAsync(db, tenantId, userId, cancellationToken);
+        return await ReadPreferencesAsync(db, tenantId, userId, cancellationToken);
+    }
+
+    public async Task<PersonalListeningPreferences> UpdatePreferencesAsync(
+        Guid tenantId, Guid userId, ListeningPreferences? overrides, string expectedRevision,
+        CancellationToken cancellationToken = default)
+    {
+        if (tenantId == Guid.Empty) throw new ArgumentException("A tenant is required.", nameof(tenantId));
+        if (userId == Guid.Empty) throw new ArgumentException("A user is required.", nameof(userId));
+        if (string.IsNullOrWhiteSpace(expectedRevision))
+            throw new ArgumentException("An expected preferences revision is required.", nameof(expectedRevision));
+
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await RequirePreferenceScopeAsync(db, tenantId, userId, cancellationToken);
+        var current = await ReadPreferencesAsync(db, tenantId, userId, cancellationToken);
+        if (!string.Equals(current.Revision, expectedRevision, StringComparison.Ordinal))
+            throw new RuntimeSettingConflictException("Listening preferences changed during the update.");
+
+        var action = overrides == null ? "runtime-settings.personal-reset" : "runtime-settings.personal-update";
+        if (overrides == null)
+        {
+            var personalRows = await db.TenantRuntimeSettings
+                .Where(item => item.TenantId == tenantId && item.OwnerUserId == userId &&
+                               ListeningPreferenceKeys.All.Contains(item.Key))
+                .ToListAsync(cancellationToken);
+            db.TenantRuntimeSettings.RemoveRange(personalRows);
+        }
+        else
+        {
+            var existingRevisions = await db.TenantRuntimeSettings.AsNoTracking()
+                .Where(item => item.TenantId == tenantId && item.OwnerUserId == userId &&
+                               ListeningPreferenceKeys.All.Contains(item.Key))
+                .ToDictionaryAsync(item => item.Key, item => (long?)item.Revision,
+                    StringComparer.OrdinalIgnoreCase, cancellationToken);
+            var writes = new[]
+            {
+                new RuntimeSettingWrite(ListeningPreferenceKeys.ExplicitFilter, overrides.ExplicitFilter,
+                    existingRevisions.GetValueOrDefault(ListeningPreferenceKeys.ExplicitFilter)),
+                new RuntimeSettingWrite(ListeningPreferenceKeys.ShowExternalLabel,
+                    overrides.ShowExternalLabel.ToString(CultureInfo.InvariantCulture),
+                    existingRevisions.GetValueOrDefault(ListeningPreferenceKeys.ShowExternalLabel)),
+                new RuntimeSettingWrite(ListeningPreferenceKeys.ShowExplicitLabel,
+                    overrides.ShowExplicitLabel.ToString(CultureInfo.InvariantCulture),
+                    existingRevisions.GetValueOrDefault(ListeningPreferenceKeys.ShowExplicitLabel))
+            };
+            _ = await StageScopedBatchAsync(db, tenantId, userId, writes, "personal-preferences", userId,
+                cancellationToken);
+        }
+
+        db.AuditEvents.Add(new AuditEventRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            ActorUserId = userId,
+            Category = "runtime-settings",
+            Action = action,
+            Outcome = "succeeded",
+            CorrelationId = $"runtime-settings:{Guid.NewGuid():N}",
+            DetailsJson = JsonSerializer.Serialize(new
+            {
+                scope = "personal",
+                settings = ListeningPreferenceKeys.All.OrderBy(key => key, StringComparer.Ordinal).ToArray()
+            }, JsonOptions),
+            CreatedAt = _clock.UtcNow
+        });
+
+        PersonalListeningPreferences updated;
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            updated = await ReadPreferencesAsync(db, tenantId, userId, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (Exception ex) when (IsWriteConflict(ex))
+        { throw new RuntimeSettingConflictException("Listening preferences changed during the update.", ex); }
+        _signal.Publish();
+        return updated;
+    }
+
+    private static async Task RequirePreferenceScopeAsync(
+        AllstarrDbContext db, Guid tenantId, Guid? userId, CancellationToken cancellationToken)
+    {
+        if (userId.HasValue)
+        {
+            if (!await db.Users.AsNoTracking().AnyAsync(item => item.Id == userId.Value &&
+                    item.TenantId == tenantId && item.Status == PlatformUserStatus.Active, cancellationToken))
+                throw new UnauthorizedAccessException("An active user in this household is required.");
+            return;
+        }
+        if (!await db.Tenants.AsNoTracking().AnyAsync(item => item.Id == tenantId, cancellationToken))
+            throw new ArgumentException("The tenant does not exist.", nameof(tenantId));
+    }
+
+    private async Task<PersonalListeningPreferences> ReadPreferencesAsync(
+        AllstarrDbContext db, Guid tenantId, Guid? userId, CancellationToken cancellationToken)
+    {
+        var rows = await db.TenantRuntimeSettings.AsNoTracking()
+            .Where(item => item.TenantId == tenantId &&
+                           (item.OwnerUserId == null || userId.HasValue && item.OwnerUserId == userId) &&
+                           ListeningPreferenceKeys.All.Contains(item.Key))
+            .ToListAsync(cancellationToken);
+        var householdRows = rows.Where(item => item.OwnerUserId == null)
+            .ToDictionary(item => item.Key, StringComparer.OrdinalIgnoreCase);
+        var personalRows = rows.Where(item => item.OwnerUserId == userId && userId.HasValue)
+            .ToDictionary(item => item.Key, StringComparer.OrdinalIgnoreCase);
+        var householdSettings = ListeningPreferenceKeys.All.ToDictionary(
+            key => key,
+            key => householdRows.TryGetValue(key, out var row)
+                ? FromRecord(row, RuntimeSettingCatalog.Require(key))
+                : FromBootstrap(RuntimeSettingCatalog.Require(key)),
+            StringComparer.OrdinalIgnoreCase);
+        var household = ToListeningPreferences(householdSettings);
+        var effectiveSettings = ListeningPreferenceKeys.All.ToDictionary(
+            key => key,
+            key => personalRows.TryGetValue(key, out var row)
+                ? FromRecord(row, RuntimeSettingCatalog.Require(key))
+                : householdSettings[key],
+            StringComparer.OrdinalIgnoreCase);
+        var effective = ToListeningPreferences(effectiveSettings);
+        return new(effective, household, personalRows.Count == 0,
+            ComputePreferencesRevision(tenantId, userId, householdSettings, personalRows));
+    }
+
+    private static ListeningPreferences ToListeningPreferences(
+        IReadOnlyDictionary<string, EffectiveRuntimeSetting> settings) => new(
+        (string)settings[ListeningPreferenceKeys.ExplicitFilter].Value,
+        (bool)settings[ListeningPreferenceKeys.ShowExternalLabel].Value,
+        (bool)settings[ListeningPreferenceKeys.ShowExplicitLabel].Value);
+
+    private static string ComputePreferencesRevision(
+        Guid tenantId, Guid? userId,
+        IReadOnlyDictionary<string, EffectiveRuntimeSetting> household,
+        IReadOnlyDictionary<string, TenantRuntimeSettingRecord> personal)
+    {
+        var input = new StringBuilder()
+            .Append("tenant=").Append(tenantId.ToString("N", CultureInfo.InvariantCulture))
+            .Append(";user=").Append(userId?.ToString("N", CultureInfo.InvariantCulture) ?? "household");
+        foreach (var key in ListeningPreferenceKeys.All.OrderBy(key => key, StringComparer.Ordinal))
+        {
+            var setting = household[key];
+            input.Append(";h:").Append(key).Append(':').Append(setting.ValueType).Append(':')
+                .Append(setting.NormalizedValue).Append(':').Append(setting.Revision?.ToString(CultureInfo.InvariantCulture) ?? "bootstrap");
+            if (personal.TryGetValue(key, out var row))
+                input.Append(";p:").Append(key).Append(':').Append(row.Id.ToString("N", CultureInfo.InvariantCulture))
+                    .Append(':').Append(row.Revision.ToString(CultureInfo.InvariantCulture));
+        }
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input.ToString()))).ToLowerInvariant();
+    }
+
+    private static bool IsWriteConflict(Exception exception) =>
+        DbErrors.IsTransientConflict(exception) || DbErrors.IsUniqueViolation(exception);
 
     public long PublishExternalCommit() => _signal.Publish();
 

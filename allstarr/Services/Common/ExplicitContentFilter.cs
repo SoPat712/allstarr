@@ -16,9 +16,12 @@ public static class ExplicitContentFilter
     /// <param name="filter">The explicit content filter setting</param>
     /// <returns>True if the song should be included, false otherwise</returns>
     public static bool ShouldIncludeSong(Song song, ExplicitFilter filter)
+        => song.IsLocal || ShouldInclude(song.ExplicitContentLyrics, filter);
+
+    public static bool ShouldInclude(int? explicitContent, ExplicitFilter filter)
     {
         // If no explicit content info, include the song
-        if (song.ExplicitContentLyrics == null)
+        if (explicitContent == null)
             return true;
 
         return filter switch
@@ -26,14 +29,13 @@ public static class ExplicitContentFilter
             // All: No filtering, include everything
             ExplicitFilter.All => true,
 
-            // ExplicitOnly: Exclude clean/edited versions (value 3)
-            // Include: 0 (naturally clean), 1 (explicit), 2 (unknown), 6/7 (no advice)
-            ExplicitFilter.ExplicitOnly => song.ExplicitContentLyrics != 3,
+            // Unknown and unrated songs remain visible in every mode.
+            ExplicitFilter.ExplicitOnly => explicitContent is not (0 or 3),
 
             // CleanOnly: Only show clean content
             // Include: 0 (naturally clean), 3 (clean/edited version)
             // Exclude: 1 (explicit)
-            ExplicitFilter.CleanOnly => song.ExplicitContentLyrics != 1,
+            ExplicitFilter.CleanOnly => explicitContent != 1,
 
             _ => true
         };

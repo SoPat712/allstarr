@@ -127,6 +127,20 @@ public sealed class ProtocolProviderGateway(
     public IReadOnlyList<string> GetProviderOrder(ProviderCapabilityKind capability) =>
         ResolveProviderOrder(capability);
 
+    private Task<EffectiveProviderPolicySnapshot?> ResolveEffectivePolicyAsync(ProtocolExecutionContext protocol)
+    {
+        if (protocol.Actor is not { } actor) return Task.FromResult<EffectiveProviderPolicySnapshot?>(null);
+        if (protocol.Policy is { } policy && policy.TenantId == actor.TenantId && policy.UserId == actor.EffectiveUserId)
+            return Task.FromResult<EffectiveProviderPolicySnapshot?>(policy);
+        return ResolveAsync();
+
+        async Task<EffectiveProviderPolicySnapshot?> ResolveAsync() => effectivePolicies == null
+            ? null
+            : actor.EffectiveUserId is { } userId
+                ? await effectivePolicies.ResolveForUserAsync(actor.TenantId, userId, protocol.CancellationToken)
+                : await effectivePolicies.ResolveAsync(actor.TenantId, protocol.CancellationToken);
+    }
+
     public async Task<SearchResult> SearchAsync(
         ProtocolExecutionContext protocol,
         string query,
@@ -160,9 +174,7 @@ public sealed class ProtocolProviderGateway(
                  NormalizeProvider(itemProvider) == requestedProviderId);
         }
         var actor = protocol.RequireActor();
-        var effectivePolicy = effectivePolicies == null
-            ? null
-            : await effectivePolicies.ResolveAsync(actor.TenantId, protocol.CancellationToken);
+        var effectivePolicy = await ResolveEffectivePolicyAsync(protocol);
         var playableOrder = songLimit > 0
             ? await ResolvePlayableProviderOrderAsync(
                 protocol,
@@ -247,7 +259,9 @@ public sealed class ProtocolProviderGateway(
         }
 
         var songs = await CollapseVerifiedSearchTracksAsync(
-            routed.Songs, trackLookups, playableOrder, protocol.CancellationToken);
+            routed.Songs.Where(song => effectivePolicy?.Includes(song) != false).ToArray(),
+            trackLookups.Where(item => effectivePolicy?.Includes(item.Song) != false).ToArray(),
+            playableOrder, protocol.CancellationToken);
         return new SearchResult
         {
             Songs = Merge(songs, [], songLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider, playableOrder),
@@ -356,11 +370,9 @@ public sealed class ProtocolProviderGateway(
         }
 
         var actor = protocol.RequireActor();
-        if (effectivePolicies != null)
+        var effectivePolicy = await ResolveEffectivePolicyAsync(protocol);
+        if (effectivePolicy != null)
         {
-            var effectivePolicy = await effectivePolicies.ResolveAsync(
-                actor.TenantId,
-                protocol.CancellationToken);
             configuredProviderOrder = ResolveProviderOrder(
                     ProviderCapabilityKind.Streaming,
                     effectivePolicy)
@@ -399,6 +411,7 @@ public sealed class ProtocolProviderGateway(
             .Where(outcome => outcome?.IsSuccess == true)
             .SelectMany(outcome => outcome!.RequireValue().Items)
             .Select(Map)
+            .Where(item => effectivePolicy?.Includes(item) != false)
             .Where(item => providerOrder.Contains(
                 NormalizeProvider(item.ExternalProvider), StringComparer.Ordinal));
         return Merge(
@@ -453,7 +466,10 @@ public sealed class ProtocolProviderGateway(
                 routed.Candidate.Context,
                 new ProviderTrackLookupRequest(id));
             if (outcome.IsSuccess)
-                return await EnrichRelationshipsAsync(routed.Candidate, outcome.RequireValue());
+            {
+                var song = await EnrichRelationshipsAsync(routed.Candidate, outcome.RequireValue());
+                return (await ResolveEffectivePolicyAsync(protocol))?.Includes(song) == false ? null : song;
+            }
             if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
             ThrowRouteFailure(outcome.Error);
         }
@@ -477,7 +493,13 @@ public sealed class ProtocolProviderGateway(
             var outcome = await routed.Candidate.Implementation.GetAlbumAsync(
                 routed.Candidate.Context,
                 new ProviderAlbumLookupRequest(id));
-            if (outcome.IsSuccess) return Map(outcome.RequireValue());
+            if (outcome.IsSuccess)
+            {
+                var album = Map(outcome.RequireValue());
+                var policy = await ResolveEffectivePolicyAsync(protocol);
+                album.Songs = album.Songs.Where(song => policy?.Includes(song) != false).ToList();
+                return album;
+            }
             if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
             ThrowRouteFailure(outcome.Error);
         }
@@ -585,7 +607,8 @@ public sealed class ProtocolProviderGateway(
                 if (cursor != null && (seenCursors.Count >= 1_000 || !seenCursors.Add(cursor)))
                     throw new HttpRequestException("The provider repeated an artist-track page cursor.");
             } while (cursor != null);
-            return tracks;
+            var policy = await ResolveEffectivePolicyAsync(protocol);
+            return tracks.Where(song => policy?.Includes(song) != false).ToList();
         }
         await RequireCompatibilityProviderAsync(protocol, routedProviderId);
         return [];
@@ -601,9 +624,7 @@ public sealed class ProtocolProviderGateway(
         if (protocol.Actor is null) return [];
 
         var actor = protocol.RequireActor();
-        var effectivePolicy = effectivePolicies == null
-            ? null
-            : await effectivePolicies.ResolveAsync(actor.TenantId, protocol.CancellationToken);
+        var effectivePolicy = await ResolveEffectivePolicyAsync(protocol);
         var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Playlist, effectivePolicy);
         var plan = await router.PlanAsync<IProviderPlaylistCapability>(Request(
             protocol,
@@ -703,7 +724,8 @@ public sealed class ProtocolProviderGateway(
                 tracks.AddRange(page.Items.Where(item => item.Metadata != null).Select(item => Map(item.Metadata!)));
                 cursor = page.NextCursor;
             } while (cursor != null);
-            return tracks;
+            var policy = await ResolveEffectivePolicyAsync(protocol);
+            return tracks.Where(song => policy?.Includes(song) != false).ToList();
         }
 
         await RequireCompatibilityProviderAsync(protocol, providerId, ProviderCapabilityKind.Playlist);
@@ -756,12 +778,11 @@ public sealed class ProtocolProviderGateway(
         opening.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
         protocol = new ProtocolExecutionContext(protocol.Protocol, protocol.BackendInstanceId,
             protocol.VerifiedBackendPrincipalId, protocol.Principal, protocol.CorrelationId,
-            protocol.Deadline, opening.Token, protocol.Client, protocol.LibraryScopeId);
+            protocol.Deadline, opening.Token, protocol.Client, protocol.LibraryScopeId)
+        { Policy = protocol.Policy };
         providerId = NormalizeProvider(providerId);
         var actor = protocol.RequireActor();
-        var effectivePolicy = effectivePolicies == null
-            ? null
-            : await effectivePolicies.ResolveAsync(actor.TenantId, protocol.CancellationToken);
+        var effectivePolicy = await ResolveEffectivePolicyAsync(protocol);
         if (quality == ProviderAudioQuality.Any && effectivePolicy != null)
         {
             quality = AudioQualityPolicy.RequestedQuality(effectivePolicy.AudioQuality);

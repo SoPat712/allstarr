@@ -1,4 +1,5 @@
 using allstarr.Core.Protocols;
+using allstarr.Core.Settings;
 using allstarr.Services.Common;
 using allstarr.Services.Subsonic;
 using Microsoft.AspNetCore.Mvc;
@@ -14,13 +15,16 @@ public sealed class ProtocolExecutionContextFilter : IAsyncActionFilter
 {
     private readonly ProtocolExecutionContextFactory _factory;
     private readonly ILogger<ProtocolExecutionContextFilter> _logger;
+    private readonly IEffectiveProviderPolicyResolver _policies;
 
     public ProtocolExecutionContextFilter(
         ProtocolExecutionContextFactory factory,
-        ILogger<ProtocolExecutionContextFilter> logger)
+        ILogger<ProtocolExecutionContextFilter> logger,
+        IEffectiveProviderPolicyResolver policies)
     {
         _factory = factory;
         _logger = logger;
+        _policies = policies;
     }
 
     public async Task OnActionExecutionAsync(
@@ -73,6 +77,14 @@ public sealed class ProtocolExecutionContextFilter : IAsyncActionFilter
                     : null);
         }
 
+        if (context.HttpContext.GetProtocolExecutionContext() is { Principal: { } principal } execution)
+        {
+            items[ProtocolExecutionContextFactory.HttpContextItemKey] = execution with
+            {
+                Policy = await _policies.ResolveForUserAsync(principal.TenantId, principal.UserId,
+                    context.HttpContext.RequestAborted)
+            };
+        }
         await next();
     }
 }

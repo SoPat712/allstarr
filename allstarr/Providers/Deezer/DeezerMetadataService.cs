@@ -14,7 +14,6 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
     public string ProviderId => "deezer";
 
     private readonly HttpClient _httpClient;
-    private readonly SubsonicSettings _settings;
     private readonly SemaphoreSlim _requestLock = new(1, 1);
     private readonly int _minRequestIntervalMs;
     private DateTime _lastRequestTime = DateTime.MinValue;
@@ -24,11 +23,9 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
 
     public DeezerMetadataService(
         IHttpClientFactory httpClientFactory,
-        IOptions<SubsonicSettings> settings,
         IOptions<DeezerSettings>? deezerSettings = null)
     {
         _httpClient = httpClientFactory.CreateClient();
-        _settings = settings.Value;
         _minRequestIntervalMs = Math.Max(
             0,
             deezerSettings?.Value.MinRequestIntervalMs ?? new DeezerSettings().MinRequestIntervalMs);
@@ -85,10 +82,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
                 foreach (var track in data.EnumerateArray())
                 {
                     var song = ParseDeezerTrack(track);
-                    if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
-                    {
-                        songs.Add(song);
-                    }
+                    songs.Add(song);
                 }
             }
 
@@ -428,10 +422,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
             song.AlbumId = album.Id;
             song.AlbumArtist = album.Artist;
 
-            if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
-            {
-                songs.Add(song);
-            }
+            songs.Add(song);
 
             trackIndex++;
         }
@@ -891,10 +882,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
                 // This prevents Jellyfin from splitting the playlist into multiple "discs".
                 song.DiscNumber = null;
 
-                if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
-                {
-                    tracks.Add(song);
-                }
+                tracks.Add(song);
 
                 trackIndex++;
             }

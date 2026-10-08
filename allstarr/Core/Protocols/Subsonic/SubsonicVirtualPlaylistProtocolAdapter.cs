@@ -6,6 +6,7 @@ using System.Xml.Linq;
 using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using allstarr.Services.Subsonic;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -92,8 +93,9 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         if (!IsSuccessfulNativeResponse(nativeResponse.Body, nativeFormat))
             return nativeResponse;
 
-        var visible = await playlists.ListAsync(context, cancellationToken);
-        if (visible.Count == 0) return nativeResponse;
+        var visible = (await playlists.ListAsync(context, cancellationToken))
+            .Select(item => ExternalTrackPresentation.ApplyPreferences(item, context.Policy)).ToArray();
+        if (visible.Length == 0) return nativeResponse;
 
         var merged = nativeFormat == NativeFormat.Json
             ? MergeJson(nativeResponse.Body, visible)
@@ -106,6 +108,7 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
     {
         var playlist = await playlists.ReadAsync(context, id, cancellationToken);
         if (playlist == null) return null;
+        playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
         var tracks = playlist.Tracks.ToArray();
         if (format.Equals("json", StringComparison.OrdinalIgnoreCase))
         {
@@ -116,7 +119,7 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
                 ["owner"] = "allstarr",
                 ["public"] = false,
                 ["songCount"] = tracks.Length,
-                ["entry"] = tracks.Select(ToJsonEntry).ToList()
+                ["entry"] = tracks.Select(track => ToJsonEntry(track, context.Policy?.Preferences)).ToList()
             };
             if (TryGetDurationSeconds(playlist, out var duration)) result["duration"] = duration;
             if (playlist.Description != null) result["comment"] = playlist.Description;
@@ -137,18 +140,22 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
             new XAttribute("id", playlist.ProtocolId), new XAttribute("name", playlist.Name),
             new XAttribute("owner", "allstarr"), new XAttribute("public", false),
             new XAttribute("songCount", tracks.Length));
-        if (tracks.All(track => track.DurationMilliseconds.HasValue))
-            element.Add(new XAttribute("duration", tracks.Sum(track => track.DurationMilliseconds)!.Value / 1000));
+        if (TryGetDurationSeconds(playlist, out var xmlDuration))
+            element.Add(new XAttribute("duration", xmlDuration));
         if (playlist.Description != null) element.Add(new XAttribute("comment", playlist.Description));
         if (playlist.ArtworkReferenceKey != null) element.Add(new XAttribute("coverArt", playlist.ArtworkReferenceKey));
         foreach (var track in tracks)
-            element.Add(new XElement(ns + "entry", ToXmlAttributes(track)));
+            element.Add(new XElement(ns + "entry", ToXmlAttributes(track, context.Policy?.Preferences)));
         var document = new XDocument(new XElement(ns + "subsonic-response",
             new XAttribute("status", "ok"), new XAttribute("version", Version), element));
         return new ContentResult { Content = document.ToString(), ContentType = "application/xml" };
     }
 
-    private static Dictionary<string, object?> ToJsonEntry(VirtualPlaylistTrack track)
+    private static string TrackTitle(VirtualPlaylistTrack track, ListeningPreferences? preferences) =>
+        track.RouteKind == TrackRouteKind.Local ? track.Title :
+            ExternalTrackPresentation.Title(track.Title, track.SourceMetadata?.IsExplicit == true, preferences);
+
+    private static Dictionary<string, object?> ToJsonEntry(VirtualPlaylistTrack track, ListeningPreferences? preferences)
     {
         if (track.NativeEntryJson != null)
         {
@@ -159,7 +166,7 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         var result = new Dictionary<string, object?>
         {
             ["id"] = track.BackendItemId,
-            ["title"] = track.Title,
+            ["title"] = TrackTitle(track, preferences),
             ["artist"] = track.Artist,
             ["track"] = track.SourcePosition + 1,
             ["isDir"] = false,
@@ -174,7 +181,7 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         return result;
     }
 
-    private static IEnumerable<XAttribute> ToXmlAttributes(VirtualPlaylistTrack track)
+    private static IEnumerable<XAttribute> ToXmlAttributes(VirtualPlaylistTrack track, ListeningPreferences? preferences)
     {
         if (track.NativeEntryJson != null)
         {
@@ -189,7 +196,7 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
             yield break;
         }
         yield return new XAttribute("id", track.BackendItemId);
-        yield return new XAttribute("title", track.Title);
+        yield return new XAttribute("title", TrackTitle(track, preferences));
         yield return new XAttribute("artist", track.Artist);
         if (track.Album != null) yield return new XAttribute("album", track.Album);
         if (track.AlbumArtist != null) yield return new XAttribute("albumArtist", track.AlbumArtist);

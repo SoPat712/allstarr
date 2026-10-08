@@ -35,7 +35,6 @@ public enum MusicService
 
 public abstract class MediaBackendSettings
 {
-    public ExplicitFilter ExplicitFilter { get; set; } = ExplicitFilter.All;
     public DownloadMode DownloadMode { get; set; } = DownloadMode.Track;
     public MusicService MusicService { get; set; } = MusicService.None;
     public StorageMode StorageMode { get; set; } = StorageMode.Permanent;

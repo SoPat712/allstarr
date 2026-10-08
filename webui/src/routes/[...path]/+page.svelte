@@ -20,6 +20,13 @@
     { href: "#/activity", label: "Activity", mobileLabel: "Activity", icon: "activity", mobile: true },
     { href: "#/settings", label: "Settings", mobileLabel: "Settings", icon: "settings", mobile: false },
   ];
+  const preferencesDestination: (typeof destinations)[number] = {
+    href: "#/preferences",
+    label: "Listening preferences",
+    mobileLabel: "Preferences",
+    icon: "headphones",
+    mobile: false,
+  };
   // Intelligence remains available only in the explicit development composition.
   const navigationDestinations = destinations.filter((item) => item.href !== "#/intelligence");
   const mobileDestinations = navigationDestinations.filter((item) => item.mobile);
@@ -79,7 +86,7 @@
   const route = $derived(currentRoute(`/${page.params.path ?? ""}`));
   const routeQuery = $derived(new URLSearchParams(page.url.hash.split("?", 2)[1] ?? ""));
   const activeDestination = $derived(
-    destinations.find((item) =>
+    [...destinations, preferencesDestination].find((item) =>
       item.href === "#/" ? route === "/" : route.startsWith(item.prefix ?? item.href.slice(1)),
     ) ?? destinations[0],
   );
@@ -166,6 +173,7 @@
       return import("$lib/components/DownloadsView.svelte");
     }
     if (path === "/activity") return import("$lib/components/EventLogView.svelte");
+    if (path === "/preferences") return import("$lib/components/ListeningPreferencesView.svelte");
     if (path === "/intelligence" && session?.features?.intelligence === true) {
       return import("$lib/shelved/IntelligenceView.svelte");
     }
@@ -497,8 +505,10 @@
           {/if}
         </span>
         <div class="min-w-0">
-          <strong>{session.user?.name}</strong>
-          <small>{session.backend}</small>
+          <a class="block min-w-0 text-inherit no-underline" href="#/preferences" aria-label="Listening preferences" aria-current={route === "/preferences" ? "page" : undefined}>
+            <strong>{session.user?.name}</strong>
+            <small>{session.backend} · Preferences</small>
+          </a>
         </div>
         <button
           class="icon-button"
@@ -602,7 +612,7 @@
           <div>
             <p class="eyebrow">Account and administration</p>
             <Dialog.Title>More</Dialog.Title>
-            <Dialog.Description>Connections, deployment settings, appearance, and your session.</Dialog.Description>
+            <Dialog.Description>Listening preferences, connections, deployment settings, appearance, and your session.</Dialog.Description>
           </div>
           <Dialog.Close class="icon-button" aria-label="Close more destinations"><X size={18} aria-hidden="true" /></Dialog.Close>
         </header>
@@ -640,6 +650,10 @@
           </nav>
 
           <div class="mobile-menu-actions">
+            <button type="button" aria-pressed={route === "/preferences"} onclick={() => { mobileMenuOpen = false; window.location.hash = "/preferences"; }}>
+              <UiIcon name="headphones" />
+              <span><strong>Listening preferences</strong><small>Content and track labels for your account</small></span>
+            </button>
             <button type="button" onclick={cycleTheme}>
               {#if themeMode === "system"}<Monitor aria-hidden="true" />
               {:else if themeMode === "light"}<Sun aria-hidden="true" />

@@ -7,7 +7,7 @@ using allstarr.Core.Protocols;
 
 namespace allstarr.Services.Subsonic;
 
-public class SubsonicResponseBuilder
+public class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts = null)
 {
     private const string SubsonicNamespace = "http://subsonic.org/restapi";
     private const string SubsonicVersion = "1.16.1";
@@ -316,7 +316,7 @@ public class SubsonicResponseBuilder
         {
             ["id"] = song.Id,
             ["isDir"] = false,
-            ["title"] = ExternalTrackPresentation.Title(song),
+            ["title"] = ExternalTrackPresentation.Title(song, ExternalTrackPresentation.Preferences(httpContexts?.HttpContext)),
             ["type"] = "music",
             ["mediaType"] = "song",
             ["isVideo"] = false,
@@ -423,7 +423,7 @@ public class SubsonicResponseBuilder
         var element = new XElement(ns + "song",
             new XAttribute("id", song.Id),
             new XAttribute("isDir", "false"),
-            new XAttribute("title", ExternalTrackPresentation.Title(song)),
+            new XAttribute("title", ExternalTrackPresentation.Title(song, ExternalTrackPresentation.Preferences(httpContexts?.HttpContext))),
             new XAttribute("type", "music"),
             new XAttribute("mediaType", "song"),
             new XAttribute("isVideo", "false"),

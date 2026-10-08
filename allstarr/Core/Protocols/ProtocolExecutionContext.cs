@@ -1,6 +1,7 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
 using allstarr.Core.Operations;
+using allstarr.Core.Settings;
 using allstarr.Middleware;
 using System.Text.Json.Serialization;
 
@@ -124,6 +125,8 @@ public sealed record ProtocolExecutionContext
 
     public bool CanRunUserScopedWork => Actor != null;
 
+    public EffectiveProviderPolicySnapshot? Policy { get; init; }
+
     public ProviderActorContext RequireActor() => Actor ?? throw new UnauthorizedAccessException(
         "The verified backend principal is not linked to an Allstarr user.");
 
@@ -136,7 +139,8 @@ public sealed record ProtocolExecutionContext
         Deadline,
         CancellationToken,
         Client,
-        libraryScopeId);
+        libraryScopeId)
+    { Policy = Policy };
 }
 
 public sealed class ProtocolExecutionOptions

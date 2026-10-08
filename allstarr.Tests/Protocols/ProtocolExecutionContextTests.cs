@@ -147,7 +147,8 @@ public sealed class ProtocolExecutionContextTests
                 new ProtocolExecutionOptions(),
                 new FakeClock(new DateTimeOffset(2026, 7, 11, 19, 0, 0, TimeSpan.Zero)),
                 new IdentityOptions { BackendInstanceId = "primary" }),
-            NullLogger<ProtocolExecutionContextFilter>.Instance);
+            NullLogger<ProtocolExecutionContextFilter>.Instance,
+            Moq.Mock.Of<allstarr.Core.Settings.IEffectiveProviderPolicyResolver>(Moq.MockBehavior.Strict));
         var actionRan = false;
 
         await filter.OnActionExecutionAsync(actionContext, () =>
@@ -191,7 +192,8 @@ public sealed class ProtocolExecutionContextTests
                 new ProtocolExecutionOptions(),
                 new FakeClock(DateTimeOffset.UtcNow),
                 new IdentityOptions { BackendInstanceId = "primary" }),
-            NullLogger<ProtocolExecutionContextFilter>.Instance);
+            NullLogger<ProtocolExecutionContextFilter>.Instance,
+            Moq.Mock.Of<allstarr.Core.Settings.IEffectiveProviderPolicyResolver>(Moq.MockBehavior.Strict));
         var actionRan = false;
 
         await filter.OnActionExecutionAsync(actionContext, () =>
@@ -223,7 +225,8 @@ public sealed class ProtocolExecutionContextTests
                 new ProtocolExecutionOptions(),
                 new FakeClock(DateTimeOffset.UtcNow),
                 new IdentityOptions { BackendInstanceId = "primary" }),
-            NullLogger<ProtocolExecutionContextFilter>.Instance);
+            NullLogger<ProtocolExecutionContextFilter>.Instance,
+            Moq.Mock.Of<allstarr.Core.Settings.IEffectiveProviderPolicyResolver>(Moq.MockBehavior.Strict));
         var actionRan = false;
 
         await filter.OnActionExecutionAsync(actionContext, () =>

@@ -468,6 +468,68 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         Assert.False(PlaylistVirtualizationService.TryParseProtocolId("ext-spotify-playlist-123", out _));
     }
 
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin, "json")]
+    [InlineData(ProtocolKind.Subsonic, "json")]
+    [InlineData(ProtocolKind.Subsonic, "xml")]
+    public async Task PersonalFilterAndLabelsDoNotMutateSharedPlaylistOrNativeTracks(ProtocolKind protocol, string format)
+    {
+        var source = Model().Tracks[2];
+        var model = Model() with
+        {
+            Tracks = [
+                Model().Tracks[0] with { SourceMetadata = new(IsExplicit: true) },
+                source with { BackendItemId = "clean", Title = "Clean", SourceMetadata = new(IsExplicit: false) },
+                source with { BackendItemId = "explicit", Title = "Explicit", SourceMetadata = new(IsExplicit: true) },
+                source with { BackendItemId = "unknown", Title = "Unknown", SourceMetadata = new(IsExplicit: null) }
+            ]
+        };
+        var service = new StubVirtualizationService(model);
+        var jellyfin = new JellyfinVirtualPlaylistProtocolAdapter(service, new StubJellyfinMutationResolver(null));
+        var subsonic = new SubsonicVirtualPlaylistProtocolAdapter(service, new StubMutationResolver(null));
+        foreach (var filter in new[] { "CleanOnly", "All", "ExplicitOnly" })
+        {
+            var policy = new allstarr.Core.Settings.EffectiveProviderPolicySnapshot(Guid.CreateVersion7(),
+                System.Collections.Immutable.ImmutableDictionary<allstarr.Core.Capabilities.ProviderCapabilityKind,
+                    System.Collections.Immutable.ImmutableArray<string>>.Empty,
+                System.Collections.Immutable.ImmutableHashSet<string>.Empty, "lossless", 0.07)
+            { Preferences = new(filter, false, false) };
+            var context = Context(protocol) with { Policy = policy };
+            var expected = filter == "All" ? 4 : 3;
+            string[] titles;
+            if (protocol == ProtocolKind.Jellyfin)
+            {
+                var result = Assert.IsType<JsonResult>(await jellyfin.ReadItemsAsync(context, ProtocolId, default));
+                using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+                Assert.Equal(expected, json.RootElement.GetProperty("TotalRecordCount").GetInt32());
+                titles = json.RootElement.GetProperty("Items").EnumerateArray().Select(item => item.GetProperty("Name").GetString()!).ToArray();
+                Assert.Equal(expected, Assert.Single(await jellyfin.ListItemsAsync(context, default))["ChildCount"]);
+            }
+            else if (format == "json")
+            {
+                var result = Assert.IsType<JsonResult>(await subsonic.ReadAsync(context, ProtocolId, format, default));
+                using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+                var playlist = json.RootElement.GetProperty("subsonic-response").GetProperty("playlist");
+                Assert.Equal(expected, playlist.GetProperty("songCount").GetInt32());
+                titles = playlist.GetProperty("entry").EnumerateArray().Select(item => item.GetProperty("title").GetString()!).ToArray();
+            }
+            else
+            {
+                var result = Assert.IsType<ContentResult>(await subsonic.ReadAsync(context, ProtocolId, format, default));
+                var xml = XDocument.Parse(result.Content!);
+                var playlist = xml.Descendants().Single(item => item.Name.LocalName == "playlist");
+                Assert.Equal(expected.ToString(), playlist.Attribute("songCount")!.Value);
+                titles = playlist.Elements().Select(item => item.Attribute("title")!.Value).ToArray();
+            }
+            Assert.Contains("Second", titles);
+            Assert.Contains("Unknown", titles);
+            Assert.Equal(filter != "CleanOnly", titles.Contains("Explicit"));
+            Assert.Equal(filter != "ExplicitOnly", titles.Contains("Clean"));
+            Assert.DoesNotContain(titles, title => title.Contains("[A]", StringComparison.Ordinal) || title.Contains("[E]", StringComparison.Ordinal));
+        }
+        Assert.Equal(4, model.Tracks.Count);
+    }
+
     private static VirtualPlaylistReadModel Model() => new(
         ProtocolId, LinkId, Guid.CreateVersion7(), "Road Trip", "Source description", "artwork-key",
         "apple-music", "source-playlist", "revision-7", PlaylistLinkMode.Hybrid,

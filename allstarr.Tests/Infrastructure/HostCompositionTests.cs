@@ -549,6 +549,9 @@ public sealed class HostCompositionTests
                         _effectivePolicy.TenantId,
                         It.IsAny<CancellationToken>()))
                     .ReturnsAsync(_effectivePolicy);
+                resolver.Setup(item => item.ResolveForUserAsync(
+                        _effectivePolicy.TenantId, It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync((Guid _, Guid userId, CancellationToken _) => _effectivePolicy with { UserId = userId });
                 services.AddSingleton(resolver.Object);
             });
         }

@@ -68,6 +68,12 @@ In Settings, **Listeners can connect their own accounts** defaults to on. Turnin
 
 Activity groups operational events by outcome and shows the actor, target, duration, source, and correlation details. Use it with container logs when a durable job or provider call fails.
 
+### Listening preferences
+
+Open your name in the desktop sidebar, or **More → Listening preferences** on a small screen. These choices belong to your signed-in backend user and apply in both Jellyfin and Subsonic clients. **All** shows every external track; **Explicit only** hides known clean tracks; **Clean only** hides known explicit tracks. Unknown explicit status remains visible in every mode. Native library items are unchanged.
+
+The **[A]** external and **[E]** explicit title markers can be toggled independently; both default to on. Personal choices override household defaults. **Reset to household defaults** removes your choices and follows the latest defaults again. Reload client search results, playlists or queues to see updated presentation.
+
 ### Settings
 
 Settings owns deployment behavior rather than provider credentials: playback quality, matching preferences, cache behavior, maintenance, backup, restore, and other operator policy. Controls that affect one feature stay near that feature when possible.
@@ -107,7 +113,7 @@ Imports stay private inside Allstarr unless a separate listening-app or scrobbli
 4. Choose **Stream when played** or **Keep every song**. Keep-all queues owner- and library-scoped durable downloads for every resolved external song; local songs are already permanent. An unavailable or unresolved song is reported in Activity without rolling back the playlist import.
 5. Open **Mappings** for ambiguous or unresolved tracks.
 
-The default **Mapped** view always preserves the source playlist's full order. Local matches play from the media server, external `[A]` tracks use their eligible mapped providers in the configured streaming order, and unresolved songs remain visible with a clear not-playable status. **Original** previews the source metadata, while **Native** is only a diagnostic view of the separate playlist written into Jellyfin or Subsonic; it can omit external and unresolved entries that the backend cannot store natively.
+The default **Mapped** view preserves source order among tracks visible under your listening preferences. Local matches play from the media server, external `[A]` tracks use their eligible mapped providers in the configured streaming order, and unresolved songs remain visible with a clear not-playable status. **Original** previews the source metadata, while **Native** is only a diagnostic view of the separate playlist written into Jellyfin or Subsonic; it can omit external and unresolved entries that the backend cannot store natively.
 6. Accept only a candidate that represents the same recording. Use interactive search when automatic candidates are wrong.
 
 An accepted match is reusable across playlist sync, search, playback, and later rematches. A matched local item is returned as the complete native backend object. A genuinely external item keeps a stable virtual identity and provider label.

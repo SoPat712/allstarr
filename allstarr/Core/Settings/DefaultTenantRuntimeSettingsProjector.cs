@@ -153,7 +153,6 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
             case "Scrobbling:ListenBrainz:Enabled": _scrobbling.ListenBrainz.Enabled = (bool)value; break;
             case "Library:EnableExternalPlaylists": SetBoth(item => item.EnableExternalPlaylists = (bool)value, item => item.EnableExternalPlaylists = (bool)value); break;
             case "Library:PlaylistsDirectory": SetBoth(item => item.PlaylistsDirectory = (string)value, item => item.PlaylistsDirectory = (string)value); break;
-            case "Library:ExplicitFilter": SetBoth(item => item.ExplicitFilter = Enum.Parse<ExplicitFilter>((string)value), item => item.ExplicitFilter = Enum.Parse<ExplicitFilter>((string)value)); break;
             case "Library:DownloadMode": SetBoth(item => item.DownloadMode = Enum.Parse<DownloadMode>((string)value), item => item.DownloadMode = Enum.Parse<DownloadMode>((string)value)); break;
             case "Library:StorageMode": SetBoth(item => item.StorageMode = Enum.Parse<StorageMode>((string)value), item => item.StorageMode = Enum.Parse<StorageMode>((string)value)); break;
             case "Library:CacheDurationHours": SetBoth(item => item.CacheDurationHours = (int)value, item => item.CacheDurationHours = (int)value); break;

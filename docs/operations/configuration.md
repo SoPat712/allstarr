@@ -101,3 +101,7 @@ local copies unavailable; independently authorized provider routes can still pla
 When an inaccessible match has another accessible local copy of the same recording,
 Allstarr chooses it deterministically. Native backend requests continue to use the
 caller's credentials.
+
+## Listening preferences
+
+`EXPLICIT_FILTER` seeds the household default through the existing settings importer. Supported values are `All`, `ExplicitOnly` and `CleanOnly`; the default is `All`. Unknown explicit status is included in every mode. Each signed-in listener can override this filter and independently show the `[A]` external and `[E]` explicit title markers in **Listening preferences**. Both markers default to on. Reset removes that listener's overrides and uses the latest household defaults. Native backend objects remain unchanged; routing order and deployment settings remain household controls.

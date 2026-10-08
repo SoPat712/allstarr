@@ -711,6 +711,7 @@ namespace allstarr.Core.Storage.Migrations
                 {
                     Id = table.Column<Guid>(type: "TEXT", nullable: false),
                     TenantId = table.Column<Guid>(type: "TEXT", nullable: false),
+                    OwnerUserId = table.Column<Guid>(type: "TEXT", nullable: true),
                     Key = table.Column<string>(type: "TEXT", maxLength: 200, nullable: false),
                     ValueType = table.Column<string>(type: "TEXT", maxLength: 32, nullable: false),
                     ValueJson = table.Column<string>(type: "TEXT", maxLength: 4096, nullable: false),
@@ -723,12 +724,19 @@ namespace allstarr.Core.Storage.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_tenant_runtime_settings", x => x.Id);
+                    table.CheckConstraint("CK_tenant_runtime_settings_personal_keys", "\"OwnerUserId\" IS NULL OR \"Key\" IN ('Library:ExplicitFilter', 'Playback:ShowExternalLabel', 'Playback:ShowExplicitLabel')");
                     table.ForeignKey(
                         name: "FK_tenant_runtime_settings_tenants_TenantId",
                         column: x => x.TenantId,
                         principalTable: "tenants",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
+                        name: "FK_tenant_runtime_settings_users_TenantId_OwnerUserId",
+                        columns: x => new { x.TenantId, x.OwnerUserId },
+                        principalTable: "users",
+                        principalColumns: new[] { "TenantId", "Id" },
+                        onDelete: ReferentialAction.Restrict);
                     table.ForeignKey(
                         name: "FK_tenant_runtime_settings_users_TenantId_UpdatedByUserId",
                         columns: x => new { x.TenantId, x.UpdatedByUserId },
@@ -3433,10 +3441,18 @@ namespace allstarr.Core.Storage.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
-                name: "IX_tenant_runtime_settings_TenantId_Key",
+                name: "IX_tenant_runtime_settings_household_key",
                 table: "tenant_runtime_settings",
                 columns: new[] { "TenantId", "Key" },
-                unique: true);
+                unique: true,
+                filter: "\"OwnerUserId\" IS NULL");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_tenant_runtime_settings_personal_key",
+                table: "tenant_runtime_settings",
+                columns: new[] { "TenantId", "OwnerUserId", "Key" },
+                unique: true,
+                filter: "\"OwnerUserId\" IS NOT NULL");
 
             migrationBuilder.CreateIndex(
                 name: "IX_tenant_runtime_settings_TenantId_UpdatedByUserId",

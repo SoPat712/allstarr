@@ -18,9 +18,9 @@ public class ExplicitContentFilterTests
     }
 
     [Fact]
-    public void ShouldIncludeSong_ExplicitOnly_ShouldExcludeOnlyCleanEditedValue3()
+    public void ShouldIncludeSong_ExplicitOnly_ShouldExcludeKnownCleanValues()
     {
-        Assert.True(ExplicitContentFilter.ShouldIncludeSong(new Song { ExplicitContentLyrics = 0 }, ExplicitFilter.ExplicitOnly));
+        Assert.False(ExplicitContentFilter.ShouldIncludeSong(new Song { ExplicitContentLyrics = 0 }, ExplicitFilter.ExplicitOnly));
         Assert.True(ExplicitContentFilter.ShouldIncludeSong(new Song { ExplicitContentLyrics = 1 }, ExplicitFilter.ExplicitOnly));
         Assert.True(ExplicitContentFilter.ShouldIncludeSong(new Song { ExplicitContentLyrics = 2 }, ExplicitFilter.ExplicitOnly));
         Assert.False(ExplicitContentFilter.ShouldIncludeSong(new Song { ExplicitContentLyrics = 3 }, ExplicitFilter.ExplicitOnly));

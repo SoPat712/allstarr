@@ -91,9 +91,9 @@ public class ConfigController : ControllerBase
             ?? throw new InvalidOperationException("The deployment backend is unavailable.");
         var useJellyfinSettings = backendType.Equals("Jellyfin", StringComparison.OrdinalIgnoreCase);
 
-        var fallbackExplicitFilter = useJellyfinSettings
-            ? _jellyfinSettings.ExplicitFilter.ToString()
-            : _subsonicSettings.ExplicitFilter.ToString();
+        var fallbackExplicitFilter = Enum.TryParse<ExplicitFilter>(
+            _configuration[$"{backendType}:ExplicitFilter"], true, out var configuredFilter)
+            ? configuredFilter.ToString() : ExplicitFilter.All.ToString();
         var fallbackEnableExternalPlaylists = useJellyfinSettings
             ? _jellyfinSettings.EnableExternalPlaylists
             : _subsonicSettings.EnableExternalPlaylists;

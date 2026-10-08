@@ -45,6 +45,21 @@ export type RuntimeStatus = {
   };
 };
 
+export type ExplicitFilter = "All" | "ExplicitOnly" | "CleanOnly";
+
+export type ListeningPreferences = {
+  explicitFilter: string;
+  showExternalLabel: boolean;
+  showExplicitLabel: boolean;
+};
+
+export type PersonalListeningPreferences = {
+  values: ListeningPreferences;
+  householdDefaults: ListeningPreferences;
+  usesHouseholdDefaults: boolean;
+  revision: string;
+};
+
 export type PlaylistSummary = {
   id: string;
   name: string;
@@ -1538,6 +1553,26 @@ export const settings = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ previewToken }),
+    }),
+};
+
+export const listeningPreferences = {
+  get: () => json<PersonalListeningPreferences>("/api/admin/preferences"),
+  save: (values: {
+    explicitFilter: ExplicitFilter;
+    showExternalLabel: boolean;
+    showExplicitLabel: boolean;
+    expectedRevision: string;
+  }) => json<PersonalListeningPreferences>("/api/admin/preferences", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(values),
+  }),
+  reset: (expectedRevision: string) =>
+    json<PersonalListeningPreferences>("/api/admin/preferences", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expectedRevision }),
     }),
 };
 

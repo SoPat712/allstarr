@@ -17,6 +17,8 @@ public sealed class EffectiveProviderPolicyTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync((Guid _, IEnumerable<string> keys, CancellationToken _) =>
                 keys.ToDictionary(key => key, Setting, StringComparer.OrdinalIgnoreCase));
+        settings.Setup(item => item.GetPreferencesAsync(tenantId, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PersonalListeningPreferences(new(), new(), true, "household-revision"));
         var resolver = new EffectiveProviderPolicyResolver(settings.Object);
 
         var snapshot = await resolver.ResolveAsync(tenantId);

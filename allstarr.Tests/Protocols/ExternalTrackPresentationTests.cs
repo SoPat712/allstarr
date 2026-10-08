@@ -8,6 +8,24 @@ namespace allstarr.Tests;
 public sealed class ExternalTrackPresentationTests
 {
     [Theory]
+    [InlineData(true, true, true, "Title [A]/[E]")]
+    [InlineData(true, false, true, "Title [A]")]
+    [InlineData(false, true, true, "Title [E]")]
+    [InlineData(false, false, true, "Title")]
+    [InlineData(false, true, false, "Title")]
+    public void LabelsCanBeToggledIndependently(bool external, bool explicitLabel, bool explicitTrack, string expected)
+    {
+        var preferences = new allstarr.Core.Settings.ListeningPreferences("All", external, explicitLabel);
+        Assert.Equal(expected, ExternalTrackPresentation.Title("Title", explicitTrack, preferences));
+        Assert.Equal("Title", ExternalTrackPresentation.Title(new Song
+        {
+            Title = "Title",
+            IsLocal = true,
+            ExplicitContentLyrics = 1
+        }, preferences));
+    }
+
+    [Theory]
     [InlineData(true, 1, "Original title")]
     [InlineData(true, 0, "Original title")]
     [InlineData(false, 1, "Original title [A]/[E]")]
