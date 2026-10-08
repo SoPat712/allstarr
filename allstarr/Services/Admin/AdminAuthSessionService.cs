@@ -72,7 +72,7 @@ public sealed class EfAdminAuthSessionStore(IDbContextFactory<AllstarrDbContext>
 }
 
 /// <summary>
-/// Stores only opaque session IDs in cookies and encrypted session payloads in PostgreSQL.
+/// Stores only opaque session IDs in cookies and encrypted session payloads in SQLite.
 /// </summary>
 public sealed class AdminAuthSessionService(
     IAdminAuthSessionStore store,

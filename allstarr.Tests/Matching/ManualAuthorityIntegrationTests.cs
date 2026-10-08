@@ -12,7 +12,7 @@ namespace allstarr.Tests;
 public sealed class ManualAuthorityIntegrationTests
 {
     [Fact]
-    [Trait("Category", "Postgres")]
+    [Trait("Category", "Sqlite")]
     public async Task ClearManualAuthority_UsesExactRevisionAndPreservesHistory()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();

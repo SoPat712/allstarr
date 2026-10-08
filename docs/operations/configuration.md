@@ -4,14 +4,12 @@ Allstarr separates deployment bootstrap, durable application settings, and encry
 
 ## Deployment-owned values
 
-`.env` exists for values required before PostgreSQL and the administrator UI are available. `.env.example` is the checked-in source of truth.
+`.env` exists for values required before storage and the administrator UI are available. `.env.example` is the checked-in source of truth.
 
 | Group | Current values |
 | --- | --- |
 | Backend and release selection | `BACKEND_TYPE`, `ALLSTARR_RELEASE_PROFILE` |
-| PostgreSQL bootstrap | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD_FILE` |
-| Encryption bootstrap | `ALLSTARR_KEYRING_FILE` |
-| Image and media mounts | `ALLSTARR_IMAGE`, `DOWNLOAD_PATH`, `KEPT_PATH`, `APPLE_UPLOAD_PATH` |
+| Image and local data mounts | `ALLSTARR_IMAGE`, `ALLSTARR_DATA_PATH`, `APPLE_UPLOAD_PATH` |
 | Public listeners | `PROXY_BIND_ADDRESS`, `PROXY_PORT`, `ADMIN_BIND_ADDRESS`, `ADMIN_PORT` |
 | Admin network policy | `ADMIN_BIND_ANY_IP`, `ADMIN_TRUSTED_SUBNETS` |
 | Admin URL prefix | `ADMIN_BASE_PATH` (empty by default) |
@@ -23,21 +21,17 @@ Allstarr separates deployment bootstrap, durable application settings, and encry
 
 The Compose file translates these values into ASP.NET configuration. Changing one requires recreating the affected container. Allstarr does not hot-edit its own Compose deployment.
 
-PostgreSQL is mandatory. There is no SQLite, Redis, or Valkey runtime option.
+SQLite is the durable database. Compose mounts `ALLSTARR_DATA_PATH` (default `./data` in `.env.example`) at `/app/data`. Without that variable, Compose uses the `allstarr-data` named volume. No database sidecar is required.
 
 For a dashboard mounted under a reverse-proxy path or optional OIDC login, see [WebUI proxy and SSO setup](webui-access.md). Neither setting changes music-client authentication on port 5274.
 
 ## Protected files
 
-`allstarr.sh init` creates the PostgreSQL password file and Allstarr key ring with private permissions. Back them up separately from the database.
-
-- Losing the PostgreSQL password prevents database access.
-- Losing the key ring prevents decryption of stored provider credentials.
-- Rotating or replacing either file is an operator action, not a normal settings change.
+First startup creates `keyring.json` with private permissions when the database has no saved secrets. Keep it with the database: losing the key ring prevents decryption of saved provider credentials. `Secrets__KeyRingPath` remains available as an explicit override; it must be writable to apply a restore. Use the verified backup and restore controls in Settings → Maintenance. See [storage operations](storage.md) for data-folder contents and offline copies.
 
 ## Durable settings
 
-Non-secret product behavior belongs in tenant-scoped PostgreSQL settings and is edited through the dashboard surface that owns it. General playback, cache, matching, playlist, and diagnostics policy lives under **Settings**. Provider priority lives under **Integrations > Routing**.
+Non-secret product behavior belongs in tenant-scoped SQLite settings and is edited through the dashboard surface that owns it. General playback, cache, matching, playlist, and diagnostics policy lives under **Settings**. Provider priority lives under **Integrations > Routing**.
 
 `DurableRuntimeSettingsService` owns validation, typing, revisions, and optimistic concurrency. Controllers must not add a second environment or JSON owner for these settings.
 

@@ -76,7 +76,7 @@ public class DownloadsControllerLyricsArchiveTests
     }
 
     [Fact]
-    [Trait("Category", "Postgres")]
+    [Trait("Category", "Sqlite")]
     public async Task DeleteDownload_RemovesAdjacentLyricsSidecar()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();

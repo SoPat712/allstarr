@@ -3,7 +3,7 @@ namespace allstarr.Tests;
 public sealed class OperationalLogRegressionContractTests
 {
     [Fact]
-    public void AdminSessions_UsePostgreSqlWithoutProcessOrFileAuthority()
+    public void AdminSessions_UseSqliteWithoutProcessOrFileAuthority()
     {
         var service = File.ReadAllText(FindRepositoryFile(
             "allstarr", "Services", "Admin", "AdminAuthSessionService.cs"));

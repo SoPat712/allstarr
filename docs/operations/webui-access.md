@@ -71,6 +71,6 @@ SSO creates a normal 12-hour Allstarr session. Signing out ends the local sessio
 
 Use **Disconnect SSO** while signed in to remove your link and revoke its stored credential. Existing SSO-created Allstarr sessions stop working; a native-login session remains usable. If a native credential expires, start SSO again and authenticate the same media account to renew the link.
 
-Setting `ADMIN_OIDC_ENABLED=false` and recreating the container disables SSO and its existing sessions without changing music-client login. A full PostgreSQL backup preserves links. Portable state exports exclude SSO links and their credentials; link accounts again after a portable restore.
+Setting `ADMIN_OIDC_ENABLED=false` and recreating the container disables SSO and its existing sessions without changing music-client login. A verified database-and-key-ring backup preserves account links and encrypted credentials. Browser session protection keys are separate files, so sign in again after restoring onto a fresh installation. A stopped copy of the complete data folder includes those protection keys.
 
 If callbacks fail, check the exact redirect URI, public URL, proxy path handling, and trusted forwarded-protocol configuration. Do not include authorization codes, cookies, passwords, or tokens in bug reports.

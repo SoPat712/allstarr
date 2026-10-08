@@ -124,7 +124,7 @@ A high confidence score can still appear under **Review** when two distinct, sam
 
 Virtual playlists do not silently mutate the source service. Backend materialization adds only resolved local items unless the workflow explicitly says it will download or write back.
 
-Import behavior is fixed when a playlist is created so a later settings edit cannot accidentally turn a frozen copy into a live source link. Song retention can be enabled later; Allstarr immediately queues the already-imported downloadable songs and applies the same policy to later linked updates. Kept files remain permanent until they are explicitly released or removed and must be backed up separately from PostgreSQL.
+Import behavior is fixed when a playlist is created so a later settings edit cannot accidentally turn a frozen copy into a live source link. Song retention can be enabled later; Allstarr immediately queues the already-imported downloadable songs and applies the same policy to later linked updates. Kept files remain permanent until they are explicitly released or removed and must be backed up separately from database archives.
 
 ## Cached versus kept
 
@@ -153,7 +153,7 @@ Scrobbling is checkpointed so a provider is not sent the same completed listen t
 - Keep the dashboard on a trusted network or behind an authenticated proxy.
 - Use a separate provider account when a service allows it, and grant the smallest audience required.
 - Preview imports, legacy configuration, playlist changes, and destructive maintenance actions.
-- Back up PostgreSQL, the Allstarr key ring, configuration, and retained media as separate assets.
-- Use `allstarr.sh upgrade` before an update that should have a rollback artifact.
+- Create and download a verified database-and-key-ring backup in Settings → Maintenance before an update.
+- Back up deployment configuration, retained media, extension packages, and optional provider sessions separately; see [storage operations](operations/storage.md).
 
 For exact procedures, see [configuration](operations/configuration.md), [storage and recovery](operations/storage.md), and [client compatibility](operations/client-compatibility.md).

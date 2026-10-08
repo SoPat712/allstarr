@@ -2,6 +2,27 @@
 
 The runtime stores durable state in SQLite at `{Storage:DataDirectory}/{Storage:DatabaseFileName}` (defaults: `/app/data/allstarr.db`). Run one Allstarr process per database and mount the data directory on local disk. Network filesystems are rejected. PostgreSQL connection settings are no longer used by the runtime.
 
+## One local data folder
+
+Compose mounts `ALLSTARR_DATA_PATH` at `/app/data`; `.env.example` sets `./data`. With no override, Compose uses the `allstarr-data` named volume. Direct runs can set `Storage__DataDirectory` to another local folder. First startup creates the database and key ring without a setup script or database service.
+
+| Path within the data folder | Contents |
+| --- | --- |
+| `allstarr.db`, `allstarr.db-wal`, `allstarr.db-shm` | Database and live SQLite sidecars |
+| `keyring.json` | Keys for encrypted saved credentials |
+| `data-protection/` | Browser session protection keys |
+| `downloads/`, `kept/` | Managed and retained music |
+| `extensions/` | Installed extension packages |
+| `cache/` | Media cache and temporary download/import workspaces |
+| `backups/` | Verified database-and-key-ring archives |
+| `restore-pending/`, `pre-restore-*/` | Staged and previous restore data |
+
+Explicit library, extension, cache, workspace, and key-ring path overrides remain supported. Include those external paths separately when moving an installation. Optional Apple gateway and wrapper sessions remain in their own profile volumes.
+
+To move to another host, stop Allstarr, copy the entire data folder including any sidecars, and preserve its private permissions. Also copy deployment configuration, optional provider volumes, and external path overrides. Mount the copy into a new container using the same image version. Keep the original container stopped so only one process uses each database, then verify accounts, playlists, settings, and playback. Never copy the active database piecemeal.
+
+## Database readiness and recovery
+
 Startup enables WAL, applies the checked-in baseline, and runs an integrity check before storage becomes ready. Each connection enforces foreign keys and uses normal synchronization with a five-second busy timeout. Unknown schema versions and damaged database files leave durable operations unavailable while the native proxy remains available. Startup does not replace damaged data or fall back to another database.
 
 | Setting | Default | Purpose |

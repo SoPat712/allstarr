@@ -12,7 +12,6 @@ permissions:
 env:
   DOTNET_VERSION: "10.0.301"
   NODE_VERSION: "22.23.1"
-  ALLSTARR_TEST_POSTGRES: "Host=127.0.0.1;Port=5432;Database=allstarr_test;Username=allstarr;Password=ci-postgres-password;SSL Mode=Disable"
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
@@ -21,21 +20,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       app-version: ${{ steps.app-version.outputs.version }}
-    services:
-      postgres:
-        image: postgres:18.4-alpine3.23@sha256:996d0920e4ff9df1fc19dacb904492f3c1ec0ec1cc338f0ad7123be7731c5f5e
-        env:
-          POSTGRES_DB: allstarr_test
-          POSTGRES_USER: allstarr
-          POSTGRES_PASSWORD: ci-postgres-password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U allstarr -d allstarr_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -69,10 +53,6 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.10"
-
-      - name: Install PostgreSQL 18 client
-        shell: bash
-        run: bash tools/ci/postgres-client.sh install
 
       - name: Restore dependencies
         run: dotnet restore -p:NuGetAudit=true
@@ -150,66 +130,34 @@ jobs:
         run: |
           set -euo pipefail
 
-          smoke_dir="${RUNNER_TEMP}/allstarr-release-smoke"
-          container_name="allstarr-release-smoke"
-          postgres_name="allstarr-release-smoke-postgres"
-          network_name="allstarr-release-smoke"
-          mkdir -p "${smoke_dir}/state" "${smoke_dir}/downloads" "${smoke_dir}/kept"
-          printf '%s\n' 'ci-postgres-password' > "${smoke_dir}/postgres-password"
-          key="$(openssl rand -base64 32)"
-          printf '{"activeKeyId":"key-1","keys":{"key-1":"%s"}}\n' "${key}" > "${smoke_dir}/allstarr-keyring.json"
-          chmod 600 "${smoke_dir}/postgres-password" "${smoke_dir}/allstarr-keyring.json"
+          smoke_dir="$(mktemp -d "${RUNNER_TEMP}/allstarr-release-smoke.XXXXXX")"
+          container_name="allstarr-release-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          container_created=false
+          mkdir -p "${smoke_dir}/data"
 
           cleanup() {
-            docker logs "${container_name}" || true
-            docker rm --force "${container_name}" >/dev/null 2>&1 || true
-            docker logs "${postgres_name}" || true
-            docker rm --force "${postgres_name}" >/dev/null 2>&1 || true
-            docker network rm "${network_name}" >/dev/null 2>&1 || true
+            if [ "${container_created}" = true ]; then
+              docker logs "${container_name}" || true
+              docker rm --force "${container_name}" >/dev/null 2>&1 || true
+            fi
             rm -rf "${smoke_dir}"
           }
           trap cleanup EXIT
 
-          docker network create "${network_name}"
-          docker run --detach \
-            --name "${postgres_name}" \
-            --network "${network_name}" \
-            --env 'POSTGRES_DB=allstarr' \
-            --env 'POSTGRES_USER=allstarr' \
-            --env 'POSTGRES_PASSWORD=ci-postgres-password' \
-            postgres:18.4-alpine3.23@sha256:996d0920e4ff9df1fc19dacb904492f3c1ec0ec1cc338f0ad7123be7731c5f5e
-
-          for attempt in {1..30}; do
-            if docker exec "${postgres_name}" pg_isready -U allstarr -d allstarr >/dev/null; then
-              break
-            fi
-            if [ "${attempt}" -eq 30 ]; then
-              echo 'Smoke-test PostgreSQL did not become ready.' >&2
-              exit 1
-            fi
-            sleep 2
-          done
-
           docker run --detach \
             --name "${container_name}" \
-            --network "${network_name}" \
-            --volume "${smoke_dir}/state:/app/state" \
-            --volume "${smoke_dir}/downloads:/app/downloads" \
-            --volume "${smoke_dir}/kept:/app/kept" \
-            --volume "${smoke_dir}/postgres-password:/run/secrets/postgres_password:ro" \
-            --volume "${smoke_dir}/allstarr-keyring.json:/run/secrets/allstarr_keyring:ro" \
+            --volume "${smoke_dir}/data:/app/data" \
             --env 'ASPNETCORE_ENVIRONMENT=Production' \
             --env 'Backend__Type=Jellyfin' \
-            --env 'Storage__Provider=Postgres' \
-            --env "Storage__ConnectionString=Host=${postgres_name};Port=5432;Database=allstarr;Username=allstarr;SSL Mode=Disable" \
-            --env 'Storage__PasswordFile=/run/secrets/postgres_password' \
-            --env 'Storage__AutoMigrate=true' \
-            --env 'Secrets__KeyRingPath=/run/secrets/allstarr_keyring' \
+            --env 'Storage__DataDirectory=/app/data' \
             allstarr:release-smoke
+          container_created=true
 
           for attempt in {1..60}; do
             if docker exec "${container_name}" \
               curl --fail --silent http://127.0.0.1:8080/health/ready >/dev/null; then
+              docker exec "${container_name}" sh -c \
+                'test -s /app/data/allstarr.db && test -s /app/data/keyring.json && test "$(stat -c "%a" /app/data/keyring.json)" = 600'
               exit 0
             fi
 

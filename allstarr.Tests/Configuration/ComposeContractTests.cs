@@ -8,19 +8,18 @@ public sealed class ComposeContractTests
     private readonly string _repositoryRoot = FindRepositoryRoot();
 
     [Fact]
-    public void Compose_IsPostgresOnlyWithExplicitOptionalProfiles()
+    public void Compose_UsesOneDataFolderWithExplicitOptionalProfiles()
     {
         var compose = File.ReadAllText(Path.Combine(_repositoryRoot, "docker-compose.yml"));
 
-        Assert.Contains("postgres:18.4-alpine3.23@sha256:", compose, StringComparison.Ordinal);
-        Assert.Contains("Storage__Provider: Postgres", compose, StringComparison.Ordinal);
+        Assert.DoesNotContain("postgres", compose, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Storage__DataDirectory: \"/app/data\"", compose, StringComparison.Ordinal);
         Assert.Contains("Release__Profile: \"${ALLSTARR_RELEASE_PROFILE:-core}\"", compose, StringComparison.Ordinal);
-        Assert.Contains("Storage__PasswordFile: \"/run/secrets/postgres_password\"", compose, StringComparison.Ordinal);
-        Assert.Contains("Secrets__KeyRingPath: \"/run/secrets/allstarr_keyring\"", compose, StringComparison.Ordinal);
+        Assert.DoesNotContain("Storage__PasswordFile", compose, StringComparison.Ordinal);
+        Assert.DoesNotContain("Secrets__KeyRingPath", compose, StringComparison.Ordinal);
         Assert.Contains("${ADMIN_PORT:-5275}:5275", compose, StringComparison.Ordinal);
         Assert.Contains("/health/ready", compose, StringComparison.Ordinal);
-        Assert.Contains("postgres-data:/var/lib/postgresql", compose, StringComparison.Ordinal);
-        Assert.Contains("allstarr-state:/app/state", compose, StringComparison.Ordinal);
+        Assert.Contains("${ALLSTARR_DATA_PATH:-allstarr-data}:/app/data", compose, StringComparison.Ordinal);
         Assert.Contains("./.env:/app/.env:ro", compose, StringComparison.Ordinal);
         Assert.Contains("ghcr.io/sopat712/allstarr:3.1.0-beta.1", compose, StringComparison.Ordinal);
         Assert.Matches("(?s)spotify-lyrics:.*?profiles:\\s*- spotify-lyrics", compose);
@@ -73,23 +72,18 @@ public sealed class ComposeContractTests
             "ADMIN_OIDC_PUBLIC_URL",
             "ADMIN_PORT",
             "ADMIN_TRUSTED_SUBNETS",
+            "ALLSTARR_DATA_PATH",
             "ALLSTARR_IMAGE",
-            "ALLSTARR_KEYRING_FILE",
             "ALLSTARR_RELEASE_PROFILE",
             "APPLE_UPLOAD_PATH",
             "BACKEND_TYPE",
             "CORS_ALLOWED_ORIGINS",
             "CORS_ALLOW_CREDENTIALS",
-            "DOWNLOAD_PATH",
             "EXTENSIONS_ALLOW_REMOTE_INSTALL",
-            "KEPT_PATH",
             "MUSICBRAINZ_AUTHORIZED_USER_AGENT_OVERRIDE",
             "MUSICBRAINZ_BASE_URL",
             "MUSICBRAINZ_RATE_LIMIT_MS",
             "MUSICBRAINZ_SOURCE_ID",
-            "POSTGRES_DB",
-            "POSTGRES_PASSWORD_FILE",
-            "POSTGRES_USER",
             "PROXY_BIND_ADDRESS",
             "PROXY_PORT",
             "SPOTIFY_API_SESSION_COOKIE"
@@ -102,6 +96,7 @@ public sealed class ComposeContractTests
         var ignore = File.ReadAllText(Path.Combine(_repositoryRoot, ".dockerignore"));
 
         Assert.Contains("secrets/", ignore, StringComparison.Ordinal);
+        Assert.Contains("data/", ignore, StringComparison.Ordinal);
         Assert.Contains(".env", ignore, StringComparison.Ordinal);
         Assert.Contains("downloads/", ignore, StringComparison.Ordinal);
         Assert.Contains("kept/", ignore, StringComparison.Ordinal);
@@ -142,7 +137,7 @@ public sealed class ComposeContractTests
         var services = process.StandardOutput.ReadToEnd()
             .Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .ToHashSet(StringComparer.Ordinal);
-        var expected = new HashSet<string>(["allstarr", "postgres"], StringComparer.Ordinal);
+        var expected = new HashSet<string>(["allstarr"], StringComparer.Ordinal);
         if (profiles.Contains("spotify-lyrics")) expected.Add("spotify-lyrics");
         if (profiles.Contains("apple")) expected.UnionWith(["apple-gateway", "apple-wrapper"]);
 
@@ -176,23 +171,22 @@ public sealed class ComposeContractTests
     }
 
     [Fact]
-    public void Upgrade_PreservesPortableState()
+    public void Controller_DelegatesBackupAndRestoreToMaintenance()
     {
         var controller = File.ReadAllText(Path.Combine(_repositoryRoot, "allstarr.sh"));
 
-        Assert.Contains("upgrade [OUTPUT_DIR]", controller, StringComparison.Ordinal);
-        Assert.Contains("backup [OUTPUT_DIR]", controller, StringComparison.Ordinal);
-        Assert.Contains("volume-data.tar.gz", controller, StringComparison.Ordinal);
-        Assert.Contains("deployment-files.tar", controller, StringComparison.Ordinal);
-        Assert.Contains("allstarr_allstarr-cache:/volume-cache:ro", controller, StringComparison.Ordinal);
-        Assert.Contains("allstarr_postgres-data:/volume-postgres:ro", controller, StringComparison.Ordinal);
-        Assert.Contains("restore BACKUP --confirm-replace", controller, StringComparison.Ordinal);
-        Assert.Contains("validate_restore_archive", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("allstarr_valkey-data", controller, StringComparison.Ordinal);
+        Assert.Contains("backup|restore|upgrade) die", controller, StringComparison.Ordinal);
+        Assert.Contains("use Settings > Maintenance for backups and restores", controller, StringComparison.Ordinal);
+        Assert.Contains("Stop Allstarr before copying its data folder", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("postgres", controller, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("openssl rand", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("volume-data.tar.gz", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("find $RESTORE_PATHS", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("down -v", controller, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void RuntimeImage_ContainsBackupToolsAndPinnedDotnetBases()
+    public void RuntimeImage_UsesDataFolderAndPinnedDotnetBases()
     {
         var dockerfile = File.ReadAllText(Path.Combine(_repositoryRoot, "Dockerfile"));
 
@@ -201,8 +195,9 @@ public sealed class ComposeContractTests
         Assert.Contains("node:22.23.1-alpine3.23@sha256:", dockerfile, StringComparison.Ordinal);
         Assert.Contains("COPY webui/package.json webui/package-lock.json", dockerfile, StringComparison.Ordinal);
         Assert.Contains("COPY --from=webui /src/webui/build ./wwwroot/", dockerfile, StringComparison.Ordinal);
-        Assert.Contains("postgresql-client-18", dockerfile, StringComparison.Ordinal);
-        Assert.Contains("/app/state/backups", dockerfile, StringComparison.Ordinal);
+        Assert.DoesNotContain("postgres", dockerfile, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ca-certificates curl", dockerfile, StringComparison.Ordinal);
+        Assert.Contains("/app/data/backups", dockerfile, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -210,6 +205,7 @@ public sealed class ComposeContractTests
     {
         var workflow = File.ReadAllText(Path.Combine(_repositoryRoot, ".github", "workflows", "ci.yml"));
 
+        Assert.DoesNotContain("postgres", workflow, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("DOTNET_VERSION: \"10.0.301\"", workflow, StringComparison.Ordinal);
         Assert.Contains("NODE_VERSION: \"22.23.1\"", workflow, StringComparison.Ordinal);
         Assert.Contains("working-directory: webui", workflow, StringComparison.Ordinal);
@@ -236,10 +232,11 @@ public sealed class ComposeContractTests
         Assert.Contains("needs: build-and-test", workflow, StringComparison.Ordinal);
         Assert.Contains("docker compose -f docker-compose.yml config --quiet", workflow, StringComparison.Ordinal);
         Assert.Contains("docker compose -f docker-compose.yml --profile apple config --quiet", workflow, StringComparison.Ordinal);
-        Assert.Contains("Storage__Provider=Postgres", workflow, StringComparison.Ordinal);
+        Assert.Contains("Storage__DataDirectory=/app/data", workflow, StringComparison.Ordinal);
         Assert.Contains("Backend__Type=Jellyfin", workflow, StringComparison.Ordinal);
-        Assert.Contains("allstarr-release-smoke-postgres", workflow, StringComparison.Ordinal);
-        Assert.DoesNotContain("Storage__Provider=Sqlite", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("postgres", workflow, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("test -s /app/data/allstarr.db", workflow, StringComparison.Ordinal);
+        Assert.Contains("test -s /app/data/keyring.json", workflow, StringComparison.Ordinal);
         Assert.DoesNotContain("Redis__Enabled", workflow, StringComparison.Ordinal);
         Assert.True(dotnetTestIndex >= 0 && publishJobIndex > dotnetTestIndex);
         Assert.True(smokeBuildIndex > publishJobIndex);

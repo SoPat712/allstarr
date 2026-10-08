@@ -4198,6 +4198,7 @@ public sealed class ProtocolRouteFixtureTests
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Testing");
+            builder.UseSetting("Storage:DataDirectory", _stateRoot);
             builder.UseSetting("Backend:Type", _backend);
             builder.ConfigureAppConfiguration((_, configuration) =>
             {
@@ -4206,7 +4207,6 @@ public sealed class ProtocolRouteFixtureTests
                     ["Backend:Type"] = _backend,
                     ["SpotifyApi:Enabled"] = "false",
                     ["SpotifyImport:Enabled"] = "false",
-                    ["Storage:EnforceMutationGuard"] = "false",
                     ["Extensions:Directory"] = Path.Combine(_stateRoot, "extensions"),
                     ["Cache:GenreDirectory"] = Path.Combine(_stateRoot, "genres"),
                     ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = "applemusic,deezer,qobuz,spotify"

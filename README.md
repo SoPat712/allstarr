@@ -44,9 +44,9 @@ Read the [user guide](docs/user-guide.md) for the dashboard map, setup order, pl
 
 ## Upgrade or recover
 
-`allstarr.sh` remembers enabled optional profiles, validates Compose, protects generated secrets, and never deletes volumes during normal operation.
+`allstarr.sh` remembers enabled optional profiles, validates Compose, and never deletes volumes during normal operation.
 
-SQLite development builds require a fresh data folder; existing PostgreSQL state is not imported. Preserve the old database and encryption key ring before changing an installation. Database backup and restore are temporarily unavailable while they are rebuilt for SQLite. Downloaded and kept music remain in their mounted folders and need their own backup policy. See the [storage runbook](docs/operations/storage.md).
+SQLite development builds require a fresh data folder; existing PostgreSQL state is not imported. Preserve the old database and encryption key ring before changing an installation. Create and restore verified database-and-key-ring backups in Settings → Maintenance. Compose keeps application data in `./data` by default. Downloaded and kept music need their own backup policy. See the [storage runbook](docs/operations/storage.md).
 
 Beta testers and contributors can run the checked-out source instead of a published image:
 

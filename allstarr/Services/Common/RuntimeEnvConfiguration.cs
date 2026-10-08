@@ -40,12 +40,7 @@ public static class RuntimeEnvConfiguration
             ["EXTENSIONS_ALLOW_REMOTE_INSTALL"] = ["Extensions:AllowRemoteInstall"],
 
             ["SUBSONIC_URL"] = ["Subsonic:Url"],
-            ["ALLSTARR_STORAGE_PROVIDER"] = ["Storage:Provider"],
-            ["ALLSTARR_STORAGE_CONNECTION_STRING"] = ["Storage:ConnectionString"],
-            ["ALLSTARR_STORAGE_PASSWORD_FILE"] = ["Storage:PasswordFile"],
             ["ALLSTARR_STORAGE_AUTO_MIGRATE"] = ["Storage:AutoMigrate"],
-            ["ALLSTARR_STORAGE_ENFORCE_MUTATION_GUARD"] = ["Storage:EnforceMutationGuard"],
-            ["ALLSTARR_BACKUP_DIRECTORY"] = ["Storage:BackupDirectory"],
             ["ALLSTARR_SECRET_KEY_RING_PATH"] = ["Secrets:KeyRingPath"],
             ["ALLSTARR_MULTI_USER_MODE"] = ["Identity:Mode"],
             ["ALLSTARR_BACKEND_INSTANCE_ID"] = ["Identity:BackendInstanceId"],

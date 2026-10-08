@@ -283,7 +283,7 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddHttpContextAccessor();
 var dataProtectionKeysPath = builder.Environment.IsEnvironment("Testing")
     ? Path.Combine(Path.GetTempPath(), "allstarr-tests", "data-protection")
-    : "/app/cache/data-protection";
+    : Path.Combine(builder.Configuration["Storage:DataDirectory"] ?? "/app/data", "data-protection");
 var dataProtectionKeysDirectory = new DirectoryInfo(dataProtectionKeysPath);
 dataProtectionKeysDirectory.Create();
 builder.Services.AddDataProtection()

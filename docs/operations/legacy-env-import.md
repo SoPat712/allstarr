@@ -1,18 +1,18 @@
 # Legacy `.env` import
 
-Version 3 uses an explicit administrator import to carry safe configuration from a 2.x deployment into a fresh PostgreSQL-backed installation. Startup never scans or applies a legacy file automatically.
+Version 3 uses an explicit administrator import to carry safe configuration from a 2.x deployment into a fresh SQLite installation. Startup never scans or applies a legacy file automatically.
 
 ## Supported workflow
 
 1. Back up and stop the version 2 deployment.
-2. Create a separate version 3 deployment, PostgreSQL database, key ring, cache, and writable media roots.
+2. Create a separate version 3 deployment with an empty local data folder; startup creates its database and key ring.
 3. Finish version 3 onboarding and sign in as an administrator.
 4. Open the legacy `.env` migration in Settings and upload or paste the old file.
 5. Review the preview, conflicts, obsolete keys, deployment-only values, accounts, backend identity, and playlists.
 6. Confirm and apply the preview before it expires.
 7. Test imported accounts and enable sharing explicitly where appropriate.
 8. Review and enable imported playlist links and schedules; finish ambiguous playlist handoffs through the provider-neutral playlist workflow.
-9. Run readiness checks and take a PostgreSQL plus key-ring backup before cutting clients over.
+9. Run readiness checks and create and download a verified backup in Settings → Maintenance before cutting clients over.
 
 Version 2 and version 3 must never write the same cache, download, kept, or managed-library root at the same time.
 
