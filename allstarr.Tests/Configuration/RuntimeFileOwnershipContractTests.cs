@@ -27,7 +27,6 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Core/Operations/PlatformReadinessService.cs"] = "temporary readiness probe",
             ["Core/Storage/DurableBackupService.cs"] = "backup archive",
             ["Core/Storage/DurableStateTransferService.cs"] = "transfer archive",
-            ["Core/Storage/SelectiveStateTransferService.cs"] = "transfer archive",
             ["Services/AppleMusic/AppleMusicDownloadService.cs"] = "managed audio",
             ["Services/Common/BaseDownloadService.cs"] = "managed audio and artwork",
             ["Services/Common/ExtensionManager.cs"] = "extension packages",
@@ -84,7 +83,6 @@ public sealed class RuntimeFileOwnershipContractTests
             "Core/ManagedFiles/FilePlacementService.cs",
             "Core/Storage/DurableBackupService.cs",
             "Core/Storage/DurableStateTransferService.cs",
-            "Core/Storage/SelectiveStateTransferService.cs",
             "Services/Common/ExtensionManager.cs",
             "Services/Common/FileMediaApplicationCache.cs"
         };

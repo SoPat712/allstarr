@@ -14,7 +14,6 @@
   import EnvMigrationCard from "$lib/components/EnvMigrationCard.svelte";
   import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
-  import SelectiveTransferCard from "$lib/components/SelectiveTransferCard.svelte";
   import CacheDiagnosticsCard from "$lib/components/CacheDiagnosticsCard.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
@@ -321,7 +320,6 @@
             <header><div><strong>Playlist readiness</strong><small>Source access and songs available to listeners</small></div></header>
             <Button variant="secondary" disabled={Boolean(action)} onclick={() => void run("playlists", settings.playlistProbe, "Playlist pipeline checked.")}>{action === "playlists" ? "Testing…" : "Test playlist readiness"}</Button>
           </article>
-          {#if administrator}<SelectiveTransferCard />{/if}
           {#if administrator}
             <article class="panel maintenance-card">
               <header><div><strong>Setup guide</strong><small>Durable account onboarding</small></div></header>
