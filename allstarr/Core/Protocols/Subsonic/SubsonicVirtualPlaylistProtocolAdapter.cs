@@ -5,6 +5,7 @@ using System.Xml;
 using System.Xml.Linq;
 using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
+using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Storage;
 using allstarr.Core.Settings;
 using allstarr.Services.Subsonic;
@@ -24,11 +25,12 @@ public interface ISubsonicPlaylistMutationResolver
 }
 
 /// <summary>
-/// Resolves an Allstarr playlist identifier only when it belongs to the verified
-/// Subsonic actor, tenant, backend, protocol, and requested library scope.
+/// Resolves an Allstarr playlist identifier through the viewer's backend permissions.
+/// Virtual-only links remain private to the user who linked the source.
 /// </summary>
 public sealed class SubsonicPlaylistMutationResolver(
-    IDbContextFactory<AllstarrDbContext> contextFactory) : ISubsonicPlaylistMutationResolver
+    IDbContextFactory<AllstarrDbContext> contextFactory,
+    IBackendPlaylistTargetResolver? targets = null) : ISubsonicPlaylistMutationResolver
 {
     public async Task<SubsonicPlaylistMutationRoute?> ResolveAsync(
         ProtocolExecutionContext context,
@@ -48,18 +50,28 @@ public sealed class SubsonicPlaylistMutationResolver(
         var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
             item.Id == linkId &&
             item.TenantId == actor.TenantId &&
-            item.OwnerUserId == userId &&
+            (item.OwnerUserId == userId || item.TargetPlaylistId != null) &&
             item.TargetBackendInstanceId == context.BackendInstanceId &&
             (item.TargetProtocol == "subsonic" ||
              item.TargetProtocol == "opensubsonic" ||
              item.TargetProtocol == "navidrome") &&
-            item.Enabled &&
-            (context.LibraryScopeId == null || item.LibraryScopeId == context.LibraryScopeId),
+            item.Enabled,
             cancellationToken);
         if (link == null) return null;
 
         var writable = link.Mode != PlaylistLinkMode.Virtual &&
                        !string.IsNullOrWhiteSpace(link.TargetPlaylistId);
+        if (!string.IsNullOrWhiteSpace(link.TargetPlaylistId))
+        {
+            if (targets == null) return null;
+            var target = targets.Resolve(link.TargetProtocol);
+            var targetContext = new BackendPlaylistTargetContext(context.BackendInstanceId,
+                context.VerifiedBackendPrincipalId, null, actor.TenantId);
+            var read = await target.ReadAsync(targetContext, link.TargetPlaylistId!, cancellationToken);
+            if (!read.IsSuccess || read.Value == null) return null;
+            writable = writable && await target.CanWriteAsync(targetContext, link.TargetPlaylistId!, cancellationToken);
+        }
+        else if (link.OwnerUserId != userId) return null;
         return new SubsonicPlaylistMutationRoute(
             writable,
             writable ? link.TargetPlaylistId!.Trim() : null);

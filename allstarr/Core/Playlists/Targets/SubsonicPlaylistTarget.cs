@@ -84,7 +84,8 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
                 name,
                 trackCount,
                 playlist.StringOrNull("comment"),
-                playlist.StringOrNull("coverArt")));
+                playlist.StringOrNull("coverArt"),
+                string.Equals(playlist.StringOrNull("owner"), context.VerifiedPrincipalId, StringComparison.Ordinal)));
             if (values.Count == limit) break;
         }
 
@@ -203,6 +204,17 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
         {
             return new(BackendPlaylistTargetStatus.Cancelled, ErrorCode: "cancelled");
         }
+    }
+
+    public async Task<bool> CanWriteAsync(BackendPlaylistTargetContext context, string backendPlaylistId,
+        CancellationToken cancellationToken)
+    {
+        var response = await CallAsync(context, "getPlaylist", [Pair("id", backendPlaylistId)], cancellationToken);
+        if (!response.IsSuccess) return false;
+        using var document = JsonDocument.Parse(response.Body!);
+        return TryResponseRoot(document.RootElement, out var root, out _) &&
+               string.Equals(root.GetPropertyOrDefault("playlist").StringOrNull("owner"),
+                   context.VerifiedPrincipalId, StringComparison.Ordinal);
     }
 
     public async Task<BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>> WriteAsync(

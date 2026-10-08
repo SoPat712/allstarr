@@ -36,8 +36,6 @@ public sealed class PlaylistLinksControllerContractTests
             [nameof(PlaylistLinksController.ClearOverride)] = "matches/overrides/{overrideId:guid}",
             [nameof(PlaylistLinksController.CreateSchedule)] = "{id:guid}/schedules",
             [nameof(PlaylistLinksController.UpdateSchedule)] = "schedules/{scheduleId:guid}",
-            [nameof(PlaylistLinksController.CreateBackendCredential)] = "backend-credentials",
-            [nameof(PlaylistLinksController.RotateBackendCredential)] = "backend-credentials/{referenceId:guid}"
         };
         foreach (var (name, template) in expected)
         {
@@ -234,25 +232,10 @@ public sealed class PlaylistLinksControllerContractTests
         Assert.Equal(2, source.Split("new MediaAssetIdentity(", StringSplitOptions.None).Length - 1);
     }
 
-    [Fact]
-    public async Task BackendCredentialEndpoint_RequiresLinkedSessionAndRequestDoesNotRenderPassword()
-    {
-        var request = new BackendCredentialRequest
-        {
-            TargetProtocol = "subsonic",
-            BackendInstanceId = "main",
-            Username = "listener",
-            Password = "do-not-echo"
-        };
-        Assert.DoesNotContain("do-not-echo", request.ToString(), StringComparison.Ordinal);
-        var result = await Controller().CreateBackendCredential(request, CancellationToken.None);
-        Assert.IsType<UnauthorizedObjectResult>(result);
-    }
-
     private static PlaylistLinksController Controller()
     {
         var controller = new PlaylistLinksController(
-            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
+            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
     }

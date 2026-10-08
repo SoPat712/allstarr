@@ -27,6 +27,7 @@
   import ConnectSourceDialog from "$lib/components/ConnectSourceDialog.svelte";
   import ConnectivityBars from "$lib/components/ConnectivityBars.svelte";
   import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
+  import PlaylistConsent from "$lib/components/PlaylistConsent.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
@@ -436,6 +437,7 @@
     {/if}
 
     {#if mode === "accounts"}
+    <PlaylistConsent />
     <section class="panel connections-panel">
       <header class="panel-heading connections-heading">
         <div><p class="eyebrow">Encrypted account access</p><h2>Accounts</h2><p>Personal accounts belong to one user; Shared accounts are available to the household. Credentials are never returned to the browser.</p></div>

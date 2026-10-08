@@ -863,6 +863,18 @@ check_public_image() {
     fi
 }
 
+check_private_image() {
+    local label="$1" url="$2" code
+    code="$(curl -sS --max-time "$TIMEOUT_SECONDS" -o /dev/null -w '%{http_code}' "$url" || true)"
+    checks=$((checks + 1))
+    if [[ "$code" == 404 ]]; then
+        printf 'PASS %-34s anonymous-access-denied\n' "$label"
+    else
+        printf 'FAIL %-34s anonymous-status=%s\n' "$label" "${code:-000}"
+        failures=$((failures + 1))
+    fi
+}
+
 check_range_parity() {
     local label="$1" direct_url="$2" allstarr_url="$3" credential_mode="${4:-header}" allow_unavailable="${5:-0}"
     local direct_code allstarr_code direct_bytes allstarr_bytes direct_range allstarr_range direct_type allstarr_type signature
@@ -2150,7 +2162,7 @@ if [[ -n "$virtual_playlist_id" ]]; then
     if [[ -n "$virtual_art_tag" ]]; then
         check_image "virtual playlist artwork" \
             "$ALLSTARR_BASE/Items/$virtual_playlist_id/Images/Primary?UserId=$best_user_id"
-        check_public_image "virtual artwork without token" \
+        check_private_image "virtual artwork without token" \
             "$ALLSTARR_BASE/Items/$virtual_playlist_id/Images/Primary?UserId=$best_user_id"
         check_image "virtual long artwork" \
             "$ALLSTARR_BASE/Items/$virtual_playlist_id/Images/Primary/0/$virtual_art_tag/jpg/300/300/0/0?UserId=$best_user_id" \

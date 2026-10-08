@@ -1761,19 +1761,22 @@ test("Subsonic Intelligence requests explicit scoped background access before in
   await mockApi(page);
   const credentialReferenceId = "44444444-4444-4444-4444-444444444444";
   let indexed = false;
+  let granted = false;
   await page.route("**/api/admin/media-targets", (route) => route.fulfill({
     contentType: "application/json",
     body: JSON.stringify({ targets: [{
       id: "subsonic-target", protocol: "subsonic", backendInstanceId: "primary",
       libraryScopeId: indexed ? "music" : null, displayName: "Listener",
-      credentialReferenceId: indexed ? credentialReferenceId : null,
+      credentialReferenceId: granted ? credentialReferenceId : null,
     }] }),
   }));
-  await page.route("**/api/admin/playlist-links/backend-credentials", (route) => route.fulfill({
-    status: 201,
-    contentType: "application/json",
-    body: JSON.stringify({ referenceId: credentialReferenceId, activeVersion: 1, updatedAt: "2026-08-26T18:00:00Z" }),
-  }));
+  await page.route("**/api/admin/auth/playlist-consent", (route) => {
+    granted = true;
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ supported: true, granted, updatedAt: "2026-08-26T18:00:00Z" }),
+    });
+  });
   await page.route("**/api/admin/library-index/enqueue", async (route) => {
     indexed = true;
     await route.fulfill({
@@ -1789,15 +1792,15 @@ test("Subsonic Intelligence requests explicit scoped background access before in
   const dialog = page.getByRole("dialog", { name: "Connect Subsonic for background features" });
   await expect(dialog).toContainText("Only your Allstarr account can use this credential.");
   await expect(dialog).toContainText("never included in job payloads or logs");
-  await dialog.getByLabel("Subsonic username").fill("listener");
+  await expect(dialog.getByLabel("Subsonic username")).toHaveCount(0);
   await dialog.getByLabel("Subsonic password").fill("test-password");
   const credentialRequest = page.waitForRequest((request) =>
-    request.method() === "POST" && request.url().endsWith("/api/admin/playlist-links/backend-credentials"));
+    request.method() === "POST" && request.url().endsWith("/api/admin/auth/playlist-consent"));
   const indexRequest = page.waitForRequest((request) =>
     request.method() === "POST" && request.url().endsWith("/api/admin/library-index/enqueue"));
-  await dialog.getByRole("button", { name: "Connect and index" }).click();
+  await dialog.getByRole("button", { name: "Allow and index" }).click();
   expect((await credentialRequest).postDataJSON()).toEqual({
-    targetProtocol: "subsonic", backendInstanceId: "primary", username: "listener", password: "test-password",
+    password: "test-password",
   });
   expect((await indexRequest).postDataJSON()).toMatchObject({
     libraryScopeId: "music", credentialReferenceId, pageSize: 200,

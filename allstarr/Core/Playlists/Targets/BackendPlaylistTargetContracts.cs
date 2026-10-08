@@ -258,6 +258,9 @@ public interface IBackendPlaylistTarget
         string backendPlaylistId,
         CancellationToken cancellationToken);
 
+    Task<bool> CanWriteAsync(BackendPlaylistTargetContext context, string backendPlaylistId,
+        CancellationToken cancellationToken) => Task.FromResult(false);
+
     Task<BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistMember>>> ReadItemsAsync(
         BackendPlaylistTargetContext context,
         IReadOnlyList<string> backendItemIds,

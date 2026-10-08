@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Operations;
+using allstarr.Core.Identity;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Secrets;
@@ -161,37 +162,96 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
         Assert.Equal(plaintext, lease.ReadUtf8());
     }
 
-    [Fact]
-    public async Task SubsonicPlaylistAuthentication_ResolvesTenantSecretOnlyAtExecutionTime()
+    [Theory]
+    [InlineData("principal")]
+    [InlineData("backend")]
+    [InlineData("tenant")]
+    [InlineData("purpose")]
+    [InlineData("revoked")]
+    [InlineData("disabled")]
+    [InlineData("unbound")]
+    [InlineData("owner")]
+    [InlineData("global")]
+    public async Task SubsonicPlaylistWrite_RechecksExactListenerGrantBeforeEveryExecution(string mismatch)
     {
+        var owner = await PlaylistPrincipalAsync("listener-a");
+        var other = await PlaylistPrincipalAsync("listener-b");
         var store = CreateStore();
-        var secret = await store.StoreAsync(
-            _tenantId,
-            "backend-playlist:subsonic:primary",
-            Encoding.UTF8.GetBytes("{\"username\":\"playlist-user\",\"password\":\"playlist-password\"}"));
-        var resolver = new EncryptedSubsonicPlaylistAuthenticationResolver(
-            store,
-            Options.Create(new SubsonicSettings()),
-            new Microsoft.AspNetCore.Http.HttpContextAccessor());
-
-        var authentication = await resolver.ResolveAsync(
-            new BackendPlaylistTargetContext(
-                "primary",
-                "backend-user",
-                secret.Id.ToString(),
-                _tenantId),
-            default);
-
-        Assert.Contains(authentication.FormParameters, item => item is { Key: "u", Value: "playlist-user" });
+        Assert.Null(await store.GetSubsonicPlaylistGrantAsync(owner));
+        var grant = await store.StoreSubsonicPlaylistGrantAsync(owner, "playlist-password");
+        var resolver = new EncryptedSubsonicPlaylistAuthenticationResolver(store, new Microsoft.AspNetCore.Http.HttpContextAccessor());
+        var target = new BackendPlaylistTargetContext("primary", "listener-a", grant.ReferenceId.ToString(), _tenantId);
+        var authentication = await resolver.ResolveAsync(target, default);
+        Assert.Contains(authentication.FormParameters, item => item is { Key: "u", Value: "listener-a" });
         Assert.Contains(authentication.FormParameters, item => item is { Key: "p", Value: "playlist-password" });
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
-            await resolver.ResolveAsync(
-                new BackendPlaylistTargetContext(
-                    "primary",
-                    "other-user",
-                    secret.Id.ToString(),
-                    Guid.CreateVersion7()),
-                default));
+        if (mismatch == "principal") target = new("primary", "listener-b", grant.ReferenceId.ToString(), _tenantId);
+        if (mismatch == "backend") target = new("other", "listener-a", grant.ReferenceId.ToString(), _tenantId);
+        if (mismatch == "tenant") target = new("primary", "listener-a", grant.ReferenceId.ToString(), Guid.CreateVersion7());
+        if (mismatch == "revoked") await store.RevokeSubsonicPlaylistGrantAsync(owner);
+        if (mismatch is "purpose" or "disabled" or "unbound" or "owner" or "global")
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var reference = await db.SecretReferences.SingleAsync(item => item.Id == grant.ReferenceId);
+            if (mismatch == "purpose") reference.Purpose = "admin-oidc:fixture";
+            if (mismatch == "disabled") (await db.Users.SingleAsync(item => item.Id == owner.UserId)).Status = PlatformUserStatus.Disabled;
+            if (mismatch == "unbound") reference.BackendIdentityId = null;
+            if (mismatch == "owner") reference.BackendIdentityId = await db.BackendIdentities.Where(item => item.UserId == other.UserId).Select(item => item.Id).SingleAsync();
+            if (mismatch == "global") reference.TenantId = null;
+            await db.SaveChangesAsync();
+        }
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await resolver.ResolveAsync(target, default));
+    }
+
+    [Fact]
+    public async Task PlaylistConsent_RevokeIsPersonalAndReplacementDoesNotReviveQueuedReference()
+    {
+        var a = await PlaylistPrincipalAsync("listener-a");
+        var b = await PlaylistPrincipalAsync("listener-b");
+        var store = CreateStore();
+        var first = await store.StoreSubsonicPlaylistGrantAsync(a, "a-password");
+        await store.StoreSubsonicPlaylistGrantAsync(b, "b-password");
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.StoreSubsonicPlaylistGrantAsync(
+            a with { UserId = b.UserId }, "foreign-password"));
+        await store.RevokeSubsonicPlaylistGrantAsync(a);
+        var restarted = CreateStore();
+        Assert.Null(await restarted.GetSubsonicPlaylistGrantAsync(a));
+        Assert.NotNull(await restarted.GetSubsonicPlaylistGrantAsync(b));
+        using (var lease = await restarted.OpenSubsonicPlaylistCredentialAsync(_tenantId, "primary", "listener-b", null))
+            Assert.Contains("b-password", lease.ReadUtf8(), StringComparison.Ordinal);
+        var replacement = await restarted.StoreSubsonicPlaylistGrantAsync(a, "replacement-password");
+        Assert.NotEqual(first.ReferenceId, replacement.ReferenceId);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => restarted.OpenSubsonicPlaylistCredentialAsync(
+            _tenantId, "primary", "listener-a", first.ReferenceId));
+        using var current = await restarted.OpenSubsonicPlaylistCredentialAsync(_tenantId, "primary", "listener-a", replacement.ReferenceId);
+        Assert.Contains("replacement-password", current.ReadUtf8(), StringComparison.Ordinal);
+    }
+
+    private async Task<AllstarrPrincipal> PlaylistPrincipalAsync(string name)
+    {
+        var userId = Guid.CreateVersion7();
+        await using var db = await _factory.CreateDbContextAsync();
+        db.Users.Add(new()
+        {
+            Id = userId,
+            TenantId = _tenantId,
+            DisplayName = name,
+            Status = PlatformUserStatus.Active,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+        db.BackendIdentities.Add(new()
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = _tenantId,
+            UserId = userId,
+            BackendType = "subsonic",
+            BackendInstanceId = "primary",
+            PrincipalId = name,
+            CreatedAt = DateTimeOffset.UtcNow,
+            LastSeenAt = DateTimeOffset.UtcNow
+        });
+        await db.SaveChangesAsync();
+        return new(_tenantId, userId, "subsonic", "primary", name, name, false);
     }
 
     [Fact]

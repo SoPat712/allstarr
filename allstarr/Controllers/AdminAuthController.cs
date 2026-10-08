@@ -7,6 +7,7 @@ using allstarr.Models.Settings;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using allstarr.Core.Identity;
+using allstarr.Core.Secrets;
 using allstarr.Core.Configuration;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
@@ -31,6 +32,7 @@ public sealed class AdminAuthController : ControllerBase
     private readonly AdminOidcOptions? _oidcOptions;
     private readonly AdminOidcLinks? _oidcLinks;
     private readonly IAntiforgery? _antiforgery;
+    private readonly EncryptedSecretStore? _secrets;
     private string? _pendingOidcKey;
 
     public AdminAuthController(
@@ -46,7 +48,8 @@ public sealed class AdminAuthController : ControllerBase
         ReleaseComposition? releaseComposition = null,
         AdminOidcOptions? oidcOptions = null,
         AdminOidcLinks? oidcLinks = null,
-        IAntiforgery? antiforgery = null)
+        IAntiforgery? antiforgery = null,
+        EncryptedSecretStore? secrets = null)
     {
         _jellyfinSettings = jellyfinSettings.Value;
         _subsonicSettings = subsonicSettings.Value;
@@ -66,6 +69,7 @@ public sealed class AdminAuthController : ControllerBase
         _oidcOptions = oidcOptions;
         _oidcLinks = oidcLinks;
         _antiforgery = antiforgery;
+        _secrets = secrets;
     }
 
     [HttpPost("login")]
@@ -320,19 +324,7 @@ public sealed class AdminAuthController : ControllerBase
 
         try
         {
-            var endpoint = $"{_subsonicSettings.Url.TrimEnd('/')}/rest/getUser.view";
-            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, endpoint)
-            {
-                Content = new FormUrlEncodedContent(new Dictionary<string, string>
-                {
-                    ["u"] = username,
-                    ["p"] = request.Password,
-                    ["username"] = username,
-                    ["v"] = "1.16.1",
-                    ["c"] = "allstarr-admin",
-                    ["f"] = "json"
-                })
-            };
+            using var httpRequest = SubsonicAuthenticationRequest(username, request.Password);
             using var response = await _httpClient.SendAsync(httpRequest, HttpContext.RequestAborted);
 
             if (!response.IsSuccessStatusCode)
@@ -383,6 +375,96 @@ public sealed class AdminAuthController : ControllerBase
         }
     }
 
+    private HttpRequestMessage SubsonicAuthenticationRequest(string username, string password) =>
+        new(HttpMethod.Post, $"{_subsonicSettings.Url!.TrimEnd('/')}/rest/getUser.view")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["u"] = username,
+                ["p"] = password,
+                ["username"] = username,
+                ["v"] = "1.16.1",
+                ["c"] = "allstarr-admin",
+                ["f"] = "json"
+            })
+        };
+
+    [HttpGet("playlist-consent")]
+    public async Task<IActionResult> GetPlaylistConsent(CancellationToken cancellationToken)
+    {
+        var session = await _sessionService.GetValidSessionAsync(Request, cancellationToken);
+        if (session == null) return Unauthorized();
+        if (_backendType != BackendType.Subsonic)
+            return Ok(new { supported = false, granted = false, updatedAt = (DateTimeOffset?)null });
+        var principal = await ConsentPrincipalAsync(session, cancellationToken);
+        if (principal == null || _secrets == null) return Unauthorized();
+        return Ok(ConsentStatus(await _secrets.GetSubsonicPlaylistGrantAsync(principal, cancellationToken)));
+    }
+
+    [HttpPost("playlist-consent")]
+    public async Task<IActionResult> GrantPlaylistConsent([FromBody] PlaylistConsentRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await _sessionService.GetValidSessionAsync(Request, cancellationToken);
+        if (session == null) return Unauthorized();
+        if (_backendType != BackendType.Subsonic || _secrets == null)
+            return BadRequest(new { error = "Playlist consent is available for Subsonic listeners." });
+        if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length > 2000)
+            return BadRequest(new { error = "Enter your backend password." });
+        try
+        {
+            using var authentication = SubsonicAuthenticationRequest(session.UserId, request.Password);
+            using var response = await _httpClient.SendAsync(authentication, cancellationToken);
+            if (!response.IsSuccessStatusCode) return Unauthorized(new { error = "Backend reauthentication failed." });
+            using var document = await JsonDocument.ParseAsync(
+                await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
+            if (!AdminBackendIdentity.TryReadSubsonic(document.RootElement, session.UserId, out _))
+                return Unauthorized(new { error = "Backend reauthentication failed." });
+            var principal = await ConsentPrincipalAsync(session, cancellationToken);
+            if (principal == null) return Unauthorized();
+            return Ok(ConsentStatus(await _secrets.StoreSubsonicPlaylistGrantAsync(
+                principal, request.Password, cancellationToken)));
+        }
+        catch (Exception exception) when (exception is JsonException or HttpRequestException)
+        {
+            return StatusCode(502, new { error = "Backend reauthentication is unavailable. Try again." });
+        }
+        catch (UnauthorizedAccessException) { return Unauthorized(); }
+    }
+
+    [HttpDelete("playlist-consent")]
+    public async Task<IActionResult> RevokePlaylistConsent(CancellationToken cancellationToken)
+    {
+        var session = await _sessionService.GetValidSessionAsync(Request, cancellationToken);
+        if (session == null) return Unauthorized();
+        if (_backendType != BackendType.Subsonic || _secrets == null) return BadRequest();
+        var principal = await ConsentPrincipalAsync(session, cancellationToken);
+        if (principal == null) return Unauthorized();
+        await _secrets.RevokeSubsonicPlaylistGrantAsync(principal, cancellationToken);
+        return Ok(ConsentStatus(null));
+    }
+
+    private async Task<AllstarrPrincipal?> ConsentPrincipalAsync(AdminAuthSession session, CancellationToken cancellationToken)
+    {
+        if (_identityResolver == null || !session.BackendType.Equals("Subsonic", StringComparison.OrdinalIgnoreCase) ||
+            !session.TenantId.HasValue || !session.AllstarrUserId.HasValue) return null;
+        try
+        {
+            var principal = await _identityResolver.ResolveAsync(
+                new BackendIdentityDescriptor("subsonic", session.UserId, session.UserName, session.IsAdministrator), cancellationToken);
+            return principal?.UserId == session.AllstarrUserId && principal.TenantId == session.TenantId ? principal : null;
+        }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
+    private static object ConsentStatus(BackendCredentialGrant? grant) =>
+        new { supported = true, granted = grant != null, updatedAt = grant?.UpdatedAt };
+
+    public sealed class PlaylistConsentRequest
+    {
+        public string Password { get; set; } = string.Empty;
+    }
+
     private async Task<IActionResult> CompleteLoginAsync(
         BackendType backend,
         string userId,
@@ -413,6 +495,12 @@ public sealed class AdminAuthController : ControllerBase
                 return Conflict(new { error = "This SSO identity or media account is already linked. Disconnect its existing link first." });
             }
             await HttpContext.SignOutAsync(AdminOidcOptions.PendingScheme);
+        }
+        if (backend == BackendType.Subsonic && request.ManagePlaylists)
+        {
+            if (principal == null || _secrets == null)
+                return StatusCode(503, new { error = "Playlist consent could not be saved. Try again." });
+            await _secrets.StoreSubsonicPlaylistGrantAsync(principal, request.Password!, HttpContext.RequestAborted);
         }
         var session = await _sessionService.CreateSessionAsync(
             userId,
@@ -471,6 +559,7 @@ public sealed class AdminAuthController : ControllerBase
         public string? Password { get; set; }
         public bool RememberMe { get; set; }
         public bool LinkOidc { get; set; }
+        public bool ManagePlaylists { get; set; }
     }
 
     private sealed class JellyfinAuthenticateRequest

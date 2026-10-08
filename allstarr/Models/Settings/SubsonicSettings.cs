@@ -47,6 +47,4 @@ public sealed class SubsonicSettings : MediaBackendSettings
 {
     public string? Url { get; set; }
 
-    // Encrypted JSON username/password reference used by background playlist writes.
-    public string? PlaylistCredentialReference { get; set; }
 }

@@ -47,7 +47,7 @@ Intelligence is not in the desktop navigation, mobile bar, or More sheet while t
 
 AudioMuse-AI is not an extension. Connect a self-hosted AudioMuse-AI server directly in **Intelligence → Automation**. Integrations still reports its health because it participates in the shared capability system.
 
-Subsonic users may see **Connect background access** the first time they open Intelligence. Protocol sign-in does not retain the backend password. This explicit step encrypts a credential for the exact Allstarr user and Subsonic identity, starts library indexing, and enables background recommendations and playlist creation without granting access to another listener.
+When the development Intelligence workspace requests background access, Subsonic listeners reauthenticate as themselves using the same playlist-management consent described below. This also starts library indexing.
 
 ### Integrations
 
@@ -63,6 +63,20 @@ Listeners connect **Personal** accounts, which only they may use and manage. Adm
 Administrators can change an account’s audience in **Access → Edit access**. Sharing makes the account available for supported capabilities, including playlists or scrobbling when supported, and may consume the provider’s limits. Making it Personal stops new shared selections; it cannot retract audio already delivered.
 
 In Settings, **Listeners can connect their own accounts** defaults to on. Turning it off prevents new listener connections while preserving use, configuration and removal of their existing accounts. Connection probes remain administrator-only, so listeners see **Save connection**. See [provider account policy](operations/configuration.md#provider-accounts).
+
+### Subsonic playlist consent
+
+On Subsonic sign-in, **Let Allstarr manage my playlists** starts unchecked. Selecting it saves an encrypted backend write credential only after your backend authenticates you. Leave it unchecked to sign in and read playlists without granting background writes.
+
+In **Integrations → Accounts**, **Playlist management** shows your consent status. Enter your own Subsonic password to grant access, or revoke it there. Revocation stops future writes, including queued writes; sign-in and reads continue. Granting access again does not reactivate old revoked credential references. Reopen and save affected playlist links to use the new grant.
+
+SSO alone does not grant playlist access. Use native backend reauthentication to consent. Administrators cannot enter another listener's password through this flow. Jellyfin uses its configured service token, checking the listener's target playlist permissions before writing, and does not store listener passwords.
+
+### Shared playlists
+
+The user who links a source playlist owns its source account, refresh schedule and Allstarr management actions. A link with a backend playlist follows that backend's read and edit permissions; a virtual-only link without a backend target stays private to its owner. Backend sharing does not expose the owner's link settings or credentials.
+
+Each viewer's external tracks use accounts available to that viewer. If no eligible route exists, the track is unavailable for that viewer. Playlist artwork also requires an authorized viewer. Change public/share permissions in your backend client; Allstarr does not keep a separate share list.
 
 ### Activity
 
