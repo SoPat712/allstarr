@@ -96,7 +96,6 @@ public sealed class CacheIslandRegressionContractTests
         var client = File.ReadAllText(Path.Combine(
             _repositoryRoot,
             "allstarr",
-            "Core",
             "Providers",
             "Spotify",
             "SpotifyPathfinderPlaylistClient.cs"));
@@ -113,7 +112,7 @@ public sealed class CacheIslandRegressionContractTests
             .Select(provider => File.ReadAllText(Path.Combine(
                 _repositoryRoot,
                 "allstarr",
-                "Services",
+                "Providers",
                 provider,
                 $"{provider}DownloadService.cs")))
             .ToArray();

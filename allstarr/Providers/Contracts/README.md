@@ -1,8 +1,8 @@
-# Capability Core
+# Provider Contracts and Routing
 
-This folder owns the provider-facing contracts shared by built-ins and the SDK v1 bridge. It does not
-select accounts, choose a provider, translate identities, persist recordings, or shape Jellyfin and Subsonic
-responses. Those jobs stay in their own layers.
+This folder owns the provider-facing contracts shared by built-ins and the SDK v1 bridge, together with
+provider and account selection. Identity translation, recording persistence, and Jellyfin and Subsonic
+response projection stay in their own layers.
 
 The first contract version covers metadata, streaming, download, playlist, lyrics, intelligence, and health. Each call gets
 an explicit `ProviderExecutionContext`, so provider code never has to discover the actor, account, library,
@@ -20,7 +20,7 @@ returns providers in stable ID order. An operational descriptor is accepted only
 of its declared typed interface. Legacy-only built-ins stay visible as `ConfiguredOnly` or `Unavailable` and are
 not routable.
 
-`ProviderRouter` lives in `Core/Routing`. It applies provider policy, account scope/revision, capability state,
+`ProviderRouter` applies provider policy, account scope/revision, capability state,
 health/circuits, sidecar readiness, quality, deadline, and durable download rules before returning an ordered
 plan. Cross-provider track candidates require an exact verified translation from `TrackIdentityService` in
 `Core/Matching`. Missing or ambiguous identity links never trigger a guessed fallback. Managed downloads log

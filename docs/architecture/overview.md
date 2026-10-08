@@ -46,15 +46,15 @@ The public protocol controllers preserve client compatibility. New application b
 | Concern | Current owner |
 | --- | --- |
 | Composition and middleware | `allstarr/Program.cs` |
-| Provider contracts and registration | `allstarr/Core/Capabilities` |
-| Provider selection and routing policy | `allstarr/Core/Routing` |
+| Provider contracts and registration | `allstarr/Providers/Contracts` |
+| Provider selection and routing policy | `allstarr/Providers/Contracts` |
 | Canonical track identity and matching | `allstarr/Core/Matching` |
 | Playlist ownership and synchronization | `allstarr/Core/Playlists` |
 | Durable jobs and schedules | `allstarr/Core/Jobs` |
 | PostgreSQL model and migrations | `allstarr/Core/Storage` |
 | Runtime settings and legacy import | `allstarr/Core/Settings`, `allstarr/Core/Configuration` |
 | Provider accounts and encrypted secrets | `allstarr/Core/Identity`, `allstarr/Core/Secrets` |
-| Extension control plane and SDK | `allstarr/Core/Extensions` |
+| Extension control plane and SDK | `allstarr/Providers/Extensions` |
 | Playback and listening signals | `allstarr/Core/Playback` |
 | Intelligence and generated sets | `allstarr/Shelved/Intelligence` |
 | Managed media lifecycle | `allstarr/Core/ManagedFiles`, `allstarr/Core/Downloads` |

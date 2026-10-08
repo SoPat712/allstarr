@@ -19,22 +19,22 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Controllers/DownloadsController.cs"] = "managed audio and lyrics sidecars",
             ["Core/Downloads/ProviderDownloadArtifactResolver.cs"] = "managed audio",
             ["Core/Enrichment/TagLibManagedMetadataWriter.cs"] = "managed audio and artwork",
-            ["Core/Extensions/ExtensionSdkV1.cs"] = "extension packages",
-            ["Core/Extensions/ExtensionSignedSessionClient.cs"] = "protected extension session",
+            ["Providers/Extensions/ExtensionSdkV1.cs"] = "extension packages",
+            ["Providers/Extensions/ExtensionSignedSessionClient.cs"] = "protected extension session",
             ["Shelved/Intelligence/ListeningHistoryImportPersistence.cs"] = "bounded listening-history upload",
             ["Core/ManagedFiles/FilePlacementService.cs"] = "managed audio and artwork",
             ["Core/ManagedFiles/PhysicalManagedFileOperations.cs"] = "managed audio and artwork",
             ["Core/Operations/PlatformReadinessService.cs"] = "temporary readiness probe",
             ["Core/Storage/DurableBackupService.cs"] = "backup archive",
             ["Core/Storage/DurableStateTransferService.cs"] = "transfer archive",
-            ["Services/AppleMusic/AppleMusicDownloadService.cs"] = "managed audio",
+            ["Providers/Apple/AppleMusicDownloadService.cs"] = "managed audio",
             ["Services/Common/BaseDownloadService.cs"] = "managed audio and artwork",
-            ["Services/Common/ExtensionManager.cs"] = "extension packages",
+            ["Providers/Extensions/ExtensionManager.cs"] = "extension packages",
             ["Services/Common/FileMediaApplicationCache.cs"] = "bounded media cache",
             ["Services/Common/ManagedTrackCacheService.cs"] = "managed audio cache",
-            ["Services/Deezer/DeezerDownloadService.cs"] = "managed audio",
+            ["Providers/Deezer/DeezerDownloadService.cs"] = "managed audio",
             ["Services/Lyrics/KeptLyricsSidecarService.cs"] = "lyrics sidecar",
-            ["Services/Qobuz/QobuzDownloadService.cs"] = "managed audio",
+            ["Providers/Qobuz/QobuzDownloadService.cs"] = "managed audio",
             ["Services/Subsonic/PlaylistSyncService.cs"] = "M3U target artifact"
         };
 
@@ -77,13 +77,13 @@ public sealed class RuntimeFileOwnershipContractTests
             .ToArray();
         var allowed = new[]
         {
-            "Core/Extensions/ExtensionSdkV1.cs",
-            "Core/Extensions/ExtensionSignedSessionClient.cs",
+            "Providers/Extensions/ExtensionSdkV1.cs",
+            "Providers/Extensions/ExtensionSignedSessionClient.cs",
             "Core/Enrichment/TagLibManagedMetadataWriter.cs",
             "Core/ManagedFiles/FilePlacementService.cs",
             "Core/Storage/DurableBackupService.cs",
             "Core/Storage/DurableStateTransferService.cs",
-            "Services/Common/ExtensionManager.cs",
+            "Providers/Extensions/ExtensionManager.cs",
             "Services/Common/FileMediaApplicationCache.cs"
         };
 
