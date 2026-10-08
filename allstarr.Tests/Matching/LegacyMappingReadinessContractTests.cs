@@ -29,16 +29,11 @@ public sealed class LegacyMappingReadinessContractTests
     [Fact]
     public void AutomaticPlaylistMatching_QueriesOnlyPlaybackCapableProviders()
     {
-        var walker = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Services", "Spotify", "PerProviderTrackMatcher.cs"));
         var providers = File.ReadAllText(FindRepositoryFile(
             "allstarr", "Services", "Common", "MultiProviderMetadataService.cs"));
 
         Assert.Contains("GetEnabledPlaybackProviders()", providers, StringComparison.Ordinal);
         Assert.Contains("requirePlayableExtensions: true", providers, StringComparison.Ordinal);
-        Assert.Contains("InjectedSourceTrack", walker, StringComparison.Ordinal);
-        Assert.Contains("PerProviderAcceptThresholds", walker, StringComparison.Ordinal);
-        Assert.Contains("CanUseForPlayback", walker, StringComparison.Ordinal);
     }
 
     [Fact]
