@@ -69,7 +69,7 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         Assert.Single(await database.Set<FavoriteEventRecord>().ToListAsync());
         Assert.Equal(actionCount, await database.Set<FavoriteActionRecord>().CountAsync());
         Assert.Single(await database.Jobs.Where(item => item.Type == FavoriteActionPipeline.JobType).ToListAsync());
-        Assert.Empty(await database.OutboxMessages.ToListAsync());
+        Assert.Null(database.Model.FindEntityType("allstarr.Core.Storage.OutboxMessageRecord"));
     }
 
     [Fact]
@@ -261,30 +261,8 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task LegacyPolicy_CannotDisableDownloadsOrEnableRetiredActions()
+    public async Task FavoritePolicy_IsDownloadOnlyAndHasNoTargetCredential()
     {
-        await using (var database = await _factory.CreateDbContextAsync())
-        {
-            database.FavoriteActionPolicies.Add(new FavoriteActionPolicyRecord
-            {
-                Id = Guid.CreateVersion7(),
-                TenantId = _tenantId,
-                Scope = FavoriteActionPolicyScope.Global,
-                Protocol = "jellyfin",
-                BackendInstanceId = "jellyfin-main",
-                LibraryScopeId = "music",
-                AddToVirtualLiked = false,
-                AutoDownload = false,
-                MatchLocalLibrary = true,
-                PlaceManagedFile = true,
-                EnrichMetadata = true,
-                RefreshBackendLibrary = true,
-                UpdatedByUserId = _userId,
-                CreatedAt = _clock.UtcNow,
-                UpdatedAt = _clock.UtcNow
-            });
-            await database.SaveChangesAsync();
-        }
         var receipt = await _pipeline.RecordAsync(Request(FavoriteOperation.Favorite, "old-policy", libraryScopeId: "music")
             with
         { ItemId = "ext-fixture-song-track-1" });

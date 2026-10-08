@@ -267,84 +267,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.ToTable("provider_download_workspaces", (string)null);
                 });
 
-            modelBuilder.Entity("allstarr.Core.Favorites.FavoriteActionPolicyRecord", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
-
-                    b.Property<bool?>("AddToVirtualLiked")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool?>("AutoDownload")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("BackendInstanceId")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool?>("EnrichMetadata")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("LibraryScopeId")
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
-                    b.Property<bool?>("MatchLocalLibrary")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<Guid?>("OwnerUserId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<bool?>("PlaceManagedFile")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Protocol")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
-
-                    b.Property<bool?>("RefreshBackendLibrary")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("Revision")
-                        .IsConcurrencyToken()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Scope")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid?>("TargetCredentialReferenceId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("UpdatedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<Guid>("UpdatedByUserId")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TargetCredentialReferenceId")
-                        .HasDatabaseName("IX_favorite_policy_credential_reference");
-
-                    b.HasIndex("TenantId", "UpdatedByUserId");
-
-                    b.HasIndex("TenantId", "OwnerUserId", "Scope", "Protocol", "BackendInstanceId", "LibraryScopeId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_favorite_policy_scope");
-
-                    b.ToTable("favorite_action_policies", (string)null);
-                });
-
             modelBuilder.Entity("allstarr.Core.Favorites.FavoriteActionRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1696,140 +1618,6 @@ namespace allstarr.Core.Storage.Migrations
                         {
                             t.HasCheckConstraint("CK_playback_delivery_checkpoint_state", "\"State\" IN ('Delivered', 'Ignored', 'Retrying', 'PermanentFailure')");
                         });
-                });
-
-            modelBuilder.Entity("allstarr.Core.Routing.ProviderRouteDecisionEntity", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid?>("ActorUserId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("CandidateDecisionsJson")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Capability")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("CorrelationId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<Guid?>("DurableJobId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("LibraryScopeId")
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("OperationId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("RouteKey")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid?>("SelectedProviderAccountId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("SelectedProviderId")
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DurableJobId");
-
-                    b.HasIndex("SelectedProviderAccountId", "SelectedProviderId");
-
-                    b.HasIndex("TenantId", "ActorUserId");
-
-                    b.HasIndex("TenantId", "RouteKey")
-                        .IsUnique()
-                        .HasDatabaseName("IX_provider_route_decision_key");
-
-                    b.HasIndex("TenantId", "CorrelationId", "CreatedAt")
-                        .HasDatabaseName("IX_provider_route_decision_correlation");
-
-                    b.ToTable("provider_route_decisions", (string)null);
-                });
-
-            modelBuilder.Entity("allstarr.Core.Routing.ProviderRouteOutcomeEntity", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("NextProviderId")
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("OutcomeKey")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid?>("ProviderAccountId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ProviderId")
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ReasonCode")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("RouteDecisionId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("Sequence")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Stage")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ProviderAccountId", "ProviderId");
-
-                    b.HasIndex("RouteDecisionId", "OutcomeKey")
-                        .IsUnique()
-                        .HasDatabaseName("IX_provider_route_outcome_key");
-
-                    b.HasIndex("RouteDecisionId", "TenantId");
-
-                    b.HasIndex("TenantId", "CreatedAt")
-                        .HasDatabaseName("IX_provider_route_outcome_tenant_created");
-
-                    b.ToTable("provider_route_outcomes", (string)null);
                 });
 
             modelBuilder.Entity("allstarr.Core.Settings.TenantRuntimeSettingRecord", b =>
@@ -3657,78 +3445,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.ToTable("onboarding_states", (string)null);
                 });
 
-            modelBuilder.Entity("allstarr.Core.Storage.OutboxMessageRecord", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("AttemptCount")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("AvailableAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long?>("DeliveredAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long?>("FailedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("LastErrorCode")
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("LastErrorMessage")
-                        .HasMaxLength(1000)
-                        .HasColumnType("TEXT");
-
-                    b.Property<long?>("LeaseExpiresAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("LeaseOwner")
-                        .HasMaxLength(200)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("MaxAttempts")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("PayloadJson")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("Revision")
-                        .IsConcurrencyToken()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("State")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid?>("TenantId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Type")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("UpdatedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("State", "AvailableAt");
-
-                    b.HasIndex("TenantId", "UpdatedAt", "Id")
-                        .HasDatabaseName("IX_outbox_updates");
-
-                    b.ToTable("outbox_messages", (string)null);
-                });
-
             modelBuilder.Entity("allstarr.Core.Storage.PlatformUserRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4834,28 +4550,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasConstraintName("FK_download_workspace_user");
                 });
 
-            modelBuilder.Entity("allstarr.Core.Favorites.FavoriteActionPolicyRecord", b =>
-                {
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "UpdatedByUserId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
             modelBuilder.Entity("allstarr.Core.Favorites.FavoriteActionRecord", b =>
                 {
                     b.HasOne("allstarr.Core.Favorites.FavoriteEventRecord", null)
@@ -5198,59 +4892,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasPrincipalKey("TenantId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
-                });
-
-            modelBuilder.Entity("allstarr.Core.Routing.ProviderRouteDecisionEntity", b =>
-                {
-                    b.HasOne("allstarr.Core.Storage.DurableJobRecord", null)
-                        .WithMany()
-                        .HasForeignKey("DurableJobId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_provider_route_decision_job");
-
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.ProviderAccountRecord", null)
-                        .WithMany()
-                        .HasForeignKey("SelectedProviderAccountId", "SelectedProviderId")
-                        .HasPrincipalKey("Id", "ProviderId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_provider_route_decision_account");
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "ActorUserId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_provider_route_decision_actor");
-                });
-
-            modelBuilder.Entity("allstarr.Core.Routing.ProviderRouteOutcomeEntity", b =>
-                {
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.ProviderAccountRecord", null)
-                        .WithMany()
-                        .HasForeignKey("ProviderAccountId", "ProviderId")
-                        .HasPrincipalKey("Id", "ProviderId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_provider_route_outcome_account");
-
-                    b.HasOne("allstarr.Core.Routing.ProviderRouteDecisionEntity", null)
-                        .WithMany()
-                        .HasForeignKey("RouteDecisionId", "TenantId")
-                        .HasPrincipalKey("Id", "TenantId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("FK_provider_route_outcome_decision");
                 });
 
             modelBuilder.Entity("allstarr.Core.Settings.TenantRuntimeSettingRecord", b =>
@@ -5674,14 +5315,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasPrincipalKey("TenantId", "Id")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-                });
-
-            modelBuilder.Entity("allstarr.Core.Storage.OutboxMessageRecord", b =>
-                {
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.PlatformUserRecord", b =>

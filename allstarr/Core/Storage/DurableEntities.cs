@@ -25,14 +25,6 @@ public enum DurableJobState
     Cancelled
 }
 
-public enum OutboxMessageState
-{
-    Pending,
-    Delivering,
-    Delivered,
-    Failed
-}
-
 public enum ProviderHealthState
 {
     Unknown,
@@ -205,27 +197,6 @@ public sealed class JobAttemptRecord
     public string? Outcome { get; set; }
     public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }
-}
-
-public sealed class OutboxMessageRecord
-{
-    public Guid Id { get; set; }
-    public Guid? TenantId { get; set; }
-    public string Type { get; set; } = string.Empty;
-    public string PayloadJson { get; set; } = "{}";
-    public OutboxMessageState State { get; set; }
-    public DateTimeOffset AvailableAt { get; set; }
-    public int AttemptCount { get; set; }
-    public int MaxAttempts { get; set; } = 20;
-    public string? LeaseOwner { get; set; }
-    public DateTimeOffset? LeaseExpiresAt { get; set; }
-    public DateTimeOffset? DeliveredAt { get; set; }
-    public DateTimeOffset? FailedAt { get; set; }
-    public string? LastErrorCode { get; set; }
-    public string? LastErrorMessage { get; set; }
-    public DateTimeOffset CreatedAt { get; set; }
-    public DateTimeOffset UpdatedAt { get; set; }
-    public long Revision { get; set; }
 }
 
 public sealed class ProviderHealthSampleRecord

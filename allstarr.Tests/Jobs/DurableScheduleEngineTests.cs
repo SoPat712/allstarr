@@ -106,7 +106,7 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
         await Task.WhenAll(_engine.TickAsync(), NewEngine().TickAsync());
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Single(await db.Jobs.ToListAsync());
-        Assert.Empty(await db.OutboxMessages.ToListAsync());
+        Assert.Null(db.Model.FindEntityType("allstarr.Core.Storage.OutboxMessageRecord"));
     }
 
     [Fact]
@@ -273,7 +273,7 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
         Assert.Equal(scheduledFor, run.ScheduledFor);
         Assert.Equal(job.Id, run.JobId);
         Assert.Equal("[]", run.SeedTrackKeysJson);
-        Assert.Empty(await db.OutboxMessages.ToListAsync());
+        Assert.Null(db.Model.FindEntityType("allstarr.Core.Storage.OutboxMessageRecord"));
         var snapshot = JsonSerializer.Deserialize<RecommendationPolicySnapshot>(run.PolicySnapshotJson)!;
         Assert.Equal(policyId, JsonSerializer.Deserialize<RecommendationScheduleTemplate>(
             (await db.JobSchedules.SingleAsync()).PayloadTemplateJson)!.IntelligencePolicyId);

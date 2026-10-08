@@ -293,39 +293,6 @@ namespace allstarr.Core.Storage.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "outbox_messages",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    TenantId = table.Column<Guid>(type: "TEXT", nullable: true),
-                    Type = table.Column<string>(type: "TEXT", maxLength: 200, nullable: false),
-                    PayloadJson = table.Column<string>(type: "TEXT", nullable: false),
-                    State = table.Column<string>(type: "TEXT", maxLength: 32, nullable: false),
-                    AvailableAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    AttemptCount = table.Column<int>(type: "INTEGER", nullable: false),
-                    MaxAttempts = table.Column<int>(type: "INTEGER", nullable: false),
-                    LeaseOwner = table.Column<string>(type: "TEXT", maxLength: 200, nullable: true),
-                    LeaseExpiresAt = table.Column<long>(type: "INTEGER", nullable: true),
-                    DeliveredAt = table.Column<long>(type: "INTEGER", nullable: true),
-                    FailedAt = table.Column<long>(type: "INTEGER", nullable: true),
-                    LastErrorCode = table.Column<string>(type: "TEXT", maxLength: 100, nullable: true),
-                    LastErrorMessage = table.Column<string>(type: "TEXT", maxLength: 1000, nullable: true),
-                    CreatedAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    UpdatedAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    Revision = table.Column<long>(type: "INTEGER", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_outbox_messages", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_outbox_messages_tenants_TenantId",
-                        column: x => x.TenantId,
-                        principalTable: "tenants",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Restrict);
-                });
-
-            migrationBuilder.CreateTable(
                 name: "users",
                 columns: table => new
                 {
@@ -565,52 +532,6 @@ namespace allstarr.Core.Storage.Migrations
                         column: x => x.ReviewedByUserId,
                         principalTable: "users",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Restrict);
-                });
-
-            migrationBuilder.CreateTable(
-                name: "favorite_action_policies",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    TenantId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    OwnerUserId = table.Column<Guid>(type: "TEXT", nullable: true),
-                    Scope = table.Column<string>(type: "TEXT", maxLength: 32, nullable: false),
-                    Protocol = table.Column<string>(type: "TEXT", maxLength: 32, nullable: false),
-                    BackendInstanceId = table.Column<string>(type: "TEXT", maxLength: 200, nullable: false),
-                    LibraryScopeId = table.Column<string>(type: "TEXT", maxLength: 300, nullable: true),
-                    AddToVirtualLiked = table.Column<bool>(type: "INTEGER", nullable: true),
-                    MatchLocalLibrary = table.Column<bool>(type: "INTEGER", nullable: true),
-                    AutoDownload = table.Column<bool>(type: "INTEGER", nullable: true),
-                    EnrichMetadata = table.Column<bool>(type: "INTEGER", nullable: true),
-                    PlaceManagedFile = table.Column<bool>(type: "INTEGER", nullable: true),
-                    RefreshBackendLibrary = table.Column<bool>(type: "INTEGER", nullable: true),
-                    TargetCredentialReferenceId = table.Column<Guid>(type: "TEXT", nullable: true),
-                    UpdatedByUserId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    CreatedAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    UpdatedAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    Revision = table.Column<long>(type: "INTEGER", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_favorite_action_policies", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_favorite_action_policies_tenants_TenantId",
-                        column: x => x.TenantId,
-                        principalTable: "tenants",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Restrict);
-                    table.ForeignKey(
-                        name: "FK_favorite_action_policies_users_TenantId_OwnerUserId",
-                        columns: x => new { x.TenantId, x.OwnerUserId },
-                        principalTable: "users",
-                        principalColumns: new[] { "TenantId", "Id" },
-                        onDelete: ReferentialAction.Restrict);
-                    table.ForeignKey(
-                        name: "FK_favorite_action_policies_users_TenantId_UpdatedByUserId",
-                        columns: x => new { x.TenantId, x.UpdatedByUserId },
-                        principalTable: "users",
-                        principalColumns: new[] { "TenantId", "Id" },
                         onDelete: ReferentialAction.Restrict);
                 });
 
@@ -1661,54 +1582,6 @@ namespace allstarr.Core.Storage.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "provider_route_decisions",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    TenantId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    ActorUserId = table.Column<Guid>(type: "TEXT", nullable: true),
-                    DurableJobId = table.Column<Guid>(type: "TEXT", nullable: true),
-                    RouteKey = table.Column<string>(type: "TEXT", maxLength: 64, nullable: false),
-                    OperationId = table.Column<string>(type: "TEXT", maxLength: 100, nullable: false),
-                    CorrelationId = table.Column<string>(type: "TEXT", maxLength: 100, nullable: false),
-                    Capability = table.Column<string>(type: "TEXT", maxLength: 100, nullable: false),
-                    LibraryScopeId = table.Column<string>(type: "TEXT", maxLength: 300, nullable: true),
-                    SelectedProviderId = table.Column<string>(type: "TEXT", maxLength: 100, nullable: true),
-                    SelectedProviderAccountId = table.Column<Guid>(type: "TEXT", nullable: true),
-                    CandidateDecisionsJson = table.Column<string>(type: "TEXT", nullable: false),
-                    CreatedAt = table.Column<long>(type: "INTEGER", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_provider_route_decisions", x => x.Id);
-                    table.UniqueConstraint("AK_provider_route_decisions_Id_TenantId", x => new { x.Id, x.TenantId });
-                    table.ForeignKey(
-                        name: "FK_provider_route_decision_account",
-                        columns: x => new { x.SelectedProviderAccountId, x.SelectedProviderId },
-                        principalTable: "provider_accounts",
-                        principalColumns: new[] { "Id", "ProviderId" },
-                        onDelete: ReferentialAction.Restrict);
-                    table.ForeignKey(
-                        name: "FK_provider_route_decision_actor",
-                        columns: x => new { x.TenantId, x.ActorUserId },
-                        principalTable: "users",
-                        principalColumns: new[] { "TenantId", "Id" },
-                        onDelete: ReferentialAction.Restrict);
-                    table.ForeignKey(
-                        name: "FK_provider_route_decision_job",
-                        column: x => x.DurableJobId,
-                        principalTable: "durable_jobs",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Restrict);
-                    table.ForeignKey(
-                        name: "FK_provider_route_decisions_tenants_TenantId",
-                        column: x => x.TenantId,
-                        principalTable: "tenants",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Restrict);
-                });
-
-            migrationBuilder.CreateTable(
                 name: "recommendation_runs",
                 columns: table => new
                 {
@@ -2152,46 +2025,6 @@ namespace allstarr.Core.Storage.Migrations
                         name: "FK_provider_download_artifacts_provider_download_workspaces_WorkspaceRecordId",
                         column: x => x.WorkspaceRecordId,
                         principalTable: "provider_download_workspaces",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Restrict);
-                });
-
-            migrationBuilder.CreateTable(
-                name: "provider_route_outcomes",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    TenantId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    RouteDecisionId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    OutcomeKey = table.Column<string>(type: "TEXT", maxLength: 64, nullable: false),
-                    Sequence = table.Column<int>(type: "INTEGER", nullable: false),
-                    Stage = table.Column<string>(type: "TEXT", maxLength: 50, nullable: false),
-                    ProviderId = table.Column<string>(type: "TEXT", maxLength: 100, nullable: true),
-                    ProviderAccountId = table.Column<Guid>(type: "TEXT", nullable: true),
-                    Status = table.Column<string>(type: "TEXT", maxLength: 32, nullable: false),
-                    ReasonCode = table.Column<string>(type: "TEXT", maxLength: 100, nullable: false),
-                    NextProviderId = table.Column<string>(type: "TEXT", maxLength: 100, nullable: true),
-                    CreatedAt = table.Column<long>(type: "INTEGER", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_provider_route_outcomes", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_provider_route_outcome_account",
-                        columns: x => new { x.ProviderAccountId, x.ProviderId },
-                        principalTable: "provider_accounts",
-                        principalColumns: new[] { "Id", "ProviderId" },
-                        onDelete: ReferentialAction.Restrict);
-                    table.ForeignKey(
-                        name: "FK_provider_route_outcome_decision",
-                        columns: x => new { x.RouteDecisionId, x.TenantId },
-                        principalTable: "provider_route_decisions",
-                        principalColumns: new[] { "Id", "TenantId" },
-                        onDelete: ReferentialAction.Cascade);
-                    table.ForeignKey(
-                        name: "FK_provider_route_outcomes_tenants_TenantId",
-                        column: x => x.TenantId,
-                        principalTable: "tenants",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Restrict);
                 });
@@ -2980,22 +2813,6 @@ namespace allstarr.Core.Storage.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
-                name: "IX_favorite_action_policies_TenantId_UpdatedByUserId",
-                table: "favorite_action_policies",
-                columns: new[] { "TenantId", "UpdatedByUserId" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_favorite_policy_credential_reference",
-                table: "favorite_action_policies",
-                column: "TargetCredentialReferenceId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_favorite_policy_scope",
-                table: "favorite_action_policies",
-                columns: new[] { "TenantId", "OwnerUserId", "Scope", "Protocol", "BackendInstanceId", "LibraryScopeId" },
-                unique: true);
-
-            migrationBuilder.CreateIndex(
                 name: "IX_favorite_action_event",
                 table: "favorite_actions",
                 columns: new[] { "EventId", "TenantId", "OwnerUserId" });
@@ -3339,16 +3156,6 @@ namespace allstarr.Core.Storage.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
-                name: "IX_outbox_messages_State_AvailableAt",
-                table: "outbox_messages",
-                columns: new[] { "State", "AvailableAt" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_outbox_updates",
-                table: "outbox_messages",
-                columns: new[] { "TenantId", "UpdatedAt", "Id" });
-
-            migrationBuilder.CreateIndex(
                 name: "IX_playback_delivery_idempotency",
                 table: "playback_delivery_checkpoints",
                 columns: new[] { "TenantId", "OwnerUserId", "SignalKey", "TargetId" },
@@ -3582,53 +3389,6 @@ namespace allstarr.Core.Storage.Migrations
                 columns: new[] { "TenantId", "ObservedAt", "Id" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_provider_route_decision_correlation",
-                table: "provider_route_decisions",
-                columns: new[] { "TenantId", "CorrelationId", "CreatedAt" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_provider_route_decision_key",
-                table: "provider_route_decisions",
-                columns: new[] { "TenantId", "RouteKey" },
-                unique: true);
-
-            migrationBuilder.CreateIndex(
-                name: "IX_provider_route_decisions_DurableJobId",
-                table: "provider_route_decisions",
-                column: "DurableJobId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_provider_route_decisions_SelectedProviderAccountId_SelectedProviderId",
-                table: "provider_route_decisions",
-                columns: new[] { "SelectedProviderAccountId", "SelectedProviderId" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_provider_route_decisions_TenantId_ActorUserId",
-                table: "provider_route_decisions",
-                columns: new[] { "TenantId", "ActorUserId" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_provider_route_outcome_key",
-                table: "provider_route_outcomes",
-                columns: new[] { "RouteDecisionId", "OutcomeKey" },
-                unique: true);
-
-            migrationBuilder.CreateIndex(
-                name: "IX_provider_route_outcome_tenant_created",
-                table: "provider_route_outcomes",
-                columns: new[] { "TenantId", "CreatedAt" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_provider_route_outcomes_ProviderAccountId_ProviderId",
-                table: "provider_route_outcomes",
-                columns: new[] { "ProviderAccountId", "ProviderId" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_provider_route_outcomes_RouteDecisionId_TenantId",
-                table: "provider_route_outcomes",
-                columns: new[] { "RouteDecisionId", "TenantId" });
-
-            migrationBuilder.CreateIndex(
                 name: "IX_provider_track_identities_ProviderAccountId_ProviderId",
                 table: "provider_track_identities",
                 columns: new[] { "ProviderAccountId", "ProviderId" });
@@ -3813,9 +3573,6 @@ namespace allstarr.Core.Storage.Migrations
                 name: "extension_permission_reviews");
 
             migrationBuilder.DropTable(
-                name: "favorite_action_policies");
-
-            migrationBuilder.DropTable(
                 name: "favorite_actions");
 
             migrationBuilder.DropTable(
@@ -3864,9 +3621,6 @@ namespace allstarr.Core.Storage.Migrations
                 name: "onboarding_states");
 
             migrationBuilder.DropTable(
-                name: "outbox_messages");
-
-            migrationBuilder.DropTable(
                 name: "playback_delivery_checkpoints");
 
             migrationBuilder.DropTable(
@@ -3886,9 +3640,6 @@ namespace allstarr.Core.Storage.Migrations
 
             migrationBuilder.DropTable(
                 name: "provider_health_samples");
-
-            migrationBuilder.DropTable(
-                name: "provider_route_outcomes");
 
             migrationBuilder.DropTable(
                 name: "recommendation_feedback");
@@ -3928,9 +3679,6 @@ namespace allstarr.Core.Storage.Migrations
 
             migrationBuilder.DropTable(
                 name: "provider_download_workspaces");
-
-            migrationBuilder.DropTable(
-                name: "provider_route_decisions");
 
             migrationBuilder.DropTable(
                 name: "recommendation_candidates");

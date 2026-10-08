@@ -148,6 +148,19 @@ public sealed class DurableStorageTests : IAsyncLifetime
             $"SQLite {version} predates the aggregate memory safety fix.");
     }
 
+    [Theory]
+    [InlineData("outbox_messages")]
+    [InlineData("provider_route_decisions")]
+    [InlineData("provider_route_outcomes")]
+    [InlineData("favorite_action_policies")]
+    public async Task BaselineExcludesRetiredStateOwners(string table)
+    {
+        await using var context = new AllstarrDbContext(_database.Options);
+        await context.Database.MigrateAsync();
+        Assert.False(await context.Database.SqlQuery<bool>(
+            $"SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name={table}) AS Value").SingleAsync());
+    }
+
     [Fact]
     public void CheckedInMigration_GeneratesNativeSqliteSql()
     {
