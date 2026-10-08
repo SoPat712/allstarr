@@ -179,17 +179,15 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         modelBuilder.Entity<ProviderAccountRecord>(entity =>
         {
             entity.ToTable("provider_accounts", table => table.HasCheckConstraint(
-                "CK_provider_accounts_scope_shape",
-                "(\"Scope\" = 'Global' AND \"TenantId\" IS NULL AND \"OwnerUserId\" IS NULL AND \"LibraryScopeId\" IS NULL) OR " +
-                "(\"Scope\" = 'User' AND \"TenantId\" IS NOT NULL AND \"OwnerUserId\" IS NOT NULL AND \"LibraryScopeId\" IS NULL) OR " +
-                "(\"Scope\" = 'Library' AND \"TenantId\" IS NOT NULL AND \"OwnerUserId\" IS NULL AND \"LibraryScopeId\" IS NOT NULL)"));
+                "CK_provider_accounts_owner_shape",
+                "(\"OwnerUserId\" IS NULL AND \"TenantId\" IS NULL) OR " +
+                "(\"OwnerUserId\" IS NOT NULL AND \"TenantId\" IS NOT NULL)"));
             entity.HasKey(item => item.Id);
             entity.HasAlternateKey(item => new { item.Id, item.ProviderId });
             entity.Property(item => item.Id).ValueGeneratedNever();
             entity.Property(item => item.ProviderId).HasMaxLength(100).IsRequired();
             entity.Property(item => item.DisplayName).HasMaxLength(200).IsRequired();
-            entity.Property(item => item.Scope).HasConversion<string>().HasMaxLength(32);
-            entity.Property(item => item.LibraryScopeId).HasMaxLength(300);
+            entity.Ignore(item => item.Scope);
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new { item.ProviderId, item.TenantId, item.OwnerUserId });
             entity.HasIndex(item => item.CreatedByUserId);

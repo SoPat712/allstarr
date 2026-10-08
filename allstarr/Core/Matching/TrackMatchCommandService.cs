@@ -1295,7 +1295,7 @@ public sealed class TrackMatchCommandService(
                             OwnerUserId = owner.Id,
                             ProviderAccountId = account.Id,
                             ProviderTrackIdentityId = identity.Id,
-                            LibraryScopeId = account.LibraryScopeId ?? "music",
+                            LibraryScopeId = "music",
                             BackendInstanceId = backend?.BackendInstanceId ?? "source-import",
                             BackendPrincipalId = backend?.PrincipalId ?? owner.Id.ToString("N"),
                             Protocol = backend?.BackendType.ToLowerInvariant() ?? "jellyfin",

@@ -465,7 +465,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
             new ProviderAccountContext(
                 Guid.CreateVersion7(),
                 providerId,
-                ProviderAccountScope.User,
+                ProviderAccountScope.Personal,
                 1,
                 tenantId: context.Actor.TenantId,
                 ownerUserId: context.Actor.EffectiveUserId),

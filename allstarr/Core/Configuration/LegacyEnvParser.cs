@@ -59,6 +59,7 @@ public static class LegacyEnvParser
     private static readonly IReadOnlyDictionary<string, string> DurableAliases =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
+            ["LISTENERS_CAN_CONNECT_OWN_ACCOUNTS"] = "ProviderAccounts:ListenersCanConnectOwnAccounts",
             ["EXPLICIT_FILTER"] = "Library:ExplicitFilter",
             ["DOWNLOAD_MODE"] = "Library:DownloadMode",
             ["STORAGE_MODE"] = "Library:StorageMode",

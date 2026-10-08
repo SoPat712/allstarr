@@ -102,3 +102,7 @@ Reserved built-in provider IDs cannot be replaced by a registry package. Package
 - `allstarr/Providers/Extensions/SpotiFlacExtensionCompatibility.cs`
 - `allstarr/Providers/Contracts/ProviderRegistry.cs`
 - `allstarr/Controllers/ExtensionController.cs`
+
+### Account audiences
+
+Capability `accountScopes` accepts `personal` and `shared`. Legacy `user` and `global` declarations are translated to those audiences at manifest validation. Library-scoped accounts are unsupported and rejected during validation. Built-in and extension capabilities use the same owner checks, account ordering and encrypted credential leases.

@@ -8,6 +8,7 @@ namespace allstarr.Core.Settings;
 
 public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
 {
+    private readonly ProviderAccountOptions _providerAccounts;
     private readonly IDurableRuntimeSettings _settings;
     private readonly IRuntimeSettingsChangeSignal _signal;
     private readonly Guid _tenantId;
@@ -33,9 +34,10 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
         IOptions<SpotifyApiSettings> spotifyApi, IOptions<SpotifyImportSettings> spotifyImport,
         IOptions<MusicBrainzSettings> musicBrainz, IOptions<ScrobblingSettings> scrobbling,
         IOptions<JellyfinSettings> jellyfin, IOptions<SubsonicSettings> subsonic,
-        ILogger<DefaultTenantRuntimeSettingsProjector> logger)
+        ILogger<DefaultTenantRuntimeSettingsProjector> logger, ProviderAccountOptions? providerAccounts = null)
     {
         (_settings, _signal, _configuration, _logger) = (settings, signal, configuration, logger);
+        _providerAccounts = providerAccounts ?? new();
         _bootstrapAppleBaseUrl = configuration["AppleDownload:BaseUrl"];
         _tenantId = identity.GetDefaultTenantId();
         (_cache, _deezer, _qobuz, _apple) = (cache.Value, deezer.Value, qobuz.Value, apple.Value);
@@ -121,6 +123,7 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
         var value = setting.Value;
         switch (setting.Key)
         {
+            case ProviderAccountOptions.ListenerConnectionsKey: _providerAccounts.ListenersCanConnectOwnAccounts = (bool)value; break;
             case "Cache:SearchResultsMinutes": _cache.SearchResultsMinutes = (int)value; break;
             case "Cache:PlaylistImagesHours": _cache.PlaylistImagesHours = (int)value; break;
             case "Cache:LyricsDays": _cache.LyricsDays = (int)value; break;

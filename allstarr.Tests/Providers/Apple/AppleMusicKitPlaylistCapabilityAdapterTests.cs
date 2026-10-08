@@ -57,7 +57,7 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
         var registration = ProviderRegistrationValidator.Validate(AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(adapter));
         var capability = Assert.Single(registration.Descriptor.Capabilities);
         Assert.Equal(["getPlaylistTracks", "getUserPlaylists", "mutatePlaylist", "resolveArtwork", "searchPlaylists"], capability.Hooks);
-        Assert.Equal([ProviderAccountScope.User], capability.AllowedAccountScopes);
+        Assert.Equal([ProviderAccountScope.Personal], capability.AllowedAccountScopes);
         Assert.Same(adapter, Assert.Single(registration.Implementations));
         Assert.DoesNotContain(handler.Paths, path => path.Contains("stream", StringComparison.OrdinalIgnoreCase) || path.Contains("download", StringComparison.OrdinalIgnoreCase));
     }
@@ -71,7 +71,7 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
         Assert.Equal(ProviderErrorKind.AccountNeedsConfiguration,
             (await valid.GetPlaylistTracksAsync(Context(includeSecret: false), new(playlist, new()))).Error!.Kind);
         Assert.Equal(ProviderErrorKind.AccountNeedsConfiguration,
-            (await valid.GetPlaylistTracksAsync(Context(scope: ProviderAccountScope.Global), new(playlist, new()))).Error!.Kind);
+            (await valid.GetPlaylistTracksAsync(Context(scope: ProviderAccountScope.Shared), new(playlist, new()))).Error!.Kind);
 
         var malformed = new AppleMusicKitPlaylistCapabilityAdapter(new HttpClient(handler), new RawSecretAccessor("not-json"));
         Assert.Equal(ProviderErrorKind.AccountNeedsConfiguration,
@@ -188,14 +188,14 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
         Assert.DoesNotContain("secret-body", result.Error.ToString(), StringComparison.Ordinal);
     }
 
-    private static ProviderExecutionContext Context(bool includeSecret = true, ProviderAccountScope scope = ProviderAccountScope.User)
+    private static ProviderExecutionContext Context(bool includeSecret = true, ProviderAccountScope scope = ProviderAccountScope.Personal)
     {
         var tenant = Guid.Parse("11111111-1111-1111-1111-111111111111");
         var user = Guid.Parse("22222222-2222-2222-2222-222222222222");
         return new(new ProviderActorContext(tenant, ProviderActorKind.User, user, new("jellyfin", "backend", "principal")),
             "apple-musickit", new(Guid.Parse("33333333-3333-3333-3333-333333333333"), "apple-musickit", scope, 1,
-                tenantId: scope == ProviderAccountScope.Global ? null : tenant,
-                ownerUserId: scope == ProviderAccountScope.User ? user : null,
+                tenantId: scope == ProviderAccountScope.Shared ? null : tenant,
+                ownerUserId: scope == ProviderAccountScope.Personal ? user : null,
                 secretReferenceId: includeSecret ? Guid.Parse("44444444-4444-4444-4444-444444444444") : null), null,
             new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
                 true, true, false, ["apple-musickit"]), "playlist-read", "correlation", DateTimeOffset.UtcNow.AddMinutes(1), default);

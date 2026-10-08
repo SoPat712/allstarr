@@ -53,7 +53,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         _source = new FakeSource();
         _target = new FakeTarget();
         var clock = new Clock(_now);
-        var accountResolver = new ProviderAccountResolver(_factory, new ProviderPolicyOptions());
+        var accountResolver = new ProviderAccountResolver(_factory);
         _trackMatches = new TrackMatchCommandService(
             _factory,
             new TrackMatchDecisionEngine(),
@@ -85,7 +85,6 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             OwnerUserId = _user,
             ProviderId = "fixture",
             DisplayName = "Fixture",
-            Scope = ProviderAccountScope.User,
             Enabled = true,
             CreatedAt = _now,
             UpdatedAt = _now
@@ -126,7 +125,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             new TrackMatchCommandService(
                 factory,
                 new TrackMatchDecisionEngine(),
-                new ProviderAccountResolver(factory, new ProviderPolicyOptions()),
+                new ProviderAccountResolver(factory),
                 new Clock(_now)),
             new Clock(_now), new KeyedAsyncLock());
         var baselines = new List<(int Count, int Commands, long Allocated, long ElapsedTicks)>();
@@ -798,7 +797,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         var matches = new TrackMatchCommandService(
             _factory,
             matcher,
-            new ProviderAccountResolver(_factory, new ProviderPolicyOptions()),
+            new ProviderAccountResolver(_factory),
             new Clock(_now),
             new PlaylistPlayableSearchService(
                 gateway.Object,
@@ -864,7 +863,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         var trackMatches = new TrackMatchCommandService(
             _factory,
             matcher,
-            new ProviderAccountResolver(_factory, new ProviderPolicyOptions()),
+            new ProviderAccountResolver(_factory),
             new Clock(_now),
             new PlaylistPlayableSearchService(
                 gateway.Object,
@@ -926,7 +925,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             }]);
         var matcher = new TrackMatchDecisionEngine();
         var matches = new TrackMatchCommandService(
-            _factory, matcher, new ProviderAccountResolver(_factory, new ProviderPolicyOptions()), new Clock(_now),
+            _factory, matcher, new ProviderAccountResolver(_factory), new Clock(_now),
             new PlaylistPlayableSearchService(gateway.Object, matcher, null!, new IdentityOptions(),
                 Options.Create(new JellyfinSettings()), NullLogger<PlaylistPlayableSearchService>.Instance));
         var service = new PlaylistOrchestrationService(
@@ -1022,7 +1021,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         var trackMatches = new TrackMatchCommandService(
             concurrentFactory,
             matcher,
-            new ProviderAccountResolver(_factory, new ProviderPolicyOptions()),
+            new ProviderAccountResolver(_factory),
             new Clock(_now),
             new PlaylistPlayableSearchService(
                 gateway.Object,
@@ -1488,7 +1487,6 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 OwnerUserId = _user,
                 ProviderId = "fixture",
                 DisplayName = "Fixture duplicate",
-                Scope = ProviderAccountScope.User,
                 Enabled = true,
                 CreatedAt = _now,
                 UpdatedAt = _now

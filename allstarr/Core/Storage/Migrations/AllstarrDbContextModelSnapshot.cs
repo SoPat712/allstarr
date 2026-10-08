@@ -3900,10 +3900,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<bool>("Enabled")
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("LibraryScopeId")
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
                     b.Property<Guid?>("OwnerUserId")
                         .HasColumnType("TEXT");
 
@@ -3915,11 +3911,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<long>("Revision")
                         .IsConcurrencyToken()
                         .HasColumnType("INTEGER");
-
-                    b.Property<string>("Scope")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
 
                     b.Property<Guid?>("SecretReferenceId")
                         .HasColumnType("TEXT");
@@ -3942,7 +3933,7 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.ToTable("provider_accounts", null, t =>
                         {
-                            t.HasCheckConstraint("CK_provider_accounts_scope_shape", "(\"Scope\" = 'Global' AND \"TenantId\" IS NULL AND \"OwnerUserId\" IS NULL AND \"LibraryScopeId\" IS NULL) OR (\"Scope\" = 'User' AND \"TenantId\" IS NOT NULL AND \"OwnerUserId\" IS NOT NULL AND \"LibraryScopeId\" IS NULL) OR (\"Scope\" = 'Library' AND \"TenantId\" IS NOT NULL AND \"OwnerUserId\" IS NULL AND \"LibraryScopeId\" IS NOT NULL)");
+                            t.HasCheckConstraint("CK_provider_accounts_owner_shape", "(\"OwnerUserId\" IS NULL AND \"TenantId\" IS NULL) OR (\"OwnerUserId\" IS NOT NULL AND \"TenantId\" IS NOT NULL)");
                         });
                 });
 

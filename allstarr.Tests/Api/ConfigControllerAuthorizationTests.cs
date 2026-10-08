@@ -78,7 +78,6 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             Id = _providerAccountId,
             ProviderId = "deezer",
             DisplayName = "Health fixture",
-            Scope = ProviderAccountScope.Global,
             Enabled = true,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
@@ -266,7 +265,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         Assert.All(statuses.EnumerateArray(), status =>
         {
             Assert.Equal(_providerAccountId, status.GetProperty("providerAccountId").GetGuid());
-            Assert.Equal("global", status.GetProperty("accountScope").GetString());
+            Assert.Equal("shared", status.GetProperty("accountScope").GetString());
             Assert.Equal(JsonValueKind.Null, status.GetProperty("testedAt").ValueKind);
             Assert.Equal("unknown", status.GetProperty("health").GetString());
             Assert.True(status.TryGetProperty("configuration", out _));

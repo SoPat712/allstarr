@@ -304,14 +304,14 @@ const responses: Record<string, unknown> = {
     }],
   },
   "/api/admin/provider-accounts": {
-    managementMode: "Hybrid",
+    listenersCanConnectOwnAccounts: true,
     audienceUsers: [
       { id: "user", displayName: "Tester" },
       { id: "listener", displayName: "Listener" },
     ],
     accounts: [{
       id: "account", providerId: "lumen-audio", displayName: "Lumen account",
-      sourceDisplayName: "Lumen Audio", scope: "User", enabled: true, revision: 1,
+      sourceDisplayName: "Lumen Audio", scope: "Personal", enabled: true, revision: 1, canManage: true, canChangeAudience: true,
       ownerUserId: "user", ownerDisplayName: "Tester", createdByUserId: "user",
       creatorDisplayName: "Tester",
       configuration: { region: "ca" }, configuredFields: ["token", "region"],
@@ -321,12 +321,12 @@ const responses: Record<string, unknown> = {
   "/api/admin/providers/status": [
     {
       provider: "lumen-audio", providerAccountId: "account", providerAccountName: "Lumen account",
-      capability: "metadata", accountScope: "user", supported: true, enabled: true,
+      capability: "metadata", accountScope: "personal", supported: true, enabled: true,
       configuration: "configured", health: "healthy", ready: true, canAttempt: true, canTest: true,
     },
     {
       provider: "lumen-audio", providerAccountId: "account", providerAccountName: "Lumen account",
-      capability: "streaming", accountScope: "user", supported: true, enabled: true,
+      capability: "streaming", accountScope: "personal", supported: true, enabled: true,
       configuration: "configured", health: "degraded", ready: false, canAttempt: true, canTest: true,
       reasonCode: "probe_failed",
     },
@@ -535,7 +535,7 @@ async function mockApi(page: Page, options: {
           ...((accountResponse as { accounts: Array<Record<string, unknown>> }).accounts ?? []),
           {
             id: "audio-account", providerId: "audiomuse-ai", displayName: "My AudioMuse-AI connection",
-            sourceDisplayName: "AudioMuse-AI", scope: "User", enabled: false, revision: 2,
+            sourceDisplayName: "AudioMuse-AI", scope: "Personal", enabled: false, revision: 2,
             ownerUserId: "user", ownerDisplayName: "Tester", createdByUserId: "user",
             creatorDisplayName: "Tester", configuration: {}, configuredFields: [],
             secret: { configured: false, revoked: false },
@@ -1387,7 +1387,7 @@ for (const viewport of viewports) {
       await page.getByRole("button", { name: "Edit access" }).click();
       const access = page.locator(".access-dialog");
       await expect(access).toBeVisible();
-      await access.getByRole("radio", { name: "One user" }).check();
+      await access.getByRole("radio", { name: "Personal" }).check();
       await access.getByRole("button", { name: "Allstarr user" }).click();
       await page.getByRole("option", { name: "Listener" }).click();
       await access.getByRole("button", { name: "Save access" }).click();
@@ -1396,115 +1396,74 @@ for (const viewport of viewports) {
       await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();
       await page.getByRole("tab", { name: "Access" }).click();
       await page.getByRole("button", { name: "Edit access" }).click();
-      await page.getByRole("radio", { name: "One library" }).check();
-      await expect(page.getByText("Only requests in the selected media library may use this account.")).toBeVisible();
-      await page.getByLabel("Library ID").fill("music");
+      await expect(page.getByRole("radio", { name: "One library" })).toHaveCount(0);
+      await page.getByRole("radio", { name: "Shared" }).check();
       await page.getByRole("button", { name: "Save access" }).click();
-      const libraryShare = page.getByRole("alertdialog", {
-        name: "Share this connection with a library?",
-      });
-      await expect(libraryShare).toBeVisible();
-      await libraryShare.getByRole("button", { name: "Keep current access" }).click();
-      await page.getByRole("radio", { name: "Global" }).check();
-      await page.getByRole("button", { name: "Save access" }).click();
-      await expect(page.getByRole("alertdialog", { name: "Share this connection with everyone?" })).toBeVisible();
+      await expect(page.getByRole("alertdialog", { name: "Share this connection with household users?" })).toBeVisible();
     });
 
-    test("A listener can choose Private or explicitly confirm Global when connecting Spotify", async ({ page }) => {
+    test("A listener connects only Personal accounts", async ({ page }) => {
       await mockApi(page);
-      await page.route("**/api/admin/auth/me", (route) => route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          authenticated: true,
-          backend: "Jellyfin",
-          user: { id: "listener", name: "Listener", isAdministrator: false },
-        }),
-      }));
-
-      await page.goto("#/integrations/accounts?source=spotify&connect=1");
-      const dialog = page.getByRole("dialog", { name: "Connect a Source" });
-      await expect(dialog).toBeVisible();
-      await expect(dialog.getByRole("button", { name: "Source", exact: true })).toContainText("Spotify");
-      const audience = dialog.getByRole("button", { name: "Who can use it?" });
-      await expect(audience).toContainText("Private");
-      await audience.click();
-      await expect(page.getByRole("option", { name: "Private", exact: true })).toBeVisible();
-      await expect(page.getByRole("option", { name: "One library" })).toHaveCount(0);
-      await page.getByRole("option", { name: "Global", exact: true }).click();
-      const consent = dialog.getByRole("checkbox", { name: "I agree to share provider access with every Allstarr user." });
-      await expect(consent).toBeVisible();
-      await expect(consent).not.toBeChecked();
-      await expect(dialog).toContainText("personal playlists and scrobbling");
-      await consent.check();
-      await expect(consent).toBeChecked();
-      await audience.click();
-      await page.getByRole("option", { name: "Private", exact: true }).click();
-      await expect(consent).toHaveCount(0);
+      await page.route("**/api/admin/auth/me", (route) => route.fulfill({ json: {
+        authenticated: true, backend: "Jellyfin", listenersCanConnectOwnAccounts: true,
+        user: { id: "listener", name: "Listener", isAdministrator: false },
+      } }));
       const writes: Record<string, unknown>[] = [];
       await page.route("**/api/admin/provider-accounts", async (route) => {
         if (route.request().method() !== "POST") return route.fallback();
         writes.push(route.request().postDataJSON());
         await route.fulfill({ status: 201, json: { id: "new-account", revision: 1, enabled: true } });
       });
+      await page.goto("#/integrations/accounts?source=spotify&connect=1");
+      const dialog = page.getByRole("dialog", { name: "Connect a Source" });
+      await expect(dialog).toBeVisible();
+      const audience = dialog.getByRole("button", { name: "Who can use it?" });
+      await expect(audience).toContainText("Personal");
       await audience.click();
-      await page.getByRole("option", { name: "Global", exact: true }).click();
+      await expect(page.getByRole("option", { name: "Shared", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("option", { name: "One library" })).toHaveCount(0);
+      await page.getByRole("option", { name: "Personal", exact: true }).click();
       await dialog.getByLabel("Spotify session cookie").fill("fixture-only-cookie");
-      await dialog.getByRole("button", { name: "Save connection" }).click();
-      expect(writes).toHaveLength(0);
-      await consent.check();
       await dialog.getByRole("button", { name: "Save connection" }).click();
       await expect(dialog).toBeHidden();
       expect(writes).toHaveLength(1);
-      expect(writes[0]).toMatchObject({ providerId: "spotify", scope: "Global", secret: { sessionCookie: "fixture-only-cookie" } });
+      expect(writes[0]).toMatchObject({ providerId: "spotify", scope: "Personal", secret: { sessionCookie: "fixture-only-cookie" } });
     });
 
-    test("A listener controls sharing of their own account and can make it Private again", async ({ page }) => {
+    test("A listener keeps existing account controls when connections are off and Shared accounts are read-only", async ({ page }) => {
       await mockApi(page);
       await page.route("**/api/admin/auth/me", (route) => route.fulfill({ json: {
-        authenticated: true, backend: "Jellyfin",
+        authenticated: true, backend: "Jellyfin", listenersCanConnectOwnAccounts: false,
         user: { id: "listener", name: "Listener", isAdministrator: false },
       } }));
       const fixture = responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[] };
-      let account = { ...fixture.accounts[0], ownerUserId: "listener", createdByUserId: "listener", canChangeAudience: true, scope: "User", revision: 1 };
-      const writes: Record<string, unknown>[] = [];
+      let shared = false;
       await page.route("**/api/admin/provider-accounts", (route) => route.fulfill({ json: {
-        managementMode: "Hybrid", audienceUsers: [], accounts: [account],
+        listenersCanConnectOwnAccounts: false, audienceUsers: [], accounts: [{ ...fixture.accounts[0],
+          scope: shared ? "Shared" : "Personal", ownerUserId: shared ? null : "listener",
+          canManage: !shared, canChangeAudience: false,
+          configuration: shared ? {} : { region: "ca" }, configuredFields: shared ? [] : ["region"],
+        }],
       } }));
-      await page.route("**/api/admin/provider-accounts/account/audience", async (route) => {
-        const input = route.request().postDataJSON();
-        writes.push(input);
-        account = { ...account, ...input, revision: account.revision + 1 };
-        await route.fulfill({ json: account });
-      });
-      const editor = page.locator(".access-dialog");
-      async function editAccess() {
-        await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();
-        await page.getByRole("tab", { name: "Access" }).click();
-        await page.getByRole("button", { name: "Edit access" }).click();
-        await expect(editor).toBeVisible();
-      }
       await page.goto("#/integrations/accounts");
-      await editAccess();
-      await expect(editor.getByRole("radio", { name: "Private" })).toBeChecked();
-      await expect(editor.getByRole("radio", { name: "One user" })).toHaveCount(0);
-      await expect(editor.getByRole("radio", { name: "One library" })).toHaveCount(0);
-      await editor.getByRole("radio", { name: "Global" }).check();
-      if (process.env.ALLSTARR_SCREENSHOT_DIR)
-        await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/sharing-${viewport.width}.png` });
-      await editor.getByRole("button", { name: "Save access" }).click();
-      const confirmation = page.getByRole("alertdialog", { name: "Share this connection with everyone?" });
-      await expect(confirmation).toBeVisible();
-      expect(writes).toHaveLength(0);
-      await confirmation.getByRole("button", { name: "Share with everyone" }).click();
-      await expect(editor).toBeHidden();
-      expect(writes[0]).toMatchObject({ scope: "Global", expectedRevision: 1 });
-      await editAccess();
-      await expect(editor.getByRole("radio", { name: "Global" })).toBeChecked();
-      await editor.getByRole("radio", { name: "Private" }).check();
-      await editor.getByRole("button", { name: "Save access" }).click();
-      await expect(editor).toBeHidden();
-      expect(writes[1]).toMatchObject({ scope: "User", ownerUserId: "listener", expectedRevision: 2 });
+      await expect(page.getByRole("dialog", { name: "Connect a Source" })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Connect Source" })).toHaveCount(0);
+      await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();
+      await page.getByRole("tab", { name: "Configuration", exact: true }).click();
+      await expect(page.getByRole("button", { name: "Edit configuration", exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Disable account", exact: true })).toBeVisible();
+      await page.getByRole("tab", { name: "Access" }).click();
+      await expect(page.getByRole("button", { name: "Edit access", exact: true })).toHaveCount(0);
+      shared = true;
+      await page.reload();
+      await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();
+      await page.getByRole("tab", { name: "Configuration", exact: true }).click();
+      await expect(page.getByRole("button", { name: "Edit configuration", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Disable account", exact: true })).toHaveCount(0);
+      await page.getByRole("tab", { name: "Access" }).click();
+      await expect(page.getByRole("button", { name: "Edit access", exact: true })).toHaveCount(0);
+      if (viewport.width < 768) await expectContainedMobileGeometry(page);
+      else expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     });
 
     test("AudioMuse-AI configuration stays in Intelligence before the connection is ready", async ({ page }) => {

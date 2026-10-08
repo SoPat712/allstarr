@@ -40,7 +40,7 @@ public sealed class ProtocolPlaylistGatewayTests
                 descriptor,
                 capability.Object,
                 new ProviderAccountContext(
-                    accountId, "spotify", ProviderAccountScope.User, 1,
+                    accountId, "spotify", ProviderAccountScope.Personal, 1,
                     tenantId: tenant, ownerUserId: user)));
         var legacy = new Mock<IMusicMetadataService>(MockBehavior.Strict);
         var gateway = Gateway(router.Object, Registry(descriptor, capability.Object), legacy.Object);
@@ -81,7 +81,7 @@ public sealed class ProtocolPlaylistGatewayTests
                 descriptor,
                 capability.Object,
                 new ProviderAccountContext(
-                    accountId, "spotify", ProviderAccountScope.User, 1,
+                    accountId, "spotify", ProviderAccountScope.Personal, 1,
                     tenantId: tenant, ownerUserId: user)));
         var legacy = new Mock<IMusicMetadataService>(MockBehavior.Strict);
         var gateway = Gateway(router.Object, Registry(descriptor, capability.Object), legacy.Object);
@@ -121,7 +121,7 @@ public sealed class ProtocolPlaylistGatewayTests
                 descriptor,
                 capability.Object,
                 new ProviderAccountContext(
-                    accountId, "spotify", ProviderAccountScope.User, 1,
+                    accountId, "spotify", ProviderAccountScope.Personal, 1,
                     tenantId: tenant, ownerUserId: user)));
         var legacy = new Mock<IMusicMetadataService>(MockBehavior.Strict);
         var gateway = Gateway(router.Object, Registry(descriptor, capability.Object), legacy.Object);
@@ -177,7 +177,7 @@ public sealed class ProtocolPlaylistGatewayTests
                 descriptor,
                 capability.Object,
                 new ProviderAccountContext(
-                    accountId, "spotify", ProviderAccountScope.User, 1,
+                    accountId, "spotify", ProviderAccountScope.Personal, 1,
                     tenantId: tenant, ownerUserId: user)));
         var legacy = new Mock<IMusicMetadataService>(MockBehavior.Strict);
         var gateway = Gateway(router.Object, Registry(descriptor, capability.Object), legacy.Object);
@@ -368,6 +368,6 @@ public sealed class ProtocolPlaylistGatewayTests
             ProviderAccountRequirement.Required,
             "1.0",
             hasImplementation ? ["getUserPlaylists", "searchPlaylists", "getPlaylistTracks"] : [],
-            [ProviderAccountScope.User])],
+            [ProviderAccountScope.Personal])],
         new ProviderPermissionDescriptor());
 }

@@ -55,7 +55,7 @@ internal static class SqliteIntegrity
             "FK_download_artifact_saved_file_lineage");
 
         var savedAccountScope = $"EXISTS (SELECT 1 FROM durable_jobs j WHERE j.\"ProviderAccountId\"=OLD.\"Id\" AND NOT {ScopeMatches("NEW", "j.\"TenantId\"", "j.\"OwnerUserId\"", "j.\"LibraryScopeId\"")})";
-        Guard(migration, "provider_account_saved_lineage", "provider_accounts", "Scope,TenantId,OwnerUserId,LibraryScopeId",
+        Guard(migration, "provider_account_saved_lineage", "provider_accounts", "TenantId,OwnerUserId",
             savedAccountScope, "CK_provider_account_saved_lineage");
     }
 
@@ -78,9 +78,8 @@ internal static class SqliteIntegrity
         $"({account} IS NULL OR EXISTS (SELECT 1 FROM provider_accounts a WHERE a.\"Id\"={account} AND {ScopeMatches("a", tenant, owner, library)}))";
 
     private static string ScopeMatches(string account, string tenant, string owner, string library) =>
-        $"COALESCE((({account}.\"Scope\"='Global' AND {account}.\"TenantId\" IS NULL AND {account}.\"OwnerUserId\" IS NULL AND {account}.\"LibraryScopeId\" IS NULL) OR " +
-        $"({account}.\"Scope\"='User' AND {tenant} IS NOT NULL AND {owner} IS NOT NULL AND {account}.\"TenantId\"={tenant} AND {account}.\"OwnerUserId\"={owner}) OR " +
-        $"({account}.\"Scope\"='Library' AND {tenant} IS NOT NULL AND {library} IS NOT NULL AND {account}.\"TenantId\"={tenant} AND {account}.\"OwnerUserId\" IS NULL AND {account}.\"LibraryScopeId\"={library})), 0)";
+        $"COALESCE((({account}.\"TenantId\" IS NULL AND {account}.\"OwnerUserId\" IS NULL) OR " +
+        $"({tenant} IS NOT NULL AND {owner} IS NOT NULL AND {account}.\"TenantId\"={tenant} AND {account}.\"OwnerUserId\"={owner})), 0)";
 
     private static string SyncCount(string file, string condition = "1") =>
         $"UPDATE managed_files SET \"ReferenceCount\"=(SELECT count(*) FROM managed_file_references r WHERE r.\"ManagedFileId\"={file} AND r.\"ReleasedAt\" IS NULL), \"Revision\"=\"Revision\"+1 " +

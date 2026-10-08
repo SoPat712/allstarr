@@ -206,9 +206,8 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
                     ],
                     allowedAccountScopes:
                     [
-                        ProviderAccountScope.Global,
-                        ProviderAccountScope.User,
-                        ProviderAccountScope.Library
+                        ProviderAccountScope.Shared,
+                        ProviderAccountScope.Personal
                     ]),
                 new ProviderCapabilityDescriptor(
                     ProviderCapabilityKind.Streaming,
@@ -218,9 +217,8 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
                     hooks: ["getStreamLease", "probeStream"],
                     allowedAccountScopes:
                     [
-                        ProviderAccountScope.Global,
-                        ProviderAccountScope.User,
-                        ProviderAccountScope.Library
+                        ProviderAccountScope.Shared,
+                        ProviderAccountScope.Personal
                     ]),
                 new ProviderCapabilityDescriptor(
                     ProviderCapabilityKind.Download,
@@ -230,9 +228,8 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
                     hooks: ["checkAvailability", "download"],
                     allowedAccountScopes:
                     [
-                        ProviderAccountScope.Global,
-                        ProviderAccountScope.User,
-                        ProviderAccountScope.Library
+                        ProviderAccountScope.Shared,
+                        ProviderAccountScope.Personal
                     ]),
                 new ProviderCapabilityDescriptor(
                     ProviderCapabilityKind.Playlist,
@@ -242,9 +239,8 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
                     hooks: ["getUserPlaylists", "searchPlaylists", "getPlaylistTracks"],
                     allowedAccountScopes:
                     [
-                        ProviderAccountScope.Global,
-                        ProviderAccountScope.User,
-                        ProviderAccountScope.Library
+                        ProviderAccountScope.Shared,
+                        ProviderAccountScope.Personal
                     ])
             ],
             permissions: new ProviderPermissionDescriptor(

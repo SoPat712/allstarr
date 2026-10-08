@@ -27,14 +27,14 @@ public sealed class ScopedRecommendationAccountAccessor(IDbContextFactory<Allsta
     {
         IntelligencePolicyService.ValidateScope(scope); await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var accounts = await db.ProviderAccounts.AsNoTracking().Where(item => item.Enabled &&
-            item.ProviderId == providerId && item.TenantId == scope.TenantId &&
-            (item.Scope == ProviderAccountScope.User && item.OwnerUserId == scope.OwnerUserId ||
-             item.Scope == ProviderAccountScope.Library && item.LibraryScopeId == scope.LibraryScopeId))
+            item.ProviderId == providerId &&
+            (item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId ||
+             item.TenantId == null && item.OwnerUserId == null))
             .ToListAsync(cancellationToken);
-        var account = accounts.OrderBy(item => item.Scope == ProviderAccountScope.User ? 0 : 1)
+        var account = accounts.OrderBy(item => item.OwnerUserId != null ? 0 : 1)
             .ThenBy(item => item.Id).FirstOrDefault();
         return account == null ? null : new ProviderAccountContext(account.Id, account.ProviderId, account.Scope,
-            account.Revision, account.Enabled, account.TenantId, account.OwnerUserId, account.LibraryScopeId,
+            account.Revision, account.Enabled, account.TenantId, account.OwnerUserId, null,
             "recommendation-account", account.SecretReferenceId);
     }
     public async Task<T> UseAsync<T>(IntelligenceScope scope, string providerId,

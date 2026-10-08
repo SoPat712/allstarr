@@ -23,9 +23,8 @@ export const providerDisplayName = (
 ) => providerId ? findProviderDefinition(providers, providerId)?.name ?? providerId : fallback;
 
 export function audienceLabel(account: ProviderAccount) {
-  if (account.scope === "Global") return "Everyone";
-  if (account.scope === "Library") return `Library ${account.libraryScopeId || "scope"}`;
-  return account.ownerDisplayName ? `Only ${account.ownerDisplayName}` : "Only me";
+  if (account.scope === "Shared") return "Shared";
+  return account.ownerDisplayName ? `Personal · ${account.ownerDisplayName}` : "Personal · you";
 }
 
 export function sourceStatus(

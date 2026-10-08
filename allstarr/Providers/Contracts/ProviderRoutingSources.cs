@@ -10,7 +10,8 @@ using RuntimeHealthState = allstarr.Services.Common.ProviderHealthState;
 namespace allstarr.Core.Routing;
 
 public sealed class DurableProviderRouteAccountResolver(
-    ProviderAccountResolver resolver) : IProviderRouteAccountResolver
+    ProviderAccountResolver resolver,
+    IProviderRouteHealthSource health) : IProviderRouteAccountResolver
 {
     public async Task<ProviderRouteAccountResolution?> ResolveAsync(
         ProviderRouteAccountRequest request,
@@ -31,14 +32,24 @@ public sealed class DurableProviderRouteAccountResolver(
             backend?.PrincipalId ?? request.Actor.DurableJobId?.ToString("N") ?? "system",
             "Provider route actor",
             request.Actor.Kind == ProviderActorKind.Administrator);
-        var resolved = await resolver.ResolveAsync(
+        var candidates = await resolver.ResolveCandidatesAsync(
             new ProviderAccountResolutionRequest(
                 principal,
                 request.ProviderId,
                 CapabilityName(request.Capability),
                 request.RequestedAccountId,
-                request.LibraryScopeId),
+                request.LibraryScopeId,
+                request.AllowedScopes,
+                request.AllowSharedAccount),
             cancellationToken);
+        var resolved = request.RequestedAccountId.HasValue
+            ? candidates.FirstOrDefault()
+            : candidates.FirstOrDefault(candidate =>
+            {
+                var current = health.Get(request.ProviderId, candidate.Account.Id, request.Capability);
+                return !current.CircuitOpen && current.State is
+                    ProviderRouteHealthState.Healthy or ProviderRouteHealthState.Unknown;
+            }) ?? candidates.FirstOrDefault();
         if (resolved == null)
         {
             return null;
@@ -54,7 +65,7 @@ public sealed class DurableProviderRouteAccountResolver(
                 account.Enabled,
                 account.TenantId,
                 account.OwnerUserId,
-                account.LibraryScopeId,
+                null,
                 resolved.Reason.Replace('_', '-'),
                 account.SecretReferenceId),
             account.Revision);

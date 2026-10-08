@@ -57,14 +57,14 @@ public sealed class ProviderExecutionContextTests
         var anotherTenant = new ProviderAccountContext(
             Guid.CreateVersion7(),
             "deezer",
-            ProviderAccountScope.User,
+            ProviderAccountScope.Personal,
             revision: 4,
             tenantId: Guid.CreateVersion7(),
             ownerUserId: _userId);
         var anotherUser = new ProviderAccountContext(
             Guid.CreateVersion7(),
             "deezer",
-            ProviderAccountScope.User,
+            ProviderAccountScope.Personal,
             revision: 4,
             tenantId: _tenantId,
             ownerUserId: Guid.CreateVersion7());
@@ -76,7 +76,7 @@ public sealed class ProviderExecutionContextTests
             new ProviderAccountContext(
                 Guid.CreateVersion7(),
                 "deezer",
-                ProviderAccountScope.User,
+                ProviderAccountScope.Personal,
                 revision: 4,
                 enabled: false,
                 tenantId: _tenantId,
@@ -97,7 +97,7 @@ public sealed class ProviderExecutionContextTests
         var targetAccount = new ProviderAccountContext(
             Guid.CreateVersion7(),
             "spotify",
-            ProviderAccountScope.User,
+            ProviderAccountScope.Personal,
             revision: 3,
             tenantId: _tenantId,
             ownerUserId: targetUserId);
@@ -110,7 +110,7 @@ public sealed class ProviderExecutionContextTests
             new ProviderAccountContext(
                 Guid.CreateVersion7(),
                 "spotify",
-                ProviderAccountScope.User,
+                ProviderAccountScope.Personal,
                 revision: 3,
                 tenantId: _tenantId,
                 ownerUserId: Guid.CreateVersion7()),
@@ -123,7 +123,7 @@ public sealed class ProviderExecutionContextTests
         var global = new ProviderAccountContext(
             Guid.CreateVersion7(),
             "qobuz",
-            ProviderAccountScope.Global,
+            ProviderAccountScope.Shared,
             revision: 2);
         Assert.Throws<UnauthorizedAccessException>(() =>
             Context(UserActor(), global, Policy("qobuz", allowSharedAccount: false)));
@@ -149,30 +149,27 @@ public sealed class ProviderExecutionContextTests
     }
 
     [Fact]
-    public void LibraryAccount_RequiresTheExactLibraryContext()
+    public void Accounts_RejectLibraryOwnershipAndAllowIndependentLibraryContext()
     {
+        Assert.Throws<ArgumentException>(() => new ProviderAccountContext(
+            Guid.CreateVersion7(), "spotify", ProviderAccountScope.Personal, 1,
+            tenantId: _tenantId, ownerUserId: _userId, libraryScopeId: "library-a"));
+        Assert.Throws<ArgumentException>(() => new ProviderAccountContext(
+            Guid.CreateVersion7(), "spotify", ProviderAccountScope.Shared, 1,
+            libraryScopeId: "library-a"));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ProviderAccountContext(
+            Guid.CreateVersion7(), "spotify", (ProviderAccountScope)99, 1));
+
         var account = new ProviderAccountContext(
-            Guid.CreateVersion7(),
-            "spotify",
-            ProviderAccountScope.Library,
-            revision: 1,
-            tenantId: _tenantId,
-            libraryScopeId: "library-a");
-        var policy = Policy("spotify");
-
-        Assert.Throws<ArgumentException>(() => Context(UserActor(), account, policy));
-        Assert.Throws<UnauthorizedAccessException>(() => Context(
-            UserActor(),
-            account,
-            policy,
-            new ProviderLibraryContext(_tenantId, "library-b")));
-
-        var valid = Context(
-            UserActor(),
-            account,
-            policy,
-            new ProviderLibraryContext(_tenantId, "library-a"));
-        Assert.Equal("library-a", valid.Library!.ScopeId);
+            Guid.CreateVersion7(), "spotify", ProviderAccountScope.Personal, 1,
+            tenantId: _tenantId, ownerUserId: _userId);
+        foreach (var libraryId in new[] { "library-a", "library-b" })
+        {
+            var context = Context(UserActor(), account, Policy("spotify"),
+                new ProviderLibraryContext(_tenantId, libraryId));
+            Assert.Equal(libraryId, context.Library!.ScopeId);
+            Assert.Same(account, context.Account);
+        }
     }
 
     [Fact]

@@ -39,7 +39,6 @@ public sealed class PlaylistLinksController(
     IApplicationCache applicationCache,
     IPlatformClock clock,
     PlaylistRematchService rematches,
-    ProviderPolicyOptions providerPolicy,
     AdminProtocolExecutionContextFactory protocolContexts,
     IPlaylistVirtualizationService virtualization,
     IPlaylistTrackRetentionQueue retentionQueue,
@@ -57,20 +56,19 @@ public sealed class PlaylistLinksController(
                 .ToDictionary(item => item.Id, StringComparer.OrdinalIgnoreCase);
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
             var accounts = await db.ProviderAccounts.AsNoTracking()
-                .Where(item => item.Enabled &&
-                               (item.TenantId == null || item.TenantId == session.TenantId) &&
-                               (item.OwnerUserId == null || item.OwnerUserId == session.AllstarrUserId))
+                .AvailableTo(session.TenantId, session.AllstarrUserId)
+                .Where(item => item.Enabled)
                 .OrderBy(item => item.ProviderId)
                 .ThenBy(item => item.DisplayName)
                 .ToListAsync(cancellationToken);
-            var creatorIds = accounts
-                .Select(item => item.CreatedByUserId ?? item.OwnerUserId)
+            var ownerIds = accounts
+                .Select(item => item.OwnerUserId)
                 .Where(item => item.HasValue)
                 .Select(item => item!.Value)
                 .Distinct()
                 .ToArray();
-            var creatorNames = await db.Users.AsNoTracking()
-                .Where(item => creatorIds.Contains(item.Id))
+            var ownerNames = await db.Users.AsNoTracking()
+                .Where(item => ownerIds.Contains(item.Id))
                 .ToDictionaryAsync(item => item.Id, item => item.DisplayName, cancellationToken);
             var capableAccounts = accounts.Where(item =>
             {
@@ -78,12 +76,8 @@ public sealed class PlaylistLinksController(
                 var capability = provider.Capabilities.Single(value => value.Capability == ProviderCapabilityKind.Playlist);
                 return capability.AllowedAccountScopes.Contains(item.Scope);
             }).ToArray();
-            var availableAccounts = capableAccounts
-                .Where(item => item.Scope != ProviderAccountScope.Global ||
-                               providerPolicy.AllowsGlobalAccount(item.CreatedByUserId,
-                                   session.AllstarrUserId, "playlist", session.IsAdministrator))
-                .ToArray();
-            var blockedAccounts = capableAccounts.Except(availableAccounts).ToArray();
+            var availableAccounts = capableAccounts;
+            ProviderAccountRecord[] blockedAccounts = [];
             var effectivePolicy = effectivePolicies == null || !session.TenantId.HasValue
                 ? null
                 : await effectivePolicies.ResolveAsync(session.TenantId.Value, cancellationToken);
@@ -109,18 +103,16 @@ public sealed class PlaylistLinksController(
                     item,
                     true,
                     null,
-                    (item.CreatedByUserId ?? item.OwnerUserId) is { } creatorId
-                        ? creatorNames.GetValueOrDefault(creatorId)
+                    item.OwnerUserId is { } ownerId
+                        ? ownerNames.GetValueOrDefault(ownerId)
                         : null,
-                    item.Scope == ProviderAccountScope.Global &&
-                    session.IsAdministrator &&
-                    !providerPolicy.AllowGlobalPersonalAccounts)),
+                    false)),
                 blockedAccounts = blockedAccounts.Select(item => ToPlaylistSourceAccountDto(
                     item,
                     false,
                     "shared-playlist-credentials-disabled",
-                    (item.CreatedByUserId ?? item.OwnerUserId) is { } creatorId
-                        ? creatorNames.GetValueOrDefault(creatorId)
+                    item.OwnerUserId is { } ownerId
+                        ? ownerNames.GetValueOrDefault(ownerId)
                         : null)),
                 providers = supportedProviders.Values
                     .OrderBy(provider => configuredProviderOrder.GetValueOrDefault(provider.Id, int.MaxValue))
@@ -138,7 +130,7 @@ public sealed class PlaylistLinksController(
                     }),
                 policy = new
                 {
-                    allowSharedPlaylistCredentials = providerPolicy.AllowGlobalPersonalAccounts,
+                    allowSharedPlaylistCredentials = true,
                     administratorCanUseSharedPlaylistCredentials = session.IsAdministrator
                 }
             });
@@ -162,7 +154,7 @@ public sealed class PlaylistLinksController(
                         (item.TenantId == null || item.TenantId == session.TenantId) &&
                         (item.OwnerUserId == null || item.OwnerUserId == session.AllstarrUserId),
                 cancellationToken) ?? throw new KeyNotFoundException();
-            var execution = await CreateExecutionAsync(session, account.LibraryScopeId, cancellationToken);
+            var execution = await CreateExecutionAsync(session, null, cancellationToken);
             var actor = execution.RequireActor();
             var providerId = account.ProviderId.Trim().ToLowerInvariant();
             var policy = new ProviderExecutionPolicy(
@@ -172,9 +164,7 @@ public sealed class PlaylistLinksController(
                 allowSharedAccount: true,
                 allowManagedDownloads: false,
                 allowedProviderIds: [providerId]);
-            var library = string.IsNullOrWhiteSpace(account.LibraryScopeId)
-                ? null
-                : new ProviderLibraryContext(actor.TenantId, account.LibraryScopeId);
+            ProviderLibraryContext? library = null;
             var plan = await providerRouter.PlanAsync<IProviderPlaylistCapability>(new ProviderRouteRequest(
                 ProviderCapabilityKind.Playlist,
                 actor,
@@ -1093,7 +1083,7 @@ public sealed class PlaylistLinksController(
         string operationId,
         CancellationToken cancellationToken)
     {
-        var execution = await CreateExecutionAsync(session, account.LibraryScopeId, cancellationToken);
+        var execution = await CreateExecutionAsync(session, null, cancellationToken);
         var actor = execution.RequireActor();
         var providerId = account.ProviderId.Trim().ToLowerInvariant();
         var policy = new ProviderExecutionPolicy(
@@ -1103,9 +1093,7 @@ public sealed class PlaylistLinksController(
             allowSharedAccount: true,
             allowManagedDownloads: false,
             allowedProviderIds: [providerId]);
-        var library = string.IsNullOrWhiteSpace(account.LibraryScopeId)
-            ? null
-            : new ProviderLibraryContext(actor.TenantId, account.LibraryScopeId);
+        ProviderLibraryContext? library = null;
         var plan = await providerRouter.PlanAsync<IProviderPlaylistCapability>(new ProviderRouteRequest(
             ProviderCapabilityKind.Playlist,
             actor,
@@ -1140,14 +1128,11 @@ public sealed class PlaylistLinksController(
                 }
                 : account.DisplayName,
             ownerDisplayName,
-            libraryScopeId = account.LibraryScopeId,
             scope = account.Scope.ToString().ToLowerInvariant(),
             accessLabel = account.Scope switch
             {
-                ProviderAccountScope.User => "Personal account",
-                ProviderAccountScope.Library => "Library-shared account",
-                ProviderAccountScope.Global when administratorAccess => "Administrator account",
-                _ => "Deployment-shared account"
+                ProviderAccountScope.Personal => "Personal account",
+                _ => "Shared account"
             },
             revision = account.Revision,
             capability = "playlist",

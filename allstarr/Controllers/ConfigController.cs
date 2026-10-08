@@ -1,3 +1,4 @@
+using allstarr.Core.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
@@ -142,6 +143,11 @@ public class ConfigController : ControllerBase
         return Ok(new
         {
             backendType,
+            providerAccounts = new
+            {
+                listenersCanConnectOwnAccounts = RuntimeBool(ProviderAccountOptions.ListenerConnectionsKey,
+                    _configuration.GetValue(ProviderAccountOptions.ListenerConnectionsKey, true))
+            },
             explicitFilter = RuntimeString("Library:ExplicitFilter", fallbackExplicitFilter),
             enableExternalPlaylists = RuntimeBool("Library:EnableExternalPlaylists", fallbackEnableExternalPlaylists),
             matching = new
@@ -349,6 +355,9 @@ public class ConfigController : ControllerBase
                 "admin-ui",
                 session.AllstarrUserId,
                 HttpContext.RequestAborted);
+            if (HttpContext.RequestServices.GetService<ProviderAccountOptions>() is { } accountOptions &&
+                result.Settings.FirstOrDefault(item => item.Key == ProviderAccountOptions.ListenerConnectionsKey) is { Value: bool allowed })
+                accountOptions.ListenersCanConnectOwnAccounts = allowed;
             var cacheEntriesInvalidated = normalized.Any(item =>
                 !item.DurableKey.StartsWith("Scrobbling:", StringComparison.OrdinalIgnoreCase) &&
                 !item.DurableKey.StartsWith("WebUi:", StringComparison.OrdinalIgnoreCase))

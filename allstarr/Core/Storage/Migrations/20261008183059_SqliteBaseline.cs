@@ -1009,8 +1009,6 @@ namespace allstarr.Core.Storage.Migrations
                     CreatedByUserId = table.Column<Guid>(type: "TEXT", nullable: true),
                     ProviderId = table.Column<string>(type: "TEXT", maxLength: 100, nullable: false),
                     DisplayName = table.Column<string>(type: "TEXT", maxLength: 200, nullable: false),
-                    Scope = table.Column<string>(type: "TEXT", maxLength: 32, nullable: false),
-                    LibraryScopeId = table.Column<string>(type: "TEXT", maxLength: 300, nullable: true),
                     SecretReferenceId = table.Column<Guid>(type: "TEXT", nullable: true),
                     Enabled = table.Column<bool>(type: "INTEGER", nullable: false),
                     CreatedAt = table.Column<long>(type: "INTEGER", nullable: false),
@@ -1021,7 +1019,7 @@ namespace allstarr.Core.Storage.Migrations
                 {
                     table.PrimaryKey("PK_provider_accounts", x => x.Id);
                     table.UniqueConstraint("AK_provider_accounts_Id_ProviderId", x => new { x.Id, x.ProviderId });
-                    table.CheckConstraint("CK_provider_accounts_scope_shape", "(\"Scope\" = 'Global' AND \"TenantId\" IS NULL AND \"OwnerUserId\" IS NULL AND \"LibraryScopeId\" IS NULL) OR (\"Scope\" = 'User' AND \"TenantId\" IS NOT NULL AND \"OwnerUserId\" IS NOT NULL AND \"LibraryScopeId\" IS NULL) OR (\"Scope\" = 'Library' AND \"TenantId\" IS NOT NULL AND \"OwnerUserId\" IS NULL AND \"LibraryScopeId\" IS NOT NULL)");
+                    table.CheckConstraint("CK_provider_accounts_owner_shape", "(\"OwnerUserId\" IS NULL AND \"TenantId\" IS NULL) OR (\"OwnerUserId\" IS NOT NULL AND \"TenantId\" IS NOT NULL)");
                     table.ForeignKey(
                         name: "FK_provider_account_creator",
                         column: x => x.CreatedByUserId,

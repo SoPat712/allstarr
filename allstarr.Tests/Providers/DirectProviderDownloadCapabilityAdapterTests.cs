@@ -277,7 +277,7 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
             new ProviderAccountContext(
                 account,
                 providerId,
-                ProviderAccountScope.User,
+                ProviderAccountScope.Personal,
                 revision: 1,
                 tenantId: tenant,
                 ownerUserId: user,

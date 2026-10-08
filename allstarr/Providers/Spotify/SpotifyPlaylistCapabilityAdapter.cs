@@ -31,10 +31,7 @@ public sealed class EncryptedProviderAccountSecretAccessor(EncryptedSecretStore 
         ArgumentNullException.ThrowIfNull(operation);
         if (account.SecretReferenceId == null)
             throw new KeyNotFoundException("The selected provider account has no secret reference.");
-        var access = account.Scope == Core.Storage.ProviderAccountScope.Global
-            ? new SecretAccessContext(null, AllowGlobal: true)
-            : new SecretAccessContext(account.TenantId);
-        using var lease = await secretStore.OpenAsync(account.SecretReferenceId.Value, access, cancellationToken);
+        using var lease = await secretStore.OpenProviderAccountAsync(account, cancellationToken);
         return await operation(lease.Value);
     }
 }
@@ -140,7 +137,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
                     ProviderAccountRequirement.Required,
                     "1",
                     ["getUserPlaylists", "getPlaylistTracks", "searchPlaylists", "resolveArtwork", "mutatePlaylist"],
-                    [Core.Storage.ProviderAccountScope.Global, Core.Storage.ProviderAccountScope.User, Core.Storage.ProviderAccountScope.Library]),
+                    [Core.Storage.ProviderAccountScope.Shared, Core.Storage.ProviderAccountScope.Personal]),
                 new ProviderCapabilityDescriptor(
                     ProviderCapabilityKind.Lyrics,
                     ProviderCapabilitySupportState.Supported,

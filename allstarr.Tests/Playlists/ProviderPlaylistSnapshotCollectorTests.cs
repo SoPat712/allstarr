@@ -224,7 +224,7 @@ public sealed class ProviderPlaylistSnapshotCollectorTests
             ? new ProviderAccountContext(
                 Guid.Parse("33333333-3333-3333-3333-333333333333"),
                 provider,
-                ProviderAccountScope.User,
+                ProviderAccountScope.Personal,
                 1,
                 tenantId: tenant,
                 ownerUserId: user)

@@ -51,9 +51,8 @@ public sealed class DeezerMetadataCapabilityAdapter(IConcreteMetadataService leg
                     hooks: ["getStreamLease", "probeStream"],
                     allowedAccountScopes:
                     [
-                        ProviderAccountScope.Global,
-                        ProviderAccountScope.User,
-                        ProviderAccountScope.Library
+                        ProviderAccountScope.Shared,
+                        ProviderAccountScope.Personal
                     ]),
                 new ProviderCapabilityDescriptor(
                     ProviderCapabilityKind.Download,
@@ -63,9 +62,8 @@ public sealed class DeezerMetadataCapabilityAdapter(IConcreteMetadataService leg
                     hooks: ["checkAvailability", "download"],
                     allowedAccountScopes:
                     [
-                        ProviderAccountScope.Global,
-                        ProviderAccountScope.User,
-                        ProviderAccountScope.Library
+                        ProviderAccountScope.Shared,
+                        ProviderAccountScope.Personal
                     ]),
                 new ProviderCapabilityDescriptor(
                     ProviderCapabilityKind.Playlist,
@@ -75,9 +73,8 @@ public sealed class DeezerMetadataCapabilityAdapter(IConcreteMetadataService leg
                     hooks: ["getUserPlaylists", "searchPlaylists", "getPlaylistTracks"],
                     allowedAccountScopes:
                     [
-                        ProviderAccountScope.Global,
-                        ProviderAccountScope.User,
-                        ProviderAccountScope.Library
+                        ProviderAccountScope.Shared,
+                        ProviderAccountScope.Personal
                     ])
             ],
             permissions: new ProviderPermissionDescriptor(

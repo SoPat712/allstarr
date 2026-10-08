@@ -33,10 +33,10 @@ public sealed class PlaylistPersistenceServiceTests : IAsyncLifetime
         db.Tenants.Add(new TenantRecord { Id = _tenant, Slug = "phase4", Name = "Phase 4", CreatedAt = _now });
         db.Users.AddRange(User(_userA, "A"), User(_userB, "B"));
         var identityA = Identity(_userA, "principal-a"); db.BackendIdentities.AddRange(identityA, Identity(_userB, "principal-b"));
-        db.ProviderAccounts.Add(new ProviderAccountRecord { Id = _accountA, TenantId = _tenant, OwnerUserId = _userA, ProviderId = "fixture", DisplayName = "A", Scope = ProviderAccountScope.User, Enabled = true, CreatedAt = _now, UpdatedAt = _now });
+        db.ProviderAccounts.Add(new ProviderAccountRecord { Id = _accountA, TenantId = _tenant, OwnerUserId = _userA, ProviderId = "fixture", DisplayName = "A", Enabled = true, CreatedAt = _now, UpdatedAt = _now });
         db.LibraryTracks.Add(new LibraryTrackRecord { Id = _localTrack, TenantId = _tenant, OwnerUserId = _userA, BackendIdentityId = identityA.Id, LibraryScopeId = "music", Protocol = "jellyfin", BackendInstanceId = "backend", BackendItemId = "local-1", FilePath = "/media/Music/local.flac", Title = "Local", Artist = "Artist", DurationMilliseconds = 1000, ProviderIdsJson = "{}", IndexedAt = _now, SourceModifiedAt = _now, UpdatedAt = _now });
         await db.SaveChangesAsync();
-        var resolver = new ProviderAccountResolver(_factory, new ProviderPolicyOptions()); var clock = new PersistenceClock(_now);
+        var resolver = new ProviderAccountResolver(_factory); var clock = new PersistenceClock(_now);
         _matches = new TrackMatchCommandService(_factory, new TrackMatchDecisionEngine(), resolver, clock);
         _playlists = new PlaylistPersistenceService(_factory, resolver, clock, _matches);
     }
@@ -57,7 +57,7 @@ public sealed class PlaylistPersistenceServiceTests : IAsyncLifetime
         var restartedMatches = new TrackMatchCommandService(
             _factory,
             new TrackMatchDecisionEngine(),
-            new ProviderAccountResolver(_factory, new ProviderPolicyOptions()),
+            new ProviderAccountResolver(_factory),
             new PersistenceClock(_now));
         Assert.Equal(
             decision.Id,
@@ -196,7 +196,6 @@ public sealed class PlaylistPersistenceServiceTests : IAsyncLifetime
                 OwnerUserId = variant == "account" ? _userB : owner,
                 ProviderId = "fixture",
                 DisplayName = "Other account",
-                Scope = ProviderAccountScope.User,
                 Enabled = true,
                 CreatedAt = _now,
                 UpdatedAt = _now

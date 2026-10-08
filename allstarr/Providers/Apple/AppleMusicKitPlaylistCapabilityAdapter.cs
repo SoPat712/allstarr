@@ -225,7 +225,7 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
             "Account-bound Apple Music playlist intake through a selected per-user Music User Token. Metadata, search, and lyrics are supplied by separate providers.",
             ProviderOrigin.BuiltIn, "1", "apple-musickit-library-playlist-v1",
             [new ProviderCapabilityDescriptor(ProviderCapabilityKind.Playlist, ProviderCapabilitySupportState.Supported,
-                ProviderAccountRequirement.Required, "1", ["getUserPlaylists", "searchPlaylists", "getPlaylistTracks", "resolveArtwork", "mutatePlaylist"], [ProviderAccountScope.User])],
+                ProviderAccountRequirement.Required, "1", ["getUserPlaylists", "searchPlaylists", "getPlaylistTracks", "resolveArtwork", "mutatePlaylist"], [ProviderAccountScope.Personal])],
             new ProviderPermissionDescriptor([ApiOrigin], false, ["musickitcredentials"]),
             [new ProviderSettingDescriptor("musickitcredentials", ProviderSettingValueKind.Secret,
                 ProviderSettingScope.ProviderAccount, "MusicKit developer token and Music User Token", true)]),
@@ -241,10 +241,10 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
                 new ProviderCapabilityDescriptor(ProviderCapabilityKind.Metadata, ProviderCapabilitySupportState.Supported,
                     ProviderAccountRequirement.Required, "1",
                     ["searchTracks", "getTrack", "searchAlbums", "getAlbum", "searchArtists", "getArtist"],
-                    [ProviderAccountScope.User]),
+                    [ProviderAccountScope.Personal]),
                 new ProviderCapabilityDescriptor(ProviderCapabilityKind.Playlist, ProviderCapabilitySupportState.Supported,
                     ProviderAccountRequirement.Required, "1", ["getUserPlaylists", "searchPlaylists", "getPlaylistTracks", "resolveArtwork", "mutatePlaylist"],
-                    [ProviderAccountScope.User])
+                    [ProviderAccountScope.Personal])
             ],
             new ProviderPermissionDescriptor([ApiOrigin], false, ["musickitcredentials"]),
             [new ProviderSettingDescriptor("musickitcredentials", ProviderSettingValueKind.Secret,
@@ -395,7 +395,7 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
     private static ProviderError? ValidateContext(ProviderExecutionContext context)
     {
         if (!context.ProviderId.Equals(StableProviderId, StringComparison.Ordinal)) return new(ProviderErrorKind.Forbidden);
-        if (context.Account is not { Scope: ProviderAccountScope.User, SecretReferenceId: not null } account)
+        if (context.Account is not { Scope: ProviderAccountScope.Personal, SecretReferenceId: not null } account)
             return new(ProviderErrorKind.AccountNeedsConfiguration);
         if (account.TenantId != context.Actor.TenantId || account.OwnerUserId != context.Actor.UserId)
             return new(ProviderErrorKind.Forbidden);

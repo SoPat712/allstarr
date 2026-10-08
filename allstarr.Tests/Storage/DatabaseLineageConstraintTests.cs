@@ -51,7 +51,6 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
             OwnerUserId = _userB,
             ProviderId = "lineage-provider",
             DisplayName = "Tenant B account",
-            Scope = ProviderAccountScope.User,
             Enabled = true,
             CreatedAt = now,
             UpdatedAt = now

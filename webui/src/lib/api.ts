@@ -258,7 +258,7 @@ export type AppleDownloadStatus = {
 
 export type UiSchema = {
   activeBackend: string;
-  providerAccountManagementMode?: string;
+  listenersCanConnectOwnAccounts?: boolean;
   providers: ProviderDefinition[];
   configSections?: ConfigSection[];
   priorityGroups?: PriorityGroup[];
@@ -415,12 +415,12 @@ export type ProviderAccount = {
   providerId: string;
   displayName: string;
   sourceDisplayName?: string | null;
-  scope: "Global" | "User" | "Library";
+  scope: "Personal" | "Shared";
   ownerUserId?: string | null;
   ownerDisplayName?: string | null;
   createdByUserId?: string | null;
   creatorDisplayName?: string | null;
-  libraryScopeId?: string | null;
+  canManage: boolean;
   enabled: boolean;
   revision: number;
   canChangeAudience?: boolean;
@@ -1389,7 +1389,7 @@ export const home = {
 export const sources = {
   accounts: () =>
     json<{
-      managementMode: string;
+      listenersCanConnectOwnAccounts?: boolean;
       audienceUsers: { id: string; displayName: string }[];
       accounts: ProviderAccount[];
     }>("/api/admin/provider-accounts"),
@@ -1399,8 +1399,8 @@ export const sources = {
   create: (input: {
     providerId: string;
     displayName: string;
-    scope: string;
-    libraryScopeId?: string | null;
+    scope: "Personal" | "Shared";
+    ownerUserId?: string | null;
     enabled: boolean;
     secret: Record<string, unknown>;
   }) => json<ProviderAccount>("/api/admin/provider-accounts", {
@@ -1428,14 +1428,13 @@ export const sources = {
     }),
   setAudience: (
     account: ProviderAccount,
-    scope: string,
+    scope: "Personal" | "Shared",
     ownerUserId?: string | null,
-    libraryScopeId?: string | null,
   ) =>
     json<ProviderAccount>(`/api/admin/provider-accounts/${account.id}/audience`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scope, ownerUserId, libraryScopeId, expectedRevision: account.revision }),
+      body: JSON.stringify({ scope, ownerUserId, expectedRevision: account.revision }),
     }),
   remove: (id: string) =>
     json<void>(`/api/admin/provider-accounts/${id}`, { method: "DELETE" }),

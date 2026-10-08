@@ -1,4 +1,6 @@
 using allstarr.Core.Identity;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Routing;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -88,22 +90,16 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AccountResolution_IsolatesUsersAndDoesNotUseGlobalForPersonalData()
+    public async Task AccountResolution_UsesPersonalBeforeSharedAndRejectsAnotherUsersAccount()
     {
         var resolver = Resolver(Options(MultiUserMode.Hybrid));
         var first = (await resolver.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "user-1")))!;
         var second = (await resolver.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "user-2")))!;
-        var firstAccount = Account("applemusic", ProviderAccountScope.User, first.TenantId, first.UserId);
-        var secondAccount = Account("applemusic", ProviderAccountScope.User, second.TenantId, second.UserId);
-        var global = Account("applemusic", ProviderAccountScope.Global, null, null);
+        var firstAccount = Account("applemusic", ProviderAccountScope.Personal, first.TenantId, first.UserId);
+        var secondAccount = Account("applemusic", ProviderAccountScope.Personal, second.TenantId, second.UserId);
+        var global = Account("applemusic", ProviderAccountScope.Shared, null, null);
         await AddAccounts(firstAccount, secondAccount, global);
-        var accountResolver = new ProviderAccountResolver(
-            _factory,
-            new ProviderPolicyOptions
-            {
-                AllowGlobalAccounts = true,
-                AllowGlobalPersonalAccounts = false
-            });
+        var accountResolver = new ProviderAccountResolver(_factory);
 
         var resolved = await accountResolver.ResolveAsync(new ProviderAccountResolutionRequest(
             first,
@@ -121,99 +117,115 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AdministratorCanExplicitlySelectGlobalPersonalAccountWithoutEnablingImplicitUse()
+    public async Task SharedAccounts_AreAvailableForEveryUserAndCapability()
     {
-        var identityResolver = Resolver(Options(MultiUserMode.Hybrid));
-        var user = (await identityResolver.ResolveAsync(
-            new BackendIdentityDescriptor("Jellyfin", "administrator")))!;
-        var administrator = user with { IsAdministrator = true };
-        var global = Account("spotify", ProviderAccountScope.Global, null, null);
-        await AddAccounts(global);
-        var resolver = new ProviderAccountResolver(
-            _factory,
-            new ProviderPolicyOptions
-            {
-                AllowGlobalAccounts = true,
-                AllowGlobalPersonalAccounts = false
-            });
+        var identities = Resolver(Options(MultiUserMode.Hybrid));
+        var user = (await identities.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "listener")))!;
+        var shared = Account("spotify", ProviderAccountScope.Shared, null, null);
+        await AddAccounts(shared);
+        var resolver = new ProviderAccountResolver(_factory);
+        foreach (var capability in new[] { "streaming", "download", "playlist", "scrobbling", "favorites", "personal-library" })
+        {
+            var resolved = await resolver.ResolveAsync(new(user, "spotify", capability));
+            Assert.Equal(shared.Id, resolved!.Account.Id);
+            Assert.Equal("shared_account", resolved.Reason);
+            Assert.Equal(shared.Id, (await resolver.ResolveAsync(new(user, "spotify", capability, shared.Id)))!.Account.Id);
+        }
+    }
 
-        var implicitResolution = await resolver.ResolveAsync(new ProviderAccountResolutionRequest(
-            administrator,
-            "spotify",
-            "playlist"));
-        var explicitResolution = await resolver.ResolveAsync(new ProviderAccountResolutionRequest(
-            administrator,
-            "spotify",
-            "playlist",
-            global.Id));
+    [Fact]
+    public async Task PersonalAccount_PrecedesSharedForDownloadsAndFallsBackWhenDisabled()
+    {
+        var identities = Resolver(Options(MultiUserMode.Hybrid));
+        var user = (await identities.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "listener")))!;
+        var personal = Account("qobuz", ProviderAccountScope.Personal, user.TenantId, user.UserId);
+        var shared = Account("qobuz", ProviderAccountScope.Shared, null, null);
+        await AddAccounts(shared, personal);
+        var resolver = new ProviderAccountResolver(_factory);
+        foreach (var capability in new[] { "download", "playlist" })
+            Assert.Equal(personal.Id, (await resolver.ResolveAsync(new(user, "qobuz", capability)))!.Account.Id);
+        await using var db = await _factory.CreateDbContextAsync();
+        var current = await db.ProviderAccounts.SingleAsync(item => item.Id == personal.Id);
+        current.Enabled = false;
+        await db.SaveChangesAsync();
+        Assert.Equal(shared.Id, (await resolver.ResolveAsync(new(user, "qobuz", "download")))!.Account.Id);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => resolver.ResolveAsync(new(user, "qobuz", "download", personal.Id)));
+    }
 
-        Assert.Null(implicitResolution);
-        Assert.Equal(global.Id, explicitResolution!.Account.Id);
-        Assert.Equal("explicit_account", explicitResolution.Reason);
+    [Fact]
+    public async Task AccountResolution_FiltersUnsupportedScopesAndRevokedCredentialsBeforeFallback()
+    {
+        var identities = Resolver(Options(MultiUserMode.Hybrid));
+        var user = (await identities.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "listener")))!;
+        var personal = Account("fixture-extension", ProviderAccountScope.Personal, user.TenantId, user.UserId);
+        var shared = Account("fixture-extension", ProviderAccountScope.Shared, null, null);
+        await AddAccounts(personal, shared);
+        var resolver = new ProviderAccountResolver(_factory);
+        Assert.Equal(shared.Id, (await resolver.ResolveAsync(new(user, "fixture-extension", "streaming",
+            AllowedScopes: [ProviderAccountScope.Shared])))!.Account.Id);
+        Assert.Null(await resolver.ResolveAsync(new(user, "fixture-extension", "streaming",
+            AllowedScopes: [ProviderAccountScope.Shared], AllowSharedAccount: false)));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => resolver.ResolveAsync(new(user,
+            "fixture-extension", "streaming", personal.Id, AllowedScopes: [ProviderAccountScope.Shared])));
+        await using var db = await _factory.CreateDbContextAsync();
+        var secretId = Guid.CreateVersion7();
+        db.SecretReferences.Add(new()
+        {
+            Id = secretId,
+            TenantId = user.TenantId,
+            Purpose = $"provider-account:fixture-extension:{personal.Id:N}",
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow,
+            RevokedAt = DateTimeOffset.UtcNow
+        });
+        (await db.ProviderAccounts.SingleAsync(item => item.Id == personal.Id)).SecretReferenceId = secretId;
+        await db.SaveChangesAsync();
+        Assert.Equal(shared.Id, (await resolver.ResolveAsync(new(user, "fixture-extension", "streaming")))!.Account.Id);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => resolver.ResolveAsync(new(user,
+            "fixture-extension", "streaming", personal.Id)));
+    }
+
+    [Theory]
+    [InlineData("deezer", ProviderRouteHealthState.Unauthorized, false)]
+    [InlineData("fixture-extension", ProviderRouteHealthState.Degraded, false)]
+    [InlineData("fixture-extension", ProviderRouteHealthState.Healthy, true)]
+    public async Task Routing_FallsBackFromUnusablePersonalAccountButHonorsExplicitSelection(
+        string provider, ProviderRouteHealthState personalHealth, bool circuitOpen)
+    {
+        var identities = Resolver(Options(MultiUserMode.Hybrid));
+        var user = (await identities.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "listener")))!;
+        var personal = Account(provider, ProviderAccountScope.Personal, user.TenantId, user.UserId);
+        var shared = Account(provider, ProviderAccountScope.Shared, null, null);
+        await AddAccounts(personal, shared);
+        var routes = new DurableProviderRouteAccountResolver(new ProviderAccountResolver(_factory),
+            new AccountHealth(personal.Id, personalHealth, circuitOpen));
+        var actor = new ProviderActorContext(user.TenantId, ProviderActorKind.User, user.UserId,
+            new ProviderBackendPrincipal("jellyfin", "fixture", "listener"));
+        var request = new ProviderRouteAccountRequest(actor, provider, ProviderCapabilityKind.Streaming,
+            null, null, [ProviderAccountScope.Personal, ProviderAccountScope.Shared]);
+        Assert.Equal(shared.Id, (await routes.ResolveAsync(request))!.Account.AccountId);
+        Assert.Equal(personal.Id, (await routes.ResolveAsync(request with { RequestedAccountId = personal.Id }))!.Account.AccountId);
+    }
+
+    private sealed class AccountHealth(Guid personalId, ProviderRouteHealthState state, bool circuitOpen)
+        : IProviderRouteHealthSource
+    {
+        public ProviderRouteHealthSnapshot Get(string providerId, Guid? providerAccountId, ProviderCapabilityKind capability) =>
+            providerAccountId == personalId ? new(state, circuitOpen) : new(ProviderRouteHealthState.Healthy, false);
+    }
+
+    [Fact]
+    public async Task AccountOwnership_DoesNotChangeWithLibraryAndAdministratorCannotImpersonateOwner()
+    {
+        var identities = Resolver(Options(MultiUserMode.Hybrid));
+        var a = (await identities.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "a")))!;
+        var b = (await identities.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "b")))!;
+        var personal = Account("deezer", ProviderAccountScope.Personal, a.TenantId, a.UserId);
+        await AddAccounts(personal);
+        var resolver = new ProviderAccountResolver(_factory);
+        Assert.Equal(personal.Id, (await resolver.ResolveAsync(new(a, "deezer", "metadata", LibraryScopeId: "other-library")))!.Account.Id);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => resolver.ResolveAsync(
-            new ProviderAccountResolutionRequest(
-                user,
-                "spotify",
-                "playlist",
-                global.Id)));
-    }
-
-    [Fact]
-    public async Task SharedDownloaderPolicy_AppliesOnlyToDownloadLane()
-    {
-        var identityResolver = Resolver(Options(MultiUserMode.Hybrid));
-        var principal = (await identityResolver.ResolveAsync(
-            new BackendIdentityDescriptor("Subsonic", "listener")))!;
-        var userAccount = Account("qobuz", ProviderAccountScope.User, principal.TenantId, principal.UserId);
-        var shared = Account("qobuz", ProviderAccountScope.Global, null, null);
-        await AddAccounts(userAccount, shared);
-        var resolver = new ProviderAccountResolver(
-            _factory,
-            new ProviderPolicyOptions
-            {
-                AllowGlobalAccounts = true,
-                AllowGlobalPersonalAccounts = false,
-                SharedDownloaderAccountId = shared.Id
-            });
-
-        var download = await resolver.ResolveAsync(new ProviderAccountResolutionRequest(
-            principal,
-            "qobuz",
-            "download"));
-        var playlist = await resolver.ResolveAsync(new ProviderAccountResolutionRequest(
-            principal,
-            "qobuz",
-            "playlist"));
-
-        Assert.Equal(shared.Id, download!.Account.Id);
-        Assert.Equal("policy_shared_downloader", download.Reason);
-        Assert.Equal(userAccount.Id, playlist!.Account.Id);
-        Assert.Equal("user_account", playlist.Reason);
-    }
-
-    [Fact]
-    public async Task LibraryAccount_RequiresExactTenantAndLibraryScope()
-    {
-        var identityResolver = Resolver(Options(MultiUserMode.Hybrid));
-        var principal = (await identityResolver.ResolveAsync(
-            new BackendIdentityDescriptor("Jellyfin", "library-user")))!;
-        var account = Account("deezer", ProviderAccountScope.Library, principal.TenantId, null);
-        account.LibraryScopeId = "music-main";
-        await AddAccounts(account);
-        var resolver = new ProviderAccountResolver(_factory, new ProviderPolicyOptions());
-
-        var missingScope = await resolver.ResolveAsync(new ProviderAccountResolutionRequest(
-            principal,
-            "deezer",
-            "metadata"));
-        var correctScope = await resolver.ResolveAsync(new ProviderAccountResolutionRequest(
-            principal,
-            "deezer",
-            "metadata",
-            LibraryScopeId: "music-main"));
-
-        Assert.Null(missingScope);
-        Assert.Equal(account.Id, correctScope!.Account.Id);
+            new(b with { IsAdministrator = true }, "deezer", "metadata", personal.Id)));
     }
 
     private BackendIdentityResolver Resolver(IdentityOptions options) => new(
@@ -241,7 +253,6 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
             Id = Guid.CreateVersion7(),
             ProviderId = provider,
             DisplayName = $"{provider} fixture",
-            Scope = scope,
             TenantId = tenantId,
             OwnerUserId = ownerId,
             Enabled = true,

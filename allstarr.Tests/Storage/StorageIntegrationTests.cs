@@ -191,7 +191,6 @@ public sealed class StorageIntegrationTests
                 OwnerUserId = principal.UserId,
                 ProviderId = "spotify",
                 DisplayName = "Schedule source",
-                Scope = ProviderAccountScope.User,
                 Enabled = true,
                 CreatedAt = now,
                 UpdatedAt = now
@@ -484,7 +483,6 @@ public sealed class StorageIntegrationTests
                     OwnerUserId = userId,
                     ProviderId = "fixture",
                     DisplayName = "Fixture",
-                    Scope = ProviderAccountScope.User,
                     Enabled = true,
                     CreatedAt = now,
                     UpdatedAt = now

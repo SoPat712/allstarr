@@ -48,7 +48,6 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
             OwnerUserId = _ownerId,
             ProviderId = "spotify",
             DisplayName = "Source",
-            Scope = ProviderAccountScope.User,
             Enabled = true,
             CreatedAt = now,
             UpdatedAt = now

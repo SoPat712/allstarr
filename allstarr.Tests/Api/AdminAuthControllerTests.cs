@@ -273,11 +273,10 @@ public class AdminAuthControllerTests
     }
 
     [Theory]
-    [InlineData(ProviderAccountManagementMode.AdminManaged)]
-    [InlineData(ProviderAccountManagementMode.UserManaged)]
-    [InlineData(ProviderAccountManagementMode.Hybrid)]
-    public async Task GetCurrentSession_ExposesOnlyTheNonSecretAccountManagementMode(
-        ProviderAccountManagementMode managementMode)
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetCurrentSession_ExposesOnlyTheNonSecretAccountConnectionSetting(
+        bool allowConnections)
     {
         var handler = new DelegateHttpMessageHandler((_, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
@@ -285,15 +284,15 @@ public class AdminAuthControllerTests
             handler,
             AdminAuthSessionTestSupport.Create(),
             new DefaultHttpContext(),
-            managementMode: managementMode);
+            allowConnections: allowConnections);
 
         var result = Assert.IsType<OkObjectResult>(await controller.GetCurrentSession());
         using var payload = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
 
         Assert.False(payload.RootElement.GetProperty("authenticated").GetBoolean());
         Assert.Equal(
-            managementMode.ToString(),
-            payload.RootElement.GetProperty("providerAccountManagementMode").GetString());
+            allowConnections,
+            payload.RootElement.GetProperty("listenersCanConnectOwnAccounts").GetBoolean());
         Assert.False(payload.RootElement.TryGetProperty("secret", out _));
         Assert.False(payload.RootElement.TryGetProperty("accounts", out _));
     }
@@ -326,9 +325,7 @@ public class AdminAuthControllerTests
         Assert.Equal("user-42", payload.RootElement.GetProperty("user").GetProperty("id").GetString());
         Assert.Equal("alice", payload.RootElement.GetProperty("user").GetProperty("name").GetString());
         Assert.True(payload.RootElement.GetProperty("user").GetProperty("isAdministrator").GetBoolean());
-        Assert.Equal(
-            "Hybrid",
-            payload.RootElement.GetProperty("providerAccountManagementMode").GetString());
+        Assert.True(payload.RootElement.GetProperty("listenersCanConnectOwnAccounts").GetBoolean());
 
         var refreshedCookie = Assert.Single(httpContext.Response.Headers.SetCookie);
         Assert.Contains($"{AdminAuthSessionService.SessionCookieName}={session.SessionId}", refreshedCookie);
@@ -406,7 +403,7 @@ public class AdminAuthControllerTests
         AdminAuthSessionService sessionService,
         HttpContext httpContext,
         BackendType backendType = BackendType.Jellyfin,
-        ProviderAccountManagementMode managementMode = ProviderAccountManagementMode.Hybrid)
+        bool allowConnections = true)
     {
         var jellyfinOptions = Options.Create(new JellyfinSettings
         {
@@ -434,9 +431,9 @@ public class AdminAuthControllerTests
                 new TestMemoryApplicationCache(),
                 NullLogger<MediaAssetResolver>.Instance),
             identityResolver: null,
-            providerAccountManagementOptions: new ProviderAccountManagementOptions
+            providerAccountManagementOptions: new ProviderAccountOptions
             {
-                ManagementMode = managementMode.ToString()
+                ListenersCanConnectOwnAccounts = allowConnections
             })
         {
             ControllerContext = new ControllerContext

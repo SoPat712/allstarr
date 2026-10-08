@@ -84,7 +84,7 @@ public sealed class AudioMuseIntelligenceCapabilityAdapterTests
                 new("jellyfin", "backend", "principal")),
             "audiomuse-ai",
             new(Guid.Parse("33333333-3333-3333-3333-333333333333"), "audiomuse-ai",
-                ProviderAccountScope.User, 1, tenantId: tenant, ownerUserId: user,
+                ProviderAccountScope.Personal, 1, tenantId: tenant, ownerUserId: user,
                 secretReferenceId: Guid.Parse("44444444-4444-4444-4444-444444444444")),
             new(tenant, "music"),
             new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),

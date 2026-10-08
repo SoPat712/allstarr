@@ -163,6 +163,7 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         var service = new DurableRuntimeSettingsService(_factory, configuration, _clock, signal);
         await service.ApplyBatchAsync(_tenantId,
         [
+            new(ProviderAccountOptions.ListenerConnectionsKey, "false"),
             new("Cache:SearchResultsMinutes", "15"), new("Deezer:Quality", "FLAC"),
             new("Providers:StreamingOrder", "deezer,qobuz"), new("Library:DownloadMode", "Album"),
             new("AppleDownload:BaseUrl", "http://apple-gateway.lan/base"),
@@ -184,22 +185,25 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         var spotifyImport = new SpotifyImportSettings();
         var jellyfin = new JellyfinSettings(); var subsonic = new SubsonicSettings();
         var identity = new IdentityOptions { DefaultTenantId = _tenantId.ToString() };
+        var accounts = new ProviderAccountOptions();
         var projector = new DefaultTenantRuntimeSettingsProjector(service, signal, identity, configuration,
             Options.Create(cache), Options.Create(deezer), Options.Create(qobuz), Options.Create(apple),
             Options.Create(spotifyApi), Options.Create(spotifyImport),
             Options.Create(new MusicBrainzSettings()), Options.Create(new ScrobblingSettings()), Options.Create(jellyfin), Options.Create(subsonic),
-            NullLogger<DefaultTenantRuntimeSettingsProjector>.Instance);
+            NullLogger<DefaultTenantRuntimeSettingsProjector>.Instance, accounts);
         await projector.StartAsync(CancellationToken.None);
+        Assert.False(accounts.ListenersCanConnectOwnAccounts);
         for (var attempt = 0; attempt < 50 && cache.SearchResultsMinutes != 15; attempt++) await Task.Delay(10);
         var migrated = await service.GetAsync(_tenantId, AudioQualityPolicy.SettingKey);
         Assert.Equal(RuntimeSettingOrigin.Durable, migrated.Origin);
         Assert.Equal("HiResLossless", migrated.Value);
         await service.ApplyBatchAsync(_tenantId,
-            [new("Cache:SearchResultsMinutes", "22", 1), new(AudioQualityPolicy.SettingKey, "CdLossless", migrated.Revision)],
+            [new(ProviderAccountOptions.ListenerConnectionsKey, "true", 1), new("Cache:SearchResultsMinutes", "22", 1), new(AudioQualityPolicy.SettingKey, "CdLossless", migrated.Revision)],
             "webui", _userId);
         for (var attempt = 0; attempt < 50 && cache.SearchResultsMinutes != 22; attempt++) await Task.Delay(10);
         await projector.StopAsync(CancellationToken.None);
 
+        Assert.True(accounts.ListenersCanConnectOwnAccounts);
         Assert.Equal(22, cache.SearchResultsMinutes); Assert.Equal("MP3_128", deezer.Quality);
         Assert.Equal("bootstrap-secret", deezer.Arl);
         Assert.Equal("qobuz", configuration["MULTI_PROVIDER_STREAMING_ORDER"]);

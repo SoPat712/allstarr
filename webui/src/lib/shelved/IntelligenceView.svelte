@@ -59,7 +59,7 @@
   let loadedScope = $state<IntelligenceScope | null>(null);
   let providerDefinitions = $state<ProviderDefinition[]>([]);
   let providerAccounts = $state<ProviderAccount[]>([]);
-  let providerManagementMode = $state("AdminManaged");
+  let listenersCanConnectOwnAccounts = $state(true);
   let audioMuseConnectionOpen = $state(false);
   let audioMuseAccount = $state<ProviderAccount | null>(null);
   let providerSetupRequested = $state(false);
@@ -99,7 +99,7 @@
     item.enabled && item.secret.configured && !item.secret.revoked));
   const recoverableAudioMuseAccount = $derived(audioMuseAccounts.find((item) =>
     !item.enabled || !item.secret.configured || item.secret.revoked));
-  const canManageAudioMuse = $derived(providerManagementMode !== "AdminManaged" || administrator);
+  const canManageAudioMuse = $derived(administrator || listenersCanConnectOwnAccounts || audioMuseAccounts.some((item) => item.canManage));
   const runState = $derived(data?.actions.latestRunState?.replace("retryscheduled", "retry scheduled"));
   const runStatus = $derived(runState === "succeeded" ? "Ready" : ["pending", "running", "retry scheduled"].includes(runState ?? "") ? "Refreshing" : runState);
   const materializationActive = $derived(data?.generatedSets.some((item) => ["pending", "running"].includes(item.state)) ?? false);
@@ -157,7 +157,7 @@
       providerDefinitions = schemaResult.value.providers;
     if (accountsResult.status === "fulfilled") {
       providerAccounts = accountsResult.value.accounts;
-      providerManagementMode = accountsResult.value.managementMode;
+      listenersCanConnectOwnAccounts = accountsResult.value.listenersCanConnectOwnAccounts ?? true;
     }
     audioMuseSetupLoading = false;
   }
@@ -588,6 +588,7 @@
 <ConnectSourceDialog
   bind:open={audioMuseConnectionOpen}
   providers={providerDefinitions}
+  users={[]}
   {administrator}
   account={audioMuseAccount}
   initialProviderId="audiomuse-ai"

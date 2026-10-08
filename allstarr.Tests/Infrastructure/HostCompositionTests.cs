@@ -198,13 +198,12 @@ public sealed class HostCompositionTests
     }
 
     [Theory]
-    [InlineData("AdminManaged")]
-    [InlineData("UserManaged")]
-    [InlineData("Hybrid")]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task NonAdministratorSchema_ExposesOnlyReadyAccountSelfService(
-        string managementMode)
+        bool allowConnections)
     {
-        using var factory = new AllstarrFactory("Jellyfin", managementMode);
+        using var factory = new AllstarrFactory("Jellyfin", allowConnections);
         using var scope = factory.Services.CreateScope();
         var controller = ActivatorUtilities.CreateInstance<AdminUiController>(scope.ServiceProvider);
         controller.ControllerContext = Context(administrator: false);
@@ -212,7 +211,7 @@ public sealed class HostCompositionTests
         var result = Assert.IsType<OkObjectResult>(await controller.GetSchema());
         var schema = Assert.IsType<AdminUiSchemaResponse>(result.Value);
 
-        Assert.Equal(managementMode, schema.ProviderAccountManagementMode);
+        Assert.Equal(allowConnections, schema.ListenersCanConnectOwnAccounts);
         Assert.Equal(["sources", "settings"], schema.Routes.Select(route => route.Id));
         Assert.All(schema.Providers, provider =>
         {
@@ -300,7 +299,7 @@ public sealed class HostCompositionTests
                 ProviderOrigin.Extension, "1", "1.0",
                 [new ProviderCapabilityDescriptor(ProviderCapabilityKind.Metadata,
                     ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.Optional, "1.0",
-                    ["searchTracks", "getTrack"], [ProviderAccountScope.User])],
+                    ["searchTracks", "getTrack"], [ProviderAccountScope.Personal])],
                 new ProviderPermissionDescriptor(), entryPoint: "index.js"),
             [new FixtureExtensionMetadata()]));
         var controller = ActivatorUtilities.CreateInstance<AdminUiController>(scope.ServiceProvider);
@@ -461,7 +460,7 @@ public sealed class HostCompositionTests
                 ProviderAccountRequirement.Required,
                 compatibilityVersion: "1",
                 hooks: ["getUserPlaylists", "getPlaylistTracks"],
-                allowedAccountScopes: [ProviderAccountScope.User]),
+                allowedAccountScopes: [ProviderAccountScope.Personal]),
             new ProviderCapabilityDescriptor(
                 ProviderCapabilityKind.Streaming,
                 ProviderCapabilitySupportState.Supported,
@@ -494,7 +493,7 @@ public sealed class HostCompositionTests
     private sealed class AllstarrFactory : WebApplicationFactory<Program>
     {
         private readonly string _backend;
-        private readonly string _providerAccountManagementMode;
+        private readonly bool _allowConnections;
         private readonly string _releaseProfile;
         private readonly EffectiveProviderPolicySnapshot? _effectivePolicy;
         private readonly string _extensionDirectory = Path.Combine(
@@ -505,12 +504,12 @@ public sealed class HostCompositionTests
 
         public AllstarrFactory(
             string backend,
-            string providerAccountManagementMode = "Hybrid",
+            bool allowConnections = true,
             string releaseProfile = "core",
             EffectiveProviderPolicySnapshot? effectivePolicy = null)
         {
             _backend = backend;
-            _providerAccountManagementMode = providerAccountManagementMode;
+            _allowConnections = allowConnections;
             _releaseProfile = releaseProfile;
             _effectivePolicy = effectivePolicy;
         }
@@ -522,15 +521,15 @@ public sealed class HostCompositionTests
             builder.UseSetting("Backend:Type", _backend);
             builder.UseSetting("Release:Profile", _releaseProfile);
             builder.UseSetting(
-                "ProviderAccounts:ManagementMode",
-                _providerAccountManagementMode);
+                "ProviderAccounts:ListenersCanConnectOwnAccounts",
+                _allowConnections.ToString());
             builder.ConfigureAppConfiguration((_, configuration) =>
             {
                 configuration.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["Backend:Type"] = _backend,
                     ["Release:Profile"] = _releaseProfile,
-                    ["ProviderAccounts:ManagementMode"] = _providerAccountManagementMode,
+                    ["ProviderAccounts:ListenersCanConnectOwnAccounts"] = _allowConnections.ToString(),
                     ["SpotifyApi:Enabled"] = "false",
                     ["SpotifyImport:Enabled"] = "false",
                     ["Extensions:Directory"] = _extensionDirectory,

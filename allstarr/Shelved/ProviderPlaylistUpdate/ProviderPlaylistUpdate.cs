@@ -397,7 +397,7 @@ public sealed class ProviderPlaylistUpdateService(
             new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, false),
             ProviderExplicitContentPolicy.Allow,
             allowFallback: false,
-            allowSharedAccount: account.Scope == ProviderAccountScope.Global,
+            allowSharedAccount: account.Scope == ProviderAccountScope.Shared,
             allowManagedDownloads: false,
             allowedProviderIds: [link.SourceProviderId]);
         var plan = await providerRouter.PlanAsync<IProviderPlaylistCapability>(new ProviderRouteRequest(
@@ -444,22 +444,9 @@ public sealed class ProviderPlaylistUpdateService(
         PlaylistLinkRecord link,
         ProviderAccountRecord account) =>
         account.Enabled && account.ProviderId == link.SourceProviderId &&
-        account.Scope switch
-        {
-            ProviderAccountScope.User =>
-                account.TenantId == link.TenantId &&
-                account.OwnerUserId == link.OwnerUserId &&
-                account.LibraryScopeId == null,
-            ProviderAccountScope.Library =>
-                account.TenantId == link.TenantId &&
-                account.OwnerUserId == null &&
-                account.LibraryScopeId == link.LibraryScopeId,
-            ProviderAccountScope.Global =>
-                account.TenantId == null &&
-                account.OwnerUserId == null &&
-                account.LibraryScopeId == null,
-            _ => false
-        };
+        (account.OwnerUserId.HasValue
+            ? account.TenantId == link.TenantId && account.OwnerUserId == link.OwnerUserId
+            : account.TenantId == null);
 
     private static bool MatchesRoutedAccount(
         ProviderAccountRecord account,
@@ -471,7 +458,6 @@ public sealed class ProviderPlaylistUpdateService(
         routed.Revision == account.Revision &&
         routed.TenantId == account.TenantId &&
         routed.OwnerUserId == account.OwnerUserId &&
-        routed.LibraryScopeId == account.LibraryScopeId &&
         routed.SecretReferenceId == account.SecretReferenceId;
 
     private async Task<ProviderPlaylistSourceState> ReadSourceAsync(

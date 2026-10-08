@@ -47,7 +47,6 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
                 OwnerUserId = _userId,
                 ProviderId = "spotify",
                 DisplayName = "Personal Spotify",
-                Scope = ProviderAccountScope.User,
                 Enabled = true,
                 CreatedAt = _now,
                 UpdatedAt = _now

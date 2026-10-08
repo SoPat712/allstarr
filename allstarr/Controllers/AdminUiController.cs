@@ -34,7 +34,7 @@ public class AdminUiController : ControllerBase
     private readonly MusicBrainzSettings _musicBrainzSettings;
     private readonly ExtensionManager _extensionManager;
     private readonly ProviderStatusManager _providerStatusManager;
-    private readonly ProviderAccountManagementMode _providerAccountManagementMode;
+    private readonly ProviderAccountOptions _providerAccountOptions;
     private readonly IProviderRegistry? _providerRegistry;
     private readonly IProtocolProviderGateway? _providerGateway;
     private readonly IEffectiveProviderPolicyResolver? _effectivePolicies;
@@ -49,7 +49,7 @@ public class AdminUiController : ControllerBase
         IOptions<MusicBrainzSettings> musicBrainzSettings,
         ExtensionManager extensionManager,
         ProviderStatusManager providerStatusManager,
-        ProviderAccountManagementOptions providerAccountManagementOptions,
+        ProviderAccountOptions providerAccountManagementOptions,
         ITrackMatchRepository trackMatches,
         IProviderRegistry? providerRegistry = null,
         IProtocolProviderGateway? providerGateway = null,
@@ -63,7 +63,7 @@ public class AdminUiController : ControllerBase
         _musicBrainzSettings = musicBrainzSettings.Value;
         _extensionManager = extensionManager;
         _providerStatusManager = providerStatusManager;
-        _providerAccountManagementMode = providerAccountManagementOptions.ParseManagementMode();
+        _providerAccountOptions = providerAccountManagementOptions;
         _trackMatches = trackMatches;
         _providerRegistry = providerRegistry;
         _providerGateway = providerGateway;
@@ -81,7 +81,7 @@ public class AdminUiController : ControllerBase
             return Ok(new AdminUiSchemaResponse
             {
                 ActiveBackend = activeBackend,
-                ProviderAccountManagementMode = _providerAccountManagementMode.ToString(),
+                ListenersCanConnectOwnAccounts = _providerAccountOptions.ListenersCanConnectOwnAccounts,
                 Providers = BuildProviders(disabledProviders).Select(item => new AdminUiProvider
                 {
                     Id = item.Id,
@@ -110,7 +110,7 @@ public class AdminUiController : ControllerBase
         var schema = new AdminUiSchemaResponse
         {
             ActiveBackend = activeBackend,
-            ProviderAccountManagementMode = _providerAccountManagementMode.ToString(),
+            ListenersCanConnectOwnAccounts = _providerAccountOptions.ListenersCanConnectOwnAccounts,
             Routes = BuildRoutes(),
             Backends = BuildBackends(),
             Providers = BuildProviders(disabledProviders),
@@ -1453,6 +1453,9 @@ public class AdminUiController : ControllerBase
                 "audio.quality",
                 AudioQualityPolicy.Steps.ToList(),
                 helpText: "Sets the maximum quality Allstarr uses for playback and downloads. A listener's bandwidth limit can lower playback quality."),
+            Field("LISTENERS_CAN_CONNECT_OWN_ACCOUNTS", "Listeners can connect their own accounts", "boolean",
+                "providerAccounts.listenersCanConnectOwnAccounts",
+                helpText: "Allows listeners to add Personal provider accounts. Existing accounts remain usable and removable when turned off."),
             DeploymentField("BACKEND_TYPE", "Backend", "select", "backendType", ["Jellyfin", "Subsonic"]),
             Field("STORAGE_MODE", "Storage mode", "select", "library.storageMode", ["Permanent", "Cache"]),
             Field("DOWNLOAD_MODE", "Download mode", "select", "library.downloadMode", ["Track", "Album"]),

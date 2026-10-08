@@ -54,7 +54,6 @@ public sealed class ManualAuthorityIntegrationTests
                 OwnerUserId = userId,
                 ProviderId = "spotify",
                 DisplayName = "Spotify",
-                Scope = ProviderAccountScope.User,
                 Enabled = true,
                 CreatedAt = now,
                 UpdatedAt = now
@@ -143,7 +142,7 @@ public sealed class ManualAuthorityIntegrationTests
         var service = new TrackMatchCommandService(
             factory,
             new TrackMatchDecisionEngine(),
-            new ProviderAccountResolver(factory, new ProviderPolicyOptions()),
+            new ProviderAccountResolver(factory),
             new Clock(now.AddMinutes(1)));
         var actor = new TrackMatchActor(tenantId, userId, true);
 

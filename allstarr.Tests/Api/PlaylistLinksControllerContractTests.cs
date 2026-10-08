@@ -207,14 +207,14 @@ public sealed class PlaylistLinksControllerContractTests
     }
 
     [Fact]
-    public void SourceDiscovery_ExcludesNonOperationalProvidersAndAllowsAdministratorsToManageGlobalAccounts()
+    public void SourceDiscovery_ExcludesNonOperationalProvidersAndUsesPersonalOrSharedAccounts()
     {
         var source = File.ReadAllText(FindRepositoryFile(
             "allstarr", "Controllers", "PlaylistLinksController.cs"));
 
         Assert.Contains("includeNonOperational: false", source, StringComparison.Ordinal);
-        Assert.Contains("providerPolicy.AllowGlobalPersonalAccounts", source, StringComparison.Ordinal);
-        Assert.Contains("providerPolicy.AllowsGlobalAccount(item.CreatedByUserId", source, StringComparison.Ordinal);
+        Assert.Contains(".AvailableTo(session.TenantId, session.AllstarrUserId)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("AllowsGlobalAccount", source, StringComparison.Ordinal);
         Assert.Contains("session.IsAdministrator", source, StringComparison.Ordinal);
         Assert.Contains("Response.Headers.RetryAfter", source, StringComparison.Ordinal);
         Assert.Contains("retryAfterSeconds", source, StringComparison.Ordinal);

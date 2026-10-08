@@ -14,13 +14,14 @@ import {
   sourceTimingLabel,
 } from "./sources";
 
-const account = (scope: ProviderAccount["scope"] = "User"): ProviderAccount => ({
+const account = (scope: ProviderAccount["scope"] = "Personal"): ProviderAccount => ({
   id: "account-1",
   providerId: "future-extension",
   displayName: "My source",
   scope,
   enabled: true,
   revision: 1,
+  canManage: true,
   secret: { configured: true, revoked: false },
   createdAt: "2026-07-27T00:00:00Z",
   updatedAt: "2026-07-27T00:00:00Z",
@@ -85,10 +86,9 @@ describe("source presentation", () => {
   });
 
   it("labels audiences without revealing credentials", () => {
-    expect(audienceLabel({ ...account("Global") })).toBe("Everyone");
-    expect(audienceLabel({ ...account(), ownerDisplayName: "Alex" })).toBe("Only Alex");
-    expect(audienceLabel({ ...account("Library"), libraryScopeId: "music" }))
-      .toBe("Library music");
+    expect(audienceLabel({ ...account("Shared") })).toBe("Shared");
+    expect(audienceLabel({ ...account(), ownerDisplayName: "Alex" })).toBe("Personal · Alex");
+    expect(audienceLabel({ ...account() })).toBe("Personal · you");
   });
 
   it("uses schema-defined extension account settings", () => {

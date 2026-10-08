@@ -240,7 +240,6 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
                 DisplayName = "Spotify",
                 TenantId = _tenantId,
                 OwnerUserId = _userId,
-                Scope = ProviderAccountScope.User,
                 Enabled = true,
                 CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = DateTimeOffset.UtcNow,
@@ -376,12 +375,12 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
             Assert.Equal("legacy-env-import", setting.Source);
             var accounts = await db.ProviderAccounts.OrderBy(item => item.ProviderId).ToListAsync();
             Assert.Equal(4, accounts.Count);
-            Assert.All(accounts.Where(account => account.Scope == ProviderAccountScope.Global), account => Assert.False(account.Enabled));
+            Assert.All(accounts.Where(account => account.Scope == ProviderAccountScope.Shared), account => Assert.False(account.Enabled));
             var listenBrainz = Assert.Single(accounts, account => account.ProviderId == "listenbrainz");
             Assert.Equal("My ListenBrainz account", listenBrainz.DisplayName);
             Assert.Equal("Shared Spotify account", Assert.Single(accounts, account => account.ProviderId == "spotify").DisplayName);
             Assert.True(listenBrainz.Enabled);
-            Assert.Equal(ProviderAccountScope.User, listenBrainz.Scope);
+            Assert.Equal(ProviderAccountScope.Personal, listenBrainz.Scope);
             Assert.Equal(_tenantId, listenBrainz.TenantId);
             Assert.Equal(_userId, listenBrainz.OwnerUserId);
             Assert.All(accounts, account => Assert.NotNull(account.SecretReferenceId));
@@ -450,7 +449,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         Assert.DoesNotContain("lastfm-session", JsonSerializer.Serialize(result), StringComparison.Ordinal);
         await using var db = await _factory.CreateDbContextAsync();
         var account = Assert.Single(await db.ProviderAccounts.ToListAsync());
-        Assert.Equal(ProviderAccountScope.User, account.Scope);
+        Assert.Equal(ProviderAccountScope.Personal, account.Scope);
         Assert.Equal(_tenantId, account.TenantId);
         Assert.Equal(_userId, account.OwnerUserId);
         Assert.True(account.Enabled);
@@ -602,7 +601,6 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
                 Id = Guid.CreateVersion7(),
                 ProviderId = "deezer",
                 DisplayName = "Existing",
-                Scope = ProviderAccountScope.Global,
                 Enabled = true,
                 CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = DateTimeOffset.UtcNow

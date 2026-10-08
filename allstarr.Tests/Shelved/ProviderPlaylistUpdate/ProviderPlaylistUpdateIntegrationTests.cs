@@ -19,8 +19,8 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
     private readonly Guid _owner = Guid.CreateVersion7();
     private readonly Guid _otherOwner = Guid.CreateVersion7();
     private readonly Guid _account = Guid.CreateVersion7();
-    private readonly Guid _globalAccount = Guid.CreateVersion7();
-    private readonly Guid _libraryAccount = Guid.CreateVersion7();
+    private readonly Guid _sharedAccount = Guid.CreateVersion7();
+    private readonly Guid _otherAccount = Guid.CreateVersion7();
     private readonly Guid _link = Guid.CreateVersion7();
     private readonly Guid _backendIdentity = Guid.CreateVersion7();
     private readonly Guid _canonicalA = Guid.CreateVersion7();
@@ -41,7 +41,7 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
         _target = new();
         var registry = new ProviderRegistry([Registration(_provider)]);
         _router = new(registry, AccountContext(
-            _account, ProviderAccountScope.User, _tenant, _owner, null));
+            _account, ProviderAccountScope.Personal, _tenant, _owner, null));
         _clock = new(_now);
         _service = new(
             _factory,
@@ -71,9 +71,9 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
             LastSeenAt = _now
         });
         db.ProviderAccounts.AddRange(
-            Account(_account, ProviderAccountScope.User, _tenant, _owner, null),
-            Account(_libraryAccount, ProviderAccountScope.Library, _tenant, null, "other-library"),
-            Account(_globalAccount, ProviderAccountScope.Global, null, null, null));
+            Account(_account, ProviderAccountScope.Personal, _tenant, _owner, null),
+            Account(_otherAccount, ProviderAccountScope.Personal, _tenant, _otherOwner, null),
+            Account(_sharedAccount, ProviderAccountScope.Shared, null, null, null));
         db.CanonicalRecordings.AddRange(
             Canonical(_canonicalA),
             Canonical(_canonicalB));
@@ -114,11 +114,11 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
             var account = await db.ProviderAccounts.SingleAsync(item => item.Id == _account);
             account.OwnerUserId = _owner;
             var link = await db.PlaylistLinks.SingleAsync(item => item.Id == _link);
-            link.ProviderAccountId = _libraryAccount;
+            link.ProviderAccountId = _otherAccount;
             await db.SaveChangesAsync();
         }
         await AssertDeniedAsync(
-            () => _service.PreviewAsync(Actor(_tenant, _owner), _link, "music", "account-library", default),
+            () => _service.PreviewAsync(Actor(_tenant, _owner), _link, "music", "foreign-account", default),
             typeof(ProviderPlaylistUpdateException), "provider-account-unavailable");
         await using (var db = await _factory.CreateDbContextAsync())
         {
@@ -128,12 +128,12 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
         }
 
         _router.Account = AccountContext(
-            _account, ProviderAccountScope.User, _tenant, _owner, null, revision: 1);
+            _account, ProviderAccountScope.Personal, _tenant, _owner, null, revision: 1);
         await AssertDeniedAsync(
             () => _service.PreviewAsync(Actor(_tenant, _owner), _link, "music", "stale-route-account", default),
             typeof(ProviderPlaylistUpdateException), "provider-route-unavailable");
         _router.Account = AccountContext(
-            _account, ProviderAccountScope.User, _tenant, _owner, null);
+            _account, ProviderAccountScope.Personal, _tenant, _owner, null);
 
         _router.LibraryScopeOverride = "other-library";
         await AssertDeniedAsync(
@@ -149,34 +149,26 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Global_and_library_accounts_remain_supported_for_preview_and_apply()
+    public async Task Shared_and_personal_accounts_support_preview_and_apply()
     {
-        await SetLinkAccountAsync(_globalAccount);
+        await SetLinkAccountAsync(_sharedAccount);
 
         var plan = await _service.PreviewAsync(
-            Actor(_tenant, _owner), _link, "music", "global-account", default);
+            Actor(_tenant, _owner), _link, "music", "shared-account", default);
         var result = await _service.ApplyAsync(plan, default);
 
         Assert.True(result.Applied);
         Assert.Equal(1, _provider.MutationCalls);
-        Assert.Equal(_globalAccount, _router.Account.AccountId);
+        Assert.Equal(_sharedAccount, _router.Account.AccountId);
 
         _provider.ResetSource();
-        await using (var db = await _factory.CreateDbContextAsync())
-        {
-            var account = await db.ProviderAccounts.SingleAsync(item => item.Id == _libraryAccount);
-            account.LibraryScopeId = "music";
-            await db.SaveChangesAsync();
-        }
-        await SetLinkAccountAsync(_libraryAccount);
-
+        await SetLinkAccountAsync(_account);
         plan = await _service.PreviewAsync(
-            Actor(_tenant, _owner), _link, "music", "library-account", default);
+            Actor(_tenant, _owner), _link, "music", "personal-account", default);
         result = await _service.ApplyAsync(plan, default);
-
         Assert.True(result.Applied);
         Assert.Equal(2, _provider.MutationCalls);
-        Assert.Equal(_libraryAccount, _router.Account.AccountId);
+        Assert.Equal(_account, _router.Account.AccountId);
     }
 
     [Fact]
@@ -347,7 +339,7 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
             account.Scope,
             account.TenantId,
             account.OwnerUserId,
-            account.LibraryScopeId,
+            null,
             account.Revision);
     }
 
@@ -431,8 +423,6 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
             OwnerUserId = owner,
             ProviderId = "fixture",
             DisplayName = scope.ToString(),
-            Scope = scope,
-            LibraryScopeId = library,
             Enabled = true,
             CreatedAt = _now,
             UpdatedAt = _now
@@ -531,7 +521,7 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
                 ProviderAccountRequirement.Required,
                 "1.0",
                 ["getUserPlaylists", "getPlaylistTracks", "mutatePlaylist"],
-                [ProviderAccountScope.Global, ProviderAccountScope.User, ProviderAccountScope.Library])],
+                [ProviderAccountScope.Shared, ProviderAccountScope.Personal])],
             new ProviderPermissionDescriptor()),
         [capability]);
 
@@ -808,7 +798,7 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
                             ProviderAccountRequirement.Required,
                             "1.0",
                             ["mutatePlaylist"],
-                            [ProviderAccountScope.User])],
+                            [ProviderAccountScope.Personal])],
                         new ProviderPermissionDescriptor()),
                     Implementation = wrong
                 };

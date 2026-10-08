@@ -132,7 +132,9 @@ public sealed class ProviderRouter(
                             provider.Id,
                             request.Capability,
                             state.RequestedAccountId,
-                            request.Library?.ScopeId),
+                            request.Library?.ScopeId,
+                            descriptor.AllowedAccountScopes,
+                            request.Policy.AllowSharedAccount),
                         request.CancellationToken);
             }
             catch (UnauthorizedAccessException)
@@ -359,7 +361,8 @@ public sealed class ProviderRouter(
                     source.ProviderId,
                     request.Capability,
                     state.RequestedAccountId,
-                    request.Library?.ScopeId),
+                    request.Library?.ScopeId,
+                    AllowSharedAccount: request.Policy.AllowSharedAccount),
                 request.CancellationToken);
         }
         catch (UnauthorizedAccessException)

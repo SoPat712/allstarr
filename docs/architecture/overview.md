@@ -69,7 +69,9 @@ A **provider account** is an encrypted credential and access policy for a source
 
 Built-in and extension capabilities meet at `ProviderRegistry`. Extension IDs may not replace reserved built-in provider IDs.
 
-`ProviderAccountOwnership.OwnedBy` is the shared management predicate: a private account belongs to its tenant/user owner; a global account remains managed by its recorded creator. Global records retain null tenant/user/library scope, so sharing needs no duplicate account or secret store. Audience changes rebind the encrypted secret in the same database transaction and invalidate account discovery caches. Routing distinguishes management from consumption: eligible shared capabilities may serve other users, but personal capabilities stay creator-only unless explicit operator policy permits sharing. The owner’s private account is preferred, then their own shared account, before other eligible library/global accounts. Administrator-assigned private accounts cannot be reshared by the recipient or reclaimed by the original creator.
+Account ownership is authoritative: a non-null `OwnerUserId` means Personal; null means Shared. The public scope is derived rather than stored independently. Creator identity is audit provenance and never grants access. Administrators manage account records; routing still selects only the requesting user’s Personal account or a Shared account. Eligible Personal accounts precede Shared accounts, with deterministic ordering within each audience. Library IDs do not scope accounts.
+
+Audience changes rebind the encrypted secret in the same database transaction and invalidate account discovery caches. Credential leases verify the current account owner, provider, revision, enabled state, secret reference and purpose before decrypting. The household connection toggle controls listener account creation without disabling existing owner management or use.
 
 ## Native-server compatibility
 

@@ -403,7 +403,7 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
         var forgedSnapshot = new ProviderAccountContext(
             account.Id,
             account.ProviderId,
-            ProviderAccountScope.User,
+            ProviderAccountScope.Personal,
             account.Revision,
             tenantId: _tenantA,
             ownerUserId: _userB);
@@ -645,7 +645,6 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
             OwnerUserId = userId,
             ProviderId = providerId,
             DisplayName = $"{providerId} personal",
-            Scope = ProviderAccountScope.User,
             Enabled = true,
             CreatedAt = _clock.UtcNow,
             UpdatedAt = _clock.UtcNow
@@ -672,16 +671,14 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
                 enabled: account.Enabled,
                 tenantId: account.TenantId,
                 ownerUserId: account.OwnerUserId,
-                libraryScopeId: account.LibraryScopeId));
+                libraryScopeId: null));
 
     private ProviderExecutionContext Context(
         ProviderActorContext actor,
         string providerId,
         ProviderAccountContext? account)
     {
-        var library = account?.Scope == ProviderAccountScope.Library
-            ? new ProviderLibraryContext(actor.TenantId, account.LibraryScopeId!)
-            : null;
+        ProviderLibraryContext? library = null;
         return new ProviderExecutionContext(
             actor,
             providerId,

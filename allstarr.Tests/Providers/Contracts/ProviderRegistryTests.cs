@@ -64,7 +64,7 @@ public sealed class ProviderRegistryTests
             "sonic-provider",
             capabilities: [new(ProviderCapabilityKind.Intelligence,
                 ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.Required,
-                "1.0", hooks, [ProviderAccountScope.User])],
+                "1.0", hooks, [ProviderAccountScope.Personal])],
             origin: ProviderOrigin.Extension,
             entryPoint: "index.js");
 
@@ -205,7 +205,7 @@ public sealed class ProviderRegistryTests
                     ProviderAccountRequirement.Required,
                     compatibilityVersion: "1.0",
                     hooks: ["getUserPlaylists", "getPlaylistTracks", "mutatePlaylist"],
-                    allowedAccountScopes: [ProviderAccountScope.User])
+                    allowedAccountScopes: [ProviderAccountScope.Personal])
             ]);
 
         var exception = Assert.Throws<InvalidOperationException>(() =>

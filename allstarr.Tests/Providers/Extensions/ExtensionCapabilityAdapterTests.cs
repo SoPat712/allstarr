@@ -31,7 +31,7 @@ public sealed class ExtensionCapabilityAdapterTests
         var streaming = Assert.Single(playableManifest.Capabilities,
             item => item.Kind == ProviderCapabilityKind.Streaming);
         Assert.True(streaming.AccountRequired);
-        Assert.Contains(ProviderAccountScope.User, streaming.AccountScopes);
+        Assert.Contains(ProviderAccountScope.Personal, streaming.AccountScopes);
     }
 
     [Fact]
@@ -533,8 +533,8 @@ public sealed class ExtensionCapabilityAdapterTests
     {
         var manifest = new ExtensionSdkManifest("fixture-extension", "Fixture", "1.0.0", "1", "index.js",
         [
-            new ExtensionSdkCapability(ProviderCapabilityKind.Metadata, ["searchArtists"], [ProviderAccountScope.User]),
-            new ExtensionSdkCapability(ProviderCapabilityKind.Health, ["probeMetadata"], [ProviderAccountScope.User])
+            new ExtensionSdkCapability(ProviderCapabilityKind.Metadata, ["searchArtists"], [ProviderAccountScope.Personal]),
+            new ExtensionSdkCapability(ProviderCapabilityKind.Health, ["probeMetadata"], [ProviderAccountScope.Personal])
         ], []);
         var sandbox = Sandbox(manifest, """
             let active = false;
@@ -701,7 +701,7 @@ public sealed class ExtensionCapabilityAdapterTests
         var manifest = new ExtensionSdkManifest(
             "fixture-extension", "Fixture", "1.0.0", "1", "index.js",
             [new ExtensionSdkCapability(ProviderCapabilityKind.Playlist,
-                ["getUserPlaylists", "resolveArtwork"], [ProviderAccountScope.User])],
+                ["getUserPlaylists", "resolveArtwork"], [ProviderAccountScope.Personal])],
             [new ExtensionPermissionRequest(
                 ExtensionPermissionKind.Network, "https://images.example.test/", true)]);
         const string script = """
@@ -763,8 +763,8 @@ public sealed class ExtensionCapabilityAdapterTests
             "search", "findPath", "blend", "getMap", "disconnect"];
         var manifest = new ExtensionSdkManifest("fixture-extension", "Fixture", "1.0.0", "1", "index.js",
         [
-            new ExtensionSdkCapability(ProviderCapabilityKind.Intelligence, hooks, [ProviderAccountScope.User]),
-            new ExtensionSdkCapability(ProviderCapabilityKind.Health, ["probeIntelligence"], [ProviderAccountScope.User])
+            new ExtensionSdkCapability(ProviderCapabilityKind.Intelligence, hooks, [ProviderAccountScope.Personal]),
+            new ExtensionSdkCapability(ProviderCapabilityKind.Health, ["probeIntelligence"], [ProviderAccountScope.Personal])
         ], []);
         var sandbox = Sandbox(manifest, """
             const track = { trackId: 'track-1', title: 'Track', artist: 'Artist', album: 'Album',
@@ -813,7 +813,7 @@ public sealed class ExtensionCapabilityAdapterTests
             "search", "findPath", "blend", "getMap"];
         var manifest = new ExtensionSdkManifest("fixture-extension", "Fixture", "1.0.0", "1", "index.js",
         [
-            new ExtensionSdkCapability(ProviderCapabilityKind.Intelligence, hooks, [ProviderAccountScope.User])
+            new ExtensionSdkCapability(ProviderCapabilityKind.Intelligence, hooks, [ProviderAccountScope.Personal])
         ], []);
         var sandbox = Sandbox(manifest, """
             function tracks(count) {
@@ -957,7 +957,7 @@ public sealed class ExtensionCapabilityAdapterTests
 
     private static ExtensionSdkManifest Manifest(ProviderCapabilityKind kind, params string[] hooks) => new(
         "fixture-extension", "Fixture", "1.0.0", "1", "index.js",
-        [new ExtensionSdkCapability(kind, hooks, [ProviderAccountScope.User])], []);
+        [new ExtensionSdkCapability(kind, hooks, [ProviderAccountScope.Personal])], []);
 
     private static ExtensionSandbox Sandbox(
         ExtensionSdkManifest manifest,
@@ -969,7 +969,7 @@ public sealed class ExtensionCapabilityAdapterTests
     private static ExtensionSdkManifest DownloadManifest() => new(
         "fixture-extension", "Fixture", "1.0.0", "1", "index.js",
         [new ExtensionSdkCapability(ProviderCapabilityKind.Download, ["download"],
-            [ProviderAccountScope.User], AccountRequired: false)],
+            [ProviderAccountScope.Personal], AccountRequired: false)],
         [new ExtensionPermissionRequest(ExtensionPermissionKind.Network, "https://media.example.test/", true)]);
 
     private static DownloadFixtureState DownloadFixture(byte[] bytes, long maximumBytes, string artifactId)
@@ -1014,7 +1014,7 @@ public sealed class ExtensionCapabilityAdapterTests
         var actor = new ProviderActorContext(Guid.CreateVersion7(), ProviderActorKind.User, Guid.CreateVersion7(),
             new ProviderBackendPrincipal("jellyfin", "fixture", "user"));
         var account = includeAccount
-            ? new ProviderAccountContext(Guid.CreateVersion7(), providerId, ProviderAccountScope.User, 1,
+            ? new ProviderAccountContext(Guid.CreateVersion7(), providerId, ProviderAccountScope.Personal, 1,
                 tenantId: actor.TenantId, ownerUserId: actor.EffectiveUserId)
             : null;
         return new ProviderExecutionContext(actor, providerId, account, null,

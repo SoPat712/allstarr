@@ -247,7 +247,6 @@ public sealed class DurableProviderHealthStoreTests : IAsyncLifetime
             Id = accountId,
             ProviderId = providerId,
             DisplayName = $"Fixture {displayName}",
-            Scope = ProviderAccountScope.Global,
             Enabled = true,
             CreatedAt = _clock.UtcNow,
             UpdatedAt = _clock.UtcNow

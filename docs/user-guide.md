@@ -58,11 +58,11 @@ Subsonic users may see **Connect background access** the first time they open In
 
 A Service is an implementation. An Account is a credential and access policy for that Service. An Extension is an optional package that can add Services. Routing decides which ready Service/account pair is tried for a capability. These are related but not interchangeable settings.
 
-Ordinary Jellyfin and Subsonic users can choose **Private** (the default) or explicitly confirm **Global** when connecting their own account. Global allows other listeners to use eligible provider capabilities under the server's policy; it does not reveal the credential or give them control of the connection. Personal playlists, favorites, and scrobbling remain restricted by default, while the person who connected the account keeps access to their own personal capabilities.
+Listeners connect **Personal** accounts, which only they may use and manage. Administrators can assign Personal accounts to a user or create **Shared** accounts for the household. A listener’s eligible Personal account is preferred over Shared accounts. Administrators manage Shared accounts; listeners can see their availability without viewing credentials or changing them.
 
-To change this later, open the account's **Access → Edit access** dialog. The person who connected it can share it, make it private again, disable it, or remove it. An account privately assigned to you by an administrator needs administrator help to change its audience. Making an account private stops new shared account selections; it cannot retract audio already delivered. Provider limits may be consumed by shared use.
+Administrators can change an account’s audience in **Access → Edit access**. Sharing makes the account available for supported capabilities, including playlists or scrobbling when supported, and may consume the provider’s limits. Making it Personal stops new shared selections; it cannot retract audio already delivered.
 
-Server policy still applies: **AdminManaged** disables listener self-service; **UserManaged** limits everyone, including administrators, to their own accounts; **Hybrid** allows both owner self-service and administrator management. Connection probes remain administrator-only, so listeners see **Save connection**, not an unavailable “Save and test” action. See [provider account policy](operations/configuration.md#provider-accounts).
+In Settings, **Listeners can connect their own accounts** defaults to on. Turning it off prevents new listener connections while preserving use, configuration and removal of their existing accounts. Connection probes remain administrator-only, so listeners see **Save connection**. See [provider account policy](operations/configuration.md#provider-accounts).
 
 ### Activity
 

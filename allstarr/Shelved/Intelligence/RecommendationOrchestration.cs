@@ -398,9 +398,8 @@ public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbCont
                 (musicBrainzIds.Contains(item.MusicBrainzRecordingId) || isrcs.Contains(item.Isrc)))
             .Select(item => new { item.Id, item.MusicBrainzRecordingId, item.Isrc }).ToListAsync(cancellationToken);
         var validAccounts = await db.ProviderAccounts.AsNoTracking().Where(item => item.Enabled &&
-                item.TenantId == run.TenantId &&
-                (item.Scope == ProviderAccountScope.User && item.OwnerUserId == run.OwnerUserId ||
-                 item.Scope == ProviderAccountScope.Library && item.LibraryScopeId == run.LibraryScopeId))
+                (item.TenantId == run.TenantId && item.OwnerUserId == run.OwnerUserId ||
+                 item.TenantId == null && item.OwnerUserId == null))
             .Select(item => new { item.Id, item.ProviderId }).ToListAsync(cancellationToken);
 
         return candidates.Select(candidate =>

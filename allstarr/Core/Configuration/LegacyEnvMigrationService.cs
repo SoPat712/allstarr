@@ -174,14 +174,14 @@ public sealed class LegacyEnvMigrationService
                 cancellationToken);
             await using var db = await _factory.CreateDbContextAsync(cancellationToken);
             existingProviders = (await db.ProviderAccounts.AsNoTracking()
-                    .Where(item => item.Scope == ProviderAccountScope.Global && item.TenantId == null)
+                    .Where(item => item.OwnerUserId == null && item.TenantId == null)
                     .Select(item => item.ProviderId)
                     .ToListAsync(cancellationToken))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (actor.ActorUserId.HasValue)
             {
                 existingUserProviders = (await db.ProviderAccounts.AsNoTracking()
-                        .Where(item => item.Scope == ProviderAccountScope.User &&
+                        .Where(item => item.OwnerUserId != null &&
                                        item.TenantId == tenantId.Value &&
                                        item.OwnerUserId == actor.ActorUserId.Value)
                         .Select(item => item.ProviderId)
@@ -537,7 +537,7 @@ public sealed class LegacyEnvMigrationService
                              item.Action == "create_disabled_if_missing"))
                 {
                     if (await db.ProviderAccounts.AnyAsync(item =>
-                            item.Scope == ProviderAccountScope.Global && item.TenantId == null &&
+                            item.OwnerUserId == null && item.TenantId == null &&
                             item.ProviderId == provider.ProviderId, cancellationToken))
                     {
                         throw new LegacyEnvMigrationException(
@@ -551,7 +551,6 @@ public sealed class LegacyEnvMigrationService
                         TenantId = null,
                         ProviderId = provider.ProviderId,
                         DisplayName = ImportedAccountName(provider.ProviderId, personal: false),
-                        Scope = ProviderAccountScope.Global,
                         Enabled = false,
                         CreatedAt = _clock.UtcNow,
                         UpdatedAt = _clock.UtcNow
@@ -593,7 +592,7 @@ public sealed class LegacyEnvMigrationService
                             "The administrator session is not linked to an Allstarr user.");
                     }
                     if (await db.ProviderAccounts.AnyAsync(item =>
-                            item.Scope == ProviderAccountScope.User &&
+                            item.OwnerUserId != null &&
                             item.TenantId == state.TenantId.Value &&
                             item.OwnerUserId == state.ActorUserId.Value &&
                             item.ProviderId == providerId, cancellationToken))
@@ -610,7 +609,6 @@ public sealed class LegacyEnvMigrationService
                         OwnerUserId = state.ActorUserId.Value,
                         ProviderId = providerId,
                         DisplayName = ImportedAccountName(providerId, personal: true),
-                        Scope = ProviderAccountScope.User,
                         Enabled = true,
                         CreatedAt = _clock.UtcNow,
                         UpdatedAt = _clock.UtcNow
@@ -638,7 +636,7 @@ public sealed class LegacyEnvMigrationService
 
                 var spotifyAccount = createdProviderRecords.SingleOrDefault(item => item.ProviderId == "spotify") ??
                                      await db.ProviderAccounts.SingleOrDefaultAsync(item =>
-                                         item.Scope == ProviderAccountScope.Global && item.TenantId == null &&
+                                         item.OwnerUserId == null && item.TenantId == null &&
                                          item.ProviderId == "spotify", cancellationToken);
                 var createdSchedules = new List<JobScheduleRecord>();
                 var createdPlaylistLinks = new List<PlaylistLinkRecord>();
@@ -963,9 +961,9 @@ public sealed class LegacyEnvMigrationService
 
         var accounts = await db.ProviderAccounts.AsNoTracking()
             .Where(item =>
-                item.Scope == ProviderAccountScope.Global && item.TenantId == null &&
+                item.OwnerUserId == null && item.TenantId == null &&
                 (item.ProviderId == "deezer" || item.ProviderId == "qobuz" || item.ProviderId == "spotify") ||
-                tenantId.HasValue && actorUserId.HasValue && item.Scope == ProviderAccountScope.User &&
+                tenantId.HasValue && actorUserId.HasValue && item.OwnerUserId != null &&
                 item.TenantId == tenantId.Value && item.OwnerUserId == actorUserId.Value &&
                 (item.ProviderId == "lastfm" || item.ProviderId == "listenbrainz"))
             .OrderBy(item => item.ProviderId).ThenBy(item => item.Id)

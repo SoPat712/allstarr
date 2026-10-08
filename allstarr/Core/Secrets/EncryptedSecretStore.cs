@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -193,6 +194,33 @@ public sealed class EncryptedSecretStore
             CryptographicOperations.ZeroMemory(plaintextCopy);
             ClearKeyRing(keyRing);
         }
+    }
+
+    public async Task<SecretLease> OpenProviderAccountAsync(
+        ProviderAccountContext account,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(account);
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var current = await context.ProviderAccounts.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == account.AccountId, cancellationToken);
+        if (current == null || !current.Enabled || !account.Enabled ||
+            current.ProviderId != account.ProviderId || current.Revision != account.Revision ||
+            current.TenantId != account.TenantId || current.OwnerUserId != account.OwnerUserId ||
+            current.Scope != account.Scope || account.LibraryScopeId != null ||
+            current.SecretReferenceId == null || current.SecretReferenceId != account.SecretReferenceId)
+            throw new UnauthorizedAccessException("The provider account authorization is no longer current.");
+
+        var purpose = $"provider-account:{current.ProviderId}:{current.Id:N}";
+        var referenceAllowed = await context.SecretReferences.AsNoTracking().AnyAsync(item =>
+            item.Id == current.SecretReferenceId && item.TenantId == current.TenantId &&
+            item.Purpose == purpose && item.RevokedAt == null, cancellationToken);
+        if (!referenceAllowed)
+            throw new UnauthorizedAccessException("The credential does not belong to the selected provider account.");
+
+        return await OpenAsync(current.SecretReferenceId.Value,
+            new SecretAccessContext(current.TenantId, AllowGlobal: current.OwnerUserId == null),
+            cancellationToken);
     }
 
     public async Task<SecretLease> OpenAsync(

@@ -64,7 +64,7 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         var account = new ProviderAccountContext(
             accountId,
             "qobuz",
-            ProviderAccountScope.User,
+            ProviderAccountScope.Personal,
             revision: 1,
             tenantId: tenantId,
             ownerUserId: userId);
@@ -245,6 +245,6 @@ public sealed class ProviderCtsDiagnosticRunnerTests
             requirement,
             "1",
             ["getStreamLease"],
-            requirement == ProviderAccountRequirement.None ? [] : [ProviderAccountScope.User])],
+            requirement == ProviderAccountRequirement.None ? [] : [ProviderAccountScope.Personal])],
         new ProviderPermissionDescriptor());
 }
