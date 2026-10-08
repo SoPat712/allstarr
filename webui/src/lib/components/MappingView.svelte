@@ -28,7 +28,7 @@
   import { manualMatchAuthority } from "$lib/matching-api";
   import MatchDialog from "$lib/components/MatchDialog.svelte";
   import BulkRematchDialog from "$lib/components/BulkRematchDialog.svelte";
-  import ArtworkSimilarity from "$lib/components/ArtworkSimilarity.svelte";
+  import ArtworkSimilarity from "$lib/shelved/ArtworkSimilarity.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import RouteError from "$lib/components/RouteError.svelte";

@@ -14,7 +14,7 @@
   import OperationConsole from "$lib/components/OperationConsole.svelte";
   import PlaylistSettingsDialog from "$lib/components/PlaylistSettingsDialog.svelte";
   import BulkRematchDialog from "$lib/components/BulkRematchDialog.svelte";
-  import PlaylistSourceUpdateDialog from "$lib/components/PlaylistSourceUpdateDialog.svelte";
+  import PlaylistSourceUpdateDialog from "$lib/shelved/PlaylistSourceUpdateDialog.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";

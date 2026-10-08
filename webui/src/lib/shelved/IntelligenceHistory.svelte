@@ -10,7 +10,7 @@
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
-  import ListeningActivityHeatmap from "$lib/components/ListeningActivityHeatmap.svelte";
+  import ListeningActivityHeatmap from "$lib/shelved/ListeningActivityHeatmap.svelte";
   import {
     intelligence,
     type IntelligenceScope,

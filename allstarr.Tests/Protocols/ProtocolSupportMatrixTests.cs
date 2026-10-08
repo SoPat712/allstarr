@@ -473,7 +473,7 @@ public sealed class ProtocolSupportMatrixTests
         Assert.Contains("StableInstantMixOrder", controller, StringComparison.Ordinal);
         Assert.Equal(
             ["IntelligenceController.AudioMuse.cs"],
-            Directory.EnumerateFiles(Path.Combine(root, "allstarr", "Controllers"), "*.cs")
+            ControllerFiles(root)
                 .Where(file => File.ReadAllText(file).Contains("_audioMuse.StartAnalysisAsync(", StringComparison.Ordinal))
                 .Select(Path.GetFileName).Order(StringComparer.Ordinal));
     }
@@ -481,10 +481,14 @@ public sealed class ProtocolSupportMatrixTests
     [Fact]
     public void Controllers_DoNotStartUntrackedTaskRunWork()
     {
-        var directory = Path.Combine(FindRepositoryRoot(), "allstarr", "Controllers");
-        foreach (var file in Directory.EnumerateFiles(directory, "*.cs", SearchOption.TopDirectoryOnly))
+        foreach (var file in ControllerFiles(FindRepositoryRoot()))
             Assert.DoesNotContain("Task.Run", File.ReadAllText(file), StringComparison.Ordinal);
     }
+
+    private static IEnumerable<string> ControllerFiles(string root) =>
+        Directory.EnumerateFiles(Path.Combine(root, "allstarr", "Controllers"), "*.cs")
+            .Concat(Directory.EnumerateFiles(
+                Path.Combine(root, "allstarr", "Shelved", "Intelligence", "Controllers"), "*.cs"));
 
     private static void AssertRequired(JsonElement row, string property)
     {

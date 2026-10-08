@@ -9,7 +9,7 @@
     type MatchTarget,
     type ProviderDefinition,
   } from "$lib/api";
-  import ArtworkSimilarity from "$lib/components/ArtworkSimilarity.svelte";
+  import ArtworkSimilarity from "$lib/shelved/ArtworkSimilarity.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import {
