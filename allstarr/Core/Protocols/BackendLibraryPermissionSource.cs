@@ -38,7 +38,8 @@ public sealed class BackendLibraryPermissionSource(
                 {
                     var token = AuthHeaderHelper.ExtractToken(http.Request.Headers);
                     token ??= http.Request.Query["api_key"].FirstOrDefault()
-                        ?? http.Request.Query["ApiKey"].FirstOrDefault();
+                        ?? http.Request.Query["ApiKey"].FirstOrDefault()
+                        ?? http.Request.Query["access_token"].FirstOrDefault();
                     return string.IsNullOrWhiteSpace(token) ? null : Jellyfin(context, token);
                 }
                 var parameters = http.Items[SubsonicAuthFilter.RequestParametersItemKey] as SubsonicRequestParameters;

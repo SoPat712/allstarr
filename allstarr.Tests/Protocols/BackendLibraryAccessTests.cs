@@ -19,14 +19,17 @@ namespace allstarr.Tests;
 
 public sealed class BackendLibraryAccessTests
 {
-    [Fact]
-    public async Task RequestPermissions_UseVerifiedViewerCredentialsAndNeverTheServiceKey()
+    [Theory]
+    [InlineData("api_key")]
+    [InlineData("ApiKey")]
+    [InlineData("access_token")]
+    public async Task RequestPermissions_UseVerifiedViewerCredentialsAndNeverTheServiceKey(string tokenParameter)
     {
         var clock = new Clock();
         var viewer = Context(clock, ProtocolKind.Jellyfin, "listener");
         var http = new DefaultHttpContext();
         http.Items[ProtocolExecutionContextFactory.HttpContextItemKey] = viewer;
-        http.Request.QueryString = new("?UserId=other-user&api_key=viewer-token");
+        http.Request.QueryString = new($"?UserId=other-user&{tokenParameter}=viewer-token");
         var factory = new Mock<IDbContextFactory<AllstarrDbContext>>(MockBehavior.Strict);
         var source = new BackendLibraryPermissionSource(new HttpContextAccessor { HttpContext = http }, factory.Object, null!,
             Options.Create(new JellyfinSettings { Url = "https://backend.test", ApiKey = "service-key" }),
