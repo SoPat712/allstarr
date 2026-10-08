@@ -27,7 +27,7 @@ class StreamFixture(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/admin/"):
             cookie = self.headers.get("Cookie")
-            valid_cookie = cookie in ("fixture=admin", "fixture=listener")
+            valid_cookie = cookie in ("fixture=admin", "fixture=listener", "fixture=foreign")
             administrator = cookie == "fixture=admin"
             status = 200 if valid_cookie else 401
             if self.path.endswith("auth/me"):
@@ -35,7 +35,10 @@ class StreamFixture(BaseHTTPRequestHandler):
             elif self.path.endswith("ui/home"):
                 value = {"schema": {}, "stats": {"cacheTracks": None, "keptTracks": None},
                          "providerHealth": {"providers": []}, "activity": {"items": []}}
-            elif administrator:
+            elif self.path.endswith("ui/now-playing"):
+                owner = "another-user" if cookie == "fixture=foreign" else "fixture-user"
+                value = {"items": [{"userId": owner}]}
+            elif self.path.endswith("ui/activity") or administrator:
                 value = {"items": []}
             else:
                 status = 403 if valid_cookie else 401
@@ -67,12 +70,14 @@ class StreamFixture(BaseHTTPRequestHandler):
 
     def do_POST(self):
         login = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
-        valid = login.get("username") in ("fixture", "fixture-admin") and login.get("password") == "fixture-password"
+        valid = login.get("username") in ("fixture", "fixture-admin", "fixture-foreign") and login.get("password") == "fixture-password"
         administrator = login.get("username") == "fixture-admin"
-        body = json.dumps({"authenticated": valid, "user": {"isAdministrator": administrator}}).encode()
+        body = json.dumps({"authenticated": valid, "user": {
+            "isAdministrator": administrator, "allstarrUserId": "fixture-user"}}).encode()
         self.send_response(200 if valid else 400)
         if valid:
-            self.send_header("Set-Cookie", f"fixture={'admin' if administrator else 'listener'}; Path=/; HttpOnly")
+            audience = "admin" if administrator else "foreign" if login.get("username") == "fixture-foreign" else "listener"
+            self.send_header("Set-Cookie", f"fixture={audience}; Path=/; HttpOnly")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -151,8 +156,9 @@ class JellyfinSmokeTests(unittest.TestCase):
         self.assertIn("RESULT 1 0 0", self.stream("/timeout"))
 
     def test_dashboard_cookie_session_and_now_playing(self):
-        for username, password, expected in (("fixture", "fixture-password", "RESULT 4 0 1"),
-                                             ("fixture-admin", "fixture-password", "RESULT 4 0 1"),
+        for username, password, expected in (("fixture", "fixture-password", "RESULT 5 0 1"),
+                                             ("fixture-admin", "fixture-password", "RESULT 5 0 1"),
+                                             ("fixture-foreign", "fixture-password", "RESULT 5 1 1"),
                                              ("fixture", "invalid", "RESULT 1 1 0")):
             with self.subTest(username=username, password=password), tempfile.TemporaryDirectory() as directory:
                 code = "\n".join([
