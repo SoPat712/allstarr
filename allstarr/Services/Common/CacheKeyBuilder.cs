@@ -93,41 +93,12 @@ public static class CacheKeyBuilder
     public static string BuildMediaAssetPayloadKey(string sha256) =>
         $"artwork:payload:v1:{Normalize(sha256)}";
 
-    #region Search Keys
-
-    public static string BuildSearchKey(
-        string? searchTerm,
-        string? itemTypes,
-        int? limit,
-        int? startIndex,
-        string? parentId,
-        string? sortBy,
-        string? sortOrder,
-        bool? recursive,
-        string? userId,
-        string? isFavorite = null)
-    {
-        return $"search:v2:{DigestIdentity(
-            searchTerm,
-            itemTypes,
-            limit,
-            startIndex,
-            parentId,
-            sortBy,
-            sortOrder,
-            recursive,
-            userId,
-            isFavorite)}";
-    }
-
     private static string Normalize(string? value)
     {
         return string.IsNullOrWhiteSpace(value)
             ? string.Empty
             : value.Trim().ToLowerInvariant();
     }
-
-    #endregion
 
     #region Metadata Keys
 

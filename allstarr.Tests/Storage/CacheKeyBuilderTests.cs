@@ -6,57 +6,6 @@ namespace allstarr.Tests;
 public class CacheKeyBuilderTests
 {
     [Fact]
-    public void SearchKey_ShouldIncludeRouteContextDimensions()
-    {
-        var key = CacheKeyBuilder.BuildSearchKey(
-            " DATA ",
-            "MusicAlbum",
-            500,
-            0,
-            "efa26829c37196b030fa31d127e0715b",
-            "DateCreated,SortName",
-            "Descending",
-            true,
-            "1635cd7d23144ba08251ebe22a56119e");
-
-        Assert.StartsWith("search:v2:", key, StringComparison.Ordinal);
-        Assert.DoesNotContain("data", key, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("1635cd7d", key, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void SearchKey_ShouldDifferentiateFavoriteOnlyQueries()
-    {
-        var normalKey = CacheKeyBuilder.BuildSearchKey(
-            "Sunflower",
-            "Audio",
-            100,
-            0,
-            "parent",
-            "SortName",
-            "Ascending",
-            true,
-            "user-1",
-            "false");
-
-        var favoritesOnlyKey = CacheKeyBuilder.BuildSearchKey(
-            "Sunflower",
-            "Audio",
-            100,
-            0,
-            "parent",
-            "SortName",
-            "Ascending",
-            true,
-            "user-1",
-            "true");
-
-        Assert.NotEqual(normalKey, favoritesOnlyKey);
-        Assert.StartsWith("search:v2:", normalKey, StringComparison.Ordinal);
-        Assert.StartsWith("search:v2:", favoritesOnlyKey, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void LyricsAndMetadataKeys_ShouldMatchExpectedFormats()
     {
         Assert.StartsWith("lyrics:v2:", CacheKeyBuilder.BuildLyricsKey("Artist", "Title", "Album", 240));

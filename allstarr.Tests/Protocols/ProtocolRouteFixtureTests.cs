@@ -34,6 +34,71 @@ namespace allstarr.Tests;
 public sealed class ProtocolRouteFixtureTests
 {
     [Fact]
+    public async Task JellyfinSearch_RechecksNativeAccessForEachViewerAndAfterRevocation()
+    {
+        var nativeRequests = new List<string>();
+        var revoked = false;
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.SearchAsync(
+                It.IsAny<ProtocolExecutionContext>(), "fixture", It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()))
+            .ReturnsAsync(new SearchResult
+            {
+                Songs = [new Song
+                {
+                    Id = "ext-deezer-song-42", ExternalId = "42", ExternalProvider = "deezer",
+                    Title = "External fixture", Artist = "Fixture Artist"
+                }]
+            });
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            var viewer = QueryHelpers.ParseQuery(request.RequestUri!.Query)["ApiKey"].ToString();
+            if (request.RequestUri!.AbsolutePath == "/Users/Me")
+                return Json(200, JsonSerializer.Serialize(new { Id = viewer }));
+            Assert.Equal("/Items", request.RequestUri.AbsolutePath);
+            nativeRequests.Add(viewer);
+            return revoked
+                ? Json(403, """{"error":"Library access revoked"}""")
+                : Json(200, JsonSerializer.Serialize(new
+                {
+                    Items = new[] { new { Id = $"native-{viewer}", Type = "Audio", Name = "Native fixture",
+                        UnknownFutureField = new { Keep = viewer } } },
+                    TotalRecordCount = 1,
+                    StartIndex = 0
+                }));
+        }, services =>
+        {
+            services.RemoveAll<IProtocolProviderGateway>();
+            services.AddSingleton(gateway.Object);
+        }, new Dictionary<string, string?> { ["Jellyfin:EnableExternalPlaylists"] = "false" });
+        using var client = factory.CreateClient();
+
+        foreach (var viewer in new[] { "listener-a", "listener-b", "listener-a" })
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get,
+                $"/Items?SearchTerm=fixture&IncludeItemTypes=Audio&api_key={viewer}");
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var payload = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var items = payload.RootElement.GetProperty("Items").EnumerateArray().ToArray();
+            var native = items.Where(item => item.GetProperty("Id").GetString()!.StartsWith("native-", StringComparison.Ordinal)).ToArray();
+            if (revoked)
+                Assert.Empty(native);
+            else
+            {
+                var item = Assert.Single(native);
+                Assert.Equal($"native-{viewer}", item.GetProperty("Id").GetString());
+                Assert.Equal(viewer, item.GetProperty("UnknownFutureField").GetProperty("Keep").GetString());
+            }
+            Assert.Contains(items, item => item.GetProperty("Id").GetString() == "ext-deezer-song-42");
+            if (viewer == "listener-b") revoked = true;
+        }
+
+        Assert.Equal(new[] { "listener-a", "listener-b", "listener-a" }, nativeRequests);
+        gateway.Verify(service => service.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "fixture",
+            It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()), Times.Exactly(3));
+    }
+
+    [Fact]
     public void JellyfinExternalStream_ReportsUnavailableAccountAsForbidden()
     {
         var (status, message) = allstarr.Controllers.JellyfinController.MapExternalStreamException(
