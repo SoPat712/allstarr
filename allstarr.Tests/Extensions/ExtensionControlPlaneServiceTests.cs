@@ -38,7 +38,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task StageReviewActivateUpdateAndRollback_AreDurableAndExplicit()
+    public async Task StageReviewActivateAndUpdate_AreDurableAndExplicit()
     {
         var registry = await _service.AddRegistryAsync(new("Fixture", "https://registry.example.test/index.json"));
         var v1 = Package("1.0.0", "a");
@@ -64,18 +64,11 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         Assert.Equal(first.Id, second.PreviousPackageId);
 
         first = (await _service.ListPackagesAsync()).Single(item => item.Id == first.Id);
-        first = await _service.ResetPermissionsForReviewAsync(first.Id, first.Revision);
-        first = await _service.ReviewAsync(first.Id, _reviewer, first.Revision,
-        [
-            new("network", "https://api.example.test/", true),
-            new("secret", "accountToken", true)
-        ]);
-        second = await _service.RollbackAsync(second.Id, second.Revision);
-        Assert.Equal(first.Id, second.Id);
+        Assert.Equal(ExtensionPackageState.RolledBack, first.State);
         Assert.Equal(ExtensionPackageState.Active, second.State);
         await using var db = await _factory.CreateDbContextAsync();
-        Assert.Single(await db.ExtensionPackages.Where(item => item.State == ExtensionPackageState.Active).ToListAsync());
-        Assert.Contains(await db.ExtensionLogs.ToListAsync(), item => item.EventCode == "package.rolled-back");
+        Assert.Equal(second.Id, (await db.ExtensionPackages.SingleAsync(item => item.State == ExtensionPackageState.Active)).Id);
+        Assert.Equal(2, await db.ExtensionLogs.CountAsync(item => item.EventCode == "package.activated"));
     }
 
     [Fact]
@@ -149,11 +142,11 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task CancellingStagingRemovesContentAndLeavesHistoricalRecord()
+    public async Task AbandoningCancelledActivationRemovesContentAndLeavesHistoricalRecord()
     {
         var package = await _service.StageAsync(Package("1.0.0", "cancelled"));
 
-        package = await _service.CancelStagingAsync(package.Id, package.Revision);
+        package = await _service.AbandonStagingAsync(package.Id, package.Revision);
 
         Assert.Equal(ExtensionPackageState.Uninstalled, package.State);
         Assert.Equal("staging_cancelled", package.FailureCode);
@@ -210,7 +203,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RuntimeActivationRegistersReviewedPackageAndDisableRemovesIt()
+    public async Task RuntimeUpdatePreservesActiveVersionWhenPreviousPackageIsUninstalled()
     {
         var package = await _service.StageAsync(Package("4.0.0", "runtime"));
         package = await _service.ReviewAsync(package.Id, _reviewer, package.Revision,
@@ -237,6 +230,24 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         Assert.Contains(ProviderAccountScope.User, descriptor.Capabilities.Single().AllowedAccountScopes);
         Assert.True(registry.TryGetCapability<IProviderMetadataCapability>(package.ExtensionId,
             ProviderCapabilityKind.Metadata, out _));
+        var previous = package;
+        package = await _service.StageAsync(Package("4.1.0", "runtime-update"));
+        package = await _service.ReviewAsync(package.Id, _reviewer, package.Revision,
+        [
+            new("network", "https://api.example.test/", true),
+            new("secret", "accountToken", true)
+        ]);
+        package = await coordinator.ActivateAsync(package.Id, package.Revision);
+        Assert.True(registry.TryGetCapability<IProviderMetadataCapability>(package.ExtensionId,
+            ProviderCapabilityKind.Metadata, out var activeCapability));
+        previous = (await _service.ListPackagesAsync()).Single(item => item.Id == previous.Id);
+        await coordinator.UninstallAsync(previous.Id, previous.Revision);
+        Assert.False(Directory.Exists(previous.PackagePath));
+        Assert.True(Directory.Exists(package.PackagePath));
+        Assert.True(registry.TryGetCapability<IProviderMetadataCapability>(package.ExtensionId,
+            ProviderCapabilityKind.Metadata, out var retainedCapability));
+        Assert.Same(activeCapability, retainedCapability);
+
         await coordinator.DisableAsync(package.Id, package.Revision);
         Assert.False(registry.TryGet(package.ExtensionId, out _));
         package = (await _service.ListPackagesAsync(package.ExtensionId)).Single(item => item.Id == package.Id);

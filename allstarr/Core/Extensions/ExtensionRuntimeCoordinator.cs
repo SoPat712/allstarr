@@ -93,7 +93,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            await _controlPlane.CancelStagingAsync(packageId, expectedRevision, CancellationToken.None);
+            await _controlPlane.AbandonStagingAsync(packageId, expectedRevision, CancellationToken.None);
             throw;
         }
         catch
@@ -106,21 +106,6 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         RegisterVerified(build.Registration);
         StoreSandbox(package.Id, package.ExtensionId, build.Sandbox);
         return active;
-    }
-
-    public async Task<ExtensionPackageRecord> RollbackAsync(
-        Guid activePackageId, long expectedRevision, CancellationToken cancellationToken = default)
-    {
-        var active = await GetPackageAsync(activePackageId, cancellationToken);
-        if (!active.PreviousPackageId.HasValue)
-            throw new InvalidOperationException("The active package has no rollback version.");
-        var previous = await GetPackageAsync(active.PreviousPackageId.Value, cancellationToken);
-        var build = await BuildRegistrationAsync(previous, cancellationToken);
-        RejectBuiltInCollision(build.Registration.Descriptor.Id);
-        var restored = await _controlPlane.RollbackAsync(activePackageId, expectedRevision, cancellationToken);
-        RegisterVerified(build.Registration);
-        StoreSandbox(previous.Id, previous.ExtensionId, build.Sandbox);
-        return restored;
     }
 
     public async Task DisableAsync(Guid packageId, long expectedRevision, CancellationToken cancellationToken = default)
@@ -144,27 +129,14 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         return reset;
     }
 
-    public async Task<ExtensionPackageRecord> CancelStagingAsync(
-        Guid packageId,
-        long expectedRevision,
-        CancellationToken cancellationToken = default)
-    {
-        var package = await GetPackageAsync(packageId, cancellationToken);
-        var cancelled = await _controlPlane.CancelStagingAsync(
-            packageId, expectedRevision, cancellationToken);
-        _registry.RemoveExtension(package.ExtensionId);
-        _sandboxes.TryRemove(packageId, out _);
-        return cancelled;
-    }
-
     public async Task<ExtensionPackageRecord> UninstallAsync(
         Guid packageId, long expectedRevision,
         CancellationToken cancellationToken = default)
     {
         var package = await GetPackageAsync(packageId, cancellationToken);
         var uninstalled = await _controlPlane.UninstallAsync(packageId, expectedRevision, cancellationToken);
-        _registry.RemoveExtension(package.ExtensionId);
-        _sandboxes.TryRemove(packageId, out _);
+        if (_sandboxes.TryRemove(packageId, out _))
+            _registry.RemoveExtension(package.ExtensionId);
         try
         {
             var packagePath = Path.GetFullPath(package.PackagePath);

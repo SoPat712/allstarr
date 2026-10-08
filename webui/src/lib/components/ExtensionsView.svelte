@@ -46,7 +46,6 @@
   let removePackage = $state<ExtensionPackage | null>(null);
   let removeRegistry = $state<ExtensionRegistry | null>(null);
   let reviewAccessPackage = $state<ExtensionPackage | null>(null);
-  let reviewingExisting = $state(false);
   let confirmOpen = $state(false);
 
   const installed = $derived(currentPackages(packages));
@@ -146,7 +145,7 @@
     });
   }
 
-  async function openReview(item: ExtensionPackage, existing = false) {
+  async function openReview(item: ExtensionPackage) {
     if (action) return;
     action = `review-load:${item.id}`;
     try {
@@ -156,7 +155,6 @@
         previousPackage ? extensions.permissions(previousPackage.id) : Promise.resolve([]),
       ]);
       reviewPackage = item;
-      reviewingExisting = existing;
       decisions = {};
       permissionConfirmed = false;
       reviewOpen = true;
@@ -203,14 +201,7 @@
     }
   }
 
-  async function cancelReview() {
-    if (!reviewPackage) return;
-    if (reviewingExisting) {
-      reviewPackage = null;
-      reviewOpen = false;
-      return;
-    }
-    await run(`cancel:${reviewPackage.id}`, () => extensions.cancelStaging(reviewPackage!), "Extension installation cancelled.");
+  function closeReview() {
     reviewPackage = null;
     reviewOpen = false;
   }
@@ -266,7 +257,7 @@
     activatePackage = null;
     removePackage = null;
     removeRegistry = null;
-    if (resetPackage) await openReview(resetPackage, true);
+    if (resetPackage) await openReview(resetPackage);
   }
 
   async function addRegistry(event: SubmitEvent) {
@@ -321,7 +312,6 @@
                 <DropdownMenu.Portal>
                   <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
                     {#if item.active}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run(item.id, () => extensions.disable(item), "Extension disabled.")}>Disable</DropdownMenu.Item>{/if}
-                    {#if item.active && item.previousPackageId}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run(item.id, () => extensions.rollback(item), "Previous extension version restored.")}>Rollback</DropdownMenu.Item>{/if}
                     {#if item.hasPermissions && ["active", "disabled"].includes(item.state.toLowerCase())}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => confirmPermissionReview(item)}>Review access</DropdownMenu.Item>{/if}
                     <DropdownMenu.Separator />
                     <DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action)} onSelect={() => confirmRemoval(item)}>Uninstall</DropdownMenu.Item>
@@ -424,7 +414,7 @@
       </div>
       <div class="extension-review-footer">
         <label class="permission-confirm"><Checkbox bind:checked={permissionConfirmed} /><span>I understand the access requested by this extension.</span></label>
-        <footer class="dialog-actions"><Button variant="secondary" disabled={Boolean(action)} onclick={() => void cancelReview()}>{reviewingExisting ? "Close review" : action.startsWith("cancel:") ? "Cancelling…" : "Cancel installation"}</Button><Button disabled={!permissionConfirmed || permissions.some((item) => decisions[item.id] === undefined) || Boolean(action)} onclick={() => void approve()}>{action.startsWith("review:") ? "Saving…" : "Save review"}</Button></footer>
+        <footer class="dialog-actions"><Button variant="secondary" disabled={Boolean(action)} onclick={closeReview}>Close review</Button><Button disabled={!permissionConfirmed || permissions.some((item) => decisions[item.id] === undefined) || Boolean(action)} onclick={() => void approve()}>{action.startsWith("review:") ? "Saving…" : "Save review"}</Button></footer>
       </div>
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>

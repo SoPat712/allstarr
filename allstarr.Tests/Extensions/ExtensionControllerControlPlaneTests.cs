@@ -150,8 +150,6 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
             Guid.CreateVersion7(), new RevisionRequest(), default));
         Assert.IsType<UnauthorizedObjectResult>(await controller.RevokePermissionGrants(
             Guid.CreateVersion7(), new RevisionRequest(), default));
-        Assert.IsType<UnauthorizedObjectResult>(await controller.CancelStaging(
-            Guid.CreateVersion7(), new RevisionRequest(), default));
     }
 
     [Fact]

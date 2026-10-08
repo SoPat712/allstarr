@@ -139,7 +139,7 @@ public sealed class LegacyEnvMigrationService
             .FirstOrDefaultAsync(cancellationToken)
             : null;
         return new(
-            CompatibilitySunsets.LegacyEnvV2ImporterEnabled,
+            true,
             completedAt.HasValue,
             SourcePresent: false,
             FirstRun: !completedAt.HasValue,
@@ -151,7 +151,6 @@ public sealed class LegacyEnvMigrationService
         LegacyEnvMigrationActor actor,
         CancellationToken cancellationToken = default)
     {
-        RequireImporterEnabled();
         ValidateActor(actor);
         PurgeExpired();
         var document = LegacyEnvParser.Parse(source);
@@ -381,7 +380,6 @@ public sealed class LegacyEnvMigrationService
         LegacyEnvMigrationActor actor,
         CancellationToken cancellationToken = default)
     {
-        RequireImporterEnabled();
         ValidateActor(actor);
         PurgeExpired();
         if (!confirmed)
@@ -1307,16 +1305,6 @@ public sealed class LegacyEnvMigrationService
         if (string.IsNullOrWhiteSpace(actor.SessionId))
         {
             throw new LegacyEnvMigrationException("admin_session_required", "An administrator session is required.");
-        }
-    }
-
-    private static void RequireImporterEnabled()
-    {
-        if (!CompatibilitySunsets.LegacyEnvV2ImporterEnabled)
-        {
-            throw new LegacyEnvMigrationException(
-                "migration_retired",
-                "The v2 environment importer is no longer available in this release.");
         }
     }
 

@@ -346,7 +346,7 @@ public sealed partial class ExtensionControlPlaneService
         return package;
     }
 
-    public async Task<ExtensionPackageRecord> CancelStagingAsync(
+    internal async Task<ExtensionPackageRecord> AbandonStagingAsync(
         Guid packageId,
         long expectedRevision,
         CancellationToken cancellationToken = default)
@@ -398,15 +398,6 @@ public sealed partial class ExtensionControlPlaneService
         DeletePackageContents(package.PackagePath);
     }
 
-    public Task<ExtensionPackageRecord> ActivateAsync(Guid packageId, long expectedRevision, CancellationToken cancellationToken = default) =>
-        TransitionActiveAsync(packageId, expectedRevision, rollback: false, cancellationToken);
-
-    public async Task<ExtensionPackageRecord> RollbackAsync(
-        Guid activePackageId,
-        long expectedRevision,
-        CancellationToken cancellationToken = default) =>
-        await TransitionActiveAsync(activePackageId, expectedRevision, rollback: true, cancellationToken);
-
     public async Task DisableAsync(Guid packageId, long expectedRevision, CancellationToken cancellationToken = default)
     {
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
@@ -430,9 +421,6 @@ public sealed partial class ExtensionControlPlaneService
         if (package.Revision != expectedRevision) throw new DbUpdateConcurrencyException();
         if (package.State is ExtensionPackageState.Active or ExtensionPackageState.ReviewRequired or ExtensionPackageState.Uninstalled)
             throw new InvalidOperationException("Disable or finish reviewing the package before uninstalling it.");
-        if (await db.ExtensionPackages.AnyAsync(item => item.PreviousPackageId == package.Id &&
-                item.State != ExtensionPackageState.Uninstalled, cancellationToken))
-            throw new InvalidOperationException("This package is retained as a rollback target for another version.");
         package.State = ExtensionPackageState.Uninstalled;
         package.DisabledAt ??= _clock.UtcNow;
         package.Revision++;
@@ -458,44 +446,25 @@ public sealed partial class ExtensionControlPlaneService
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    private async Task<ExtensionPackageRecord> TransitionActiveAsync(
+    public async Task<ExtensionPackageRecord> ActivateAsync(
         Guid packageId,
         long expectedRevision,
-        bool rollback,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken = default)
     {
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         var package = await db.ExtensionPackages.SingleOrDefaultAsync(item => item.Id == packageId, cancellationToken)
                       ?? throw new KeyNotFoundException("Extension package not found.");
         if (package.Revision != expectedRevision) throw new DbUpdateConcurrencyException();
-        ExtensionPackageRecord target;
-        if (rollback)
-        {
-            if (package.State != ExtensionPackageState.Active || !package.PreviousPackageId.HasValue)
-                throw new InvalidOperationException("The active package has no rollback version.");
-            target = await db.ExtensionPackages.SingleAsync(item => item.Id == package.PreviousPackageId, cancellationToken);
-            if (target.State is ExtensionPackageState.RolledBack or ExtensionPackageState.Disabled &&
-                await db.ExtensionPermissionReviews.AnyAsync(
-                    item => item.ExtensionPackageId == target.Id,
-                    cancellationToken))
-                throw new InvalidOperationException(
-                    "Rollback requires the previous package permissions to be revoked and reviewed again.");
-            if (target.State is not (ExtensionPackageState.RolledBack or ExtensionPackageState.Disabled or ExtensionPackageState.Staged))
-                throw new InvalidOperationException("The rollback package is not available.");
-        }
-        else
-        {
-            if (package.State == ExtensionPackageState.Disabled &&
-                await db.ExtensionPermissionReviews.AnyAsync(
-                    item => item.ExtensionPackageId == package.Id,
-                    cancellationToken))
-                throw new InvalidOperationException(
-                    "Reactivation requires permission grants to be revoked and reviewed again.");
-            if (package.State is not (ExtensionPackageState.Staged or ExtensionPackageState.Disabled))
-                throw new InvalidOperationException("Only a reviewed or previously disabled package can be activated.");
-            target = package;
-        }
+        if (package.State == ExtensionPackageState.Disabled &&
+            await db.ExtensionPermissionReviews.AnyAsync(
+                item => item.ExtensionPackageId == package.Id,
+                cancellationToken))
+            throw new InvalidOperationException(
+                "Reactivation requires permission grants to be revoked and reviewed again.");
+        if (package.State is not (ExtensionPackageState.Staged or ExtensionPackageState.Disabled))
+            throw new InvalidOperationException("Only a reviewed or previously disabled package can be activated.");
+        var target = package;
         try
         {
             VerifyStagedContents(target);
@@ -523,19 +492,12 @@ public sealed partial class ExtensionControlPlaneService
             current.DisabledAt = now;
             current.Revision++;
         }
-        if (rollback)
-        {
-            package.State = ExtensionPackageState.RolledBack;
-            package.DisabledAt = now;
-            package.Revision++;
-        }
         target.State = ExtensionPackageState.Active;
         target.ActivatedAt = now;
         target.DisabledAt = null;
         target.Revision++;
-        await AddLogAsync(db, target, "information", rollback ? "package.rolled-back" : "package.activated",
-            rollback ? "Previous extension package restored." : "Extension package activated.",
-            rollback ? "extension-rollback" : "extension-activate", now);
+        await AddLogAsync(db, target, "information", "package.activated",
+            "Extension package activated.", "extension-activate", now);
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return target;

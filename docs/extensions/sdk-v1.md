@@ -75,7 +75,7 @@ For the SpotiFLAC Apple Music package, catalog metadata can work without a subsc
 
 JavaScript packages run in the constrained Jint compatibility runtime with bounded bridges. A package receives only the APIs granted by its reviewed permissions. Network access is allowlisted and request-bounded. File access is package-scoped. Host process, Docker socket, arbitrary filesystem, and raw secret-store access are not capabilities.
 
-Permission changes require administrator review before an update can activate. Disable, rollback, uninstall, and registry removal are control-plane operations with durable state and audit events.
+Permission changes require administrator review before an update can activate. Disable, uninstall, and registry removal are control-plane operations with durable state and audit events.
 
 ## Registries and ownership
 

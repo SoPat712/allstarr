@@ -1630,12 +1630,8 @@ export const extensions = {
     json<ExtensionPackage>(`/api/admin/extensions/packages/${item.id}/activate`, revisionBody(item.revision)),
   disable: (item: ExtensionPackage) =>
     json<void>(`/api/admin/extensions/packages/${item.id}/disable`, revisionBody(item.revision)),
-  rollback: (item: ExtensionPackage) =>
-    json<ExtensionPackage>(`/api/admin/extensions/packages/${item.id}/rollback`, revisionBody(item.revision)),
   revokePermissions: (item: ExtensionPackage) =>
     json<ExtensionPackage>(`/api/admin/extensions/packages/${item.id}/permissions/revoke`, revisionBody(item.revision)),
-  cancelStaging: (item: ExtensionPackage) =>
-    json<ExtensionPackage>(`/api/admin/extensions/packages/${item.id}/staging/cancel`, revisionBody(item.revision)),
   uninstall: (item: ExtensionPackage) =>
     json<ExtensionPackage>(`/api/admin/extensions/packages/${item.id}`, {
       ...revisionBody(item.revision),
