@@ -36,7 +36,7 @@ The source is explicitly marked as confirmed streaming, cached audio, or an unco
 
 ### Intelligence (deferred)
 
-Intelligence is not in the desktop navigation, mobile bar, or More sheet while the first release is being prepared. Existing `#/intelligence` links still open the development workspace. This navigation change does not delete history, disable existing opt-in jobs, or disconnect accounts. The [release plan](release-readiness.md#first-release-scope-decision-2026-09-13) tracks the remaining release-exclusion work; the following describes the retained workspace, not a first-release promise.
+Intelligence is not in the desktop navigation, mobile bar, or More sheet while the first release is being prepared. Existing `#/intelligence` links still open the development workspace. This navigation change does not delete history, disable existing opt-in jobs, or disconnect accounts. The following describes the retained workspace, not a first-release promise.
 
 - **Overview** shows live playback, listening totals, and an interactive daily or monthly activity map for the selected library. Long and all-time ranges add an activity-year selector, default to the busiest imported year, and separate imported history from direct playback in each bucket.
 - **History** searches, filters, corrects, exports, or removes retained listening events.

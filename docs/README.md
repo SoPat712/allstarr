@@ -6,8 +6,6 @@ User and operator guides describe shipped behavior. Contributor assessments expl
 
 - [User guide](user-guide.md): dashboard map, setup order, imports, playlists, cache, and Intelligence.
 - [Architecture overview](architecture/overview.md): runtime boundaries and code ownership.
-- [Unified music service plan](architecture/unified-music-service-plan.md): accepted primary release journeys, canonical catalog direction, keep/modify/shelve decisions, and implementation gates.
-- [Jellyfin and provider routing plan](architecture/jellyfin-provider-routing-plan.md): accepted first-use-case matching, route order, audio quality, fallback, and live qualification contract.
 - [Music ecosystem reference ledger](architecture/reference-projects.md): pinned upstream projects, reusable lessons, license boundaries, and rejected ideas.
 - [Configuration](operations/configuration.md): deployment-owned values, durable settings, and secrets.
 - [Deployment profiles](operations/deployment-profiles.md): install, update, optional services, backup, and restore.
@@ -30,7 +28,6 @@ User and operator guides describe shipped behavior. Contributor assessments expl
 - [WebUI design system](../DESIGN.md)
 - [Test and qualification tools](../tools/tests/README.md)
 - [Provider capability module](../allstarr/Core/Capabilities/README.md)
-- [Release readiness assessment](release-readiness.md): dated feature inventory, code-churn evidence, and proposed first-release gates; not a shipped-support contract.
 
 ## Documentation rules
 
