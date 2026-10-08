@@ -26,27 +26,6 @@ namespace allstarr.Core.Storage.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "backups",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    StorageProvider = table.Column<string>(type: "TEXT", maxLength: 32, nullable: false),
-                    ArtifactPath = table.Column<string>(type: "TEXT", maxLength: 1000, nullable: false),
-                    Sha256 = table.Column<string>(type: "TEXT", maxLength: 64, nullable: false),
-                    SchemaVersion = table.Column<string>(type: "TEXT", maxLength: 200, nullable: false),
-                    ApplicationVersion = table.Column<string>(type: "TEXT", maxLength: 50, nullable: false),
-                    Status = table.Column<string>(type: "TEXT", maxLength: 50, nullable: false),
-                    CreatedAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    VerifiedAt = table.Column<long>(type: "INTEGER", nullable: true),
-                    RestoreStatus = table.Column<string>(type: "TEXT", maxLength: 50, nullable: true),
-                    RestoreVerifiedAt = table.Column<long>(type: "INTEGER", nullable: true)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_backups", x => x.Id);
-                });
-
-            migrationBuilder.CreateTable(
                 name: "downloaded_song_mappings",
                 columns: table => new
                 {
@@ -2560,11 +2539,6 @@ namespace allstarr.Core.Storage.Migrations
                 column: "UserId");
 
             migrationBuilder.CreateIndex(
-                name: "IX_backups_CreatedAt",
-                table: "backups",
-                column: "CreatedAt");
-
-            migrationBuilder.CreateIndex(
                 name: "IX_canonical_artists_TenantId_MusicBrainzArtistId",
                 table: "canonical_artists",
                 columns: new[] { "TenantId", "MusicBrainzArtistId" },
@@ -3513,9 +3487,6 @@ namespace allstarr.Core.Storage.Migrations
 
             migrationBuilder.DropTable(
                 name: "admin_oidc_links");
-
-            migrationBuilder.DropTable(
-                name: "backups");
 
             migrationBuilder.DropTable(
                 name: "canonical_catalog_aliases");

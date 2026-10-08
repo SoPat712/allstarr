@@ -1817,61 +1817,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.ToTable("backend_identities", (string)null);
                 });
 
-            modelBuilder.Entity("allstarr.Core.Storage.BackupRecord", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ApplicationVersion")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ArtifactPath")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("RestoreStatus")
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<long?>("RestoreVerifiedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("SchemaVersion")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Sha256")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("StorageProvider")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
-
-                    b.Property<long?>("VerifiedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CreatedAt");
-
-                    b.ToTable("backups", (string)null);
-                });
-
             modelBuilder.Entity("allstarr.Core.Storage.CanonicalArtistRecord", b =>
                 {
                     b.Property<Guid>("Id")

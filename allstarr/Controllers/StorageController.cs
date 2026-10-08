@@ -1,74 +1,75 @@
 using allstarr.Core.Storage;
 using allstarr.Filters;
+using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.Sqlite;
 
 namespace allstarr.Controllers;
 
 [ApiController]
 [Route("api/admin/storage")]
 [ServiceFilter(typeof(AdminPortFilter))]
-public sealed class StorageController : ControllerBase
+public sealed class StorageController(DurableStorageState storageState, DurableBackupService backupService) : ControllerBase
 {
-    private readonly DurableStorageState _storageState;
-    private readonly DurableBackupService _backupService;
-    private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
-
-    public StorageController(
-        DurableStorageState storageState,
-        DurableBackupService backupService,
-        IDbContextFactory<AllstarrDbContext> contextFactory)
-    {
-        _storageState = storageState;
-        _backupService = backupService;
-        _contextFactory = contextFactory;
-    }
-
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken cancellationToken = default)
     {
-        var storage = _storageState.GetSnapshot();
-        var storageResponse = new
+        if (RequireAdministrator() is { } error) return error;
+        var storage = storageState.GetSnapshot();
+        return Ok(new
         {
-            provider = storage.Provider.ToString(),
-            readiness = storage.Readiness.ToString(),
-            storage.SchemaVersion,
-            storage.ErrorCode,
-            storage.CheckedAt
-        };
-        if (storage.Readiness != DurableStorageReadiness.Ready)
-        {
-            return Ok(new { storage = storageResponse, backups = Array.Empty<object>() });
-        }
-
-        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        var backups = await context.Backups.AsNoTracking()
-            .OrderByDescending(item => item.CreatedAt)
-            .Take(50)
-            .Select(item => new
+            storage = new
             {
-                item.Id,
-                item.StorageProvider,
-                item.Sha256,
-                item.SchemaVersion,
-                item.ApplicationVersion,
-                item.Status,
-                item.CreatedAt,
-                item.VerifiedAt,
-                item.RestoreStatus,
-                item.RestoreVerifiedAt
-            })
-            .ToListAsync(cancellationToken);
-        return Ok(new { storage = storageResponse, backups });
+                provider = storage.Provider.ToString(),
+                readiness = storage.Readiness.ToString(),
+                storage.SchemaVersion,
+                storage.ErrorCode,
+                storage.CheckedAt
+            },
+            backups = await backupService.ListAsync(cancellationToken)
+        });
     }
 
     [HttpPost("backups")]
-    public Task<IActionResult> CreateBackup(CancellationToken cancellationToken = default)
+    public async Task<IActionResult> CreateBackup(CancellationToken cancellationToken = default)
     {
-        return Task.FromResult<IActionResult>(StatusCode(StatusCodes.Status503ServiceUnavailable, new
+        if (RequireAdministrator() is { } error) return error;
+        try { return Ok(await backupService.CreateAsync(cancellationToken)); }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or SqliteException or UnauthorizedAccessException)
         {
-            error = "backups_unavailable",
-            message = "Backups are being rebuilt."
-        }));
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                error = "backup_unavailable",
+                message = "The backup could not be created. Check storage readiness, disk space, and key-ring access."
+            });
+        }
+    }
+
+    [HttpGet("backups/{id:guid}/download")]
+    public async Task<IActionResult> DownloadBackup(Guid id, CancellationToken cancellationToken = default)
+    {
+        if (RequireAdministrator() is { } error) return error;
+        try
+        {
+            var download = await backupService.OpenVerifiedAsync(id, cancellationToken);
+            return File(download.Stream, "application/zip", download.FileName);
+        }
+        catch (FileNotFoundException) { return NotFound(new { error = "backup_not_found" }); }
+        catch (Exception exception) when (exception is BackupVerificationException or InvalidDataException)
+        {
+            return UnprocessableEntity(new { error = "backup_invalid", message = "Backup verification failed." });
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "backup_unavailable" });
+        }
+    }
+
+    private IActionResult? RequireAdministrator()
+    {
+        if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
+            value is not AdminAuthSession session)
+            return Unauthorized(new { error = "admin_session_required" });
+        return session.IsAdministrator ? null : StatusCode(StatusCodes.Status403Forbidden, new { error = "administrator_required" });
     }
 }

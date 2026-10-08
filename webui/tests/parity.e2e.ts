@@ -1061,8 +1061,9 @@ for (const viewport of viewports) {
       await expect(page.getByRole("button", { name: "Verify package" })).toBeInViewport();
       await page.getByRole("button", { name: "Close installer" }).click();
       await page.goto("#/settings/maintenance");
-      await expect(page.getByText("Backups are being rebuilt.")).toBeVisible();
-      await expect(page.getByRole("button", { name: "Create verified backup" })).toHaveCount(0);
+      await expect(page.getByText("Database and encryption key ring. Keep downloaded backups private.")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Create verified backup" })).toBeVisible();
+      await expect(page.getByText("No backups yet.")).toBeVisible();
       await expect(page.locator(".transfer-card")).toHaveCount(0);
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
@@ -3744,6 +3745,58 @@ test("Settings loads only the active section owners", async ({ page }) => {
   expect(requests).toContain("/api/admin/cache");
   expect(requests).not.toContain("/api/admin/config");
   expect(requests).not.toContain("/api/admin/provider-accounts");
+});
+
+test("Maintenance creates verified backups, lists downloads, and reports failures", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await mockApi(page);
+  const backup = {
+    id: "11111111-1111-4111-8111-111111111111",
+    status: "verified",
+    createdAt: "2026-09-30T14:20:00Z",
+    verifiedAt: "2026-09-30T14:20:01Z",
+    fileName: "allstarr-backup-20260930.zip",
+    bytes: 2_097_152,
+    sha256: "a".repeat(64),
+    schemaVersion: "1",
+    applicationVersion: "1.0.0",
+    includesKeyRing: true,
+  };
+  let created = false;
+  let failCreate = false;
+  await page.route("**/api/admin/storage/backups", async (route) => {
+    if (route.request().method() === "POST") {
+      if (failCreate) {
+        await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Backup creation failed." }) });
+        return;
+      }
+      created = true;
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify(backup) });
+      return;
+    }
+    await route.continue();
+  });
+  await page.route("**/api/admin/storage", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      storage: { provider: "Sqlite", readiness: "Ready" },
+      backups: created ? [backup] : [],
+    }),
+  }));
+
+  await page.goto("#/settings/maintenance");
+  const card = page.locator(".maintenance-card").filter({ hasText: "Durable application state" });
+  await card.getByRole("button", { name: "Create verified backup" }).click();
+  await expect(card.getByText(backup.fileName)).toBeVisible();
+  await expect(card.getByText(/Sep 30, 2026.*2 MiB.*Verified/)).toBeVisible();
+  await expect(card.getByRole("link", { name: "Download" })).toHaveAttribute(
+    "href", "/api/admin/storage/backups/11111111-1111-4111-8111-111111111111/download",
+  );
+
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  failCreate = true;
+  await card.getByRole("button", { name: "Create verified backup" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Backup creation failed." })).toBeVisible();
 });
 
 test("Audio quality supports keyboard changes, provider outcomes, save, and reload", async ({ page }) => {
