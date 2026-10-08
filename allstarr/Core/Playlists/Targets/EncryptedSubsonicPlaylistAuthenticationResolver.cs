@@ -1,6 +1,7 @@
 using System.Text.Json;
 using allstarr.Core.Secrets;
 using allstarr.Models.Settings;
+using allstarr.Services.Subsonic;
 using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Playlists.Targets;
@@ -9,13 +10,28 @@ public sealed class EncryptedSubsonicPlaylistAuthenticationResolver : IBackendPl
 {
     private readonly EncryptedSecretStore _secrets;
     private readonly SubsonicSettings _settings;
+    private readonly IHttpContextAccessor _httpContext;
 
     public EncryptedSubsonicPlaylistAuthenticationResolver(
         EncryptedSecretStore secrets,
-        IOptions<SubsonicSettings> settings)
+        IOptions<SubsonicSettings> settings,
+        IHttpContextAccessor httpContext)
     {
         _secrets = secrets;
         _settings = settings.Value;
+        _httpContext = httpContext ?? throw new ArgumentNullException(nameof(httpContext));
+    }
+
+    public ValueTask<BackendPlaylistAuthentication> ResolveReadAsync(
+        BackendPlaylistTargetContext context,
+        CancellationToken cancellationToken)
+    {
+        if (_httpContext.HttpContext is not { } requestContext)
+            return ResolveAsync(context, cancellationToken);
+        if (!SubsonicSessionAuthentication.TryGetViewerReadParameters(requestContext,
+                context.BackendInstanceId, context.VerifiedPrincipalId, context.TenantId, out var parameters))
+            throw new UnauthorizedAccessException("The signed-in viewer is unavailable for this backend read.");
+        return ValueTask.FromResult(new BackendPlaylistAuthentication(new Dictionary<string, string>(), parameters));
     }
 
     public async ValueTask<BackendPlaylistAuthentication> ResolveAsync(

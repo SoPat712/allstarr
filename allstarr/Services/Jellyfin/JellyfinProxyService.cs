@@ -21,8 +21,6 @@ public class JellyfinProxyService
     private readonly IApplicationCache _cache;
     private readonly IMediaAssetResolver _mediaAssets;
     private readonly IConfiguration _configuration;
-    private string? _cachedMusicLibraryId;
-    private bool _libraryIdDetected = false;
 
     public HttpClient HttpClient => _httpClient;
 
@@ -44,58 +42,24 @@ public class JellyfinProxyService
         _configuration = configuration;
     }
 
-    private async Task<string?> GetMusicLibraryIdAsync()
+    public async Task<IReadOnlyList<string>> GetMusicLibraryIdsForFilteringAsync(
+        string? callerQuery,
+        IHeaderDictionary clientHeaders)
     {
-        if (!string.IsNullOrEmpty(_settings.LibraryId))
+        var (views, status) = await GetJsonAsync($"UserViews{callerQuery}", null, clientHeaders);
+        using (views)
         {
-            return _settings.LibraryId;
-        }
-
-        if (_libraryIdDetected)
-        {
-            return _cachedMusicLibraryId;
-        }
-
-        try
-        {
-            _logger.LogInformation("Auto-detecting music library ID...");
-            _cachedMusicLibraryId = await GetMusicLibraryIdInternalAsync();
-            _libraryIdDetected = true;
-
-            if (!string.IsNullOrEmpty(_cachedMusicLibraryId))
+            if (status != StatusCodes.Status200OK || views == null) return [];
+            try
             {
-                _logger.LogInformation("Music library auto-detected: {LibraryId}", _cachedMusicLibraryId);
+                return allstarr.Core.Protocols.BackendMusicLibraries.Read(
+                    allstarr.Core.Protocols.ProtocolKind.Jellyfin, views.RootElement);
             }
-            else
+            catch (InvalidOperationException)
             {
-                _logger.LogWarning("Could not auto-detect music library. All content types will be visible. Set JELLYFIN_LIBRARY_ID to filter to music only.");
-            }
-
-            return _cachedMusicLibraryId;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to auto-detect music library ID");
-            _libraryIdDetected = true;
-            return null;
-        }
-    }
-
-    public async Task<string?> GetMusicLibraryIdForFilteringAsync(
-        string? callerQuery = null,
-        IHeaderDictionary? clientHeaders = null)
-    {
-        if (!string.IsNullOrWhiteSpace(callerQuery))
-        {
-            var (views, _) = await GetJsonAsync($"UserViews{callerQuery}", null, clientHeaders);
-            using (views)
-            {
-                var visibleLibraryId = FindMusicLibraryId(views);
-                if (!string.IsNullOrWhiteSpace(visibleLibraryId)) return visibleLibraryId;
+                return [];
             }
         }
-
-        return await GetMusicLibraryIdAsync();
     }
 
     private string GetAuthorizationHeader()
@@ -915,49 +879,6 @@ public class JellyfinProxyService
             _logger.LogError(ex, "Failed to test Jellyfin connection");
             return (false, null, null);
         }
-    }
-
-    private async Task<string?> GetMusicLibraryIdInternalAsync()
-    {
-        try
-        {
-            var queryParams = new Dictionary<string, string>();
-            if (!string.IsNullOrEmpty(_settings.UserId))
-            {
-                queryParams["userId"] = _settings.UserId;
-            }
-
-            var (result, statusCode) = await GetJsonAsyncInternal("Library/MediaFolders", queryParams);
-            if (result == null)
-            {
-                return null;
-            }
-
-            using (result) return FindMusicLibraryId(result);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get music library ID");
-            return null;
-        }
-    }
-
-    private static string? FindMusicLibraryId(JsonDocument? document)
-    {
-        if (document == null ||
-            !document.RootElement.TryGetProperty("Items", out var items) ||
-            items.ValueKind != JsonValueKind.Array)
-            return null;
-
-        foreach (var item in items.EnumerateArray())
-        {
-            if (item.TryGetProperty("CollectionType", out var collectionType) &&
-                string.Equals(collectionType.GetString(), "music", StringComparison.OrdinalIgnoreCase) &&
-                item.TryGetProperty("Id", out var id))
-                return id.GetString();
-        }
-
-        return null;
     }
 
     private string BuildUrl(string endpoint, Dictionary<string, string>? queryParams = null)

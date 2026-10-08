@@ -96,6 +96,10 @@ public interface IBackendPlaylistAuthenticationResolver
     ValueTask<BackendPlaylistAuthentication> ResolveAsync(
         BackendPlaylistTargetContext context,
         CancellationToken cancellationToken);
+
+    ValueTask<BackendPlaylistAuthentication> ResolveReadAsync(
+        BackendPlaylistTargetContext context,
+        CancellationToken cancellationToken) => ResolveAsync(context, cancellationToken);
 }
 
 public sealed record BackendPlaylistAuthentication(

@@ -23,6 +23,7 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
     private FakeClock _clock = null!;
     private TrackIdentityService _identities = null!;
     private readonly Mock<IMusicBrainzCatalogRefreshQueue> _catalogQueue = new(MockBehavior.Strict);
+    private readonly Mock<IBackendLibraryAccessResolver> _libraryAccess = new(MockBehavior.Strict);
 
     public async Task InitializeAsync()
     {
@@ -59,7 +60,10 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         state.Set(DurableStorageReadiness.Ready, "fixture");
         _clock = new FakeClock(now);
         _identities = new TrackIdentityService(_factory, state, _clock, _catalogQueue.Object);
-        _service = new LibraryIndexService(_factory, state, _clock, _identities);
+        _libraryAccess.Setup(service => service.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProtocolExecutionContext context, CancellationToken _) =>
+                new BackendLibraryAccess(true, context.Principal!.UserId == _userA ? ["music"] : []));
+        _service = new LibraryIndexService(_factory, state, _clock, _identities, _libraryAccess.Object);
     }
 
     [Fact]
@@ -101,7 +105,7 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task IndexReads_CannotCrossUserLibraryOrUnlinkedIdentity()
+    public async Task IndexReads_RequireBackendLibraryAccessAndLinkedIdentity()
     {
         await _service.UpsertAsync(Context(_userA, "principal-a", "music"), Input());
 
@@ -110,6 +114,21 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
             _service.ListAsync(Context(_userA, "principal-a", "other"), "music"));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             _service.ListAsync(UnlinkedContext(), "music"));
+    }
+
+    [Fact]
+    public async Task IndexReads_UseBackendAccessInsteadOfIndexProvenanceAndFailClosed()
+    {
+        var indexed = await _service.UpsertAsync(Context(_userA, "principal-a", "music"), Input());
+        var viewer = Context(_userB, "principal-b", "music");
+        _libraryAccess.Setup(service => service.ResolveAsync(viewer, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BackendLibraryAccess(true, ["music"]));
+        Assert.Equal(indexed.Id, Assert.Single(await _service.ListAsync(viewer, "music")).Id);
+
+        _libraryAccess.Setup(service => service.ResolveAsync(viewer, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(BackendLibraryAccess.Unavailable);
+        Assert.Empty(await _service.ListAsync(viewer, "music"));
+        Assert.Empty(await _service.GetMatchCandidatesAsync(viewer, "music"));
     }
 
     [Fact]

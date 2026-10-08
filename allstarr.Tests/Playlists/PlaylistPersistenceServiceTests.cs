@@ -17,6 +17,7 @@ public sealed class PlaylistPersistenceServiceTests : IAsyncLifetime
     private TestDbContextFactory _factory = null!;
     private TrackMatchCommandService _matches = null!;
     private PlaylistPersistenceService _playlists = null!;
+    private TestBackendLibraryAccess _access = null!;
     private Guid _tenant;
     private Guid _userA;
     private Guid _userB;
@@ -36,9 +37,54 @@ public sealed class PlaylistPersistenceServiceTests : IAsyncLifetime
         db.ProviderAccounts.Add(new ProviderAccountRecord { Id = _accountA, TenantId = _tenant, OwnerUserId = _userA, ProviderId = "fixture", DisplayName = "A", Enabled = true, CreatedAt = _now, UpdatedAt = _now });
         db.LibraryTracks.Add(new LibraryTrackRecord { Id = _localTrack, TenantId = _tenant, OwnerUserId = _userA, BackendIdentityId = identityA.Id, LibraryScopeId = "music", Protocol = "jellyfin", BackendInstanceId = "backend", BackendItemId = "local-1", FilePath = "/media/Music/local.flac", Title = "Local", Artist = "Artist", DurationMilliseconds = 1000, ProviderIdsJson = "{}", IndexedAt = _now, SourceModifiedAt = _now, UpdatedAt = _now });
         await db.SaveChangesAsync();
+        _access = new TestBackendLibraryAccess(_factory, "music");
         var resolver = new ProviderAccountResolver(_factory); var clock = new PersistenceClock(_now);
-        _matches = new TrackMatchCommandService(_factory, new TrackMatchDecisionEngine(), resolver, clock);
-        _playlists = new PlaylistPersistenceService(_factory, resolver, clock, _matches);
+        _matches = new TrackMatchCommandService(_factory, new TrackMatchDecisionEngine(), resolver, clock, _access);
+        _playlists = new PlaylistPersistenceService(_factory, resolver, clock, _matches, _access);
+    }
+
+    [Fact]
+    public async Task LocalMatches_UseViewerPermissionsAcrossIndexOwnersAndStopAfterRevocation()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var local = await db.LibraryTracks.SingleAsync();
+            local.OwnerUserId = _userB;
+            local.BackendIdentityId = await db.BackendIdentities.Where(item => item.UserId == _userB)
+                .Select(item => item.Id).SingleAsync();
+            local.LibraryScopeId = "second-library";
+            await db.SaveChangesAsync();
+        }
+        _access.Permissions[_userA] = new(true, ["second-library"]);
+        var context = Context(_userA, "principal-a");
+        var actor = new TrackMatchActor(_tenant, _userA, false);
+        var snapshot = await _matches.CaptureSnapshotAsync(context, Snapshot(1, "track-1"));
+        var decision = new MatchDecisionInput(snapshot.Id, _localTrack, null, TrackMatchState.Accepted,
+            .95, .8, 1, snapshot.SnapshotVersion, 1, TrackMatchDecisionEngine.AlgorithmVersion,
+            "policy-v1", "[]", "[\"exact\"]", "[]");
+        await _matches.RecordDecisionAsync(context, decision);
+        await _matches.SetOverrideAsync(context, new ManualOverrideInput(snapshot.Id, "music",
+            ManualOverrideDecision.Pin, _localTrack, "confirmed"));
+        Assert.Equal(_localTrack, Assert.Single(await _matches.SearchLocalTracksAsync(actor, "Local")).Id);
+        Assert.Equal(_localTrack, Assert.Single((await _matches.GetReviewDataAsync(actor)).LibraryTracks).Id);
+        var link = await _playlists.CreateLinkAsync(context, Link());
+        var source = await _playlists.CaptureSourceSnapshotAsync(context, link.Id,
+            new PlaylistSourceSnapshotInput(1, "rev-1", "etag-1", "Provider list", null, null, Hash("playlist"),
+                [new PlaylistSourceEntryInput(0, snapshot.Id, Hash("entry-1"))]));
+        Assert.Equal("local-1", Assert.Single((await _playlists.ReadPreviewAsync(context, link.Id, source.Id)).Entries)
+            .ResolvedRoute!.BackendItemId);
+
+        _access.Permissions[_userA] = BackendLibraryAccess.Unavailable;
+        Assert.Empty(await _matches.SearchLocalTracksAsync(actor, "Local"));
+        Assert.Empty((await _matches.GetReviewDataAsync(actor)).LibraryTracks);
+        Assert.Empty((await _matches.GetDetailAsync(actor, "fixture", "track-1", "local-1")).LocalTracks);
+        var denied = Assert.Single((await _playlists.ReadPreviewAsync(context, link.Id, source.Id)).Entries);
+        Assert.False(denied.TargetEligible);
+        Assert.Null(denied.ResolvedRoute?.BackendItemId);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => _matches.RecordDecisionAsync(context,
+            decision with { DecisionVersion = 2 }));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => _matches.SetOverrideAsync(context,
+            new ManualOverrideInput(snapshot.Id, "music", ManualOverrideDecision.Pin, _localTrack, "denied")));
     }
 
     [Fact]
@@ -58,7 +104,7 @@ public sealed class PlaylistPersistenceServiceTests : IAsyncLifetime
             _factory,
             new TrackMatchDecisionEngine(),
             new ProviderAccountResolver(_factory),
-            new PersistenceClock(_now));
+            new PersistenceClock(_now), new TestBackendLibraryAccess(_factory, "music"));
         Assert.Equal(
             decision.Id,
             (await restartedMatches.RecordDecisionAsync(context, decisionInput)).Id);

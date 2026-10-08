@@ -88,7 +88,10 @@ public sealed class AdminOidcLinks(
         return await sessions.CreateSessionAsync(user.UserId, user.Name, user.IsAdministrator, user.AccessToken, null,
             backendType: backend.Backend == "jellyfin" ? "Jellyfin" : "Subsonic", tenantId: principal.TenantId, allstarrUserId: principal.UserId,
             cancellationToken: cancellationToken, oidcSecretReferenceId: binding.link.SecretReferenceId,
-            oidcBackendEndpoint: backend.Endpoint, oidcBackendInstanceId: identityOptions.BackendInstanceId);
+            oidcBackendEndpoint: backend.Endpoint, oidcBackendInstanceId: identityOptions.BackendInstanceId,
+            subsonicReadAuthentication: backend.Backend == "subsonic"
+                ? allstarr.Services.Subsonic.SubsonicSessionAuthentication.Create(user.UserId, credential.Credential)
+                : null);
     }
 
     public async Task<bool> IsLinkedAsync(AdminAuthSession session, CancellationToken cancellationToken)

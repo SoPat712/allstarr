@@ -639,10 +639,13 @@ public sealed class ProtocolRouteFixtureTests
             request =>
             {
                 observedRequests.Add(request.RequestUri!.PathAndQuery);
-                return request.RequestUri.AbsolutePath == "/Users/Me"
-                    ? Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}""")
-                    : Json(StatusCodes.Status200OK,
-                        """{"Id":"music-1","Type":"CollectionFolder","CollectionType":"music","Etag":"full-object"}""");
+                return request.RequestUri.AbsolutePath switch
+                {
+                    "/Users/Me" => Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}"""),
+                    "/UserViews" => Json(StatusCodes.Status200OK, """{"Items":[{"Id":"music-1","CollectionType":"music"}]}"""),
+                    _ => Json(StatusCodes.Status200OK,
+                        """{"Id":"music-1","Type":"CollectionFolder","CollectionType":"music","Etag":"full-object"}""")
+                };
             },
             configuration: new Dictionary<string, string?>
             {
@@ -699,6 +702,53 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Contains("/UserViews?ApiKey=fixture-key&UserId=user-1", observedRequests);
         Assert.Contains("/Items/visible-music?ApiKey=fixture-key&UserId=user-1", observedRequests);
         Assert.DoesNotContain(observedRequests, request => request.Contains("global-music", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(403, "{}")]
+    [InlineData(200, "{\"Items\":[]}")]
+    [InlineData(200, "{}")]
+    public async Task JellyfinMusicRoot_DoesNotFallBackToConfiguredAdministratorLibrary(int status, string views)
+    {
+        var observed = new List<string>();
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            observed.Add(request.RequestUri!.AbsolutePath);
+            return request.RequestUri.AbsolutePath switch
+            {
+                "/Users/Me" => Json(200, """{"Id":"listener"}"""),
+                "/UserViews" => Json(status, views),
+                _ => throw new InvalidOperationException("Unexpected administrator library lookup")
+            };
+        }, configuration: new Dictionary<string, string?> { ["Jellyfin:LibraryId"] = "admin-library" });
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync("/Items/Root?api_key=fixture-key");
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(["/Users/Me", "/UserViews"], observed);
+    }
+
+    [Fact]
+    public async Task JellyfinMusicRoot_PreservesNativeRootForMultipleVisibleMusicLibraries()
+    {
+        var observed = new List<string>();
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            observed.Add(request.RequestUri!.AbsolutePath);
+            return request.RequestUri.AbsolutePath switch
+            {
+                "/Users/Me" => Json(200, """{"Id":"listener"}"""),
+                "/UserViews" => Json(200, """{"Items":[{"Id":"music-a","CollectionType":"music"},{"Id":"music-b","CollectionType":"music"}]}"""),
+                "/Items/Root" => Json(200, """{"Id":"native-root","Type":"UserRootFolder","Etag":"unchanged"}"""),
+                _ => throw new InvalidOperationException("Unexpected single-library selection")
+            };
+        });
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync("/Items/Root?api_key=fixture-key");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("native-root", body.RootElement.GetProperty("Id").GetString());
+        Assert.Equal("unchanged", body.RootElement.GetProperty("Etag").GetString());
+        Assert.Equal(["/Users/Me", "/UserViews", "/Items/Root"], observed);
     }
 
     [Theory]

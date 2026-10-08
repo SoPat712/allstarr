@@ -258,7 +258,7 @@ public sealed class TrackRematchAllIntegrationTests
             factory,
             new TrackMatchDecisionEngine(),
             new ProviderAccountResolver(factory),
-            clock);
+            clock, new TestBackendLibraryAccess(factory, "music"));
         var handler = new TrackRematchAllJobHandler(factory, rematches, commands, clock);
 
         var completion = await handler.ExecuteAsync(

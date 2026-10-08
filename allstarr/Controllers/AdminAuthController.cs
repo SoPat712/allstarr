@@ -424,7 +424,10 @@ public sealed class AdminAuthController : ControllerBase
             backendName,
             principal?.TenantId,
             principal?.UserId,
-            HttpContext.RequestAborted);
+            HttpContext.RequestAborted,
+            subsonicReadAuthentication: backend == BackendType.Subsonic
+                ? allstarr.Services.Subsonic.SubsonicSessionAuthentication.Create(userId, request.Password!)
+                : null);
 
         SetSessionCookie(session.SessionId, session.ExpiresAtUtc);
         _logger.LogInformation(

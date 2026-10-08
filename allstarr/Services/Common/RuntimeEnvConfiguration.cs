@@ -21,6 +21,7 @@ public static class RuntimeEnvConfiguration
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
             ["BACKEND_TYPE"] = ["Backend:Type"],
+            ["BACKEND_MUSIC_LIBRARY_IDS"] = ["Backend:MusicLibraryIds"],
             ["ALLSTARR_RELEASE_PROFILE"] = ["Release:Profile"],
             ["ADMIN_BIND_ANY_IP"] = ["Admin:BindAnyIp"],
             ["ADMIN_BASE_PATH"] = ["Admin:BasePath"],

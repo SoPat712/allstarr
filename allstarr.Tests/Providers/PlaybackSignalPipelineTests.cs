@@ -24,6 +24,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     private Factory factory = null!;
     private DurableJobQueue jobs = null!;
     private Clock clock = null!;
+    private IPlaybackTrackResolver playbackTracks = null!;
 
     public async Task InitializeAsync()
     {
@@ -64,6 +65,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
             SourceModifiedAt = now,
             UpdatedAt = now
         }); await db.SaveChangesAsync();
+        playbackTracks = new PlaybackTrackResolver(factory, new TestBackendLibraryAccess(factory, "music"));
         clock = new() { UtcNow = now }; var jobOptions = new DurableJobOptions(); jobs = new(factory, jobOptions, new JobPayloadPolicy(jobOptions), clock);
     }
 
@@ -164,7 +166,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         foreach (var request in requests) Assert.True(await pipeline.RecordAsync(request));
         var lastFm = new Target("lastfm", true);
         var listenBrainz = new Target("listenbrainz", true);
-        var trackResolver = new PlaybackTrackResolver(factory,
+        var trackResolver = new PlaybackTrackResolver(factory, new TestBackendLibraryAccess(factory, "music"),
         [
             new BackendMetadataResolver(new("Synthetic external", "Allstarr qualification", "Smoke", null, 120))
         ]);
@@ -209,7 +211,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         var unscoped = new ProtocolExecutionContext(
             execution.Protocol, execution.BackendInstanceId, execution.VerifiedBackendPrincipalId,
             execution.Principal, execution.CorrelationId, execution.Deadline, default);
-        var pipeline = new PlaybackSignalPipeline(jobs, new ProtocolLibraryScopeResolver(factory));
+        var pipeline = new PlaybackSignalPipeline(jobs, new ProtocolLibraryScopeResolver(factory, new TestBackendLibraryAccess(factory, "music", "other")));
 
         Assert.True(await pipeline.RecordAsync(new(
             unscoped, PlaybackTransition.Start, "track-1", "device", "session", 0, clock.UtcNow)));
@@ -219,7 +221,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task MissingProtocolLibraryScope_RejectsAnAmbiguousItem()
+    public async Task MissingProtocolLibraryScope_ChoosesAccessibleLibraryDeterministically()
     {
         await using (var db = await factory.CreateDbContextAsync())
         {
@@ -250,12 +252,16 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
             execution.Protocol, execution.BackendInstanceId, execution.VerifiedBackendPrincipalId,
             execution.Principal, execution.CorrelationId, execution.Deadline, default);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            new ProtocolLibraryScopeResolver(factory).ResolveAsync(unscoped, "track-1"));
+        var resolved = await new ProtocolLibraryScopeResolver(factory, new TestBackendLibraryAccess(factory, "music", "other"))
+            .ResolveAsync(unscoped, "track-1");
+        Assert.Equal("music", resolved.LibraryScopeId);
+        var restricted = await new ProtocolLibraryScopeResolver(factory, new TestBackendLibraryAccess(factory, "other"))
+            .ResolveAsync(unscoped.WithLibraryScope("music"), "track-1");
+        Assert.Equal("other", restricted.LibraryScopeId);
     }
 
     [Fact]
-    public async Task EmptyDurableIndex_UsesConfiguredJellyfinLibraryScope()
+    public async Task EmptyDurableIndex_UsesOnlyViewerAccessibleLibraryScope()
     {
         await using (var db = await factory.CreateDbContextAsync())
         {
@@ -266,17 +272,19 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         var unscoped = new ProtocolExecutionContext(
             execution.Protocol, execution.BackendInstanceId, execution.VerifiedBackendPrincipalId,
             execution.Principal, execution.CorrelationId, execution.Deadline, default);
-        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
-            new Dictionary<string, string?> { ["Jellyfin:LibraryId"] = "configured-music" }).Build();
-
-        var resolved = await new ProtocolLibraryScopeResolver(factory, configuration)
+        var resolved = await new ProtocolLibraryScopeResolver(factory, new TestBackendLibraryAccess(factory, "visible-music"))
             .ResolveAsync(unscoped, "backend-track");
 
-        Assert.Equal("configured-music", resolved.LibraryScopeId);
+        Assert.Equal("visible-music", resolved.LibraryScopeId);
+        var external = await new ProtocolLibraryScopeResolver(factory, new TestBackendLibraryAccess(factory))
+            .ResolveAsync(unscoped, "ext-deezer-song-track");
+        Assert.Equal("music", external.LibraryScopeId);
     }
 
-    [Fact]
-    public async Task EmptyDurableIndex_ResolvesPlaybackTrackFromBackendMetadata()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task EmptyDurableIndex_ResolvesPlaybackTrackFromBackendMetadata(bool libraryAccessAvailable)
     {
         await using (var db = await factory.CreateDbContextAsync())
         {
@@ -285,13 +293,119 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         }
         var metadata = new BackendMetadataResolver(new(
             "Backend title", "Backend artist", "Backend album", "/art", 180));
-        var resolver = new PlaybackTrackResolver(factory, [metadata]);
+        var access = new TestBackendLibraryAccess(factory, "music");
+        if (!libraryAccessAvailable) access.Permissions[user] = BackendLibraryAccess.Unavailable;
+        var resolver = new PlaybackTrackResolver(factory, access, [metadata]);
 
         var resolved = await resolver.ResolveAsync(Payload() with { ItemId = "backend-track" });
 
         Assert.NotNull(resolved);
         Assert.Equal("Backend title", resolved.Title);
         Assert.Equal(180_000, resolved.DurationMilliseconds);
+    }
+
+    [Theory]
+    [InlineData("allowed")]
+    [InlineData("denied")]
+    [InlineData("unavailable")]
+    public async Task PlaybackTrackMetadataUsesViewerPermissionInsteadOfIndexOwner(string permission)
+    {
+        var indexOwner = Guid.CreateVersion7();
+        Guid trackId;
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            var identity = Guid.CreateVersion7();
+            db.Users.Add(new()
+            {
+                Id = indexOwner,
+                TenantId = tenant,
+                DisplayName = "Index owner",
+                Status = PlatformUserStatus.Active,
+                CreatedAt = clock.UtcNow,
+                UpdatedAt = clock.UtcNow
+            });
+            db.BackendIdentities.Add(new()
+            {
+                Id = identity,
+                TenantId = tenant,
+                UserId = indexOwner,
+                BackendType = "jellyfin",
+                BackendInstanceId = "backend",
+                PrincipalId = "index-owner",
+                CreatedAt = clock.UtcNow,
+                LastSeenAt = clock.UtcNow
+            });
+            var track = await db.LibraryTracks.SingleAsync();
+            track.OwnerUserId = indexOwner;
+            track.BackendIdentityId = identity;
+            track.LibraryScopeId = "shared-library";
+            track.Title = "Shared indexed title";
+            trackId = track.Id;
+            await db.SaveChangesAsync();
+        }
+        var access = new TestBackendLibraryAccess(factory, "shared-library");
+        access.Permissions[user] = permission switch
+        {
+            "allowed" => new(true, ["shared-library"]),
+            "denied" => new(true, []),
+            _ => BackendLibraryAccess.Unavailable
+        };
+        var payload = Payload();
+
+        var resolved = await new PlaybackTrackResolver(factory, access).ResolveAsync(payload);
+
+        Assert.NotEqual(indexOwner, payload.Scope.OwnerUserId);
+        Assert.Equal("music", payload.Scope.LibraryScopeId);
+        if (permission == "allowed")
+        {
+            Assert.NotNull(resolved);
+            Assert.Equal(trackId, resolved.LibraryTrackId);
+            Assert.Equal("Shared indexed title", resolved.Title);
+        }
+        else Assert.Null(resolved);
+    }
+
+    [Theory]
+    [InlineData("tenant")]
+    [InlineData("backend")]
+    [InlineData("protocol")]
+    public async Task PlaybackTrackMetadataRetainsExactPayloadBackendAndTenantBoundaries(string mismatch)
+    {
+        var payload = Payload();
+        payload = payload with
+        {
+            Scope = mismatch switch
+            {
+                "tenant" => payload.Scope with { TenantId = Guid.CreateVersion7() },
+                "backend" => payload.Scope with { BackendInstanceId = "other-backend" },
+                _ => payload.Scope with { Protocol = "subsonic" }
+            }
+        };
+
+        Assert.Null(await playbackTracks.ResolveAsync(payload));
+    }
+
+    [Fact]
+    public async Task PlaybackTrackMetadataChoosesAccessibleCopiesDeterministically()
+    {
+        Guid preferredId;
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            var copy = await db.LibraryTracks.AsNoTracking().SingleAsync();
+            copy.Id = preferredId = Guid.CreateVersion7();
+            copy.LibraryScopeId = "a-accessible";
+            copy.Title = "Preferred accessible copy";
+            db.LibraryTracks.Add(copy);
+            await db.SaveChangesAsync();
+        }
+        var access = new TestBackendLibraryAccess(factory, "music", "a-accessible");
+        var resolver = new PlaybackTrackResolver(factory, access);
+
+        Assert.Equal(preferredId, (await resolver.ResolveAsync(Payload()))!.LibraryTrackId);
+        Assert.Equal(preferredId, (await resolver.ResolveAsync(Payload()))!.LibraryTrackId);
+
+        access.Permissions[user] = new(true, ["music"]);
+        Assert.Equal("Track", (await resolver.ResolveAsync(Payload()))!.Title);
     }
 
     [Fact]
@@ -382,7 +496,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
             jobs, Options.Create(new MusicBrainzSettings { Enabled = true }));
         var handler = new PlaybackSignalJobHandler(
             new Writer(), new Scrobbles(), new Lyrics(), factory,
-            new PlaybackTrackResolver(factory), enrichment);
+            new PlaybackTrackResolver(factory, new TestBackendLibraryAccess(factory, "music")), enrichment);
 
         Assert.Equal(DurableJobCompletionKind.Succeeded,
             (await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default)).Kind);
@@ -402,7 +516,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     public async Task ScopedDeliverySkipsMissingOptionalAccounts(bool lastFm, bool listenBrainz, int expected)
     {
         var targets = new[] { new Target("lastfm", lastFm), new Target("listenbrainz", listenBrainz) };
-        var delivery = new ScopedPlaybackScrobbleDelivery(factory, targets, new Checkpoints());
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, targets, new Checkpoints(), playbackTracks);
         await delivery.DeliverAsync(Payload(), default);
         Assert.Equal(expected, targets.Sum(x => x.Successes));
     }
@@ -412,7 +526,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     {
         var first = new Target("lastfm", true); var second = new Target("listenbrainz", true) { FailFirst = true };
         var checkpoints = new EfPlaybackDeliveryCheckpointStore(factory);
-        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [first, second], checkpoints);
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [first, second], checkpoints, playbackTracks);
         var failure = await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() =>
             delivery.DeliverAsync(Payload(), default));
         Assert.Equal("playback_scrobble_retrying", failure.Code);
@@ -447,7 +561,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         var cancelled = new Target("lastfm", true) { CancelSource = cancellation };
         var later = new Target("listenbrainz", true);
         var delivery = new ScopedPlaybackScrobbleDelivery(
-            factory, [cancelled, later], new EfPlaybackDeliveryCheckpointStore(factory));
+            factory, [cancelled, later], new EfPlaybackDeliveryCheckpointStore(factory), playbackTracks);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             delivery.DeliverAsync(Payload(), cancellation.Token));
@@ -464,7 +578,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         var delivery = new ScopedPlaybackScrobbleDelivery(
             factory,
             [new Target("lastfm", true), new Target("listenbrainz", true)],
-            new Checkpoints());
+            new Checkpoints(), playbackTracks);
 
         var payload = Payload();
         await delivery.DeliverAsync(payload, default);
@@ -501,7 +615,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         var rejected = new Target("lastfm", true) { Reject = true };
         var healthy = new Target("listenbrainz", true);
         var checkpoints = new Checkpoints();
-        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [rejected, healthy], checkpoints);
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [rejected, healthy], checkpoints, playbackTracks);
         var payload = Payload();
 
         var firstFailure = await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() =>
@@ -543,7 +657,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         {
             Result = ScopedPlaybackScrobbleResult.Ignored("1", "Timestamp is too old", "{\"ignored\":1}")
         };
-        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new Checkpoints());
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new Checkpoints(), playbackTracks);
 
         await delivery.DeliverAsync(Payload(), default);
         await delivery.DeliverAsync(Payload(), default);
@@ -559,7 +673,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
             Result = ScopedPlaybackScrobbleResult.Retrying("29", "Last.fm could not accept the listen yet.",
                 TimeSpan.FromSeconds(42))
         };
-        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new Checkpoints());
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new Checkpoints(), playbackTracks);
 
         var failure = await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() =>
             delivery.DeliverAsync(Payload(), default));
@@ -573,7 +687,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     [InlineData(60, 1)]
     public async Task CompletedScrobbleHonorsHalfTrackThreshold(int playedSeconds, int expected)
     {
-        var target = new Target("lastfm", true); var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new Checkpoints());
+        var target = new Target("lastfm", true); var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new Checkpoints(), playbackTracks);
         await delivery.DeliverAsync(Payload() with { PositionTicks = TimeSpan.FromSeconds(playedSeconds).Ticks }, default);
         Assert.Equal(expected, target.Successes);
     }
@@ -587,6 +701,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
             factory,
             [target],
             new Checkpoints(),
+            playbackTracks,
             activity: activity);
         var progress = Payload() with
         {
@@ -605,7 +720,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     public async Task ExplicitSubsonicSubmission_BypassesPlaybackThreshold()
     {
         var target = new Target("lastfm", true);
-        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new Checkpoints());
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new Checkpoints(), playbackTracks);
 
         await delivery.DeliverAsync(Payload() with
         {
@@ -645,7 +760,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
             new Scrobbles(),
             new Lyrics(),
             factory,
-            new PlaybackTrackResolver(factory));
+            new PlaybackTrackResolver(factory, new TestBackendLibraryAccess(factory, "music")));
 
         var result = await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default);
 
@@ -665,7 +780,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         Assert.True(await pipeline.RecordAsync(Signal(PlaybackTransition.Stop, "track-1", TimeSpan.FromSeconds(61).Ticks)));
 
         var handler = new PlaybackSignalJobHandler(
-            new Writer(), new Scrobbles(), new Lyrics(), factory, new PlaybackTrackResolver(factory));
+            new Writer(), new Scrobbles(), new Lyrics(), factory, new PlaybackTrackResolver(factory, new TestBackendLibraryAccess(factory, "music")));
         for (var index = 0; index < 3; index++)
         {
             var claim = await jobs.ClaimNextAsync($"worker-{index}", [PlaybackSignalPipeline.JobType]);
@@ -693,7 +808,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         var pipeline = new PlaybackSignalPipeline(jobs);
         Assert.True(await pipeline.RecordAsync(Signal(PlaybackTransition.Submission, itemId, 0)));
         var claim = await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]);
-        var resolver = new PlaybackTrackResolver(factory,
+        var resolver = new PlaybackTrackResolver(factory, new TestBackendLibraryAccess(factory, "music"),
             [new BackendMetadataResolver(new("External title", "External artist", "External album", null, 180))]);
         var handler = new PlaybackSignalJobHandler(
             new RecommendationSignalWriter(factory, clock), new Scrobbles(), new Lyrics(), factory, resolver);
@@ -774,7 +889,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
         var target = new Target("lastfm", true);
-        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new Checkpoints());
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new Checkpoints(), playbackTracks);
 
         await delivery.DeliverAsync(Payload() with
         {
@@ -801,7 +916,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
         var target = new Target("lastfm", true);
-        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new Checkpoints());
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new Checkpoints(), playbackTracks);
 
         await delivery.DeliverAsync(Payload() with
         {
@@ -827,7 +942,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         using var activity = new PlaybackDeliveryActivityStore();
         var pipeline = new PlaybackSignalPipeline(jobs, playbackActivity: activity);
         var handler = new PlaybackSignalJobHandler(new Writer(), new Scrobbles(), new Lyrics(), factory,
-            new PlaybackTrackResolver(factory,
+            new PlaybackTrackResolver(factory, new TestBackendLibraryAccess(factory, "music"),
                 [new BackendMetadataResolver(new("Track", "Artist", "Album", null, 180))]));
         var start = Signal(PlaybackTransition.Start, itemId, 0);
         await pipeline.RecordAsync(start);

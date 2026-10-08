@@ -168,6 +168,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     private readonly ITrackMatchRepository _trackMatches;
     private readonly IPlatformClock _clock;
     private readonly KeyedAsyncLock _locks;
+    private readonly IBackendLibraryAccessResolver _libraryAccess;
     private readonly ILogger<PlaylistOrchestrationService>? _logger;
 
     public PlaylistOrchestrationService(
@@ -179,6 +180,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         ITrackMatchRepository trackMatches,
         IPlatformClock clock,
         KeyedAsyncLock locks,
+        IBackendLibraryAccessResolver libraryAccess,
         ILogger<PlaylistOrchestrationService>? logger = null,
         IEffectiveProviderPolicyResolver? effectivePolicies = null)
     {
@@ -186,6 +188,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             (factory, source, targets, planner, matcher, trackMatches, clock, logger);
         _effectivePolicies = effectivePolicies;
         _locks = locks;
+        _libraryAccess = libraryAccess;
     }
 
     private readonly IEffectiveProviderPolicyResolver? _effectivePolicies;
@@ -449,7 +452,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         CancellationToken cancellationToken)
     {
         if (_logger == null) return;
-        var projection = await new DurablePlaylistProjectionReader(_factory)
+        var projection = await new DurablePlaylistProjectionReader(_factory, _libraryAccess)
             .ReadByLinkIdAsync(
                 link.TenantId,
                 link.OwnerUserId,
@@ -792,11 +795,9 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                            providerIdentityIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
 
-        var candidates = await db.LibraryTracks.AsNoTracking()
-            .Where(item =>
-                item.TenantId == link.TenantId && item.OwnerUserId == link.OwnerUserId &&
-                item.LibraryScopeId == link.LibraryScopeId &&
-                item.BackendInstanceId == link.TargetBackendInstanceId)
+        var access = await _libraryAccess.ResolveAsync(execution, cancellationToken);
+        var candidates = await LibraryTrackAccess.Query(db, execution, access)
+            .Where(item => item.TenantId == link.TenantId && item.BackendInstanceId == link.TargetBackendInstanceId)
             .Select(item => new LibraryTrackRecord
             {
                 Id = item.Id,
@@ -943,7 +944,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     : null;
 
             var match = effectiveMatcher.Decide(
-                new TrackMatchScope(link.TenantId, link.OwnerUserId, link.TargetBackendInstanceId, link.LibraryScopeId, link.ProviderAccountId, 1, snapshot.SnapshotVersion),
+                new TrackMatchScope(link.TenantId, link.OwnerUserId, link.TargetBackendInstanceId, link.LibraryScopeId, link.ProviderAccountId, 1, snapshot.SnapshotVersion, access.LibraryIds.ToHashSet(StringComparer.Ordinal)),
                 source,
                 candidateSet,
                 rejectedOverride);
@@ -1254,8 +1255,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var durations = await db.LibraryTracks.AsNoTracking()
             .Where(item =>
                 item.TenantId == link.TenantId &&
-                item.OwnerUserId == link.OwnerUserId &&
-                item.LibraryScopeId == link.LibraryScopeId &&
+                item.Protocol == link.TargetProtocol &&
                 item.BackendInstanceId == link.TargetBackendInstanceId &&
                 expectedIds.Contains(item.BackendItemId))
             .Select(item => new { item.BackendItemId, item.DurationMilliseconds })

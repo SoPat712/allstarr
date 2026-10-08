@@ -85,6 +85,8 @@ Allstarr changes a native response only when a documented feature requires it: e
 
 Jellyfin search fetches native results with the current viewer’s credentials on every request. The merged native/provider response is not cached, so changing viewers or revoking backend access cannot replay another authorized response. Provider-owned metadata caches remain independent of native authorization.
 
+Library indexing discovers all music libraries, optionally restricted by the deployment's selected library IDs. Local-copy selection uses the current viewer's backend library permissions rather than the identity that indexed the item. Permission results are isolated by backend, viewer and authentication context, expire after 30 seconds, and are invalidated on sign-in. Lookup failures deny indexed local routes; independently authorized provider routes remain eligible. Native playback metadata and artwork require a fresh viewer-filtered item lookup.
+
 Authenticated search keeps successful tracks, albums, and artists when another provider or search category fails. A batched, account-aware identity lookup collapses external track hits only when accepted links identify the same recording; tentative, released, replaced, pinned, and unknown links remain separate. The representative follows configured streaming order. This is still a provider-shaped search result, not the stable canonical protocol ID or native-item merge needed for unified music results.
 
 Playlist snapshot persistence serializes writes for each provider account with a shared process-local lock. Source collection finishes before that lock is acquired, and the database transaction starts only after acquisition. Run one Allstarr process for a deployment; the lock does not coordinate separate processes. Database conflict classification lives in `Core/Storage/DbErrors`, while each operation retains its own bounded retry policy.
@@ -143,7 +145,9 @@ The complete application-cache key inventory is:
 | --- | --- | --- |
 | `search:*` | Provider search response | Short TTL and provider/account revision |
 | `metadata:album:*`, `metadata:artist:*`, `musicbrainz:*`, `odesli:*` | Provider metadata or translation response | Bounded TTL and provider/account revision |
-| `playback:metadata:*`, `jellyfin:item-type:*` | Backend metadata projection | Bounded TTL and backend/library revision |
+| `playback:metadata:*` | External provider playback metadata | Bounded TTL |
+| `jellyfin:item-type:*` | Native music-surface type classification | Bounded TTL; never grants item access |
+| `backend:libraries:v1:*` | Viewer-authorized backend music libraries | 30-second TTL, sign-in invalidation and authentication/selection identity |
 | `lyrics:*` | Provider lyrics response | Bounded TTL and provider/track revision |
 | `media:descriptor:*`, `playlist:artwork-descriptor:*`, `artwork:payload:*` | Artwork bytes or descriptor | Bounded media size/TTL and resource revision |
 | `playback:signal:dedupe:*` | Short-lived duplicate-signal marker | Five-minute maximum TTL |

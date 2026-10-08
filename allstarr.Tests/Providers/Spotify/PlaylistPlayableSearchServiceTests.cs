@@ -111,7 +111,8 @@ public sealed class PlaylistPlayableSearchServiceTests
             NullLogger<PlaylistPlayableSearchService>.Instance);
         var context = Context(tenant, user);
         var scope = new TrackMatchScope(
-            tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1);
+            tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1,
+            new HashSet<string>(StringComparer.Ordinal));
 
         var result = await service.MatchAsync(
             context,
@@ -170,7 +171,8 @@ public sealed class PlaylistPlayableSearchServiceTests
                 "source", "spotify", "source-track", "Window Song",
                 "The Artist", null, null, 240_000, null, null, null),
             new TrackMatchScope(
-                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1),
+                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1,
+                new HashSet<string>(StringComparer.Ordinal) { "music" }),
             [],
             null,
             CancellationToken.None);
@@ -229,7 +231,8 @@ public sealed class PlaylistPlayableSearchServiceTests
                 null,
                 null),
             new TrackMatchScope(
-                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1),
+                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1,
+                new HashSet<string>(StringComparer.Ordinal) { "music" }),
             [],
             null,
             CancellationToken.None);
@@ -275,7 +278,8 @@ public sealed class PlaylistPlayableSearchServiceTests
             NullLogger<PlaylistPlayableSearchService>.Instance);
         var context = Context(tenant, user);
         var scope = new TrackMatchScope(
-            tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1);
+            tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1,
+            new HashSet<string>(StringComparer.Ordinal) { "music" });
         var canonical = Guid.CreateVersion7();
 
         var result = await service.ReuseAsync(
@@ -324,7 +328,8 @@ public sealed class PlaylistPlayableSearchServiceTests
     {
         var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
-        var scope = new TrackMatchScope(tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1);
+        var scope = new TrackMatchScope(tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1,
+            new HashSet<string>(StringComparer.Ordinal) { "music" });
         var source = new ExternalTrackMatchSnapshot("source", "spotify", "source-track", "Sunroof",
             "Nicky Youre, hey daisy", "Sunroof", null, 163_025, null, null, null);
         var local = new LocalTrackMatchCandidate(Guid.CreateVersion7(), tenant, user, "main", "music",
@@ -392,7 +397,8 @@ public sealed class PlaylistPlayableSearchServiceTests
                 "source", "spotify", "source-track", "Winter Wind",
                 "Frédéric Chopin", null, null, 225_000, null, null, null),
             new TrackMatchScope(
-                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1),
+                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1,
+                new HashSet<string>(StringComparer.Ordinal) { "music" }),
             [
                 new ProviderTrackIdentityRecord
                 {
@@ -452,7 +458,8 @@ public sealed class PlaylistPlayableSearchServiceTests
                 "source", "spotify", "source-track", "Feels",
                 "Calvin Harris", "Funk Wav Bounces Vol. 1", null, 223_000, null, null, null),
             new TrackMatchScope(
-                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1),
+                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1,
+                new HashSet<string>(StringComparer.Ordinal) { "music" }),
             [],
             null,
             CancellationToken.None);
@@ -525,7 +532,8 @@ public sealed class PlaylistPlayableSearchServiceTests
                 null,
                 null),
             new TrackMatchScope(
-                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1),
+                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1,
+                new HashSet<string>(StringComparer.Ordinal) { "music" }),
             [],
             null,
             CancellationToken.None);
@@ -560,7 +568,8 @@ public sealed class PlaylistPlayableSearchServiceTests
             new ExternalTrackMatchSnapshot(
                 "source", "spotify", "source-track", "Crush", "Selena Gomez & The Scene",
                 "Kiss & Tell", null, 199_000, null, null, null),
-            new TrackMatchScope(tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1),
+            new TrackMatchScope(tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1,
+                new HashSet<string>(StringComparer.Ordinal) { "music" }),
             [], null, CancellationToken.None);
 
         Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);

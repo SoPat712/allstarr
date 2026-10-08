@@ -92,7 +92,8 @@ public static class ApplicationCachePolicyRegistry
                 "odesli:url-to-spotify:v2:",
                 "odesli:translate:v2:",
                 "jellyfin:item-type:v1:",
-                "jellyfin:item-type:v2:"))
+                "jellyfin:item-type:v2:",
+                "backend:libraries:v1:"))
             category = ApplicationCacheCategory.ProviderResponse;
 
         return category != default ||

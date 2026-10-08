@@ -58,9 +58,9 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             _factory,
             new TrackMatchDecisionEngine(),
             accountResolver,
-            clock);
+            clock, new TestBackendLibraryAccess(_factory, "music"));
         _service = new(_factory, _source, new FakeTargetResolver(_target), new PlaylistMaterializationPlanner(),
-            new TrackMatchDecisionEngine(), _trackMatches, clock, new KeyedAsyncLock(),
+            new TrackMatchDecisionEngine(), _trackMatches, clock, new KeyedAsyncLock(), new TestBackendLibraryAccess(_factory, "music"),
             new CollectingLogger<PlaylistOrchestrationService>(_logs));
         await using var db = await _factory.CreateDbContextAsync();
         _identity = Guid.CreateVersion7(); _canonical = Guid.CreateVersion7();
@@ -126,8 +126,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 factory,
                 new TrackMatchDecisionEngine(),
                 new ProviderAccountResolver(factory),
-                new Clock(_now)),
-            new Clock(_now), new KeyedAsyncLock());
+                new Clock(_now), new TestBackendLibraryAccess(factory, "music")),
+            new Clock(_now), new KeyedAsyncLock(), new TestBackendLibraryAccess(_factory, "music"));
         var baselines = new List<(int Count, int Commands, long Allocated, long ElapsedTicks)>();
 
         foreach (var count in new[] { 100, 1_000, 10_000 })
@@ -341,7 +341,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.False(secondPlan.Plan.SourceSnapshotIsStale);
         Assert.NotEqual(firstPlan.Plan.IdempotencyKey, secondPlan.Plan.IdempotencyKey);
 
-        var projection = await new DurablePlaylistProjectionReader(_factory)
+        var projection = await new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"))
             .ReadByLinkIdAsync(_tenant, _user, _link);
         var reconciliation = Assert.IsType<DurablePlaylistReconciliation>(
             projection!.Reconciliation);
@@ -375,7 +375,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             "stable-revision",
             Entry(0, "entry-a", "source-1", "One") with { ArtworkUrl = "https://art/new" });
         await _service.RefreshAsync(Context(), _link);
-        var artworkOnly = await new DurablePlaylistProjectionReader(_factory)
+        var artworkOnly = await new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"))
             .ReadByLinkIdAsync(_tenant, _user, _link);
         Assert.Empty(artworkOnly!.Reconciliation!.ChangedPositions);
 
@@ -383,7 +383,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             "stable-revision",
             Entry(0, "entry-a", "source-1", "Renamed") with { ArtworkUrl = "https://art/new" });
         await _service.RefreshAsync(Context(), _link);
-        var renamed = await new DurablePlaylistProjectionReader(_factory)
+        var renamed = await new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"))
             .ReadByLinkIdAsync(_tenant, _user, _link);
         Assert.Equal([0], renamed!.Reconciliation!.ChangedPositions);
     }
@@ -611,8 +611,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
 
         var rematches = new PlaylistRematchService(
             _factory,
-            new DurablePlaylistProjectionReader(_factory),
-            new TrackMatchDecisionEngine());
+            new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music")),
+            new TrackMatchDecisionEngine(), new TestBackendLibraryAccess(_factory, "music"));
         var preview = await rematches.PreviewAsync(_tenant, _user);
         Assert.Equal(2, preview.TotalRows);
         Assert.Equal(2, preview.StaleRevisionRows);
@@ -766,7 +766,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             new TrackMatchActor(_tenant, _user, false),
             externalSnapshotId: externalSnapshotId);
         Assert.Contains(review.ProviderIdentities, item => item.Id == source.Id);
-        var projection = await new DurablePlaylistProjectionReader(_factory)
+        var projection = await new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"))
             .ReadByLinkIdAsync(_tenant, _user, _link);
         Assert.Equal("external", Assert.Single(projection!.Entries).RouteKind);
         Assert.Equal("deezer", Assert.Single(projection.Entries).RouteProviderId);
@@ -798,7 +798,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             _factory,
             matcher,
             new ProviderAccountResolver(_factory),
-            new Clock(_now),
+            new Clock(_now), new TestBackendLibraryAccess(_factory, "music"),
             new PlaylistPlayableSearchService(
                 gateway.Object,
                 matcher,
@@ -864,7 +864,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             _factory,
             matcher,
             new ProviderAccountResolver(_factory),
-            new Clock(_now),
+            new Clock(_now), new TestBackendLibraryAccess(_factory, "music"),
             new PlaylistPlayableSearchService(
                 gateway.Object,
                 matcher,
@@ -879,7 +879,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             new PlaylistMaterializationPlanner(),
             matcher,
             trackMatches,
-            new Clock(_now), new KeyedAsyncLock());
+            new Clock(_now), new KeyedAsyncLock(), new TestBackendLibraryAccess(_factory, "music"));
 
         await service.RefreshAsync(Context(), _link);
 
@@ -897,7 +897,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             .ToListAsync();
         Assert.Equal(2, routes.Count);
         Assert.All(routes, item => Assert.Equal("automatic-suggestion", item.VerificationMethod));
-        var projection = await new DurablePlaylistProjectionReader(_factory, gateway.Object)
+        var projection = await new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"), gateway.Object)
             .ReadByLinkIdAsync(_tenant, _user, _link);
         Assert.NotNull(projection);
         Assert.Equal(1, projection.TotalCount);
@@ -925,12 +925,12 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             }]);
         var matcher = new TrackMatchDecisionEngine();
         var matches = new TrackMatchCommandService(
-            _factory, matcher, new ProviderAccountResolver(_factory), new Clock(_now),
+            _factory, matcher, new ProviderAccountResolver(_factory), new Clock(_now), new TestBackendLibraryAccess(_factory, "music"),
             new PlaylistPlayableSearchService(gateway.Object, matcher, null!, new IdentityOptions(),
                 Options.Create(new JellyfinSettings()), NullLogger<PlaylistPlayableSearchService>.Instance));
         var service = new PlaylistOrchestrationService(
             _factory, _source, new FakeTargetResolver(_target), new PlaylistMaterializationPlanner(), matcher,
-            matches, new Clock(_now), new KeyedAsyncLock());
+            matches, new Clock(_now), new KeyedAsyncLock(), new TestBackendLibraryAccess(_factory, "music"));
 
         await service.RefreshAsync(Context(), _link);
 
@@ -1022,7 +1022,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             concurrentFactory,
             matcher,
             new ProviderAccountResolver(_factory),
-            new Clock(_now),
+            new Clock(_now), new TestBackendLibraryAccess(concurrentFactory, "music"),
             new PlaylistPlayableSearchService(
                 gateway.Object,
                 matcher,
@@ -1297,7 +1297,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             Entry(1, "entry-projection-2", "source-2", "Two"));
         await _service.RunAsync(Context(), new(_link, 73));
 
-        var reader = new DurablePlaylistProjectionReader(_factory);
+        var reader = new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"));
         var projection = await reader.ReadByNameAsync(_tenant, _user, "Provider Mix");
         var projectionByLink = await reader.ReadByLinkIdAsync(_tenant, null, _link);
 
@@ -1404,7 +1404,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             .Returns(["deezer"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["qobuz"]);
-        var projection = await new DurablePlaylistProjectionReader(_factory, gateway.Object)
+        var projection = await new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"), gateway.Object)
             .ReadByNameAsync(_tenant, _user, "Provider Mix");
 
         Assert.NotNull(projection);
@@ -1423,7 +1423,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.Equal(["deezer", "qobuz"],
             projection.Entries[1].ProviderRoutes.Select(item => item.ProviderId));
         var virtualization = new PlaylistVirtualizationService(
-            _factory, new DurablePlaylistProjectionReader(_factory, gateway.Object));
+            _factory, new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"), gateway.Object), new TestBackendLibraryAccess(_factory, "music"));
         var virtualPlaylist = await virtualization.ReadAsync(
             Context(), PlaylistVirtualizationService.CreateProtocolId(_link));
         var sourceAlias = await virtualization.ReadBySourceAsync(
@@ -1447,6 +1447,47 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     }
 
     [Fact]
+    public async Task Projection_ChoosesAccessibleCanonicalCopyThenFallsBackWhenAccessIsRemoved()
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot("permissions", Entry(0, "entry", "source-1", "One"));
+        await _service.RefreshAsync(Context(), _link);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var original = await db.LibraryTracks.SingleAsync(item => item.Id == _trackOne);
+            original.CanonicalRecordingId = _canonical;
+            foreach (var id in new[] { "copy-z", "copy-a" })
+            {
+                var copy = Local(Guid.CreateVersion7(), id, "source-1", "Accessible copy");
+                copy.LibraryScopeId = "second-library";
+                copy.CanonicalRecordingId = _canonical;
+                db.LibraryTracks.Add(copy);
+            }
+            await db.SaveChangesAsync();
+        }
+        var permissions = new TestBackendLibraryAccess(_factory, "second-library");
+        var projections = new DurablePlaylistProjectionReader(_factory, permissions);
+        var virtualization = new PlaylistVirtualizationService(_factory, projections, permissions);
+        var projected = await projections.ReadByLinkIdAsync(_tenant, _user, _link);
+        var local = Assert.Single(projected!.Entries);
+        Assert.Equal("local", local.RouteKind);
+        Assert.Equal("copy-a", local.BackendItemId);
+        var visible = await virtualization.ReadAsync(Context(), PlaylistVirtualizationService.CreateProtocolId(_link));
+        Assert.Equal("copy-a", Assert.Single(visible!.Tracks).BackendItemId);
+
+        permissions.Permissions[_user] = BackendLibraryAccess.Unavailable;
+        projected = await projections.ReadByLinkIdAsync(_tenant, _user, _link);
+        var fallback = Assert.Single(projected!.Entries);
+        Assert.Equal("external", fallback.RouteKind);
+        Assert.Null(fallback.BackendItemId);
+        visible = await virtualization.ReadAsync(Context(), PlaylistVirtualizationService.CreateProtocolId(_link));
+        var external = Assert.Single(visible!.Tracks);
+        Assert.Equal(TrackRouteKind.External, external.RouteKind);
+        Assert.Contains(external.BackendItemId, new[] { "ext-fixture-song-source-1", "ext-fixture-song-source-alias" });
+        Assert.Equal("One", external.Title);
+    }
+
+    [Fact]
     public async Task Virtualization_reads_are_scoped_and_source_alias_requires_unambiguous_account()
     {
         await SetLink(mode: PlaylistLinkMode.Virtual);
@@ -1456,7 +1497,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         await _service.RefreshAsync(Context(), _link);
 
         var virtualization = new PlaylistVirtualizationService(
-            _factory, new DurablePlaylistProjectionReader(_factory));
+            _factory, new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music")), new TestBackendLibraryAccess(_factory, "music"));
         var protocolId = PlaylistVirtualizationService.CreateProtocolId(_link);
         var visible = await virtualization.ReadAsync(Context(), protocolId);
         Assert.NotNull(visible);
@@ -1583,7 +1624,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             "[\"test\"]",
             "[]"));
 
-        var reader = new DurablePlaylistProjectionReader(_factory);
+        var reader = new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"));
         var active = await reader.ReadByNameAsync(_tenant, _user, "Provider Mix");
         Assert.NotNull(active);
         Assert.Equal(first.SnapshotId, active.SnapshotId);
@@ -1678,7 +1719,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         });
 
         var restartedFactory = new DbFactory(_database.Options);
-        var projection = await new DurablePlaylistProjectionReader(restartedFactory)
+        var projection = await new DurablePlaylistProjectionReader(restartedFactory, new TestBackendLibraryAccess(restartedFactory, "music"))
             .ReadByNameAsync(_tenant, _user, "Provider Mix");
         Assert.NotNull(projection);
         Assert.Equal(1, projection.TotalCount);

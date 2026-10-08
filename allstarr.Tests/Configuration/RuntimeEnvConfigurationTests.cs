@@ -35,6 +35,7 @@ public sealed class RuntimeEnvConfigurationTests : IDisposable
     }
 
     [Theory]
+    [InlineData("BACKEND_MUSIC_LIBRARY_IDS", "Backend:MusicLibraryIds")]
     [InlineData("ADMIN_BASE_PATH", "Admin:BasePath")]
     [InlineData("ADMIN_OIDC_ENABLED", "Admin:Oidc:Enabled")]
     [InlineData("ADMIN_OIDC_AUTHORITY", "Admin:Oidc:Authority")]

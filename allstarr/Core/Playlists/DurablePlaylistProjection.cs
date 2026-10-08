@@ -129,6 +129,7 @@ public static class PlaylistProjectionSelector
 
 public sealed class DurablePlaylistProjectionReader(
     IDbContextFactory<AllstarrDbContext> factory,
+    IBackendLibraryAccessResolver libraryAccess,
     IProtocolProviderGateway? providerGateway = null,
     IEffectiveProviderPolicyResolver? effectivePolicies = null)
 {
@@ -136,7 +137,8 @@ public sealed class DurablePlaylistProjectionReader(
         Guid tenantId,
         Guid? ownerUserId,
         string name,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Guid? viewerUserId = null)
     {
         await using var database = await factory.CreateDbContextAsync(cancellationToken);
         var normalizedName = name.Trim().ToLowerInvariant();
@@ -152,14 +154,15 @@ public sealed class DurablePlaylistProjectionReader(
             .FirstOrDefaultAsync(cancellationToken);
         if (snapshot == null) return null;
 
-        return await ProjectAsync(database, snapshot, tenantId, cancellationToken);
+        return await ProjectAsync(database, snapshot, tenantId, viewerUserId ?? ownerUserId ?? snapshot.OwnerUserId, cancellationToken);
     }
 
     public async Task<DurablePlaylistProjection?> ReadByLinkIdAsync(
         Guid tenantId,
         Guid? ownerUserId,
         Guid playlistLinkId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Guid? viewerUserId = null)
     {
         await using var database = await factory.CreateDbContextAsync(cancellationToken);
         var snapshots = database.PlaylistSourceSnapshots.AsNoTracking()
@@ -174,21 +177,22 @@ public sealed class DurablePlaylistProjectionReader(
             .FirstOrDefaultAsync(cancellationToken);
         if (snapshot == null) return null;
 
-        return await ProjectAsync(database, snapshot, tenantId, cancellationToken);
+        return await ProjectAsync(database, snapshot, tenantId, viewerUserId ?? ownerUserId ?? snapshot.OwnerUserId, cancellationToken);
     }
 
     public async Task<IReadOnlyDictionary<Guid, DurablePlaylistProjection>> ReadByLinkIdsAsync(
         Guid tenantId,
         Guid? ownerUserId,
         IReadOnlyCollection<Guid> playlistLinkIds,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Guid? viewerUserId = null)
     {
         var result = new Dictionary<Guid, DurablePlaylistProjection>();
         // ponytail: project sequentially; bulk-load only if measured list latency requires it.
         foreach (var playlistLinkId in playlistLinkIds)
         {
             var projection = await ReadByLinkIdAsync(
-                tenantId, ownerUserId, playlistLinkId, cancellationToken);
+                tenantId, ownerUserId, playlistLinkId, cancellationToken, viewerUserId);
             if (projection != null) result[playlistLinkId] = projection;
         }
         return result;
@@ -198,6 +202,7 @@ public sealed class DurablePlaylistProjectionReader(
         AllstarrDbContext database,
         PlaylistSourceSnapshotRecord snapshot,
         Guid tenantId,
+        Guid viewerUserId,
         CancellationToken cancellationToken)
     {
         var ownerUserId = snapshot.OwnerUserId;
@@ -324,19 +329,19 @@ public sealed class DurablePlaylistProjectionReader(
                 .Select(item => item.LibraryTrackId!.Value))
             .Distinct()
             .ToArray();
-        var library = await database.LibraryTracks.AsNoTracking()
-            .Where(item => libraryIds.Contains(item.Id) &&
-                           item.TenantId == tenantId &&
-                           item.OwnerUserId == ownerUserId &&
-                           item.LibraryScopeId == link.LibraryScopeId &&
-                           item.BackendInstanceId == link.TargetBackendInstanceId &&
+        var access = await libraryAccess.ResolveUserAsync(viewerUserId, cancellationToken);
+        var matchedCanonicalIds = publishedMatches.Values.Where(item => item.CanonicalRecordingId.HasValue)
+            .Select(item => item.CanonicalRecordingId!.Value).Concat(canonicalIds).Distinct().ToArray();
+        var library = await LibraryTrackAccess.Query(database, access)
+            .Where(item => (libraryIds.Contains(item.Id) ||
+                           item.CanonicalRecordingId.HasValue && matchedCanonicalIds.Contains(item.CanonicalRecordingId.Value)) &&
+                           item.TenantId == tenantId && item.BackendInstanceId == link.TargetBackendInstanceId &&
                            (link.TargetProtocol == "jellyfin"
                                ? item.Protocol == "jellyfin"
                                : item.Protocol == "subsonic" ||
                                  item.Protocol == "opensubsonic" ||
                                  item.Protocol == "navidrome"))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var playableLibraryTrackIds = library.Keys.ToHashSet();
         var run = await database.PlaylistSyncRuns.AsNoTracking()
             .Where(item => item.PlaylistLinkId == link.Id &&
                            item.PlaylistSourceSnapshotId == snapshot.Id &&
@@ -404,8 +409,7 @@ public sealed class DurablePlaylistProjectionReader(
                     ? publishedMatches.GetValueOrDefault(matchId)
                     : null,
                 overrides,
-                library,
-                playableLibraryTrackIds))
+                library))
             .ToArray();
 
         return new(
@@ -575,21 +579,13 @@ public sealed class DurablePlaylistProjectionReader(
         IReadOnlyList<string> providerOrder,
         TrackMatchRecord? match,
         IReadOnlyDictionary<Guid, ManualTrackOverrideRecord> overrides,
-        IReadOnlyDictionary<Guid, LibraryTrackRecord> library,
-        IReadOnlySet<Guid> playableLibraryTrackIds)
+        IReadOnlyDictionary<Guid, LibraryTrackRecord> library)
     {
         overrides.TryGetValue(external.Id, out var manual);
         var identity = sourceIdentities.GetValueOrDefault(external.Id);
-        var classification = TrackClassifier.Classify(
-            manual,
-            match,
-            identity,
-            identities,
-            providerOrder,
-            playableLibraryTrackIds);
-        LibraryTrackRecord? local = null;
-        if (classification.LibraryTrackId.HasValue)
-            library.TryGetValue(classification.LibraryTrackId.Value, out local);
+        var route = TrackRouteProjector.Project(external, match, manual, identity, library.Values, identities, providerOrder);
+        var classification = route.Classification;
+        var local = route.LibraryTrack;
         var backendItemId = local?.BackendItemId;
         var metadata = ReadMetadata(external.PayloadJson);
         var primaryRoute = classification.PrimaryProviderRoute;

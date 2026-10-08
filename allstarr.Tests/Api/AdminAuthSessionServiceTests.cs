@@ -16,6 +16,7 @@ public sealed class AdminAuthSessionServiceTests
         var first = AdminAuthSessionTestSupport.Create(store, dataProtection);
         var tenantId = Guid.CreateVersion7();
         var allstarrUserId = Guid.CreateVersion7();
+        var authentication = allstarr.Services.Subsonic.SubsonicSessionAuthentication.Create("alice", "session-password");
         var created = await first.CreateSessionAsync(
             userId: "alice",
             userName: "alice",
@@ -24,7 +25,8 @@ public sealed class AdminAuthSessionServiceTests
             jellyfinServerId: null,
             backendType: "Subsonic",
             tenantId: tenantId,
-            allstarrUserId: allstarrUserId);
+            allstarrUserId: allstarrUserId,
+            subsonicReadAuthentication: authentication);
 
         var restored = await AdminAuthSessionTestSupport.Create(store, dataProtection)
             .GetValidSessionAsync(created.SessionId);
@@ -34,6 +36,10 @@ public sealed class AdminAuthSessionServiceTests
         Assert.Equal(string.Empty, restored.JellyfinAccessToken);
         Assert.Equal(tenantId, restored.TenantId);
         Assert.Equal(allstarrUserId, restored.AllstarrUserId);
+        Assert.Equal(authentication, restored.SubsonicReadAuthentication);
+        Assert.DoesNotContain("p", restored.SubsonicReadAuthentication!.Keys);
+        Assert.DoesNotContain("session-password", System.Text.Json.JsonSerializer.Serialize(restored), StringComparison.Ordinal);
+        Assert.DoesNotContain(authentication["t"], store.Records[created.SessionId].ProtectedPayload, StringComparison.Ordinal);
         Assert.DoesNotContain("alice", store.Records[created.SessionId].ProtectedPayload, StringComparison.Ordinal);
     }
 
