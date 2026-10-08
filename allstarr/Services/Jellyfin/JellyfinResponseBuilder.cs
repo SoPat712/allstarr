@@ -12,9 +12,11 @@ namespace allstarr.Services.Jellyfin;
 public class JellyfinResponseBuilder
 {
     private readonly string _serverId;
+    private readonly IHttpContextAccessor? _httpContexts;
 
-    public JellyfinResponseBuilder(IOptions<JellyfinSettings>? settings = null)
+    public JellyfinResponseBuilder(IOptions<JellyfinSettings>? settings = null, IHttpContextAccessor? httpContexts = null)
     {
+        _httpContexts = httpContexts;
         _serverId = string.IsNullOrWhiteSpace(settings?.Value.DeviceId)
             ? "allstarrrr-proxy"
             : settings.Value.DeviceId;
@@ -283,7 +285,10 @@ public class JellyfinResponseBuilder
         return new JsonResult(data);
     }
 
-    public Dictionary<string, object?> ConvertSongToJellyfinItem(Song song)
+    public Dictionary<string, object?> ConvertSongToJellyfinItem(Song song) =>
+        ConvertSongToJellyfinItem(song, ExternalTrackPresentation.Preferences(_httpContexts?.HttpContext));
+
+    public Dictionary<string, object?> ConvertSongToJellyfinItem(Song song, allstarr.Core.Settings.ListeningPreferences? preferences)
     {
         if (song.IsLocal && JellyfinItemSnapshotHelper.TryGetClonedRawItemSnapshot(song, out var original))
         {
@@ -310,7 +315,7 @@ public class JellyfinResponseBuilder
 
         if (!song.IsLocal)
         {
-            songTitle = ExternalTrackPresentation.Title(song);
+            songTitle = ExternalTrackPresentation.Title(song, preferences);
 
             artistName = AppendExternalSourceLabel(artistName, song.ExternalProvider);
             albumName = AppendExternalSourceLabel(albumName, song.ExternalProvider);

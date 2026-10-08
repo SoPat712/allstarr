@@ -1,5 +1,8 @@
 using System.Collections.Immutable;
 using allstarr.Core.Capabilities;
+using allstarr.Models.Domain;
+using allstarr.Models.Settings;
+using allstarr.Services.Common;
 
 namespace allstarr.Core.Settings;
 
@@ -31,6 +34,15 @@ public sealed record EffectiveProviderPolicySnapshot(
     string AudioQuality,
     double LocalPreferenceWindow)
 {
+    public Guid? UserId { get; init; }
+    public ListeningPreferences Preferences { get; init; } = new();
+    public string PreferenceRevision { get; init; } = string.Empty;
+
+    public bool Includes(Song song) => song.IsLocal || Includes(song.ExplicitContentLyrics);
+
+    public bool Includes(int? explicitContent) => ExplicitContentFilter.ShouldInclude(
+        explicitContent, Enum.Parse<ExplicitFilter>(Preferences.ExplicitFilter));
+
     public IReadOnlyList<string> GetProviderOrder(ProviderCapabilityKind capability) =>
         ProviderOrders.TryGetValue(capability, out var order) ? order : [];
 
@@ -58,6 +70,9 @@ public interface IEffectiveProviderPolicyResolver
     Task<EffectiveProviderPolicySnapshot> ResolveAsync(
         Guid tenantId,
         CancellationToken cancellationToken = default);
+
+    Task<EffectiveProviderPolicySnapshot> ResolveForUserAsync(
+        Guid tenantId, Guid userId, CancellationToken cancellationToken = default);
 }
 
 public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings settings)
@@ -73,12 +88,20 @@ public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings sett
 
     public async Task<EffectiveProviderPolicySnapshot> ResolveAsync(
         Guid tenantId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) => await ResolveCoreAsync(tenantId, null, cancellationToken);
+
+    public Task<EffectiveProviderPolicySnapshot> ResolveForUserAsync(
+        Guid tenantId, Guid userId, CancellationToken cancellationToken = default) =>
+        ResolveCoreAsync(tenantId, userId, cancellationToken);
+
+    private async Task<EffectiveProviderPolicySnapshot> ResolveCoreAsync(
+        Guid tenantId, Guid? userId, CancellationToken cancellationToken)
     {
         if (tenantId == Guid.Empty)
             throw new ArgumentException("A tenant is required.", nameof(tenantId));
 
         var values = await settings.GetManyAsync(tenantId, Keys, cancellationToken);
+        var preferences = await settings.GetPreferencesAsync(tenantId, userId, cancellationToken);
         var orders = ProviderOrderPolicyCatalog.Definitions.ToImmutableDictionary(
             item => item.Capability,
             item => ((string[])values[item.SettingKey].Value).ToImmutableArray());
@@ -90,6 +113,11 @@ public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings sett
             orders,
             disabled,
             (string)values[AudioQualityPolicy.SettingKey].Value,
-            (int)values["Matching:LocalPreferencePercent"].Value / 100d);
+            (int)values["Matching:LocalPreferencePercent"].Value / 100d)
+        {
+            UserId = userId,
+            Preferences = preferences.Values,
+            PreferenceRevision = preferences.Revision
+        };
     }
 }

@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
@@ -93,10 +94,10 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         CancellationToken cancellationToken) =>
         mutationResolver.ResolveAsync(context, id, cancellationToken);
 
-    public Task<IReadOnlyList<VirtualPlaylistReadModel>> ListAsync(
-        ProtocolExecutionContext context,
-        CancellationToken cancellationToken) =>
-        playlists.ListAsync(context, cancellationToken);
+    public async Task<IReadOnlyList<VirtualPlaylistReadModel>> ListAsync(
+        ProtocolExecutionContext context, CancellationToken cancellationToken) =>
+        (await playlists.ListAsync(context, cancellationToken))
+        .Select(item => ExternalTrackPresentation.ApplyPreferences(item, context.Policy)).ToArray();
 
     public async Task<IReadOnlyList<Dictionary<string, object?>>> ListItemsAsync(
         ProtocolExecutionContext context,
@@ -110,6 +111,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         ProtocolExecutionContext context, string id, CancellationToken cancellationToken)
     {
         var playlist = await playlists.ReadAsync(context, id, cancellationToken);
+        if (playlist != null) playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
         if (playlist == null) return null;
         return new JsonResult(ToItem(playlist));
     }
@@ -123,6 +125,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     {
         var playlist = await playlists.ReadBySourceAsync(
             context, sourceProviderId, sourcePlaylistId, cancellationToken);
+        if (playlist != null) playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
         return playlist == null ? null : new JsonResult(ToItem(playlist, responsePlaylistId));
     }
 
@@ -130,6 +133,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         ProtocolExecutionContext context, string id, CancellationToken cancellationToken)
     {
         var playlist = await playlists.ReadAsync(context, id, cancellationToken);
+        if (playlist != null) playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
         return playlist == null
             ? null
             : new JsonResult(new
@@ -148,6 +152,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     {
         var playlist = await playlists.ReadBySourceAsync(
             context, sourceProviderId, sourcePlaylistId, cancellationToken);
+        if (playlist != null) playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
         return playlist == null
             ? null
             : new JsonResult(new
@@ -164,6 +169,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         if (context != null)
         {
             var playlist = await playlists.ReadAsync(context, id, cancellationToken);
+            if (playlist != null) playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
             return playlist?.ArtworkReferenceKey == null
                 ? null
                 : playlist.TargetPlaylistId ??
@@ -216,6 +222,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         CancellationToken cancellationToken)
     {
         var playlist = await playlists.ReadAsync(context, id, cancellationToken);
+        if (playlist != null) playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
         if (playlist == null) return null;
         return await CreateItemsResponseAsync(
             context, playlist, id, clientHeaders, clientQuery);
@@ -232,6 +239,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     {
         var playlist = await playlists.ReadBySourceAsync(
             context, sourceProviderId, sourcePlaylistId, cancellationToken);
+        if (playlist != null) playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
         return playlist == null
             ? null
             : await CreateItemsResponseAsync(
@@ -267,7 +275,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                         track.BackendItemId);
                     item = JsonSerializer.SerializeToNode(FallbackItem(track))!.AsObject();
                     item["Id"] = $"{PlaylistVirtualizationService.UnresolvedItemPrefix}{track.BackendItemId}";
-                    AddSourceLabels(item, track, track.SourceProviderId);
+                    AddSourceLabels(item, track, track.SourceProviderId, context.Policy?.Preferences);
                     item["LocationType"] = "Virtual";
                     item["PlayAccess"] = "None";
                     item["CanDownload"] = false;
@@ -298,9 +306,9 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                     IsLocal = false,
                     ExternalProvider = track.RouteProviderId ?? track.SourceProviderId,
                     ExternalId = track.RouteExternalId ?? track.SourceExternalId,
-                    ExplicitContentLyrics = track.SourceMetadata?.IsExplicit == true ? 1 : 0
+                    ExplicitContentLyrics = track.SourceMetadata?.IsExplicit is { } explicitContent ? explicitContent ? 1 : 0 : null
                 };
-                item = JsonSerializer.SerializeToNode(responseBuilder.ConvertSongToJellyfinItem(song))!.AsObject();
+                item = JsonSerializer.SerializeToNode(responseBuilder.ConvertSongToJellyfinItem(song, context.Policy?.Preferences))!.AsObject();
             }
             else
             {
@@ -311,7 +319,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                     var labelProvider = playlist.ProjectionMode == PlaylistProjectionMode.Source
                         ? track.SourceProviderId
                         : track.RouteProviderId ?? track.SourceProviderId;
-                    AddSourceLabels(item, track, labelProvider);
+                    AddSourceLabels(item, track, labelProvider, context.Policy?.Preferences);
                 }
                 if (playlist.ProjectionMode == PlaylistProjectionMode.Source)
                 {
@@ -443,9 +451,9 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             .ToDictionary(item => item["Id"]!.GetValue<string>(), StringComparer.Ordinal);
     }
 
-    private static void AddSourceLabels(JsonObject item, VirtualPlaylistTrack track, string? provider)
+    private static void AddSourceLabels(JsonObject item, VirtualPlaylistTrack track, string? provider, ListeningPreferences? preferences)
     {
-        item["Name"] = ExternalTrackPresentation.Title(track.Title, track.SourceMetadata?.IsExplicit == true);
+        item["Name"] = ExternalTrackPresentation.Title(track.Title, track.SourceMetadata?.IsExplicit == true, preferences);
         foreach (var name in new[] { "Album", "AlbumArtist" })
             Label(item, name, provider);
         if (item["Artists"] is JsonArray artists)

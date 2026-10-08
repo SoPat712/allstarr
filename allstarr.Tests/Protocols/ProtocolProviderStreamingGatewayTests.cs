@@ -310,9 +310,10 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     [InlineData(ProviderIdentityVerification.Verified, "automatic-match", 2, "deezer", "deezer,apple-download,qobuz")]
     [InlineData(ProviderIdentityVerification.Verified, "automatic-suggestion", 3, null, null)]
     [InlineData(ProviderIdentityVerification.Pinned, "manual", 3, null, null)]
+    [InlineData(ProviderIdentityVerification.Verified, "automatic-match", 2, "deezer", null, "CleanOnly")]
     public async Task MetadataSearch_CollapsesOnlyVerifiedRoutes(
         ProviderIdentityVerification verification, string method,
-        int expectedCount, string? preferredProvider, string? streamingOrder)
+        int expectedCount, string? preferredProvider, string? streamingOrder, string? explicitFilter = null)
     {
         var providerIds = new[] { "apple-download", "deezer", "qobuz" };
         var metadata = providerIds.Select(providerId =>
@@ -326,7 +327,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new(
                     providerId, [new ProviderTrackMetadata(
                         new(providerId, ProviderResourceKind.Track, $"{providerId}-track"),
-                        "Shared title", [new("Artist")])])));
+                        "Shared title", [new("Artist")], isExplicit: providerId == "apple-download" ? true : null)])));
             capability.Setup(item => item.SearchAlbumsAsync(
                     It.IsAny<ProviderExecutionContext>(),
                     It.IsAny<ProviderMetadataSearchRequest>()))
@@ -374,7 +375,17 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             Mock.Of<IMusicMetadataService>(), new HttpClientFactory(), configuration,
             identities: identities.Object);
 
-        var songs = (await gateway.SearchAsync(Context(), "Shared title", 10, 0, 0)).Songs;
+        var context = Context();
+        if (explicitFilter != null)
+            context = context with
+            {
+                Policy = new allstarr.Core.Settings.EffectiveProviderPolicySnapshot(context.RequireActor().TenantId,
+                    System.Collections.Immutable.ImmutableDictionary<ProviderCapabilityKind, System.Collections.Immutable.ImmutableArray<string>>.Empty
+                        .Add(ProviderCapabilityKind.Streaming, System.Collections.Immutable.ImmutableArray.Create(providerIds)),
+                    System.Collections.Immutable.ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, 0.07)
+                { UserId = context.RequireActor().EffectiveUserId, Preferences = new(explicitFilter) }
+            };
+        var songs = (await gateway.SearchAsync(context, "Shared title", 10, 0, 0)).Songs;
 
         Assert.Equal(expectedCount, songs.Count);
         Assert.Contains(songs, song => song.ExternalProvider == "qobuz");

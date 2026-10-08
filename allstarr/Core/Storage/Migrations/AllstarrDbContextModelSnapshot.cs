@@ -1633,6 +1633,9 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("TEXT");
 
+                    b.Property<Guid?>("OwnerUserId")
+                        .HasColumnType("TEXT");
+
                     b.Property<long>("Revision")
                         .IsConcurrencyToken()
                         .HasColumnType("INTEGER");
@@ -1664,11 +1667,21 @@ namespace allstarr.Core.Storage.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("TenantId", "Key")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasDatabaseName("IX_tenant_runtime_settings_household_key")
+                        .HasFilter("\"OwnerUserId\" IS NULL");
 
                     b.HasIndex("TenantId", "UpdatedByUserId");
 
-                    b.ToTable("tenant_runtime_settings", (string)null);
+                    b.HasIndex("TenantId", "OwnerUserId", "Key")
+                        .IsUnique()
+                        .HasDatabaseName("IX_tenant_runtime_settings_personal_key")
+                        .HasFilter("\"OwnerUserId\" IS NOT NULL");
+
+                    b.ToTable("tenant_runtime_settings", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_tenant_runtime_settings_personal_keys", "\"OwnerUserId\" IS NULL OR \"Key\" IN ('Library:ExplicitFilter', 'Playback:ShowExternalLabel', 'Playback:ShowExplicitLabel')");
+                        });
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.AdminAuthSessionRecord", b =>
@@ -4796,6 +4809,12 @@ namespace allstarr.Core.Storage.Migrations
                         .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "OwnerUserId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
                         .WithMany()

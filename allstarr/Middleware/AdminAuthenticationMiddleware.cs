@@ -74,6 +74,9 @@ public class AdminAuthenticationMiddleware
         var path = request.Path.Value ?? string.Empty;
         var method = request.Method;
 
+        if (path.TrimEnd('/').Equals("/api/admin/preferences", StringComparison.OrdinalIgnoreCase))
+            return HttpMethods.IsGet(method) || HttpMethods.IsPut(method) || HttpMethods.IsDelete(method);
+
         if (HttpMethods.IsGet(method) &&
             path.Equals("/api/admin/jellyfin/playlists", StringComparison.OrdinalIgnoreCase))
         {

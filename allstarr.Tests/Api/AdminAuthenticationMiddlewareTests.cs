@@ -73,6 +73,9 @@ public class AdminAuthenticationMiddlewareTests
     }
 
     [Theory]
+    [InlineData("/api/admin/preferences", "GET")]
+    [InlineData("/api/admin/preferences", "PUT")]
+    [InlineData("/api/admin/preferences", "DELETE")]
     [InlineData("/api/admin/ui/schema", "GET")]
     [InlineData("/api/admin/ui/home", "GET")]
     [InlineData("/api/admin/provider-accounts", "GET")]

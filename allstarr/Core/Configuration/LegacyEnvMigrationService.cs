@@ -949,7 +949,7 @@ public sealed class LegacyEnvMigrationService
         if (tenantId.HasValue)
         {
             var settings = await db.TenantRuntimeSettings.AsNoTracking()
-                .Where(item => item.TenantId == tenantId.Value)
+                .Where(item => item.TenantId == tenantId.Value && item.OwnerUserId == null)
                 .OrderBy(item => item.Key)
                 .Select(item => new { item.Key, item.Revision })
                 .ToListAsync(cancellationToken);
