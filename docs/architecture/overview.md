@@ -83,6 +83,8 @@ Allstarr changes a native response only when a documented feature requires it: e
 
 Authenticated search keeps successful tracks, albums, and artists when another provider or search category fails. A batched, account-aware identity lookup collapses external track hits only when accepted links identify the same recording; tentative, released, replaced, pinned, and unknown links remain separate. The representative follows configured streaming order. This is still a provider-shaped search result, not the stable canonical protocol ID or native-item merge needed for unified music results.
 
+Playlist snapshot persistence serializes writes for each provider account with a shared process-local lock. Source collection finishes before that lock is acquired, and the database transaction starts only after acquisition. Run one Allstarr process for a deployment; the lock does not coordinate separate processes. Database conflict classification lives in `Core/Storage/DbErrors`, while each operation retains its own bounded retry policy.
+
 ## Canonical catalog ingestion
 
 `MusicBrainzService` is the single bounded client for MusicBrainz-compatible

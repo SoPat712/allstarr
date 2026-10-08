@@ -196,7 +196,7 @@ public sealed class DurableScheduleEngine
                 return (1, shouldEnqueue ? 1 : 0, skippedOverlap ? 1 : 0,
                     isMisfire && schedule.MisfirePolicy == ScheduleMisfirePolicy.Skip ? 1 : 0);
             }
-            catch (Exception exception) when (attempt < 2 && PostgresConcurrency.IsRetryable(exception))
+            catch (Exception exception) when (attempt < 2 && DbErrors.IsTransientConflict(exception))
             {
                 await transaction.RollbackAsync(cancellationToken);
             }
