@@ -11,7 +11,7 @@ namespace allstarr.Tests;
 
 public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
 {
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private TestFactory _factory = null!;
     private TestClock _clock = null!;
     private DatabaseApplicationCache _cache = null!;
@@ -19,7 +19,7 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestFactory(_database.Options);
         _clock = new TestClock(new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero));
         _cache = new DatabaseApplicationCache(

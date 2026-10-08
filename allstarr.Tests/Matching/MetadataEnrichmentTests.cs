@@ -231,7 +231,7 @@ public sealed class MetadataEnrichmentTests
         Directory.CreateDirectory(root);
         try
         {
-            await using var database = await PostgresTestDatabase.CreateAsync();
+            await using var database = await SqliteTestDatabase.CreateAsync();
             var factory = new DbFactory(database.Options);
             var tenantId = Guid.CreateVersion7();
             var userId = Guid.CreateVersion7();
@@ -389,7 +389,7 @@ public sealed class MetadataEnrichmentTests
         Directory.CreateDirectory(root);
         try
         {
-            await using var database = await PostgresTestDatabase.CreateAsync();
+            await using var database = await SqliteTestDatabase.CreateAsync();
             var factory = new DbFactory(database.Options);
             var tenant = Guid.CreateVersion7(); var foreignTenant = Guid.CreateVersion7(); var user = Guid.CreateVersion7();
             await using (var db = await factory.CreateDbContextAsync())

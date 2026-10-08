@@ -98,7 +98,7 @@ public sealed class DownloadActivityControllerTests
     [Trait("Category", "Postgres")]
     public async Task NowPlaying_QueriesPortableTimestampColumnsWithConvertedParameters()
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync();
         var factory = new TestDbContextFactory(database.Options);
         var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();

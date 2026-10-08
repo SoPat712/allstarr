@@ -7,9 +7,9 @@ namespace allstarr.Tests;
 public sealed class LibraryPlaylistStorageModelTests
 {
     [Fact]
-    public async Task PostgresModel_PersistsScopedMatchAndOrderedPlaylistEvidence()
+    public async Task SqliteModel_PersistsScopedMatchAndOrderedPlaylistEvidence()
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync();
         await using var context = new AllstarrDbContext(database.Options);
 
         var now = DateTimeOffset.UtcNow;
@@ -267,9 +267,9 @@ public sealed class LibraryPlaylistStorageModelTests
     }
 
     [Fact]
-    public async Task PostgresModel_RejectsCrossTenantMatchAndInvalidAcceptedShape()
+    public async Task SqliteModel_RejectsCrossTenantMatchAndInvalidAcceptedShape()
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync();
         await using var context = new AllstarrDbContext(database.Options);
 
         var tenant = Guid.NewGuid();

@@ -14,7 +14,7 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
     private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
     private readonly Guid _otherUserId = Guid.CreateVersion7();
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private TestFactory _factory = null!;
     private FakeClock _clock = null!;
     private DurableJobQueue _jobs = null!;
@@ -22,7 +22,7 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestFactory(_database.Options);
         await using var database = await _factory.CreateDbContextAsync();
         var now = new DateTimeOffset(2026, 7, 12, 12, 0, 0, TimeSpan.Zero);

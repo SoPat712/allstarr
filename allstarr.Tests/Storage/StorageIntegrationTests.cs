@@ -30,7 +30,7 @@ public sealed class StorageIntegrationTests
     [Fact]
     public async Task DownloadedTrackCache_SeparatesTenantsAccountsLibrariesAndQuality()
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync();
         var store = new EfDownloadedSongMappingStore(new TestDbContextFactory(database.Options));
         var tenant = Guid.CreateVersion7();
         var otherTenant = Guid.CreateVersion7();
@@ -69,7 +69,7 @@ public sealed class StorageIntegrationTests
     [Fact]
     public async Task StorageLineageConstraints_RejectCrossTenantFavoriteJob()
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync();
         await using var db = new AllstarrDbContext(database.Options);
 
         var now = DateTimeOffset.UtcNow;
@@ -114,7 +114,7 @@ public sealed class StorageIntegrationTests
     [Fact]
     public async Task StorageHostOptions_SupportIdentityJobAndScheduleTransactions()
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync();
         await using var services = BuildHostStorageServices(database.ConnectionString);
         var factory = services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
         await using (var db = await factory.CreateDbContextAsync())
@@ -122,7 +122,7 @@ public sealed class StorageIntegrationTests
             await db.Database.MigrateAsync();
         }
 
-        var storageState = new DurableStorageState(services.GetRequiredService<DurableStorageOptions>());
+        var storageState = new DurableStorageState(services.GetRequiredService<StorageOptions>());
         await using (var db = await factory.CreateDbContextAsync())
         {
             storageState.Set(DurableStorageReadiness.Ready, db.Database.GetMigrations().Last());
@@ -133,8 +133,8 @@ public sealed class StorageIntegrationTests
             Mode = "Hybrid",
             DefaultTenantId = Guid.CreateVersion7().ToString(),
             SingleUserId = Guid.CreateVersion7().ToString(),
-            DefaultTenantSlug = "host-postgres",
-            DefaultTenantName = "Host PostgreSQL",
+            DefaultTenantSlug = "host-sqlite",
+            DefaultTenantName = "Host SQLite",
             BackendInstanceId = "primary"
         };
         var clock = new SystemPlatformClock();
@@ -146,37 +146,37 @@ public sealed class StorageIntegrationTests
         var jobOptions = new DurableJobOptions();
         var queue = new DurableJobQueue(factory, jobOptions, new JobPayloadPolicy(jobOptions), clock);
         var enqueued = await queue.EnqueueAsync(new DurableJobEnqueueRequest<object>(
-            "postgres.host-transaction",
-            "postgres-host-transaction",
+            "sqlite.host-transaction",
+            "sqlite-host-transaction",
             new { value = "safe" },
             principal!.TenantId,
             principal.UserId));
         Assert.True(enqueued.Created);
-        var claim = await queue.ClaimNextAsync("postgres-host-worker");
+        var claim = await queue.ClaimNextAsync("sqlite-host-worker");
         Assert.NotNull(claim);
         await queue.CompleteAsync(claim!, DurableJobCompletion.Success());
 
         var cancellable = await queue.EnqueueAsync(new DurableJobEnqueueRequest<object>(
-            "postgres.host-cancel",
-            "postgres-host-cancel",
+            "sqlite.host-cancel",
+            "sqlite-host-cancel",
             new { value = "cancel" },
             principal.TenantId,
             principal.UserId));
         Assert.True(await queue.RequestCancellationAsync(cancellable.JobId, principal.TenantId));
 
         var failing = await queue.EnqueueAsync(new DurableJobEnqueueRequest<object>(
-            "postgres.host-failure",
-            "postgres-host-failure",
+            "sqlite.host-failure",
+            "sqlite-host-failure",
             new { value = "fail" },
             principal.TenantId,
             principal.UserId));
         var failureClaim = await queue.ClaimNextAsync(
-            "postgres-host-failure-worker",
-            ["postgres.host-failure"]);
+            "sqlite-host-failure-worker",
+            ["sqlite.host-failure"]);
         Assert.NotNull(failureClaim);
         await queue.CompleteAsync(
             failureClaim!,
-            DurableJobCompletion.Failure("expected_test_failure", "Expected native PostgreSQL test failure."));
+            DurableJobCompletion.Failure("expected_test_failure", "Expected native SQLite test failure."));
 
         var accountId = Guid.CreateVersion7();
         var scheduleId = Guid.CreateVersion7();
@@ -222,7 +222,7 @@ public sealed class StorageIntegrationTests
                 ScheduleId = scheduleId,
                 LibraryScopeId = "music",
                 SourceProviderId = "spotify",
-                SourcePlaylistId = "native-postgres-playlist",
+                SourcePlaylistId = "native-sqlite-playlist",
                 SourcePlaylistIdHash = new string('a', 64),
                 TargetProtocol = "subsonic",
                 TargetBackendInstanceId = "primary",
@@ -253,7 +253,7 @@ public sealed class StorageIntegrationTests
     [Fact]
     public async Task StorageLegacyEnvMigration_AtomicallyAppliesAndDecryptsSharedAccount()
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync();
         var root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try
@@ -271,8 +271,8 @@ public sealed class StorageIntegrationTests
                 db.Tenants.Add(new TenantRecord
                 {
                     Id = tenantId,
-                    Slug = "postgres-env-migration",
-                    Name = "Postgres environment migration",
+                    Slug = "sqlite-env-migration",
+                    Name = "SQLite environment migration",
                     CreatedAt = DateTimeOffset.UtcNow
                 });
                 db.Users.Add(new PlatformUserRecord
@@ -290,10 +290,10 @@ public sealed class StorageIntegrationTests
             var keyRingPath = Path.Combine(root, "keyring.json");
             await File.WriteAllTextAsync(keyRingPath, JsonSerializer.Serialize(new
             {
-                activeKeyId = "postgres-test-key",
+                activeKeyId = "sqlite-test-key",
                 keys = new Dictionary<string, string>
                 {
-                    ["postgres-test-key"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+                    ["sqlite-test-key"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
                 }
             }));
             if (!OperatingSystem.IsWindows())
@@ -318,13 +318,13 @@ public sealed class StorageIntegrationTests
                 secretOptions,
                 clock);
             var actor = new LegacyEnvMigrationActor(
-                "postgres-admin-session",
+                "sqlite-admin-session",
                 tenantId,
                 userId,
-                "postgres-migration-correlation");
+                "sqlite-migration-correlation");
             var source = Encoding.UTF8.GetBytes("""
                 CACHE_LYRICS_DAYS=45
-                DEEZER_ARL=postgres-deezer-secret
+                DEEZER_ARL=sqlite-deezer-secret
                 JELLYFIN_URL=http://old-jellyfin:8096
                 SCROBBLING_LASTFM_SESSION_KEY=personal-session-secret
                 SCROBBLING_LOCAL_TRACKS_ENABLED=true
@@ -371,7 +371,7 @@ public sealed class StorageIntegrationTests
                     account.SecretReferenceId!.Value,
                     new SecretAccessContext(null, AllowGlobal: true));
                 using var secret = JsonDocument.Parse(lease.Value);
-                Assert.Equal("postgres-deezer-secret", secret.RootElement.GetProperty("arl").GetString());
+                Assert.Equal("sqlite-deezer-secret", secret.RootElement.GetProperty("arl").GetString());
             }
 
             var restarted = new LegacyEnvMigrationService(factory, settings, secrets, clock);
@@ -396,11 +396,9 @@ public sealed class StorageIntegrationTests
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["Storage:Provider"] = "Postgres",
-            ["Storage:ConnectionString"] = connectionString,
-            ["Storage:AutoMigrate"] = "true",
-            ["Storage:ConnectionRetryCount"] = "3",
-            ["Storage:BackupDirectory"] = Path.Combine(Path.GetTempPath(), "allstarr-postgres-backups")
+            ["Storage:DataDirectory"] = Path.GetDirectoryName(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource),
+            ["Storage:DatabaseFileName"] = Path.GetFileName(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource),
+            ["Storage:AutoMigrate"] = "true"
         }).Build();
         var services = new ServiceCollection();
         services.AddLogging();
@@ -420,7 +418,7 @@ public sealed class StorageIntegrationTests
     [Trait("Lane", "ReleaseCritical")]
     public async Task StorageCacheLoss_PreservesDurableWorkAndProgressAcrossCacheRestart()
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync();
         var factory = new TestDbContextFactory(database.Options);
 
         var now = new DateTimeOffset(2026, 7, 24, 17, 0, 0, TimeSpan.Zero);
@@ -576,11 +574,11 @@ public sealed class StorageIntegrationTests
             clock);
         var enqueued = await queue.EnqueueAsync(new DurableJobEnqueueRequest<object>(
             "playlist.materialize",
-            "postgres-cache-loss",
+            "sqlite-cache-loss",
             new { generation = 1 },
             tenantId,
             userId));
-        var claim = await queue.ClaimNextAsync("postgres-cache-worker");
+        var claim = await queue.ClaimNextAsync("sqlite-cache-worker");
         Assert.NotNull(claim);
         Assert.True(await queue.ReportProgressAsync(
             claim!,
@@ -629,76 +627,24 @@ public sealed class StorageIntegrationTests
     }
 
     [Fact]
-    [Trait("Lane", "ReleaseCritical")]
-    public async Task StorageBackup_VerifiesAndRestoresIntoIsolatedDatabase()
+    public async Task StorageBackup_ReturnsUnavailableWithoutCreatingAnArtifact()
     {
-        await using var sourceDatabase = await PostgresTestDatabase.CreateAsync();
-        await using var targetDatabase = await PostgresTestDatabase.CreateAsync();
-        var backupRoot = Path.Combine(
-            Path.GetTempPath(),
-            "allstarr-tests",
-            Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(backupRoot);
-        try
-        {
-            var factory = new TestDbContextFactory(sourceDatabase.Options);
-            await using (var reset = await factory.CreateDbContextAsync())
-            {
-                reset.Jobs.Add(new DurableJobRecord
-                {
-                    Id = Guid.CreateVersion7(),
-                    ScopeKey = "global",
-                    Type = "postgres.backup-fixture",
-                    PayloadJson = "{}",
-                    IdempotencyKey = "before-backup",
-                    State = DurableJobState.Pending,
-                    MaxAttempts = 3,
-                    AvailableAt = DateTimeOffset.UtcNow,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                    UpdatedAt = DateTimeOffset.UtcNow
-                });
-                await reset.SaveChangesAsync();
-            }
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new TestDbContextFactory(database.Options);
+        var options = database.StorageOptions;
+        var state = new DurableStorageState(options);
+        state.Set(DurableStorageReadiness.Ready);
+        var service = new DurableBackupService(factory, options, state, new StorageProcessRunner());
+        var controller = new allstarr.Controllers.StorageController(state, service, factory);
 
-            var options = new DurableStorageOptions
-            {
-                Provider = "Postgres",
-                ConnectionString = sourceDatabase.ConnectionString,
-                BackupDirectory = backupRoot
-            };
-            var state = new DurableStorageState(options);
-            state.Set(DurableStorageReadiness.Ready, "InitialDurableFoundation");
-            var service = new DurableBackupService(
-                factory,
-                options,
-                state,
-                new StorageProcessRunner());
+        var result = Assert.IsType<Microsoft.AspNetCore.Mvc.ObjectResult>(await controller.CreateBackup());
 
-            var artifact = await service.CreateAsync();
-            Assert.True(File.Exists(artifact.ArtifactPath));
-            Assert.True(File.Exists(artifact.ManifestPath));
-
-            await service.RestorePostgresAsync(
-                artifact,
-                targetDatabase.ConnectionString,
-                destructiveRestoreConfirmed: true,
-                isolatedTargetDatabaseConfirmation: targetDatabase.DatabaseName);
-
-            var restoredOptions = new DbContextOptionsBuilder<AllstarrDbContext>()
-                .UseNpgsql(targetDatabase.ConnectionString)
-                .Options;
-            await using var restored = new AllstarrDbContext(restoredOptions);
-            var restoredJob = await restored.Jobs.AsNoTracking().SingleAsync();
-            Assert.Equal("before-backup", restoredJob.IdempotencyKey);
-            Assert.Empty(await restored.Backups.AsNoTracking().ToListAsync());
-        }
-        finally
-        {
-            if (Directory.Exists(backupRoot))
-            {
-                Directory.Delete(backupRoot, recursive: true);
-            }
-        }
+        Assert.Equal(503, result.StatusCode);
+        Assert.Contains("backups_unavailable", System.Text.Json.JsonSerializer.Serialize(result.Value));
+        Assert.False(Directory.Exists(options.BackupDirectory));
+        await using var context = await factory.CreateDbContextAsync();
+        Assert.Empty(await context.Backups.ToListAsync());
+        Assert.Empty(await context.Jobs.ToListAsync());
     }
 
     private sealed class FixedClock(DateTimeOffset now) : IPlatformClock

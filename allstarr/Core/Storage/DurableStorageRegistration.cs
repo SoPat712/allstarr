@@ -10,29 +10,20 @@ public static class DurableStorageRegistration
         IConfiguration configuration,
         IHostEnvironment environment)
     {
-        var options = configuration
-            .GetSection(DurableStorageOptions.SectionName)
-            .Get<DurableStorageOptions>() ?? new DurableStorageOptions();
-        var provider = options.ParseProvider();
-        options.ApplyPasswordFile(provider);
-        if (environment.IsEnvironment("Testing"))
-        {
-            options.EnforceMutationGuard = false;
-        }
-
+        var options = configuration.GetSection(StorageOptions.SectionName)
+            .Get<StorageOptions>() ?? new StorageOptions();
+        options.Validate();
         services.AddSingleton(Options.Create(options));
         services.AddSingleton(options);
         services.AddSingleton<DurableStorageState>();
+        services.AddSingleton<SqlitePragmaInterceptor>();
         services.AddSingleton<IStorageProcessRunner, StorageProcessRunner>();
         services.AddSingleton<IDurableRestoreTargetVerifier, DurableRestoreTargetVerifier>();
         services.AddSingleton<DurableBackupService>();
-        services.AddDbContextFactory<AllstarrDbContext>(builder =>
-        {
-            builder.UseNpgsql(options.ConnectionString, postgres =>
-            {
-                postgres.CommandTimeout(options.CommandTimeoutSeconds);
-            });
-        });
+        services.AddDbContextFactory<AllstarrDbContext>((provider, builder) =>
+            builder.UseSqlite(options.ConnectionString, sqlite =>
+                    sqlite.CommandTimeout(options.CommandTimeoutSeconds))
+                .AddInterceptors(provider.GetRequiredService<SqlitePragmaInterceptor>()));
         services.AddSingleton<DurableStorageInitializer>();
         services.AddHostedService(provider => provider.GetRequiredService<DurableStorageInitializer>());
         return services;

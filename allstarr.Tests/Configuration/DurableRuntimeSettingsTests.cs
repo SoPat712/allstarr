@@ -15,7 +15,7 @@ namespace allstarr.Tests;
 
 public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
 {
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private TestFactory _factory = null!;
     private Guid _tenantId;
     private Guid _userId;
@@ -23,7 +23,7 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
         _tenantId = Guid.CreateVersion7(); _userId = Guid.CreateVersion7();

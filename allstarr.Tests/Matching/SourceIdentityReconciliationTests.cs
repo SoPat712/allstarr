@@ -2,8 +2,6 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace allstarr.Tests;
 
@@ -20,7 +18,7 @@ public sealed class SourceIdentityReconciliationTests
     public async Task Reconciliation_IsAtomicIdempotentAndProtectsStrongEvidence(
         string evidence, bool alreadyMoved, bool expected)
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync();
         await using var db = new AllstarrDbContext(database.Options);
         var seed = await SeedAsync(db, evidence, alreadyMoved);
         var before = seed.Identity.CanonicalRecordingId;
@@ -50,7 +48,7 @@ public sealed class SourceIdentityReconciliationTests
     [Fact]
     public async Task Reconciliation_DeniesForeignTenantWithoutWrites()
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync();
         await using var db = new AllstarrDbContext(database.Options);
         var seed = await SeedAsync(db, "provisional", false);
         var foreign = new ProviderActorContext(Guid.CreateVersion7(), ProviderActorKind.User,
@@ -60,86 +58,6 @@ public sealed class SourceIdentityReconciliationTests
                 db, foreign, seed.Identity, seed.Target, DateTimeOffset.UtcNow, default));
         Assert.Equal(seed.Origin, seed.Identity.CanonicalRecordingId);
         Assert.Empty(await db.AuditEvents.ToArrayAsync());
-    }
-
-    [Theory]
-    [InlineData("provisional", true, true)]
-    [InlineData("provisional", true, false)]
-    [InlineData("isrc", false, true)]
-    [InlineData("mbid", false, true)]
-    [InlineData("manual", false, true)]
-    public async Task Migration_RepairsOnlyUnanchoredSourceAliasesAndNormalizesLegacyHashes(
-        string evidence, bool repair, bool hasNormalizedAlias)
-    {
-        await using var database = await PostgresTestDatabase.CreateAsync(useTemplate: false);
-        await using var db = new AllstarrDbContext(database.Options);
-        var migrator = db.Database.GetService<IMigrator>();
-        await migrator.MigrateAsync("20260927214131_AddAdminOidcLinks");
-        var seed = await SeedAsync(db, evidence, true);
-        var current = await db.CanonicalCatalogAliases.SingleAsync();
-        if (!hasNormalizedAlias)
-            db.CanonicalCatalogAliases.Remove(current);
-        var legacyId = Guid.CreateVersion7();
-        db.CanonicalCatalogAliases.Add(new CanonicalCatalogAliasRecord
-        {
-            Id = legacyId,
-            TenantId = current.TenantId,
-            EntityKind = current.EntityKind,
-            CanonicalEntityId = current.CanonicalEntityId,
-            Namespace = current.Namespace,
-            ExternalId = current.ExternalId,
-            ExternalIdHash = current.ExternalId,
-            CreatedAt = current.CreatedAt,
-            LastSeenAt = current.LastSeenAt
-        });
-        await db.SaveChangesAsync();
-        await migrator.MigrateAsync();
-        db.ChangeTracker.Clear();
-
-        var alias = Assert.Single(await db.CanonicalCatalogAliases.ToArrayAsync());
-        Assert.Equal(repair ? seed.Target : seed.Origin, alias.CanonicalEntityId);
-        Assert.Equal(CanonicalCatalogKeys.Hash(alias.ExternalId), alias.ExternalIdHash);
-        Assert.Equal(repair ? hasNormalizedAlias ? 2 : 1 : 0,
-            await db.AuditEvents.CountAsync(item => item.Action == "source-alias.reconcile"));
-        Assert.Equal(hasNormalizedAlias ? 1 : 0, await db.AuditEvents.CountAsync(item => item.Action == "alias.deduplicate"));
-        Assert.Equal(seed.Target, (await db.ProviderTrackIdentities.SingleAsync()).CanonicalRecordingId);
-        Assert.Equal(2, await db.CanonicalRecordings.CountAsync());
-        await migrator.MigrateAsync();
-        Assert.Single(await db.CanonicalCatalogAliases.ToArrayAsync());
-    }
-
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task Migration_PreservesConflictingAliasesForReview(bool hasNormalizedHash)
-    {
-        await using var database = await PostgresTestDatabase.CreateAsync(useTemplate: false);
-        await using var db = new AllstarrDbContext(database.Options);
-        var migrator = db.Database.GetService<IMigrator>();
-        await migrator.MigrateAsync("20260927214131_AddAdminOidcLinks");
-        var seed = await SeedAsync(db, "isrc", true);
-        var current = await db.CanonicalCatalogAliases.SingleAsync();
-        if (!hasNormalizedHash)
-            current.ExternalIdHash = CanonicalCatalogKeys.Hash("another-legacy-hash");
-        db.CanonicalCatalogAliases.Add(new CanonicalCatalogAliasRecord
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = current.TenantId,
-            EntityKind = current.EntityKind,
-            CanonicalEntityId = seed.Target,
-            Namespace = current.Namespace,
-            ExternalId = current.ExternalId,
-            ExternalIdHash = current.ExternalId,
-            CreatedAt = current.CreatedAt,
-            LastSeenAt = current.LastSeenAt
-        });
-        await db.SaveChangesAsync();
-        await migrator.MigrateAsync();
-        db.ChangeTracker.Clear();
-
-        Assert.Equal(2, await db.CanonicalCatalogAliases.CountAsync());
-        Assert.Equal(seed.Origin, (await db.CanonicalCatalogAliases.SingleAsync(item => item.Id == current.Id)).CanonicalEntityId);
-        Assert.Empty(await db.AuditEvents.ToListAsync());
     }
 
     private static async Task<(ProviderActorContext Actor, ProviderTrackIdentityRecord Identity, Guid Origin, Guid Target)>

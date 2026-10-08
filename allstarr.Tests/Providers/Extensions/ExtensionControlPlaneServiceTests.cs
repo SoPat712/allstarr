@@ -17,7 +17,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "allstarr-extension-control", Guid.NewGuid().ToString("N"));
     private readonly Guid _reviewer = Guid.CreateVersion7();
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private DbFactory _factory = null!;
     private ExtensionControlPlaneService _service = null!;
     private IConfiguration _configuration = null!;
@@ -25,7 +25,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(_root);
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
         var tenant = Guid.CreateVersion7();

@@ -15,7 +15,7 @@ namespace allstarr.Tests;
 
 public sealed class TrackIdentityServiceTests : IAsyncLifetime
 {
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private DurableStorageState _storageState = null!;
     private FakeClock _clock = null!;
@@ -28,11 +28,11 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
-        var storage = new DurableStorageOptions
+        _database = await SqliteTestDatabase.CreateAsync();
+        var storage = new StorageOptions
         {
-            Provider = "Postgres",
-            ConnectionString = _database.ConnectionString
+            DataDirectory = _database.StorageOptions.DataDirectory,
+            DatabaseFileName = _database.StorageOptions.DatabaseFileName
         };
         _factory = new TestDbContextFactory(_database.Options);
         await using (var context = await _factory.CreateDbContextAsync())

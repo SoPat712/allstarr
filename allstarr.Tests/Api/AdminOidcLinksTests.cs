@@ -28,10 +28,10 @@ public sealed class AdminOidcLinksTests
     [InlineData("subsonic")]
     public async Task LinkRequiresExactIdentity_RevalidatesBackend_AndRevokesSessions(string backendName)
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync();
         IDbContextFactory<AllstarrDbContext> factory = new Factory(database.Options);
         var options = new IdentityOptions();
-        var state = new DurableStorageState(new() { Provider = "Postgres", ConnectionString = database.ConnectionString });
+        var state = new DurableStorageState(new() { DataDirectory = database.StorageOptions.DataDirectory, DatabaseFileName = database.StorageOptions.DatabaseFileName });
         state.Set(DurableStorageReadiness.Ready);
         var identities = new BackendIdentityResolver(factory, state, options, new SystemPlatformClock());
         var alice = (await identities.ResolveAsync(new(backendName, "alice", "Alice")))!;

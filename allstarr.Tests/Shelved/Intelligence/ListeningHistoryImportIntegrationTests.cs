@@ -15,7 +15,7 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(
         Path.GetTempPath(), "allstarr-history-import-tests", Guid.NewGuid().ToString("N"));
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private FakeClock _clock = null!;
     private DurableJobQueue _jobs = null!;
@@ -26,7 +26,7 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
         _clock = new FakeClock(new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero));
         _scope = new(Guid.NewGuid(), Guid.NewGuid(), "jellyfin", "fixture-server", "music");

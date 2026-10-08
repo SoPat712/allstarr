@@ -17,7 +17,7 @@ public sealed class TrackRematchAllIntegrationTests
     [Trait("Category", "Postgres")]
     public async Task Administrator_preview_includes_every_owner_in_the_tenant()
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync();
         var factory = new DbFactory(database.Options);
         var now = new DateTimeOffset(2026, 8, 25, 12, 0, 0, TimeSpan.Zero);
         var tenantId = Guid.CreateVersion7();
@@ -72,7 +72,7 @@ public sealed class TrackRematchAllIntegrationTests
     [Trait("Category", "Postgres")]
     public async Task Force_rematch_replaces_resolved_and_unresolved_decisions_once_and_preserves_manual_authority()
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database = await SqliteTestDatabase.CreateAsync();
         var factory = new DbFactory(database.Options);
         var now = new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero);
         var clock = new Clock(now);

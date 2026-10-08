@@ -1,18 +1,18 @@
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
+using Microsoft.Data.Sqlite;
 
 namespace allstarr.Core.Storage;
 
 public static class DbErrors
 {
     public static bool IsUniqueViolation(Exception exception) =>
-        Chain(exception).OfType<PostgresException>()
-            .Any(error => error.SqlState == PostgresErrorCodes.UniqueViolation);
+        Chain(exception).OfType<SqliteException>()
+            .Any(error => error.SqliteErrorCode == 19 && error.SqliteExtendedErrorCode is 2067 or 1555);
 
     public static bool IsTransientConflict(Exception exception) =>
-        Chain(exception).Any(error => error is DbUpdateConcurrencyException or PostgresException
+        Chain(exception).Any(error => error is DbUpdateConcurrencyException or SqliteException
         {
-            SqlState: PostgresErrorCodes.SerializationFailure or PostgresErrorCodes.DeadlockDetected
+            SqliteErrorCode: 5 or 6
         });
 
     internal static IEnumerable<Exception> Chain(Exception exception)

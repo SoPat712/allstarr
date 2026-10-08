@@ -18,14 +18,14 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
         "allstarr-tests",
         Guid.NewGuid().ToString("N"));
     private readonly Guid _tenantId = Guid.CreateVersion7();
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private string _keyRingPath = string.Empty;
     private TestDbContextFactory _factory = null!;
 
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(_root);
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _keyRingPath = Path.Combine(_root, "keyring.json");
         WriteKeyRing("key-1", new Dictionary<string, byte[]>
         {

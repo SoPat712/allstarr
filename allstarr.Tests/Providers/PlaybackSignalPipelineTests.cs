@@ -18,7 +18,7 @@ namespace allstarr.Tests;
 
 public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
 {
-    private PostgresTestDatabase database = null!;
+    private SqliteTestDatabase database = null!;
     private readonly Guid tenant = Guid.CreateVersion7();
     private readonly Guid user = Guid.CreateVersion7();
     private Factory factory = null!;
@@ -27,7 +27,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        database = await PostgresTestDatabase.CreateAsync();
+        database = await SqliteTestDatabase.CreateAsync();
         factory = new(database.Options); await using var db = await factory.CreateDbContextAsync();
         var now = DateTimeOffset.UtcNow; db.Tenants.Add(new() { Id = tenant, Slug = "playback", Name = "Playback", CreatedAt = now });
         db.Users.Add(new() { Id = user, TenantId = tenant, DisplayName = "User", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now }); await db.SaveChangesAsync();

@@ -11,7 +11,7 @@ namespace allstarr.Tests;
 
 public sealed class AdminUpdateFeedTests : IAsyncLifetime
 {
-    private PostgresTestDatabase database = null!;
+    private SqliteTestDatabase database = null!;
     private TestFactory factory = null!;
     private Guid tenantId;
     private Guid otherTenantId;
@@ -21,7 +21,7 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        database = await PostgresTestDatabase.CreateAsync();
+        database = await SqliteTestDatabase.CreateAsync();
         factory = new TestFactory(database.Options);
         await using var context = await factory.CreateDbContextAsync();
 

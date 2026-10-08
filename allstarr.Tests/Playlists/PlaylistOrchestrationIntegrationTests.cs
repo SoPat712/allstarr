@@ -22,14 +22,13 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
-using Npgsql;
 using Xunit.Abstractions;
 
 namespace allstarr.Tests;
 
 public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper output) : IAsyncLifetime
 {
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private DbFactory _factory = null!;
     private FakeSource _source = null!;
     private FakeTarget _target = null!;
@@ -49,7 +48,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new(_database.Options);
         _source = new FakeSource();
         _target = new FakeTarget();
@@ -109,13 +108,13 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
 
     [Fact]
     [Trait("Lane", "ReleaseCritical")]
-    public async Task PostgreSql_playlist_baseline_is_chunk_bounded_at_100_1000_and_10000_tracks()
+    public async Task Sqlite_playlist_baseline_has_bounded_reads_and_linear_writes_at_100_1000_and_10000_tracks()
     {
         await SetLink(mode: PlaylistLinkMode.Virtual);
         var commands = new CommandCounter();
         var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseNpgsql(_database.ConnectionString)
-            .AddInterceptors(commands)
+            .UseSqlite(_database.ConnectionString)
+            .AddInterceptors(new SqlitePragmaInterceptor(), commands)
             .Options;
         var factory = new DbFactory(options);
         var service = new PlaylistOrchestrationService(
@@ -163,17 +162,23 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             }
             var measuredCommands = commands.Count - 1;
             Assert.True(
-                measuredCommands <= 15 +
+                commands.ReadCount - 1 <= 15 +
                     (int)Math.Ceiling(count / 20d) * 2 +
                     (int)Math.Ceiling(count / 500d),
-                $"{measuredCommands} SQL commands exceeded the chunk budget for {count} tracks.");
+                $"{commands.ReadCount - 1} SQL reads exceeded the chunk budget for {count} tracks.");
+            Assert.True(commands.WriteCount <= 4 * count + 32,
+                $"{commands.WriteCount} SQL writes exceeded the linear budget for {count} tracks.");
+            Assert.True(timer.Elapsed < TimeSpan.FromSeconds(30),
+                $"Refreshing {count} tracks took {timer.Elapsed.TotalSeconds:F1} seconds.");
 
             commands.Reset();
             Assert.Equal(
                 refresh.SnapshotId,
                 (await service.RefreshAsync(Context(), _link)).SnapshotId);
             // Exact-canonical resolution adds a fixed identity lookup set; it remains constant across scale.
-            Assert.InRange(commands.Count, 1, 24);
+            Assert.InRange(commands.ReadCount, 1, 24);
+            Assert.True(commands.WriteCount <= 2 * count + 16,
+                $"{commands.WriteCount} unchanged-source SQL writes exceeded the linear budget for {count} tracks.");
 
             commands.Reset();
             allocatedBefore = GC.GetTotalAllocatedBytes();
@@ -191,12 +196,14 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 item => Assert.Equal(PlaylistPreviewEntryStatus.Duplicate, item.Status));
             Assert.Equal(["local-1"], run.Plan.OrderedBackendItemIds);
             Assert.True(
-                commands.Count <= 15 + (int)Math.Ceiling(count / 20d),
-                $"{commands.Count} matching SQL commands exceeded the chunk budget for {count} tracks.");
+                commands.ReadCount <= 15 + (int)Math.Ceiling(count / 20d),
+                $"{commands.ReadCount} matching SQL reads exceeded the chunk budget for {count} tracks.");
+            Assert.True(commands.WriteCount <= count + 32,
+                $"{commands.WriteCount} matching SQL writes exceeded the linear budget for {count} tracks.");
 
             baselines.Add((count, measuredCommands, allocated, elapsedTicks));
             output.WriteLine(
-                $"postgres-playlist tracks={count} commands={measuredCommands} returned_rows={run.Plan.Entries.Count} accepted_routes={run.Plan.OrderedBackendItemIds.Count} allocated_bytes={allocated} elapsed_ticks={elapsedTicks}");
+                $"sqlite-playlist tracks={count} commands={measuredCommands} returned_rows={run.Plan.Entries.Count} accepted_routes={run.Plan.OrderedBackendItemIds.Count} allocated_bytes={allocated} elapsed_ticks={elapsedTicks}");
         }
 
         Assert.All(baselines.Zip(baselines.Skip(1)), pair =>
@@ -1659,17 +1666,18 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 .SingleAsync();
         }
         var actor = new TrackMatchActor(_tenant, _user, false);
+        using var rematchGate = new Barrier(8);
         var rematches = await Task.WhenAll(Enumerable.Range(0, 8).Select(index =>
-            _trackMatches.RematchSnapshotAsync(
-                actor,
-                snapshotId,
-                $"job-rematch-{index}")));
+            Task.Factory.StartNew(() =>
+            {
+                Assert.True(rematchGate.SignalAndWait(TimeSpan.FromSeconds(15)));
+                return _trackMatches.RematchSnapshotAsync(actor, snapshotId, $"job-rematch-{index}");
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap()));
         Assert.All(rematches, result =>
         {
             Assert.True(result.Succeeded);
             Assert.Equal(2, result.DecisionVersion);
         });
-        NpgsqlConnection.ClearAllPools();
 
         var restartedFactory = new DbFactory(_database.Options);
         var projection = await new DurablePlaylistProjectionReader(restartedFactory)
@@ -1901,28 +1909,45 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     private sealed class CommandCounter : DbCommandInterceptor
     {
         private int _count;
+        private int _readCount;
+        private int _writeCount;
         public int Count => Volatile.Read(ref _count);
-        public void Reset() => Interlocked.Exchange(ref _count, 0);
-        private void Increment() => Interlocked.Increment(ref _count);
+        public int ReadCount => Volatile.Read(ref _readCount);
+        public int WriteCount => Volatile.Read(ref _writeCount);
+        public void Reset()
+        {
+            Interlocked.Exchange(ref _count, 0);
+            Interlocked.Exchange(ref _readCount, 0);
+            Interlocked.Exchange(ref _writeCount, 0);
+        }
+        private void Increment(DbCommand command)
+        {
+            Interlocked.Increment(ref _count);
+            var sql = command.CommandText.TrimStart();
+            if (sql.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase) || sql.StartsWith("WITH", StringComparison.OrdinalIgnoreCase))
+                Interlocked.Increment(ref _readCount);
+            else if (sql.StartsWith("INSERT", StringComparison.OrdinalIgnoreCase) || sql.StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase) || sql.StartsWith("DELETE", StringComparison.OrdinalIgnoreCase))
+                Interlocked.Increment(ref _writeCount);
+        }
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
             DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
             CancellationToken cancellationToken = default)
         {
-            Increment();
+            Increment(command);
             return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
         }
         public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
             DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
             CancellationToken cancellationToken = default)
         {
-            Increment();
+            Increment(command);
             return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
         }
         public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(
             DbCommand command, CommandEventData eventData, InterceptionResult<object> result,
             CancellationToken cancellationToken = default)
         {
-            Increment();
+            Increment(command);
             return base.ScalarExecutingAsync(command, eventData, result, cancellationToken);
         }
     }

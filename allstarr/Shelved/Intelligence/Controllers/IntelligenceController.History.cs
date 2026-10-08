@@ -4,6 +4,7 @@ using allstarr.Core.Intelligence;
 using allstarr.Core.Playback;
 using allstarr.Core.Storage;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Controllers;
@@ -543,18 +544,18 @@ public sealed partial class IntelligenceController
             query = query.Where(item => item.ClientClass == client);
         }
         if (!string.IsNullOrWhiteSpace(request.Artist))
-            query = query.Where(item => item.Artist != null && EF.Functions.ILike(item.Artist, LiteralPattern(request.Artist), "\\"));
+            query = query.Where(item => item.Artist != null && EF.Functions.Like(item.Artist, LiteralPattern(request.Artist), "\\"));
         if (!string.IsNullOrWhiteSpace(request.Album))
-            query = query.Where(item => item.Album != null && EF.Functions.ILike(item.Album, LiteralPattern(request.Album), "\\"));
+            query = query.Where(item => item.Album != null && EF.Functions.Like(item.Album, LiteralPattern(request.Album), "\\"));
         if (!string.IsNullOrWhiteSpace(request.Track))
-            query = query.Where(item => item.Title != null && EF.Functions.ILike(item.Title, LiteralPattern(request.Track), "\\"));
+            query = query.Where(item => item.Title != null && EF.Functions.Like(item.Title, LiteralPattern(request.Track), "\\"));
         if (!string.IsNullOrWhiteSpace(request.Search))
         {
             var pattern = LiteralPattern(request.Search);
             query = query.Where(item =>
-                item.Title != null && EF.Functions.ILike(item.Title, pattern, "\\") ||
-                item.Artist != null && EF.Functions.ILike(item.Artist, pattern, "\\") ||
-                item.Album != null && EF.Functions.ILike(item.Album, pattern, "\\"));
+                item.Title != null && EF.Functions.Like(item.Title, pattern, "\\") ||
+                item.Artist != null && EF.Functions.Like(item.Artist, pattern, "\\") ||
+                item.Album != null && EF.Functions.Like(item.Album, pattern, "\\"));
         }
         return query;
     }
@@ -591,14 +592,19 @@ public sealed partial class IntelligenceController
         var timeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
         var from = period.From.UtcTicks;
         var to = period.To.UtcTicks;
-        var buckets = await db.Database.SqlQuery<ListeningHistoryActivityBucket>($$"""
-            SELECT to_char(timezone({{timeZoneId}},
-                          to_timestamp(("ListenedAt" - 621355968000000000) / 10000000.0)),
-                          'YYYY-MM-DD') AS "Date",
-                   count(*)::integer AS "Count",
-                   count(*) FILTER (WHERE "SourceKind" <> 'protocol')::integer AS "ImportedCount",
-                   count(*) FILTER (WHERE "SourceKind" = 'protocol')::integer AS "PlaybackCount",
-                   coalesce(sum("DurationMilliseconds"), 0)::bigint AS "DurationMilliseconds"
+        var connection = (SqliteConnection)db.Database.GetDbConnection();
+        connection.CreateFunction<long, string>("allstarr_local_date", ticks =>
+            TimeZoneInfo.ConvertTime(new DateTimeOffset(ticks, TimeSpan.Zero), timeZone)
+                .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), isDeterministic: true);
+        List<ListeningHistoryActivityBucket> buckets;
+        try
+        {
+            buckets = await db.Database.SqlQuery<ListeningHistoryActivityBucket>($$"""
+            SELECT allstarr_local_date("ListenedAt") AS "Date",
+                   CAST(count(*) AS INTEGER) AS "Count",
+                   CAST(count(*) FILTER (WHERE "SourceKind" <> 'protocol') AS INTEGER) AS "ImportedCount",
+                   CAST(count(*) FILTER (WHERE "SourceKind" = 'protocol') AS INTEGER) AS "PlaybackCount",
+                   CAST(coalesce(sum("DurationMilliseconds"), 0) AS INTEGER) AS "DurationMilliseconds"
             FROM listening_events
             WHERE "TenantId" = {{scope.TenantId}} AND "OwnerUserId" = {{scope.OwnerUserId}}
               AND "Protocol" = {{scope.Protocol}} AND "BackendInstanceId" = {{scope.BackendInstanceId}}
@@ -607,6 +613,11 @@ public sealed partial class IntelligenceController
             GROUP BY 1
             ORDER BY 1
             """).ToListAsync(cancellationToken);
+        }
+        finally
+        {
+            connection.CreateFunction<long, string>("allstarr_local_date", null);
+        }
         var dates = buckets.Select(item => DateOnly.ParseExact(item.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture)).ToArray();
         var (current, longest) = ListeningHistoryStreaks.Calculate(
             dates,
@@ -669,16 +680,16 @@ public sealed partial class IntelligenceController
                   AND "LibraryScopeId" = {{scope.LibraryScopeId}} AND "State" = 'Completed'
                   AND "ListenedAt" >= {{from}} AND "ListenedAt" < {{to}}
             ), grouped AS (
-                SELECT 'source'::text AS "Dimension", coalesce(nullif("SourceKind", ''), 'unknown') AS "Value",
-                       count(*)::integer AS "ListenCount", coalesce(sum("DurationMilliseconds"), 0)::bigint AS "DurationMilliseconds"
+                SELECT 'source' AS "Dimension", coalesce(nullif("SourceKind", ''), 'unknown') AS "Value",
+                       CAST(count(*) AS INTEGER) AS "ListenCount", CAST(coalesce(sum("DurationMilliseconds"), 0) AS INTEGER) AS "DurationMilliseconds"
                 FROM scoped GROUP BY 2
                 UNION ALL
-                SELECT 'provider'::text, coalesce(nullif("ProviderId", ''), 'unknown'),
-                       count(*)::integer, coalesce(sum("DurationMilliseconds"), 0)::bigint
+                SELECT 'provider', coalesce(nullif("ProviderId", ''), 'unknown'),
+                       CAST(count(*) AS INTEGER), CAST(coalesce(sum("DurationMilliseconds"), 0) AS INTEGER)
                 FROM scoped GROUP BY 2
                 UNION ALL
-                SELECT 'client'::text, coalesce(nullif("ClientClass", ''), 'unknown'),
-                       count(*)::integer, coalesce(sum("DurationMilliseconds"), 0)::bigint
+                SELECT 'client', coalesce(nullif("ClientClass", ''), 'unknown'),
+                       CAST(count(*) AS INTEGER), CAST(coalesce(sum("DurationMilliseconds"), 0) AS INTEGER)
                 FROM scoped GROUP BY 2
             ), ranked AS (
                 SELECT *, row_number() OVER (PARTITION BY "Dimension" ORDER BY "ListenCount" DESC, "Value") AS position

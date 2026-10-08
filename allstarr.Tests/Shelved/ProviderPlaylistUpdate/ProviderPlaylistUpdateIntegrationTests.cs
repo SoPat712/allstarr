@@ -25,7 +25,7 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
     private readonly Guid _backendIdentity = Guid.CreateVersion7();
     private readonly Guid _canonicalA = Guid.CreateVersion7();
     private readonly Guid _canonicalB = Guid.CreateVersion7();
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private DbFactory _factory = null!;
     private StatefulPlaylistCapability _provider = null!;
     private StatefulTarget _target = null!;
@@ -35,7 +35,7 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new(_database.Options);
         _provider = new("fixture");
         _target = new();

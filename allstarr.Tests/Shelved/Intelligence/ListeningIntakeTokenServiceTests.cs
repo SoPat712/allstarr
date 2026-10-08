@@ -13,7 +13,7 @@ public sealed class ListeningIntakeTokenServiceTests : IAsyncLifetime
     private readonly string _root = Path.Combine(Path.GetTempPath(), "allstarr-listening-intake", Guid.NewGuid().ToString("N"));
     private readonly Guid _tenant = Guid.CreateVersion7();
     private readonly Guid _user = Guid.CreateVersion7();
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private Factory _factory = null!;
     private ListeningIntakeTokenService _service = null!;
     private readonly IntelligenceScope _scope;
@@ -24,7 +24,7 @@ public sealed class ListeningIntakeTokenServiceTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(_root);
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new(_database.Options);
         var now = DateTimeOffset.UtcNow;
         await using (var db = await _factory.CreateDbContextAsync())

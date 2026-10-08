@@ -17,14 +17,14 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
     private readonly Guid _account = Guid.CreateVersion7();
     private readonly Guid _schedule = Guid.CreateVersion7();
     private readonly Guid _link = Guid.CreateVersion7();
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private TestFactory _factory = null!;
     private FakeClock _clock = null!;
     private DurableScheduleEngine _engine = null!;
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestFactory(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
         var now = new DateTimeOffset(2026, 7, 10, 12, 0, 0, TimeSpan.Zero);

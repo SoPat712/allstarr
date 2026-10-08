@@ -1,6 +1,3 @@
-using allstarr.Core.Configuration;
-using allstarr.Core.Jobs;
-using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -11,518 +8,175 @@ namespace allstarr.Tests;
 
 public sealed class DurableStorageTests : IAsyncLifetime
 {
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
 
-    public async Task InitializeAsync()
+    public async Task InitializeAsync() =>
+        _database = await SqliteTestDatabase.CreateAsync(useTemplate: false);
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData(".")]
+    [InlineData("..")]
+    [InlineData("../outside.db")]
+    [InlineData("nested/db")]
+    [InlineData("nested\\db")]
+    [InlineData("/outside.db")]
+    public void Options_RejectDatabaseNamesOutsideDataDirectory(string name)
     {
-        _database = await PostgresTestDatabase.CreateAsync(useTemplate: false);
+        var options = _database.StorageOptions;
+        options.DatabaseFileName = name;
+        Assert.Throws<InvalidOperationException>(options.Validate);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(601)]
+    public void Options_RejectInvalidCommandTimeout(int seconds)
+    {
+        var options = _database.StorageOptions;
+        options.CommandTimeoutSeconds = seconds;
+        Assert.Throws<InvalidOperationException>(options.Validate);
     }
 
     [Fact]
-    public void Options_RejectUnknownProviderInsteadOfFallingBack()
+    public void Options_RequireDataDirectory()
     {
-        var options = new DurableStorageOptions
-        {
-            Provider = "automatic",
-            ConnectionString = _database.ConnectionString
-        };
-
-        var exception = Assert.Throws<InvalidOperationException>(() => options.ParseProvider());
-
-        Assert.Contains("Postgres", exception.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("Sqlite", exception.Message, StringComparison.OrdinalIgnoreCase);
+        var options = new StorageOptions { DataDirectory = " " };
+        Assert.Throws<InvalidOperationException>(options.Validate);
     }
 
     [Fact]
-    public async Task PostgresInitializer_AppliesCheckedInMigrationsAndReportsSchema()
+    [Trait("Lane", "ReleaseCritical")]
+    public async Task Initializer_AppliesBaselineAndConfiguresEveryConnection()
     {
-        var options = Options();
-        var state = new DurableStorageState(options);
-        var initializer = new DurableStorageInitializer(
-            Factory(),
-            options,
-            state,
-            NullLogger<DurableStorageInitializer>.Instance);
-
-        await initializer.StartAsync(CancellationToken.None);
-
+        var state = await Initialize(_database.StorageOptions);
         var snapshot = state.GetSnapshot();
+        Assert.Equal(DurableStorageProvider.Sqlite, snapshot.Provider);
         Assert.Equal(DurableStorageReadiness.Ready, snapshot.Readiness);
-        await using var context = await Factory().CreateDbContextAsync();
-        Assert.Equal(context.Database.GetMigrations().Last(), snapshot.SchemaVersion);
-        Assert.True(await TableExists(context, "durable_jobs"));
-        Assert.True(await TableExists(context, "canonical_recordings"));
-        Assert.True(await TableExists(context, "provider_track_identities"));
-        Assert.True(await TableExists(context, "tenant_runtime_settings"));
+        await using var context = new AllstarrDbContext(_database.Options);
+        Assert.Equal(Assert.Single(context.Database.GetMigrations()), snapshot.SchemaVersion);
+        foreach (var table in new[] { "durable_jobs", "canonical_recordings", "provider_track_identities", "tenant_runtime_settings" })
+            Assert.True(await context.Database.SqlQuery<bool>($"SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name={table}) AS Value").SingleAsync());
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            if (attempt == 0) context.Database.OpenConnection();
+            else await context.Database.OpenConnectionAsync();
+            Assert.Equal("wal", await Scalar(context, "PRAGMA journal_mode;"));
+            Assert.Equal(1L, await Scalar(context, "PRAGMA foreign_keys;"));
+            Assert.Equal(1L, await Scalar(context, "PRAGMA synchronous;"));
+            Assert.Equal(5000L, await Scalar(context, "PRAGMA busy_timeout;"));
+            Assert.Equal("ok", await Scalar(context, "PRAGMA quick_check;"));
+            await context.Database.CloseConnectionAsync();
+        }
     }
 
     [Fact]
     public async Task AutoMigrateDisabled_WithPendingSchema_RemainsUnready()
     {
-        var options = Options();
+        var options = _database.StorageOptions;
         options.AutoMigrate = false;
-        var state = new DurableStorageState(options);
-        var initializer = new DurableStorageInitializer(
-            Factory(),
-            options,
-            state,
-            NullLogger<DurableStorageInitializer>.Instance);
-
-        await initializer.StartAsync(CancellationToken.None);
-
-        var snapshot = state.GetSnapshot();
+        var snapshot = (await Initialize(options)).GetSnapshot();
         Assert.Equal(DurableStorageReadiness.SchemaIncompatible, snapshot.Readiness);
         Assert.Equal("schema_migration_required", snapshot.ErrorCode);
+        await using var context = new AllstarrDbContext(_database.Options);
+        Assert.Empty(await context.Database.GetAppliedMigrationsAsync());
     }
 
     [Fact]
     [Trait("Lane", "ReleaseCritical")]
     public async Task Initializer_RejectsUnknownNewerMigrationWithoutChangingSchema()
     {
-        await using (var context = await Factory().CreateDbContextAsync())
-        {
-            await context.Database.MigrateAsync();
-            await context.Database.ExecuteSqlRawAsync(
-                "INSERT INTO \"__EFMigrationsHistory\" (\"MigrationId\", \"ProductVersion\") " +
-                "VALUES ('99991231235959_FutureAllstarrSchema', '99.0.0')");
-        }
-
-        var options = Options();
-        var state = new DurableStorageState(options);
-        var initializer = new DurableStorageInitializer(
-            Factory(),
-            options,
-            state,
-            NullLogger<DurableStorageInitializer>.Instance);
-
-        await initializer.StartAsync(CancellationToken.None);
-
-        var snapshot = state.GetSnapshot();
+        await using var context = new AllstarrDbContext(_database.Options);
+        await context.Database.MigrateAsync();
+        await context.Database.ExecuteSqlRawAsync("""
+            INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+            VALUES ('99991231235959_FutureAllstarrSchema', '99.0.0')
+            """);
+        var before = await context.Database.GetAppliedMigrationsAsync();
+        var snapshot = (await Initialize(_database.StorageOptions)).GetSnapshot();
         Assert.Equal(DurableStorageReadiness.SchemaIncompatible, snapshot.Readiness);
         Assert.Equal(DurableSchemaCompatibility.UnsupportedVersionErrorCode, snapshot.ErrorCode);
         Assert.Equal("99991231235959_FutureAllstarrSchema", snapshot.SchemaVersion);
-    }
-
-    [Fact]
-    public async Task RestoreTargetVerifier_RejectsUnknownMigrationFromTargetItInspects()
-    {
-        await using (var context = await Factory().CreateDbContextAsync())
-        {
-            await context.Database.MigrateAsync();
-            await context.Database.ExecuteSqlRawAsync(
-                "INSERT INTO \"__EFMigrationsHistory\" (\"MigrationId\", \"ProductVersion\") " +
-                "VALUES ('99991231235959_FutureAllstarrSchema', '99.0.0')");
-        }
-
-        var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
-            new DurableRestoreTargetVerifier().VerifyAsync(
-                DurableStorageProvider.Postgres,
-                _database.ConnectionString));
-
-        Assert.Contains("schema", exception.Message, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task PostgresAdditiveMigrations_ApplyCleanly()
-    {
-        await using var context = await Factory().CreateDbContextAsync();
-        await context.Database.MigrateAsync();
-
-        Assert.True(await TableExists(context, "provider_health_rollups"));
-        Assert.True(await ColumnExists(context, "durable_jobs", "MaxDeferrals"));
-        Assert.True(await ColumnExists(context, "durable_jobs", "PolicySnapshotJson"));
-        Assert.True(await ColumnExists(context, "durable_jobs", "RequestFingerprint"));
-        Assert.True(await ColumnExists(context, "outbox_messages", "MaxAttempts"));
-        Assert.True(await ColumnExists(context, "backups", "RestoreStatus"));
-    }
-
-    [Fact]
-    public async Task SuggestedTargetMigration_NormalizesLegacyTargetlessRows()
-    {
-        await using var context = await Factory().CreateDbContextAsync();
-        var migrator = context.GetService<IMigrator>();
-        await migrator.MigrateAsync("20260727233000_AllowExternalAcceptedTrackMatches");
-        var now = DateTimeOffset.UtcNow;
-        var tenantId = Guid.CreateVersion7();
-        var userId = Guid.CreateVersion7();
-        var accountId = Guid.CreateVersion7();
-        var snapshotId = Guid.CreateVersion7();
-        context.AddRange(
-            new TenantRecord
-            {
-                Id = tenantId,
-                Slug = "legacy-suggestion",
-                Name = "Legacy suggestion",
-                CreatedAt = now
-            },
-            new PlatformUserRecord
-            {
-                Id = userId,
-                TenantId = tenantId,
-                DisplayName = "User",
-                Status = PlatformUserStatus.Active,
-                CreatedAt = now,
-                UpdatedAt = now
-            },
-            new ProviderAccountRecord
-            {
-                Id = accountId,
-                TenantId = tenantId,
-                OwnerUserId = userId,
-                ProviderId = "spotify",
-                DisplayName = "Spotify",
-                Scope = ProviderAccountScope.User,
-                Enabled = true,
-                CreatedAt = now,
-                UpdatedAt = now
-            });
-        await context.SaveChangesAsync();
-        context.ExternalMetadataSnapshots.Add(new ExternalMetadataSnapshotRecord
-        {
-            Id = snapshotId,
-            TenantId = tenantId,
-            OwnerUserId = userId,
-            ProviderAccountId = accountId,
-            LibraryScopeId = "music",
-            BackendInstanceId = "home",
-            BackendPrincipalId = "principal",
-            Protocol = "jellyfin",
-            ProviderId = "spotify",
-            ResourceKind = "track",
-            ExternalIdHash = new('a', 64),
-            SnapshotVersion = 1,
-            PayloadJson = "{}",
-            PayloadSha256 = new('b', 64),
-            CorrelationId = "legacy-suggestion",
-            RetrievedAt = now
-        });
-        await context.SaveChangesAsync();
-        context.TrackMatches.Add(new TrackMatchRecord
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = tenantId,
-            OwnerUserId = userId,
-            ExternalSnapshotId = snapshotId,
-            LibraryScopeId = "music",
-            State = TrackMatchState.Suggested,
-            Confidence = .8,
-            Threshold = .88,
-            DecisionVersion = 1,
-            PolicyVersion = "normalized-v6",
-            ReasonsJson = "[]",
-            CandidateResultsJson = "[]",
-            WarningsJson = "[]",
-            CorrelationId = "legacy-suggestion",
-            DecidedAt = now
-        });
-        await context.SaveChangesAsync();
-
-        await migrator.MigrateAsync();
-        context.ChangeTracker.Clear();
-
-        Assert.Equal(TrackMatchState.Unresolved, await context.TrackMatches
-            .Select(item => item.State)
-            .SingleAsync());
-    }
-
-    [Fact]
-    public async Task ImportedPlaylistScheduleMigration_ActivatesLegacyLinksIdempotently()
-    {
-        await using var context = await Factory().CreateDbContextAsync();
-        var migrator = context.GetService<IMigrator>();
-        await migrator.MigrateAsync("20260727234500_AllowSuggestedTrackTargets");
-        var now = DateTimeOffset.UtcNow;
-        var tenantId = Guid.CreateVersion7();
-        var userId = Guid.CreateVersion7();
-        var accountId = Guid.CreateVersion7();
-        var scheduleId = Guid.CreateVersion7();
-        context.AddRange(
-            new TenantRecord
-            {
-                Id = tenantId,
-                Slug = "legacy-playlist",
-                Name = "Legacy playlist",
-                CreatedAt = now
-            },
-            new PlatformUserRecord
-            {
-                Id = userId,
-                TenantId = tenantId,
-                DisplayName = "User",
-                Status = PlatformUserStatus.Active,
-                CreatedAt = now,
-                UpdatedAt = now
-            },
-            new ProviderAccountRecord
-            {
-                Id = accountId,
-                TenantId = tenantId,
-                OwnerUserId = userId,
-                ProviderId = "spotify",
-                DisplayName = "Spotify",
-                Scope = ProviderAccountScope.User,
-                Enabled = true,
-                CreatedAt = now,
-                UpdatedAt = now
-            },
-            new JobScheduleRecord
-            {
-                Id = scheduleId,
-                TenantId = tenantId,
-                OwnerUserId = userId,
-                LibraryScopeId = "music",
-                JobType = DurableScheduleEngine.PlaylistSyncJobType,
-                CronExpression = "0 8 * * *",
-                TimeZoneId = "UTC",
-                OverlapPolicy = ScheduleOverlapPolicy.Skip,
-                MisfirePolicy = ScheduleMisfirePolicy.RunOnce,
-                RetryPolicyJson = "{}",
-                PayloadTemplateJson = "{}",
-                Enabled = false,
-                CreatedAt = now,
-                UpdatedAt = now,
-                Revision = 1
-            });
-        await context.SaveChangesAsync();
-        var linkId = Guid.CreateVersion7();
-        await context.Database.ExecuteSqlInterpolatedAsync($"""
-            INSERT INTO playlist_links (
-                "Id", "TenantId", "OwnerUserId", "ProviderAccountId", "ScheduleId", "Enabled",
-                "LibraryScopeId", "SourceProviderId", "SourcePlaylistId", "SourcePlaylistIdHash",
-                "TargetProtocol", "TargetBackendInstanceId", "Mode", "MaterializationMode",
-                "MirrorStaleEntries", "PreserveManualEntries", "SyncName", "SyncDescription", "SyncArtwork",
-                "RuleVersion", "PolicyVersion", "CreatedAt", "UpdatedAt", "Revision")
-            VALUES (
-                {linkId}, {tenantId}, {userId}, {accountId}, {scheduleId}, {false},
-                {"music"}, {"spotify"}, {"source"}, {new string('a', 64)},
-                {"jellyfin"}, {"primary"}, {"Materialized"}, {"Reconcile"},
-                {false}, {true}, {true}, {true}, {true},
-                {"legacy-env-import-v1"}, {"legacy-env-import-v1"}, {now.UtcTicks}, {now.UtcTicks}, {1L})
-            """);
-
-        await migrator.MigrateAsync();
-        context.ChangeTracker.Clear();
-
-        var link = await context.PlaylistLinks.SingleAsync();
-        var schedule = await context.JobSchedules.SingleAsync();
-        Assert.True(link.Enabled);
-        Assert.True(schedule.Enabled);
-        Assert.NotNull(schedule.NextRunAt);
-        Assert.Equal(2, link.Revision);
-        Assert.Equal(2, schedule.Revision);
-    }
-
-    [Fact]
-    [Trait("Lane", "ReleaseCritical")]
-    public async Task ProbeCacheSnapshot_AppliesToFreshPostgres()
-    {
-        await using var context = await Factory().CreateDbContextAsync();
-
-        await context.Database.MigrateAsync();
-
-        Assert.Contains(
-            "20260724012448_ProbeCacheSnapshot",
-            await context.Database.GetAppliedMigrationsAsync());
-        Assert.Equal("boolean", await ColumnType(context, "playlist_links", "Enabled"));
-    }
-
-    [Fact]
-    public async Task ProbeCacheSnapshot_UpgradesLegacyIntegerEnabledColumn()
-    {
-        await using var context = await Factory().CreateDbContextAsync();
-        var migrator = context.GetService<IMigrator>();
-        await migrator.MigrateAsync("20260723233918_AddDownloadArtifactMediaFacts");
-        await context.Database.ExecuteSqlRawAsync("""
-            ALTER TABLE playlist_links
-                ALTER COLUMN "Enabled" DROP DEFAULT,
-                ALTER COLUMN "Enabled" TYPE integer USING (CASE WHEN "Enabled" THEN 1 ELSE 0 END),
-                ALTER COLUMN "Enabled" SET DEFAULT 1
-            """);
-
-        await migrator.MigrateAsync();
-
-        Assert.Equal("boolean", await ColumnType(context, "playlist_links", "Enabled"));
-    }
-
-    [Fact]
-    [Trait("Lane", "ReleaseCritical")]
-    public async Task DownloadedSongMappingRepair_UpgradesLegacyLowercaseIdWithoutDataLoss()
-    {
-        await using var context = await Factory().CreateDbContextAsync();
-        var migrator = context.GetService<IMigrator>();
-        await migrator.MigrateAsync("20260729010000_ActivateImportedPlaylistSchedules");
-        await context.Database.ExecuteSqlRawAsync(
-            """ALTER TABLE downloaded_song_mappings RENAME COLUMN "Id" TO id""");
-        var mappingId = Guid.CreateVersion7();
-        await context.Database.ExecuteSqlInterpolatedAsync($"""
-            INSERT INTO downloaded_song_mappings
-                (id, "ProviderId", "ExternalId", "LocalPath", "Title", "Artist", "Album", "DownloadedAt", "Revision")
-            VALUES
-                ({mappingId}, {"test"}, {"external"}, {"/music/test.flac"}, {"Test"}, {"Artist"}, {"Album"}, {DateTimeOffset.UtcNow.UtcTicks}, {1L})
-            """);
-
-        await migrator.MigrateAsync();
-
-        Assert.True(await ColumnExists(context, "downloaded_song_mappings", "Id"));
-        Assert.False(await ColumnExists(context, "downloaded_song_mappings", "id"));
-        Assert.Equal(mappingId, await context.DownloadedSongMappings.Select(item => item.Id).SingleAsync());
+        Assert.Equal(before, await context.Database.GetAppliedMigrationsAsync());
     }
 
     [Fact]
     [Trait("Lane", "ReleaseCritical")]
     public async Task SchemaCompatibility_RejectsCaseDivergentMigrationId()
     {
-        await using var context = await Factory().CreateDbContextAsync();
+        await using var context = new AllstarrDbContext(_database.Options);
         await context.Database.MigrateAsync();
-        const string migration = "20260724012448_ProbeCacheSnapshot";
+        var migration = Assert.Single(context.Database.GetMigrations());
         var divergent = migration.ToLowerInvariant();
         await context.Database.ExecuteSqlInterpolatedAsync(
             $"UPDATE \"__EFMigrationsHistory\" SET \"MigrationId\" = {divergent} WHERE \"MigrationId\" = {migration}");
-
         var compatibility = await DurableSchemaCompatibility.InspectAsync(context);
-
         Assert.Equal(DurableSchemaCompatibilityStatus.UnsupportedVersion, compatibility.Status);
         Assert.Contains(migration, compatibility.MissingMigrations);
         Assert.Contains(divergent, compatibility.UnknownMigrations);
     }
 
     [Fact]
-    public async Task OnboardingMigration_BackfillsExistingBackendIdentity()
+    public async Task CorruptDatabase_RemainsUnavailableWithoutReplacingData()
     {
-        await using var context = await Factory().CreateDbContextAsync();
-        var migrator = context.GetService<IMigrator>();
-        await migrator.MigrateAsync("20260726205440_VerifyPlaylistMaterialization");
-        var tenantId = Guid.CreateVersion7();
-        var userId = Guid.CreateVersion7();
-        var now = DateTimeOffset.UtcNow;
-        context.Tenants.Add(new TenantRecord
-        {
-            Id = tenantId,
-            Slug = "onboarding-upgrade",
-            Name = "Onboarding upgrade",
-            CreatedAt = now
-        });
-        context.Users.Add(new PlatformUserRecord
-        {
-            Id = userId,
-            TenantId = tenantId,
-            DisplayName = "Existing user",
-            Status = PlatformUserStatus.Active,
-            CreatedAt = now,
-            UpdatedAt = now
-        });
-        context.BackendIdentities.Add(new BackendIdentityRecord
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = tenantId,
-            UserId = userId,
-            BackendType = "jellyfin",
-            BackendInstanceId = "primary",
-            PrincipalId = "existing-user",
-            CreatedAt = now,
-            LastSeenAt = now
-        });
-        await context.SaveChangesAsync();
-
-        await migrator.MigrateAsync();
-
-        var state = await context.OnboardingStates.SingleAsync();
-        Assert.Equal(OnboardingStateService.SchemaVersion, state.SchemaVersion);
-        Assert.Equal("schema-backfill", state.CompletionSource);
-        Assert.NotNull(state.CompletedAt);
-        Assert.Contains(
-            OnboardingStateService.BackendIdentityStep,
-            state.CompletedStepsJson,
-            StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task UnavailablePostgres_NeverCreatesFallbackStorage()
-    {
-        var options = new DurableStorageOptions
-        {
-            Provider = "Postgres",
-            ConnectionString =
-                "Host=127.0.0.1;Port=1;Database=allstarr;Username=allstarr;Password=test;Timeout=1;Command Timeout=1",
-            ConnectionRetryCount = 0,
-            AutoMigrate = true
-        };
-        var state = new DurableStorageState(options);
-        var dbOptions = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseNpgsql(options.ConnectionString)
-            .Options;
-        var initializer = new DurableStorageInitializer(
-            new TestDbContextFactory(dbOptions),
-            options,
-            state,
-            NullLogger<DurableStorageInitializer>.Instance);
-
-        await initializer.StartAsync(CancellationToken.None);
-
-        var snapshot = state.GetSnapshot();
-        Assert.Equal(DurableStorageProvider.Postgres, snapshot.Provider);
+        byte[] original = [1, 2, 3, 4];
+        await File.WriteAllBytesAsync(_database.DatabasePath, original);
+        var snapshot = (await Initialize(_database.StorageOptions)).GetSnapshot();
+        Assert.Equal(DurableStorageProvider.Sqlite, snapshot.Provider);
         Assert.Equal(DurableStorageReadiness.Unavailable, snapshot.Readiness);
         Assert.Equal("database_initialization_failed", snapshot.ErrorCode);
+        Assert.Equal(original, await File.ReadAllBytesAsync(_database.DatabasePath));
     }
 
+    [Theory]
+    [InlineData(DriveType.Network, "unknown", true)]
+    [InlineData(DriveType.Fixed, "nfs", true)]
+    [InlineData(DriveType.Fixed, "SMBFS", true)]
+    [InlineData(DriveType.Fixed, "cifs", true)]
+    [InlineData(DriveType.Fixed, "ext4", false)]
+    [InlineData(DriveType.Fixed, "apfs", false)]
+    public void NetworkStorage_IsRejected(DriveType type, string format, bool rejected) =>
+        Assert.Equal(rejected, DurableStorageInitializer.IsNetworkFileSystem(type, format));
+
     [Fact]
-    public void CheckedInMigration_GeneratesNativePostgresSql()
+    public void CheckedInMigration_GeneratesNativeSqliteSql()
     {
         using var context = new AllstarrDbContext(_database.Options);
         var script = context.GetService<IMigrator>().GenerateScript();
-
-        Assert.Contains("CREATE TABLE tenants", script, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("CREATE TABLE canonical_recordings", script, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("uuid", script, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("bytea", script, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(" BLOB", script, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CREATE TABLE \"tenants\"", script, StringComparison.Ordinal);
+        Assert.Contains("CREATE TABLE \"canonical_recordings\"", script, StringComparison.Ordinal);
+        Assert.Contains(" BLOB", script, StringComparison.Ordinal);
+        Assert.Contains(" INTEGER", script, StringComparison.Ordinal);
+        Assert.Contains(" TEXT", script, StringComparison.Ordinal);
+        Assert.Contains("FK_managed_file_job_owner_lineage", script, StringComparison.Ordinal);
+        Assert.Contains("TR_managed_file_reference_count_guard", script, StringComparison.Ordinal);
         Assert.DoesNotContain("AUTOINCREMENT", script, StringComparison.OrdinalIgnoreCase);
         Assert.False(context.Database.HasPendingModelChanges());
     }
 
-    private DurableStorageOptions Options() => new()
+    private async Task<DurableStorageState> Initialize(StorageOptions options)
     {
-        Provider = "Postgres",
-        ConnectionString = _database.ConnectionString,
-        AutoMigrate = true,
-        ConnectionRetryCount = 0
-    };
-
-    private TestDbContextFactory Factory() => new(_database.Options);
-
-    private static async Task<bool> TableExists(AllstarrDbContext context, string table) =>
-        await context.Database.SqlQuery<bool>(
-            $"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = {table}) AS \"Value\"")
-            .SingleAsync();
-
-    private static async Task<bool> ColumnExists(
-        AllstarrDbContext context,
-        string table,
-        string column) =>
-        await context.Database.SqlQuery<bool>(
-            $"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = {table} AND column_name = {column}) AS \"Value\"")
-            .SingleAsync();
-
-    private static async Task<string> ColumnType(
-        AllstarrDbContext context,
-        string table,
-        string column) =>
-        await context.Database.SqlQuery<string>(
-            $"SELECT data_type AS \"Value\" FROM information_schema.columns WHERE table_schema = 'public' AND table_name = {table} AND column_name = {column}")
-            .SingleAsync();
-
-    public async Task DisposeAsync()
-    {
-        await _database.DisposeAsync();
+        var state = new DurableStorageState(options);
+        await new DurableStorageInitializer(new TestDbContextFactory(_database.Options), options,
+            state, NullLogger<DurableStorageInitializer>.Instance).StartAsync(CancellationToken.None);
+        return state;
     }
+
+    private static async Task<object?> Scalar(AllstarrDbContext context, string sql)
+    {
+        await using var command = context.Database.GetDbConnection().CreateCommand();
+        command.CommandText = sql;
+        return await command.ExecuteScalarAsync();
+    }
+
+    public async Task DisposeAsync() => await _database.DisposeAsync();
 
     private sealed class TestDbContextFactory(DbContextOptions<AllstarrDbContext> options)
         : IDbContextFactory<AllstarrDbContext>
     {
         public AllstarrDbContext CreateDbContext() => new(options);
-
-        public Task<AllstarrDbContext> CreateDbContextAsync(
-            CancellationToken cancellationToken = default) =>
+        public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(new AllstarrDbContext(options));
     }
 }

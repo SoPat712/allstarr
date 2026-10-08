@@ -85,7 +85,7 @@ public sealed class FreshInstallContractTests
     {
         var architecture = File.ReadAllText(Path.Combine(
             _repositoryRoot, "docs", "architecture", "overview.md"));
-        foreach (var owner in new[] { "PostgreSQL", "Filesystem", "Environment / deployment secrets" })
+        foreach (var owner in new[] { "SQLite", "Filesystem", "Environment / deployment secrets" })
         {
             Assert.Contains($"| {owner} |", architecture, StringComparison.Ordinal);
         }

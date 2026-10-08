@@ -9,11 +9,11 @@ public sealed class MigrationModelSnapshotTests
     public void CheckedInSnapshotMatchesTheRuntimeModel()
     {
         var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseNpgsql("Host=unused;Database=unused;Username=unused;Password=unused")
+            .UseSqlite("Data Source=:memory:")
             .Options;
         using var context = new AllstarrDbContext(options);
 
         Assert.False(context.Database.HasPendingModelChanges());
-        Assert.Equal("20260927230000_ReconcileSourceIdentityAliases", context.Database.GetMigrations().Last());
+        Assert.Equal("20261008130205_SqliteBaseline", Assert.Single(context.Database.GetMigrations()));
     }
 }

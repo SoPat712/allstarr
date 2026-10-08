@@ -9,24 +9,22 @@ public sealed class DurableBackupServiceTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(
         Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
-    private DurableStorageOptions _options = null!;
+    private StorageOptions _options = null!;
     private DurableStorageState _state = null!;
 
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(_root);
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
         context.Jobs.Add(Job("backup-fixture"));
         await context.SaveChangesAsync();
-        _options = new DurableStorageOptions
+        _options = new StorageOptions
         {
-            Provider = "Postgres",
-            ConnectionString = _database.ConnectionString,
-            BackupDirectory = Path.Combine(_root, "backups")
+            DataDirectory = _root
         };
         _state = new DurableStorageState(_options);
         _state.Set(DurableStorageReadiness.Ready, context.Database.GetMigrations().Last());
@@ -97,102 +95,6 @@ public sealed class DurableBackupServiceTests : IAsyncLifetime
             artifact.ManifestPath,
             DurableStorageProvider.Postgres,
             artifact.Sha256));
-    }
-
-    [Fact]
-    public async Task PostgresRestore_UsesEnvironmentForPasswordAndNeverCommandArguments()
-    {
-        var (artifact, currentSchema) = await PostgresArtifact("fixture.dump");
-        var options = new DurableStorageOptions
-        {
-            Provider = "Postgres",
-            ConnectionString =
-                "Host=db.internal;Port=5433;Database=allstarr_live;Username=operator;Password=fixture-password;SSL Mode=Require",
-            BackupDirectory = Path.Combine(_root, "backups")
-        };
-        var state = new DurableStorageState(options);
-        state.Set(DurableStorageReadiness.Ready, currentSchema);
-        var runner = new RecordingProcessRunner();
-        var verifier = new SequencedRestoreVerifier(currentSchema);
-        var service = new DurableBackupService(_factory, options, state, runner, verifier);
-
-        await service.RestorePostgresAsync(
-            artifact,
-            "Host=db.internal;Port=5433;Database=allstarr_restore;Username=operator;Password=fixture-password;SSL Mode=Require",
-            destructiveRestoreConfirmed: true,
-            isolatedTargetDatabaseConfirmation: "allstarr_restore");
-
-        Assert.Equal(2, runner.Requests.Count);
-        Assert.Equal("pg_restore", runner.Requests[0].FileName);
-        Assert.Contains("--list", runner.Requests[0].Arguments);
-        var restore = runner.Requests[1];
-        Assert.DoesNotContain(restore.Arguments, argument =>
-            argument.Contains("fixture-password", StringComparison.Ordinal));
-        Assert.Equal("fixture-password", restore.Environment["PGPASSWORD"]);
-        Assert.Equal("db.internal", restore.Environment["PGHOST"]);
-        Assert.Equal(DurableStorageProvider.Postgres, verifier.Providers.Single());
-    }
-
-    [Fact]
-    public async Task PostgresRestore_RejectsConfiguredCurrentDatabaseBeforeExecution()
-    {
-        var (artifact, currentSchema) = await PostgresArtifact("live-target.dump");
-        var options = new DurableStorageOptions
-        {
-            Provider = "Postgres",
-            ConnectionString =
-                "Host=db.internal;Database=allstarr_live;Username=operator;Password=live-secret"
-        };
-        var state = new DurableStorageState(options);
-        state.Set(DurableStorageReadiness.Ready, currentSchema);
-        var runner = new RecordingProcessRunner();
-        var service = new DurableBackupService(
-            _factory,
-            options,
-            state,
-            runner,
-            new SequencedRestoreVerifier(currentSchema));
-
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.RestorePostgresAsync(
-                artifact,
-                "Host=db.internal;Database=ALLSTARR_LIVE;Username=operator;Password=other-secret",
-                destructiveRestoreConfirmed: true,
-                isolatedTargetDatabaseConfirmation: "ALLSTARR_LIVE"));
-
-        Assert.Contains("current database", exception.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Empty(runner.Requests);
-    }
-
-    [Fact]
-    public async Task PostgresRestore_RequiresExactIsolatedTargetConfirmation()
-    {
-        var (artifact, currentSchema) = await PostgresArtifact("confirmation-target.dump");
-        var options = new DurableStorageOptions
-        {
-            Provider = "Postgres",
-            ConnectionString =
-                "Host=db.internal;Database=allstarr_live;Username=operator;Password=live-secret"
-        };
-        var state = new DurableStorageState(options);
-        state.Set(DurableStorageReadiness.Ready, currentSchema);
-        var runner = new RecordingProcessRunner();
-        var service = new DurableBackupService(
-            _factory,
-            options,
-            state,
-            runner,
-            new SequencedRestoreVerifier(currentSchema));
-
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.RestorePostgresAsync(
-                artifact,
-                "Host=db.internal;Database=allstarr_restore;Username=operator;Password=fixture",
-                destructiveRestoreConfirmed: true,
-                isolatedTargetDatabaseConfirmation: "wrong_target"));
-
-        Assert.Contains("confirmed exactly", exception.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Empty(runner.Requests);
     }
 
     private DurableBackupService Service(
@@ -284,26 +186,6 @@ public sealed class DurableBackupServiceTests : IAsyncLifetime
         {
             Requests.Add(request);
             return Task.FromResult(new StorageProcessResult(0, null));
-        }
-    }
-
-    private sealed class SequencedRestoreVerifier(string schemaVersion)
-        : IDurableRestoreTargetVerifier
-    {
-        public List<DurableStorageProvider> Providers { get; } = [];
-
-        public Task<DurableSchemaCompatibilitySnapshot> VerifyAsync(
-            DurableStorageProvider provider,
-            string connectionString,
-            CancellationToken cancellationToken = default)
-        {
-            Providers.Add(provider);
-            return Task.FromResult(new DurableSchemaCompatibilitySnapshot(
-                DurableSchemaCompatibilityStatus.Current,
-                schemaVersion,
-                schemaVersion,
-                [],
-                []));
         }
     }
 

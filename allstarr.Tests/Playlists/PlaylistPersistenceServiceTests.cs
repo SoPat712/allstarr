@@ -13,7 +13,7 @@ namespace allstarr.Tests;
 
 public sealed class PlaylistPersistenceServiceTests : IAsyncLifetime
 {
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private TrackMatchCommandService _matches = null!;
     private PlaylistPersistenceService _playlists = null!;
@@ -26,7 +26,7 @@ public sealed class PlaylistPersistenceServiceTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _database = await PostgresTestDatabase.CreateAsync();
+        _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
         _tenant = Guid.CreateVersion7(); _userA = Guid.CreateVersion7(); _userB = Guid.CreateVersion7(); _accountA = Guid.CreateVersion7(); _localTrack = Guid.CreateVersion7();
         await using var db = await _factory.CreateDbContextAsync();

@@ -16,18 +16,18 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
         Path.GetTempPath(),
         "allstarr-sidecar-readiness",
         Guid.NewGuid().ToString("N"));
-    private PostgresTestDatabase _database = null!;
+    private SqliteTestDatabase _database = null!;
     private DurableStorageState _storageState = null!;
     private FakeClock _clock = null!;
 
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(_root);
-        _database = await PostgresTestDatabase.CreateAsync();
-        var storage = new DurableStorageOptions
+        _database = await SqliteTestDatabase.CreateAsync();
+        var storage = new StorageOptions
         {
-            Provider = "Postgres",
-            ConnectionString = _database.ConnectionString
+            DataDirectory = _database.StorageOptions.DataDirectory,
+            DatabaseFileName = _database.StorageOptions.DatabaseFileName
         };
         _storageState = new DurableStorageState(storage);
         _storageState.Set(DurableStorageReadiness.Ready, "fixture");
@@ -77,7 +77,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
 
         Assert.False(snapshot.Ready);
         Assert.Contains(snapshot.Components, component =>
-            component.Id == "storage:postgres" &&
+            component.Id == "storage:sqlite" &&
             component.State == "unavailable" &&
             component.ErrorCode == "database_unavailable");
     }
