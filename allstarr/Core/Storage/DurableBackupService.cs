@@ -19,7 +19,7 @@ public sealed record BackupArtifact(
 
 public sealed class BackupVerificationException(string message) : InvalidOperationException(message);
 
-public sealed class DurableBackupService(
+public sealed partial class DurableBackupService(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     StorageOptions options,
     DurableStorageState storageState,
@@ -46,6 +46,7 @@ public sealed class DurableBackupService(
         try
         {
             options.Validate();
+            if (HasPendingRestore) throw new RestorePendingException();
             var directory = Path.GetFullPath(options.BackupDirectory);
             if (directory.Contains('\'')) throw new BackupVerificationException("The backup directory must not contain a single quote.");
             Directory.CreateDirectory(directory);
@@ -159,8 +160,20 @@ public sealed class DurableBackupService(
             throw new BackupVerificationException("The backup schema is not supported by this build.");
         foreach (var (name, expected) in manifest.Sha256)
         {
-            await using var content = archive.GetEntry(name)!.Open();
-            var actual = Convert.ToHexString(await SHA256.HashDataAsync(content, cancellationToken)).ToLowerInvariant();
+            var entry = archive.GetEntry(name)!;
+            await using var content = entry.Open();
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var buffer = new byte[64 * 1024];
+            long total = 0;
+            int count;
+            while ((count = await content.ReadAsync(buffer, cancellationToken)) != 0)
+            {
+                total += count;
+                if (total > EntryLimit(name)) throw new BackupVerificationException("The backup exceeds its size limit.");
+                hash.AppendData(buffer, 0, count);
+            }
+            if (total != entry.Length) throw new BackupVerificationException("The backup entry length is invalid.");
+            var actual = Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
             if (!actual.Equals(expected, StringComparison.Ordinal))
                 throw new BackupVerificationException("Backup checksum verification failed.");
         }
@@ -175,12 +188,15 @@ public sealed class DurableBackupService(
                 ((item.ExternalAttributes >> 16) & 0xF000) == 0xA000))
             throw new BackupVerificationException("The backup must contain only the database, key ring, and manifest.");
         var entry = archive.GetEntry(ManifestFile)!;
-        if (entry.Length > 64 * 1024 || archive.GetEntry(KeyRingFile)!.Length > 1024 * 1024)
+        if (archive.Entries.Any(item => item.Length < 0 || item.Length > EntryLimit(item.FullName)))
             throw new BackupVerificationException("Backup metadata exceeds its size limit.");
         try
         {
             await using var stream = entry.Open();
-            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+            using var bounded = new MemoryStream();
+            await CopyBoundedAsync(stream, bounded, EntryLimit(ManifestFile), cancellationToken);
+            bounded.Position = 0;
+            using var document = await JsonDocument.ParseAsync(bounded, cancellationToken: cancellationToken);
             if (document.RootElement.ValueKind != JsonValueKind.Object ||
                 document.RootElement.EnumerateObject().Count() != 6 ||
                 document.RootElement.EnumerateObject().Select(item => item.Name).Distinct(StringComparer.Ordinal).Count() != 6)
@@ -202,7 +218,7 @@ public sealed class DurableBackupService(
         }
     }
 
-    internal async Task<string> VerifySnapshotAsync(string databasePath, string keyPath, CancellationToken cancellationToken)
+    internal async Task<string> VerifySnapshotAsync(string databasePath, string keyPath, CancellationToken cancellationToken, bool allowPendingMigrations = false)
     {
         var connection = new SqliteConnectionStringBuilder { DataSource = databasePath, Mode = SqliteOpenMode.ReadOnly, Pooling = false };
         await using var snapshot = new AllstarrDbContext(new DbContextOptionsBuilder<AllstarrDbContext>()
@@ -216,7 +232,10 @@ public sealed class DurableBackupService(
                 throw new BackupVerificationException("The backup database failed its integrity check.");
         }
         var compatibility = await DurableSchemaCompatibility.InspectAsync(snapshot, cancellationToken);
-        if (!compatibility.IsCurrent)
+        var applied = (await snapshot.Database.GetAppliedMigrationsAsync(cancellationToken)).ToArray();
+        var known = snapshot.Database.GetMigrations().ToArray();
+        if ((!allowPendingMigrations && !compatibility.IsCurrent) || applied.Length == 0 ||
+            !applied.SequenceEqual(known.Take(applied.Length), StringComparer.Ordinal))
             throw new BackupVerificationException("The backup database schema is not supported by this build.");
         var ring = await new FileSecretKeyRingProvider(new SecretStoreOptions { KeyRingPath = keyPath }).LoadAsync(cancellationToken);
         try
@@ -226,7 +245,7 @@ public sealed class DurableBackupService(
                 throw new BackupVerificationException("The backup key ring is missing a key required by saved credentials.");
         }
         finally { foreach (var key in ring.Keys.Values) CryptographicOperations.ZeroMemory(key); }
-        return compatibility.CurrentSchemaVersion;
+        return compatibility.AppliedSchemaVersion;
     }
 
     private async Task RotateAsync(CancellationToken cancellationToken)

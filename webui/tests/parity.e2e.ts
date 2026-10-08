@@ -3799,6 +3799,70 @@ test("Maintenance creates verified backups, lists downloads, and reports failure
   await expect(page.getByRole("status").filter({ hasText: "Backup creation failed." })).toBeVisible();
 });
 
+test("Maintenance stages a backup restore only after keyboard confirmation", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await mockApi(page);
+  let restorePending = false;
+  let failRestore = true;
+  let restoreRequests = 0;
+  await page.route("**/api/admin/storage", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      storage: { provider: "Sqlite", readiness: "Ready" },
+      backups: [],
+      restorePending,
+    }),
+  }));
+  await page.route("**/api/admin/storage/restore", async (route) => {
+    restoreRequests += 1;
+    expect(route.request().postData() ?? "").toContain('name="backup"');
+    if (failRestore) {
+      await route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: "Backup restore failed." }) });
+      return;
+    }
+    restorePending = true;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ restartRequired: true, message: "Restart Allstarr to finish restoring." }),
+    });
+  });
+
+  await page.goto("#/settings/maintenance");
+  const card = page.locator(".maintenance-card").filter({ hasText: "Durable application state" });
+  await card.getByLabel("Backup ZIP file").setInputFiles({
+    name: "restore.zip", mimeType: "application/zip", buffer: Buffer.from("fixture zip"),
+  });
+  const stage = card.getByRole("button", { name: "Restore on restart" });
+  await expect(stage).toBeEnabled();
+  await stage.click();
+  const dialog = page.getByRole("alertdialog", { name: "Stage backup restore?" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("The next restart replaces saved state and credentials");
+  await expect(dialog).toContainText("Previous files are preserved.");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  expect(restoreRequests).toBe(0);
+
+  await stage.click();
+  const confirm = dialog.getByRole("button", { name: "Restore on restart" });
+  await confirm.focus();
+  await page.keyboard.press("Enter");
+  await expect(dialog.getByRole("alert")).toHaveText("Backup restore failed.");
+  await expect(confirm).toBeEnabled();
+  expect(restoreRequests).toBe(1);
+
+  failRestore = false;
+  await dialog.getByRole("button", { name: "Restore on restart" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(card.getByText("A restore is staged. Restart Allstarr to finish replacing saved state and credentials.")).toBeVisible();
+  await expect(stage).toBeDisabled();
+  expect(restoreRequests).toBe(2);
+  await page.reload();
+  await page.goto("#/settings/maintenance");
+  await expect(card.getByText("A restore is staged. Restart Allstarr to finish replacing saved state and credentials.")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});
+
 test("Audio quality supports keyboard changes, provider outcomes, save, and reload", async ({ page }) => {
   await mockApi(page);
   let quality = "BestAvailable";
