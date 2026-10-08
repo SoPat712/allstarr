@@ -347,8 +347,7 @@ const responses: Record<string, unknown> = {
   },
   "/api/admin/storage": { storage: { provider: "Sqlite", readiness: "Ready" }, backups: [] },
   "/api/admin/cache": {
-    database: { entryCount: 2, payloadBytes: 2048, hitRatio: .75, hits: 3, misses: 1, writes: 2, evictions: 1 },
-    hot: { entryCount: 1, payloadBytes: 1024, maximumBytes: 16_777_216, hitRatio: .75, hits: 3, misses: 1, writes: 1, evictions: 0 },
+    memory: { entryCount: 2, payloadBytes: 2048, maximumBytes: 16_777_216, hitRatio: .75, hits: 3, misses: 1, writes: 2, evictions: 1 },
     media: { entryCount: 1, payloadBytes: 4096, maximumBytes: 536_870_912, maximumEntryBytes: 16_777_216, hitRatio: .5, hits: 1, misses: 1, writes: 1, evictions: 1 },
     categories: [{
       category: "Artwork", owner: "media-assets", storageTier: "Media", enabled: true,
@@ -3915,11 +3914,11 @@ test("Maintenance reports cache budgets and confirms category purge", async ({ p
   await page.goto("#/settings/general");
   const cacheSettings = page.locator("details").filter({ hasText: "Cache" });
   await cacheSettings.locator("summary").click();
-  await expect(cacheSettings.getByText(/hot RAM remains fixed at 16 MiB/)).toBeVisible();
+  await expect(cacheSettings.getByText(/memory cache remains bounded at 16 MiB/)).toBeVisible();
   await page.goto("#/settings/maintenance");
   const card = page.locator(".cache-diagnostics-card");
 
-  await expect(card.getByText("Hot RAM hit / miss")).toBeVisible();
+  await expect(card.getByText("Memory hit / miss")).toBeVisible();
   await expect(card.getByText("Upstream avoided")).toBeVisible();
   await card.getByText("Limits and cleanup preview").click();
   await expect(card.getByText("Stale account scopes")).toBeVisible();

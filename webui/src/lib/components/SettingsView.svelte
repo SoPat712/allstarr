@@ -285,7 +285,7 @@
               {/each}
               {#if item.id === "cache"}
                 <p class="settings-impact">
-                  Estimated ceiling after save: hot RAM remains fixed at 16 MiB and disk remains deployment-bounded at {cacheDiskCeiling.toLocaleString()} MiB. Retention changes affect refresh frequency, not those ceilings.
+                  Estimated ceiling after save: memory cache remains bounded at 16 MiB and disk remains deployment-bounded at {cacheDiskCeiling.toLocaleString()} MiB. Retention changes affect refresh frequency, not those ceilings.
                 </p>
               {/if}
               {#if item.fields.some((field) => !field.readOnly && field.ownership !== "deployment")}

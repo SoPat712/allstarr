@@ -355,8 +355,7 @@ export type CacheCategoryDiagnostics = {
 };
 
 export type CacheDiagnostics = {
-  database: CacheTierUsage;
-  hot: CacheTierUsage;
+  memory: CacheTierUsage;
   media: CacheTierUsage;
   categories: CacheCategoryDiagnostics[];
   activity: {

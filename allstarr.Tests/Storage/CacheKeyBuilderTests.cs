@@ -68,7 +68,7 @@ public class CacheKeyBuilderTests
             ApplicationCacheCategory.CanonicalMetadata,
             ApplicationCachePolicyRegistry.Classify(CacheKeyBuilder.BuildArtistKey("qobuz", "7")));
         Assert.Equal(
-            ApplicationCacheCategory.CanonicalMetadata,
+            ApplicationCacheCategory.Artwork,
             ApplicationCachePolicyRegistry.Classify(
                 CacheKeyBuilder.BuildProviderPlaylistArtworkDescriptorKey("spotify", "mix", "rev")));
     }

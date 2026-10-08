@@ -1719,47 +1719,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.ToTable("admin_oidc_links", (string)null);
                 });
 
-            modelBuilder.Entity("allstarr.Core.Storage.ApplicationCacheEntryRecord", b =>
-                {
-                    b.Property<string>("Key")
-                        .HasMaxLength(512)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Category")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long?>("ExpiresAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("PayloadBytes")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long>("UpdatedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Value")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Key");
-
-                    b.HasIndex("ExpiresAt")
-                        .HasDatabaseName("IX_application_cache_expires_at");
-
-                    b.HasIndex("Category", "UpdatedAt")
-                        .HasDatabaseName("IX_application_cache_category_updated");
-
-                    b.ToTable("application_cache_entries", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_application_cache_payload_bytes", "\"PayloadBytes\" >= 0 AND \"PayloadBytes\" <= 1048576");
-                        });
-                });
-
             modelBuilder.Entity("allstarr.Core.Storage.AuditEventRecord", b =>
                 {
                     b.Property<Guid>("Id")

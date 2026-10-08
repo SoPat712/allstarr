@@ -589,25 +589,15 @@ public sealed class StorageIntegrationTests
                 1,
                 "spotify")));
 
-        var firstCache = new DatabaseApplicationCache(
-            factory,
-            clock,
-            NullLogger<DatabaseApplicationCache>.Instance);
+        using var firstCache = new MemoryApplicationCache(clock);
         Assert.True(await firstCache.SetStringAsync(
             "search:v2:cache-loss",
             "disposable",
             TimeSpan.FromHours(1)));
         Assert.Equal("disposable", await firstCache.GetStringAsync("search:v2:cache-loss"));
 
-        await using (var purge = await factory.CreateDbContextAsync())
-        {
-            await purge.ApplicationCacheEntries.ExecuteDeleteAsync();
-        }
-
-        var restartedCache = new DatabaseApplicationCache(
-            factory,
-            clock,
-            NullLogger<DatabaseApplicationCache>.Instance);
+        firstCache.Dispose();
+        using var restartedCache = new MemoryApplicationCache(clock);
         Assert.Null(await restartedCache.GetStringAsync("search:v2:cache-loss"));
         await using var verification = await factory.CreateDbContextAsync();
         Assert.True(await verification.Jobs.AnyAsync(item => item.Id == enqueued.JobId));

@@ -18,7 +18,7 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         Path.GetTempPath(),
         $"allstarr-cache-diagnostics-media-{Guid.CreateVersion7():N}");
     private HybridApplicationCache _cache = null!;
-    private BoundedHotApplicationCache _hot = null!;
+    private MemoryApplicationCache _hot = null!;
     private FileMediaApplicationCache _media = null!;
     private TestClock _clock = null!;
     private readonly ApplicationCacheActivityMetrics _activity = new();
@@ -29,11 +29,7 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         var factory = new TestFactory(_database.Options);
         _clock = new TestClock(
             new DateTimeOffset(2026, 7, 24, 12, 0, 0, TimeSpan.Zero));
-        var database = new DatabaseApplicationCache(
-            factory,
-            _clock,
-            NullLogger<DatabaseApplicationCache>.Instance);
-        _hot = new BoundedHotApplicationCache(database);
+        _hot = new MemoryApplicationCache(_clock);
         _media = new FileMediaApplicationCache(
             new FileMediaCacheOptions(_mediaPath),
             _clock,
@@ -41,7 +37,7 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         _cache = new HybridApplicationCache(
             _hot,
             _media,
-            activityMetrics: _activity);
+            activityMetrics: _activity, contextFactory: factory, clock: _clock);
 
     }
 
@@ -51,10 +47,10 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         const string key = "playlist:discovery:v2:global:shared:00000000000000000000000000000000:1:fixture:digest";
         Assert.True(await _cache.SetStringAsync(key, "{}"));
 
-        await using var context = new AllstarrDbContext(_database.Options);
-        var entry = await context.Set<ApplicationCacheEntryRecord>().SingleAsync(item => item.Key == key);
-        Assert.Equal(ApplicationCacheCategory.PlaylistDiscovery.ToString(), entry.Category);
-        Assert.Equal(_clock.UtcNow.AddMinutes(5), entry.ExpiresAt);
+        _clock.UtcNow = _clock.UtcNow.AddMinutes(4);
+        Assert.Equal("{}", await _cache.GetStringAsync(key));
+        _clock.UtcNow = _clock.UtcNow.AddMinutes(1);
+        Assert.Null(await _cache.GetStringAsync(key));
     }
 
     [Fact]
@@ -64,14 +60,11 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         Assert.True(await _cache.SetStringAsync("artwork:payload:v1:track-1", "media"));
 
         var snapshot = await _cache.GetDiagnosticsAsync();
-        Assert.Equal(1, snapshot.Database.EntryCount);
-        Assert.Equal(1, snapshot.Hot.EntryCount);
+        Assert.Equal(1, snapshot.Memory.EntryCount);
         Assert.Equal(1, snapshot.Media.EntryCount);
-        Assert.Equal(8, snapshot.Database.PayloadBytes);
-        Assert.Equal(8, snapshot.Hot.PayloadBytes);
+        Assert.Equal(8, snapshot.Memory.PayloadBytes);
         Assert.Equal(5, snapshot.Media.PayloadBytes);
-        Assert.Equal(1, snapshot.Database.Writes);
-        Assert.Equal(1, snapshot.Hot.Writes);
+        Assert.Equal(1, snapshot.Memory.Writes);
         Assert.Equal(1, snapshot.Media.Writes);
         _activity.RecordCoalesced();
         _activity.RecordStaleServe();
@@ -99,7 +92,7 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         Assert.Equal("metadata", await _cache.GetStringAsync("odesli:translate:v2:track-1:spotify"));
         Assert.Null(await _cache.GetStringAsync("artwork:payload:v1:track-1"));
         snapshot = await _cache.GetDiagnosticsAsync();
-        Assert.Equal(1, snapshot.Hot.Hits);
+        Assert.Equal(1, snapshot.Memory.Hits);
         Assert.Equal(1, snapshot.Media.Misses);
 
         Assert.True(await _cache.SetStringAsync("artwork:payload:v1:track-2", "media"));
@@ -193,6 +186,135 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         Assert.Equal(1, await maintenance.RunOnceAsync());
         Assert.Equal("referenced", await _cache.GetStringAsync(referencedKey));
         Assert.Null(await _cache.GetStringAsync(orphanedKey));
+    }
+
+    [Fact]
+    public async Task MaintenanceRemovesStaleProviderAccountScopes()
+    {
+        var tenantId = Guid.CreateVersion7();
+        var userId = Guid.CreateVersion7();
+        var accountId = Guid.CreateVersion7();
+        await using (var database = new AllstarrDbContext(_database.Options))
+        {
+            database.AddRange(
+                new TenantRecord
+                {
+                    Id = tenantId,
+                    Slug = "cache-scope",
+                    Name = "Cache scope",
+                    CreatedAt = _clock.UtcNow
+                },
+                new PlatformUserRecord
+                {
+                    Id = userId,
+                    TenantId = tenantId,
+                    DisplayName = "Cache scope",
+                    Status = PlatformUserStatus.Active,
+                    CreatedAt = _clock.UtcNow,
+                    UpdatedAt = _clock.UtcNow
+                },
+                new ProviderAccountRecord
+                {
+                    Id = accountId,
+                    TenantId = tenantId,
+                    OwnerUserId = userId,
+                    ProviderId = "spotify",
+                    DisplayName = "Cache scope",
+                    Scope = ProviderAccountScope.User,
+                    Enabled = true,
+                    Revision = 2,
+                    CreatedAt = _clock.UtcNow,
+                    UpdatedAt = _clock.UtcNow
+                });
+            await database.SaveChangesAsync();
+        }
+
+        var current = CacheKeyBuilder.BuildProviderPlaylistDiscoveryKey(
+            tenantId, userId, accountId, 2, "spotify", null, null, 100);
+        var stale = CacheKeyBuilder.BuildProviderPlaylistDiscoveryKey(
+            tenantId, userId, accountId, 1, "spotify", null, null, 100);
+        Assert.True(await _cache.SetStringAsync(current, "current"));
+        Assert.True(await _cache.SetStringAsync(stale, "stale"));
+
+        Assert.Equal(1, (await _cache.PreviewMaintenanceAsync()).Metadata.StaleAuthorizationScopeEntries);
+        Assert.Equal(1, await _cache.CleanupAsync());
+        Assert.Equal("current", await _cache.GetStringAsync(current));
+        Assert.Null(await _cache.GetStringAsync(stale));
+    }
+
+    [Fact]
+    public async Task MaintenanceRemovesOlderArtworkRevisionsDeterministically()
+    {
+        var first = CacheKeyBuilder.BuildMediaAssetDescriptorKey(new(
+            null, null, null, "jellyfin", "playlist", "playlist-1", "revision-1", 96, 96));
+        var second = CacheKeyBuilder.BuildMediaAssetDescriptorKey(new(
+            null, null, null, "jellyfin", "playlist", "playlist-1", "revision-2", 96, 96));
+        const string descriptor = """{"PayloadKey":"artwork:payload:v1:fixture"}""";
+        Assert.True(await _cache.SetStringAsync(first, descriptor, TimeSpan.FromHours(1)));
+        _clock.UtcNow = _clock.UtcNow.AddSeconds(1);
+        Assert.True(await _cache.SetStringAsync(second, descriptor, TimeSpan.FromHours(1)));
+
+        Assert.Equal(1, (await _cache.PreviewMaintenanceAsync()).Metadata.SupersededEntries);
+        Assert.Equal(1, await _cache.CleanupAsync());
+        Assert.Null(await _cache.GetStringAsync(first));
+        Assert.Equal(descriptor, await _cache.GetStringAsync(second));
+    }
+
+    [Fact]
+    public async Task Restart_PreservesLyricsAndReferencedArtworkWhileMetadataStartsCold()
+    {
+        var payload = CacheKeyBuilder.BuildMediaAssetPayloadKey(new string('c', 64));
+        var descriptor = CacheKeyBuilder.BuildMediaAssetDescriptorKey(new(
+            null, null, null, "jellyfin", "album", "album-1", "revision-1"));
+        await _cache.SetStringAsync("search:v2:restart", "metadata");
+        await _cache.SetStringAsync("lyrics:v2:restart", "lyrics");
+        await _cache.SetStringAsync(payload, "artwork");
+        await _cache.SetStringAsync(descriptor, JsonSerializer.Serialize(new { PayloadKey = payload }));
+        using var memory = new MemoryApplicationCache(_clock);
+        using var files = new FileMediaApplicationCache(new FileMediaCacheOptions(_mediaPath), _clock,
+            NullLogger<FileMediaApplicationCache>.Instance);
+        var restarted = new HybridApplicationCache(memory, files, clock: _clock);
+        _clock.UtcNow += TimeSpan.FromMinutes(6);
+
+        Assert.Null(await restarted.GetStringAsync("search:v2:restart"));
+        Assert.Equal(0, await restarted.CleanupAsync());
+        Assert.Equal("lyrics", await restarted.GetStringAsync("lyrics:v2:restart"));
+        Assert.Equal("artwork", await restarted.GetStringAsync(payload));
+        Assert.NotNull(await restarted.GetStringAsync(descriptor));
+        Assert.Equal(3, (await restarted.GetDiagnosticsAsync()).Media.EntryCount);
+    }
+
+    [Fact]
+    public async Task IncompleteArtworkReferenceScan_ReportsNoUnsafeReclamation()
+    {
+        var payload = CacheKeyBuilder.BuildMediaAssetPayloadKey(new string('d', 64));
+        var good = CacheKeyBuilder.BuildMediaAssetDescriptorKey(new(
+            null, null, null, "jellyfin", "album", "good", "revision-1"));
+        var bad = CacheKeyBuilder.BuildMediaAssetDescriptorKey(new(
+            null, null, null, "jellyfin", "album", "bad", "revision-1"));
+        await _cache.SetStringAsync(payload, "artwork");
+        await _cache.SetStringAsync(good, JsonSerializer.Serialize(new { PayloadKey = payload }));
+        await _cache.SetStringAsync(bad, "{broken");
+        _clock.UtcNow += TimeSpan.FromMinutes(6);
+
+        var preview = await _cache.PreviewMaintenanceAsync();
+        Assert.True(preview.ArtworkReferenceScanLimitReached);
+        Assert.Equal(0, preview.UnreferencedArtworkPayloads);
+        Assert.Equal(1, preview.Metadata.UnknownOwnerEntries);
+        Assert.Equal(1, await _cache.CleanupAsync());
+        Assert.Equal("artwork", await _cache.GetStringAsync(payload));
+        Assert.Null(await _cache.GetStringAsync(bad));
+    }
+
+    [Fact]
+    public async Task PatternPurge_ReachesLyricsWithoutClearingMetadataOrOtherFiles()
+    {
+        await _cache.SetStringAsync("search:v2:keep", "metadata");
+        await _cache.SetStringAsync("lyrics:v2:a%_\\x", "lyrics");
+        await _cache.SetStringAsync("lyrics:v2:other", "keep");
+        Assert.Equal(1, await _cache.DeleteByPatternAsync("lyrics:v2:a%_\\?"));
+        Assert.Equal("metadata", await _cache.GetStringAsync("search:v2:keep"));
+        Assert.Equal("keep", await _cache.GetStringAsync("lyrics:v2:other"));
     }
 
     public async Task DisposeAsync()

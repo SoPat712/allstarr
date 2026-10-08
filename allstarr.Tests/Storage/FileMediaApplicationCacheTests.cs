@@ -77,15 +77,18 @@ public sealed class FileMediaApplicationCacheTests : IAsyncLifetime
         Assert.Null(await _cache.GetStringAsync("artwork:payload:v1:playlist-two"));
     }
 
-    [Fact]
-    public async Task Cleanup_RemovesMalformedOrphanedAndTemporaryFiles()
+    [Theory]
+    [InlineData("{not-json")]
+    [InlineData("{}")]
+    [InlineData("{\"key\":null}")]
+    public async Task Cleanup_RemovesMalformedOrphanedAndTemporaryFiles(string invalidMetadata)
     {
         await _cache.SetStringAsync("artwork:payload:v1:malformed", "value");
         var entryFiles = Directory.GetFiles(_root, "*", SearchOption.AllDirectories);
         var metadataPath = Assert.Single(
             entryFiles,
             path => path.EndsWith(".json", StringComparison.Ordinal));
-        await File.WriteAllTextAsync(metadataPath, "{not-json");
+        await File.WriteAllTextAsync(metadataPath, invalidMetadata);
 
         var shard = Path.Combine(_root, "ff");
         Directory.CreateDirectory(shard);

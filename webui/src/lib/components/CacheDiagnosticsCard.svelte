@@ -19,14 +19,14 @@
     onPurge: (target: string) => void;
   } = $props();
 
-  const totalBytes = $derived((snapshot?.database.payloadBytes ?? 0) + (snapshot?.media.payloadBytes ?? 0));
+  const totalBytes = $derived((snapshot?.memory.payloadBytes ?? 0) + (snapshot?.media.payloadBytes ?? 0));
   const reclaimableBytes = $derived(
     (preview?.metadata.reclaimableBytes ?? 0) +
     (preview?.media.reclaimableBytes ?? 0) +
     (preview?.unreferencedArtworkBytes ?? 0),
   );
   const misses = $derived(
-    (snapshot?.database.misses ?? 0) + (snapshot?.hot.misses ?? 0) + (snapshot?.media.misses ?? 0),
+    (snapshot?.memory.misses ?? 0) + (snapshot?.media.misses ?? 0),
   );
   const coalescingRatio = $derived(
     misses ? (snapshot?.activity.coalescedRequests ?? 0) / misses : 0,
@@ -56,25 +56,23 @@
 
 <article class="panel maintenance-card cache-diagnostics-card">
   <header>
-    <div><strong>Application cache</strong><small>Disposable PostgreSQL metadata, bounded RAM, and disk media</small></div>
+    <div><strong>Application cache</strong><small>Bounded memory for metadata; disk storage for artwork and lyrics</small></div>
     <span>{bytes(totalBytes)}</span>
   </header>
 
   <dl class="cache-tier-grid">
-    <div><dt>Metadata</dt><dd>{snapshot?.database.entryCount ?? 0} · {bytes(snapshot?.database.payloadBytes)}</dd></div>
-    <div><dt>Hot RAM</dt><dd>{bytes(snapshot?.hot.payloadBytes)} / {bytes(snapshot?.hot.maximumBytes)}</dd></div>
+    <div><dt>Memory</dt><dd>{bytes(snapshot?.memory.payloadBytes)} / {bytes(snapshot?.memory.maximumBytes)}</dd></div>
     <div><dt>Disk media</dt><dd>{bytes(snapshot?.media.payloadBytes)} / {bytes(snapshot?.media.maximumBytes)}</dd></div>
     <div><dt>Reclaimable</dt><dd>{bytes(reclaimableBytes)}</dd></div>
   </dl>
 
   <div class="cache-activity" aria-label="Cache activity">
-    <span><strong>{hitMiss(snapshot?.database)}</strong><small>Metadata hit / miss</small></span>
-    <span><strong>{hitMiss(snapshot?.hot)}</strong><small>Hot RAM hit / miss</small></span>
+    <span><strong>{hitMiss(snapshot?.memory)}</strong><small>Memory hit / miss</small></span>
     <span><strong>{hitMiss(snapshot?.media)}</strong><small>Media hit / miss</small></span>
     <span><strong>{(coalescingRatio * 100).toFixed(0)}%</strong><small>Coalesced misses</small></span>
     <span><strong>{snapshot?.activity.staleServes ?? 0}</strong><small>Stale serves</small></span>
     <span><strong>{bytes(snapshot?.activity.upstreamBytesAvoided)}</strong><small>Upstream avoided</small></span>
-    <span><strong>{(snapshot?.database.evictions ?? 0) + (snapshot?.media.evictions ?? 0)}</strong><small>Evictions</small></span>
+    <span><strong>{(snapshot?.memory.evictions ?? 0) + (snapshot?.media.evictions ?? 0)}</strong><small>Evictions</small></span>
   </div>
 
   <details class="cache-details">

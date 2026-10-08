@@ -8,7 +8,7 @@ public sealed class ApplicationCacheContractTests
     [Fact]
     public void ProductionFacade_ImplementsApplicationCacheContract()
     {
-        Assert.True(typeof(IApplicationCache).IsAssignableFrom(typeof(BoundedHotApplicationCache)));
+        Assert.True(typeof(IApplicationCache).IsAssignableFrom(typeof(MemoryApplicationCache)));
     }
 
     [Fact]
