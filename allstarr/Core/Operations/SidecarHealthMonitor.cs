@@ -70,13 +70,10 @@ public sealed class SidecarStatusCatalog
 {
     private readonly ConcurrentDictionary<string, SidecarStatus> _statuses =
         new(StringComparer.OrdinalIgnoreCase);
-    private readonly OperationalRuntimeState? _runtimeState;
 
     public SidecarStatusCatalog(
-        SidecarHealthOptions options,
-        OperationalRuntimeState? runtimeState = null)
+        SidecarHealthOptions options)
     {
-        _runtimeState = runtimeState;
         foreach (var target in options.Targets)
         {
             var state = string.IsNullOrWhiteSpace(target.BaseUrl)
@@ -101,18 +98,6 @@ public sealed class SidecarStatusCatalog
 
     public void Set(SidecarStatus status)
     {
-        if (_statuses.TryGetValue(status.Id, out var prior) && prior.State != status.State)
-        {
-            if (prior.State == SidecarRuntimeState.Ready && status.State != SidecarRuntimeState.Ready)
-            {
-                _runtimeState?.RecordSidecarTransition(recovered: false);
-            }
-            else if (prior.State != SidecarRuntimeState.Ready && status.State == SidecarRuntimeState.Ready)
-            {
-                _runtimeState?.RecordSidecarTransition(recovered: true);
-            }
-        }
-
         _statuses[status.Id] = status;
     }
 }
@@ -215,22 +200,8 @@ public sealed class SidecarHealthMonitor : BackgroundService
                 continue;
             }
 
-            using var activity = PlatformDiagnostics.ActivitySource.StartActivity("sidecar.probe");
-            activity?.SetTag("sidecar.id", target.Id);
-            activity?.SetTag("provider.id", target.ProviderId);
-            var started = System.Diagnostics.Stopwatch.GetTimestamp();
             var status = await ProbeAsync(target, cancellationToken);
-            var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started);
             _catalog.Set(status);
-            activity?.SetTag("sidecar.state", status.State.ToString().ToLowerInvariant());
-            activity?.SetTag("error.code", status.ErrorCode);
-            PlatformDiagnostics.SidecarProbes.Add(
-                1,
-                new("provider.id", target.ProviderId),
-                new("sidecar.state", status.State.ToString().ToLowerInvariant()));
-            PlatformDiagnostics.SidecarProbeLatency.Record(
-                elapsed.TotalMilliseconds,
-                new KeyValuePair<string, object?>("provider.id", target.ProviderId));
         }
     }
 

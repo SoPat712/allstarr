@@ -76,7 +76,7 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ReadAsync_AdminSeesTenantOutboxButNotOtherTenant()
+    public async Task ReadAsync_AdminSeesTenantJobsAndAuditsWithoutOutboxEvents()
     {
         var events = await Feed().ReadAsync(
             new AdminUpdateScope(tenantId, userId, true),
@@ -84,14 +84,17 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
             100,
             CancellationToken.None);
 
-        Assert.Contains(events, item => item.Resource == "outbox" &&
-            JsonSerializer.Serialize(item.Data).Contains("tenant-message", StringComparison.Ordinal));
+        Assert.Contains(events, item => item.Resource == "job" && item.CorrelationId == "own");
         Assert.Contains(events, item => item.CorrelationId == "other");
+        Assert.Contains(events, item => item.Resource == "audit" && item.Action == "own-audit");
+        Assert.Contains(events, item => item.Resource == "audit" && item.Action == "other-audit");
+        Assert.DoesNotContain(events, item => item.Resource == "outbox");
         Assert.DoesNotContain(events, item => item.CorrelationId == "foreign");
-        Assert.DoesNotContain(
-            JsonSerializer.Serialize(events),
-            "foreign-message",
-            StringComparison.Ordinal);
+        var json = JsonSerializer.Serialize(events);
+        Assert.DoesNotContain("foreign-message", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("never-stream", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("PayloadJson", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DetailsJson", json, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

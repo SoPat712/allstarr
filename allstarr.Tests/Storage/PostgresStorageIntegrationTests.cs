@@ -122,7 +122,7 @@ public sealed class PostgresStorageIntegrationTests
 
     [Fact]
     [Trait("Category", "Postgres")]
-    public async Task NativePostgresHostOptions_SupportIdentityJobAndOutboxTransactions()
+    public async Task NativePostgresHostOptions_SupportIdentityJobAndScheduleTransactions()
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
         await using var services = BuildHostStorageServices(database.ConnectionString);
@@ -248,12 +248,6 @@ public sealed class PostgresStorageIntegrationTests
         var scheduleResult = await new DurableScheduleEngine(factory, queue, clock).TickAsync();
         Assert.Equal(1, scheduleResult.Enqueued);
 
-        var outbox = new DurableOutbox(factory, jobOptions, clock);
-        var message = await outbox.ClaimNextAsync("postgres-host-dispatcher");
-        Assert.NotNull(message);
-        Assert.Equal("job.enqueued", message!.Type);
-        await outbox.MarkDeliveredAsync(message);
-
         await using var verify = await factory.CreateDbContextAsync();
         Assert.Single(await verify.Tenants.AsNoTracking().ToListAsync());
         Assert.Single(await verify.Users.AsNoTracking().ToListAsync());
@@ -264,8 +258,6 @@ public sealed class PostgresStorageIntegrationTests
         Assert.Contains(jobs, item => item.State == DurableJobState.Cancelled);
         Assert.Contains(jobs, item => item.Id == failing.JobId && item.State == DurableJobState.Failed);
         Assert.Contains(jobs, item => item.Type == DurableScheduleEngine.PlaylistSyncJobType);
-        Assert.NotNull((await verify.OutboxMessages.AsNoTracking()
-            .SingleAsync(item => item.Id == message.MessageId)).DeliveredAt);
     }
 
     [Fact]

@@ -1,8 +1,6 @@
 using System.Text.Json;
 using System.Text;
 using allstarr.Services.Common;
-using allstarr.Core.Operations;
-using allstarr.Core.Protocols;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers;
@@ -12,31 +10,6 @@ public partial class JellyfinController
     private IActionResult HandleProxyResponse(JsonDocument? result, int statusCode, object? fallbackValue = null)
     {
         return ProxyResponseResultFactory.Create(result, statusCode, fallbackValue);
-    }
-
-    // Persist bounded route usage only; query strings may contain secrets.
-    private async Task LogEndpointUsageAsync(string path, string method)
-    {
-        if (HttpContext.RequestServices.GetRequiredService<IHostEnvironment>()
-            .IsEnvironment("Testing")) return;
-
-        try
-        {
-            var execution = HttpContext.GetProtocolExecutionContext();
-            var actor = execution?.Actor;
-            await HttpContext.RequestServices.GetRequiredService<EndpointUsageAudit>().RecordAsync(
-                method,
-                path,
-                actor?.TenantId,
-                actor?.UserId,
-                HttpContext.TraceIdentifier,
-                HttpContext.RequestAborted);
-        }
-        catch (Exception ex)
-        {
-            // Observability must not break the protocol request.
-            _logger.LogWarning(ex, "Failed to record endpoint usage");
-        }
     }
 
     // Redacts security-sensitive query params before any logging or analytics persistence.

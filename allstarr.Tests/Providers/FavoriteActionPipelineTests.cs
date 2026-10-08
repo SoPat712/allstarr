@@ -70,7 +70,7 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         Assert.Single(await database.Set<FavoriteEventRecord>().ToListAsync());
         Assert.Single(await database.Set<FavoriteActionRecord>().ToListAsync());
         Assert.Single(await database.Jobs.Where(item => item.Type == FavoriteActionPipeline.JobType).ToListAsync());
-        Assert.Equal(2, await database.OutboxMessages.CountAsync()); // job.enqueued + favorite.recorded
+        Assert.Empty(await database.OutboxMessages.ToListAsync());
     }
 
     [Fact]

@@ -17,23 +17,6 @@ public sealed class OperationalLogRegressionContractTests
         Assert.DoesNotContain("File.", service, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void EndpointUsage_UsesRetentionBoundedAuditEventsWithoutCsvFiles()
-    {
-        var helper = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Controllers", "JellyfinController.Helpers.cs"));
-        var diagnostics = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Controllers", "DiagnosticsController.cs"));
-        var audit = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Core", "Operations", "EndpointUsageAudit.cs"));
-
-        Assert.Contains("EndpointUsageAudit", helper, StringComparison.Ordinal);
-        Assert.Contains("AuditEvents", audit, StringComparison.Ordinal);
-        Assert.DoesNotContain("AppendAllText", helper, StringComparison.Ordinal);
-        Assert.DoesNotContain("ReadAllLines", diagnostics, StringComparison.Ordinal);
-        Assert.DoesNotContain("endpoints.csv", helper + diagnostics + audit, StringComparison.Ordinal);
-    }
-
     private static string FindRepositoryFile(params string[] parts)
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

@@ -59,7 +59,7 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
 {
     private const int AuditSource = 0;
     private const int JobSource = 1;
-    private const int OutboxSource = 2;
+    // Source 2 is retired outbox data; keep later source IDs stable for cursors.
     private const int TrackMatchSource = 3;
     private const int PlaylistSnapshotSource = 4;
     private const int ProviderHealthSource = 5;
@@ -141,30 +141,6 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
                     group => group.Key,
                     group => group.MinBy(item => item.Id)!.Id,
                     StringComparer.Ordinal);
-
-        var outbox = scope.IsAdministrator
-            ? await context.OutboxMessages.AsNoTracking()
-                .Where(item => item.TenantId == scope.TenantId &&
-                    (item.UpdatedAt > cursor.OccurredAt ||
-                     item.UpdatedAt == cursor.OccurredAt &&
-                     (OutboxSource > cursor.Source ||
-                      OutboxSource == cursor.Source &&
-                      (item.Id.CompareTo(cursor.ResourceId) > 0 ||
-                       item.Id == cursor.ResourceId && item.Revision > cursor.Revision))))
-                .OrderBy(item => item.UpdatedAt).ThenBy(item => item.Id).ThenBy(item => item.Revision)
-                .Take(limit)
-                .Select(item => new
-                {
-                    item.Id,
-                    item.UpdatedAt,
-                    item.Revision,
-                    item.Type,
-                    item.State,
-                    item.LastErrorCode,
-                    item.AttemptCount
-                })
-                .ToListAsync(cancellationToken)
-            : [];
 
         var matches = await context.TrackMatches.AsNoTracking()
             .Where(item => item.TenantId == scope.TenantId &&
@@ -268,22 +244,6 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
                     item.AttemptCount,
                     item.DeferralCount
                 })))
-            .Concat(outbox.Select(item => Event(
-                OutboxSource,
-                item.Id,
-                item.Revision,
-                item.UpdatedAt,
-                "outbox",
-                "changed",
-                null,
-                null,
-                new
-                {
-                    item.Type,
-                    state = item.State.ToString(),
-                    errorCode = item.LastErrorCode,
-                    item.AttemptCount
-                })))
             .Concat(matches.Select(item => Event(
                 TrackMatchSource,
                 item.Id,
@@ -364,7 +324,6 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
     {
         "audit" => AuditSource,
         "job" => JobSource,
-        "outbox" => OutboxSource,
         "track-match" => TrackMatchSource,
         "playlist-source" => PlaylistSnapshotSource,
         _ => ProviderHealthSource

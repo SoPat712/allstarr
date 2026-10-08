@@ -6,7 +6,6 @@ public sealed class DurableJobOptions
 
     public int DefaultMaxAttempts { get; set; } = 5;
     public int DefaultMaxDeferrals { get; set; } = 96;
-    public int MaxOutboxAttempts { get; set; } = 20;
     public int LeaseSeconds { get; set; } = 60;
     public int PollIntervalMilliseconds { get; set; } = 1000;
     public int MaxPayloadBytes { get; set; } = 256 * 1024;
@@ -21,11 +20,6 @@ public sealed class DurableJobOptions
         if (DefaultMaxDeferrals is < 1 or > 10000)
         {
             throw new InvalidOperationException("Jobs:DefaultMaxDeferrals must be between 1 and 10000.");
-        }
-
-        if (MaxOutboxAttempts is < 1 or > 10000)
-        {
-            throw new InvalidOperationException("Jobs:MaxOutboxAttempts must be between 1 and 10000.");
         }
 
         if (LeaseSeconds is < 5 or > 3600)

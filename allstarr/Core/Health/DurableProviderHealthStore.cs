@@ -168,9 +168,6 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
         providerId = Normalize(providerId);
         capability = Normalize(capability);
         var now = _clock.UtcNow;
-        using var activity = PlatformDiagnostics.ActivitySource.StartActivity("provider-health.record");
-        activity?.SetTag("provider.id", providerId);
-        activity?.SetTag("provider.capability", capability);
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
         var account = await context.ProviderAccounts.SingleOrDefaultAsync(
@@ -250,18 +247,6 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
         else
         {
             _circuits.TryRemove(circuitKey, out _);
-        }
-        PlatformDiagnostics.ProviderHealthSamples.Add(
-            1,
-            new("provider.id", providerId),
-            new("provider.capability", capability),
-            new("provider.state", state.ToString().ToLowerInvariant()));
-        if (latencyMilliseconds.HasValue)
-        {
-            PlatformDiagnostics.ProviderProbeLatency.Record(
-                latencyMilliseconds.Value,
-                new("provider.id", providerId),
-                new("provider.capability", capability));
         }
         return snapshot;
     }

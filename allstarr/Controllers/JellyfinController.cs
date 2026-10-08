@@ -1558,8 +1558,6 @@ public partial class JellyfinController : ControllerBase
             _logger.LogDebug("ProxyRequest: {Method} /{Path}", Request.Method, path);
         }
 
-        await LogEndpointUsageAsync(path, Request.Method);
-
         var blockedPrefixes = new[]
         {
             "system/restart",
