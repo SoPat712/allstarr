@@ -1831,40 +1831,55 @@ public sealed class TrackMatchCommandService(
             selected == null;
         var selectedExternal = externalRoutable ? playable!.SelectedExternal : null;
         Guid? canonicalRecordingId = selected?.CanonicalRecordingId ?? source?.CanonicalRecordingId;
-        if (externalRoutable && selectedExternal != null)
+        try
         {
-            if (source == null)
+            if (externalRoutable && selectedExternal != null)
             {
-                var canonical = new CanonicalRecordingRecord
+                if (source == null)
                 {
-                    Id = Guid.CreateVersion7(),
-                    TenantId = actor.TenantId,
-                    CreatedByUserId = actor.UserId,
-                    Isrc = payload.Isrc,
-                    IsProvisional = true,
-                    CreatedAt = clock.UtcNow,
-                    UpdatedAt = clock.UtcNow
-                };
-                db.CanonicalRecordings.Add(canonical);
-                await CanonicalCatalogIdentityProjection.ProjectRecordingSignalsAsync(
-                    db, catalogActor, canonical, clock.UtcNow, cancellationToken);
-                source = await AddSourceSnapshotIdentityAsync(
-                    db, catalogActor, snapshot, canonical.Id, latestVersion + 1,
-                    clock.UtcNow, cancellationToken);
+                    var canonical = new CanonicalRecordingRecord
+                    {
+                        Id = Guid.CreateVersion7(),
+                        TenantId = actor.TenantId,
+                        CreatedByUserId = actor.UserId,
+                        Isrc = payload.Isrc,
+                        IsProvisional = true,
+                        CreatedAt = clock.UtcNow,
+                        UpdatedAt = clock.UtcNow
+                    };
+                    db.CanonicalRecordings.Add(canonical);
+                    await CanonicalCatalogIdentityProjection.ProjectRecordingSignalsAsync(
+                        db, catalogActor, canonical, clock.UtcNow, cancellationToken);
+                    source = await AddSourceSnapshotIdentityAsync(
+                        db, catalogActor, snapshot, canonical.Id, latestVersion + 1,
+                        clock.UtcNow, cancellationToken);
+                }
+                canonicalRecordingId = await LinkExternalIdentitiesAsync(
+                    db,
+                    catalogActor,
+                    source,
+                    selectedExternal,
+                    playable!.RoutableExternalCandidates,
+                    decision.State,
+                    latestVersion + 1,
+                    clock.UtcNow,
+                    cancellationToken);
+                if (!canonicalRecordingId.HasValue)
+                    return new(false, TrackMatchCommandFailure.Conflict,
+                        "The source recording has conflicting identity evidence; review the match before merging it.");
             }
-            canonicalRecordingId = await LinkExternalIdentitiesAsync(
-                db,
-                catalogActor,
-                source,
-                selectedExternal,
-                playable!.RoutableExternalCandidates,
-                decision.State,
-                latestVersion + 1,
-                clock.UtcNow,
+        }
+        catch (CanonicalCatalogAliasConflictException) when (retriesRemaining > 0)
+        {
+            return await RematchSnapshotAsync(
+                actor,
+                externalSnapshotId,
+                correlationId,
+                policyVersion,
+                execution,
+                excludedProviderIdentityId,
+                retriesRemaining - 1,
                 cancellationToken);
-            if (!canonicalRecordingId.HasValue)
-                return new(false, TrackMatchCommandFailure.Conflict,
-                    "The source recording has conflicting identity evidence; review the match before merging it.");
         }
         var input = externalRoutable && canonicalRecordingId.HasValue
             ? MatchDecisionInput.FromExternalDecision(
