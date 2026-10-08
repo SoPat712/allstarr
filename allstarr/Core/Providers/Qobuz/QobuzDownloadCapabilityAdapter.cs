@@ -8,6 +8,7 @@ using allstarr.Core.Downloads;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Storage;
 using allstarr.Models.Settings;
+using allstarr.Services;
 using allstarr.Services.Common;
 using allstarr.Services.Qobuz;
 using Microsoft.Extensions.Options;
@@ -369,3 +370,11 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
         [property: JsonPropertyName("userAuthToken")] string? UserAuthToken,
         [property: JsonPropertyName("userId")] string? UserId);
 }
+
+public sealed class QobuzMetadataCapabilityAdapter(IConcreteMetadataService legacy)
+    : ConcreteMetadataCapabilityAdapter(QobuzDownloadCapabilityAdapter.StableProviderId, legacy);
+
+public sealed class QobuzPlaylistCapabilityAdapter(
+    IConcreteMetadataService legacy,
+    QobuzMetadataCapabilityAdapter metadata)
+    : ConcretePlaylistCapabilityAdapter(QobuzDownloadCapabilityAdapter.StableProviderId, legacy, metadata);
