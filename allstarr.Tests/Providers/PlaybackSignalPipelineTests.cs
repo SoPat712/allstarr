@@ -713,7 +713,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         await delivery.DeliverAsync(progress with { Transition = PlaybackTransition.Stop }, default);
 
         Assert.Equal(1, target.Successes);
-        Assert.True(activity.WasDelivered(progress.ItemId, progress.DeviceId!));
+        Assert.True(activity.WasDelivered(progress.Scope.TenantId, progress.Scope.OwnerUserId, progress.ItemId, progress.DeviceId!));
     }
 
     [Fact]

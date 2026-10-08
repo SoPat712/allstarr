@@ -67,6 +67,61 @@ public class WebSocketProxyMiddlewareTests
         Assert.Equal("finished", destination.CloseStatusDescription);
     }
 
+    [Theory]
+    [InlineData(200, false)]
+    [InlineData(200, true)]
+    [InlineData(400, true)]
+    [InlineData(401, false)]
+    public async Task SocketOwner_UsesVerifiedCurrentUserAndNeverClaimedIdentity(int status, bool queryToken)
+    {
+        var paths = new List<string>();
+        var handler = new OwnerHandler(request =>
+        {
+            paths.Add(request.RequestUri!.AbsolutePath);
+            if (queryToken) Assert.Contains("ApiKey=fixture", request.RequestUri.Query, StringComparison.Ordinal);
+            return new System.Net.Http.HttpResponseMessage((System.Net.HttpStatusCode)status)
+            {
+                Content = new StringContent("{\"Id\":\"verified-owner\",\"Name\":\"Owner\"}", Encoding.UTF8, "application/json")
+            };
+        });
+        var settings = Options.Create(new JellyfinSettings { Url = "http://localhost:8096" });
+        var cache = new DisabledApplicationCache();
+        var proxy = new allstarr.Services.Jellyfin.JellyfinProxyService(new OwnerClients(handler), settings,
+            new HttpContextAccessor(), Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Jellyfin.JellyfinProxyService>.Instance,
+            cache, new allstarr.Services.Common.MediaAssetResolver(cache,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.MediaAssetResolver>.Instance),
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
+        var middleware = new WebSocketProxyMiddleware(_ => Task.CompletedTask, settings,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<WebSocketProxyMiddleware>.Instance, [], proxy,
+            new allstarr.Core.Identity.IdentityOptions { BackendInstanceId = "backend" });
+        var http = new DefaultHttpContext();
+        http.Request.QueryString = new QueryString(queryToken ? "?api_key=fixture&UserId=claimed-owner" : "?UserId=claimed-owner");
+        if (!queryToken) http.Request.Headers["X-Emby-Token"] = "fixture";
+        var key = await middleware.ResolveSessionKeyAsync(http, "same-device");
+        if (status == 200)
+        {
+            Assert.Equal(new allstarr.Services.Jellyfin.JellyfinSessionKey("backend", "verified-owner", "same-device"), key);
+        }
+        else Assert.Null(key);
+        Assert.Equal(["/Users/Me"], paths);
+        paths.Clear();
+        http.Request.Headers.Clear();
+        http.Request.QueryString = new QueryString("?UserId=claimed-owner");
+        Assert.Null(await middleware.ResolveSessionKeyAsync(http, "same-device"));
+        Assert.Empty(paths);
+    }
+
+    private sealed class OwnerHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(respond(request));
+    }
+
+    private sealed class OwnerClients(HttpMessageHandler handler) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+    }
+
     private static WebSocketProxyMiddleware CreateMiddleware() => new(
         _ => Task.CompletedTask,
         Options.Create(new JellyfinSettings { Url = "http://localhost:8096" }),

@@ -106,6 +106,54 @@ public sealed class AdminAuthSessionServiceTests
         Assert.DoesNotContain("secret-token", record.ProtectedPayload, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("disabled")]
+    [InlineData("principal")]
+    [InlineData("backend")]
+    [InlineData("instance")]
+    [InlineData("unlinked")]
+    public async Task NativeSession_RechecksActiveUserAndExactBackendIdentity(string change)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var tenant = Guid.CreateVersion7();
+        var user = Guid.CreateVersion7();
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.Tenants.Add(new TenantRecord { Id = tenant, Slug = "session", Name = "Session" });
+            db.Users.Add(new PlatformUserRecord { Id = user, TenantId = tenant, DisplayName = "Listener", Status = PlatformUserStatus.Active });
+            db.BackendIdentities.Add(new BackendIdentityRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = tenant,
+                UserId = user,
+                BackendType = "jellyfin",
+                BackendInstanceId = "backend",
+                PrincipalId = "listener"
+            });
+            await db.SaveChangesAsync();
+        }
+        var store = new MemoryAdminAuthSessionStore();
+        var service = new AdminAuthSessionService(store, new EphemeralDataProtectionProvider(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AdminAuthSessionService>.Instance,
+            contextFactory: factory, identityOptions: new allstarr.Core.Identity.IdentityOptions { BackendInstanceId = "backend" });
+        var session = await service.CreateSessionAsync("listener", "Listener", false, "fixture", null,
+            tenantId: tenant, allstarrUserId: user);
+        Assert.NotNull(await service.GetValidSessionAsync(session.SessionId));
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            var identity = await db.BackendIdentities.SingleAsync();
+            if (change == "disabled") (await db.Users.SingleAsync()).Status = PlatformUserStatus.Disabled;
+            if (change == "principal") identity.PrincipalId = "other";
+            if (change == "backend") identity.BackendType = "subsonic";
+            if (change == "instance") identity.BackendInstanceId = "other";
+            if (change == "unlinked") db.BackendIdentities.Remove(identity);
+            await db.SaveChangesAsync();
+        }
+        Assert.Null(await service.GetValidSessionAsync(session.SessionId));
+        Assert.Empty(store.Records);
+    }
+
     private sealed class CollectingLogger<T>(List<(string Message, Exception? Exception)> entries)
         : ILogger<T>
     {

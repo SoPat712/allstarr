@@ -63,7 +63,7 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
 
         Assert.Contains(events, item => item.Resource == "job" && item.CorrelationId == "own");
         Assert.Contains(events, item => item.Resource == "audit" && item.Action == "own-audit");
-        Assert.Contains(events, item => item.Resource == "audit" && item.Action == "job-audit" && item.JobId.HasValue);
+        Assert.DoesNotContain(events, item => item.Action == "job-audit");
         Assert.DoesNotContain(events, item => item.CorrelationId is "other" or "foreign");
         Assert.DoesNotContain(events, item => item.Resource == "outbox");
         var json = JsonSerializer.Serialize(events);
@@ -150,21 +150,14 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
     [Fact]
     public async Task Stream_WritesStatusAndRecoverableSafeUpdates()
     {
-        var controller = new AdminUpdatesController(Feed());
+        var sessions = AdminAuthSessionTestSupport.Create();
+        var session = await sessions.CreateSessionAsync("backend-user", "Owner", false, "never-stream-session-token", null,
+            tenantId: tenantId, allstarrUserId: userId);
+        var controller = new AdminUpdatesController(Feed(), sessions);
         var httpContext = new DefaultHttpContext();
         httpContext.Response.Body = new MemoryStream();
         httpContext.Request.Headers["Last-Event-ID"] = BeforeSeed().ToString();
-        httpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
-        {
-            SessionId = "session",
-            UserId = "backend-user",
-            UserName = "Owner",
-            IsAdministrator = false,
-            TenantId = tenantId,
-            AllstarrUserId = userId,
-            JellyfinAccessToken = "never-stream-session-token",
-            ExpiresAtUtc = DateTime.UtcNow.AddMinutes(5)
-        };
+        httpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = session;
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(3));
 
@@ -177,6 +170,39 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
         Assert.Contains("event: update", body, StringComparison.Ordinal);
         Assert.Contains("id: ", body, StringComparison.Ordinal);
         Assert.DoesNotContain("never-stream", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CorrelationCollision_DoesNotGrantAnotherActorsAudit()
+    {
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.AuditEvents.Add(Audit(tenantId, otherUserId, "private-other", "own", startedAt.AddSeconds(8)));
+            await db.SaveChangesAsync();
+        }
+        var events = await Feed().ReadAsync(new(tenantId, userId, false), BeforeSeed(), 100, default);
+        Assert.DoesNotContain(events, item => item.Action == "private-other");
+        Assert.Empty(await Feed().ReadAsync(new(tenantId, null, false), BeforeSeed(), 100, default));
+    }
+
+    [Fact]
+    public async Task Stream_StopsAfterSessionRevocation()
+    {
+        var sessions = AdminAuthSessionTestSupport.Create();
+        var session = await sessions.CreateSessionAsync("owner", "Owner", false, "fixture", null,
+            tenantId: tenantId, allstarrUserId: userId);
+        var http = new DefaultHttpContext();
+        http.Response.Body = new MemoryStream();
+        http.Items[AdminAuthSessionService.HttpContextSessionItemKey] = session;
+        var controller = new AdminUpdatesController(Feed(), sessions)
+        {
+            ControllerContext = new ControllerContext { HttpContext = http }
+        };
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var stream = controller.Stream(timeout.Token);
+        await sessions.RemoveSessionAsync(session.SessionId);
+        await stream.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.False(timeout.IsCancellationRequested);
     }
 
     [Theory]

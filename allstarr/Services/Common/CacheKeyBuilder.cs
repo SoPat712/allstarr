@@ -30,10 +30,12 @@ public static class CacheKeyBuilder
         $"jellyfin:item-type:v2:{Digest(itemId.Trim())}";
 
     public static string BuildPlaybackSignalDedupeKey(
+        string backendInstanceId,
+        string backendPrincipalId,
         string signalType,
         string deviceId,
         string itemId) =>
-        $"playback:signal:dedupe:v1:{DigestIdentity(signalType, deviceId, itemId)}";
+        $"playback:signal:dedupe:v2:{DigestIdentity(backendInstanceId, backendPrincipalId, signalType, deviceId, itemId)}";
 
     public static string BuildProviderPlaylistArtworkDescriptorKey(
         string provider,

@@ -34,6 +34,8 @@
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { findProviderDefinition, providerDisplayName } from "$lib/sources";
 
+  let { administrator = false }: { administrator?: boolean } = $props();
+
   let items = $state<ActivityItem[]>([]);
   let providers = $state<ProviderDefinition[]>([]);
   let backend = $state("Local library");
@@ -205,8 +207,8 @@
   <Skeleton class="panel event-log-panel skeleton-panel" aria-label="Loading Event log" aria-busy="true" />
 {:else if error && !items.length}
   <RouteError
-    eyebrow="Event log unavailable"
-    title="Allstarr could not load durable activity."
+    eyebrow={administrator ? "Event log unavailable" : "Activity unavailable"}
+    title={administrator ? "Allstarr could not load durable activity." : "Allstarr could not load your activity."}
     message={error}
     onRetry={() => load("initial")}
   />
@@ -223,9 +225,9 @@
     <p class="sr-only" aria-live="polite" aria-atomic="true">{streamAnnouncement}</p>
     <header class="panel-heading playlist-toolbar event-log-heading">
       <div>
-        <p class="eyebrow">Durable activity</p>
-        <h2>Event log</h2>
-        <p>Matching, playlists, providers, jobs, and administrative changes.</p>
+        <p class="eyebrow">{administrator ? "Durable activity" : "Your activity"}</p>
+        <h2>{administrator ? "Event log" : "Listening activity"}</h2>
+        <p>{administrator ? "Matching, playlists, providers, jobs, and administrative changes." : "Your listening, playlists, matches, connected providers, and background work."}</p>
       </div>
       <Button variant="secondary" disabled={refreshing || loadingEarlier} onclick={() => void load("refresh")}>{refreshing ? "Refreshing…" : "Refresh"}</Button>
     </header>
@@ -353,7 +355,9 @@
           <strong>{items.length ? "No events match these filters" : "No events have been recorded"}</strong>
           <p>{items.length
             ? "Reset the current filters to return to the complete loaded history."
-            : "Allstarr returned zero durable events. New matching, playlist, provider, and job activity will appear here."}</p>
+            : administrator
+              ? "Allstarr returned zero durable events. New matching, playlist, provider, and job activity will appear here."
+              : "Your listening, playlist, matching, provider, and background activity will appear here."}</p>
           {#if items.length}<Button variant="secondary" onclick={resetFilters}>Reset filters</Button>{/if}
         </div>
       {/each}

@@ -17,13 +17,13 @@ The dashboard controls how Allstarr connects sources, matches music, projects pl
 6. Open **Integrations → Routing** to choose the fallback order for each capability.
 7. Test ordinary local playback in a music client before adding provider playlists or external playback.
 
-Administrators see deployment and shared-account controls. A non-administrator sees only the libraries, accounts, and actions allowed for that backend identity.
+Administrators see deployment and shared-account controls. Listeners can open Home, Playlists, Mappings, Services, their Accounts, Activity, and Listening preferences. Settings, Extensions, Routing, Cached, and Kept require administrator access, including when opened through a direct link.
 
 ## Dashboard map
 
 ### Home
 
-Home is the operational summary. It shows active listening sessions, the source serving playback, scrobble progress, storage totals, provider health, durable work, and recent activity. Start here when playback or background work seems wrong.
+Home shows your active listening sessions, playback source, scrobble progress, playlists, durable work, and recent activity. Administrators also see household activity, storage totals, and provider health. Start here when playback or background work seems wrong.
 
 The source is explicitly marked as confirmed streaming, cached audio, or an unconfirmed catalog entry. See [external song labels and playback sources](operations/client-compatibility.md#external-song-labels-and-playback-sources) for `[A]`/`[E]` titles, automatic fallback, song details, and client limitations.
 
@@ -36,7 +36,7 @@ The source is explicitly marked as confirmed streaming, cached audio, or an unco
 
 ### Intelligence (deferred)
 
-Intelligence is not in the desktop navigation, mobile bar, or More sheet while the first release is being prepared. Existing `#/intelligence` links still open the development workspace. This navigation change does not delete history, disable existing opt-in jobs, or disconnect accounts. The following describes the retained workspace, not a first-release promise.
+Intelligence is not in the desktop navigation, mobile bar, or More sheet while the first release is being prepared. Administrators can open `#/intelligence` only in the explicit development composition. This navigation change does not delete history, disable existing opt-in jobs, or disconnect accounts. The following describes the retained workspace, not a first-release promise.
 
 - **Overview** shows live playback, listening totals, and an interactive daily or monthly activity map for the selected library. Long and all-time ranges add an activity-year selector, default to the busiest imported year, and separate imported history from direct playback in each bucket.
 - **History** searches, filters, corrects, exports, or removes retained listening events.
@@ -80,7 +80,7 @@ Each viewer's external tracks use accounts available to that viewer. If no eligi
 
 ### Activity
 
-Activity groups operational events by outcome and shows the actor, target, duration, source, and correlation details. Use it with container logs when a durable job or provider call fails.
+Activity groups operational events by outcome and shows target, source, and correlation details. Listeners see only their own activity, downloads, job details, progress, and live updates. Administrators can inspect household activity. Use it with container logs when a durable job or provider call fails.
 
 ### Listening preferences
 

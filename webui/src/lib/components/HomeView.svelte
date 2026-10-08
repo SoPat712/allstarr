@@ -43,7 +43,7 @@
     refreshing = true;
     const requests = [
       ["Home overview", home.overview()],
-      ...(administrator ? [["Now playing", home.nowPlaying()]] as const : []),
+      ["Now playing", home.nowPlaying()],
     ] as const;
     const results = await Promise.allSettled(requests.map((request) => request[1]));
     const next: HomeSnapshot = { failures: [] };
@@ -79,7 +79,7 @@
   const scheduleRefresh = refreshScheduler.schedule;
 
   async function refreshNowPlaying() {
-    if (!administrator || !snapshot) return;
+    if (!snapshot) return;
     try {
       const response = await home.nowPlaying();
       snapshot = { ...snapshot, nowPlaying: response.items };
@@ -127,7 +127,7 @@
 
   onMount(() => {
     void refresh();
-    if (administrator) nowPlayingTimer = setInterval(() => void refreshNowPlaying(), 5_000);
+    nowPlayingTimer = setInterval(() => void refreshNowPlaying(), 5_000);
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
       unsubscribe();
@@ -160,7 +160,7 @@
     </div>
   {/if}
 
-  {#if sourceIssues.length}
+  {#if administrator && sourceIssues.length}
     <div class="degraded-banner" role="status">
       <span aria-hidden="true">!</span>
       <p>
@@ -171,8 +171,7 @@
     </div>
   {/if}
 
-  {#if administrator}
-    <section class="panel now-playing-panel" aria-label="Now playing">
+  <section class="panel now-playing-panel" aria-label="Now playing">
       <header>
         <div>
           <p class="eyebrow">Listening now</p>
@@ -185,7 +184,7 @@
 
       {#if snapshot.nowPlaying?.length}
         <div class="now-playing-rail" aria-label="Active listeners">
-          {#each snapshot.nowPlaying as item (item.deviceId)}
+          {#each snapshot.nowPlaying as item (`${item.userId ?? "unknown"}:${item.deviceId}`)}
             <article class="now-playing-card">
               <div class="listener-profile">
                 <span class="listener-avatar" aria-label={`${item.userName} profile`}>
@@ -256,11 +255,10 @@
       {:else}
         <div class="now-playing-empty">
           <strong>Nothing is playing right now.</strong>
-          <span>Active Jellyfin music sessions will appear here.</span>
+          <span>{administrator ? "Active Jellyfin music sessions will appear here." : "Your active listening sessions will appear here."}</span>
         </div>
       {/if}
-    </section>
-  {/if}
+  </section>
 
   <section class="panel home-overview-panel" aria-label="Allstarr overview" aria-busy={refreshing}>
     <header>
@@ -315,25 +313,29 @@
     </div>
 
     <div class="home-facts">
-      <article>
-        <span class="metric-icon backend" aria-hidden="true"><Server size={18} /></span>
-        <div>
-          <p>Media server</p>
-          <strong>{snapshot.status?.backendType ?? "Unknown"}</strong>
-          <Badge state={snapshot.status?.durableStorage?.readiness === "Ready" ? "healthy" : "degraded"}>
-            {snapshot.status?.durableStorage?.readiness ?? "Unavailable"}
-          </Badge>
-        </div>
-      </article>
+      {#if administrator}
+        <article>
+          <span class="metric-icon backend" aria-hidden="true"><Server size={18} /></span>
+          <div>
+            <p>Media server</p>
+            <strong>{snapshot.status?.backendType ?? "Unknown"}</strong>
+            <Badge state={snapshot.status?.durableStorage?.readiness === "Ready" ? "healthy" : "degraded"}>
+              {snapshot.status?.durableStorage?.readiness ?? "Unavailable"}
+            </Badge>
+          </div>
+        </article>
+      {/if}
 
-      <article>
-        <span class="metric-icon cache" aria-hidden="true"><HardDrive size={18} /></span>
-        <div>
-          <p>Managed audio</p>
-          <strong>{snapshot.stats?.cacheTracks == null ? "—" : (snapshot.stats.cacheTracks + (snapshot.stats.keptTracks ?? 0)).toLocaleString()}</strong>
-          <small>{snapshot.stats?.cacheTracks == null ? "Administrator view only" : `${snapshot.stats.cacheTracks} cached · ${snapshot.stats.keptTracks ?? 0} kept`}</small>
-        </div>
-      </article>
+      {#if administrator}
+        <article>
+          <span class="metric-icon cache" aria-hidden="true"><HardDrive size={18} /></span>
+          <div>
+            <p>Managed audio</p>
+            <strong>{snapshot.stats?.cacheTracks == null ? "—" : (snapshot.stats.cacheTracks + (snapshot.stats.keptTracks ?? 0)).toLocaleString()}</strong>
+            <small>{snapshot.stats?.cacheTracks == null ? "Administrator view only" : `${snapshot.stats.cacheTracks} cached · ${snapshot.stats.keptTracks ?? 0} kept`}</small>
+          </div>
+        </article>
+      {/if}
 
       <article>
         <span class="metric-icon artist" aria-hidden="true"><Mic2 size={18} /></span>
@@ -428,7 +430,7 @@
       {:else}
         <div class="compact-empty">
           <strong>No recent activity</strong>
-          <p>Provider checks, matches, and background work will appear here.</p>
+          <p>{administrator ? "Provider checks, matches, and background work will appear here." : "Your listening, playlist, matching, and background activity will appear here."}</p>
         </div>
       {/if}
     </article>

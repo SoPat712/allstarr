@@ -131,6 +131,8 @@ The bounded `PlaybackDeliveryActivityStore` retains disposable, one-hour stream-
 
 State-changing background work uses the durable job queue, schedules, leases, retries, cancellation, and owner authorization under `Core/Jobs`. A process-local task is not an acceptable owner for matching, downloads, playlist synchronization, scrobbling, or extension lifecycle work.
 
+Every queued job has an explicit initiating user, including scheduled work using a Shared account. Enqueue and each execution attempt verify that the user is active and the exact saved account remains enabled, owned or Shared, registered for the requested capability, and bound to a valid credential purpose. Retries never substitute another account. The encrypted secret store rechecks the account and credential again when opening a lease. Listener activity, progress, and event feeds use the recorded user; a shared correlation ID grants no access. Revoked sessions close their live event stream.
+
 Startup opens the SQLite file on local disk, enables WAL, applies the baseline migration, and checks schema compatibility and integrity before marking storage ready. Every connection enables foreign keys, normal synchronization, and a five-second busy timeout. Durable workers wait for readiness. Run one application process per deployment; network filesystems are unsupported.
 
 ## Cache and media

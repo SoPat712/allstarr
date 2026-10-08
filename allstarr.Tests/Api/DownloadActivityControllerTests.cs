@@ -38,7 +38,7 @@ public sealed class DownloadActivityControllerTests
         var resolver = new StubMetadataResolver(
             new PlaybackTrackMetadata("Rocket", "Artist", "Album", "/art", DurationSeconds: 120));
         var deliveries = new PlaybackDeliveryActivityStore();
-        deliveries.MarkDelivered("ext-deezer-song-123", "device-1");
+        deliveries.MarkDelivered(tenantId, userId, "ext-deezer-song-123", "device-1");
         using var streamResponse = new HttpResponseMessage(System.Net.HttpStatusCode.OK);
         if (confirmed)
         {
@@ -193,6 +193,49 @@ public sealed class DownloadActivityControllerTests
         Assert.IsType<NotFoundResult>(await controller.GetPlaybackArtwork("local-item", default));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NowPlaying_SameDeviceAndTrack_SeparatesListenersAndDelivery(bool administrator)
+    {
+        var tenant = Guid.CreateVersion7();
+        var owner = Guid.CreateVersion7();
+        var other = Guid.CreateVersion7();
+        const string track = "ext-deezer-song-123";
+        var now = DateTime.UtcNow;
+        var source = new StubPlaybackSource(
+            new("same-device", track, 0, now, owner, "owner", "Owner", TenantId: tenant),
+            new("same-device", track, 0, now.AddSeconds(1), other, "other", "Other", TenantId: tenant));
+        using var deliveries = new PlaybackDeliveryActivityStore();
+        deliveries.MarkDelivered(tenant, other, track, "same-device");
+        var controller = CreateController([source], [], deliveries);
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
+        {
+            SessionId = "session",
+            UserId = "owner",
+            UserName = "Owner",
+            IsAdministrator = administrator,
+            TenantId = tenant,
+            AllstarrUserId = owner,
+            JellyfinAccessToken = "fixture",
+            ExpiresAtUtc = now.AddHours(1)
+        };
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(
+            Assert.IsType<OkObjectResult>(await controller.GetNowPlaying(default)).Value));
+        var items = json.RootElement.GetProperty("items").EnumerateArray().ToArray();
+        Assert.Equal(administrator ? 2 : 1, items.Length);
+        var own = Assert.Single(items, item => item.GetProperty("UserId").GetGuid() == owner);
+        Assert.False(own.GetProperty("Scrobbled").GetBoolean());
+        Assert.Equal(administrator ? "/api/admin/ui/users/owner/avatar" : "/api/admin/auth/me/avatar",
+            own.GetProperty("AvatarUrl").GetString());
+        if (administrator)
+            Assert.True(Assert.Single(items, item => item.GetProperty("UserId").GetGuid() == other)
+                .GetProperty("Scrobbled").GetBoolean());
+        controller.HttpContext.Items.Clear();
+        Assert.Equal(403, Assert.IsType<ObjectResult>(await controller.GetNowPlaying(default)).StatusCode);
+        Assert.IsType<NotFoundResult>(await controller.GetPlaybackArtwork(track, default));
+    }
+
     private static DownloadActivityController CreateController(
         IEnumerable<IPlaybackActivitySource> playbackSources,
         IEnumerable<IPlaybackMetadataResolver> metadataResolvers,
@@ -200,6 +243,13 @@ public sealed class DownloadActivityControllerTests
         IDbContextFactory<AllstarrDbContext>? contextFactory = null,
         IBackendLibraryAccessResolver? libraryAccess = null)
     {
+        if (libraryAccess == null)
+        {
+            var permissions = new Mock<IBackendLibraryAccessResolver>();
+            permissions.Setup(item => item.ResolveUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new BackendLibraryAccessContext(null, BackendLibraryAccess.Unavailable));
+            libraryAccess = permissions.Object;
+        }
         var controller = new DownloadActivityController(
             playbackSources,
             metadataResolvers,
@@ -207,7 +257,7 @@ public sealed class DownloadActivityControllerTests
                 new TestMemoryApplicationCache(),
                 NullLogger<MediaAssetResolver>.Instance),
             NullLogger<DownloadActivityController>.Instance,
-            libraryAccess ?? Mock.Of<IBackendLibraryAccessResolver>(),
+            libraryAccess,
             playbackDeliveries,
             contextFactory)
         {
@@ -226,7 +276,7 @@ public sealed class DownloadActivityControllerTests
         UserName = "Admin",
         IsAdministrator = true,
         TenantId = tenantId,
-        AllstarrUserId = userId,
+        AllstarrUserId = userId ?? Guid.CreateVersion7(),
         JellyfinAccessToken = "token",
         ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
         LastSeenUtc = DateTime.UtcNow

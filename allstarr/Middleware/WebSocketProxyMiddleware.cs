@@ -3,6 +3,8 @@ using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
+using allstarr.Core.Identity;
+using allstarr.Filters;
 
 namespace allstarr.Middleware;
 
@@ -16,17 +18,23 @@ public class WebSocketProxyMiddleware
     private readonly JellyfinSettings _settings;
     private readonly ILogger<WebSocketProxyMiddleware> _logger;
     private readonly JellyfinSessionManager? _sessionManager;
+    private readonly JellyfinProxyService? _proxyService;
+    private readonly IdentityOptions? _identityOptions;
 
     public WebSocketProxyMiddleware(
         RequestDelegate next,
         IOptions<JellyfinSettings> settings,
         ILogger<WebSocketProxyMiddleware> logger,
-        IEnumerable<JellyfinSessionManager> sessionManagers)
+        IEnumerable<JellyfinSessionManager> sessionManagers,
+        JellyfinProxyService? proxyService = null,
+        IdentityOptions? identityOptions = null)
     {
         _next = next;
         _settings = settings.Value;
         _logger = logger;
         _sessionManager = sessionManagers.FirstOrDefault();
+        _proxyService = proxyService;
+        _identityOptions = identityOptions;
 
         _logger.LogInformation("🔧 WEBSOCKET: WebSocketProxyMiddleware initialized - Jellyfin URL: {Url}", _settings.Url);
     }
@@ -79,6 +87,7 @@ public class WebSocketProxyMiddleware
         ClientWebSocket? serverWebSocket = null;
         WebSocket? clientWebSocket = null;
         string? deviceId = null;
+        JellyfinSessionKey? sessionKey = null;
 
         try
         {
@@ -132,9 +141,9 @@ public class WebSocketProxyMiddleware
             _logger.LogDebug("✓ WEBSOCKET: Client WebSocket accepted");
 
             if (!string.IsNullOrEmpty(deviceId))
-            {
-                await sessionManager.RegisterProxiedWebSocketAsync(deviceId);
-            }
+                sessionKey = await ResolveSessionKeyAsync(context, deviceId);
+            if (sessionKey is { } connectedKey)
+                await sessionManager.RegisterProxiedWebSocketAsync(connectedKey);
 
             // Start bidirectional proxying. When either side closes, cancel and await the
             // other direction so no relay task survives the connection cleanup.
@@ -181,9 +190,9 @@ public class WebSocketProxyMiddleware
         }
         finally
         {
-            if (!string.IsNullOrEmpty(deviceId))
+            if (sessionKey is { } disconnectedKey)
             {
-                sessionManager.UnregisterProxiedWebSocket(deviceId);
+                sessionManager.UnregisterProxiedWebSocket(disconnectedKey);
             }
 
             // Clean up connections
@@ -215,13 +224,36 @@ public class WebSocketProxyMiddleware
             serverWebSocket?.Dispose();
 
             // CRITICAL: Notify session manager only when a client socket was accepted.
-            if (clientWebSocket != null && !string.IsNullOrEmpty(deviceId))
+            if (clientWebSocket != null && sessionKey is { } endedKey)
             {
                 _logger.LogInformation("🧹 WEBSOCKET: Client disconnected, removing session for device {DeviceId}", deviceId);
-                await sessionManager.RemoveSessionAsync(deviceId);
+                await sessionManager.RemoveSessionAsync(endedKey);
             }
 
             _logger.LogDebug("🧹 WEBSOCKET: WebSocket connections cleaned up");
+        }
+    }
+
+    internal async Task<JellyfinSessionKey?> ResolveSessionKeyAsync(HttpContext context, string deviceId)
+    {
+        if (_proxyService == null || _identityOptions == null ||
+            !JellyfinAuthFilter.HasClientCredentials(context.Request)) return null;
+        try
+        {
+            var (body, status) = await _proxyService.GetJsonAsync(
+                JellyfinAuthFilter.BuildCurrentUserEndpoint(context.Request), null, context.Request.Headers);
+            using (body)
+            {
+                return status is >= 200 and < 300 &&
+                       JellyfinAuthFilter.TryGetPrincipal(body, out var principalId, out _, out _)
+                    ? new(_identityOptions.BackendInstanceId, principalId, deviceId)
+                    : null;
+            }
+        }
+        catch (Exception exception) when (exception is HttpRequestException or OperationCanceledException)
+        {
+            _logger.LogDebug("Could not bind playback state to the verified socket owner ({ExceptionType})", exception.GetType().Name);
+            return null;
         }
     }
 

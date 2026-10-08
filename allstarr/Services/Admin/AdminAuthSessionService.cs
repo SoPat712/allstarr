@@ -177,6 +177,21 @@ public sealed class AdminAuthSessionService(
             }
 
             var now = DateTime.UtcNow;
+            if (contextFactory != null)
+            {
+                await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+                var backendType = session.BackendType.ToLowerInvariant();
+                if (session.AllstarrUserId is not { } userId || session.TenantId is not { } tenantId ||
+                    !await db.Users.AsNoTracking().AnyAsync(item => item.Id == userId &&
+                        item.TenantId == tenantId && item.Status == PlatformUserStatus.Active, cancellationToken) ||
+                    !await db.BackendIdentities.AsNoTracking().AnyAsync(item => item.UserId == userId &&
+                        item.TenantId == tenantId && item.BackendType == backendType && item.PrincipalId == session.UserId &&
+                        (identityOptions == null || item.BackendInstanceId == identityOptions.BackendInstanceId), cancellationToken))
+                {
+                    await store.RemoveAsync(sessionId, cancellationToken);
+                    return null;
+                }
+            }
             if (session.OidcSecretReferenceId is { } secretId)
             {
                 if (oidcOptions?.Enabled != true || contextFactory == null || oidcBackend == null ||

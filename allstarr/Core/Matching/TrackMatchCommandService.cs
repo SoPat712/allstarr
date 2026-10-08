@@ -962,6 +962,7 @@ public sealed class TrackMatchCommandService(
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var matches = await db.TrackMatches.AsNoTracking()
             .Where(item => item.TenantId == actor.TenantId &&
+                           (actor.IsAdministrator || item.OwnerUserId == actor.UserId) &&
                            (!before.HasValue ||
                             item.DecidedAt < before.Value ||
                             item.DecidedAt == before.Value &&
@@ -976,7 +977,7 @@ public sealed class TrackMatchCommandService(
             ? []
             : await db.ExternalMetadataSnapshots.AsNoTracking()
                 .Where(item => item.TenantId == actor.TenantId &&
-                               snapshotIds.Contains(item.Id))
+                               (actor.IsAdministrator || item.OwnerUserId == actor.UserId) && snapshotIds.Contains(item.Id))
                 .ToListAsync(cancellationToken);
         var identityIds = snapshots
             .Where(item => item.ProviderTrackIdentityId.HasValue)
@@ -986,9 +987,13 @@ public sealed class TrackMatchCommandService(
         var externalHashes = snapshots.Select(item => item.ExternalIdHash)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+        var visibleIdentities = db.ProviderTrackIdentities.AsNoTracking().Where(item =>
+            item.TenantId == actor.TenantId && (actor.IsAdministrator || item.ProviderAccountId == null ||
+                db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId &&
+                    (account.OwnerUserId == actor.UserId || account.OwnerUserId == null))));
         var sourceIdentities = identityIds.Length == 0 && externalHashes.Length == 0
             ? []
-            : await db.ProviderTrackIdentities.AsNoTracking()
+            : await visibleIdentities
                 .Where(item => item.TenantId == actor.TenantId &&
                                (identityIds.Contains(item.Id) ||
                                 externalHashes.Contains(item.ExternalIdHash)))
@@ -1000,7 +1005,7 @@ public sealed class TrackMatchCommandService(
             .ToArray();
         var identities = canonicalIds.Length == 0
             ? sourceIdentities
-            : await db.ProviderTrackIdentities.AsNoTracking()
+            : await visibleIdentities
                 .Where(item => item.TenantId == actor.TenantId &&
                                canonicalIds.Contains(item.CanonicalRecordingId))
                 .ToListAsync(cancellationToken);

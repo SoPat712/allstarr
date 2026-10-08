@@ -216,7 +216,7 @@ public class JellyfinAuthFilter : IAsyncActionFilter
                !string.IsNullOrWhiteSpace(segments[3]);
     }
 
-    private static bool HasClientCredentials(HttpRequest request)
+    internal static bool HasClientCredentials(HttpRequest request)
     {
         if (HasHeaderValue(request, "X-Emby-Authorization") ||
             HasHeaderValue(request, "X-Emby-Token") ||
@@ -236,7 +236,7 @@ public class JellyfinAuthFilter : IAsyncActionFilter
                values.Any(value => !string.IsNullOrWhiteSpace(value));
     }
 
-    private static string BuildCurrentUserEndpoint(HttpRequest request)
+    internal static string BuildCurrentUserEndpoint(HttpRequest request)
     {
         return AddQueryCredentials("Users/Me", request);
     }
@@ -312,7 +312,7 @@ public class JellyfinAuthFilter : IAsyncActionFilter
         };
     }
 
-    private static bool TryGetPrincipal(
+    internal static bool TryGetPrincipal(
         System.Text.Json.JsonDocument? body,
         out string principalId,
         out string? displayName,

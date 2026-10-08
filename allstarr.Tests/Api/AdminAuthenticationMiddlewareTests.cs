@@ -85,6 +85,9 @@ public class AdminAuthenticationMiddlewareTests
     [InlineData("/api/admin/preferences", "GET")]
     [InlineData("/api/admin/preferences", "PUT")]
     [InlineData("/api/admin/preferences", "DELETE")]
+    [InlineData("/api/admin/ui/now-playing", "GET")]
+    [InlineData("/api/admin/ui/activity", "GET")]
+    [InlineData("/api/admin/downloads/artwork/ext-deezer-song-123", "GET")]
     [InlineData("/api/admin/ui/schema", "GET")]
     [InlineData("/api/admin/ui/home", "GET")]
     [InlineData("/api/admin/provider-accounts", "GET")]
@@ -133,7 +136,6 @@ public class AdminAuthenticationMiddlewareTests
     [InlineData("/api/admin/playlist-links/019f48f2-5f28-7b11-b42d-0d9b76b73b40", "PUT")]
     [InlineData("/api/admin/playlist-links/019f48f2-5f28-7b11-b42d-0d9b76b73b40", "DELETE")]
     [InlineData("/api/admin/playlist-links/rematch/preview", "GET")]
-    [InlineData("/api/admin/playlist-links/019f48f2-5f28-7b11-b42d-0d9b76b73b40/source-update/apply", "POST")]
     public async Task InvokeAsync_NonAdminUser_PlaylistSelfServiceRoutesPassToScopedControllers(
         string path,
         string method)
@@ -162,6 +164,24 @@ public class AdminAuthenticationMiddlewareTests
     }
 
     [Theory]
+    [InlineData("/api/admin/playlist-links/019f48f2-5f28-7b11-b42d-0d9b76b73b40/source-update/apply", "POST")]
+    [InlineData("/api/admin/intelligence", "GET")]
+    [InlineData("/api/admin/intelligence/policy", "PUT")]
+    [InlineData("/api/admin/intelligence/runs", "POST")]
+    [InlineData("/api/admin/intelligence/generated-sets", "POST")]
+    [InlineData("/api/admin/intelligence/data", "DELETE")]
+    [InlineData("/api/admin/jobs", "POST")]
+    [InlineData("/api/admin/jobs/not-a-guid", "GET")]
+    [InlineData("/api/admin/jobs/019f48f2-5f28-7b11-b42d-0d9b76b73b40/retry", "POST")]
+    [InlineData("/api/admin/jobs/019f48f2-5f28-7b11-b42d-0d9b76b73b40/cancel", "GET")]
+    [InlineData("/api/admin/library-index/delete", "POST")]
+    [InlineData("/api/admin/playlist-links/019f48f2-5f28-7b11-b42d-0d9b76b73b40/admin", "PUT")]
+    [InlineData("/api/admin/playlist-sources", "POST")]
+    [InlineData("/api/admin/media-targets/019f48f2-5f28-7b11-b42d-0d9b76b73b40/playlists", "DELETE")]
+    [InlineData("/api/admin/ui/activity", "POST")]
+    [InlineData("/api/admin/downloads/artwork/item", "DELETE")]
+    [InlineData("/api/admin/downloads/files", "GET")]
+    [InlineData("/api/admin/auth-spoof", "GET")]
     [InlineData("/api/admin/track-matches", "POST")]
     [InlineData("/api/admin/track-matches/rematch-all/preview", "GET")]
     [InlineData("/api/admin/track-matches/rematch-all/apply", "POST")]
@@ -174,7 +194,6 @@ public class AdminAuthenticationMiddlewareTests
     [InlineData("/api/admin/ui/schema", "POST")]
     [InlineData("/api/admin/ui/home", "POST")]
     [InlineData("/api/admin/ui/home-extra", "GET")]
-    [InlineData("/api/admin/ui/now-playing", "GET")]
     [InlineData("/api/admin/config", "GET")]
     [InlineData("/api/admin/providers/status", "GET")]
     [InlineData("/api/admin/library-index-spoof", "POST")]
@@ -221,11 +240,6 @@ public class AdminAuthenticationMiddlewareTests
     [InlineData("/api/admin/jobs/019f48f2-5f28-7b11-b42d-0d9b76b73b40/cancel", "POST")]
     [InlineData("/api/admin/favorite-action-policies", "GET")]
     [InlineData("/api/admin/favorite-action-policies/me", "PUT")]
-    [InlineData("/api/admin/intelligence", "GET")]
-    [InlineData("/api/admin/intelligence/policy", "PUT")]
-    [InlineData("/api/admin/intelligence/runs", "POST")]
-    [InlineData("/api/admin/intelligence/generated-sets", "POST")]
-    [InlineData("/api/admin/intelligence/data", "DELETE")]
     [InlineData("/api/admin/updates/stream", "GET")]
     public async Task InvokeAsync_NonAdminUser_OwnJobRoutesPassToControllerScopeChecks(
         string path,

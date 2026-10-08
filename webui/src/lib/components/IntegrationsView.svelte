@@ -18,13 +18,16 @@
     initialConnect?: boolean;
   } = $props();
 
-  const tabs = [
+  const allTabs = [
     { id: "services", label: "Services", href: "#/integrations/services" },
     { id: "accounts", label: "Accounts", href: "#/integrations/accounts" },
     { id: "extensions", label: "Extensions", href: "#/integrations/extensions" },
     { id: "routing", label: "Routing", href: "#/integrations/routing" },
   ] as const;
 
+  const tabs = $derived(administrator
+    ? allTabs
+    : allTabs.filter((item) => item.id === "services" || item.id === "accounts"));
   const active = $derived(tabs.some((item) => item.id === section) ? section : "services");
 </script>
 

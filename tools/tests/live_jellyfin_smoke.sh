@@ -592,7 +592,7 @@ check_stream_provenance() {
 
 check_dashboard_session() {
     [[ -n "$ADMIN_BASE" ]] || return 0
-    local code result ttfb path filter expected administrator
+    local code result ttfb path filter expected administrator viewer
     result="$(jq -cn '{username:env.JELLYFIN_USERNAME,password:env.JELLYFIN_PASSWORD,rememberMe:false}' |
         curl -s --max-time "$TIMEOUT_SECONDS" --cookie-jar "$admin_cookies_file" \
             -H 'Content-Type: application/json' -H "Origin: $ADMIN_BASE" --data-binary @- \
@@ -606,8 +606,9 @@ check_dashboard_session() {
     fi
     issued_admin_session=1
     administrator="$(jq -r '.user.isAdministrator == true' "$response_file")"
+    viewer="$(jq -r '.user.allstarrUserId' "$response_file")"
     printf 'PASS dashboard login ttfb_ms=%.1f\n' "$(awk -v value="$ttfb" 'BEGIN {print value * 1000}')"
-    for path in auth/me ui/home ui/now-playing; do
+    for path in auth/me ui/home ui/now-playing ui/activity; do
         expected=200
         case "$path" in
             auth/me) filter='.authenticated == true' ;;
@@ -615,19 +616,19 @@ check_dashboard_session() {
                 filter='(.stats | type == "object") and (.schema | type == "object")'
                 if [[ "$administrator" != true ]]; then
                     filter+=' and .stats.cacheTracks == null and .stats.keptTracks == null and
-                        (.providerHealth.providers | length == 0) and (.activity.items | length == 0)'
+                        (.providerHealth.providers | length == 0) and (.activity.items | type == "array")'
                 fi ;;
             ui/now-playing)
-                filter='.items | type == "array"'
+                filter='(.items | type == "array")'
                 if [[ "$administrator" != true ]]; then
-                    expected=403
-                    filter='.error == "Administrator permissions required"'
+                    filter+=' and all(.items[]; .userId == $viewer)'
                 fi ;;
+            ui/activity) filter='.items | type == "array"' ;;
         esac
         code="$(curl -s --max-time "$TIMEOUT_SECONDS" --cookie "$admin_cookies_file" \
             -o "$response_file" -w '%{http_code}' "$ADMIN_BASE/api/admin/$path" || true)"
         checks=$((checks + 1))
-        if [[ "$code" == "$expected" ]] && jq -e "$filter" "$response_file" >/dev/null; then
+        if [[ "$code" == "$expected" ]] && jq --arg viewer "$viewer" -e "$filter" "$response_file" >/dev/null; then
             echo "PASS dashboard $path status=$code role-appropriate"
         else
             echo "FAIL dashboard $path status=${code:-000}"

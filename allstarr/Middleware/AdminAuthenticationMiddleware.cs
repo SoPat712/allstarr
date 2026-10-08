@@ -44,7 +44,8 @@ public class AdminAuthenticationMiddleware
             return;
         }
 
-        if (path.StartsWith("/api/admin/auth", StringComparison.OrdinalIgnoreCase))
+        if (path.Equals("/api/admin/auth", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("/api/admin/auth/", StringComparison.OrdinalIgnoreCase))
         {
             await _next(context);
             return;
@@ -76,19 +77,19 @@ public class AdminAuthenticationMiddleware
 
         if (path.StartsWith("/api/admin/track-matches", StringComparison.OrdinalIgnoreCase))
         {
-            var segments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
-            if (segments.Length < 3 || !segments[2].Equals("track-matches", StringComparison.OrdinalIgnoreCase)) return false;
+            var matchSegments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (matchSegments.Length < 3 || !matchSegments[2].Equals("track-matches", StringComparison.OrdinalIgnoreCase)) return false;
             if (HttpMethods.IsGet(method))
-                return segments.Length == 3 || segments.Length == 5 && (
-                    segments[3].Equals("targets", StringComparison.OrdinalIgnoreCase) && segments[4] is "local" or "provider" ||
-                    segments[3].Equals("spotify", StringComparison.OrdinalIgnoreCase) ||
-                    Guid.TryParse(segments[3], out _) && segments[4].Equals("artwork", StringComparison.OrdinalIgnoreCase));
-            if (segments.Length < 5 || !Guid.TryParse(segments[3], out _)) return false;
-            if (HttpMethods.IsPost(method) && segments.Length == 5 && segments[4] is "resolve" or "rematch") return true;
-            return segments.Length >= 6 && segments[4].Equals("manual-authorities", StringComparison.OrdinalIgnoreCase) &&
-                Guid.TryParse(segments[5], out _) && (
-                    segments.Length == 6 && HttpMethods.IsDelete(method) ||
-                    segments.Length == 7 && segments[6].Equals("rematch", StringComparison.OrdinalIgnoreCase) && HttpMethods.IsPost(method));
+                return matchSegments.Length == 3 || matchSegments.Length == 5 && (
+                    matchSegments[3].Equals("targets", StringComparison.OrdinalIgnoreCase) && matchSegments[4] is "local" or "provider" ||
+                    matchSegments[3].Equals("spotify", StringComparison.OrdinalIgnoreCase) ||
+                    Guid.TryParse(matchSegments[3], out _) && matchSegments[4].Equals("artwork", StringComparison.OrdinalIgnoreCase));
+            if (matchSegments.Length < 5 || !Guid.TryParse(matchSegments[3], out _)) return false;
+            if (HttpMethods.IsPost(method) && matchSegments.Length == 5 && matchSegments[4] is "resolve" or "rematch") return true;
+            return matchSegments.Length >= 6 && matchSegments[4].Equals("manual-authorities", StringComparison.OrdinalIgnoreCase) &&
+                Guid.TryParse(matchSegments[5], out _) && (
+                    matchSegments.Length == 6 && HttpMethods.IsDelete(method) ||
+                    matchSegments.Length == 7 && matchSegments[6].Equals("rematch", StringComparison.OrdinalIgnoreCase) && HttpMethods.IsPost(method));
         }
 
         if (path.TrimEnd('/').Equals("/api/admin/preferences", StringComparison.OrdinalIgnoreCase))
@@ -110,7 +111,9 @@ public class AdminAuthenticationMiddleware
 
         if (HttpMethods.IsGet(method) &&
             (path.Equals("/api/admin/ui/schema", StringComparison.OrdinalIgnoreCase) ||
-             path.Equals("/api/admin/ui/home", StringComparison.OrdinalIgnoreCase)))
+             path.Equals("/api/admin/ui/home", StringComparison.OrdinalIgnoreCase) ||
+             path.Equals("/api/admin/ui/activity", StringComparison.OrdinalIgnoreCase) ||
+             path.Equals("/api/admin/ui/now-playing", StringComparison.OrdinalIgnoreCase)))
         {
             return true;
         }
@@ -130,7 +133,7 @@ public class AdminAuthenticationMiddleware
             path.TrimEnd('/').Equals("/api/admin/scrobbling/lastfm/authenticate", StringComparison.OrdinalIgnoreCase))
             return true;
 
-        if (IsPlaylistSelfServiceRoute(path))
+        if (IsPlaylistSelfServiceRoute(path, method))
         {
             return true;
         }
@@ -141,32 +144,47 @@ public class AdminAuthenticationMiddleware
             return true;
         }
 
-        if (path.Equals("/api/admin/intelligence", StringComparison.OrdinalIgnoreCase) ||
-            path.StartsWith("/api/admin/intelligence/", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
+        var routeSegments = path.TrimEnd('/').Split('/');
+        if (routeSegments.Length >= 4 && routeSegments[3].Equals("jobs", StringComparison.OrdinalIgnoreCase))
+            return HttpMethods.IsGet(method) && (routeSegments.Length == 4 ||
+                       routeSegments.Length == 5 && Guid.TryParse(routeSegments[4], out _)) ||
+                   HttpMethods.IsPost(method) && routeSegments.Length == 6 &&
+                   Guid.TryParse(routeSegments[4], out _) && routeSegments[5] == "cancel";
 
-        if (path.Equals("/api/admin/jobs", StringComparison.OrdinalIgnoreCase) ||
-            path.StartsWith("/api/admin/jobs/", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
+        if (HttpMethods.IsGet(method) && routeSegments.Length == 6 && routeSegments[3] == "downloads" &&
+            routeSegments[4] == "artwork" && !string.IsNullOrWhiteSpace(routeSegments[5])) return true;
 
         return false;
     }
 
-    private static bool IsPlaylistSelfServiceRoute(string path)
+    private static bool IsPlaylistSelfServiceRoute(string path, string method)
     {
-        var normalizedPath = path.Length > 1 ? path.TrimEnd('/') : path;
-        return new[]
+        var segments = path.TrimEnd('/').Split('/');
+        if (segments.Length < 4) return false;
+        var root = segments[3].ToLowerInvariant();
+        if (root == "library-index")
+            return segments.Length == 5 && (segments[4] == "counts" && HttpMethods.IsGet(method) ||
+                                            segments[4] == "enqueue" && HttpMethods.IsPost(method));
+        if (root is "playlist-sources" or "media-targets")
         {
-            "/api/admin/library-index",
-            "/api/admin/playlist-links",
-            "/api/admin/playlist-sources",
-            "/api/admin/media-targets"
-        }.Any(root => normalizedPath.Equals(root, StringComparison.OrdinalIgnoreCase) ||
-                      normalizedPath.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase));
+            if (!HttpMethods.IsGet(method)) return false;
+            return segments.Length == 4 || segments.Length >= 6 && Guid.TryParse(segments[4], out _) &&
+                segments[5] == "playlists" && (segments.Length == 6 ||
+                    segments.Length == 8 && !string.IsNullOrWhiteSpace(segments[6]) && segments[7] == "artwork");
+        }
+        if (root != "playlist-links") return false;
+        if (segments.Length == 4) return HttpMethods.IsGet(method) || HttpMethods.IsPost(method);
+        if (Guid.TryParse(segments[4], out _))
+            return segments.Length == 5 && (HttpMethods.IsGet(method) || HttpMethods.IsPut(method) || HttpMethods.IsDelete(method)) ||
+                segments.Length == 6 && (HttpMethods.IsPost(method) && segments[5] is "refresh" or "run" or "schedules" ||
+                    HttpMethods.IsPatch(method) && segments[5] == "state" || HttpMethods.IsGet(method) && segments[5] == "preview");
+        return segments.Length == 6 && (
+                segments[4] == "rematch" && (segments[5] == "preview" && HttpMethods.IsGet(method) ||
+                                             segments[5] == "apply" && HttpMethods.IsPost(method)) ||
+                segments[4] == "schedules" && Guid.TryParse(segments[5], out _) && HttpMethods.IsPut(method)) ||
+            segments.Length == 7 && segments[4] == "matches" && (
+                Guid.TryParse(segments[5], out _) && segments[6] == "override" && HttpMethods.IsPost(method) ||
+                segments[5] == "overrides" && Guid.TryParse(segments[6], out _) && HttpMethods.IsDelete(method));
     }
 
     private static bool IsProviderAccountSelfServiceRoute(string path, string method)

@@ -48,7 +48,7 @@ public interface IPlaybackMetadataResolver
 
 public interface IPlaybackDeliveryActivitySource
 {
-    bool WasDelivered(string itemId, string deviceId);
+    bool WasDelivered(Guid? tenantId, Guid? userId, string itemId, string deviceId);
     PlaybackStreamSource? StreamFor(Guid? tenantId, Guid? userId, string? deviceId, string itemId) => null;
 }
 
@@ -77,13 +77,13 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
             SizeLimit = 4_096
         });
 
-    public void MarkDelivered(string itemId, string? deviceId)
+    public void MarkDelivered(Guid tenantId, Guid userId, string itemId, string? deviceId)
     {
         if (!string.IsNullOrWhiteSpace(itemId) && !string.IsNullOrWhiteSpace(deviceId))
         {
             Microsoft.Extensions.Caching.Memory.CacheExtensions.Set(
                 _delivered,
-                $"{deviceId}\n{itemId}",
+                (tenantId, userId, deviceId, StreamItemKey(itemId), "delivered"),
                 true,
                 new Microsoft.Extensions.Caching.Memory.MemoryCacheEntryOptions
                 {
@@ -93,8 +93,9 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
         }
     }
 
-    public bool WasDelivered(string itemId, string deviceId) =>
-        _delivered.TryGetValue($"{deviceId}\n{itemId}", out _);
+    public bool WasDelivered(Guid? tenantId, Guid? userId, string itemId, string deviceId) =>
+        tenantId is { } tenant && userId is { } user &&
+        _delivered.TryGetValue((tenant, user, deviceId, StreamItemKey(itemId), "delivered"), out _);
 
     public void StreamOpened(ProtocolExecutionContext context, string itemId,
         ProviderAudioQuality quality, ProtocolProviderStream stream)
