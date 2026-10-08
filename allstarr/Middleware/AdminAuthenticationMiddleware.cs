@@ -74,6 +74,23 @@ public class AdminAuthenticationMiddleware
         var path = request.Path.Value ?? string.Empty;
         var method = request.Method;
 
+        if (path.StartsWith("/api/admin/track-matches", StringComparison.OrdinalIgnoreCase))
+        {
+            var segments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length < 3 || !segments[2].Equals("track-matches", StringComparison.OrdinalIgnoreCase)) return false;
+            if (HttpMethods.IsGet(method))
+                return segments.Length == 3 || segments.Length == 5 && (
+                    segments[3].Equals("targets", StringComparison.OrdinalIgnoreCase) && segments[4] is "local" or "provider" ||
+                    segments[3].Equals("spotify", StringComparison.OrdinalIgnoreCase) ||
+                    Guid.TryParse(segments[3], out _) && segments[4].Equals("artwork", StringComparison.OrdinalIgnoreCase));
+            if (segments.Length < 5 || !Guid.TryParse(segments[3], out _)) return false;
+            if (HttpMethods.IsPost(method) && segments.Length == 5 && segments[4] is "resolve" or "rematch") return true;
+            return segments.Length >= 6 && segments[4].Equals("manual-authorities", StringComparison.OrdinalIgnoreCase) &&
+                Guid.TryParse(segments[5], out _) && (
+                    segments.Length == 6 && HttpMethods.IsDelete(method) ||
+                    segments.Length == 7 && segments[6].Equals("rematch", StringComparison.OrdinalIgnoreCase) && HttpMethods.IsPost(method));
+        }
+
         if (path.TrimEnd('/').Equals("/api/admin/preferences", StringComparison.OrdinalIgnoreCase))
             return HttpMethods.IsGet(method) || HttpMethods.IsPut(method) || HttpMethods.IsDelete(method);
 

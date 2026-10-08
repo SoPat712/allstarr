@@ -754,6 +754,10 @@ export type MatchCandidate = {
   warnings?: string[] | null;
 };
 
+export type MatchAuthorityScope = "personal" | "household";
+
+export type ExpectedMatchAuthority = { id: string; revision: number } | null;
+
 export type ManualMatchAuthority = {
   id: string;
   kind: "local_match" | "provider_match" | "rejection";
@@ -764,6 +768,8 @@ export type ManualMatchAuthority = {
   effective: boolean;
   targetProviderId?: string | null;
   targetExternalId?: string | null;
+  scope?: MatchAuthorityScope;
+  canEdit?: boolean;
 };
 
 export type MatchReviewItem = {
@@ -785,6 +791,8 @@ export type MatchReviewItem = {
   overrideId?: string | null;
   overrideRevision?: number | null;
   manualAuthorities?: ManualMatchAuthority[];
+  allowedAuthorityScopes?: MatchAuthorityScope[];
+  effectiveAuthorityScope?: MatchAuthorityScope | "automatic";
   title?: string | null;
   searchQuery?: string | null;
   artist?: string | null;
@@ -1920,10 +1928,14 @@ export const matchReview = {
   },
   resolve: (
     externalSnapshotId: string,
-    target:
+    target: (
       | { targetType: "local"; libraryTrackId: string; reason: string }
       | { targetType: "provider"; externalProvider: string; externalId: string; reason: string }
-      | { targetType: "reject"; reason: string },
+      | { targetType: "reject"; reason: string }
+    ) & {
+      authorityScope: MatchAuthorityScope;
+      expectedAuthority: ExpectedMatchAuthority;
+    },
   ) =>
     json<{ success: boolean }>(
       `/api/admin/track-matches/${encodeURIComponent(externalSnapshotId)}/resolve`,

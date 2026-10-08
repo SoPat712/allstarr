@@ -3145,7 +3145,7 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId")
+                    b.Property<Guid?>("OwnerUserId")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Reason")
@@ -3160,6 +3160,24 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<long?>("RevokedAt")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("SourceExternalIdHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceProviderId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TargetExternalId")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TargetProviderId")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("TEXT");
 
@@ -3169,14 +3187,21 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasIndex("TenantId", "LibraryTrackId");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "LibraryScopeId", "ExternalSnapshotId")
+                    b.HasIndex("TenantId", "SourceProviderId", "SourceExternalIdHash")
                         .IsUnique()
-                        .HasDatabaseName("IX_manual_track_override_active")
-                        .HasFilter("\"RevokedAt\" IS NULL");
+                        .HasDatabaseName("IX_manual_track_override_household_active")
+                        .HasFilter("\"RevokedAt\" IS NULL AND \"OwnerUserId\" IS NULL");
+
+                    b.HasIndex("TenantId", "OwnerUserId", "SourceProviderId", "SourceExternalIdHash")
+                        .IsUnique()
+                        .HasDatabaseName("IX_manual_track_override_personal_active")
+                        .HasFilter("\"RevokedAt\" IS NULL AND \"OwnerUserId\" IS NOT NULL");
 
                     b.ToTable("manual_track_overrides", null, t =>
                         {
-                            t.HasCheckConstraint("CK_manual_overrides_shape", "(\"Decision\" = 'Pin' AND \"LibraryTrackId\" IS NOT NULL) OR \"Decision\" = 'Reject'");
+                            t.HasCheckConstraint("CK_manual_overrides_shape", "(\"Decision\" = 'Pin' AND (\n    (\"LibraryTrackId\" IS NOT NULL AND \"TargetProviderId\" IS NULL AND \"TargetExternalId\" IS NULL) OR\n    (\"LibraryTrackId\" IS NULL AND length(\"TargetProviderId\") > 0 AND length(\"TargetExternalId\") > 0 AND\n     \"TargetProviderId\" IS NOT NULL AND \"TargetExternalId\" IS NOT NULL))) OR\n(\"Decision\" = 'Reject' AND \"TargetProviderId\" IS NULL AND \"TargetExternalId\" IS NULL)");
+
+                            t.HasCheckConstraint("CK_manual_overrides_source", "length(\"SourceExternalIdHash\") = 64 AND length(\"SourceProviderId\") > 0");
 
                             t.HasCheckConstraint("CK_manual_overrides_version", "\"DecisionVersion\" > 0");
                         });
@@ -5165,7 +5190,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasForeignKey("TenantId", "OwnerUserId")
                         .HasPrincipalKey("TenantId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
                         .HasConstraintName("FK_ManualTrackOverride_PlatformUser");
                 });
 

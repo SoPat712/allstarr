@@ -119,7 +119,7 @@ public sealed class PlaylistLinksControllerContractTests
                                                name.Contains("Token", StringComparison.OrdinalIgnoreCase) ||
                                                name.Contains("Cookie", StringComparison.OrdinalIgnoreCase) ||
                                                name.Contains("Secret", StringComparison.OrdinalIgnoreCase));
-        Assert.Equal(new[] { "Decision", "LibraryTrackId", "Reason" },
+        Assert.Equal(new[] { "Decision", "LibraryTrackId", "Reason", "ExpectedAuthority" },
             typeof(SetMatchOverrideRequest).GetProperties().Select(item => item.Name));
     }
 

@@ -118,17 +118,32 @@ public sealed partial class AllstarrDbContext
             entity.ToTable("manual_track_overrides", table =>
             {
                 table.HasCheckConstraint("CK_manual_overrides_version", "\"DecisionVersion\" > 0");
-                table.HasCheckConstraint("CK_manual_overrides_shape", "(\"Decision\" = 'Pin' AND \"LibraryTrackId\" IS NOT NULL) OR \"Decision\" = 'Reject'");
+                table.HasCheckConstraint("CK_manual_overrides_source", "length(\"SourceExternalIdHash\") = 64 AND length(\"SourceProviderId\") > 0");
+                table.HasCheckConstraint("CK_manual_overrides_shape", """
+                    ("Decision" = 'Pin' AND (
+                        ("LibraryTrackId" IS NOT NULL AND "TargetProviderId" IS NULL AND "TargetExternalId" IS NULL) OR
+                        ("LibraryTrackId" IS NULL AND length("TargetProviderId") > 0 AND length("TargetExternalId") > 0 AND
+                         "TargetProviderId" IS NOT NULL AND "TargetExternalId" IS NOT NULL))) OR
+                    ("Decision" = 'Reject' AND "TargetProviderId" IS NULL AND "TargetExternalId" IS NULL)
+                    """);
             });
             entity.HasKey(item => item.Id);
             entity.Property(item => item.Id).ValueGeneratedNever();
             Required(entity.Property(item => item.LibraryScopeId), 300);
+            Required(entity.Property(item => item.SourceProviderId), 100);
+            Required(entity.Property(item => item.SourceExternalIdHash), 64);
+            entity.Property(item => item.TargetProviderId).HasMaxLength(100);
+            entity.Property(item => item.TargetExternalId).HasMaxLength(500);
             entity.Property(item => item.Decision).HasConversion<string>().HasMaxLength(32);
             Required(entity.Property(item => item.Reason), 1000);
             Required(entity.Property(item => item.MatcherVersion), 100);
             entity.Property(item => item.Revision).IsConcurrencyToken();
-            entity.HasIndex(item => new { item.TenantId, item.OwnerUserId, item.LibraryScopeId, item.ExternalSnapshotId })
-                .IsUnique().HasFilter("\"RevokedAt\" IS NULL").HasDatabaseName("IX_manual_track_override_active");
+            entity.HasIndex(item => new { item.TenantId, item.OwnerUserId, item.SourceProviderId, item.SourceExternalIdHash })
+                .IsUnique().HasFilter("\"RevokedAt\" IS NULL AND \"OwnerUserId\" IS NOT NULL")
+                .HasDatabaseName("IX_manual_track_override_personal_active");
+            entity.HasIndex(item => new { item.TenantId, item.SourceProviderId, item.SourceExternalIdHash })
+                .IsUnique().HasFilter("\"RevokedAt\" IS NULL AND \"OwnerUserId\" IS NULL")
+                .HasDatabaseName("IX_manual_track_override_household_active");
             TenantUser(entity, item => new { item.TenantId, item.OwnerUserId });
             TenantReference<ManualTrackOverrideRecord, ExternalMetadataSnapshotRecord>(entity, item => new { item.TenantId, item.ExternalSnapshotId });
             TenantReference<ManualTrackOverrideRecord, LibraryTrackRecord>(entity, item => new { item.TenantId, item.LibraryTrackId });

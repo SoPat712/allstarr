@@ -9,13 +9,22 @@ public static class DurableProviderRouteSelector
     public static IReadOnlyList<DurableProviderRoute> Select(
         ProviderTrackIdentityRecord? source,
         IEnumerable<ProviderTrackIdentityRecord> identities,
-        IReadOnlyList<string> providerPriority)
+        IReadOnlyList<string> providerPriority,
+        ManualTrackOverrideRecord? manual = null)
     {
-        if (source == null) return [];
         var priority = providerPriority
             .Select((providerId, index) => (providerId, index))
-            .ToDictionary(item => item.providerId, item => item.index, StringComparer.Ordinal);
-        return identities
+            .ToDictionary(item => item.providerId, item => item.index, StringComparer.OrdinalIgnoreCase);
+        var manualRoute = manual?.Decision == ManualOverrideDecision.Pin &&
+                          !string.IsNullOrWhiteSpace(manual.TargetProviderId) &&
+                          !string.IsNullOrWhiteSpace(manual.TargetExternalId) &&
+                          priority.ContainsKey(manual.TargetProviderId) &&
+                          ExternalTrackPlaybackPolicy.CanUseForPlayback(
+                              manual.TargetProviderId, manual.TargetExternalId)
+            ? new DurableProviderRoute(manual.TargetProviderId, manual.TargetExternalId, true)
+            : null;
+        if (source == null) return manualRoute == null ? [] : [manualRoute];
+        var automatic = identities
             .Where(item =>
                 item.TenantId == source.TenantId &&
                 item.CanonicalRecordingId == source.CanonicalRecordingId &&
@@ -25,7 +34,7 @@ public static class DurableProviderRouteSelector
                 item.Verification is ProviderIdentityVerification.Verified or
                     ProviderIdentityVerification.Pinned &&
                 priority.ContainsKey(item.ProviderId) &&
-                ExternalTrackPlaybackPolicy.CanUseForPlayback(item.ProviderId))
+                ExternalTrackPlaybackPolicy.CanUseForPlayback(item.ProviderId, item.ExternalId))
             .OrderBy(item => priority.GetValueOrDefault(item.ProviderId, int.MaxValue))
             .ThenByDescending(item => item.Verification == ProviderIdentityVerification.Pinned)
             .ThenByDescending(item => item.DecisionVersion)
@@ -34,7 +43,12 @@ public static class DurableProviderRouteSelector
             .Select(item => new DurableProviderRoute(
                 item.ProviderId,
                 item.ExternalId,
-                item.Verification == ProviderIdentityVerification.Pinned))
+                false))
             .ToArray();
+        return manualRoute == null
+            ? automatic
+            : [manualRoute, .. automatic.Where(item =>
+                !item.ProviderId.Equals(manualRoute.ProviderId, StringComparison.OrdinalIgnoreCase) ||
+                !item.ExternalId.Equals(manualRoute.ExternalId, StringComparison.OrdinalIgnoreCase))];
     }
 }

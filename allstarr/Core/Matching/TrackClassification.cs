@@ -79,6 +79,7 @@ public static class TrackRouteProjector
         libraryById.TryGetValue(classification.LibraryTrackId ?? Guid.Empty, out var local);
         canonicalId ??= local?.CanonicalRecordingId;
         if (local == null &&
+            classification.PrimaryProviderRoute?.IsManual != true &&
             classification.ReviewState is TrackMatchState.Accepted or TrackMatchState.Pinned &&
             canonicalId.HasValue)
         {
@@ -96,14 +97,9 @@ public static class TrackRouteProjector
 
 public static class ManualTrackAuthorityPolicy
 {
-    public const string ProviderVerificationMethod = "manual-review";
     public const string ReleasedProviderVerificationMethod = "manual-released";
     public const string ReplacedProviderVerificationMethod = "manual-replaced";
     public const string RematchPolicyVersion = "manual-authority-rematch-v1";
-
-    public static bool IsProviderAuthority(ProviderTrackIdentityRecord identity) =>
-        identity.Verification == ProviderIdentityVerification.Pinned &&
-        identity.VerificationMethod == ProviderVerificationMethod;
 }
 
 public static class TrackClassifier
@@ -117,38 +113,47 @@ public static class TrackClassifier
         IReadOnlySet<Guid>? playableLibraryTrackIds = null)
     {
         var rejected = TrackMatchOverridePolicy.IsEffectiveRejection(manual, decision);
-        var state = manual?.Decision switch
-        {
-            ManualOverrideDecision.Pin => TrackMatchState.Pinned,
-            ManualOverrideDecision.Reject when rejected => TrackMatchState.Rejected,
-            _ when decision?.State == TrackMatchState.Accepted &&
-                   decision.Confidence < decision.Threshold => TrackMatchState.Unresolved,
-            _ => decision?.State ?? TrackMatchState.Unresolved
-        };
-        var libraryTrackId = manual?.Decision == ManualOverrideDecision.Pin
-            ? manual.LibraryTrackId
-            : rejected
-                ? null
-                : decision?.State switch
-                {
-                    TrackMatchState.Pinned => decision.LibraryTrackId,
-                    TrackMatchState.Accepted when decision.Confidence >= decision.Threshold =>
-                        decision.LibraryTrackId,
-                    TrackMatchState.Suggested => decision.LibraryTrackId,
-                    _ => null
-                };
-        if (libraryTrackId.HasValue &&
-            playableLibraryTrackIds != null &&
-            !playableLibraryTrackIds.Contains(libraryTrackId.Value))
-            libraryTrackId = null;
-
         var providerRoutes = manual?.Decision == ManualOverrideDecision.Reject &&
                              !manual.LibraryTrackId.HasValue
             ? []
             : DurableProviderRouteSelector.Select(
                 sourceIdentity,
                 providerIdentities ?? [],
-                providerPriority ?? []);
+                providerPriority ?? [],
+                manual);
+        var hasManualProviderRoute = providerRoutes.FirstOrDefault()?.IsManual == true;
+        var hasManualLibraryRoute = manual?.Decision == ManualOverrideDecision.Pin &&
+                                    manual.LibraryTrackId.HasValue &&
+                                    (playableLibraryTrackIds == null ||
+                                     playableLibraryTrackIds.Contains(manual.LibraryTrackId.Value));
+        var hasEligibleManualPin = hasManualProviderRoute || hasManualLibraryRoute;
+        var state = manual?.Decision switch
+        {
+            ManualOverrideDecision.Pin when hasEligibleManualPin => TrackMatchState.Pinned,
+            ManualOverrideDecision.Reject when rejected => TrackMatchState.Rejected,
+            _ when decision?.State == TrackMatchState.Accepted &&
+                   decision.Confidence < decision.Threshold => TrackMatchState.Unresolved,
+            _ => decision?.State ?? TrackMatchState.Unresolved
+        };
+        var libraryTrackId = hasManualLibraryRoute
+            ? manual!.LibraryTrackId
+            : hasManualProviderRoute
+                ? null
+                : rejected
+                    ? null
+                    : decision?.State switch
+                    {
+                        TrackMatchState.Pinned => decision.LibraryTrackId,
+                        TrackMatchState.Accepted when decision.Confidence >= decision.Threshold =>
+                            decision.LibraryTrackId,
+                        TrackMatchState.Suggested => decision.LibraryTrackId,
+                        _ => null
+                    };
+        if (libraryTrackId.HasValue &&
+            playableLibraryTrackIds != null &&
+            !playableLibraryTrackIds.Contains(libraryTrackId.Value))
+            libraryTrackId = null;
+
         return new TrackClassification(state, libraryTrackId, providerRoutes);
     }
 }

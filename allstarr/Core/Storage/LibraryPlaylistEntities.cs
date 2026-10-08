@@ -97,9 +97,13 @@ public sealed class ManualTrackOverrideRecord
 {
     public Guid Id { get; set; }
     public Guid TenantId { get; set; }
-    public Guid OwnerUserId { get; set; }
+    public Guid? OwnerUserId { get; set; }
     public Guid ExternalSnapshotId { get; set; }
+    public string SourceProviderId { get; set; } = string.Empty;
+    public string SourceExternalIdHash { get; set; } = string.Empty;
     public Guid? LibraryTrackId { get; set; }
+    public string? TargetProviderId { get; set; }
+    public string? TargetExternalId { get; set; }
     public string LibraryScopeId { get; set; } = string.Empty;
     public ManualOverrideDecision Decision { get; set; }
     public string Reason { get; set; } = string.Empty;

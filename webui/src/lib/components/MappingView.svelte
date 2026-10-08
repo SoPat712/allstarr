@@ -21,11 +21,19 @@
     home,
     matchReview,
     type ManualMatchAuthority,
+    type MatchAuthorityScope,
     type MatchReviewItem,
     type MatchReviewResponse,
     type ProviderDefinition,
   } from "$lib/api";
-  import { manualMatchAuthority } from "$lib/matching-api";
+  import {
+    authorityForScope,
+    authorityScopeOf,
+    canEditAuthority,
+    canEditAuthorityScope,
+    expectedAuthorityForScope,
+    manualMatchAuthority,
+  } from "$lib/matching-api";
   import MatchDialog from "$lib/components/MatchDialog.svelte";
   import BulkRematchDialog from "$lib/components/BulkRematchDialog.svelte";
   import ArtworkSimilarity from "$lib/shelved/ArtworkSimilarity.svelte";
@@ -50,7 +58,7 @@
   import { findProviderDefinition, providerDisplayName } from "$lib/sources";
 
   type DestructiveAction =
-    | { kind: "reject"; match: MatchReviewItem }
+    | { kind: "reject"; match: MatchReviewItem; authorityScope: MatchAuthorityScope }
     | {
         kind: "manual_delete" | "manual_rematch";
         match: MatchReviewItem;
@@ -237,13 +245,15 @@
     const candidate = match.candidates.find((item) =>
       candidateResolution(item, match.providerId, playbackProviders));
     const resolution = candidateResolution(candidate, match.providerId, playbackProviders);
-    if (action) return;
+    if (action || !canEditAuthorityScope(match, "personal")) return;
     if (!resolution) return openMatch(match);
     action = `accept:${match.externalSnapshotId}`;
     try {
       await matchReview.resolve(match.externalSnapshotId, {
         ...resolution,
         reason: "Accepted highest-confidence automatic candidate",
+        authorityScope: "personal",
+        expectedAuthority: expectedAuthorityForScope(match, "personal"),
       });
       feedback = "Highest-confidence candidate accepted.";
       await load();
@@ -255,9 +265,13 @@
     }
   }
 
-  function confirm(kind: DestructiveAction["kind"], match: MatchReviewItem) {
+  function confirm(
+    kind: DestructiveAction["kind"],
+    match: MatchReviewItem,
+    authorityScope: MatchAuthorityScope = "personal",
+  ) {
     if (kind !== "reject") return;
-    destructive = { kind, match };
+    destructive = { kind, match, authorityScope };
     destructiveOpen = true;
   }
 
@@ -280,14 +294,19 @@
         await matchReview.resolve(destructive.match.externalSnapshotId, {
           targetType: "reject",
           reason: "Rejected from the match review queue",
+          authorityScope: destructive.authorityScope,
+          expectedAuthority: expectedAuthorityForScope(
+            destructive.match,
+            destructive.authorityScope,
+          ),
         });
         feedback = "Candidate rejected.";
       } else if (destructive.kind === "manual_rematch") {
         await manualMatchAuthority.rematch(destructive.authority);
-        feedback = `${destructive.match.title || "Track"} released and rematched with the current algorithm.`;
+        feedback = `${scopeLabel(authorityScopeOf(destructive.authority))} decision cleared and track rematched.`;
       } else {
         await manualMatchAuthority.delete(destructive.authority);
-        feedback = "Manual authority deleted; automatic matching is authoritative again.";
+        feedback = `${scopeLabel(authorityScopeOf(destructive.authority))} decision cleared.`;
       }
       destructiveOpen = false;
       dialogOpen = false;
@@ -301,25 +320,44 @@
   }
 
   function authorityLabel(authority: ManualMatchAuthority) {
-    return authority.kind === "provider_match"
+    const decision = authority.kind === "provider_match"
       ? `Manual ${providerName(authority.targetProviderId)} match`
       : authority.kind === "local_match"
         ? `Manual ${backend} match`
         : "Manual rejection";
+    return `${scopeLabel(authorityScopeOf(authority))} · ${decision}`;
+  }
+
+  function scopeLabel(scope: MatchAuthorityScope) {
+    return scope === "household" ? "Household" : "Personal";
+  }
+
+  function authorityState(match: MatchReviewItem, authority: ManualMatchAuthority) {
+    if (authority.effective) return "Effective";
+    if (authorityScopeOf(authority) === "household" && authorityForScope(match, "personal"))
+      return "Superseded by personal";
+    return "Not currently effective";
+  }
+
+  function revealedLayer(match: MatchReviewItem, authority: ManualMatchAuthority) {
+    const scope = authorityScopeOf(authority);
+    if (scope === "personal" && authorityForScope(match, "household"))
+      return "The household decision beneath it will become effective.";
+    if (scope === "household" && authorityForScope(match, "personal"))
+      return "The personal decision remains effective.";
+    return "Automatic matching will become effective.";
   }
 
   function confirmationCopy() {
     if (destructive?.kind === "manual_rematch") return {
-      title: "Release and rematch this decision?",
-      description: "Manual authority will be removed first, then the current matching algorithm will calculate a new result. Durable audit history is retained.",
-      label: "Release and rematch",
+      title: `Clear ${authorityScopeOf(destructive.authority)} and rematch?`,
+      description: `The ${authorityScopeOf(destructive.authority)} decision will be cleared before the matching algorithm recalculates the track. ${revealedLayer(destructive.match, destructive.authority)} Durable audit history is retained.`,
+      label: `Clear ${authorityScopeOf(destructive.authority)} and rematch`,
     };
     if (destructive?.kind === "manual_delete") return {
-      title: "Delete this manual decision?",
-      description: destructive.authority.kind === "provider_match"
-        ? "The provider pin will stop being authoritative. Its verified identity history is retained and may still be selected by a future automatic match."
-        : "The manual decision will stop being authoritative. Its durable audit history is retained.",
-      label: "Delete manual decision",
+      title: `Clear ${authorityScopeOf(destructive.authority)} decision?`,
+      description: `The ${authorityScopeOf(destructive.authority)} decision will stop being authoritative. ${revealedLayer(destructive.match, destructive.authority)} Durable audit history is retained.`,
+      label: `Clear ${authorityScopeOf(destructive.authority)}`,
     };
     return {
       title: "Reject this candidate?",
@@ -436,12 +474,10 @@
             : candidate?.backendItemId
               ? `/api/admin/downloads/artwork/${encodeURIComponent(candidate.backendItemId)}`
               : ""}
-          {@const visibleAuthorities = (match.manualAuthorities ?? []).filter((authority) =>
-            view === "manual"
-              ? authority.kind !== "rejection"
-              : view === "rejected"
-                ? authority.kind === "rejection"
-                : true)}
+          {@const visibleAuthorities = [...(match.manualAuthorities ?? [])].sort((left, right) =>
+            authorityScopeOf(left) === authorityScopeOf(right)
+              ? 0
+              : authorityScopeOf(left) === "personal" ? -1 : 1)}
           <article class:needs-attention={isAttention(match.state)} class="mapping-row">
             <div class="mapping-comparison">
               <div class="mapping-party">
@@ -500,7 +536,7 @@
               </div>
             </div>
 
-            {#if view === "manual" || view === "rejected"}
+            {#if visibleAuthorities.length}
               <div class="manual-authority-list" aria-label={`Manual decisions for ${match.title || "track"}`}>
                 {#each visibleAuthorities as authority (authority.id)}
                   <div class="manual-authority-row">
@@ -508,21 +544,21 @@
                       <strong>{authorityLabel(authority)}</strong>
                       <small>
                         {authority.reason}
-                        {#if !authority.effective} · Superseded by the current algorithm{/if}
+                        · {authorityState(match, authority)}
                       </small>
                     </span>
                     <Button
                       variant="secondary"
                       size="sm"
-                      disabled={Boolean(action)}
+                      disabled={Boolean(action) || !canEditAuthority(authority)}
                       onclick={() => confirmAuthority("manual_rematch", match, authority)}
-                    >Rematch</Button>
+                    >Clear {authorityScopeOf(authority)} and rematch</Button>
                     <Button
                       variant="destructive"
                       size="sm"
-                      disabled={Boolean(action)}
+                      disabled={Boolean(action) || !canEditAuthority(authority)}
                       onclick={() => confirmAuthority("manual_delete", match, authority)}
-                    >Delete</Button>
+                    >Clear {authorityScopeOf(authority)}</Button>
                   </div>
                 {/each}
               </div>
@@ -550,7 +586,7 @@
                     <strong>{percent(candidate?.confidence ?? match.confidence)}</strong>
                     <small>Confidence</small>
                   </span>
-                  <Button disabled={Boolean(action)} onclick={() => void accept(match)}>{action === `accept:${match.externalSnapshotId}` ? "Accepting…" : "Accept"}</Button>
+                  <Button disabled={Boolean(action) || !canEditAuthorityScope(match, "personal")} onclick={() => void accept(match)}>{action === `accept:${match.externalSnapshotId}` ? "Accepting…" : "Accept"}</Button>
                 {/if}
                 {#if !target}
                   <Button class="mapping-rematch-action" variant="secondary" disabled={Boolean(action)} onclick={() => void rematch(match)}>{action === `rematch:${match.externalSnapshotId}` ? "Rematching…" : "Rematch"}</Button>
@@ -563,13 +599,13 @@
                   <DropdownMenu.Portal>
                     <DropdownMenu.Content class="bits-menu" sideOffset={4} align="end">
                       <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void rematch(match)}>Rematch</DropdownMenu.Item>
-                      <DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action)} onSelect={() => confirm("reject", match)}>Reject candidate</DropdownMenu.Item>
+                      <DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action) || !canEditAuthorityScope(match, "personal")} onSelect={() => confirm("reject", match)}>Reject candidate</DropdownMenu.Item>
                       {#each match.manualAuthorities ?? [] as authority (authority.id)}
-                        <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => confirmAuthority("manual_rematch", match, authority)}>
-                          Rematch {authorityLabel(authority).toLowerCase()}
+                        <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !canEditAuthority(authority)} onSelect={() => confirmAuthority("manual_rematch", match, authority)}>
+                          Clear {authorityScopeOf(authority)} and rematch
                         </DropdownMenu.Item>
-                        <DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action)} onSelect={() => confirmAuthority("manual_delete", match, authority)}>
-                          Delete {authorityLabel(authority).toLowerCase()}
+                        <DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action) || !canEditAuthority(authority)} onSelect={() => confirmAuthority("manual_delete", match, authority)}>
+                          Clear {authorityScopeOf(authority)}
                         </DropdownMenu.Item>
                       {/each}
                     </DropdownMenu.Content>
@@ -629,7 +665,7 @@
     {providers}
     {backend}
     onSaved={matchSaved}
-    onReject={(match) => confirm("reject", match)}
+    onReject={(match, authorityScope) => confirm("reject", match, authorityScope)}
   />
 
   <BulkRematchDialog kind="automatic" bind:open={rematchAllOpen} onQueued={rematchAllQueued} />
@@ -643,3 +679,14 @@
     onConfirm={applyDestructive}
   />
 {/if}
+
+<style>
+  .manual-authority-row :global([data-slot="button"]) {
+    min-width: 0;
+    height: auto;
+    min-height: var(--control-sm);
+    padding-block: var(--space-2);
+    line-height: 1.25;
+    white-space: normal;
+  }
+</style>

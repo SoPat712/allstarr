@@ -550,8 +550,10 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.Equal(6, rematch.DecisionVersion);
         await AssertActiveOverride(ManualOverrideDecision.Pin);
 
+        var previous = await _trackMatches.GetActiveOverrideAsync(Context(), externalId);
         var rejected = await _trackMatches.ResolveSnapshotAsync(
-            actor, externalId, new ResolveTrackMatchCommand("reject"), "reject");
+            actor, externalId, new ResolveTrackMatchCommand("reject",
+                ExpectedAuthority: new(previous!.Id, previous.Revision)), "reject");
         Assert.True(rejected.Succeeded);
         var rejectedRematch = await _trackMatches.RematchSnapshotAsync(
             actor, externalId, "forced-rematch-rejected");
@@ -707,15 +709,18 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     }
 
     [Fact]
-    public async Task Provider_selection_bootstraps_an_unidentified_source_snapshot()
+    public async Task Provider_selection_preserves_unidentified_source_and_shared_catalog()
     {
         _source.Snapshot = Snapshot(
             "revision-provider-review",
             Entry(0, "entry-provider-review", "unindexed-source", "Manual target"));
         var refresh = await _service.RefreshAsync(Context(), _link);
         Guid externalSnapshotId;
+        int canonicalCount, aliasCount;
         await using (var db = await _factory.CreateDbContextAsync())
         {
+            canonicalCount = await db.CanonicalRecordings.CountAsync();
+            aliasCount = await db.CanonicalCatalogAliases.CountAsync();
             externalSnapshotId = await db.PlaylistSourceEntries
                 .Where(item => item.PlaylistSourceSnapshotId == refresh.SnapshotId)
                 .Select(item => item.ExternalMetadataSnapshotId)
@@ -734,42 +739,53 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             "manual-provider-review");
 
         Assert.True(result.Succeeded);
+        var previous = await _trackMatches.GetActiveOverrideAsync(Context(), externalSnapshotId);
         Assert.True((await _trackMatches.ResolveSnapshotAsync(
             new TrackMatchActor(_tenant, _user, false),
             externalSnapshotId,
             new ResolveTrackMatchCommand(
                 "provider",
                 ExternalProvider: "deezer",
-                ExternalId: "manual-deezer-track"),
+                ExternalId: "manual-deezer-track",
+                ExpectedAuthority: new(previous!.Id, previous.Revision)),
             "manual-provider-review-repeat")).Succeeded);
         await using var verify = await _factory.CreateDbContextAsync();
         var snapshot = await verify.ExternalMetadataSnapshots.SingleAsync(item =>
             item.Id == externalSnapshotId);
-        var source = await verify.ProviderTrackIdentities.SingleAsync(item =>
-            item.ProviderId == snapshot.ProviderId &&
-            item.ExternalIdHash == snapshot.ExternalIdHash);
-        var selected = await verify.ProviderTrackIdentities.SingleAsync(item =>
-            item.ProviderId == "deezer" && item.ExternalId == "manual-deezer-track");
         Assert.Null(snapshot.ProviderTrackIdentityId);
-        Assert.Equal(source.CanonicalRecordingId, selected.CanonicalRecordingId);
-        Assert.Equal(ProviderIdentityVerification.Verified, source.Verification);
-        Assert.Equal(ProviderIdentityVerification.Pinned, selected.Verification);
-        var aliases = await verify.CanonicalCatalogAliases
-            .Where(item => item.CanonicalEntityId == source.CanonicalRecordingId)
-            .ToListAsync();
-        Assert.Equal(2, aliases.Count);
-        Assert.All(aliases, item =>
-            Assert.StartsWith("provider:", item.Namespace, StringComparison.Ordinal));
-        Assert.Contains(aliases, item => item.ExternalId == source.ExternalId);
-        Assert.Contains(aliases, item => item.ExternalId == selected.ExternalId);
-        var review = await _trackMatches.GetReviewDataAsync(
-            new TrackMatchActor(_tenant, _user, false),
+        Assert.Equal(canonicalCount, await verify.CanonicalRecordings.CountAsync());
+        Assert.Equal(aliasCount, await verify.CanonicalCatalogAliases.CountAsync());
+        Assert.False(await verify.ProviderTrackIdentities.AnyAsync(item =>
+            item.ProviderId == "deezer" && item.ExternalId == "manual-deezer-track"));
+        var selected = await verify.ManualTrackOverrides.SingleAsync(item => item.RevokedAt == null);
+        Assert.Equal(_user, selected.OwnerUserId);
+        Assert.Equal(snapshot.ProviderId, selected.SourceProviderId);
+        Assert.Equal(snapshot.ExternalIdHash, selected.SourceExternalIdHash);
+        Assert.Equal("deezer", selected.TargetProviderId);
+        Assert.Equal("manual-deezer-track", selected.TargetExternalId);
+        var review = await _trackMatches.GetReviewDataAsync(new TrackMatchActor(_tenant, _user, false),
             externalSnapshotId: externalSnapshotId);
-        Assert.Contains(review.ProviderIdentities, item => item.Id == source.Id);
+        Assert.Equal(selected.Id, Assert.Single(review.ActiveOverrides).Id);
         var projection = await new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"))
             .ReadByLinkIdAsync(_tenant, _user, _link);
         Assert.Equal("external", Assert.Single(projection!.Entries).RouteKind);
         Assert.Equal("deezer", Assert.Single(projection.Entries).RouteProviderId);
+    }
+
+    [Fact]
+    public async Task Automated_source_projection_keeps_provider_choice_over_automatic_local_match()
+    {
+        _source.Snapshot = Snapshot("manual-provider-precedence", Entry(0, "entry", "source-1", "One"));
+        var refresh = await _service.RefreshAsync(Context(), _link);
+        await using var db = await _factory.CreateDbContextAsync();
+        var snapshot = await db.PlaylistSourceEntries.Where(item => item.PlaylistSourceSnapshotId == refresh.SnapshotId)
+            .Select(item => item.ExternalMetadataSnapshotId).SingleAsync();
+        Assert.True((await _trackMatches.ResolveSnapshotAsync(new(_tenant, _user, false), snapshot,
+            new("provider", ExternalProvider: "deezer", ExternalId: "chosen-track"), "pin")).Succeeded);
+        var result = Assert.Single(await _trackMatches.MatchSourceTracksAsync(
+            [new SourceTrackSeed("fixture", "source-1", "One", "Artist", "Album", 180000, null, null, "1")], "project"));
+        Assert.Equal(TrackMatchReviewState.Pinned, result.State);
+        Assert.Null(result.LocalBackendItemId);
     }
 
     [Fact]
@@ -791,6 +807,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
             .Returns(["deezer"]);
+        gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["deezer"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["apple-download"]);
         var matcher = new TrackMatchDecisionEngine();
@@ -834,6 +852,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
             .Returns(["apple-download", "deezer"]);
+        gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["apple-download", "deezer"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["apple-download", "deezer"]);
         gateway.Setup(item => item.SearchPlayableSongsAsync(
@@ -916,6 +936,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             Entry(1, "second", "unindexed-second", "Shared source"));
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
+        gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["deezer"]);
         gateway.Setup(item => item.SearchPlayableSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 60))
             .ReturnsAsync([new Song
@@ -990,6 +1012,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
             .Returns(["apple-download"]);
+        gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["apple-download"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["apple-download"]);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1399,9 +1423,21 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         await SetLink(mode: PlaylistLinkMode.Virtual);
         await _service.RefreshAsync(Context(), _link);
 
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var external = await db.ExternalMetadataSnapshots.SingleAsync(item => item.ExternalIdHash == Hash("source-external"));
+            var pin = Override(external.Id, ManualOverrideDecision.Pin, null);
+            pin.TargetProviderId = "deezer";
+            pin.TargetExternalId = "deezer-external";
+            db.ManualTrackOverrides.Add(pin);
+            await db.SaveChangesAsync();
+        }
+
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
             .Returns(["deezer"]);
+        gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["deezer", "qobuz"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["qobuz"]);
         var projection = await new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"), gateway.Object)
@@ -1853,19 +1889,26 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         UpdatedAt = _now
     };
 
-    private ManualTrackOverrideRecord Override(Guid external, ManualOverrideDecision decision, Guid? track) => new()
+    private ManualTrackOverrideRecord Override(Guid external, ManualOverrideDecision decision, Guid? track)
     {
-        Id = Guid.CreateVersion7(),
-        TenantId = _tenant,
-        OwnerUserId = _user,
-        ExternalSnapshotId = external,
-        LibraryTrackId = track,
-        LibraryScopeId = "music",
-        Decision = decision,
-        Reason = "reviewed",
-        DecisionVersion = 1,
-        CreatedAt = _now
-    };
+        using var db = _factory.CreateDbContext();
+        var snapshot = db.ExternalMetadataSnapshots.Single(item => item.Id == external);
+        return new()
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = _tenant,
+            OwnerUserId = _user,
+            ExternalSnapshotId = external,
+            SourceProviderId = snapshot.ProviderId,
+            SourceExternalIdHash = snapshot.ExternalIdHash,
+            LibraryTrackId = track,
+            LibraryScopeId = "music",
+            Decision = decision,
+            Reason = "reviewed",
+            DecisionVersion = 1,
+            CreatedAt = _now
+        };
+    }
 
     private async Task SetLink(
         PlaylistLinkMode? mode = null,

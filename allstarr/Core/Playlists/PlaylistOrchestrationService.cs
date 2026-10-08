@@ -169,6 +169,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     private readonly IPlatformClock _clock;
     private readonly KeyedAsyncLock _locks;
     private readonly IBackendLibraryAccessResolver _libraryAccess;
+    private readonly IProtocolProviderGateway? _providerGateway;
     private readonly ILogger<PlaylistOrchestrationService>? _logger;
 
     public PlaylistOrchestrationService(
@@ -182,13 +183,15 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         KeyedAsyncLock locks,
         IBackendLibraryAccessResolver libraryAccess,
         ILogger<PlaylistOrchestrationService>? logger = null,
-        IEffectiveProviderPolicyResolver? effectivePolicies = null)
+        IEffectiveProviderPolicyResolver? effectivePolicies = null,
+        IProtocolProviderGateway? providerGateway = null)
     {
         (_factory, _source, _targets, _planner, _matcher, _trackMatches, _clock, _logger) =
             (factory, source, targets, planner, matcher, trackMatches, clock, logger);
         _effectivePolicies = effectivePolicies;
         _locks = locks;
         _libraryAccess = libraryAccess;
+        _providerGateway = providerGateway;
     }
 
     private readonly IEffectiveProviderPolicyResolver? _effectivePolicies;
@@ -889,8 +892,19 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             cancellationToken);
         var storedByExternalId = resolution.LatestDecisions
             .ToDictionary(item => item.ExternalSnapshotId);
-        var allManualOverrides = resolution.ActiveOverrides
-            .ToDictionary(item => item.ExternalSnapshotId);
+        var viewerUserId = actor.EffectiveUserId ?? link.OwnerUserId;
+        var allManualOverrides = ManualTrackOverrides.Index(
+            externals.Values, resolution.ActiveOverrides, viewerUserId);
+        IReadOnlyList<string> providerOrder = await PlayableProviderOrderAsync();
+
+        async Task<IReadOnlyList<string>> PlayableProviderOrderAsync() => _providerGateway == null
+            ? new[] { link.SourceProviderId }
+                .Concat(resolution.ProviderIdentities.Select(item => item.ProviderId))
+                .Concat(allManualOverrides.Values.Select(item => item.Effective?.TargetProviderId)
+                    .OfType<string>())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray()
+            : await _providerGateway.GetPlayableProviderOrderAsync(actor, cancellationToken);
 
         var pendingDecisions = new Dictionary<Guid, MatchDecisionInput>();
         foreach (var entry in entries)
@@ -899,7 +913,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             var external = externals[entry.ExternalMetadataSnapshotId];
             if (pendingDecisions.ContainsKey(external.Id))
                 continue;
-            allManualOverrides.TryGetValue(external.Id, out var manual);
+            var manual = allManualOverrides.GetValueOrDefault(external.Id)?.Effective;
             storedByExternalId.TryGetValue(external.Id, out var stored);
             if (stored != null &&
                 stored.SourceSnapshotVersion == external.SnapshotVersion &&
@@ -982,7 +996,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             foreach (var stored in pendingExternal)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (allManualOverrides.TryGetValue(stored.ExternalSnapshotId, out var manual) &&
+                var manual = allManualOverrides.GetValueOrDefault(stored.ExternalSnapshotId)?.Effective;
+                if (manual != null &&
                     (manual.Decision == ManualOverrideDecision.Pin ||
                      manual.Decision == ManualOverrideDecision.Reject && !manual.LibraryTrackId.HasValue))
                     continue;
@@ -1009,6 +1024,9 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 cancellationToken);
             storedByExternalId = resolution.LatestDecisions
                 .ToDictionary(item => item.ExternalSnapshotId);
+            allManualOverrides = ManualTrackOverrides.Index(
+                externals.Values, resolution.ActiveOverrides, viewerUserId);
+            providerOrder = await PlayableProviderOrderAsync();
         }
 
         var decisions = new List<PersistedPlaylistMatchDecision>(entries.Count);
@@ -1018,12 +1036,29 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         {
             cancellationToken.ThrowIfCancellationRequested();
             var external = externals[entry.ExternalMetadataSnapshotId];
-            allManualOverrides.TryGetValue(external.Id, out var manual);
+            var manual = allManualOverrides.GetValueOrDefault(external.Id)?.Effective;
             var stored = storedByExternalId[external.Id];
+            var sourceIdentity = resolution.ProviderIdentities.FirstOrDefault(item =>
+                external.ProviderTrackIdentityId.HasValue &&
+                item.Id == external.ProviderTrackIdentityId.Value) ??
+                resolution.ProviderIdentities.FirstOrDefault(item =>
+                    item.TenantId == external.TenantId &&
+                    item.ProviderId.Equals(external.ProviderId, StringComparison.OrdinalIgnoreCase) &&
+                    item.ExternalIdHash == external.ExternalIdHash &&
+                    item.ResourceKind == ProviderResourceKind.Track);
+            var canonicalId = stored.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId;
+            var routeIdentities = canonicalId.HasValue
+                ? resolution.ProviderIdentities.Where(item =>
+                    item.CanonicalRecordingId == canonicalId.Value &&
+                    item.ResourceKind == ProviderResourceKind.Track)
+                : [];
 
             var classification = TrackClassifier.Classify(
                 manual,
                 stored,
+                sourceIdentity,
+                routeIdentities,
+                providerOrder,
                 playableLibraryTrackIds: candidateIds);
             var effectiveLibraryTrackId = classification.LibraryTrackId;
             var effectiveState = ToReviewState(classification.State);
@@ -1033,9 +1068,28 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 ? libCand
                 : null;
 
+            var route = classification.RouteKind switch
+            {
+                TrackRouteKind.Local => new PlaylistResolvedRoute(
+                    TrackRouteKind.Local,
+                    effectiveLibraryTrackId,
+                    library?.BackendItemId,
+                    library?.BackendInstanceId,
+                    CanonicalRecordingId: canonicalId),
+                TrackRouteKind.External when classification.PrimaryProviderRoute is { } selected =>
+                    new PlaylistResolvedRoute(
+                        TrackRouteKind.External,
+                        ProviderId: selected.ProviderId,
+                        ExternalId: selected.ExternalId,
+                        CanonicalRecordingId: canonicalId),
+                _ => new PlaylistResolvedRoute(
+                    TrackRouteKind.Unresolved,
+                    CanonicalRecordingId: canonicalId)
+            };
             decisions.Add(new PersistedPlaylistMatchDecision(entry.Id, external.Id, effectiveState,
                 effectiveLibraryTrackId, library?.BackendItemId, library?.BackendInstanceId, stored.Confidence,
-                stored.Threshold, stored.DecisionVersion, DeserializeStrings(stored.ReasonsJson), DeserializeStrings(stored.WarningsJson)));
+                stored.Threshold, stored.DecisionVersion, DeserializeStrings(stored.ReasonsJson), DeserializeStrings(stored.WarningsJson),
+                Route: route));
             if (progress != null)
             {
                 using var payload = JsonDocument.Parse(external.PayloadJson);

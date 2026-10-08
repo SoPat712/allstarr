@@ -180,6 +180,17 @@ public sealed class PlaylistPlayableSearchService(
                .Any(provider => ExternalTrackPlaybackPolicy.Normalize(provider) == normalized);
     }
 
+    public async Task<bool> CanUseProviderAsync(
+        ProviderActorContext actor,
+        string? providerId,
+        CancellationToken cancellationToken = default)
+    {
+        var normalized = ExternalTrackPlaybackPolicy.Normalize(providerId);
+        return normalized.Length > 0 &&
+               (await gateway.GetPlayableProviderOrderAsync(actor, cancellationToken))
+               .Any(provider => ExternalTrackPlaybackPolicy.Normalize(provider) == normalized);
+    }
+
     private static bool IsPlayable(Song song, IReadOnlyList<string> providerOrder)
     {
         return ExternalTrackPlaybackPolicy.CanUseForPlayback(song) &&

@@ -217,6 +217,8 @@ public sealed class LibraryPlaylistStorageModelTests
             TenantId = tenantId,
             OwnerUserId = userId,
             ExternalSnapshotId = externalId,
+            SourceProviderId = (await context.ExternalMetadataSnapshots.SingleAsync()).ProviderId,
+            SourceExternalIdHash = (await context.ExternalMetadataSnapshots.SingleAsync()).ExternalIdHash,
             LibraryTrackId = libraryTrackId,
             LibraryScopeId = "music",
             Decision = ManualOverrideDecision.Reject,
