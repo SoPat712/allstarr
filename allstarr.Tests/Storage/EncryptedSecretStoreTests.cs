@@ -8,6 +8,9 @@ using allstarr.Core.Storage;
 using allstarr.Models.Settings;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace allstarr.Tests;
 
@@ -245,6 +248,95 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
             new FileSecretKeyRingProvider(options),
             options,
             new SystemPlatformClock());
+    }
+
+    [Fact]
+    public async Task StartupWithoutSecrets_CreatesPrivateKeyRingAndPreservesItOnRestart()
+    {
+        File.Delete(_keyRingPath);
+        var (initializer, _) = CreateInitializer();
+        await initializer.StartAsync(default);
+        Assert.True(File.Exists(_keyRingPath));
+        if (!OperatingSystem.IsWindows())
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(_keyRingPath));
+        var saved = await File.ReadAllBytesAsync(_keyRingPath);
+        var reference = await CreateStore().StoreAsync(_tenantId, "startup.fixture", Encoding.UTF8.GetBytes("fixture"));
+        await initializer.StartAsync(default);
+        Assert.Equal(saved, await File.ReadAllBytesAsync(_keyRingPath));
+        using var secret = await CreateStore().OpenAsync(reference.Id, new SecretAccessContext(_tenantId));
+        Assert.Equal("fixture", secret.ReadUtf8());
+        Assert.Empty(Directory.GetFiles(_root, "*.tmp-*"));
+    }
+
+    [Fact]
+    public async Task MissingKeyRingWithSecrets_IsNeverRegeneratedAndStorageRemainsReady()
+    {
+        var reference = await CreateStore().StoreAsync(_tenantId, "startup.fixture", Encoding.UTF8.GetBytes("fixture"));
+        var saved = await File.ReadAllBytesAsync(_keyRingPath);
+        File.Delete(_keyRingPath);
+        var (initializer, storage) = CreateInitializer();
+        await initializer.StartAsync(default);
+
+        Assert.False(File.Exists(_keyRingPath));
+        Assert.Equal(DurableStorageReadiness.Ready, storage.GetSnapshot().Readiness);
+        await Assert.ThrowsAsync<FileNotFoundException>(() => CreateStore().OpenAsync(reference.Id, new SecretAccessContext(_tenantId)));
+        await File.WriteAllBytesAsync(_keyRingPath, saved);
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(_keyRingPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        using var restored = await CreateStore().OpenAsync(reference.Id, new SecretAccessContext(_tenantId));
+        Assert.Equal("fixture", restored.ReadUtf8());
+    }
+
+    [Fact]
+    public async Task ConcurrentCreation_PublishesOneCompleteRingWithoutTemporaryFiles()
+    {
+        File.Delete(_keyRingPath);
+        var provider = new FileSecretKeyRingProvider(new SecretStoreOptions { KeyRingPath = _keyRingPath });
+        var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => provider.CreateIfMissingAsync(false)));
+        Assert.Single(results, created => created);
+        var ring = await provider.LoadAsync();
+        Assert.Equal(32, ring.GetActiveKey().Length);
+        foreach (var key in ring.Keys.Values) CryptographicOperations.ZeroMemory(key);
+        Assert.Empty(Directory.GetFiles(_root, "*.tmp-*"));
+    }
+
+    [Fact]
+    public async Task InvalidExistingRing_IsPreservedAndUnavailableStorageDoesNotCreateOne()
+    {
+        await File.WriteAllTextAsync(_keyRingPath, "{invalid");
+        var (initializer, storage) = CreateInitializer();
+        await initializer.StartAsync(default);
+        Assert.Equal("{invalid", await File.ReadAllTextAsync(_keyRingPath));
+        File.Delete(_keyRingPath);
+        storage.Set(DurableStorageReadiness.Unavailable);
+        await initializer.StartAsync(default);
+        Assert.False(File.Exists(_keyRingPath));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Registration_UsesDataDirectoryUnlessKeyRingPathIsExplicit(bool overridden)
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Storage:DataDirectory"] = _root,
+            ["Secrets:KeyRingPath"] = overridden ? Path.Combine(_root, "external.json") : null
+        }).Build();
+        var services = new ServiceCollection();
+        services.AddEncryptedSecretStore(configuration);
+        using var provider = services.BuildServiceProvider();
+        Assert.Equal(Path.Combine(_root, overridden ? "external.json" : "keyring.json"),
+            provider.GetRequiredService<SecretStoreOptions>().KeyRingPath);
+    }
+
+    private (SecretStoreInitializer Initializer, DurableStorageState Storage) CreateInitializer()
+    {
+        var options = new SecretStoreOptions { KeyRingPath = _keyRingPath };
+        var storage = new DurableStorageState(new StorageOptions { DataDirectory = _root });
+        storage.Set(DurableStorageReadiness.Ready);
+        return (new SecretStoreInitializer(_factory, storage, new FileSecretKeyRingProvider(options), options,
+            NullLogger<SecretStoreInitializer>.Instance), storage);
     }
 
     private void WriteKeyRing(string activeKeyId, IReadOnlyDictionary<string, byte[]> keys)

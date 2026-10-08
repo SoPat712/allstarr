@@ -24,6 +24,53 @@ public sealed class FileSecretKeyRingProvider
         _options = options;
     }
 
+    public async Task<bool> CreateIfMissingAsync(bool hasEncryptedSecrets, CancellationToken cancellationToken = default)
+    {
+        _options.Validate();
+        var path = Path.GetFullPath(_options.KeyRingPath);
+        if (File.Exists(path)) return false;
+        if (hasEncryptedSecrets)
+            throw new FileNotFoundException("Encrypted secrets exist; restore the original encryption key ring.", path);
+
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temporary = path + $".tmp-{Guid.NewGuid():N}";
+        var key = RandomNumberGenerator.GetBytes(32);
+        var createdTemporary = false;
+        try
+        {
+            var fileOptions = new FileStreamOptions
+            {
+                Mode = FileMode.CreateNew,
+                Access = FileAccess.Write,
+                Share = FileShare.None,
+                Options = FileOptions.Asynchronous
+            };
+            if (!OperatingSystem.IsWindows())
+                fileOptions.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+            await using (var stream = new FileStream(temporary, fileOptions))
+            {
+                createdTemporary = true;
+                var id = Guid.NewGuid().ToString("N");
+                await JsonSerializer.SerializeAsync(stream, new
+                {
+                    activeKeyId = id,
+                    keys = new Dictionary<string, string> { [id] = Convert.ToBase64String(key) }
+                }, cancellationToken: cancellationToken);
+                await stream.FlushAsync(cancellationToken);
+                stream.Flush(flushToDisk: true);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            try { File.Move(temporary, path, overwrite: false); }
+            catch (IOException) when (File.Exists(path)) { return false; }
+            return true;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+            if (createdTemporary) File.Delete(temporary);
+        }
+    }
+
     public async Task<SecretKeyRing> LoadAsync(CancellationToken cancellationToken = default)
     {
         _options.Validate();
