@@ -96,9 +96,9 @@ Reserved built-in provider IDs cannot be replaced by a registry package. Package
 
 ## Owning code
 
-- `allstarr/Core/Extensions/ExtensionSdkV1.cs`
-- `allstarr/Core/Extensions/ExtensionControlPlaneService.cs`
-- `allstarr/Core/Extensions/ExtensionRuntimeCoordinator.cs`
-- `allstarr/Core/Extensions/SpotiFlacExtensionCompatibility.cs`
-- `allstarr/Core/Capabilities/ProviderRegistry.cs`
+- `allstarr/Providers/Extensions/ExtensionSdkV1.cs`
+- `allstarr/Providers/Extensions/ExtensionControlPlaneService.cs`
+- `allstarr/Providers/Extensions/ExtensionRuntimeCoordinator.cs`
+- `allstarr/Providers/Extensions/SpotiFlacExtensionCompatibility.cs`
+- `allstarr/Providers/Contracts/ProviderRegistry.cs`
 - `allstarr/Controllers/ExtensionController.cs`

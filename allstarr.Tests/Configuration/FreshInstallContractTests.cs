@@ -51,8 +51,8 @@ public sealed class FreshInstallContractTests
         var settings = File.ReadAllText(Path.Combine(
             _repositoryRoot,
             "allstarr",
-            "Models",
-            "Settings",
+            "Providers",
+            "Spotify",
             "SpotifyImportSettings.cs"));
 
         Assert.DoesNotContain("SPOTIFY_IMPORT_PLAYLIST_IDS", configuration, StringComparison.Ordinal);

@@ -27,7 +27,7 @@ User and operator guides describe shipped behavior. Contributor assessments expl
 - [Contributing](../CONTRIBUTING.md)
 - [WebUI design system](../DESIGN.md)
 - [Test and qualification tools](../tools/tests/README.md)
-- [Provider capability module](../allstarr/Core/Capabilities/README.md)
+- [Provider capability module](../allstarr/Providers/Contracts/README.md)
 
 ## Documentation rules
 
