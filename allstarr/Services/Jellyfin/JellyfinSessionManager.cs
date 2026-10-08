@@ -10,14 +10,19 @@ using allstarr.Services.Common;
 
 namespace allstarr.Services.Jellyfin;
 
+public readonly record struct JellyfinSessionKey(string BackendInstanceId, string BackendPrincipalId, string DeviceId)
+{
+    public override string ToString() => DeviceId;
+}
+
 public class JellyfinSessionManager : IDisposable
 {
     private readonly JellyfinProxyService _proxyService;
     private readonly JellyfinSettings _settings;
     private readonly ILogger<JellyfinSessionManager> _logger;
-    private readonly ConcurrentDictionary<string, SessionInfo> _sessions = new();
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _sessionInitLocks = new();
-    private readonly ConcurrentDictionary<string, byte> _proxiedWebSocketConnections = new();
+    private readonly ConcurrentDictionary<JellyfinSessionKey, SessionInfo> _sessions = new();
+    private readonly ConcurrentDictionary<JellyfinSessionKey, SemaphoreSlim> _sessionInitLocks = new();
+    private readonly ConcurrentDictionary<JellyfinSessionKey, byte> _proxiedWebSocketConnections = new();
     private readonly Timer _keepAliveTimer;
     private int _keepAliveRunning;
 
@@ -36,30 +41,32 @@ public class JellyfinSessionManager : IDisposable
         _logger.LogInformation("🔧 SESSION: JellyfinSessionManager initialized with 10-second keep-alive and WebSocket support");
     }
 
-    public async Task<bool> EnsureSessionAsync(string deviceId, string client, string device, string version, IHeaderDictionary headers)
-        => await EnsureSessionAsync(deviceId, client, device, version, headers, null);
+    public async Task<bool> EnsureSessionAsync(JellyfinSessionKey key, string client, string device, string version, IHeaderDictionary headers)
+        => await EnsureSessionAsync(key, client, device, version, headers, null);
 
     public async Task<bool> EnsureSessionAsync(
-        string deviceId,
+        JellyfinSessionKey key,
         string client,
         string device,
         string version,
         IHeaderDictionary headers,
         AllstarrPrincipal? principal)
     {
-        if (string.IsNullOrEmpty(deviceId))
+        if (string.IsNullOrEmpty(key.DeviceId) || string.IsNullOrWhiteSpace(key.BackendInstanceId) ||
+            string.IsNullOrWhiteSpace(key.BackendPrincipalId) || principal != null &&
+            (principal.BackendInstanceId != key.BackendInstanceId || principal.BackendPrincipalId != key.BackendPrincipalId))
         {
             _logger.LogError("Cannot create session - no device ID");
             return false;
         }
 
-        var initLock = _sessionInitLocks.GetOrAdd(deviceId, _ => new SemaphoreSlim(1, 1));
+        var initLock = _sessionInitLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await initLock.WaitAsync();
         try
         {
-            var hasProxiedWebSocket = HasProxiedWebSocket(deviceId);
+            var hasProxiedWebSocket = HasProxiedWebSocket(key);
 
-            if (_sessions.TryGetValue(deviceId, out var existingSession))
+            if (_sessions.TryGetValue(key, out var existingSession))
             {
                 existingSession.LastActivity = DateTime.UtcNow;
                 existingSession.HasProxiedWebSocket = hasProxiedWebSocket;
@@ -67,7 +74,7 @@ public class JellyfinSessionManager : IDisposable
                 existingSession.TenantId ??= principal?.TenantId;
                 existingSession.BackendUserId ??= principal?.BackendPrincipalId ?? AuthHeaderHelper.ExtractUserId(headers);
                 existingSession.UserName ??= principal?.DisplayName;
-                _logger.LogInformation("Session already exists for device {DeviceId}", deviceId);
+                _logger.LogInformation("Session already exists for device {DeviceId}", key);
 
                 if (!hasProxiedWebSocket)
                 {
@@ -75,21 +82,21 @@ public class JellyfinSessionManager : IDisposable
                     var refreshResult = await PostCapabilitiesAsync(headers);
                     if (refreshResult == CapabilitiesPostResult.Unauthorized)
                     {
-                        _logger.LogWarning("Token expired for device {DeviceId} - removing session", deviceId);
-                        await RemoveSessionAsync(deviceId);
+                        _logger.LogWarning("Token expired for device {DeviceId} - removing session", key);
+                        await RemoveSessionAsync(key);
                         return false;
                     }
 
                     if (refreshResult == CapabilitiesPostResult.Failed)
                     {
-                        _logger.LogWarning("Could not refresh capabilities for device {DeviceId}; preserving the existing session", deviceId);
+                        _logger.LogWarning("Could not refresh capabilities for device {DeviceId}; preserving the existing session", key);
                     }
                 }
 
                 return true;
             }
 
-            _logger.LogDebug("Creating new session for device: {DeviceId} ({Client} on {Device})", deviceId, client, device);
+            _logger.LogDebug("Creating new session for device: {DeviceId} ({Client} on {Device})", key, client, device);
 
             if (!hasProxiedWebSocket)
             {
@@ -97,25 +104,25 @@ public class JellyfinSessionManager : IDisposable
                 var createResult = await PostCapabilitiesAsync(headers);
                 if (createResult != CapabilitiesPostResult.Success)
                 {
-                    _logger.LogError("Failed to create session for {DeviceId}: {Result}", deviceId, createResult);
+                    _logger.LogError("Failed to create session for {DeviceId}: {Result}", key, createResult);
                     return false;
                 }
 
-                _logger.LogInformation("Session created for {DeviceId}", deviceId);
+                _logger.LogInformation("Session created for {DeviceId}", key);
             }
             else
             {
                 _logger.LogDebug("Skipping synthetic Jellyfin session bootstrap for proxied websocket device {DeviceId}",
-                    deviceId);
+                    key);
             }
 
             var clientIp = headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim()
                           ?? headers["X-Real-IP"].FirstOrDefault()
                           ?? "Unknown";
 
-            _sessions[deviceId] = new SessionInfo
+            _sessions[key] = new SessionInfo
             {
-                DeviceId = deviceId,
+                Key = key,
                 Client = client,
                 Device = device,
                 Version = version,
@@ -131,14 +138,14 @@ public class JellyfinSessionManager : IDisposable
 
             if (!hasProxiedWebSocket)
             {
-                _ = Task.Run(() => MaintainWebSocketForSessionAsync(deviceId, headers));
+                _ = Task.Run(() => MaintainWebSocketForSessionAsync(key, headers));
             }
 
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error creating session for {DeviceId}", deviceId);
+            _logger.LogError(ex, "Error creating session for {DeviceId}", key);
             return false;
         }
         finally
@@ -147,42 +154,42 @@ public class JellyfinSessionManager : IDisposable
         }
     }
 
-    public async Task RegisterProxiedWebSocketAsync(string deviceId)
+    public async Task RegisterProxiedWebSocketAsync(JellyfinSessionKey key)
     {
-        if (string.IsNullOrWhiteSpace(deviceId))
+        if (string.IsNullOrWhiteSpace(key.DeviceId))
         {
             return;
         }
 
-        _proxiedWebSocketConnections[deviceId] = 0;
+        _proxiedWebSocketConnections[key] = 0;
 
-        if (_sessions.TryGetValue(deviceId, out var session))
+        if (_sessions.TryGetValue(key, out var session))
         {
             session.HasProxiedWebSocket = true;
             session.LastActivity = DateTime.UtcNow;
-            await CloseSyntheticWebSocketAsync(deviceId, session);
+            await CloseSyntheticWebSocketAsync(key, session);
         }
     }
 
-    public void UnregisterProxiedWebSocket(string deviceId)
+    public void UnregisterProxiedWebSocket(JellyfinSessionKey key)
     {
-        if (string.IsNullOrWhiteSpace(deviceId))
+        if (string.IsNullOrWhiteSpace(key.DeviceId))
         {
             return;
         }
 
-        _proxiedWebSocketConnections.TryRemove(deviceId, out _);
+        _proxiedWebSocketConnections.TryRemove(key, out _);
 
-        if (_sessions.TryGetValue(deviceId, out var session))
+        if (_sessions.TryGetValue(key, out var session))
         {
             session.HasProxiedWebSocket = false;
             session.LastActivity = DateTime.UtcNow;
         }
     }
 
-    private bool HasProxiedWebSocket(string deviceId)
+    private bool HasProxiedWebSocket(JellyfinSessionKey key)
     {
-        return !string.IsNullOrWhiteSpace(deviceId) && _proxiedWebSocketConnections.ContainsKey(deviceId);
+        return !string.IsNullOrWhiteSpace(key.DeviceId) && _proxiedWebSocketConnections.ContainsKey(key);
     }
 
     private async Task<CapabilitiesPostResult> PostCapabilitiesAsync(IHeaderDictionary headers)
@@ -221,35 +228,35 @@ public class JellyfinSessionManager : IDisposable
         }
     }
 
-    public void UpdateActivity(string deviceId)
+    public void UpdateActivity(JellyfinSessionKey key)
     {
-        if (_sessions.TryGetValue(deviceId, out var session))
+        if (_sessions.TryGetValue(key, out var session))
         {
             session.LastActivity = DateTime.UtcNow;
-            _logger.LogDebug("🔄 SESSION: Updated activity for {DeviceId}", deviceId);
+            _logger.LogDebug("🔄 SESSION: Updated activity for {DeviceId}", key);
         }
         else
         {
-            _logger.LogError("⚠️ SESSION: Cannot update activity - device {DeviceId} not found", deviceId);
+            _logger.LogError("⚠️ SESSION: Cannot update activity - device {DeviceId} not found", key);
         }
     }
 
-    public void UpdatePlayingItem(string deviceId, string? itemId, long? positionTicks)
+    public void UpdatePlayingItem(JellyfinSessionKey key, string? itemId, long? positionTicks)
     {
-        if (_sessions.TryGetValue(deviceId, out var session))
+        if (_sessions.TryGetValue(key, out var session))
         {
             session.LastPlayingItemId = itemId;
             session.LastPlayingPositionTicks = positionTicks;
             session.LastActivity = DateTime.UtcNow;
             _logger.LogDebug("🎵 SESSION: Updated playing item for {DeviceId}: {ItemId} at {Position}",
-                deviceId, itemId, positionTicks);
+                key, itemId, positionTicks);
         }
     }
 
     // Explicit stops suppress duplicate stops inferred from progress transitions.
-    public void MarkExplicitStop(string deviceId, string itemId)
+    public void MarkExplicitStop(JellyfinSessionKey key, string itemId)
     {
-        if (_sessions.TryGetValue(deviceId, out var session))
+        if (_sessions.TryGetValue(key, out var session))
         {
             lock (session.SyncRoot)
             {
@@ -259,9 +266,9 @@ public class JellyfinSessionManager : IDisposable
         }
     }
 
-    public bool WasRecentlyExplicitlyStopped(string deviceId, string itemId, TimeSpan within)
+    public bool WasRecentlyExplicitlyStopped(JellyfinSessionKey key, string itemId, TimeSpan within)
     {
-        if (_sessions.TryGetValue(deviceId, out var session))
+        if (_sessions.TryGetValue(key, out var session))
         {
             lock (session.SyncRoot)
             {
@@ -282,9 +289,9 @@ public class JellyfinSessionManager : IDisposable
         return false;
     }
 
-    public bool HasSentLocalPlayedSignal(string deviceId, string itemId)
+    public bool HasSentLocalPlayedSignal(JellyfinSessionKey key, string itemId)
     {
-        if (_sessions.TryGetValue(deviceId, out var session))
+        if (_sessions.TryGetValue(key, out var session))
         {
             lock (session.SyncRoot)
             {
@@ -295,9 +302,9 @@ public class JellyfinSessionManager : IDisposable
         return false;
     }
 
-    public void MarkLocalPlayedSignalSent(string deviceId, string itemId)
+    public void MarkLocalPlayedSignalSent(JellyfinSessionKey key, string itemId)
     {
-        if (_sessions.TryGetValue(deviceId, out var session))
+        if (_sessions.TryGetValue(key, out var session))
         {
             lock (session.SyncRoot)
             {
@@ -306,14 +313,14 @@ public class JellyfinSessionManager : IDisposable
         }
     }
 
-    public bool HasSession(string deviceId)
+    public bool HasSession(JellyfinSessionKey key)
     {
-        return !string.IsNullOrWhiteSpace(deviceId) && _sessions.ContainsKey(deviceId);
+        return !string.IsNullOrWhiteSpace(key.DeviceId) && _sessions.ContainsKey(key);
     }
 
-    public string? GetLastPlayingItemId(string deviceId)
+    public string? GetLastPlayingItemId(JellyfinSessionKey key)
     {
-        if (_sessions.TryGetValue(deviceId, out var session))
+        if (_sessions.TryGetValue(key, out var session))
         {
             return session.LastPlayingItemId;
         }
@@ -321,9 +328,9 @@ public class JellyfinSessionManager : IDisposable
         return null;
     }
 
-    public (string? ItemId, long? PositionTicks) GetLastPlayingState(string deviceId)
+    public (string? ItemId, long? PositionTicks) GetLastPlayingState(JellyfinSessionKey key)
     {
-        if (_sessions.TryGetValue(deviceId, out var session))
+        if (_sessions.TryGetValue(key, out var session))
         {
             return (session.LastPlayingItemId, session.LastPlayingPositionTicks);
         }
@@ -354,13 +361,13 @@ public class JellyfinSessionManager : IDisposable
     }
 
     // Jellyfin, not local playback cleanup, owns the upstream session lifetime.
-    public void MarkSessionPotentiallyEnded(string deviceId, TimeSpan timeout)
+    public void MarkSessionPotentiallyEnded(JellyfinSessionKey key, TimeSpan timeout)
     {
-        if (_sessions.TryGetValue(deviceId, out _))
+        if (_sessions.TryGetValue(key, out _))
         {
             _logger.LogDebug(
                 "⏰ SESSION: Playback stopped for {DeviceId}; leaving upstream session lifetime to Jellyfin (timeout hint {Seconds}s ignored)",
-                deviceId,
+                key,
                 timeout.TotalSeconds);
         }
     }
@@ -392,24 +399,24 @@ public class JellyfinSessionManager : IDisposable
         };
     }
 
-    public async Task RemoveSessionAsync(string deviceId)
+    public async Task RemoveSessionAsync(JellyfinSessionKey key)
     {
-        _proxiedWebSocketConnections.TryRemove(deviceId, out _);
+        _proxiedWebSocketConnections.TryRemove(key, out _);
 
-        if (_sessions.TryRemove(deviceId, out var session))
+        if (_sessions.TryRemove(key, out var session))
         {
-            _logger.LogDebug("🗑️ SESSION: Removing session for device {DeviceId}", deviceId);
+            _logger.LogDebug("🗑️ SESSION: Removing session for device {DeviceId}", key);
 
             if (session.WebSocket != null && session.WebSocket.State == WebSocketState.Open)
             {
                 try
                 {
                     await session.WebSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Session ended", CancellationToken.None);
-                    _logger.LogDebug("🔌 WEBSOCKET: Closed WebSocket for device {DeviceId}", deviceId);
+                    _logger.LogDebug("🔌 WEBSOCKET: Closed WebSocket for device {DeviceId}", key);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "WEBSOCKET: Error closing WebSocket for {DeviceId}", deviceId);
+                    _logger.LogError(ex, "WEBSOCKET: Error closing WebSocket for {DeviceId}", key);
                 }
                 finally
                 {
@@ -429,29 +436,29 @@ public class JellyfinSessionManager : IDisposable
                     var stopJson = JsonSerializer.Serialize(stopPayload);
                     await _proxyService.PostJsonAsync("Sessions/Playing/Stopped", stopJson, session.Headers);
                     _logger.LogInformation("🛑 SESSION: Reported playback stopped for {DeviceId} (ItemId: {ItemId}, Position: {Position})",
-                        deviceId, session.LastPlayingItemId, session.LastPlayingPositionTicks);
+                        key, session.LastPlayingItemId, session.LastPlayingPositionTicks);
                 }
 
                 // Internal cleanup must never revoke the user's token.
             }
             catch (Exception ex)
             {
-                _logger.LogError("⚠️ SESSION: Error removing session for {DeviceId}: {Message}", deviceId, ex.Message);
+                _logger.LogError("⚠️ SESSION: Error removing session for {DeviceId}: {Message}", key, ex.Message);
             }
         }
     }
 
-    private async Task MaintainWebSocketForSessionAsync(string deviceId, IHeaderDictionary headers)
+    private async Task MaintainWebSocketForSessionAsync(JellyfinSessionKey key, IHeaderDictionary headers)
     {
-        if (!_sessions.TryGetValue(deviceId, out var session))
+        if (!_sessions.TryGetValue(key, out var session))
         {
-            _logger.LogError("⚠️ WEBSOCKET: Cannot create WebSocket - session {DeviceId} not found", deviceId);
+            _logger.LogError("⚠️ WEBSOCKET: Cannot create WebSocket - session {DeviceId} not found", key);
             return;
         }
 
-        if (session.HasProxiedWebSocket || HasProxiedWebSocket(deviceId))
+        if (session.HasProxiedWebSocket || HasProxiedWebSocket(key))
         {
-            _logger.LogDebug("Skipping synthetic Jellyfin websocket for proxied device {DeviceId}", deviceId);
+            _logger.LogDebug("Skipping synthetic Jellyfin websocket for proxied device {DeviceId}", key);
             return;
         }
 
@@ -473,19 +480,19 @@ public class JellyfinSessionManager : IDisposable
             var sessionHeaders = session.Headers;
 
             _logger.LogDebug("🔍 WEBSOCKET: Available headers for {DeviceId}: {Headers}",
-                deviceId, string.Join(", ", sessionHeaders.Keys));
+                key, string.Join(", ", sessionHeaders.Keys));
 
             bool authFound = false;
             if (sessionHeaders.TryGetValue("Authorization", out var auth))
             {
                 webSocket.Options.SetRequestHeader("Authorization", auth.ToString());
-                _logger.LogDebug("🔑 WEBSOCKET: Using Authorization for {DeviceId}", deviceId);
+                _logger.LogDebug("🔑 WEBSOCKET: Using Authorization for {DeviceId}", key);
                 authFound = true;
             }
             else if (sessionHeaders.TryGetValue("X-Emby-Authorization", out var embyAuth))
             {
                 webSocket.Options.SetRequestHeader("Authorization", embyAuth.ToString());
-                _logger.LogDebug("🔑 WEBSOCKET: Upgraded legacy authorization for {DeviceId}", deviceId);
+                _logger.LogDebug("🔑 WEBSOCKET: Upgraded legacy authorization for {DeviceId}", key);
                 authFound = true;
             }
             else if (sessionHeaders.TryGetValue("X-Emby-Token", out var token))
@@ -493,8 +500,8 @@ public class JellyfinSessionManager : IDisposable
                 webSocket.Options.SetRequestHeader(
                     "Authorization",
                     AuthHeaderHelper.CreateAuthHeader(
-                        token.ToString(), session.Client, session.Device, deviceId, session.Version));
-                _logger.LogDebug("🔑 WEBSOCKET: Upgraded legacy token for {DeviceId}", deviceId);
+                        token.ToString(), session.Client, session.Device, key.DeviceId, session.Version));
+                _logger.LogDebug("🔑 WEBSOCKET: Upgraded legacy token for {DeviceId}", key);
                 authFound = true;
             }
 
@@ -503,45 +510,45 @@ public class JellyfinSessionManager : IDisposable
                 if (!string.IsNullOrEmpty(_settings.ApiKey))
                 {
                     jellyfinWsUrl += $"?ApiKey={Uri.EscapeDataString(_settings.ApiKey)}";
-                    _logger.LogWarning("WEBSOCKET: No client auth found in headers, falling back to server API key for {DeviceId}", deviceId);
+                    _logger.LogWarning("WEBSOCKET: No client auth found in headers, falling back to server API key for {DeviceId}", key);
                 }
                 else
                 {
-                    _logger.LogWarning("❌ WEBSOCKET: No authentication available for {DeviceId} - WebSocket will fail", deviceId);
+                    _logger.LogWarning("❌ WEBSOCKET: No authentication available for {DeviceId} - WebSocket will fail", key);
                 }
             }
 
-            _logger.LogDebug("🔗 WEBSOCKET: Connecting to Jellyfin for device {DeviceId}: {Url}", deviceId,
+            _logger.LogDebug("🔗 WEBSOCKET: Connecting to Jellyfin for device {DeviceId}: {Url}", key,
                 jellyfinWsUrl.Split('?')[0]);
 
             webSocket.Options.SetRequestHeader("User-Agent", $"Allstarr-Proxy/{session.Client}");
 
             await webSocket.ConnectAsync(new Uri(jellyfinWsUrl), CancellationToken.None);
-            _logger.LogInformation("✓ WEBSOCKET: Connected to Jellyfin for device {DeviceId}", deviceId);
+            _logger.LogInformation("✓ WEBSOCKET: Connected to Jellyfin for device {DeviceId}", key);
 
             // Jellyfin does not expose the connected session until ForceKeepAlive arrives.
             var forceKeepAliveMessage = "{\"MessageType\":\"ForceKeepAlive\",\"Data\":100}";
             var messageBytes = Encoding.UTF8.GetBytes(forceKeepAliveMessage);
             await webSocket.SendAsync(new ArraySegment<byte>(messageBytes), WebSocketMessageType.Text, true, CancellationToken.None);
-            _logger.LogInformation("📤 WEBSOCKET: Sent ForceKeepAlive to initialize session for {DeviceId}", deviceId);
+            _logger.LogInformation("📤 WEBSOCKET: Sent ForceKeepAlive to initialize session for {DeviceId}", key);
 
             var sessionsStartMessage = "{\"MessageType\":\"SessionsStart\",\"Data\":\"0,1500\"}";
             messageBytes = Encoding.UTF8.GetBytes(sessionsStartMessage);
             await webSocket.SendAsync(new ArraySegment<byte>(messageBytes), WebSocketMessageType.Text, true, CancellationToken.None);
-            _logger.LogDebug("📤 WEBSOCKET: Sent SessionsStart for {DeviceId}", deviceId);
+            _logger.LogDebug("📤 WEBSOCKET: Sent SessionsStart for {DeviceId}", key);
 
             var buffer = new byte[1024 * 4];
             var lastKeepAlive = DateTime.UtcNow;
             using var cts = new CancellationTokenSource();
 
-            while (webSocket.State == WebSocketState.Open && _sessions.ContainsKey(deviceId))
+            while (webSocket.State == WebSocketState.Open && _sessions.ContainsKey(key))
             {
                 try
                 {
-                    if (HasProxiedWebSocket(deviceId))
+                    if (HasProxiedWebSocket(key))
                     {
                         _logger.LogDebug("Stopping synthetic Jellyfin websocket because proxied client websocket is active for {DeviceId}",
-                            deviceId);
+                            key);
                         break;
                     }
 
@@ -555,7 +562,7 @@ public class JellyfinSessionManager : IDisposable
 
                         if (result.MessageType == WebSocketMessageType.Close)
                         {
-                            _logger.LogDebug("🔌 WEBSOCKET: Jellyfin closed WebSocket for device {DeviceId}", deviceId);
+                            _logger.LogDebug("🔌 WEBSOCKET: Jellyfin closed WebSocket for device {DeviceId}", key);
                             break;
                         }
 
@@ -565,16 +572,16 @@ public class JellyfinSessionManager : IDisposable
 
                             if (message.Contains("\"MessageType\":\"KeepAlive\""))
                             {
-                                _logger.LogDebug("💓 WEBSOCKET: Received KeepAlive from Jellyfin for {DeviceId}", deviceId);
+                                _logger.LogDebug("💓 WEBSOCKET: Received KeepAlive from Jellyfin for {DeviceId}", key);
                             }
                             else if (message.Contains("\"MessageType\":\"Sessions\""))
                             {
-                                _logger.LogDebug("📥 WEBSOCKET: Session update for {DeviceId}", deviceId);
+                                _logger.LogDebug("📥 WEBSOCKET: Session update for {DeviceId}", key);
                             }
                             else
                             {
                                 _logger.LogTrace("📥 WEBSOCKET: {DeviceId}: {Message}",
-                                    deviceId, message.Length > 100 ? message[..100] + "..." : message);
+                                    key, message.Length > 100 ? message[..100] + "..." : message);
                             }
                         }
                     }
@@ -587,20 +594,20 @@ public class JellyfinSessionManager : IDisposable
                         var keepAliveMsg = "{\"MessageType\":\"KeepAlive\"}";
                         var keepAliveBytes = Encoding.UTF8.GetBytes(keepAliveMsg);
                         await webSocket.SendAsync(new ArraySegment<byte>(keepAliveBytes), WebSocketMessageType.Text, true, CancellationToken.None);
-                        _logger.LogDebug("💓 WEBSOCKET: Sent KeepAlive for {DeviceId}", deviceId);
+                        _logger.LogDebug("💓 WEBSOCKET: Sent KeepAlive for {DeviceId}", key);
                         lastKeepAlive = DateTime.UtcNow;
                     }
                 }
                 catch (WebSocketException wsEx)
                 {
-                    _logger.LogDebug(wsEx, "WEBSOCKET: Connection closed for device {DeviceId}", deviceId);
+                    _logger.LogDebug(wsEx, "WEBSOCKET: Connection closed for device {DeviceId}", key);
                     break;
                 }
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ WEBSOCKET: Failed to maintain WebSocket for device {DeviceId}", deviceId);
+            _logger.LogError(ex, "❌ WEBSOCKET: Failed to maintain WebSocket for device {DeviceId}", key);
         }
         finally
         {
@@ -615,10 +622,10 @@ public class JellyfinSessionManager : IDisposable
                     catch { }
                 }
                 webSocket.Dispose();
-                _logger.LogDebug("🧹 WEBSOCKET: Cleaned up WebSocket for device {DeviceId}", deviceId);
+                _logger.LogDebug("🧹 WEBSOCKET: Cleaned up WebSocket for device {DeviceId}", key);
             }
 
-            if (_sessions.TryGetValue(deviceId, out var sess))
+            if (_sessions.TryGetValue(key, out var sess))
             {
                 sess.WebSocket = null;
             }
@@ -647,13 +654,13 @@ public class JellyfinSessionManager : IDisposable
 
             _logger.LogTrace("Keeping {Count} sessions alive", activeSessions.Count);
 
-            var expiredSessions = new List<string>();
+            var expiredSessions = new List<JellyfinSessionKey>();
 
             foreach (var session in activeSessions)
             {
                 try
                 {
-                    session.HasProxiedWebSocket = HasProxiedWebSocket(session.DeviceId);
+                    session.HasProxiedWebSocket = HasProxiedWebSocket(session.Key);
                     if (session.HasProxiedWebSocket)
                     {
                         continue;
@@ -663,7 +670,7 @@ public class JellyfinSessionManager : IDisposable
                     if (result == CapabilitiesPostResult.Unauthorized)
                     {
                         _logger.LogWarning("Token expired for device {DeviceId} during keep-alive - marking for removal", session.DeviceId);
-                        expiredSessions.Add(session.DeviceId);
+                        expiredSessions.Add(session.Key);
                     }
                     else if (result == CapabilitiesPostResult.Failed)
                     {
@@ -676,10 +683,10 @@ public class JellyfinSessionManager : IDisposable
                 }
             }
 
-            foreach (var deviceId in expiredSessions)
+            foreach (var key in expiredSessions)
             {
-                _logger.LogWarning("Removing session with expired token: {DeviceId}", deviceId);
-                await RemoveSessionAsync(deviceId);
+                _logger.LogWarning("Removing session with expired token: {DeviceId}", key);
+                await RemoveSessionAsync(key);
             }
 
             // Three minutes tolerates brief pauses and network interruptions before cleanup.
@@ -714,7 +721,8 @@ public class JellyfinSessionManager : IDisposable
     private class SessionInfo
     {
         public object SyncRoot { get; } = new();
-        public required string DeviceId { get; init; }
+        public required JellyfinSessionKey Key { get; init; }
+        public string DeviceId => Key.DeviceId;
         public required string Client { get; init; }
         public required string Device { get; init; }
         public required string Version { get; init; }
@@ -779,7 +787,7 @@ public class JellyfinSessionManager : IDisposable
         }
     }
 
-    private async Task CloseSyntheticWebSocketAsync(string deviceId, SessionInfo session)
+    private async Task CloseSyntheticWebSocketAsync(JellyfinSessionKey key, SessionInfo session)
     {
         var syntheticSocket = session.WebSocket;
         if (syntheticSocket == null)
@@ -798,7 +806,7 @@ public class JellyfinSessionManager : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to close synthetic Jellyfin websocket for proxied device {DeviceId}", deviceId);
+            _logger.LogDebug(ex, "Failed to close synthetic Jellyfin websocket for proxied device {DeviceId}", key);
         }
         finally
         {

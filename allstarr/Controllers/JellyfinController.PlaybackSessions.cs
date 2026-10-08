@@ -4,6 +4,7 @@ using allstarr.Core.Identity;
 using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
 using allstarr.Services.Common;
+using allstarr.Services.Jellyfin;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers;
@@ -70,6 +71,12 @@ public partial class JellyfinController
         }
     }
 
+    private JellyfinSessionKey PlaybackSessionKey(string deviceId)
+    {
+        var context = HttpContext.RequireProtocolExecutionContext();
+        return new(context.BackendInstanceId, context.VerifiedBackendPrincipalId, deviceId);
+    }
+
     [HttpPost("Sessions/Playing")]
     public async Task<IActionResult> ReportPlaybackStart()
     {
@@ -113,7 +120,7 @@ public partial class JellyfinController
                 var (isExt, _, _) = _localLibraryService.ParseSongId(itemId);
                 if (!isExt)
                 {
-                    _sessionManager.UpdatePlayingItem(deviceId, itemId, positionTicks);
+                    _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), itemId, positionTicks);
                 }
             }
 
@@ -126,11 +133,11 @@ public partial class JellyfinController
                     var sessionReady = false;
                     if (!string.IsNullOrEmpty(deviceId))
                     {
-                        sessionReady = _sessionManager.HasSession(deviceId);
+                        sessionReady = _sessionManager.HasSession(PlaybackSessionKey(deviceId));
                         if (!sessionReady)
                         {
                             var ensured = await _sessionManager.EnsureSessionAsync(
-                                deviceId,
+                                PlaybackSessionKey(deviceId),
                                 client ?? "Unknown",
                                 device ?? "Unknown",
                                 version ?? "1.0",
@@ -144,12 +151,12 @@ public partial class JellyfinController
                                     deviceId);
                             }
 
-                            sessionReady = ensured || _sessionManager.HasSession(deviceId);
+                            sessionReady = ensured || _sessionManager.HasSession(PlaybackSessionKey(deviceId));
                         }
 
                         if (sessionReady)
                         {
-                            var (previousItemId, previousPositionTicks) = _sessionManager.GetLastPlayingState(deviceId);
+                            var (previousItemId, previousPositionTicks) = _sessionManager.GetLastPlayingState(PlaybackSessionKey(deviceId));
                             var inferredStop = !string.IsNullOrWhiteSpace(previousItemId) &&
                                                !string.Equals(previousItemId, itemId, StringComparison.Ordinal);
                             if (inferredStop && !string.IsNullOrWhiteSpace(previousItemId))
@@ -169,8 +176,8 @@ public partial class JellyfinController
 
                         if (sessionReady)
                         {
-                            _sessionManager.UpdateActivity(deviceId!);
-                            _sessionManager.UpdatePlayingItem(deviceId!, itemId, positionTicks);
+                            _sessionManager.UpdateActivity(PlaybackSessionKey(deviceId!));
+                            _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId!), itemId, positionTicks);
                         }
 
                         return NoContent();
@@ -221,8 +228,8 @@ public partial class JellyfinController
 
                     if (sessionReady)
                     {
-                        _sessionManager.UpdateActivity(deviceId!);
-                        _sessionManager.UpdatePlayingItem(deviceId!, itemId, positionTicks);
+                        _sessionManager.UpdateActivity(PlaybackSessionKey(deviceId!));
+                        _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId!), itemId, positionTicks);
                     }
 
                     return NoContent();
@@ -241,8 +248,8 @@ public partial class JellyfinController
 
                 if (!string.IsNullOrEmpty(deviceId))
                 {
-                    _sessionManager.UpdateActivity(deviceId);
-                    _sessionManager.UpdatePlayingItem(deviceId, itemId, positionTicks);
+                    _sessionManager.UpdateActivity(PlaybackSessionKey(deviceId));
+                    _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), itemId, positionTicks);
                 }
 
                 return NoContent();
@@ -332,12 +339,12 @@ public partial class JellyfinController
                 var (isExt, _, _) = _localLibraryService.ParseSongId(itemId);
                 if (!isExt)
                 {
-                    var sessionCreated = await _sessionManager.EnsureSessionAsync(deviceId, client ?? "Unknown",
+                    var sessionCreated = await _sessionManager.EnsureSessionAsync(PlaybackSessionKey(deviceId), client ?? "Unknown",
                         device ?? "Unknown", version ?? "1.0", Request.Headers, CurrentPlaybackPrincipal());
                     if (sessionCreated)
                     {
-                        _sessionManager.UpdateActivity(deviceId);
-                        _sessionManager.UpdatePlayingItem(deviceId, itemId, positionTicks);
+                        _sessionManager.UpdateActivity(PlaybackSessionKey(deviceId));
+                        _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), itemId, positionTicks);
                         _logger.LogDebug("✓ SESSION: Session ensured for device {DeviceId} after playback start", deviceId);
                     }
                     else
@@ -404,11 +411,11 @@ public partial class JellyfinController
                 {
                     if (!string.IsNullOrEmpty(deviceId))
                     {
-                        var sessionReady = _sessionManager.HasSession(deviceId);
+                        var sessionReady = _sessionManager.HasSession(PlaybackSessionKey(deviceId));
                         if (!sessionReady)
                         {
                             var ensured = await _sessionManager.EnsureSessionAsync(
-                                deviceId,
+                                PlaybackSessionKey(deviceId),
                                 client ?? "Unknown",
                                 device ?? "Unknown",
                                 version ?? "1.0",
@@ -422,10 +429,10 @@ public partial class JellyfinController
                                     deviceId);
                             }
 
-                            sessionReady = ensured || _sessionManager.HasSession(deviceId);
+                            sessionReady = ensured || _sessionManager.HasSession(PlaybackSessionKey(deviceId));
                         }
 
-                        var (previousItemId, previousPositionTicks) = _sessionManager.GetLastPlayingState(deviceId);
+                        var (previousItemId, previousPositionTicks) = _sessionManager.GetLastPlayingState(PlaybackSessionKey(deviceId));
                         var inferredStop = sessionReady &&
                                            !string.IsNullOrWhiteSpace(previousItemId) &&
                                            !string.Equals(previousItemId, itemId, StringComparison.Ordinal);
@@ -440,8 +447,8 @@ public partial class JellyfinController
 
                         if (sessionReady)
                         {
-                            _sessionManager.UpdateActivity(deviceId);
-                            _sessionManager.UpdatePlayingItem(deviceId, itemId, positionTicks);
+                            _sessionManager.UpdateActivity(PlaybackSessionKey(deviceId));
+                            _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), itemId, positionTicks);
                         }
 
                         if (inferredStart &&
@@ -535,11 +542,11 @@ public partial class JellyfinController
                 // Mobile clients may omit /Sessions/Playing, so infer transitions from progress.
                 if (!string.IsNullOrEmpty(deviceId))
                 {
-                    var sessionReady = _sessionManager.HasSession(deviceId);
+                    var sessionReady = _sessionManager.HasSession(PlaybackSessionKey(deviceId));
                     if (!sessionReady)
                     {
                         var ensured = await _sessionManager.EnsureSessionAsync(
-                            deviceId,
+                            PlaybackSessionKey(deviceId),
                             client ?? "Unknown",
                             device ?? "Unknown",
                             version ?? "1.0",
@@ -553,10 +560,10 @@ public partial class JellyfinController
                                 deviceId);
                         }
 
-                        sessionReady = ensured || _sessionManager.HasSession(deviceId);
+                        sessionReady = ensured || _sessionManager.HasSession(PlaybackSessionKey(deviceId));
                     }
 
-                    var (previousItemId, previousPositionTicks) = _sessionManager.GetLastPlayingState(deviceId);
+                    var (previousItemId, previousPositionTicks) = _sessionManager.GetLastPlayingState(PlaybackSessionKey(deviceId));
                     var inferredStop = sessionReady &&
                                        !string.IsNullOrWhiteSpace(previousItemId) &&
                                        !string.Equals(previousItemId, itemId, StringComparison.Ordinal);
@@ -571,8 +578,8 @@ public partial class JellyfinController
 
                     if (sessionReady)
                     {
-                        _sessionManager.UpdateActivity(deviceId);
-                        _sessionManager.UpdatePlayingItem(deviceId, itemId, positionTicks);
+                        _sessionManager.UpdateActivity(PlaybackSessionKey(deviceId));
+                        _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), itemId, positionTicks);
                     }
 
                     if (inferredStart &&
@@ -680,7 +687,7 @@ public partial class JellyfinController
         string previousItemId,
         long? previousPositionTicks)
     {
-        if (_sessionManager.WasRecentlyExplicitlyStopped(deviceId, previousItemId, InferredStopDedupeWindow))
+        if (_sessionManager.WasRecentlyExplicitlyStopped(PlaybackSessionKey(deviceId), previousItemId, InferredStopDedupeWindow))
         {
             _logger.LogDebug(
                 "Skipping inferred stop for {ItemId} on {DeviceId} (explicit stop already recorded within {Window}s)",
@@ -783,7 +790,7 @@ public partial class JellyfinController
             return;
         }
 
-        if (_sessionManager.HasSentLocalPlayedSignal(deviceId, itemId))
+        if (_sessionManager.HasSentLocalPlayedSignal(PlaybackSessionKey(deviceId), itemId))
         {
             return;
         }
@@ -825,7 +832,7 @@ public partial class JellyfinController
 
         if (statusCode == 200 || statusCode == 204)
         {
-            _sessionManager.MarkLocalPlayedSignalSent(deviceId, itemId);
+            _sessionManager.MarkLocalPlayedSignalSent(PlaybackSessionKey(deviceId), itemId);
             _logger.LogInformation(
                 "🎧 Local played signal sent via PlayedItems for {ItemId} at {Position}s (trigger={Trigger}s)",
                 itemId,
@@ -950,7 +957,7 @@ public partial class JellyfinController
             // Some clients send stop without ItemId. Recover from tracked session state when possible.
             if (string.IsNullOrWhiteSpace(itemId) && !string.IsNullOrWhiteSpace(deviceId))
             {
-                var (trackedItemId, trackedPositionTicks) = _sessionManager.GetLastPlayingState(deviceId);
+                var (trackedItemId, trackedPositionTicks) = _sessionManager.GetLastPlayingState(PlaybackSessionKey(deviceId));
                 if (!string.IsNullOrWhiteSpace(trackedItemId))
                 {
                     itemId = trackedItemId;
@@ -982,9 +989,9 @@ public partial class JellyfinController
 
                         if (!string.IsNullOrWhiteSpace(deviceId))
                         {
-                            _sessionManager.MarkExplicitStop(deviceId, itemId);
-                            _sessionManager.UpdatePlayingItem(deviceId, null, null);
-                            _sessionManager.MarkSessionPotentiallyEnded(deviceId, TimeSpan.FromSeconds(30));
+                            _sessionManager.MarkExplicitStop(PlaybackSessionKey(deviceId), itemId);
+                            _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), null, null);
+                            _sessionManager.MarkSessionPotentiallyEnded(PlaybackSessionKey(deviceId), TimeSpan.FromSeconds(30));
                         }
 
                         return NoContent();
@@ -1043,9 +1050,9 @@ public partial class JellyfinController
 
                     if ((stopStatusCode == 200 || stopStatusCode == 204) && !string.IsNullOrWhiteSpace(deviceId))
                     {
-                        _sessionManager.MarkExplicitStop(deviceId, itemId);
-                        _sessionManager.UpdatePlayingItem(deviceId, null, null);
-                        _sessionManager.MarkSessionPotentiallyEnded(deviceId, TimeSpan.FromSeconds(30));
+                        _sessionManager.MarkExplicitStop(PlaybackSessionKey(deviceId), itemId);
+                        _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), null, null);
+                        _sessionManager.MarkSessionPotentiallyEnded(PlaybackSessionKey(deviceId), TimeSpan.FromSeconds(30));
                     }
 
                     return NoContent();
@@ -1086,9 +1093,9 @@ public partial class JellyfinController
 
                     if (!string.IsNullOrWhiteSpace(deviceId))
                     {
-                        _sessionManager.MarkExplicitStop(deviceId, itemId);
-                        _sessionManager.UpdatePlayingItem(deviceId, null, null);
-                        _sessionManager.MarkSessionPotentiallyEnded(deviceId, TimeSpan.FromSeconds(30));
+                        _sessionManager.MarkExplicitStop(PlaybackSessionKey(deviceId), itemId);
+                        _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), null, null);
+                        _sessionManager.MarkSessionPotentiallyEnded(PlaybackSessionKey(deviceId), TimeSpan.FromSeconds(30));
                     }
 
                     return NoContent();
@@ -1142,10 +1149,10 @@ public partial class JellyfinController
                 {
                     if (!string.IsNullOrWhiteSpace(itemId))
                     {
-                        _sessionManager.MarkExplicitStop(deviceId, itemId);
+                        _sessionManager.MarkExplicitStop(PlaybackSessionKey(deviceId), itemId);
                     }
-                    _sessionManager.UpdatePlayingItem(deviceId, null, null);
-                    _sessionManager.MarkSessionPotentiallyEnded(deviceId, TimeSpan.FromSeconds(30));
+                    _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), null, null);
+                    _sessionManager.MarkSessionPotentiallyEnded(PlaybackSessionKey(deviceId), TimeSpan.FromSeconds(30));
                 }
             }
             else if (statusCode == 401)
@@ -1292,7 +1299,10 @@ public partial class JellyfinController
         }
 
         var normalizedDevice = string.IsNullOrWhiteSpace(deviceId) ? "unknown-device" : deviceId;
+        var context = HttpContext.RequireProtocolExecutionContext();
         var cacheKey = CacheKeyBuilder.BuildPlaybackSignalDedupeKey(
+            context.BackendInstanceId,
+            context.VerifiedBackendPrincipalId,
             signalType,
             normalizedDevice,
             itemId);

@@ -101,8 +101,12 @@ public class AdminUiController : ControllerBase
                 }).ToList(),
                 Routes =
                 [
-                    Route("sources", "#/sources", "Sources", "sources"),
-                    Route("settings", "#/settings", "Settings", "system")
+                    Route("home", "#/", "Home", "home"),
+                    Route("playlists", "#/library/playlists", "Playlists", "library"),
+                    Route("mappings", "#/library/mappings", "Mappings", "library"),
+                    Route("sources", "#/integrations/services", "Integrations", "sources"),
+                    Route("activity", "#/activity", "Activity", "activity"),
+                    Route("preferences", "#/preferences", "Listening preferences", "system")
                 ]
             });
         }
@@ -282,13 +286,12 @@ public class AdminUiController : ControllerBase
             .OrderByDescending(item => item.listens)
             .ThenBy(item => item.name)
             .FirstOrDefaultAsync(cancellationToken);
-        var scrobbleDeliveries = session.IsAdministrator
-            ? await context.PlaybackDeliveryCheckpoints.AsNoTracking().CountAsync(item =>
-                item.TenantId == tenantId && item.Kind == PlaybackScrobbleDeliveryKind.Completed &&
+        var scrobbleDeliveries = await context.PlaybackDeliveryCheckpoints.AsNoTracking().CountAsync(item =>
+                item.TenantId == tenantId && (session.IsAdministrator || item.OwnerUserId == session.AllstarrUserId) &&
+                item.Kind == PlaybackScrobbleDeliveryKind.Completed &&
                 item.UpdatedAt >= lastDay &&
                 (item.State == ScopedPlaybackScrobbleOutcome.Delivered ||
-                 item.State == ScopedPlaybackScrobbleOutcome.Ignored), cancellationToken)
-            : 0;
+                 item.State == ScopedPlaybackScrobbleOutcome.Ignored), cancellationToken);
         var currentWeekListens = await listensQuery.CountAsync(item =>
             item.State == ListeningEventState.Completed && item.ListenedAt >= currentWeekStart,
             cancellationToken);
@@ -309,9 +312,7 @@ public class AdminUiController : ControllerBase
         var providerHealth = session.IsAdministrator
             ? (await GetProviderSummaries(cancellationToken) as OkObjectResult)?.Value
             : new { providers = Array.Empty<object>() };
-        var activity = session.IsAdministrator
-            ? (await GetDashboardActivity(8, cancellationToken: cancellationToken) as OkObjectResult)?.Value
-            : new { items = Array.Empty<object>(), hasMore = false };
+        var activity = (await GetDashboardActivity(8, cancellationToken: cancellationToken) as OkObjectResult)?.Value;
 
         return Ok(new
         {
@@ -392,9 +393,9 @@ public class AdminUiController : ControllerBase
         CancellationToken cancellationToken = default)
     {
         if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var sessionValue) ||
-            sessionValue is not AdminAuthSession { IsAdministrator: true, TenantId: { } tenantId })
+            sessionValue is not AdminAuthSession { TenantId: { } tenantId, AllstarrUserId: { } userId } session)
         {
-            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Administrator permissions required" });
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "A linked Allstarr user is required" });
         }
 
         limit = Math.Clamp(limit, 1, 100);
@@ -402,11 +403,12 @@ public class AdminUiController : ControllerBase
         var contextFactory = HttpContext.RequestServices.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var accounts = await context.ProviderAccounts.AsNoTracking()
-            .Where(item => item.TenantId == tenantId)
+            .Where(item => session.IsAdministrator || item.TenantId == tenantId && item.OwnerUserId == userId)
             .ToDictionaryAsync(item => item.Id, cancellationToken);
         var accountIds = accounts.Keys.ToArray();
         var jobs = await context.Jobs.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && (!before.HasValue || item.UpdatedAt < before.Value ||
+            .Where(item => item.TenantId == tenantId && (session.IsAdministrator || item.OwnerUserId == userId) &&
+                (!before.HasValue || item.UpdatedAt < before.Value ||
                 (item.UpdatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.UpdatedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit)
@@ -418,7 +420,8 @@ public class AdminUiController : ControllerBase
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
         var playlistRuns = await context.PlaylistSyncRuns.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && (!before.HasValue || (item.CompletedAt ?? item.StartedAt) < before.Value ||
+            .Where(item => item.TenantId == tenantId && (session.IsAdministrator || item.OwnerUserId == userId) &&
+                (!before.HasValue || (item.CompletedAt ?? item.StartedAt) < before.Value ||
                 ((item.CompletedAt ?? item.StartedAt) == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.CompletedAt ?? item.StartedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit)
@@ -441,7 +444,7 @@ public class AdminUiController : ControllerBase
                 .ToListAsync(cancellationToken))
                 .ToDictionary(item => item.PlaylistLinkId);
         var matchActivity = await _trackMatches.GetActivityDataAsync(
-            new TrackMatchActor(tenantId, Guid.Empty, true),
+            new TrackMatchActor(tenantId, userId, session.IsAdministrator),
             before,
             beforeId,
             scanLimit,
@@ -458,19 +461,21 @@ public class AdminUiController : ControllerBase
             .ToDictionary(group => group.Key, group => group.ToArray());
         var libraryTracks = matchActivity.LibraryTracks;
         var audits = await context.AuditEvents.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && (!before.HasValue || item.CreatedAt < before.Value ||
+            .Where(item => item.TenantId == tenantId && (session.IsAdministrator || item.ActorUserId == userId) &&
+                (!before.HasValue || item.CreatedAt < before.Value ||
                 (item.CreatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
         var extensionLogs = await context.ExtensionLogs.AsNoTracking()
-            .Where(item => !before.HasValue || item.CreatedAt < before.Value ||
-                (item.CreatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0))
+            .Where(item => session.IsAdministrator && (!before.HasValue || item.CreatedAt < before.Value ||
+                (item.CreatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
         var downloadArtifacts = await context.ProviderDownloadArtifacts.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && (!before.HasValue || item.VerifiedAt < before.Value ||
+            .Where(item => item.TenantId == tenantId && (session.IsAdministrator || item.OwnerUserId == userId) &&
+                (!before.HasValue || item.VerifiedAt < before.Value ||
                 (item.VerifiedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.VerifiedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit)

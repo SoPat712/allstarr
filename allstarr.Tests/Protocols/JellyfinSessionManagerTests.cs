@@ -41,12 +41,12 @@ public class JellyfinSessionManagerTests
                 "MediaBrowser Client=\"Feishin\", Device=\"Desktop\", DeviceId=\"dev-123\", Version=\"1.0\", Token=\"abc\""
         };
 
-        var ensured = await manager.EnsureSessionAsync("dev-123", "Feishin", "Desktop", "1.0", headers);
+        var ensured = await manager.EnsureSessionAsync(Key("dev-123"), "Feishin", "Desktop", "1.0", headers);
         Assert.True(ensured);
 
-        manager.MarkSessionPotentiallyEnded("dev-123", TimeSpan.FromMilliseconds(25));
+        manager.MarkSessionPotentiallyEnded(Key("dev-123"), TimeSpan.FromMilliseconds(25));
 
-        Assert.True(manager.HasSession("dev-123"));
+        Assert.True(manager.HasSession(Key("dev-123")));
     }
 
     [Fact]
@@ -81,11 +81,11 @@ public class JellyfinSessionManagerTests
                 "MediaBrowser Client=\"Feishin\", Device=\"Desktop\", DeviceId=\"dev-123\", Version=\"1.0\", Token=\"abc\""
         };
 
-        var ensured = await manager.EnsureSessionAsync("dev-123", "Feishin", "Desktop", "1.0", headers);
+        var ensured = await manager.EnsureSessionAsync(Key("dev-123"), "Feishin", "Desktop", "1.0", headers);
         Assert.True(ensured);
 
-        manager.UpdatePlayingItem("dev-123", "item-123", 42);
-        await manager.RemoveSessionAsync("dev-123");
+        manager.UpdatePlayingItem(Key("dev-123"), "item-123", 42);
+        await manager.RemoveSessionAsync(Key("dev-123"));
 
         Assert.Contains("/Sessions/Capabilities/Full", requestedPaths);
         Assert.Contains("/Sessions/Playing/Stopped", requestedPaths);
@@ -123,7 +123,7 @@ public class JellyfinSessionManagerTests
         var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
         var ensured = await manager.EnsureSessionAsync(
-            "dev-123",
+            new JellyfinSessionKey("main", "backend-user-1", "dev-123"),
             "Feishin",
             "Desktop",
             "1.0",
@@ -131,7 +131,7 @@ public class JellyfinSessionManagerTests
             new AllstarrPrincipal(tenantId, userId, "jellyfin", "main", "backend-user-1", "Josh", false));
         Assert.True(ensured);
 
-        manager.UpdatePlayingItem("dev-123", "ext-deezer-song-35734823", 45 * TimeSpan.TicksPerSecond);
+        manager.UpdatePlayingItem(new JellyfinSessionKey("main", "backend-user-1", "dev-123"), "ext-deezer-song-35734823", 45 * TimeSpan.TicksPerSecond);
 
         var states = manager.GetActivePlaybackStates(TimeSpan.FromMinutes(1));
 
@@ -179,9 +179,9 @@ public class JellyfinSessionManagerTests
                 "MediaBrowser Client=\"Finamp\", Device=\"Android Auto\", DeviceId=\"dev-123\", Version=\"1.0\", Token=\"abc\""
         };
 
-        await manager.RegisterProxiedWebSocketAsync("dev-123");
+        await manager.RegisterProxiedWebSocketAsync(Key("dev-123"));
 
-        var ensured = await manager.EnsureSessionAsync("dev-123", "Finamp", "Android Auto", "1.0", headers);
+        var ensured = await manager.EnsureSessionAsync(Key("dev-123"), "Finamp", "Android Auto", "1.0", headers);
 
         Assert.True(ensured);
         Assert.DoesNotContain("/Sessions/Capabilities/Full", requestedPaths);
@@ -207,9 +207,9 @@ public class JellyfinSessionManagerTests
             NullLogger<JellyfinSessionManager>.Instance);
         var headers = CreateHeaders();
 
-        Assert.True(await manager.EnsureSessionAsync("dev-123", "Feishin", "Desktop", "1.0", headers));
-        Assert.Equal(expectedResult, await manager.EnsureSessionAsync("dev-123", "Feishin", "Desktop", "1.0", headers));
-        Assert.Equal(expectedSession, manager.HasSession("dev-123"));
+        Assert.True(await manager.EnsureSessionAsync(Key("dev-123"), "Feishin", "Desktop", "1.0", headers));
+        Assert.Equal(expectedResult, await manager.EnsureSessionAsync(Key("dev-123"), "Feishin", "Desktop", "1.0", headers));
+        Assert.Equal(expectedSession, manager.HasSession(Key("dev-123")));
         Assert.Equal(2, requests);
     }
 
@@ -235,7 +235,7 @@ public class JellyfinSessionManagerTests
             Options.Create(settings),
             NullLogger<JellyfinSessionManager>.Instance);
 
-        Assert.True(await manager.EnsureSessionAsync("dev-123", "Feishin", "Desktop", "1.0", CreateHeaders()));
+        Assert.True(await manager.EnsureSessionAsync(Key("dev-123"), "Feishin", "Desktop", "1.0", CreateHeaders()));
 
         var firstPass = manager.RunKeepAlivePassAsync();
         await refreshStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -262,6 +262,52 @@ public class JellyfinSessionManagerTests
         ["X-Emby-Authorization"] =
             "MediaBrowser Client=\"Feishin\", Device=\"Desktop\", DeviceId=\"dev-123\", Version=\"1.0\", Token=\"abc\""
     };
+
+    [Fact]
+    public async Task SameDevice_SeparatesPlaybackDedupeAndSocketCleanupByVerifiedOwner()
+    {
+        var calls = new ConcurrentBag<string>();
+        var handler = new DelegateHttpMessageHandler((request, _) =>
+        {
+            calls.Add(request.RequestUri!.AbsolutePath);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        });
+        var settings = new JellyfinSettings { Url = "http://127.0.0.1:1" };
+        using var manager = new JellyfinSessionManager(CreateProxyService(handler, settings),
+            Options.Create(settings), NullLogger<JellyfinSessionManager>.Instance);
+        var a = new JellyfinSessionKey("backend", "listener-a", "same-device");
+        var b = new JellyfinSessionKey("backend", "listener-b", "same-device");
+        var tenant = Guid.CreateVersion7();
+        foreach (var owner in new[] { a, b })
+        {
+            await manager.RegisterProxiedWebSocketAsync(owner);
+            Assert.True(await manager.EnsureSessionAsync(owner, "Client", "Device", "1", CreateHeaders(),
+                new AllstarrPrincipal(tenant, Guid.CreateVersion7(), "jellyfin", owner.BackendInstanceId,
+                    owner.BackendPrincipalId, owner.BackendPrincipalId, false)));
+            manager.UpdatePlayingItem(owner, owner.BackendPrincipalId + "-track", 0);
+        }
+        var states = manager.GetActivePlaybackStates(TimeSpan.FromMinutes(1));
+        Assert.Equal(2, states.Count);
+        Assert.All(states, state => Assert.Equal("same-device", state.DeviceId));
+        Assert.Equal(2, states.Select(state => state.UserId).Distinct().Count());
+        manager.MarkExplicitStop(b, "same-track");
+        manager.MarkLocalPlayedSignalSent(b, "same-track");
+        Assert.False(manager.WasRecentlyExplicitlyStopped(a, "same-track", TimeSpan.FromMinutes(1)));
+        Assert.False(manager.HasSentLocalPlayedSignal(a, "same-track"));
+        Assert.True(manager.WasRecentlyExplicitlyStopped(b, "same-track", TimeSpan.FromMinutes(1)));
+        Assert.True(manager.HasSentLocalPlayedSignal(b, "same-track"));
+        manager.UnregisterProxiedWebSocket(b);
+        await manager.RemoveSessionAsync(b);
+        Assert.True(manager.HasSession(a));
+        Assert.False(manager.HasSession(b));
+        Assert.Equal("listener-a-track", manager.GetLastPlayingState(a).ItemId);
+        await manager.RunKeepAlivePassAsync();
+        Assert.DoesNotContain("/Sessions/Capabilities/Full", calls);
+        Assert.False(await manager.EnsureSessionAsync(a, "Client", "Device", "1", CreateHeaders(),
+            new AllstarrPrincipal(tenant, Guid.CreateVersion7(), "jellyfin", "backend", "listener-b", "Other", false)));
+    }
+
+    private static JellyfinSessionKey Key(string deviceId) => new("backend", "backend-user", deviceId);
 
     private static JellyfinProxyService CreateProxyService(HttpMessageHandler handler, JellyfinSettings settings)
     {

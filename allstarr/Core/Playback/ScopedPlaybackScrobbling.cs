@@ -176,7 +176,7 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
         }
         if (delivered)
         {
-            activity?.MarkDelivered(payload.ItemId, payload.DeviceId);
+            activity?.MarkDelivered(payload.Scope.TenantId, payload.Scope.OwnerUserId, payload.ItemId, payload.DeviceId);
         }
         if (providerIds.Count > 0)
         {

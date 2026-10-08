@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Identity;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
@@ -43,9 +44,14 @@ public sealed class DurableJobContextAuthorizer
     private const int SnapshotVersion = 1;
 
     private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
+    private readonly IProviderRegistry? _providers;
 
-    public DurableJobContextAuthorizer(IDbContextFactory<AllstarrDbContext> contextFactory) =>
+    public DurableJobContextAuthorizer(IDbContextFactory<AllstarrDbContext> contextFactory,
+        IProviderRegistry? providers = null)
+    {
         _contextFactory = contextFactory;
+        _providers = providers;
+    }
 
     public async Task<DurableJobSavedContext> AuthorizeEnqueueAsync(
         Guid? tenantId,
@@ -89,12 +95,13 @@ public sealed class DurableJobContextAuthorizer
                 item => item.Id == providerAccountId.Value,
                 cancellationToken);
             if (account == null ||
-                !IsExactAccountAuthorized(
+                !await IsExactAccountAuthorizedAsync(
+                    context,
                     account,
                     tenantId.Value,
                     ownerUserId.Value,
-                    normalizedLibraryScope,
-                    normalizedCapability!))
+                    normalizedCapability!,
+                    cancellationToken))
             {
                 throw new UnauthorizedAccessException(
                     "The selected provider account is unavailable or outside the initiating context.");
@@ -178,12 +185,13 @@ public sealed class DurableJobContextAuthorizer
             item => item.Id == claim.ProviderAccountId.Value,
             cancellationToken);
         if (account == null ||
-            !IsExactAccountAuthorized(
+            !await IsExactAccountAuthorizedAsync(
+                context,
                 account,
                 claim.TenantId.Value,
                 claim.OwnerUserId.Value,
-                claim.LibraryScopeId,
-                claim.ProviderCapability))
+                claim.ProviderCapability,
+                cancellationToken))
         {
             return DurableJobContextAuthorization.Deny(
                 "job_provider_account_unauthorized",
@@ -221,21 +229,33 @@ public sealed class DurableJobContextAuthorizer
             account.Scope.ToString().ToLowerInvariant());
     }
 
-    private bool IsExactAccountAuthorized(
+    private async Task<bool> IsExactAccountAuthorizedAsync(
+        AllstarrDbContext context,
         ProviderAccountRecord account,
         Guid tenantId,
         Guid ownerUserId,
-        string? libraryScopeId,
-        string capability)
+        string capability,
+        CancellationToken cancellationToken)
     {
-        if (!account.Enabled)
+        if (!account.Enabled || !Enum.TryParse<ProviderCapabilityKind>(capability, true, out var kind) ||
+            !Enum.IsDefined(kind) || capability != kind.ToString().ToLowerInvariant())
         {
             return false;
         }
 
-        return account.OwnerUserId.HasValue
+        var owned = account.OwnerUserId.HasValue
             ? account.TenantId == tenantId && account.OwnerUserId == ownerUserId
             : account.TenantId == null;
+        if (!owned || _providers != null && (!_providers.TryGet(account.ProviderId, out var provider) ||
+                provider?.Capabilities.Any(item => item.Capability == kind && item.HasUsableImplementation &&
+                    item.AllowedAccountScopes.Contains(account.Scope)) != true))
+            return false;
+
+        if (account.SecretReferenceId is not { } secretId) return true;
+        var purpose = $"provider-account:{account.ProviderId}:{account.Id:N}";
+        return await context.SecretReferences.AsNoTracking().AnyAsync(item => item.Id == secretId &&
+            item.TenantId == account.TenantId && item.BackendIdentityId == null &&
+            item.Purpose == purpose && item.RevokedAt == null, cancellationToken);
     }
 
     private static string? NormalizeLibraryScope(string? value)

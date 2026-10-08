@@ -8,7 +8,7 @@ namespace allstarr.Controllers;
 [ApiController]
 [Route("api/admin/updates")]
 [ServiceFilter(typeof(AdminPortFilter))]
-public sealed class AdminUpdatesController(AdminUpdateFeed feed) : ControllerBase
+public sealed class AdminUpdatesController(AdminUpdateFeed feed, AdminAuthSessionService sessions) : ControllerBase
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -63,6 +63,7 @@ public sealed class AdminUpdatesController(AdminUpdateFeed feed) : ControllerBas
         {
             while (!token.IsCancellationRequested)
             {
+                if (await sessions.GetValidSessionAsync(session.SessionId, token) == null) break;
                 var updates = await feed.ReadAsync(
                     new AdminUpdateScope(tenantId, session.AllstarrUserId, session.IsAdministrator),
                     cursor,

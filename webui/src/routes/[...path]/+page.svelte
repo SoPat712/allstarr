@@ -27,11 +27,7 @@
     icon: "headphones",
     mobile: false,
   };
-  // Intelligence remains available only in the explicit development composition.
-  const navigationDestinations = destinations.filter((item) => item.href !== "#/intelligence");
-  const mobileDestinations = navigationDestinations.filter((item) => item.mobile);
-  const moreDestinations = [preferencesDestination, ...navigationDestinations.filter((item) => !item.mobile)];
-  const librarySections = [
+  const allLibrarySections = [
     { id: "playlists", label: "Playlists", href: "#/library/playlists" },
     { id: "mappings", label: "Mappings", href: "#/library/mappings" },
     { id: "cached", label: "Cached", href: "#/library/cached" },
@@ -71,6 +67,16 @@
   let viewError = $state("");
   let viewRequest = 0;
 
+  const administrator = $derived(session?.user?.isAdministrator === true);
+  // Intelligence remains available only in the explicit development composition.
+  const navigationDestinations = $derived(destinations.filter((item) =>
+    item.href !== "#/intelligence" && (administrator || item.href !== "#/settings")));
+  const mobileDestinations = $derived(navigationDestinations.filter((item) => item.mobile));
+  const moreDestinations = $derived([preferencesDestination, ...navigationDestinations.filter((item) => !item.mobile)]);
+  const librarySections = $derived(administrator
+    ? allLibrarySections
+    : allLibrarySections.filter((item) => item.id === "playlists" || item.id === "mappings"));
+
   function currentRoute(path: string) {
     if (path === "/home") return "/";
     if (["/library", "/library/link", "/library/injected", "/library/external"].includes(path)) {
@@ -85,6 +91,14 @@
   }
 
   const route = $derived(currentRoute(`/${page.params.path ?? ""}`));
+  const forbiddenRoute = $derived(!administrator && (
+    route.startsWith("/settings") ||
+    route === "/library/cached" ||
+    route === "/library/kept" ||
+    route === "/integrations/extensions" ||
+    route === "/integrations/routing" ||
+    route === "/intelligence"
+  ));
   const routeQuery = $derived(new URLSearchParams(page.url.hash.split("?", 2)[1] ?? ""));
   const activeDestination = $derived(
     [...destinations, preferencesDestination].find((item) =>
@@ -103,7 +117,7 @@
   );
   const activeProps = $derived(
     route === "/"
-      ? { administrator: session?.user?.isAdministrator ?? false }
+      ? { administrator }
       : route === "/library/playlists"
         ? { initialId: routeQuery.get("playlist") ?? "" }
         : route === "/library/mappings"
@@ -118,12 +132,12 @@
               : route === "/intelligence"
                 ? {
                     initialSection: routeQuery.get("section") ?? "overview",
-                    administrator: session?.user?.isAdministrator ?? false,
+                    administrator,
                   }
                 : route.startsWith("/integrations")
                   ? {
                       section: route.split("/")[2] || "services",
-                      administrator: session?.user?.isAdministrator ?? false,
+                      administrator,
                       initialSource: routeQuery.get("source") ?? "",
                       initialSection: routeQuery.get("section") ?? "data",
                       initialConnect: routeQuery.get("connect") === "1",
@@ -132,9 +146,11 @@
                     ? {
                         section: route.split("/")[2] || "general",
                         initialPanel: routeQuery.get("provider") ?? "",
-                        administrator: session?.user?.isAdministrator ?? false,
+                        administrator,
                         onOpenSetup: reopenSetup,
                       }
+                    : route === "/activity"
+                      ? { administrator }
                     : {},
   );
 
@@ -167,6 +183,7 @@
   }
 
   function viewLoader(path: string) {
+    if (forbiddenRoute) return;
     if (path === "/") return import("$lib/components/HomeView.svelte");
     if (path === "/library/playlists") return import("$lib/components/PlaylistsView.svelte");
     if (path === "/library/mappings") return import("$lib/components/MappingView.svelte");
@@ -192,7 +209,16 @@
 
   $effect(() => {
     const path = route;
+    administrator;
     session?.features?.intelligence;
+    if (forbiddenRoute) {
+      viewRequest++;
+      ActiveView = undefined;
+      loadedViewKey = "";
+      loadedRoute = path;
+      viewError = "";
+      return;
+    }
     const loader = viewLoader(path);
     const key = viewKey(path);
     if (ActiveView && loadedViewKey === key) {
@@ -558,7 +584,7 @@
         </div>
       </header>
 
-      {#if route.startsWith("/library/")}
+      {#if route.startsWith("/library/") && !forbiddenRoute}
         <SegmentedNav
           items={librarySections}
           active={route.split("/").at(-1) ?? "playlists"}
@@ -584,8 +610,21 @@
         </div>
       {/if}
 
-      {#if ActiveView && loadedViewKey === viewKey(route)}
-        <ActiveView {...activeProps} />
+      {#if forbiddenRoute}
+        <section class="panel empty-state" aria-labelledby="administrator-required-title">
+          <span class="empty-orbit" aria-hidden="true">✦</span>
+          <p class="eyebrow">Administrator required</p>
+          <h2 id="administrator-required-title">This workspace is for administrators.</h2>
+          <p>Your Home, listening preferences, playlists, accounts, and personal activity remain available.</p>
+          <div class="flex flex-wrap justify-center gap-2">
+            <a class="button" href="#/">Go to Home</a>
+            <a class="button" href="#/preferences">Listening preferences</a>
+          </div>
+        </section>
+      {:else if ActiveView && loadedViewKey === viewKey(route)}
+        {#key `${loadedViewKey}:${administrator}`}
+          <ActiveView {...activeProps} />
+        {/key}
       {:else if viewError && loadedRoute === route}
         <RouteError
           eyebrow="View unavailable"
@@ -618,9 +657,9 @@
       }}>
         <header>
           <div>
-            <p class="eyebrow">Account and administration</p>
+            <p class="eyebrow">{administrator ? "Account and administration" : "Your account"}</p>
             <Dialog.Title>More</Dialog.Title>
-            <Dialog.Description>Listening preferences, connections, deployment settings, appearance, and your session.</Dialog.Description>
+            <Dialog.Description>{administrator ? "Listening preferences, connections, deployment settings, appearance, and your session." : "Listening preferences, connections, appearance, and your session."}</Dialog.Description>
           </div>
           <Dialog.Close class="icon-button" aria-label="Close more destinations"><X size={18} aria-hidden="true" /></Dialog.Close>
         </header>
@@ -651,7 +690,7 @@
                 <span class="nav-icon"><UiIcon name={destination.icon} /></span>
                 <span>
                   <strong>{destination.label}</strong>
-                  <small>{destination.href === "#/preferences" ? "Content and track labels for your account" : destination.label === "Integrations" ? "Services, accounts, extensions, and routing" : "Deployment and operator controls"}</small>
+                  <small>{destination.href === "#/preferences" ? "Content and track labels for your account" : destination.label === "Integrations" ? (administrator ? "Services, accounts, extensions, and routing" : "Services and your connected accounts") : "Deployment and operator controls"}</small>
                 </span>
               </a>
             {/each}

@@ -101,6 +101,8 @@ public sealed class JobsController : ControllerBase
             .ToDictionary(group => group.Key, group => group.First().Id);
         var progress = await context.AuditEvents.AsNoTracking()
             .Where(item => item.Category == "job-progress" &&
+                           (session.IsAdministrator || item.TenantId == session.TenantId &&
+                               item.ActorUserId == session.AllstarrUserId) &&
                            correlationIds.Contains(item.CorrelationId))
             .OrderByDescending(item => item.CreatedAt)
             .Take(Math.Min(2500, limit * 25))
@@ -170,6 +172,7 @@ public sealed class JobsController : ControllerBase
             .ToListAsync(cancellationToken);
         var progress = await context.AuditEvents.AsNoTracking()
             .Where(item => item.Category == "job-progress" &&
+                           item.TenantId == job.TenantId && item.ActorUserId == job.OwnerUserId &&
                            item.CorrelationId == job.CorrelationId)
             .OrderByDescending(item => item.CreatedAt)
             .Take(100)

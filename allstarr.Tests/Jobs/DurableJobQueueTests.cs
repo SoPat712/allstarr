@@ -668,6 +668,125 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             _tenantId,
             _userId));
 
+    [Theory]
+    [InlineData("user")]
+    [InlineData("account")]
+    [InlineData("revoked")]
+    [InlineData("purpose")]
+    [InlineData("credential-scope")]
+    [InlineData("capability")]
+    [InlineData("provider-removed")]
+    [InlineData("account-scope")]
+    public async Task Retry_RevalidatesExactInitiatorAccountCapabilityAndCredential(string change)
+    {
+        var account = await AddProviderAccount("deezer", _userId);
+        var secretId = Guid.CreateVersion7();
+        var otherUser = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.Users.Add(new PlatformUserRecord
+            {
+                Id = otherUser,
+                TenantId = _tenantId,
+                DisplayName = "Other",
+                Status = PlatformUserStatus.Active
+            });
+            db.SecretReferences.Add(new SecretReferenceRecord
+            {
+                Id = secretId,
+                TenantId = _tenantId,
+                Purpose = $"provider-account:deezer:{account.Id:N}",
+                ActiveVersion = 1,
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            });
+            (await db.ProviderAccounts.SingleAsync(item => item.Id == account.Id)).SecretReferenceId = secretId;
+            await db.SaveChangesAsync();
+        }
+        var registry = new Moq.Mock<allstarr.Core.Capabilities.IProviderRegistry>();
+        allstarr.Core.Capabilities.ProviderDescriptor? descriptor = JobProvider();
+        registry.Setup(item => item.TryGet("deezer", out descriptor)).Returns(true);
+        var authorizer = new DurableJobContextAuthorizer(_factory, registry.Object);
+        var queue = new DurableJobQueue(_factory, _options, new JobPayloadPolicy(_options), _clock, authorizer);
+        var request = new DurableJobEnqueueRequest<object>("provider.download", "authorized-retry", new { track = "fixture" },
+            _tenantId, _userId, ProviderAccountId: account.Id, Capability: "download");
+        await queue.EnqueueAsync(request);
+        var first = (await queue.ClaimNextAsync("worker"))!;
+        Assert.True((await queue.ReauthorizeAsync(first)).Authorized);
+        await queue.CompleteAsync(first, DurableJobCompletion.Retry("transient", "Try again", TimeSpan.FromSeconds(1)));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            if (change == "user") (await db.Users.SingleAsync(item => item.Id == _userId)).Status = PlatformUserStatus.Disabled;
+            if (change == "account") (await db.ProviderAccounts.SingleAsync(item => item.Id == account.Id)).Enabled = false;
+            if (change == "revoked") (await db.SecretReferences.SingleAsync()).RevokedAt = _clock.UtcNow;
+            if (change == "purpose") (await db.SecretReferences.SingleAsync()).Purpose = "backend:unrelated";
+            if (change == "credential-scope") (await db.SecretReferences.SingleAsync()).TenantId = null;
+            await db.SaveChangesAsync();
+        }
+        if (change is "capability" or "account-scope" or "provider-removed")
+        {
+            descriptor = JobProvider(change == "capability", change == "account-scope");
+            registry.Setup(item => item.TryGet("deezer", out descriptor)).Returns(change != "provider-removed");
+        }
+        _clock.Advance(TimeSpan.FromSeconds(2));
+        var retried = (await queue.ClaimNextAsync("worker-retry"))!;
+        Assert.NotNull(retried);
+        Assert.Equal(2, retried.AttemptNumber);
+        Assert.Equal(first.ProviderAccountId, retried.ProviderAccountId);
+        Assert.False((await queue.ReauthorizeAsync(retried)).Authorized);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queue.EnqueueAsync(request with { IdempotencyKey = "new-denied" }));
+    }
+
+    [Fact]
+    public async Task PersonalAccount_CannotBeUsedByAnotherActiveInitiator()
+    {
+        var account = await AddProviderAccount("deezer", _userId);
+        var other = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.Users.Add(new PlatformUserRecord
+            {
+                Id = other,
+                TenantId = _tenantId,
+                DisplayName = "Other",
+                Status = PlatformUserStatus.Active
+            });
+            await db.SaveChangesAsync();
+        }
+        var authorizer = new DurableJobContextAuthorizer(_factory);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => authorizer.AuthorizeEnqueueAsync(
+            _tenantId, other, account.Id, null, "download", null));
+        await _queue.EnqueueAsync(new DurableJobEnqueueRequest<object>("fixture", "foreign-account", new { track = "fixture" },
+            _tenantId, _userId, ProviderAccountId: account.Id, Capability: "download"));
+        var claim = (await _queue.ClaimNextAsync("worker"))!;
+        Assert.False((await authorizer.ReauthorizeAsync(claim with { OwnerUserId = other })).Authorized);
+    }
+
+    [Fact]
+    public async Task SharedAccount_RequiresExplicitActiveInitiatorAndRejectsUnknownCapability()
+    {
+        var account = await AddProviderAccount("deezer", _userId);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var stored = await db.ProviderAccounts.SingleAsync();
+            stored.OwnerUserId = null;
+            stored.TenantId = null;
+            await db.SaveChangesAsync();
+        }
+        var authorizer = new DurableJobContextAuthorizer(_factory);
+        Assert.Equal(_userId, (await authorizer.AuthorizeEnqueueAsync(_tenantId, _userId, account.Id, null, "download", null)).OwnerUserId);
+        await Assert.ThrowsAsync<ArgumentException>(() => authorizer.AuthorizeEnqueueAsync(_tenantId, null, account.Id, null, "download", null));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => authorizer.AuthorizeEnqueueAsync(_tenantId, _userId, account.Id, null, "anything", null));
+    }
+
+    private static allstarr.Core.Capabilities.ProviderDescriptor JobProvider(bool unavailable = false, bool sharedOnly = false) => new(
+        "deezer", "Deezer", "Fixture provider", allstarr.Core.Capabilities.ProviderOrigin.BuiltIn, "1", "1.0",
+        [new(allstarr.Core.Capabilities.ProviderCapabilityKind.Download,
+            unavailable ? allstarr.Core.Capabilities.ProviderCapabilitySupportState.Unavailable : allstarr.Core.Capabilities.ProviderCapabilitySupportState.Supported,
+            allstarr.Core.Capabilities.ProviderAccountRequirement.Required, "1.0", ["checkAvailability", "download"],
+            sharedOnly ? [ProviderAccountScope.Shared] : [ProviderAccountScope.Personal, ProviderAccountScope.Shared])],
+        new allstarr.Core.Capabilities.ProviderPermissionDescriptor());
+
     private StorageOptions StorageOptions() => new()
     {
         DataDirectory = _database.StorageOptions.DataDirectory,

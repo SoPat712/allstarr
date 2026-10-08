@@ -24,7 +24,9 @@ public sealed class AdminProtocolExecutionContextFactory(
             .Where(item => item.TenantId == tenantId &&
                            item.UserId == userId &&
                            item.BackendType == backendType &&
-                           item.PrincipalId == session.UserId)
+                           item.PrincipalId == session.UserId &&
+                           db.Users.Any(user => user.Id == userId && user.TenantId == tenantId &&
+                               user.Status == PlatformUserStatus.Active))
             .OrderByDescending(item => item.LastSeenAt)
             .FirstOrDefaultAsync(cancellationToken)
             ?? throw new UnauthorizedAccessException("The linked backend identity is unavailable.");

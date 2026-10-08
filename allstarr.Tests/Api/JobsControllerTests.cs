@@ -92,6 +92,38 @@ public sealed class JobsControllerTests : IAsyncLifetime
         Assert.Equal(2, json.RootElement.GetProperty("jobs").GetArrayLength());
     }
 
+    [Fact]
+    public async Task Progress_WithCollidingCorrelation_RemainsOwnedInListAndDetail()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var own = await db.Jobs.SingleAsync(item => item.Id == _ownJobId);
+            var other = await db.Jobs.SingleAsync(item => item.Id == _otherJobId);
+            other.CorrelationId = own.CorrelationId;
+            foreach (var owner in new[] { _userId, _otherUserId })
+                db.AuditEvents.Add(new AuditEventRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    TenantId = _tenantId,
+                    ActorUserId = owner,
+                    Category = "job-progress",
+                    Action = owner == _userId ? "own-progress" : "other-progress",
+                    Outcome = "running",
+                    CorrelationId = own.CorrelationId,
+                    DetailsJson = "{}",
+                    CreatedAt = DateTimeOffset.UtcNow
+                });
+            await db.SaveChangesAsync();
+        }
+        var controller = Controller(Session(_userId));
+        foreach (var result in new[] { await controller.List(), await controller.Get(_ownJobId) })
+        {
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(result).Value));
+            var progress = Assert.Single(json.RootElement.GetProperty("progress").EnumerateArray());
+            Assert.Equal("own-progress", progress.GetProperty("Action").GetString());
+        }
+    }
+
     private JobsController Controller(AdminAuthSession session)
     {
         var httpContext = new DefaultHttpContext();

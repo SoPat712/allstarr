@@ -71,6 +71,7 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
         CancellationToken cancellationToken)
     {
         limit = Math.Clamp(limit, 1, 250);
+        if (!scope.IsAdministrator && (scope.UserId == null || scope.UserId == Guid.Empty)) return [];
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await context.Database.BeginTransactionAsync(
             IsolationLevel.RepeatableRead,
@@ -103,12 +104,7 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
 
         var audits = await context.AuditEvents.AsNoTracking()
             .Where(item => item.TenantId == scope.TenantId &&
-                (scope.IsAdministrator ||
-                 item.ActorUserId == scope.UserId ||
-                 context.Jobs.Any(job =>
-                     job.TenantId == scope.TenantId &&
-                     job.OwnerUserId == scope.UserId &&
-                     job.CorrelationId == item.CorrelationId)) &&
+                (scope.IsAdministrator || item.ActorUserId == scope.UserId) &&
                 (item.CreatedAt > cursor.OccurredAt ||
                  item.CreatedAt == cursor.OccurredAt &&
                  (AuditSource > cursor.Source ||

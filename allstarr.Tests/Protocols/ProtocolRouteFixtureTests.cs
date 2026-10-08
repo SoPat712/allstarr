@@ -1482,6 +1482,51 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task JellyfinPlayback_SameDeviceCannotReadOrClearAnotherListenersCurrentItem()
+    {
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/Users/Me")
+            {
+                var authorization = string.Join(" ", request.Headers.GetValues("Authorization"));
+                return Json(200, authorization.Contains("listener-b", StringComparison.Ordinal)
+                    ? """{"Id":"listener-b","Name":"B"}""" : """{"Id":"listener-a","Name":"A"}""");
+            }
+            return Json(204, "{}");
+        });
+        using var client = factory.CreateClient();
+        var manager = factory.Services.GetRequiredService<allstarr.Services.Jellyfin.JellyfinSessionManager>();
+        var backend = factory.Services.GetRequiredService<IdentityOptions>().BackendInstanceId;
+        var a = new allstarr.Services.Jellyfin.JellyfinSessionKey(backend, "listener-a", "same-device");
+        var b = new allstarr.Services.Jellyfin.JellyfinSessionKey(backend, "listener-b", "same-device");
+        foreach (var owner in new[] { a, b })
+        {
+            await manager.RegisterProxiedWebSocketAsync(owner);
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/Sessions/Playing")
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { ItemId = owner.BackendPrincipalId + "-track", PositionTicks = 0 }),
+                    Encoding.UTF8, "application/json")
+            };
+            request.Headers.TryAddWithoutValidation("Authorization",
+                $"MediaBrowser Client=\"Fixture\", Device=\"Fixture\", DeviceId=\"same-device\", Version=\"1\", Token=\"{owner.BackendPrincipalId}\"");
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        }
+        Assert.Equal("listener-a-track", manager.GetLastPlayingItemId(a));
+        Assert.Equal("listener-b-track", manager.GetLastPlayingItemId(b));
+        using var stop = new HttpRequestMessage(HttpMethod.Post, "/Sessions/Playing/Stopped")
+        {
+            Content = new StringContent("{}", Encoding.UTF8, "application/json")
+        };
+        stop.Headers.TryAddWithoutValidation("Authorization",
+            "MediaBrowser Client=\"Fixture\", Device=\"Fixture\", DeviceId=\"same-device\", Version=\"1\", Token=\"listener-b\"");
+        using var stopped = await client.SendAsync(stop);
+        Assert.Equal(HttpStatusCode.NoContent, stopped.StatusCode);
+        Assert.Null(manager.GetLastPlayingItemId(b));
+        Assert.Equal("listener-a-track", manager.GetLastPlayingItemId(a));
+    }
+
+    [Fact]
     public async Task JellyfinInstantMix_PreservesPinnedRouteClassesAcrossSupportedVersions()
     {
         using var fixtures = ReadFixture("jellyfin-instant-mix-paths.json");

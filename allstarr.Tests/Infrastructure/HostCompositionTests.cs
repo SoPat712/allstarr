@@ -212,7 +212,7 @@ public sealed class HostCompositionTests
         var schema = Assert.IsType<AdminUiSchemaResponse>(result.Value);
 
         Assert.Equal(allowConnections, schema.ListenersCanConnectOwnAccounts);
-        Assert.Equal(["sources", "settings"], schema.Routes.Select(route => route.Id));
+        Assert.Equal(["home", "playlists", "mappings", "sources", "activity", "preferences"], schema.Routes.Select(route => route.Id));
         Assert.All(schema.Providers, provider =>
         {
             Assert.Empty(provider.ConfigSchema);

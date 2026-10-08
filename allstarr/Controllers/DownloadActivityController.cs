@@ -45,15 +45,16 @@ public class DownloadActivityController : ControllerBase
     public async Task<IActionResult> GetNowPlaying(CancellationToken cancellationToken)
     {
         if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
-            value is not AdminAuthSession { IsAdministrator: true } session)
+            value is not AdminAuthSession { TenantId: { }, AllstarrUserId: { } } session)
         {
-            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Administrator permissions required" });
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "A linked Allstarr user is required" });
         }
 
         var states = _playbackSources
             .SelectMany(source => source.GetActivePlaybackStates(TimeSpan.FromMinutes(5)))
-            .Where(state => state.TenantId == session.TenantId)
-            .GroupBy(state => state.DeviceId, StringComparer.OrdinalIgnoreCase)
+            .Where(state => state.TenantId == session.TenantId &&
+                (session.IsAdministrator || state.UserId == session.AllstarrUserId))
+            .GroupBy(state => (state.UserId, DeviceId: state.DeviceId.ToUpperInvariant()))
             .Select(group => group.OrderByDescending(state => state.LastActivity).First())
             .OrderByDescending(state => state.LastActivity)
             .ToList();
@@ -80,7 +81,9 @@ public class DownloadActivityController : ControllerBase
                 UserName = state.UserName ?? "Unknown listener",
                 AvatarUrl = string.IsNullOrWhiteSpace(state.BackendUserId)
                     ? null
-                    : $"/api/admin/ui/users/{Uri.EscapeDataString(state.BackendUserId)}/avatar",
+                    : session.IsAdministrator
+                        ? $"/api/admin/ui/users/{Uri.EscapeDataString(state.BackendUserId)}/avatar"
+                        : "/api/admin/auth/me/avatar",
                 Client = state.Client ?? "Music client",
                 Device = state.Device,
                 ItemId = itemId,
@@ -111,7 +114,7 @@ public class DownloadActivityController : ControllerBase
                     Message = item.SafeMessage,
                     UpdatedAt = item.UpdatedAt
                 }).ToList() ?? [],
-                Scrobbled = _playbackDeliveries?.WasDelivered(itemId, state.DeviceId) == true ||
+                Scrobbled = _playbackDeliveries?.WasDelivered(state.TenantId, state.UserId, itemId, state.DeviceId) == true ||
                     delivery?.Checkpoints.Any(item => item.Kind == PlaybackScrobbleDeliveryKind.Completed &&
                         item.State is ScopedPlaybackScrobbleOutcome.Delivered or ScopedPlaybackScrobbleOutcome.Ignored) == true
             });
@@ -146,7 +149,7 @@ public class DownloadActivityController : ControllerBase
         var checkpoints = occurrenceKeys.Length == 0
             ? []
             : await db.PlaybackDeliveryCheckpoints.AsNoTracking()
-                .Where(item => item.TenantId == tenantId && item.OccurrenceKey != null &&
+                .Where(item => item.TenantId == tenantId && userIds.Contains(item.OwnerUserId) && item.OccurrenceKey != null &&
                     occurrenceKeys.Contains(item.OccurrenceKey))
                 .OrderByDescending(item => item.Kind)
                 .ThenByDescending(item => item.UpdatedAt)
@@ -162,7 +165,8 @@ public class DownloadActivityController : ControllerBase
             item => item.Key,
             item => new PlaybackDeliveryState(
                 item.Value,
-                checkpoints.Where(checkpoint => checkpoint.OccurrenceKey == item.Value.OccurrenceKey)
+                checkpoints.Where(checkpoint => checkpoint.OwnerUserId == item.Value.OwnerUserId &&
+                        checkpoint.OccurrenceKey == item.Value.OccurrenceKey)
                     .GroupBy(checkpoint => checkpoint.TargetId, StringComparer.OrdinalIgnoreCase)
                     .Select(group => group.First())
                     .OrderBy(checkpoint => checkpoint.TargetId, StringComparer.OrdinalIgnoreCase)
@@ -184,6 +188,7 @@ public class DownloadActivityController : ControllerBase
             AdminAuthSessionService.HttpContextSessionItemKey, out var value)
             ? value as AdminAuthSession
             : null;
+        if (session is not { TenantId: { }, AllstarrUserId: { } }) return NotFound();
         if (ExternalPlaybackMetadataResolver.ParseTrackIdentity(normalizedItemId) == null)
         {
             if (session?.AllstarrUserId is not { } viewerId) return NotFound();
