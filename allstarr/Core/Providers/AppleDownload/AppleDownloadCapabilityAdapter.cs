@@ -4,6 +4,7 @@ using System.Text;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
 using allstarr.Models.Settings;
+using allstarr.Services;
 using allstarr.Services.AppleMusic;
 using allstarr.Services.Common;
 using Microsoft.Extensions.Options;
@@ -326,3 +327,6 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
         expected.Host.Equals(actual.Host, StringComparison.OrdinalIgnoreCase) &&
         expected.Port == actual.Port;
 }
+
+public sealed class AppleDownloadMetadataCapabilityAdapter(IConcreteMetadataService legacy)
+    : ConcreteMetadataCapabilityAdapter(AppleDownloadCapabilityAdapter.StableProviderId, legacy);

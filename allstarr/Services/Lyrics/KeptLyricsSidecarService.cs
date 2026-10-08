@@ -6,6 +6,18 @@ using allstarr.Services.Common;
 
 namespace allstarr.Services.Lyrics;
 
+public interface IKeptLyricsSidecarService
+{
+    string GetSidecarPath(string audioFilePath);
+
+    Task<string?> EnsureSidecarAsync(
+        string audioFilePath,
+        Song? song = null,
+        string? externalProvider = null,
+        string? externalId = null,
+        CancellationToken cancellationToken = default);
+}
+
 public class KeptLyricsSidecarService : IKeptLyricsSidecarService
 {
     private static readonly Regex ProviderSuffixRegex = new(
