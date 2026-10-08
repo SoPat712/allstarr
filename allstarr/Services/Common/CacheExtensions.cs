@@ -47,8 +47,6 @@ public static class CacheExtensions
         TimeSpan freshFor) =>
         Policy(category) with { FreshFor = freshFor };
 
-    public static TimeSpan SearchResultsTTL =>
-        Policy(ApplicationCacheCategory.SearchResults).FreshFor;
     public static TimeSpan PlaylistImagesTTL =>
         Policy(ApplicationCacheCategory.Artwork, GetCacheSettings().PlaylistImagesTTL).FreshFor;
     public static TimeSpan LyricsTTL =>

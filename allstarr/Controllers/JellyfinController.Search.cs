@@ -34,7 +34,6 @@ public partial class JellyfinController
     {
         var boundSearchTerm = searchTerm;
         searchTerm = GetEffectiveSearchTerm(searchTerm, Request.QueryString.Value);
-        string? searchCacheKey = null;
 
         // Preserve Jellyfin's distinct primary and contributing artist relationships.
         var effectiveArtistIds = albumArtistIds ?? contributingArtistIds ?? artistIds;
@@ -171,33 +170,7 @@ public partial class JellyfinController
             return HandleProxyResponse(result, statusCode);
         }
 
-        if (!string.IsNullOrWhiteSpace(searchTerm))
-        {
-            // Relation-filtered searches bypass keys that do not encode every relation.
-            if (string.IsNullOrWhiteSpace(effectiveArtistIds) && string.IsNullOrWhiteSpace(albumIds))
-            {
-                searchCacheKey = CacheKeyBuilder.BuildSearchKey(
-                    searchTerm,
-                    includeItemTypes,
-                    limit,
-                    startIndex,
-                    parentId,
-                    sortBy,
-                    Request.Query["SortOrder"].ToString(),
-                    recursive,
-                    userId,
-                    Request.Query["IsFavorite"].ToString());
-                var cachedResult = await _cache.GetStringAsync(searchCacheKey);
-
-                if (!string.IsNullOrWhiteSpace(cachedResult))
-                {
-                    _logger.LogInformation("SEARCH TRACE: cache hit for key '{CacheKey}'", searchCacheKey);
-                    return Content(cachedResult, "application/json");
-                }
-            }
-
-        }
-        else
+        if (string.IsNullOrWhiteSpace(searchTerm))
         {
             _logger.LogDebug("Browse request with no filters, proxying to Jellyfin with full query string");
 
@@ -500,15 +473,6 @@ public partial class JellyfinController
             items.AddRange(allSongs);
         }
 
-        var includesSongs = itemTypes == null || itemTypes.Length == 0 || itemTypes.Contains("Audio");
-        var includesAlbums = itemTypes == null || itemTypes.Length == 0 || itemTypes.Contains("MusicAlbum") || itemTypes.Contains("Playlist");
-        var includesArtists = itemTypes == null || itemTypes.Length == 0 || itemTypes.Contains("MusicArtist");
-
-        var externalHasRequestedTypeResults =
-            (includesSongs && externalSongItems.Count > 0) ||
-            (includesAlbums && (externalAlbumItems.Count > 0 || mergedPlaylistItems.Count > 0)) ||
-            (includesArtists && externalArtistItems.Count > 0);
-
         var shapedResponse = _searchProtocolAdapter.ShapeItemsResponse(items, startIndex, limit);
 
         _logger.LogDebug(
@@ -519,25 +483,6 @@ public partial class JellyfinController
         try
         {
             var json = shapedResponse.Body;
-
-            if (!string.IsNullOrWhiteSpace(searchTerm) &&
-                string.IsNullOrWhiteSpace(effectiveArtistIds) &&
-                !string.IsNullOrWhiteSpace(searchCacheKey))
-            {
-                if (externalHasRequestedTypeResults)
-                {
-                    await _cache.SetStringAsync(searchCacheKey, json, CacheExtensions.SearchResultsTTL);
-                    _logger.LogDebug("💾 Cached search results for '{SearchTerm}' ({Minutes} min TTL)", searchTerm,
-                        CacheExtensions.SearchResultsTTL.TotalMinutes);
-                }
-                else
-                {
-                    _logger.LogInformation(
-                        "SEARCH TRACE: skipped cache write for query '{Query}' because requested external result buckets were empty (types={ItemTypes})",
-                        cleanQuery,
-                        includeItemTypes ?? string.Empty);
-                }
-            }
 
             _logger.LogDebug("About to serialize response...");
 
