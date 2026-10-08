@@ -50,14 +50,24 @@ public sealed class FavoriteActionJobHandler(
             .Where(item => item.EventId == favoriteEvent.Id && item.State != FavoriteActionState.Succeeded &&
                            item.State != FavoriteActionState.Cancelled)
             .OrderBy(item => item.ActionType == FavoriteActionPipeline.VirtualLikedAction ? 0 :
-                             item.ActionType == "match" ? 1 :
-                             item.ActionType == "download" ? 2 :
-                             item.ActionType == "place" ? 3 :
-                             item.ActionType == "enrich" ? 4 :
-                             item.ActionType == "refresh" ? 5 : 99)
+                             item.ActionType == "download" ? 1 : 99)
             .ThenBy(item => item.CreatedAt)
             .ToListAsync(cancellationToken);
-        foreach (var action in actions)
+        var retired = actions.Where(action => action.ActionType is
+            "match" or "place" or "enrich" or "refresh" or "lastfm").ToArray();
+        foreach (var action in retired)
+        {
+            action.State = FavoriteActionState.Cancelled;
+            action.LastErrorCode = "favorite_action_retired";
+            action.LastErrorMessage = "This favorite action is no longer supported.";
+            action.CompletedAt = clock.UtcNow;
+            action.UpdatedAt = clock.UtcNow;
+            action.Revision++;
+        }
+        if (retired.Length > 0)
+            await database.SaveChangesAsync(cancellationToken);
+
+        foreach (var action in actions.Where(action => action.State != FavoriteActionState.Cancelled))
         {
             if (cancellationToken.IsCancellationRequested)
                 return await CancelAsync(database, favoriteEvent, cancellationToken);
@@ -75,7 +85,7 @@ public sealed class FavoriteActionJobHandler(
             {
                 result = await ApplyVirtualLikedStateAsync(database, favoriteEvent, cancellationToken);
             }
-            else if (_executors.TryGetValue(action.ActionType, out var executor))
+            else if (action.ActionType == "download" && _executors.TryGetValue(action.ActionType, out var executor))
             {
                 try
                 {
@@ -222,27 +232,13 @@ public sealed class FavoriteActionJobHandler(
 
 public static class FavoriteActionRegistration
 {
-    public static IServiceCollection AddFavoriteActions(this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddFavoriteActions(this IServiceCollection services)
     {
-        var policy = new FavoriteActionPolicyOptions();
-        configuration.GetSection("FavoriteActions").Bind(policy);
-        services.AddSingleton(policy);
-        services.AddSingleton<IDurableFavoriteActionPolicyResolver, DurableFavoriteActionPolicyResolver>();
-        services.AddSingleton<FavoriteActionPolicyStore>();
         services.AddSingleton<FavoriteActionPipeline>();
         services.AddSingleton<IFavoriteActionPipeline>(provider => provider.GetRequiredService<FavoriteActionPipeline>());
-        services.AddSingleton<IFavoriteActionExecutor, FavoriteMatchActionExecutor>();
         services.AddSingleton<FavoriteDownloadActionExecutor>();
         services.AddSingleton<IFavoriteActionExecutor>(provider =>
             provider.GetRequiredService<FavoriteDownloadActionExecutor>());
-        services.AddSingleton<FavoriteTrackMetadataResolver>();
-        services.AddSingleton<IFavoriteActionExecutor, FavoritePlaceActionExecutor>();
-        services.AddSingleton<IFavoriteActionExecutor, FavoriteEnrichActionExecutor>();
-        services.AddSingleton<IFavoriteActionExecutor, FavoriteRefreshActionExecutor>();
-        services.AddHttpClient(LastFmFavoriteActionExecutor.HttpClientName, client =>
-            client.Timeout = TimeSpan.FromSeconds(10))
-            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
-        services.AddSingleton<IFavoriteActionExecutor, LastFmFavoriteActionExecutor>();
         services.AddSingleton<IDurableJobHandler, FavoriteActionJobHandler>();
         return services;
     }

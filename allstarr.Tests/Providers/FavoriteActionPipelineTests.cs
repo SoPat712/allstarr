@@ -1,4 +1,3 @@
-using allstarr.Core.Downloads;
 using allstarr.Core.Favorites;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Identity;
@@ -7,8 +6,6 @@ using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
-using allstarr.Core.Enrichment;
 
 namespace allstarr.Tests;
 
@@ -55,10 +52,12 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         _pipeline = new FavoriteActionPipeline(_factory, _jobs, _clock);
     }
 
-    [Fact]
-    public async Task RepeatedEvent_IsTenantUserScopedAndCreatesOneJobAndAction()
+    [Theory]
+    [InlineData("native-track", 1)]
+    [InlineData("ext-fixture-song-track-1", 2)]
+    public async Task RepeatedEvent_IsTenantUserScopedAndCreatesOneJobAndEachActionOnce(string itemId, int actionCount)
     {
-        var request = Request(FavoriteOperation.Favorite, "source-revision-1");
+        var request = Request(FavoriteOperation.Favorite, "source-revision-1") with { ItemId = itemId };
         var first = await _pipeline.RecordAsync(request);
         var repeated = await _pipeline.RecordAsync(request);
 
@@ -68,7 +67,7 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         Assert.Equal(first.JobId, repeated.JobId);
         await using var database = await _factory.CreateDbContextAsync();
         Assert.Single(await database.Set<FavoriteEventRecord>().ToListAsync());
-        Assert.Single(await database.Set<FavoriteActionRecord>().ToListAsync());
+        Assert.Equal(actionCount, await database.Set<FavoriteActionRecord>().CountAsync());
         Assert.Single(await database.Jobs.Where(item => item.Type == FavoriteActionPipeline.JobType).ToListAsync());
         Assert.Empty(await database.OutboxMessages.ToListAsync());
     }
@@ -194,9 +193,10 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
     [Fact]
     public async Task Unstar_CancelsOnlyPendingFavoriteWorkAndNeverCreatesRemovalAction()
     {
-        var favorite = await _pipeline.RecordAsync(Request(FavoriteOperation.Favorite, "state-v1"));
+        var request = Request(FavoriteOperation.Favorite, "state-v1") with { ItemId = "ext-fixture-song-track-1" };
+        var favorite = await _pipeline.RecordAsync(request);
         _clock.UtcNow = _clock.UtcNow.AddSeconds(1);
-        var unstar = await _pipeline.RecordAsync(Request(FavoriteOperation.Unfavorite, "state-v1"));
+        var unstar = await _pipeline.RecordAsync(request with { Operation = FavoriteOperation.Unfavorite });
 
         await using (var database = await _factory.CreateDbContextAsync())
         {
@@ -204,6 +204,10 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
                 (await database.Jobs.SingleAsync(item => item.Id == favorite.JobId)).State);
             var oldEvent = await database.Set<FavoriteEventRecord>().SingleAsync(item => item.Id == favorite.EventId);
             Assert.Equal(FavoriteEventState.Cancelled, oldEvent.State);
+            var cancelledActions = await database.Set<FavoriteActionRecord>()
+                .Where(item => item.EventId == favorite.EventId).ToListAsync();
+            Assert.Equal(2, cancelledActions.Count);
+            Assert.All(cancelledActions, action => Assert.Equal(FavoriteActionState.Cancelled, action.State));
             var unstarActions = await database.Set<FavoriteActionRecord>()
                 .Where(item => item.EventId == unstar.EventId).ToListAsync();
             var action = Assert.Single(unstarActions);
@@ -236,42 +240,110 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         Assert.Equal(second.EventId, repeated.EventId);
     }
 
-    [Fact]
-    public async Task RequestCannotEnableActionDeniedByEffectivePolicy()
-    {
-        var denied = new FavoriteActionPipeline(_factory, _jobs, _clock,
-            new FavoriteActionPolicyOptions { AddToVirtualLiked = true, AutoDownload = false });
-        var original = Request(FavoriteOperation.Favorite, "denied-action");
-        var request = original with { OptedInActions = ["download"] };
-
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => denied.RecordAsync(request));
-        await using var database = await _factory.CreateDbContextAsync();
-        Assert.Empty(await database.Set<FavoriteEventRecord>().ToListAsync());
-        Assert.Empty(await database.Jobs.Where(item => item.Type == FavoriteActionPipeline.JobType).ToListAsync());
-    }
-
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task LastFmAction_IsGatedByExactScopedAccount(bool configured)
+    [InlineData("ext-deezer-song-track-1", true)]
+    [InlineData("  ext-deezer-song-track-1  ", true)]
+    [InlineData("ext-apple-download-song-track-1", true)]
+    [InlineData("ext-fixture-track-1", true)]
+    [InlineData("native-track", false)]
+    [InlineData("ext-fixture-playlist-list-1", false)]
+    [InlineData("ext-fixture-album-album-1", false)]
+    [InlineData("ext-fixture-artist-artist-1", false)]
+    public async Task Favorite_QueuesDownloadsOnlyForExternalTracks(string itemId, bool download)
     {
-        var accounts = new RecordingRecommendationAccountAccessor(configured);
-        var pipeline = new FavoriteActionPipeline(_factory, _jobs, _clock,
-            recommendationAccounts: accounts);
-        var request = Request(FavoriteOperation.Favorite, "lastfm-scope", libraryScopeId: "music");
-
-        var receipt = await pipeline.RecordAsync(request);
+        var request = Request(FavoriteOperation.Favorite, "track-kind", libraryScopeId: "music") with { ItemId = itemId };
+        var receipt = await _pipeline.RecordAsync(request);
 
         await using var database = await _factory.CreateDbContextAsync();
         var actions = await database.Set<FavoriteActionRecord>()
-            .Where(item => item.EventId == receipt.EventId).Select(item => item.ActionType).ToListAsync();
-        Assert.Equal(configured, actions.Contains(FavoriteActionPipeline.LastFmAction));
-        Assert.Equal(new IntelligenceScope(_tenantId, _userId, "jellyfin", "jellyfin-main", "music"),
-            accounts.LastScope);
+            .Where(item => item.EventId == receipt.EventId).Select(item => item.ActionType).OrderBy(item => item).ToListAsync();
+        Assert.Equal(download ? new[] { "download", "virtual-liked" } : new[] { "virtual-liked" }, actions);
     }
 
     [Fact]
-    public async Task MatchAction_UsesExactOwnerBackendLibraryAndProviderIdentity()
+    public async Task LegacyPolicy_CannotDisableDownloadsOrEnableRetiredActions()
+    {
+        await using (var database = await _factory.CreateDbContextAsync())
+        {
+            database.FavoriteActionPolicies.Add(new FavoriteActionPolicyRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = _tenantId,
+                Scope = FavoriteActionPolicyScope.Global,
+                Protocol = "jellyfin",
+                BackendInstanceId = "jellyfin-main",
+                LibraryScopeId = "music",
+                AddToVirtualLiked = false,
+                AutoDownload = false,
+                MatchLocalLibrary = true,
+                PlaceManagedFile = true,
+                EnrichMetadata = true,
+                RefreshBackendLibrary = true,
+                UpdatedByUserId = _userId,
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            });
+            await database.SaveChangesAsync();
+        }
+        var receipt = await _pipeline.RecordAsync(Request(FavoriteOperation.Favorite, "old-policy", libraryScopeId: "music")
+            with
+        { ItemId = "ext-fixture-song-track-1" });
+
+        await using var verified = await _factory.CreateDbContextAsync();
+        Assert.Equal(new[] { "download", "virtual-liked" }, await verified.Set<FavoriteActionRecord>()
+            .Where(item => item.EventId == receipt.EventId).Select(item => item.ActionType).OrderBy(item => item).ToListAsync());
+        var saved = await verified.Set<FavoriteEventRecord>().SingleAsync(item => item.Id == receipt.EventId);
+        Assert.Null(saved.TargetCredentialReferenceId);
+        Assert.Contains("download-only", saved.PolicySnapshotJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PendingRetiredActions_AreCancelledWhileDownloadAndFavoriteStateComplete()
+    {
+        var receipt = await _pipeline.RecordAsync(Request(FavoriteOperation.Favorite, "legacy-actions", libraryScopeId: "music")
+            with
+        { ItemId = "ext-fixture-song-track-1" });
+        var retiredTypes = new[] { "match", "place", "enrich", "refresh", "lastfm" };
+        await using (var database = await _factory.CreateDbContextAsync())
+        {
+            database.Set<FavoriteActionRecord>().AddRange(retiredTypes.Select(type => new FavoriteActionRecord
+            {
+                Id = Guid.CreateVersion7(),
+                EventId = receipt.EventId,
+                TenantId = _tenantId,
+                OwnerUserId = _userId,
+                ActionType = type,
+                IdempotencyKey = "legacy-" + type,
+                State = FavoriteActionState.Pending,
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            }));
+            await database.SaveChangesAsync();
+        }
+        var calls = new List<string>();
+        var executors = retiredTypes.Append("download").Select(type => new RecordingExecutor(type, calls));
+        var handler = new FavoriteActionJobHandler(_factory, executors, _clock);
+        var claim = await _jobs.ClaimNextAsync("legacy-actions", [FavoriteActionPipeline.JobType]);
+        Assert.NotNull(claim);
+        var completion = await handler.ExecuteAsync(new DurableJobExecutionContext(claim!, EmptyServices.Instance), default);
+        await _jobs.CompleteAsync(claim!, completion);
+
+        Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
+        Assert.Equal(new[] { "download" }, calls);
+        await using var verified = await _factory.CreateDbContextAsync();
+        var actions = await verified.Set<FavoriteActionRecord>().Where(item => item.EventId == receipt.EventId).ToListAsync();
+        Assert.All(actions.Where(item => retiredTypes.Contains(item.ActionType)), action =>
+        {
+            Assert.Equal(FavoriteActionState.Cancelled, action.State);
+            Assert.Equal("favorite_action_retired", action.LastErrorCode);
+            Assert.Equal(0, action.AttemptCount);
+            Assert.NotNull(action.CompletedAt);
+        });
+        Assert.True((await verified.Set<FavoriteStateRecord>().SingleAsync()).IsFavorite);
+    }
+
+    [Fact]
+    public async Task DownloadAction_ReusesOnlyAnExactOwnerBackendLibraryMatch()
     {
         var identityId = Guid.CreateVersion7();
         var libraryTrackId = Guid.CreateVersion7();
@@ -327,66 +399,38 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
             TenantId = _tenantId,
             OwnerUserId = _userId,
             EventId = favoriteEvent.Id,
-            ActionType = "match",
-            IdempotencyKey = "match-key"
+            ActionType = "download",
+            IdempotencyKey = "download-key"
         };
-
-        var result = await new FavoriteMatchActionExecutor(_factory, _clock)
-            .ExecuteAsync(favoriteEvent, action, default);
-
-        Assert.True(result.Succeeded);
-        await using var verified = await _factory.CreateDbContextAsync();
-        var audit = Assert.Single(await verified.AuditEvents.Where(item => item.Category == "favorite-action").ToListAsync());
-        Assert.Equal("matched", audit.Outcome);
-        Assert.Contains(libraryTrackId.ToString(), audit.DetailsJson, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("/source/never-touched.flac", audit.DetailsJson, StringComparison.Ordinal);
-
         var download = await new FavoriteDownloadActionExecutor(null!, _factory)
-            .ExecuteAsync(favoriteEvent, Action("download"), default);
-        var place = await new FavoritePlaceActionExecutor(_factory, null!, null!, null!, new ManagedTrackPlacementOptions())
-            .ExecuteAsync(favoriteEvent, Action("place"), default);
-        var enrich = await new FavoriteEnrichActionExecutor(_factory, null!, null!, null!, null!)
-            .ExecuteAsync(favoriteEvent, Action("enrich"), default);
+            .ExecuteAsync(favoriteEvent, action, default);
         Assert.True(download.Succeeded);
-        Assert.True(place.Succeeded, $"{place.ErrorCode}: {place.SafeMessage}");
-        Assert.True(enrich.Succeeded, $"{enrich.ErrorCode}: {enrich.SafeMessage}");
-        FavoriteActionRecord Action(string type) => new()
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = _tenantId,
-            OwnerUserId = _userId,
-            EventId = favoriteEvent.Id,
-            ActionType = type,
-            IdempotencyKey = $"{type}-key"
-        };
+
+        favoriteEvent.OwnerUserId = _otherUserId;
+        Assert.False(await FavoriteDownloadActionExecutor.HasLocalMatchAsync(_factory, favoriteEvent, default));
+        favoriteEvent.OwnerUserId = _userId;
+        favoriteEvent.LibraryScopeId = "other-library";
+        Assert.False(await FavoriteDownloadActionExecutor.HasLocalMatchAsync(_factory, favoriteEvent, default));
+        favoriteEvent.LibraryScopeId = "music";
+        favoriteEvent.BackendInstanceId = "other-backend";
+        Assert.False(await FavoriteDownloadActionExecutor.HasLocalMatchAsync(_factory, favoriteEvent, default));
     }
 
     [Fact]
-    public async Task CompositeActions_RetryFromFailedStageWithoutRepeatingCompletedStages()
+    public async Task Download_RetriesWithoutRepeatingCompletedFavoriteState()
     {
-        var policy = new FavoriteActionPolicyOptions
-        {
-            AddToVirtualLiked = false,
-            MatchLocalLibrary = true,
-            AutoDownload = true,
-            PlaceManagedFile = true,
-            EnrichMetadata = true,
-            RefreshBackendLibrary = true
-        };
-        var pipeline = new FavoriteActionPipeline(_factory, _jobs, _clock, policy);
+        var pipeline = new FavoriteActionPipeline(_factory, _jobs, _clock);
         var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "jellyfin-main", "backend-user",
             new AllstarrPrincipal(_tenantId, _userId, "jellyfin", "jellyfin-main", "backend-user", "Favorite user", false),
             "composite-retry", _clock.UtcNow.AddMinutes(5), default, libraryScopeId: "music");
         await pipeline.RecordAsync(new(context, "ext-fixture-song-track-1", FavoriteOperation.Favorite, "chain-v1"));
         var calls = new List<string>();
-        var placeAttempts = 0;
+        var downloadAttempts = 0;
         var executors = new IFavoriteActionExecutor[]
         {
-            new RecordingExecutor("match", calls), new RecordingExecutor("download", calls),
-            new RecordingExecutor("place", calls, () => ++placeAttempts == 1
-                ? FavoriteActionExecutionResult.Retry("place-temporary", "Placement will retry.")
-                : FavoriteActionExecutionResult.Success()),
-            new RecordingExecutor("enrich", calls), new RecordingExecutor("refresh", calls)
+            new RecordingExecutor("download", calls, () => ++downloadAttempts == 1
+                ? FavoriteActionExecutionResult.Retry("download-temporary", "Download will retry.")
+                : FavoriteActionExecutionResult.Success())
         };
         var handler = new FavoriteActionJobHandler(_factory, executors, _clock);
         var first = await _jobs.ClaimNextAsync("favorite-chain-1", [FavoriteActionPipeline.JobType]);
@@ -394,7 +438,9 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         var firstCompletion = await handler.ExecuteAsync(new DurableJobExecutionContext(first!, EmptyServices.Instance), default);
         Assert.Equal(DurableJobCompletionKind.Retry, firstCompletion.Kind);
         await _jobs.CompleteAsync(first!, firstCompletion);
-        Assert.Equal(["match", "download", "place"], calls);
+        Assert.Equal(new[] { "download" }, calls);
+        await using (var verified = await _factory.CreateDbContextAsync())
+            Assert.Equal(1, (await verified.Set<FavoriteStateRecord>().SingleAsync()).Revision);
 
         _clock.UtcNow = _clock.UtcNow.AddHours(1);
         var second = await _jobs.ClaimNextAsync("favorite-chain-2", [FavoriteActionPipeline.JobType]);
@@ -403,48 +449,9 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         await _jobs.CompleteAsync(second!, secondCompletion);
 
         Assert.Equal(DurableJobCompletionKind.Succeeded, secondCompletion.Kind);
-        Assert.Equal(["match", "download", "place", "place", "enrich", "refresh"], calls);
-    }
-
-    [Theory]
-    [InlineData("jellyfin", false)]
-    [InlineData("subsonic", true)]
-    public async Task RefreshAction_SnapshotsOnlyScopedCredentialReferenceIntoChildJob(string protocol, bool needsCredential)
-    {
-        var credential = needsCredential ? Guid.CreateVersion7() : (Guid?)null;
-        var favoriteEvent = new FavoriteEventRecord
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = _tenantId,
-            OwnerUserId = _userId,
-            JobId = Guid.CreateVersion7(),
-            Protocol = protocol,
-            BackendInstanceId = $"{protocol}-main",
-            BackendPrincipalId = "backend-user",
-            LibraryScopeId = "music",
-            CorrelationId = "favorite-refresh",
-            TargetCredentialReferenceId = credential
-        };
-        var action = new FavoriteActionRecord
-        {
-            Id = Guid.CreateVersion7(),
-            EventId = favoriteEvent.Id,
-            TenantId = _tenantId,
-            OwnerUserId = _userId,
-            ActionType = "refresh",
-            IdempotencyKey = $"refresh-{protocol}"
-        };
-        var result = await new FavoriteRefreshActionExecutor(new BackendLibraryRefreshOrchestrator(_jobs))
-            .ExecuteAsync(favoriteEvent, action, default);
-
-        Assert.True(result.Succeeded);
-        await using var db = await _factory.CreateDbContextAsync();
-        var job = await db.Jobs.SingleAsync(item => item.Type == "library.refresh");
-        using var payload = JsonDocument.Parse(job.PayloadJson);
-        var value = payload.RootElement.GetProperty("CredentialReferenceId");
-        if (needsCredential) Assert.Equal(credential, value.GetGuid()); else Assert.Equal(JsonValueKind.Null, value.ValueKind);
-        Assert.DoesNotContain("password", job.PayloadJson, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("token", job.PayloadJson, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(new[] { "download", "download" }, calls);
+        await using var completed = await _factory.CreateDbContextAsync();
+        Assert.Equal(1, (await completed.Set<FavoriteStateRecord>().SingleAsync()).Revision);
     }
 
     private FavoriteMutationRequest Request(FavoriteOperation operation, string revision, Guid? userId = null,
@@ -494,21 +501,4 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         }
     }
 
-    private sealed class RecordingRecommendationAccountAccessor(bool configured)
-        : IScopedRecommendationAccountAccessor
-    {
-        public IntelligenceScope? LastScope { get; private set; }
-
-        public Task<bool> HasAccountAsync(IntelligenceScope scope, string providerId,
-            CancellationToken cancellationToken)
-        {
-            LastScope = scope;
-            Assert.Equal("lastfm", providerId);
-            return Task.FromResult(configured);
-        }
-
-        public Task<T> UseAsync<T>(IntelligenceScope scope, string providerId,
-            Func<JsonElement, CancellationToken, Task<T>> operation,
-            CancellationToken cancellationToken) => throw new NotSupportedException();
-    }
 }

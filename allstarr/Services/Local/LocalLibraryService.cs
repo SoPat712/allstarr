@@ -126,7 +126,10 @@ public class LocalLibraryService : ILocalLibraryService
         return (isExternal, provider, externalId);
     }
 
-    public (bool isExternal, string? provider, string? type, string? externalId) ParseExternalId(string id)
+    public (bool isExternal, string? provider, string? type, string? externalId) ParseExternalId(string id) =>
+        ParseExternalResource(id);
+
+    public static (bool isExternal, string? provider, string? type, string? externalId) ParseExternalResource(string id)
     {
         if (!id.StartsWith("ext-"))
         {

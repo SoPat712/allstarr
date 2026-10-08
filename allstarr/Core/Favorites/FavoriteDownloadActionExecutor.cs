@@ -1,3 +1,5 @@
+using System.Text.Json;
+using allstarr.Services.Local;
 using allstarr.Core.Downloads;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -15,7 +17,7 @@ public sealed class FavoriteDownloadActionExecutor(
         FavoriteActionRecord action,
         CancellationToken cancellationToken)
     {
-        var external = FavoriteMatchActionExecutor.ParseExternalTrack(favoriteEvent.ItemId);
+        var external = ParseExternalTrack(favoriteEvent.ItemId);
         if (external == null)
             return FavoriteActionExecutionResult.Failure(
                 "favorite_download_external_id_required",
@@ -25,7 +27,7 @@ public sealed class FavoriteDownloadActionExecutor(
             return FavoriteActionExecutionResult.Failure(
                 "favorite_download_library_missing",
                 "The favorite event has no authorized library scope for download.");
-        if (await FavoriteMatchActionExecutor.HasLocalMatchAsync(factory, favoriteEvent, cancellationToken))
+        if (await HasLocalMatchAsync(factory, favoriteEvent, cancellationToken))
             return FavoriteActionExecutionResult.Success();
 
         var result = await managedDownloads.ExecuteAsync(
@@ -68,5 +70,41 @@ public sealed class FavoriteDownloadActionExecutor(
         return result.Retryable
             ? FavoriteActionExecutionResult.Retry(code, message)
             : FavoriteActionExecutionResult.Failure(code, message);
+    }
+
+    internal static (string Provider, string Id)? ParseExternalTrack(string itemId)
+    {
+        var (isExternal, provider, type, externalId) = LocalLibraryService.ParseExternalResource(itemId);
+        return isExternal && type == "song"
+            ? (provider!.ToLowerInvariant(), externalId!)
+            : null;
+    }
+
+    internal static bool ProviderIdMatches(string json, string provider, string externalId)
+    {
+        try
+        {
+            var values = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+            return values != null && values.TryGetValue(provider, out var value) &&
+                   value.Equals(externalId, StringComparison.Ordinal);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    internal static async Task<bool> HasLocalMatchAsync(IDbContextFactory<AllstarrDbContext> factory,
+        FavoriteEventRecord favoriteEvent, CancellationToken cancellationToken)
+    {
+        var external = ParseExternalTrack(favoriteEvent.ItemId);
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        var candidates = await db.LibraryTracks.AsNoTracking().Where(item =>
+            item.TenantId == favoriteEvent.TenantId && item.OwnerUserId == favoriteEvent.OwnerUserId &&
+            item.BackendInstanceId == favoriteEvent.BackendInstanceId &&
+            item.LibraryScopeId == favoriteEvent.LibraryScopeId).ToListAsync(cancellationToken);
+        return external == null
+            ? candidates.Any(item => item.BackendItemId == favoriteEvent.ItemId)
+            : candidates.Any(item => ProviderIdMatches(item.ProviderIdsJson, external.Value.Provider, external.Value.Id));
     }
 }
