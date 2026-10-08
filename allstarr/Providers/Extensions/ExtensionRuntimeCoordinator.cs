@@ -25,6 +25,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     private readonly string _packageRoot;
     private readonly IDataProtector _sessionProtector;
     private readonly ConcurrentDictionary<Guid, ExtensionSandbox> _sandboxes = new();
+    private readonly object _runtimeMutationLock = new();
 
     public ExtensionRuntimeCoordinator(
         IDbContextFactory<AllstarrDbContext> factory,
@@ -67,8 +68,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             try
             {
                 var build = await BuildRegistrationAsync(package, cancellationToken);
-                RegisterVerified(build.Registration);
-                StoreSandbox(package.Id, package.ExtensionId, build.Sandbox);
+                RegisterRuntime(package, build);
             }
             catch (Exception exception)
             {
@@ -103,8 +103,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             throw;
         }
         var active = await _controlPlane.ActivateAsync(packageId, expectedRevision, cancellationToken);
-        RegisterVerified(build.Registration);
-        StoreSandbox(package.Id, package.ExtensionId, build.Sandbox);
+        RegisterRuntime(package, build);
         return active;
     }
 
@@ -112,8 +111,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     {
         var package = await GetPackageAsync(packageId, cancellationToken);
         await _controlPlane.DisableAsync(packageId, expectedRevision, cancellationToken);
-        _registry.RemoveExtension(package.ExtensionId);
-        _sandboxes.TryRemove(packageId, out _);
+        RemoveRuntime(package);
     }
 
     public async Task<ExtensionPackageRecord> ResetPermissionsForReviewAsync(
@@ -124,8 +122,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         var package = await GetPackageAsync(packageId, cancellationToken);
         var reset = await _controlPlane.ResetPermissionsForReviewAsync(
             packageId, expectedRevision, cancellationToken);
-        _registry.RemoveExtension(package.ExtensionId);
-        _sandboxes.TryRemove(packageId, out _);
+        RemoveRuntime(package);
         return reset;
     }
 
@@ -135,8 +132,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     {
         var package = await GetPackageAsync(packageId, cancellationToken);
         var uninstalled = await _controlPlane.UninstallAsync(packageId, expectedRevision, cancellationToken);
-        if (_sandboxes.TryRemove(packageId, out _))
-            _registry.RemoveExtension(package.ExtensionId);
+        RemoveRuntime(package);
         try
         {
             var packagePath = Path.GetFullPath(package.PackagePath);
@@ -327,10 +323,23 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             throw new ExtensionSdkValidationException("An extension cannot replace a built-in provider.");
     }
 
-    private void RegisterVerified(ProviderRegistration registration)
+    private void RegisterRuntime(ExtensionPackageRecord package, RuntimeBuild build)
     {
-        RejectBuiltInCollision(registration.Descriptor.Id);
-        _registry.RegisterOrReplaceExtension(registration);
+        lock (_runtimeMutationLock)
+        {
+            RejectBuiltInCollision(build.Registration.Descriptor.Id);
+            _registry.RegisterOrReplaceExtension(build.Registration);
+            StoreSandbox(package.Id, package.ExtensionId, build.Sandbox);
+        }
+    }
+
+    private void RemoveRuntime(ExtensionPackageRecord package)
+    {
+        lock (_runtimeMutationLock)
+        {
+            if (_sandboxes.TryRemove(package.Id, out _))
+                _registry.RemoveExtension(package.ExtensionId);
+        }
     }
 
     private void StoreSandbox(
