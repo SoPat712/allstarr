@@ -392,6 +392,31 @@ public sealed class StorageIntegrationTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Registration_UsesDataDirectoryDefaultsAndPreservesExplicitPaths(bool explicitPaths)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-layout-test");
+        var paths = new Dictionary<string, string>
+        {
+            ["Library:DownloadPath"] = "downloads",
+            ["Library:KeptPath"] = "kept",
+            ["Extensions:Directory"] = "extensions",
+            ["Cache:MediaDirectory"] = Path.Combine("cache", "media"),
+            ["Downloads:Workspace:RootPath"] = Path.Combine("cache", "download-workspaces"),
+            ["Intelligence:HistoryImport:RootPath"] = Path.Combine("cache", "listening-history-imports")
+        };
+        var values = new Dictionary<string, string?> { ["Storage:DataDirectory"] = root };
+        foreach (var (key, relativePath) in paths)
+            values[key] = explicitPaths ? Path.Combine(root, "custom", relativePath) : "";
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
+        var services = new ServiceCollection();
+        services.AddDurableStorage(configuration, new StorageTestHostEnvironment());
+        foreach (var (key, relativePath) in paths)
+            Assert.Equal(explicitPaths ? values[key] : Path.Combine(root, relativePath), configuration[key]);
+    }
+
     private static ServiceProvider BuildHostStorageServices(string connectionString)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>

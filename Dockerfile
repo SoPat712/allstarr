@@ -33,28 +33,11 @@ ARG ALLSTARR_VERSION
 LABEL org.opencontainers.image.version="${ALLSTARR_VERSION}"
 WORKDIR /app
 
-# curl powers container health checks; PostgreSQL 18 pg_dump/pg_restore match the
-# PostgreSQL 18 server pinned in docker-compose.yml.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
-    && install -d /usr/share/postgresql-common/pgdg \
-    && curl --fail --silent --show-error \
-        --output /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
-        https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-    && . /etc/os-release \
-    && printf '%s\n' \
-        'Types: deb' \
-        'URIs: https://apt.postgresql.org/pub/repos/apt' \
-        "Suites: ${VERSION_CODENAME}-pgdg" \
-        "Architectures: $(dpkg --print-architecture)" \
-        'Components: main' \
-        'Signed-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc' \
-        > /etc/apt/sources.list.d/pgdg.sources \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends postgresql-client-18 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN install -d /app/downloads /app/kept /app/cache /app/state/backups
+RUN install -d /app/data /app/data/downloads /app/data/kept /app/data/cache /app/data/extensions /app/data/backups
 
 COPY --from=build /app/publish .
 COPY --from=webui /src/webui/build ./wwwroot/

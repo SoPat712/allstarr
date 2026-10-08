@@ -95,7 +95,7 @@ public sealed class DownloadActivityControllerTests
     }
 
     [Fact]
-    [Trait("Category", "Postgres")]
+    [Trait("Category", "Sqlite")]
     public async Task NowPlaying_QueriesPortableTimestampColumnsWithConvertedParameters()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();

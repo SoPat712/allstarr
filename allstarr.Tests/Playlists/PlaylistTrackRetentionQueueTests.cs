@@ -69,7 +69,7 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Postgres")]
+    [Trait("Category", "Sqlite")]
     public async Task OnDemand_QueuesNothing()
     {
         var link = Link(PlaylistTrackRetention.OnDemand);
@@ -90,7 +90,7 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Postgres")]
+    [Trait("Category", "Sqlite")]
     public async Task KeepAll_QueuesDistinctExternalRoutesAndSkipsLocalOrUnresolved()
     {
         var link = Link(PlaylistTrackRetention.KeepAll);
@@ -159,7 +159,7 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Postgres")]
+    [Trait("Category", "Sqlite")]
     public async Task KeepAll_StoresScopedInitiatorOnlyJobsWithStablePayloadAndIdempotency()
     {
         var link = Link(PlaylistTrackRetention.KeepAll);
@@ -207,7 +207,7 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Postgres")]
+    [Trait("Category", "Sqlite")]
     public async Task KeepAll_NullOrMalformedConstructibleSourceMetadataDoesNotBreakQueue()
     {
         var link = Link(PlaylistTrackRetention.KeepAll);
@@ -234,7 +234,7 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "Postgres")]
+    [Trait("Category", "Sqlite")]
     public async Task RetentionJob_RejectsSourceMetadataOutsideTheLinkedLibraryScope()
     {
         var link = Link(PlaylistTrackRetention.KeepAll);

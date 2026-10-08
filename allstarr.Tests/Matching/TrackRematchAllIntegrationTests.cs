@@ -14,7 +14,7 @@ namespace allstarr.Tests;
 public sealed class TrackRematchAllIntegrationTests
 {
     [Fact]
-    [Trait("Category", "Postgres")]
+    [Trait("Category", "Sqlite")]
     public async Task Administrator_preview_includes_every_owner_in_the_tenant()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
@@ -69,7 +69,7 @@ public sealed class TrackRematchAllIntegrationTests
     }
 
     [Fact]
-    [Trait("Category", "Postgres")]
+    [Trait("Category", "Sqlite")]
     public async Task Force_rematch_replaces_resolved_and_unresolved_decisions_once_and_preserves_manual_authority()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();

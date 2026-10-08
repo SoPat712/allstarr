@@ -518,6 +518,7 @@ public sealed class HostCompositionTests
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Testing");
+            builder.UseSetting("Storage:DataDirectory", Directory.GetParent(_extensionDirectory)!.FullName);
             builder.UseSetting("Backend:Type", _backend);
             builder.UseSetting("Release:Profile", _releaseProfile);
             builder.UseSetting(
@@ -532,7 +533,6 @@ public sealed class HostCompositionTests
                     ["ProviderAccounts:ManagementMode"] = _providerAccountManagementMode,
                     ["SpotifyApi:Enabled"] = "false",
                     ["SpotifyImport:Enabled"] = "false",
-                    ["Storage:EnforceMutationGuard"] = "false",
                     ["Extensions:Directory"] = _extensionDirectory,
                     ["Cache:GenreDirectory"] = Path.Combine(
                         Directory.GetParent(_extensionDirectory)!.FullName,

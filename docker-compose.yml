@@ -1,35 +1,9 @@
 ---
 name: allstarr
 services:
-  postgres:
-    image: postgres:18.4-alpine3.23@sha256:996d0920e4ff9df1fc19dacb904492f3c1ec0ec1cc338f0ad7123be7731c5f5e
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: "${POSTGRES_DB:-allstarr}"
-      POSTGRES_USER: "${POSTGRES_USER:-allstarr}"
-      POSTGRES_PASSWORD_FILE: "/run/secrets/postgres_password"
-    secrets:
-    - postgres_password
-    volumes:
-    - postgres-data:/var/lib/postgresql
-    healthcheck:
-      test:
-      - CMD-SHELL
-      - pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
-    networks:
-    - allstarr
-    security_opt:
-    - no-new-privileges:true
   allstarr:
     image: "${ALLSTARR_IMAGE:-ghcr.io/sopat712/allstarr:3.1.0-beta.1}"
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
     ports:
     - "${PROXY_BIND_ADDRESS:-0.0.0.0}:${PROXY_PORT:-5274}:8080"
     - "${ADMIN_BIND_ADDRESS:-127.0.0.1}:${ADMIN_PORT:-5275}:5275"
@@ -40,28 +14,12 @@ services:
       Release__Profile: "${ALLSTARR_RELEASE_PROFILE:-core}"
       Admin__Containerized: 'true'
       Admin__ContainerGateway: auto
-      Storage__Provider: Postgres
-      Storage__ConnectionString: Host=postgres;Port=5432;Database=${POSTGRES_DB:-allstarr};Username=${POSTGRES_USER:-allstarr};Include
-        Error Detail=false
-      Storage__PasswordFile: "/run/secrets/postgres_password"
-      Storage__AutoMigrate: "${STORAGE_AUTO_MIGRATE:-true}"
-      Storage__BackupDirectory: "/app/state/backups"
-      Storage__EnforceMutationGuard: 'true'
-      Secrets__KeyRingPath: "/run/secrets/allstarr_keyring"
-      Library__DownloadPath: "/app/downloads"
-      Library__KeptPath: "/app/kept"
-      Extensions__Directory: "/app/state/extensions"
+      Storage__DataDirectory: "/app/data"
       AppleDownload__SetupUploadDirectory: "/app/apple-upload"
       SpotifyApi__LyricsApiUrl: "${SPOTIFY_LYRICS_API_URL:-http://spotify-lyrics:8080}"
       AppleDownload__BaseUrl: "${APPLE_DOWNLOAD_BASE_URL:-http://apple-gateway:8000}"
-    secrets:
-    - postgres_password
-    - allstarr_keyring
     volumes:
-    - allstarr-state:/app/state
-    - allstarr-cache:/app/cache
-    - "${DOWNLOAD_PATH:-./downloads}:/app/downloads"
-    - "${KEPT_PATH:-./kept}:/app/kept"
+    - "${ALLSTARR_DATA_PATH:-allstarr-data}:/app/data"
     - "${APPLE_UPLOAD_PATH:-./.apple-provider/incoming}:/app/apple-upload"
     - "./.env:/app/.env:ro"
     tmpfs:
@@ -177,15 +135,8 @@ services:
     - apparmor:unconfined
     profiles:
     - apple
-secrets:
-  postgres_password:
-    file: "${POSTGRES_PASSWORD_FILE:-./secrets/postgres-password.txt}"
-  allstarr_keyring:
-    file: "${ALLSTARR_KEYRING_FILE:-./secrets/allstarr-keyring.json}"
 volumes:
-  postgres-data:
-  allstarr-state:
-  allstarr-cache:
+  allstarr-data:
   apple-gateway-data:
   apple-wrapper-session:
 networks:

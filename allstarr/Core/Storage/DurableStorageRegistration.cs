@@ -13,6 +13,20 @@ public static class DurableStorageRegistration
         var options = configuration.GetSection(StorageOptions.SectionName)
             .Get<StorageOptions>() ?? new StorageOptions();
         options.Validate();
+        var dataDirectory = Path.GetFullPath(options.DataDirectory);
+        foreach (var (key, relativePath) in new Dictionary<string, string>
+        {
+            ["Library:DownloadPath"] = "downloads",
+            ["Library:KeptPath"] = "kept",
+            ["Extensions:Directory"] = "extensions",
+            ["Cache:MediaDirectory"] = Path.Combine("cache", "media"),
+            ["Downloads:Workspace:RootPath"] = Path.Combine("cache", "download-workspaces"),
+            ["Intelligence:HistoryImport:RootPath"] = Path.Combine("cache", "listening-history-imports")
+        })
+        {
+            if (string.IsNullOrWhiteSpace(configuration[key]))
+                configuration[key] = Path.Combine(dataDirectory, relativePath);
+        }
         services.AddSingleton(Options.Create(options));
         services.AddSingleton(options);
         services.AddSingleton<DurableStorageState>();

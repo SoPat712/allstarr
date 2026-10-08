@@ -14,7 +14,7 @@ cd allstarr
 
 Review `.env`, then start the single checked-in Compose stack with `./allstarr.sh up`.
 
-For a direct application run, use an explicitly configured disposable PostgreSQL database and persistent paths. Follow [docs/operations/storage.md](docs/operations/storage.md).
+For a direct application run, set `Storage__DataDirectory` to a disposable local folder. Follow [docs/operations/storage.md](docs/operations/storage.md).
 
 ```bash
 dotnet restore allstarr.sln
@@ -39,7 +39,7 @@ Read [README.md](README.md) for supported behavior, the [documentation map](docs
 | `allstarr/Core/Playback/` | Playback observations and client sessions |
 | `allstarr/Shelved/Intelligence/` | Listening history, recommendations, and AudioMuse integration |
 | `allstarr/Core/Jobs/` | Durable jobs, schedules, leases, and retries |
-| `allstarr/Core/Storage/` | PostgreSQL model, migrations, and state transfer |
+| `allstarr/Core/Storage/` | SQLite model, migrations, and backups |
 | `allstarr/Providers/Extensions/` | Extension package lifecycle and permissions |
 | `allstarr/Services/` | Shared services, backend adapters, and external gateways |
 | `webui/` | Svelte 5/SvelteKit administration interface |
@@ -54,7 +54,7 @@ Keep responsibilities modular. Extend the existing owner instead of creating a s
 ## Product Invariants
 
 - One deployment exposes either Jellyfin or Subsonic/OpenSubsonic, never both catch-all protocol surfaces.
-- PostgreSQL is the only durable database. Audio, artwork, cache payloads, backups, and the encryption key ring remain files.
+- SQLite is the only durable database. Audio, artwork, cache payloads, backups, and the encryption key ring remain files.
 - Original backend library files are read-only inputs. Only explicitly owned managed, cache, download, or kept paths may be written.
 - User-owned work requires a verified backend identity and exact tenant scope.
 - Provider credentials are encrypted and resolved just in time for the exact tenant, user, library, capability, and account scope.
@@ -80,7 +80,7 @@ Preserve unrelated work in a dirty tree. Stage exact files only; never use `git 
 
 ## Tests And Fixtures
 
-Every behavior change, bug fix, contract change, and migration rule needs focused coverage. Run the smallest relevant tests while iterating. PostgreSQL integration tests require an explicitly isolated database through `ALLSTARR_TEST_POSTGRES`. CI splits the Release matrix into two lanes, and both are required before release:
+Every behavior change, bug fix, contract change, and migration rule needs focused coverage. Run the smallest relevant tests while iterating. Database tests create isolated temporary SQLite files and run without an external database or opt-in variable. CI splits the Release matrix into two lanes, and both are required before release:
 
 ```bash
 dotnet test allstarr.sln -c Release --filter "Lane!=ReleaseCritical"
@@ -106,7 +106,7 @@ Provider and external-gateway tests use local fixtures, fake providers, or mocke
 or live provider calls to the automated suite. Apple gateway tests must not assume wrapper-v2 itself implements the
 Allstarr search/download contract.
 
-Migration, backup, restore, and destructive behavior require an isolated disposable PostgreSQL target and exact ownership checks. Validate affected Compose configuration with `docker compose ... config --quiet`. Do not weaken discovery, assertions, isolation, compatibility, accessibility, or security to make a check pass.
+Migration, backup, restore, and destructive behavior require an isolated disposable data folder and exact ownership checks. Validate affected Compose configuration with `docker compose ... config --quiet`. Do not weaken discovery, assertions, isolation, compatibility, accessibility, or security to make a check pass.
 
 ## WebUI
 

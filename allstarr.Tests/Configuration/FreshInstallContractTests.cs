@@ -61,19 +61,19 @@ public sealed class FreshInstallContractTests
     }
 
     [Fact]
-    public void ExampleEnvironment_DescribesTheFreshPostgresDeployment()
+    public void ExampleEnvironment_DescribesTheFreshSqliteDeployment()
     {
         var example = File.ReadAllText(Path.Combine(_repositoryRoot, ".env.example"));
 
-        Assert.Contains("POSTGRES_PASSWORD_FILE=./secrets/postgres-password.txt", example, StringComparison.Ordinal);
-        Assert.Contains("ALLSTARR_KEYRING_FILE=./secrets/allstarr-keyring.json", example, StringComparison.Ordinal);
+        Assert.DoesNotContain("POSTGRES_", example, StringComparison.Ordinal);
+        Assert.DoesNotContain("ALLSTARR_KEYRING_FILE", example, StringComparison.Ordinal);
         Assert.DoesNotContain("VALKEY_MAX_MEMORY", example, StringComparison.Ordinal);
         Assert.DoesNotContain("REDIS_ENABLED", example, StringComparison.Ordinal);
         Assert.Contains("BACKEND_TYPE=Jellyfin", example, StringComparison.Ordinal);
         Assert.DoesNotContain("SUBSONIC_URL=", example, StringComparison.Ordinal);
         Assert.DoesNotContain("JELLYFIN_URL=", example, StringComparison.Ordinal);
         Assert.DoesNotContain("JELLYFIN_API_KEY=", example, StringComparison.Ordinal);
-        Assert.Contains("KEPT_PATH=./kept", example, StringComparison.Ordinal);
+        Assert.Contains("ALLSTARR_DATA_PATH=./data", example, StringComparison.Ordinal);
         Assert.DoesNotContain("REDIS_DATA_PATH", example, StringComparison.Ordinal);
         Assert.DoesNotContain("SPOTIFY_IMPORT_PLAYLIST_IDS", example, StringComparison.Ordinal);
         Assert.DoesNotContain("SPOTIFY_IMPORT_PLAYLIST_NAMES", example, StringComparison.Ordinal);

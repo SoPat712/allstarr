@@ -98,7 +98,7 @@ an unexpected host.
 ## Connect Allstarr
 
 Open the dashboard and find the Apple download provider. The Compose profile configures its private gateway URL.
-Finish Apple login or 2FA there; credentials are forwarded only to wrapper-v2 and are not stored in Postgres.
+Finish Apple login or 2FA there; credentials are forwarded only to wrapper-v2 and are not stored in the database.
 
 The legacy `APPLE_MUSIC_AIO_URL` name is recognized only by the migration review so an operator can identify the
 old endpoint. New deployments use `APPLE_DOWNLOAD_URL`.
@@ -124,7 +124,7 @@ access. It is not a GAMDL or wrapper account and must not be copied into the dow
 ## Disable or replace the gateway
 
 Run `./allstarr.sh disable apple` followed by `./allstarr.sh up`. This removes the optional containers from the
-active profile. It does not delete Postgres records, Allstarr-managed media, the wrapper session volume, gateway
+active profile. It does not delete SQLite records, Allstarr-managed media, the wrapper session volume, gateway
 state, or a user's Apple MusicKit account.
 
 To replace the gateway, validate the replacement independently, change the URL in the dashboard, and repeat the

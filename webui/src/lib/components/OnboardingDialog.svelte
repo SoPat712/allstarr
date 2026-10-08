@@ -53,7 +53,7 @@
         <div>
           <p class="eyebrow">Durable onboarding</p>
           <Dialog.Title>Set up Allstarr</Dialog.Title>
-          <Dialog.Description>Your progress is saved to PostgreSQL for this account, not this browser.</Dialog.Description>
+          <Dialog.Description>Your progress is saved for this account across browsers.</Dialog.Description>
         </div>
         {#if !onboardingState.shouldRedirectToSetup}<Dialog.Close class="icon-button" aria-label="Close setup guide"><X size={18} aria-hidden="true" /></Dialog.Close>{/if}
       </header>

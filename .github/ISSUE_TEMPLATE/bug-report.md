@@ -46,8 +46,8 @@ Add any other context, screenshots, or surrounding details here.
 - Provider readiness: [Ready / Needs Config / Degraded / Unknown]
 - Storage Mode: [e.g. Cache]
 - Download Mode: [e.g. Track]
-- Storage: [Postgres version and readiness state]
-- PostgreSQL readiness: [Ready / Degraded / Unavailable]
+- Storage: [SQLite readiness state and local data mount]
+- SQLite readiness: [Ready / Degraded / Unavailable]
 - Relevant job or correlation ID:
 - Playlist mode, if relevant: [virtual / materialized / hybrid]
 - Scrobbling or intelligence enabled: [e.g. Disabled]

@@ -6,7 +6,7 @@
 
 ```bash
 ./allstarr.sh init
-# edit .env and protected files if required
+# edit .env if required
 ./allstarr.sh up
 ```
 
@@ -21,12 +21,9 @@ Switch back with `./allstarr.sh mode release`.
 
 ## Default stack
 
-The default stack contains:
+The default stack runs one Allstarr container with SQLite. Its `/app/data` mount holds the database, encryption key ring, managed media, extensions, backups, and cache. `.env.example` selects the host folder `./data`; if `ALLSTARR_DATA_PATH` is unset, Compose uses the `allstarr-data` named volume. Use local disk and only one Allstarr process per data folder.
 
-- PostgreSQL 18 with a health check and private password file.
-- Allstarr with the state, cache, download, kept, Apple upload, and key-ring mounts it owns.
-
-There is no SQLite, Redis, Valkey, AIO image, conversion container, or Compose overlay in the supported topology.
+The optional Apple setup upload folder remains a separate bind mount. Apple gateway and wrapper session volumes belong to the optional Apple profile. There is no database sidecar, Redis, Valkey, AIO image, conversion container, or Compose overlay in the supported topology.
 
 ## Optional profiles
 
@@ -55,20 +52,13 @@ See [Spotify lyrics](spotify-lyrics-sidecar.md) and [Apple download](apple-downl
 
 Release mode pulls the configured images and recreates the active profiles. Source mode requires a clean tracked tree, fast-forwards the checkout, rebuilds, and recreates the active profiles. `up` does not pull repository changes.
 
-Use `upgrade` when a backup should be taken before the update:
-
-```bash
-./allstarr.sh upgrade
-```
+Before updating, create and download a backup from Settings → Maintenance. Keep a separate copy of deployment configuration and managed media.
 
 ## Backup and restore
 
-```bash
-./allstarr.sh backup
-./allstarr.sh restore /path/to/archive.tar.gz --confirm-replace
-```
+Use Settings → Maintenance to create or download a verified backup, or upload one for restore on restart. The archive includes the database and encryption key ring. It excludes media, extension packages, cache, deployment configuration, and optional provider sessions. The former shell `backup`, `restore`, and `upgrade` commands direct users to Maintenance.
 
-Restore validates the archive, requires explicit replacement confirmation, and creates a pre-restore backup. PostgreSQL, configuration, the key ring, and enabled profile state have different recovery roles; follow [the storage runbook](storage.md). Downloaded and kept media remain host-mounted data and require their own backup policy.
+To move an entire installation, stop Allstarr and copy the complete data folder along with deployment configuration and any explicit external paths or optional provider volumes. Start the new container with the same image version and mounts, and keep the original stopped. Follow [the storage runbook](storage.md) for recovery and verification.
 
 ## Operations
 

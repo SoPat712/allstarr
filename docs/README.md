@@ -9,7 +9,7 @@ User and operator guides describe shipped behavior. Contributor assessments expl
 - [Music ecosystem reference ledger](architecture/reference-projects.md): pinned upstream projects, reusable lessons, license boundaries, and rejected ideas.
 - [Configuration](operations/configuration.md): deployment-owned values, durable settings, and secrets.
 - [Deployment profiles](operations/deployment-profiles.md): install, update, optional services, backup, and restore.
-- [Storage](operations/storage.md): PostgreSQL ownership, migration, backup, and recovery.
+- [Storage](operations/storage.md): SQLite ownership, data folders, backup, and recovery.
 - [Extension SDK v1](extensions/sdk-v1.md): package, capability, permission, and account contracts.
 
 ## Operator guides
