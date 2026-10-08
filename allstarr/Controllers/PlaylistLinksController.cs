@@ -922,7 +922,7 @@ public sealed class PlaylistLinksController(
             EnsureSessionScope(session, snapshot.TenantId, snapshot.OwnerUserId);
             var context = await CreateExecutionAsync(session, snapshot.LibraryScopeId, cancellationToken);
             var value = await matches.SetOverrideAsync(context, new ManualOverrideInput(externalSnapshotId,
-                snapshot.LibraryScopeId, decision, request.LibraryTrackId, Required(request.Reason, nameof(request.Reason))), cancellationToken);
+                snapshot.LibraryScopeId, decision, request.LibraryTrackId, Required(request.Reason, nameof(request.Reason)), request.ExpectedAuthority), cancellationToken);
             return Ok(value);
         });
     }
@@ -939,7 +939,7 @@ public sealed class PlaylistLinksController(
                 session.TenantId!.Value,
                 overrideId,
                 cancellationToken) ?? throw new KeyNotFoundException("Override not found.");
-            EnsureSessionScope(session, value.TenantId, value.OwnerUserId);
+            if (value.OwnerUserId != session.AllstarrUserId) throw new UnauthorizedAccessException("Only the owner may clear a personal choice here.");
             var context = await CreateExecutionAsync(session, value.LibraryScopeId, cancellationToken);
             await matches.RevokeOverrideAsync(context, overrideId, revision.Value, cancellationToken);
             return NoContent();
@@ -1610,7 +1610,7 @@ public sealed record SetPlaylistLinkStateRequest(long ExpectedRevision, bool Ena
 public sealed record RunPlaylistLinkRequest(long? Generation = null, Guid? SnapshotId = null);
 public sealed record ApplyProviderPlaylistUpdateRequest(long ExpectedRevision, string ConfirmationId);
 public sealed record ApplyPlaylistRematchRequest(string ConfirmationId);
-public sealed record SetMatchOverrideRequest(string Decision, Guid? LibraryTrackId, string Reason);
+public sealed record SetMatchOverrideRequest(string Decision, Guid? LibraryTrackId, string Reason, ManualAuthorityRevision? ExpectedAuthority = null);
 public sealed record ClearMatchOverrideRequest(long ExpectedRevision);
 public sealed record ScheduleRequest(string CronExpression, string TimeZoneId, string OverlapPolicy,
     string MisfirePolicy, bool Enabled = true, long? ExpectedRevision = null);

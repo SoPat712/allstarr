@@ -2640,23 +2640,24 @@ test("Manual and Rejected tabs expose explicit rematch and delete controls", asy
   await expect(manualMatch).toContainText("Manual Jellyfin match");
   const rematch = page.waitForRequest((request) =>
     request.method() === "POST" && request.url().endsWith("/manual-authorities/authority/rematch"));
-  await manualMatch.getByRole("button", { name: "Rematch" }).click();
-  const rematchDialog = page.getByRole("alertdialog", { name: "Release and rematch this decision?" });
-  await expect(rematchDialog).toContainText("current matching algorithm");
-  await rematchDialog.getByRole("button", { name: "Release and rematch" }).click();
-  expect((await rematch).postDataJSON()).toEqual({ kind: "local_match", expectedRevision: 3 });
+  await manualMatch.getByRole("button", { name: "Clear personal and rematch" }).click();
+  const rematchDialog = page.getByRole("alertdialog", { name: "Clear personal and rematch?" });
+  await expect(rematchDialog).toContainText("matching algorithm recalculates");
+  await rematchDialog.getByRole("button", { name: "Clear personal and rematch" }).click();
+  expect((await rematch).postDataJSON()).toEqual({ kind: "local_match", expectedRevision: 3, authorityScope: "personal" });
 
   await page.getByRole("tab", { name: /^Rejected 1$/ }).click();
   const manualRejection = page.locator(".manual-authority-row");
   await expect(manualRejection).toContainText("Manual rejection");
   const deletion = page.waitForRequest((request) =>
     request.method() === "DELETE" && request.url().includes("/manual-authorities/rejection?"));
-  await manualRejection.getByRole("button", { name: "Delete" }).click();
-  const deleteDialog = page.getByRole("alertdialog", { name: "Delete this manual decision?" });
-  await deleteDialog.getByRole("button", { name: "Delete manual decision" }).click();
+  await manualRejection.getByRole("button", { name: "Clear personal", exact: true }).click();
+  const deleteDialog = page.getByRole("alertdialog", { name: "Clear personal decision?" });
+  await deleteDialog.getByRole("button", { name: "Clear personal", exact: true }).click();
   const deleteUrl = new URL((await deletion).url());
   expect(deleteUrl.searchParams.get("kind")).toBe("rejection");
   expect(deleteUrl.searchParams.get("expectedRevision")).toBe("2");
+  expect(deleteUrl.searchParams.get("authorityScope")).toBe("personal");
 });
 
 test("Tentative mappings sort by confidence and deep links open review", async ({ page }) => {

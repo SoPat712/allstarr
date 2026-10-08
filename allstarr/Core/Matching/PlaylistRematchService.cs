@@ -79,11 +79,10 @@ public sealed class PlaylistRematchService(
         var latest = await LatestDecisions(db.TrackMatches.AsNoTracking()
                 .Where(item => item.TenantId == tenantId && externalIds.Contains(item.ExternalSnapshotId)))
             .ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
-        var overrides = await db.ManualTrackOverrides.AsNoTracking()
-            .Where(item => item.TenantId == tenantId &&
-                           externalIds.Contains(item.ExternalSnapshotId) &&
-                           item.RevokedAt == null)
-            .ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
+        var overrideRecords = await ManualTrackOverrides.LoadAsync(
+            db, tenantId, ownerUserId, snapshots.Values.ToArray(), cancellationToken);
+        var overrides = ManualTrackOverrides.Index(snapshots.Values, overrideRecords, ownerUserId)
+            .Where(item => item.Value.Effective != null).ToDictionary(item => item.Key, item => item.Value.Effective!);
         var snapshotLinks = byLink.ToDictionary(item => item.Value.SnapshotId, item => item.Key);
         var publishedRows = await db.PlaylistSourceEntries.AsNoTracking()
             .Where(item => snapshotLinks.Keys.Contains(item.PlaylistSourceSnapshotId))
@@ -377,11 +376,8 @@ public sealed class PlaylistRematchJobHandler(
         var snapshots = await db.ExternalMetadataSnapshots.AsNoTracking()
             .Where(item => snapshotIds.Contains(item.Id) && item.TenantId == tenantId && item.OwnerUserId == ownerUserId)
             .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var protectedIds = await db.ManualTrackOverrides.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && snapshotIds.Contains(item.ExternalSnapshotId) &&
-                           item.RevokedAt == null)
-            .Select(item => item.ExternalSnapshotId)
-            .ToHashSetAsync(cancellationToken);
+        var protectedIds = await ManualTrackOverrides.ProtectedSnapshotIdsAsync(
+            db, tenantId, snapshotIds, cancellationToken);
         var versions = await db.TrackMatches.AsNoTracking()
             .Where(item => item.TenantId == tenantId && snapshotIds.Contains(item.ExternalSnapshotId))
             .GroupBy(item => item.ExternalSnapshotId)

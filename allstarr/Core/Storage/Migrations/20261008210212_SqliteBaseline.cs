@@ -2168,9 +2168,13 @@ namespace allstarr.Core.Storage.Migrations
                 {
                     Id = table.Column<Guid>(type: "TEXT", nullable: false),
                     TenantId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    OwnerUserId = table.Column<Guid>(type: "TEXT", nullable: false),
+                    OwnerUserId = table.Column<Guid>(type: "TEXT", nullable: true),
                     ExternalSnapshotId = table.Column<Guid>(type: "TEXT", nullable: false),
+                    SourceProviderId = table.Column<string>(type: "TEXT", maxLength: 100, nullable: false),
+                    SourceExternalIdHash = table.Column<string>(type: "TEXT", maxLength: 64, nullable: false),
                     LibraryTrackId = table.Column<Guid>(type: "TEXT", nullable: true),
+                    TargetProviderId = table.Column<string>(type: "TEXT", maxLength: 100, nullable: true),
+                    TargetExternalId = table.Column<string>(type: "TEXT", maxLength: 500, nullable: true),
                     LibraryScopeId = table.Column<string>(type: "TEXT", maxLength: 300, nullable: false),
                     Decision = table.Column<string>(type: "TEXT", maxLength: 32, nullable: false),
                     Reason = table.Column<string>(type: "TEXT", maxLength: 1000, nullable: false),
@@ -2183,7 +2187,8 @@ namespace allstarr.Core.Storage.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_manual_track_overrides", x => x.Id);
-                    table.CheckConstraint("CK_manual_overrides_shape", "(\"Decision\" = 'Pin' AND \"LibraryTrackId\" IS NOT NULL) OR \"Decision\" = 'Reject'");
+                    table.CheckConstraint("CK_manual_overrides_shape", "(\"Decision\" = 'Pin' AND (\n    (\"LibraryTrackId\" IS NOT NULL AND \"TargetProviderId\" IS NULL AND \"TargetExternalId\" IS NULL) OR\n    (\"LibraryTrackId\" IS NULL AND length(\"TargetProviderId\") > 0 AND length(\"TargetExternalId\") > 0 AND\n     \"TargetProviderId\" IS NOT NULL AND \"TargetExternalId\" IS NOT NULL))) OR\n(\"Decision\" = 'Reject' AND \"TargetProviderId\" IS NULL AND \"TargetExternalId\" IS NULL)");
+                    table.CheckConstraint("CK_manual_overrides_source", "length(\"SourceExternalIdHash\") = 64 AND length(\"SourceProviderId\") > 0");
                     table.CheckConstraint("CK_manual_overrides_version", "\"DecisionVersion\" > 0");
                     table.ForeignKey(
                         name: "FK_ManualTrackOverride_ExternalMetadataSnapshot",
@@ -3053,11 +3058,18 @@ namespace allstarr.Core.Storage.Migrations
                 column: "UpdatedAt");
 
             migrationBuilder.CreateIndex(
-                name: "IX_manual_track_override_active",
+                name: "IX_manual_track_override_household_active",
                 table: "manual_track_overrides",
-                columns: new[] { "TenantId", "OwnerUserId", "LibraryScopeId", "ExternalSnapshotId" },
+                columns: new[] { "TenantId", "SourceProviderId", "SourceExternalIdHash" },
                 unique: true,
-                filter: "\"RevokedAt\" IS NULL");
+                filter: "\"RevokedAt\" IS NULL AND \"OwnerUserId\" IS NULL");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_manual_track_override_personal_active",
+                table: "manual_track_overrides",
+                columns: new[] { "TenantId", "OwnerUserId", "SourceProviderId", "SourceExternalIdHash" },
+                unique: true,
+                filter: "\"RevokedAt\" IS NULL AND \"OwnerUserId\" IS NOT NULL");
 
             migrationBuilder.CreateIndex(
                 name: "IX_manual_track_overrides_TenantId_ExternalSnapshotId",

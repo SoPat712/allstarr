@@ -553,6 +553,18 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             Context(), "Track Artist", 10);
 
         Assert.Empty(songs);
+        var listenerA = Context().RequireActor();
+        var listenerB = new ProviderActorContext(listenerA.TenantId, ProviderActorKind.User,
+            Guid.CreateVersion7(), listenerA.BackendPrincipal);
+        Assert.Empty(await gateway.GetPlayableProviderOrderAsync(listenerA));
+        var privateAccount = new ProviderAccountContext(Guid.CreateVersion7(), "qobuz", ProviderAccountScope.Personal,
+            1, true, listenerA.TenantId, listenerA.EffectiveUserId, null, "personal-account");
+        accounts.Setup(item => item.ResolveAsync(It.IsAny<ProviderRouteAccountRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderRouteAccountRequest request, CancellationToken _) =>
+                request.Actor.EffectiveUserId == listenerA.EffectiveUserId
+                    ? new ProviderRouteAccountResolution(privateAccount, 1) : null);
+        Assert.Equal(["qobuz"], await gateway.GetPlayableProviderOrderAsync(listenerA));
+        Assert.Empty(await gateway.GetPlayableProviderOrderAsync(listenerB));
     }
 
     [Fact]

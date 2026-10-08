@@ -194,10 +194,29 @@ public sealed class TrackRematchAllIntegrationTests
                 TenantId = tenantId,
                 OwnerUserId = userId,
                 ExternalSnapshotId = snapshotIds[2],
+                SourceProviderId = "spotify",
+                SourceExternalIdHash = Hash(2),
                 LibraryTrackId = localOne,
                 LibraryScopeId = "music",
                 Decision = ManualOverrideDecision.Pin,
                 Reason = "Keep this selection",
+                DecisionVersion = 1,
+                MatcherVersion = TrackMatchDecisionEngine.AlgorithmVersion,
+                CreatedAt = now
+            });
+            db.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = tenantId,
+                OwnerUserId = null,
+                ExternalSnapshotId = snapshotIds[3],
+                SourceProviderId = "spotify",
+                SourceExternalIdHash = Hash(3),
+                TargetProviderId = "deezer",
+                TargetExternalId = "manual-target",
+                LibraryScopeId = "music",
+                Decision = ManualOverrideDecision.Pin,
+                Reason = "Household provider choice",
                 DecisionVersion = 1,
                 MatcherVersion = TrackMatchDecisionEngine.AlgorithmVersion,
                 CreatedAt = now
@@ -271,7 +290,7 @@ public sealed class TrackRematchAllIntegrationTests
                 item.MatcherVersion == TrackMatchDecisionEngine.AlgorithmVersion));
             Assert.Single(await db.TrackMatches.Where(item => item.ExternalSnapshotId == snapshotIds[2]).ToListAsync());
             Assert.Single(await db.TrackMatches.Where(item => item.ExternalSnapshotId == snapshotIds[3]).ToListAsync());
-            Assert.Single(await db.ManualTrackOverrides.Where(item => item.RevokedAt == null).ToListAsync());
+            Assert.Equal(2, await db.ManualTrackOverrides.CountAsync(item => item.RevokedAt == null));
             Assert.Equal(25, await db.AuditEvents.CountAsync(item => item.Category == "track-rematch"));
             Assert.False(await db.TrackMatches.AnyAsync(item => item.ExternalSnapshotId == lateSnapshotId));
         }

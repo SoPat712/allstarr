@@ -26,6 +26,10 @@ public interface IProtocolProviderGateway
 {
     IReadOnlyList<string> GetProviderOrder(ProviderCapabilityKind capability);
 
+    Task<IReadOnlyList<string>> GetPlayableProviderOrderAsync(
+        ProviderActorContext actor,
+        CancellationToken cancellationToken = default);
+
     Task<SearchResult> SearchAsync(
         ProtocolExecutionContext protocol,
         string query,
@@ -126,6 +130,29 @@ public sealed class ProtocolProviderGateway(
 
     public IReadOnlyList<string> GetProviderOrder(ProviderCapabilityKind capability) =>
         ResolveProviderOrder(capability);
+
+    public async Task<IReadOnlyList<string>> GetPlayableProviderOrderAsync(
+        ProviderActorContext actor,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(actor);
+        if (actor.EffectiveUserId is not { } userId || userId == Guid.Empty) return [];
+        var effectivePolicy = effectivePolicies == null
+            ? null
+            : await effectivePolicies.ResolveForUserAsync(
+                actor.TenantId, userId, cancellationToken);
+        var configuredOrder = ResolveProviderOrder(ProviderCapabilityKind.Streaming);
+        if (effectivePolicy != null)
+            configuredOrder = effectivePolicy.ApplyProviderAvailability(
+                ProviderCapabilityKind.Streaming, configuredOrder);
+        return await ResolvePlayableProviderOrderAsync(
+            actor,
+            configuredOrder,
+            libraryScopeId: null,
+            correlationId: "provider-playable-order",
+            deadline: DateTimeOffset.UtcNow.AddMinutes(1),
+            cancellationToken: cancellationToken);
+    }
 
     private Task<EffectiveProviderPolicySnapshot?> ResolveEffectivePolicyAsync(ProtocolExecutionContext protocol)
     {
@@ -426,16 +453,34 @@ public sealed class ProtocolProviderGateway(
     private async Task<IReadOnlyList<string>> ResolvePlayableProviderOrderAsync(
         ProtocolExecutionContext protocol,
         ProviderActorContext actor,
-        IReadOnlyList<string> configuredProviderOrder)
+        IReadOnlyList<string> configuredProviderOrder) =>
+        await ResolvePlayableProviderOrderAsync(
+            actor,
+            configuredProviderOrder,
+            protocol.LibraryScopeId,
+            protocol.CorrelationId,
+            protocol.Deadline,
+            protocol.CancellationToken);
+
+    private async Task<IReadOnlyList<string>> ResolvePlayableProviderOrderAsync(
+        ProviderActorContext actor,
+        IReadOnlyList<string> configuredProviderOrder,
+        string? libraryScopeId,
+        string correlationId,
+        DateTimeOffset deadline,
+        CancellationToken cancellationToken)
     {
         if (configuredProviderOrder.Count == 0) return [];
         var streaming = await router.PlanAsync<IProviderStreamingCapability>(Request(
-            protocol,
             actor,
             ProviderCapabilityKind.Streaming,
             "protocol-playable-provider-check",
             configuredProviderOrder,
-            sourceTrackId: null));
+            sourceTrackId: null,
+            correlationId: correlationId,
+            deadline: deadline,
+            libraryScopeId: libraryScopeId,
+            cancellationToken: cancellationToken));
         var allowed = streaming.Candidates.Select(item => item.Provider.Id)
             .Select(NormalizeProvider)
             .ToHashSet(StringComparer.Ordinal);
@@ -443,7 +488,7 @@ public sealed class ProtocolProviderGateway(
             .Select(item => NormalizeProvider(item.Id))
             .ToHashSet(StringComparer.Ordinal);
         var compatibility = (await ResolveAllowedCompatibilityProvidersAsync(
-                protocol, actor, ProviderCapabilityKind.Streaming))
+                actor, ProviderCapabilityKind.Streaming, libraryScopeId, cancellationToken))
             .Where(providerId => !typed.Contains(providerId));
         allowed.UnionWith(compatibility);
         return configuredProviderOrder.Where(allowed.Contains).ToArray();
@@ -1098,7 +1143,18 @@ public sealed class ProtocolProviderGateway(
     private async Task<HashSet<string>> ResolveAllowedCompatibilityProvidersAsync(
         ProtocolExecutionContext protocol,
         ProviderActorContext actor,
-        ProviderCapabilityKind capabilityKind = ProviderCapabilityKind.Metadata)
+        ProviderCapabilityKind capabilityKind = ProviderCapabilityKind.Metadata) =>
+        await ResolveAllowedCompatibilityProvidersAsync(
+            actor,
+            capabilityKind,
+            protocol.LibraryScopeId,
+            protocol.CancellationToken);
+
+    private async Task<HashSet<string>> ResolveAllowedCompatibilityProvidersAsync(
+        ProviderActorContext actor,
+        ProviderCapabilityKind capabilityKind,
+        string? libraryScopeId,
+        CancellationToken cancellationToken)
     {
         var allowed = new HashSet<string>(StringComparer.Ordinal);
         foreach (var descriptor in registry.FindByCapability(
@@ -1123,8 +1179,8 @@ public sealed class ProtocolProviderGateway(
                         descriptor.Id,
                         capabilityKind,
                         RequestedAccountId: null,
-                        protocol.LibraryScopeId),
-                    protocol.CancellationToken);
+                        libraryScopeId),
+                    cancellationToken);
             }
             catch (UnauthorizedAccessException)
             {
@@ -1222,7 +1278,35 @@ public sealed class ProtocolProviderGateway(
         ProviderAudioQuality quality = ProviderAudioQuality.Any,
         bool allowFallback = false,
         bool allowManagedDownloads = false,
-        string? idempotencyKey = null) => new(
+        string? idempotencyKey = null) => Request(
+        actor,
+        capability,
+        operationId,
+        providerIds,
+        sourceTrackId,
+        quality,
+        allowFallback,
+        allowManagedDownloads,
+        idempotencyKey,
+        protocol.CorrelationId,
+        protocol.Deadline,
+        protocol.LibraryScopeId,
+        protocol.CancellationToken);
+
+    private static ProviderRouteRequest Request(
+        ProviderActorContext actor,
+        ProviderCapabilityKind capability,
+        string operationId,
+        IEnumerable<string> providerIds,
+        ProviderExternalResourceId? sourceTrackId,
+        ProviderAudioQuality quality = ProviderAudioQuality.Any,
+        bool allowFallback = false,
+        bool allowManagedDownloads = false,
+        string? idempotencyKey = null,
+        string correlationId = "provider-route",
+        DateTimeOffset deadline = default,
+        string? libraryScopeId = null,
+        CancellationToken cancellationToken = default) => new(
         capability,
         actor,
         new ProviderExecutionPolicy(
@@ -1235,8 +1319,8 @@ public sealed class ProtocolProviderGateway(
             allowManagedDownloads,
             providerIds),
         operationId,
-        protocol.CorrelationId,
-        protocol.Deadline,
+        correlationId,
+        deadline,
         providerIds,
         providerStates: providerIds.Select(id => new ProviderRouteProviderState(
             id,
@@ -1248,12 +1332,12 @@ public sealed class ProtocolProviderGateway(
                 ProviderAudioQuality.Lossless,
                 ProviderAudioQuality.HighResolution
             ])),
-        library: protocol.LibraryScopeId == null
+        library: libraryScopeId == null
             ? null
-            : new ProviderLibraryContext(actor.TenantId, protocol.LibraryScopeId),
+            : new ProviderLibraryContext(actor.TenantId, libraryScopeId),
         sourceTrackId: sourceTrackId,
         idempotencyKey: idempotencyKey,
-        cancellationToken: protocol.CancellationToken);
+        cancellationToken: cancellationToken);
 
     private static RangeHeaderValue? ParseRange(string? rangeHeader)
     {

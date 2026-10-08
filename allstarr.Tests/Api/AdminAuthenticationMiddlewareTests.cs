@@ -73,6 +73,15 @@ public class AdminAuthenticationMiddlewareTests
     }
 
     [Theory]
+    [InlineData("/api/admin/track-matches", "GET")]
+    [InlineData("/api/admin/track-matches/targets/local", "GET")]
+    [InlineData("/api/admin/track-matches/targets/provider", "GET")]
+    [InlineData("/api/admin/track-matches/spotify/track", "GET")]
+    [InlineData("/api/admin/track-matches/019f48f2-5f28-7b11-b42d-0d9b76b73b40/artwork", "GET")]
+    [InlineData("/api/admin/track-matches/019f48f2-5f28-7b11-b42d-0d9b76b73b40/resolve", "POST")]
+    [InlineData("/api/admin/track-matches/019f48f2-5f28-7b11-b42d-0d9b76b73b40/rematch", "POST")]
+    [InlineData("/api/admin/track-matches/019f48f2-5f28-7b11-b42d-0d9b76b73b40/manual-authorities/019f48f2-5f28-7b11-b42d-0d9b76b73b40", "DELETE")]
+    [InlineData("/api/admin/track-matches/019f48f2-5f28-7b11-b42d-0d9b76b73b40/manual-authorities/019f48f2-5f28-7b11-b42d-0d9b76b73b40/rematch", "POST")]
     [InlineData("/api/admin/preferences", "GET")]
     [InlineData("/api/admin/preferences", "PUT")]
     [InlineData("/api/admin/preferences", "DELETE")]
@@ -153,6 +162,15 @@ public class AdminAuthenticationMiddlewareTests
     }
 
     [Theory]
+    [InlineData("/api/admin/track-matches", "POST")]
+    [InlineData("/api/admin/track-matches/rematch-all/preview", "GET")]
+    [InlineData("/api/admin/track-matches/rematch-all/apply", "POST")]
+    [InlineData("/api/admin/track-matches/targets/all", "GET")]
+    [InlineData("/api/admin/track-matches/019f48f2-5f28-7b11-b42d-0d9b76b73b40/resolve", "DELETE")]
+    [InlineData("/api/admin/track-matches-spoof", "GET")]
+    [InlineData("/api/admin/track-matches/not-a-guid/resolve", "POST")]
+    [InlineData("/api/admin/track-matches/019f48f2-5f28-7b11-b42d-0d9b76b73b40/manual-authorities/not-a-guid", "DELETE")]
+    [InlineData("/api/admin/track-matches/019f48f2-5f28-7b11-b42d-0d9b76b73b40/manual-authorities/019f48f2-5f28-7b11-b42d-0d9b76b73b40/other", "POST")]
     [InlineData("/api/admin/ui/schema", "POST")]
     [InlineData("/api/admin/ui/home", "POST")]
     [InlineData("/api/admin/ui/home-extra", "GET")]

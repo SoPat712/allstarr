@@ -166,12 +166,7 @@ public sealed class TrackRematchAllService(
         CancellationToken cancellationToken)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        return await db.ManualTrackOverrides.AsNoTracking()
-            .Where(item => item.TenantId == tenantId &&
-                           snapshotIds.Contains(item.ExternalSnapshotId) &&
-                           item.RevokedAt == null)
-            .Select(item => item.ExternalSnapshotId)
-            .ToHashSetAsync(cancellationToken);
+        return await ManualTrackOverrides.ProtectedSnapshotIdsAsync(db, tenantId, snapshotIds, cancellationToken);
     }
 
     private Task<DurableJobEnqueueResult> EnqueueAsync(
@@ -240,7 +235,6 @@ public sealed class TrackRematchAllService(
                 item.Protocol,
                 item.BackendInstanceId,
                 item.BackendPrincipalId,
-                item.ProviderTrackIdentityId?.ToString("N") ??
                 $"{item.ProviderId.ToLowerInvariant()}:{item.ExternalIdHash}"))
             .Select(group => new
             {
@@ -267,63 +261,13 @@ public sealed class TrackRematchAllService(
                 (item, _) => item)
             .ToArrayAsync(cancellationToken);
         var decisionsBySnapshot = decisions.ToDictionary(item => item.ExternalSnapshotId);
-        var protectedSnapshots = await db.ManualTrackOverrides.AsNoTracking()
-            .Where(item => item.TenantId == tenantId &&
-                           snapshotIds.Contains(item.ExternalSnapshotId) &&
-                           item.RevokedAt == null)
-            .Select(item => item.ExternalSnapshotId)
-            .ToHashSetAsync(cancellationToken);
-
-        var identityIds = snapshots.Where(item => item.ProviderTrackIdentityId.HasValue)
-            .Select(item => item.ProviderTrackIdentityId!.Value)
-            .Distinct()
-            .ToArray();
-        var hashes = snapshots.Select(item => item.ExternalIdHash).Distinct().ToArray();
-        var identities = await db.ProviderTrackIdentities.AsNoTracking()
-            .Where(item => item.TenantId == tenantId &&
-                           item.ResourceKind == ProviderResourceKind.Track &&
-                           (identityIds.Contains(item.Id) || hashes.Contains(item.ExternalIdHash)))
-            .ToArrayAsync(cancellationToken);
-        var identitiesById = identities.ToDictionary(item => item.Id);
-
-        var provisional = snapshotGroups.Select(group =>
-        {
-            var decision = group.Snapshots
-                .Select(item => decisionsBySnapshot.GetValueOrDefault(item.Id))
-                .Where(item => item != null)
-                .OrderByDescending(item => item!.DecidedAt)
-                .ThenByDescending(item => item!.DecisionVersion)
-                .FirstOrDefault();
-            var canonicalIds = group.Snapshots
-                .Select(snapshot => SourceIdentity(snapshot, identitiesById, identities)?.CanonicalRecordingId)
-                .Where(item => item.HasValue)
-                .Select(item => item!.Value)
-                .ToHashSet();
-            if (decision?.CanonicalRecordingId is { } decisionCanonical)
-                canonicalIds.Add(decisionCanonical);
-            return new
-            {
+        var protectedSnapshots = await ManualTrackOverrides.ProtectedSnapshotIdsAsync(db, tenantId, snapshotIds, cancellationToken);
+        var groups = snapshotGroups.Select(group => new TrackRematchGroup(
                 group.Current,
-                Decision = decision,
-                SnapshotIds = group.Snapshots.Select(item => item.Id).ToArray(),
-                CanonicalIds = canonicalIds
-            };
-        }).ToArray();
-        var relevantCanonicalIds = provisional.SelectMany(item => item.CanonicalIds).Distinct().ToArray();
-        var manuallyPinnedCanonicalIds = relevantCanonicalIds.Length == 0
-            ? []
-            : await db.ProviderTrackIdentities.AsNoTracking()
-                .Where(item => item.TenantId == tenantId &&
-                               relevantCanonicalIds.Contains(item.CanonicalRecordingId) &&
-                               item.Verification == ProviderIdentityVerification.Pinned &&
-                               item.VerificationMethod == ManualTrackAuthorityPolicy.ProviderVerificationMethod)
-                .Select(item => item.CanonicalRecordingId)
-                .ToHashSetAsync(cancellationToken);
-        var groups = provisional.Select(item => new TrackRematchGroup(
-                item.Current,
-                item.Decision,
-                item.SnapshotIds.Any(protectedSnapshots.Contains) ||
-                item.CanonicalIds.Any(manuallyPinnedCanonicalIds.Contains)))
+                group.Snapshots.Select(item => decisionsBySnapshot.GetValueOrDefault(item.Id))
+                    .Where(item => item != null).OrderByDescending(item => item!.DecidedAt)
+                    .ThenByDescending(item => item!.DecisionVersion).FirstOrDefault(),
+                group.Snapshots.Any(item => protectedSnapshots.Contains(item.Id))))
             .ToArray();
         var snapshotFingerprint = Hash(string.Join('\n', groups
             .OrderBy(item => item.Snapshot.Id)
@@ -368,23 +312,6 @@ public sealed class TrackRematchAllService(
         return hashes;
     }
 
-    private static ProviderTrackIdentityRecord? SourceIdentity(
-        TrackRematchSnapshot snapshot,
-        IReadOnlyDictionary<Guid, ProviderTrackIdentityRecord> identitiesById,
-        IReadOnlyCollection<ProviderTrackIdentityRecord> identities)
-    {
-        if (snapshot.ProviderTrackIdentityId is { } identityId &&
-            identitiesById.TryGetValue(identityId, out var direct))
-            return direct;
-        return identities
-            .Where(item => item.ProviderId.Equals(snapshot.ProviderId, StringComparison.OrdinalIgnoreCase) &&
-                           item.ExternalIdHash == snapshot.ExternalIdHash &&
-                           (item.Scope == ProviderIdentityScope.Catalog ||
-                            item.ProviderAccountId == snapshot.ProviderAccountId))
-            .OrderByDescending(item => item.ProviderAccountId == snapshot.ProviderAccountId)
-            .FirstOrDefault();
-    }
-
     internal static string OperationCorrelation(Guid operationId) =>
         $"track-rematch:{operationId:N}";
 
@@ -395,8 +322,7 @@ public sealed class TrackRematchAllService(
         policyVersion is ForcePolicyVersion or RolloutPolicyVersion;
 
     internal static bool RequiresAuthorityGuard(string policyVersion) =>
-        IsManagedPolicy(policyVersion) ||
-        policyVersion == ManualTrackAuthorityPolicy.RematchPolicyVersion;
+        IsManagedPolicy(policyVersion);
 
     internal static AuditEventRecord SuccessAudit(
         Guid tenantId,

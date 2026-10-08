@@ -5,6 +5,7 @@
   import { X } from "@lucide/svelte";
   import {
     matchReview,
+    type MatchAuthorityScope,
     type MatchReviewItem,
     type MatchTarget,
     type ProviderDefinition,
@@ -21,6 +22,11 @@
     routingPreference,
     scoreComponents,
   } from "$lib/mappings";
+  import {
+    allowedAuthorityScopes,
+    canEditAuthorityScope,
+    expectedAuthorityForScope,
+  } from "$lib/matching-api";
   import { formatDuration } from "$lib/playlists";
   import { findProviderDefinition, providerDisplayName } from "$lib/sources";
 
@@ -41,7 +47,7 @@
     autoSearch?: boolean;
     showReject?: boolean;
     onSaved: (message: string) => void | Promise<void>;
-    onReject?: (match: MatchReviewItem) => void;
+    onReject?: (match: MatchReviewItem, authorityScope: MatchAuthorityScope) => void;
   } = $props();
 
   let preparedId = $state("");
@@ -52,6 +58,7 @@
   let loading = $state(false);
   let saving = $state(false);
   let error = $state("");
+  let authorityScope = $state<MatchAuthorityScope>("personal");
 
   const playbackProviders = $derived(playableProviderIds(providers));
   const eligibleCandidates = $derived(
@@ -67,6 +74,9 @@
             : target.externalProvider?.toLowerCase() === providerFilter.toLowerCase())
       : results,
   );
+  const selectedScopeEditable = $derived(
+    match ? canEditAuthorityScope(match, authorityScope) : false,
+  );
 
   $effect(() => {
     if (!open) {
@@ -80,6 +90,7 @@
     results = [];
     searched = false;
     error = "";
+    authorityScope = "personal";
     if (autoSearch) void search();
   });
 
@@ -166,13 +177,15 @@
   }
 
   async function chooseLocal(libraryTrackId: string, reason: string) {
-    if (!match || saving) return;
+    if (!match || saving || !selectedScopeEditable) return;
     saving = true;
     try {
       await matchReview.resolve(match.externalSnapshotId, {
         targetType: "local",
         libraryTrackId,
         reason,
+        authorityScope,
+        expectedAuthority: expectedAuthorityForScope(match, authorityScope),
       });
       open = false;
       await onSaved("Local match saved.");
@@ -184,7 +197,7 @@
   }
 
   async function chooseProvider(target: MatchTarget) {
-    if (!match || !target.externalProvider || !target.externalId || saving) return;
+    if (!match || !target.externalProvider || !target.externalId || saving || !selectedScopeEditable) return;
     saving = true;
     try {
       await matchReview.resolve(match.externalSnapshotId, {
@@ -192,6 +205,8 @@
         externalProvider: target.externalProvider,
         externalId: target.externalId,
         reason: "Selected from the provider-neutral match dialog",
+        authorityScope,
+        expectedAuthority: expectedAuthorityForScope(match, authorityScope),
       });
       open = false;
       await onSaved("Provider route saved.");
@@ -228,6 +243,20 @@
             <span>{formatDuration(match.durationMilliseconds)}{match.isrc ? ` · ISRC ${match.isrc}` : ""}</span>
           </div>
         </section>
+
+        {#if allowedAuthorityScopes(match).includes("household")}
+          <fieldset class="authority-scope-picker" disabled={saving}>
+            <legend>Save decision for</legend>
+            <label class:active={authorityScope === "personal"}>
+              <input bind:group={authorityScope} type="radio" value="personal" disabled={!canEditAuthorityScope(match, "personal")} />
+              <span><strong>Only me</strong><small>Overrides the household decision for your account.</small></span>
+            </label>
+            <label class:active={authorityScope === "household"}>
+              <input bind:group={authorityScope} type="radio" value="household" disabled={!canEditAuthorityScope(match, "household")} />
+              <span><strong>Household</strong><small>Applies when a listener has no personal decision.</small></span>
+            </label>
+          </fieldset>
+        {/if}
 
         <details class="match-technical">
           <summary class="disclosure-summary compact"><span class="disclosure-label"><strong>Database and identity details</strong></span></summary>
@@ -318,9 +347,9 @@
                     </dl>
                   </details>
                   {#if resolution?.targetType === "local"}
-                    <Button class="candidate-action" variant="secondary" size="sm" disabled={saving} onclick={() => void chooseLocal(resolution.libraryTrackId, "Selected from automatic candidate evidence")}>Choose candidate</Button>
+                    <Button class="candidate-action" variant="secondary" size="sm" disabled={saving || !selectedScopeEditable} onclick={() => void chooseLocal(resolution.libraryTrackId, "Selected from automatic candidate evidence")}>Choose candidate</Button>
                   {:else if resolution}
-                    <Button class="candidate-action" variant="secondary" size="sm" disabled={saving} onclick={() => void chooseProvider({
+                    <Button class="candidate-action" variant="secondary" size="sm" disabled={saving || !selectedScopeEditable} onclick={() => void chooseProvider({
                       id: resolution.externalId,
                       externalId: resolution.externalId,
                       externalProvider: resolution.externalProvider,
@@ -371,7 +400,7 @@
           {#each visibleResults as target}
             <button
               type="button"
-              disabled={saving}
+              disabled={saving || !selectedScopeEditable}
               onclick={() =>
                 target.externalProvider
                   ? void chooseProvider(target)
@@ -427,7 +456,7 @@
 
         <footer class="dialog-actions">
           {#if showReject}
-            <Button variant="destructive" onclick={() => onReject?.(match!)}>Reject candidate</Button>
+            <Button variant="destructive" disabled={!selectedScopeEditable} onclick={() => onReject?.(match!, authorityScope)}>Reject candidate</Button>
           {/if}
           <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
         </footer>
@@ -435,3 +464,34 @@
     </Dialog.Content>
   </Dialog.Portal>
 </Dialog.Root>
+
+<style>
+  .authority-scope-picker {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-2);
+    margin: 0;
+    border: 0;
+    padding: 0;
+  }
+  .authority-scope-picker legend { margin-bottom: var(--space-2); font-size: var(--text-xs); font-weight: 750; }
+  .authority-scope-picker label {
+    display: grid;
+    min-width: 0;
+    min-height: var(--control-md);
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-2);
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-md);
+    padding: var(--space-2) var(--space-3);
+    cursor: pointer;
+  }
+  .authority-scope-picker label.active { border-color: var(--color-signal); background: var(--color-signal-muted); }
+  .authority-scope-picker input { margin-top: .2rem; accent-color: var(--color-signal); }
+  .authority-scope-picker strong, .authority-scope-picker small { display: block; overflow-wrap: anywhere; }
+  .authority-scope-picker small { margin-top: .1rem; color: var(--color-ink-muted); line-height: 1.35; }
+  @media (max-width: 520px) {
+    .authority-scope-picker { grid-template-columns: minmax(0, 1fr); }
+  }
+</style>

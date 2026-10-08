@@ -67,7 +67,7 @@ public sealed record MatchDecisionInput(
 }
 public sealed record ManualOverrideInput(
     Guid ExternalSnapshotId, string LibraryScopeId, ManualOverrideDecision Decision,
-    Guid? LibraryTrackId, string Reason);
+    Guid? LibraryTrackId, string Reason, ManualAuthorityRevision? ExpectedAuthority = null);
 
 public sealed record PlaylistLinkInput(Guid ProviderAccountId, string SourceProviderId, string SourcePlaylistId, string SourcePlaylistIdHash, string LibraryScopeId, string TargetProtocol, string TargetBackendInstanceId, PlaylistLinkMode Mode, PlaylistMaterializationMode MaterializationMode, string RuleVersion, string PolicyVersion, Guid? ScheduleId = null, string? TargetPlaylistId = null, Guid? TargetCredentialReferenceId = null, bool MirrorStaleEntries = false, bool PreserveManualEntries = true, bool SyncName = true, bool SyncDescription = true, bool SyncArtwork = true, PlaylistProjectionMode ProjectionMode = PlaylistProjectionMode.Resolved, PlaylistImportMode ImportMode = PlaylistImportMode.Linked, PlaylistTrackRetention TrackRetention = PlaylistTrackRetention.OnDemand);
 public sealed record PlaylistLinkUpdate(long ExpectedRevision, PlaylistLinkMode Mode, PlaylistMaterializationMode MaterializationMode, string RuleVersion, string PolicyVersion, Guid? ScheduleId, string? TargetPlaylistId, bool MirrorStaleEntries, bool PreserveManualEntries, bool SyncName, bool SyncDescription, bool SyncArtwork, Guid? TargetCredentialReferenceId = null, PlaylistProjectionMode ProjectionMode = PlaylistProjectionMode.Resolved, PlaylistImportMode? ImportMode = null, PlaylistTrackRetention? TrackRetention = null);
@@ -127,15 +127,17 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
     private readonly ITrackMatchRepository _trackMatches;
     private readonly PlaylistMaterializationPlanner _planner;
     private readonly IBackendLibraryAccessResolver _libraryAccess;
+    private readonly IProtocolProviderGateway? _providerGateway;
     public PlaylistPersistenceService(
         IDbContextFactory<AllstarrDbContext> factory,
         ProviderAccountResolver accounts,
         IPlatformClock clock,
         ITrackMatchRepository trackMatches,
         IBackendLibraryAccessResolver libraryAccess,
-        PlaylistMaterializationPlanner? planner = null) =>
-        (_factory, _accounts, _clock, _trackMatches, _planner, _libraryAccess) =
-        (factory, accounts, clock, trackMatches, planner ?? new PlaylistMaterializationPlanner(), libraryAccess);
+        PlaylistMaterializationPlanner? planner = null,
+        IProtocolProviderGateway? providerGateway = null) =>
+        (_factory, _accounts, _clock, _trackMatches, _planner, _libraryAccess, _providerGateway) =
+        (factory, accounts, clock, trackMatches, planner ?? new PlaylistMaterializationPlanner(), libraryAccess, providerGateway);
 
     public async Task<PlaylistLinkRecord> CreateLinkAsync(ProtocolExecutionContext context, PlaylistLinkInput input, CancellationToken cancellationToken = default)
     {
@@ -386,17 +388,23 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
             .Where(item => item.ResourceKind == ProviderResourceKind.Track)
             .GroupBy(item => item.CanonicalRecordingId)
             .ToDictionary(group => group.Key, group => group.ToArray());
-        var manualOverrides = resolution.ActiveOverrides.ToDictionary(item => item.ExternalSnapshotId);
+        var viewerUserId = actor.EffectiveUserId ?? link.OwnerUserId;
+        var manualOverrides = ManualTrackOverrides.Index(
+            snapshots.Values, resolution.ActiveOverrides, viewerUserId);
         var latestMatches = resolution.LatestDecisions.ToDictionary(item => item.ExternalSnapshotId);
         var access = await _libraryAccess.ResolveAsync(context, cancellationToken);
         var libraryTracks = await LibraryTrackAccess.Query(db, context, access)
             .Where(item => item.BackendInstanceId == link.TargetBackendInstanceId &&
                            targetProtocols.Contains(item.Protocol))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var providerPriority = new[] { link.SourceProviderId }
-            .Concat(resolution.ProviderIdentities.Select(item => item.ProviderId))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var providerPriority = _providerGateway == null
+            ? new[] { link.SourceProviderId }
+                .Concat(resolution.ProviderIdentities.Select(item => item.ProviderId))
+                .Concat(manualOverrides.Values.Select(item => item.Effective?.TargetProviderId)
+                    .OfType<string>())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray()
+            : await _providerGateway.GetPlayableProviderOrderAsync(actor, cancellationToken);
         var source = new ImmutablePlaylistSourceSnapshot(
             snapshot.Id,
             link.Id,
@@ -429,7 +437,7 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         foreach (var entry in entries)
         {
             snapshots.TryGetValue(entry.ExternalMetadataSnapshotId, out var external);
-            manualOverrides.TryGetValue(entry.ExternalMetadataSnapshotId, out var manual);
+            var manual = manualOverrides.GetValueOrDefault(entry.ExternalMetadataSnapshotId)?.Effective;
             latestMatches.TryGetValue(entry.ExternalMetadataSnapshotId, out var match);
             if (external == null)
             {
@@ -498,7 +506,7 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
                 sourceEntry.ExternalSnapshotId,
                 ToTrackMatchState(decision?.State ?? TrackMatchReviewState.Unresolved),
                 item.LibraryTrackId,
-                manual?.Decision,
+                manual?.Effective?.Decision,
                 item.SourceEntryId,
                 item.SourceTrackReference,
                 item.SourceIdentity,

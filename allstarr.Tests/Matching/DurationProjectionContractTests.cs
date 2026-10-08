@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
 using allstarr.Controllers;
+using allstarr.Core.Matching;
 using allstarr.Core.Storage;
 
 namespace allstarr.Tests;
@@ -26,11 +27,13 @@ public sealed class DurationProjectionContractTests
         [
             snapshot,
             null,
-            null,
+            new ManualTrackOverrideLayers(null, null),
             null,
             emptyLibrary,
             new Dictionary<Guid, ProviderTrackIdentityRecord[]>(),
-            new HashSet<string>()
+            new HashSet<string>(),
+            Guid.CreateVersion7(),
+            false
         ])!);
         Assert.Equal("spotify", source.GetProperty("providerId").GetString());
         Assert.Equal(196_456, source.GetProperty("durationMilliseconds").GetInt64());
@@ -54,11 +57,13 @@ public sealed class DurationProjectionContractTests
         [
             snapshot,
             decision,
-            null,
+            new ManualTrackOverrideLayers(null, null),
             null,
             new Dictionary<Guid, LibraryTrackRecord> { [localId] = local },
             new Dictionary<Guid, ProviderTrackIdentityRecord[]>(),
-            new HashSet<string>()
+            new HashSet<string>(),
+            Guid.CreateVersion7(),
+            false
         ])!);
         Assert.Equal(200_000, target.GetProperty("durationMilliseconds").GetInt64());
         Assert.Equal("jellyfin", target.GetProperty("durationProvenance").GetString());
@@ -97,11 +102,13 @@ public sealed class DurationProjectionContractTests
                 State = TrackMatchState.Suggested,
                 CandidateResultsJson = $$"""[{"LibraryTrackId":"{{candidateId}}","AlbumEvidence":null,"DurationDeltaMilliseconds":null}]"""
             },
-            null,
+            new ManualTrackOverrideLayers(null, null),
             null,
             new Dictionary<Guid, LibraryTrackRecord> { [candidateId] = new() { Id = candidateId } },
             new Dictionary<Guid, ProviderTrackIdentityRecord[]>(),
-            new HashSet<string>()
+            new HashSet<string>(),
+            Guid.CreateVersion7(),
+            false
         ])!;
 
         Assert.Single(Value(row).GetProperty("candidates").EnumerateArray());

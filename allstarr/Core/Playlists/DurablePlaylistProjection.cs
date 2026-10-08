@@ -293,24 +293,29 @@ public sealed class DurablePlaylistProjectionReader(
                            (item.Verification == ProviderIdentityVerification.Verified ||
                             item.Verification == ProviderIdentityVerification.Pinned))
             .ToListAsync(cancellationToken);
-        var effectivePolicy = effectivePolicies == null
-            ? null
-            : await effectivePolicies.ResolveAsync(tenantId, cancellationToken);
-        var providerOrder = providerGateway == null
-            ? identities.Select(item => item.ProviderId)
-                .Distinct(StringComparer.Ordinal)
-                .Order(StringComparer.Ordinal)
-                .ToArray()
-            : ProviderOrder(ProviderCapabilityKind.Streaming)
-                .Concat(ProviderOrder(ProviderCapabilityKind.Download))
-                .Distinct(StringComparer.Ordinal)
-                .ToArray();
-
-        IReadOnlyList<string> ProviderOrder(ProviderCapabilityKind capability)
+        var overrideRecords = await ManualTrackOverrides.LoadAsync(
+            database, tenantId, viewerUserId, external.Values.ToArray(), cancellationToken);
+        var overrides = ManualTrackOverrides.Index(external.Values, overrideRecords, viewerUserId);
+        var access = await libraryAccess.ResolveUserAsync(viewerUserId, cancellationToken);
+        IReadOnlyList<string> fallbackProviderOrder = new[] { link.SourceProviderId }
+            .Concat(identities.Select(item => item.ProviderId))
+            .Concat(overrides.Values.Select(item => item.Effective?.TargetProviderId)
+                .OfType<string>())
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        if (providerGateway == null && effectivePolicies != null)
         {
-            var available = providerGateway.GetProviderOrder(capability);
-            return effectivePolicy?.ApplyProviderAvailability(capability, available) ?? available;
+            var effectivePolicy = await effectivePolicies.ResolveForUserAsync(
+                tenantId, viewerUserId, cancellationToken);
+            fallbackProviderOrder = effectivePolicy.ApplyProviderAvailability(
+                ProviderCapabilityKind.Streaming, fallbackProviderOrder);
         }
+        var providerOrder = providerGateway == null
+            ? fallbackProviderOrder
+            : access.Context?.Actor is { } actor
+                ? await providerGateway.GetPlayableProviderOrderAsync(actor, cancellationToken)
+                : [];
         var publishedMatchIds = entries
             .Where(item => item.PublishedTrackMatchId.HasValue)
             .Select(item => item.PublishedTrackMatchId!.Value)
@@ -319,17 +324,14 @@ public sealed class DurablePlaylistProjectionReader(
         var publishedMatches = await database.TrackMatches.AsNoTracking()
             .Where(item => publishedMatchIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var overrides = await database.ManualTrackOverrides.AsNoTracking()
-            .Where(item => externalIds.Contains(item.ExternalSnapshotId) && item.RevokedAt == null)
-            .ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
         var libraryIds = publishedMatches.Values
             .Where(item => item.LibraryTrackId.HasValue)
             .Select(item => item.LibraryTrackId!.Value)
-            .Concat(overrides.Values.Where(item => item.LibraryTrackId.HasValue)
-                .Select(item => item.LibraryTrackId!.Value))
+            .Concat(overrides.Values.Select(item => item.Effective)
+                .Where(item => item?.LibraryTrackId.HasValue == true)
+                .Select(item => item!.LibraryTrackId!.Value))
             .Distinct()
             .ToArray();
-        var access = await libraryAccess.ResolveUserAsync(viewerUserId, cancellationToken);
         var matchedCanonicalIds = publishedMatches.Values.Where(item => item.CanonicalRecordingId.HasValue)
             .Select(item => item.CanonicalRecordingId!.Value).Concat(canonicalIds).Distinct().ToArray();
         var library = await LibraryTrackAccess.Query(database, access)
@@ -578,10 +580,10 @@ public sealed class DurablePlaylistProjectionReader(
         IReadOnlyList<ProviderTrackIdentityRecord> identities,
         IReadOnlyList<string> providerOrder,
         TrackMatchRecord? match,
-        IReadOnlyDictionary<Guid, ManualTrackOverrideRecord> overrides,
+        IReadOnlyDictionary<Guid, ManualTrackOverrideLayers> overrides,
         IReadOnlyDictionary<Guid, LibraryTrackRecord> library)
     {
-        overrides.TryGetValue(external.Id, out var manual);
+        var manual = overrides.GetValueOrDefault(external.Id)?.Effective;
         var identity = sourceIdentities.GetValueOrDefault(external.Id);
         var route = TrackRouteProjector.Project(external, match, manual, identity, library.Values, identities, providerOrder);
         var classification = route.Classification;

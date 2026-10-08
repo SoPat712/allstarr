@@ -84,7 +84,7 @@ public sealed class TrackClassifierTests
     }
 
     [Fact]
-    public void Classify_RemovesManuallyPinnedProviderRoutesFromReview()
+    public void Classify_CatalogPinsDoNotBecomePersonalAuthority()
     {
         var tenant = Guid.CreateVersion7();
         var canonical = Guid.CreateVersion7();
@@ -101,8 +101,52 @@ public sealed class TrackClassifierTests
             ambiguous, source, [source, pinned], ["apple-download"]);
 
         Assert.Equal(TrackRouteKind.External, accepted.RouteKind);
-        Assert.Equal(TrackMatchState.Pinned, accepted.ReviewState);
+        Assert.Equal(TrackMatchState.Ambiguous, accepted.ReviewState);
+        Assert.False(accepted.PrimaryProviderRoute!.IsManual);
         Assert.Equal(TrackMatchState.Rejected, rejected.ReviewState);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ProviderPin_OverridesAutomaticLocalOnlyWhenViewerCanUseProvider(bool eligible)
+    {
+        var tenant = Guid.CreateVersion7();
+        var canonical = Guid.CreateVersion7();
+        var local = Guid.CreateVersion7();
+        var source = Identity(tenant, canonical, "spotify", "source");
+        var snapshot = new ExternalMetadataSnapshotRecord { TenantId = tenant, BackendInstanceId = "backend" };
+        var track = new LibraryTrackRecord
+        {
+            Id = local,
+            TenantId = tenant,
+            BackendInstanceId = "backend",
+            CanonicalRecordingId = canonical,
+            LibraryScopeId = "music",
+            BackendItemId = "native"
+        };
+        var decision = Decision(local, TrackMatchState.Accepted, 1, .88);
+        decision.CanonicalRecordingId = canonical;
+        var pin = new ManualTrackOverrideRecord
+        {
+            Decision = ManualOverrideDecision.Pin,
+            TargetProviderId = "deezer",
+            TargetExternalId = "personal-choice"
+        };
+        var projection = TrackRouteProjector.Project(snapshot, decision, pin, source, [track], [source],
+            eligible ? ["deezer"] : []);
+        Assert.Equal(eligible ? TrackMatchState.Pinned : TrackMatchState.Accepted, projection.ReviewState);
+        if (eligible)
+        {
+            Assert.Null(projection.LibraryTrack);
+            Assert.True(projection.PrimaryProviderRoute!.IsManual);
+            Assert.Equal("personal-choice", projection.PrimaryProviderRoute.ExternalId);
+        }
+        else
+        {
+            Assert.Equal(local, projection.LibraryTrack!.Id);
+            Assert.Null(projection.PrimaryProviderRoute);
+        }
     }
 
     private static TrackMatchRecord Decision(

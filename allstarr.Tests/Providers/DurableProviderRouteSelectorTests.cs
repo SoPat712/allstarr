@@ -35,7 +35,7 @@ public sealed class DurableProviderRouteSelectorTests
 
         Assert.Equal(["qobuz", "deezer"], routes.Select(item => item.ProviderId));
         Assert.False(routes[0].IsManual);
-        Assert.True(routes[1].IsManual);
+        Assert.False(routes[1].IsManual);
     }
 
     private static ProviderTrackIdentityRecord Identity(
