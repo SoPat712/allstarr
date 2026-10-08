@@ -33,6 +33,11 @@ public partial class JellyfinController
 
                 if (statusCode == 200)
                 {
+                    if (_libraryAccess != null && result.RootElement.TryGetProperty("User", out var authenticatedUser) &&
+                        authenticatedUser.TryGetProperty("Id", out var authenticatedId) &&
+                        authenticatedId.ValueKind == JsonValueKind.String && authenticatedId.GetString() is { Length: > 0 } principalId)
+                        await _libraryAccess.InvalidateAsync(allstarr.Core.Protocols.ProtocolKind.Jellyfin,
+                            _configuration["Identity:BackendInstanceId"] ?? "primary", principalId);
                     _logger.LogInformation("Authentication successful");
                     if (_configuration.GetValue<bool>("Debug:LogAllRequests"))
                     {

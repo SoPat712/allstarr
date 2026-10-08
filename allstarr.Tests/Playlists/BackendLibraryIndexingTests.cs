@@ -6,6 +6,7 @@ using allstarr.Core.Operations;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Protocols;
 using allstarr.Models.Settings;
+using Microsoft.Extensions.Configuration;
 
 namespace allstarr.Tests;
 
@@ -13,6 +14,106 @@ public sealed class BackendLibraryIndexingTests
 {
     private readonly Guid _tenant = Guid.CreateVersion7();
     private readonly Guid _user = Guid.CreateVersion7();
+
+    public static TheoryData<ProtocolKind> BothProtocols => new() { ProtocolKind.Jellyfin, ProtocolKind.Subsonic };
+
+    [Theory]
+    [MemberData(nameof(BothProtocols))]
+    public async Task Scanner_NullScopeIndexesEveryDiscoveredLibrary(ProtocolKind protocol)
+    {
+        var handler = new RecordingHandler(CatalogWithTrack(protocol), Discovery(protocol, "lib-a", "lib-b"));
+        var index = new RecordingIndex();
+        var scanner = CreateScanner(protocol, handler, index);
+
+        var result = await scanner.ScanAsync(Context(protocol, null), new(null, protocol == ProtocolKind.Subsonic ? Guid.CreateVersion7() : null, 50), default);
+
+        Assert.Equal(2, result.Pages);
+        Assert.Equal(new[] { "lib-a", "lib-b" }, index.Inputs.Select(track => track.LibraryScopeId).ToArray());
+        Assert.Equal(new[] { "lib-a", "lib-b" }, index.ContextScopes);
+        var pages = handler.Requests.Where(request => IsCatalogRequest(request.Uri)).ToArray();
+        Assert.Equal(2, pages.Length);
+        foreach (var library in new[] { "lib-a", "lib-b" })
+        {
+            var page = Assert.Single(pages, request => HasLibraryParameter(request, protocol, library));
+            Assert.NotNull(page);
+        }
+        if (protocol == ProtocolKind.Jellyfin)
+        {
+            Assert.Contains(handler.Requests, request => request.Uri.AbsolutePath == "/UserViews" &&
+                request.Uri.Query.Contains("IncludeHidden=true", StringComparison.Ordinal));
+            Assert.All(handler.Requests, request =>
+                Assert.Contains("UserId=principal", request.Uri.Query, StringComparison.Ordinal));
+            Assert.DoesNotContain(handler.Requests, request => request.Uri.AbsolutePath == "/Library/MediaFolders");
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(BothProtocols))]
+    public async Task Scanner_ConfiguredSubsetIndexesOnlySelectedLibrary(ProtocolKind protocol)
+    {
+        var handler = new RecordingHandler(CatalogWithTrack(protocol), Discovery(protocol, "lib-a", "lib-b"));
+        var index = new RecordingIndex();
+        var scanner = CreateScanner(protocol, handler, index,
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { [BackendMusicLibraries.SelectionKey] = "lib-b" }).Build());
+
+        var result = await scanner.ScanAsync(Context(protocol, null), new(null, protocol == ProtocolKind.Subsonic ? Guid.CreateVersion7() : null, 50), default);
+
+        Assert.Equal(1, result.Pages);
+        Assert.Equal(new[] { "lib-b" }, index.Inputs.Select(track => track.LibraryScopeId).ToArray());
+        Assert.Equal(new[] { "lib-b" }, index.ContextScopes);
+        Assert.Single(handler.Requests, request => IsCatalogRequest(request.Uri));
+        Assert.Contains(handler.Requests, request => IsCatalogRequest(request.Uri) && HasLibraryParameter(request, protocol, "lib-b"));
+    }
+
+    [Theory]
+    [MemberData(nameof(BothProtocols))]
+    public async Task Scanner_RejectsExplicitTargetOutsideDiscoveredSelection(ProtocolKind protocol)
+    {
+        var handler = new RecordingHandler("{}", Discovery(protocol, "lib-a", "lib-b"));
+        var index = new RecordingIndex();
+        var scanner = CreateScanner(protocol, handler, index,
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { [BackendMusicLibraries.SelectionKey] = "lib-a" }).Build());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => scanner.ScanAsync(Context(protocol, "lib-b"), new("lib-b", protocol == ProtocolKind.Subsonic ? Guid.CreateVersion7() : null), default));
+
+        Assert.Empty(index.Inputs);
+        Assert.DoesNotContain(handler.Requests, request => IsCatalogRequest(request.Uri));
+        Assert.Single(handler.Requests);
+    }
+
+    [Theory]
+    [MemberData(nameof(BothProtocols))]
+    public async Task Scanner_RejectsMalformedLibraryPermissionResponse(ProtocolKind protocol)
+    {
+        var handler = new RecordingHandler("{}", "{}");
+        var index = new RecordingIndex();
+        var scanner = CreateScanner(protocol, handler, index);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => scanner.ScanAsync(Context(protocol, null), new(null, protocol == ProtocolKind.Subsonic ? Guid.CreateVersion7() : null), default));
+
+        Assert.Empty(index.Inputs);
+        Assert.DoesNotContain(handler.Requests, request => IsCatalogRequest(request.Uri));
+        Assert.Single(handler.Requests);
+    }
+
+    private IBackendLibraryCatalogScanner CreateScanner(ProtocolKind protocol, RecordingHandler handler, RecordingIndex index, IConfiguration? configuration = null) =>
+        protocol == ProtocolKind.Jellyfin
+            ? new JellyfinLibraryCatalogScanner(new HttpClient(handler), new JellyfinSettings { Url = "https://jellyfin.test", ApiKey = "ephemeral-key" }, index, new Clock(), configuration)
+            : new SubsonicLibraryCatalogScanner(new HttpClient(handler), new SubsonicSettings { Url = "https://navidrome.test" }, new AuthenticationResolver(), index, new Clock(), configuration);
+
+    private static string Discovery(ProtocolKind protocol, params string[] ids) => protocol == ProtocolKind.Jellyfin
+        ? "{\"Items\":[" + string.Join(',', ids.Select(id => "{\"Id\":\"" + id + "\",\"CollectionType\":\"music\"}")) + "]}"
+        : "{\"subsonic-response\":{\"status\":\"ok\",\"musicFolders\":{\"musicFolder\":[" +
+          string.Join(',', ids.Select(id => "{\"id\":\"" + id + "\"}")) + "]}}}";
+
+    private static string CatalogWithTrack(ProtocolKind protocol) => protocol == ProtocolKind.Jellyfin
+        ? "{\"Items\":[{\"Id\":\"song\",\"Name\":\"Song\",\"Path\":\"/music/song.flac\",\"Artists\":[\"Artist\"],\"DateCreated\":\"2026-07-12T01:00:00Z\"}],\"TotalRecordCount\":1}"
+        : "{\"subsonic-response\":{\"status\":\"ok\",\"searchResult3\":{\"song\":[{\"id\":\"song\",\"title\":\"Song\",\"artist\":\"Artist\",\"path\":\"song.flac\",\"created\":\"2026-07-12T01:00:00Z\"}]}}}";
+
+    private static bool IsCatalogRequest(Uri uri) => uri.AbsolutePath.EndsWith("Items", StringComparison.Ordinal) || uri.AbsolutePath.EndsWith("search3.view", StringComparison.Ordinal);
+    private static bool HasLibraryParameter(CapturedRequest request, ProtocolKind protocol, string id) => protocol == ProtocolKind.Jellyfin
+        ? Uri.UnescapeDataString(request.Uri.Query).Contains("ParentId=" + id, StringComparison.Ordinal)
+        : request.Body.Contains("musicFolderId=" + id, StringComparison.Ordinal);
 
     [Fact]
     public async Task JellyfinScanner_IndexesMetadataAndPathsWithoutReadingMedia()
@@ -49,6 +150,7 @@ public sealed class BackendLibraryIndexingTests
             "IncludeItemTypes=Audio",
             Uri.UnescapeDataString(handler.LastRequest.RequestUri.Query),
             StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ParentId=music", Uri.UnescapeDataString(handler.LastRequest.RequestUri.Query), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -100,6 +202,7 @@ public sealed class BackendLibraryIndexingTests
         Assert.Equal(HttpMethod.Post, handler.LastRequest!.Method);
         Assert.DoesNotContain("password", handler.LastRequest.RequestUri!.ToString(), StringComparison.Ordinal);
         Assert.Contains("p=password", handler.LastBody, StringComparison.Ordinal);
+        Assert.Contains("musicFolderId=music", handler.LastBody, StringComparison.Ordinal);
         Assert.Equal("Artist/Album/First.flac", Assert.Single(index.Inputs).FilePath);
         Assert.Equal(180_000, index.Inputs[0].DurationMilliseconds);
         Assert.Equal("subsonic", index.Inputs[0].DurationProvenance);
@@ -128,7 +231,7 @@ public sealed class BackendLibraryIndexingTests
         Assert.Null(track.DurationRetrievedAt);
     }
 
-    private ProtocolExecutionContext Context(ProtocolKind protocol) => new(
+    private ProtocolExecutionContext Context(ProtocolKind protocol, string? libraryScopeId = "music") => new(
         protocol,
         "primary",
         "principal",
@@ -136,7 +239,7 @@ public sealed class BackendLibraryIndexingTests
         "library-index-test",
         DateTimeOffset.UtcNow.AddMinutes(5),
         default,
-        libraryScopeId: "music");
+        libraryScopeId: libraryScopeId);
 
     private sealed class Clock : IPlatformClock
     {
@@ -153,27 +256,41 @@ public sealed class BackendLibraryIndexingTests
 
     private sealed class RecordingHandler(string responseBody) : HttpMessageHandler
     {
+        private readonly string? _discoveryBody = null;
+        public RecordingHandler(string responseBody, string discoveryBody) : this(responseBody) => _discoveryBody = discoveryBody;
         public HttpRequestMessage? LastRequest { get; private set; }
         public string LastBody { get; private set; } = string.Empty;
+        public List<CapturedRequest> Requests { get; } = [];
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             LastRequest = request;
             LastBody = request.Content == null ? string.Empty : await request.Content.ReadAsStringAsync(cancellationToken);
+            Requests.Add(new(request.RequestUri!, LastBody));
+            var body = _discoveryBody ?? (request.RequestUri!.AbsolutePath.EndsWith("UserViews", StringComparison.Ordinal)
+                ? "{\"Items\":[{\"Id\":\"music\",\"CollectionType\":\"music\"}]}"
+                : request.RequestUri.AbsolutePath.EndsWith("getMusicFolders.view", StringComparison.Ordinal)
+                    ? "{\"subsonic-response\":{\"status\":\"ok\",\"musicFolders\":{\"musicFolder\":[{\"id\":\"music\"}]}}}"
+                    : responseBody);
+            if (request.RequestUri!.AbsolutePath.EndsWith("Items", StringComparison.Ordinal) || request.RequestUri.AbsolutePath.EndsWith("search3.view", StringComparison.Ordinal)) body = responseBody;
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent(responseBody, Encoding.UTF8, "application/json")
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
             };
         }
     }
 
+    private sealed record CapturedRequest(Uri Uri, string Body);
+
     private sealed class RecordingIndex : ILibraryIndexService
     {
         public List<LibraryTrackIndexInput> Inputs { get; } = [];
+        public List<string?> ContextScopes { get; } = [];
 
         public Task<IndexedLibraryTrack> UpsertAsync(ProtocolExecutionContext executionContext, LibraryTrackIndexInput input, CancellationToken cancellationToken = default)
         {
             Inputs.Add(input);
+            ContextScopes.Add(executionContext.LibraryScopeId);
             return Task.FromResult(new IndexedLibraryTrack(
                 Guid.CreateVersion7(), input.BackendItemId, input.FilePath, input.Title, input.Artist,
                 input.Album, input.AlbumArtist, input.DurationMilliseconds,

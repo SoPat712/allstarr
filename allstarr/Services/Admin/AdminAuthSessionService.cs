@@ -19,6 +19,7 @@ public sealed class AdminAuthSession
     public string? OidcBackendEndpoint { get; init; }
     public string? OidcBackendInstanceId { get; init; }
     public required string JellyfinAccessToken { get; init; }
+    public Dictionary<string, string>? SubsonicReadAuthentication { get; init; }
     public string? JellyfinServerId { get; init; }
     public bool IsPersistent { get; init; }
     public required DateTime ExpiresAtUtc { get; set; }
@@ -81,7 +82,8 @@ public sealed class AdminAuthSessionService(
     IDbContextFactory<AllstarrDbContext>? contextFactory = null,
     AdminOidcOptions? oidcOptions = null,
     AdminOidcBackendAuthentication? oidcBackend = null,
-    allstarr.Core.Identity.IdentityOptions? identityOptions = null)
+    allstarr.Core.Identity.IdentityOptions? identityOptions = null,
+    allstarr.Core.Protocols.IBackendLibraryAccessResolver? libraryAccess = null)
 {
     public const string SessionCookieName = "allstarr_admin_session_v3";
     public const string LegacySessionCookieName = "allstarr_admin_session";
@@ -107,7 +109,8 @@ public sealed class AdminAuthSessionService(
         CancellationToken cancellationToken = default,
         Guid? oidcSecretReferenceId = null,
         string? oidcBackendEndpoint = null,
-        string? oidcBackendInstanceId = null)
+        string? oidcBackendInstanceId = null,
+        Dictionary<string, string>? subsonicReadAuthentication = null)
     {
         var now = DateTime.UtcNow;
         var session = new AdminAuthSession
@@ -123,6 +126,7 @@ public sealed class AdminAuthSessionService(
             OidcBackendEndpoint = oidcBackendEndpoint,
             OidcBackendInstanceId = oidcBackendInstanceId,
             JellyfinAccessToken = jellyfinAccessToken,
+            SubsonicReadAuthentication = subsonicReadAuthentication,
             JellyfinServerId = jellyfinServerId,
             IsPersistent = isPersistent,
             ExpiresAtUtc = now.Add(isPersistent ? PersistentSessionLifetime : DefaultSessionLifetime),
@@ -137,6 +141,9 @@ public sealed class AdminAuthSessionService(
             ExpiresAt = session.ExpiresAtUtc,
             LastSeenAt = now
         }, cancellationToken);
+        if (libraryAccess != null && identityOptions != null &&
+            Enum.TryParse<allstarr.Core.Protocols.ProtocolKind>(backendType, true, out var protocol))
+            await libraryAccess.InvalidateAsync(protocol, identityOptions.BackendInstanceId, userId);
         return session;
     }
 

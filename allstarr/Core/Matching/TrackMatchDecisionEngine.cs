@@ -25,7 +25,8 @@ public sealed record TrackMatchScope(
     string LibraryScopeId,
     Guid ProviderAccountId,
     int PolicyVersion,
-    long SourceSnapshotVersion);
+    long SourceSnapshotVersion,
+    IReadOnlySet<string> AccessibleLibraryIds);
 
 public sealed record ExternalTrackMatchSnapshot(
     string SnapshotId,
@@ -695,11 +696,14 @@ public sealed class TrackMatchDecisionEngine
     private static bool IsVisible(TrackMatchScope scope, LocalTrackMatchCandidate candidate) =>
         candidate.TenantId == scope.TenantId &&
         candidate.BackendInstanceId.Equals(scope.BackendInstanceId, StringComparison.Ordinal) &&
-        candidate.LibraryScopeId.Equals(scope.LibraryScopeId, StringComparison.Ordinal) &&
-        (!candidate.OwnerUserId.HasValue || candidate.OwnerUserId == scope.UserId);
+        (candidate.IsLocal
+            ? scope.AccessibleLibraryIds.Contains(candidate.LibraryScopeId)
+            : candidate.LibraryScopeId.Equals(scope.LibraryScopeId, StringComparison.Ordinal) &&
+              (!candidate.OwnerUserId.HasValue || candidate.OwnerUserId == scope.UserId));
 
     private static void ValidateScope(TrackMatchScope scope)
     {
+        ArgumentNullException.ThrowIfNull(scope.AccessibleLibraryIds);
         if (scope.TenantId == Guid.Empty ||
             scope.UserId == Guid.Empty ||
             scope.ProviderAccountId == Guid.Empty ||

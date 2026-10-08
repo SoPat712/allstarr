@@ -45,12 +45,9 @@ public partial class JellyfinController
             var root = JsonNode.Parse(body.RootElement.GetRawText()) as JsonObject;
             if (root?["Items"] is JsonArray items)
             {
-                var musicLibraryId = await _proxyService.GetMusicLibraryIdForFilteringAsync();
                 var filtered = items
                     .Where(item => item is JsonObject candidate &&
-                                   (string.Equals(candidate["CollectionType"]?.GetValue<string>(), "music", StringComparison.OrdinalIgnoreCase) ||
-                                    (!string.IsNullOrWhiteSpace(musicLibraryId) &&
-                                     string.Equals(candidate["Id"]?.GetValue<string>(), musicLibraryId, StringComparison.Ordinal))))
+                                   string.Equals(candidate["CollectionType"]?.GetValue<string>(), "music", StringComparison.OrdinalIgnoreCase))
                     .Select(item => item!.DeepClone())
                     .ToArray();
                 items.Clear();
@@ -74,14 +71,16 @@ public partial class JellyfinController
                 new KeyValuePair<string, string?>(item.Key, value)))
             .ToArray();
         var queryString = QueryString.Create(credentialQuery);
-        var musicLibraryId = await _proxyService.GetMusicLibraryIdForFilteringAsync(
+        var musicLibraryIds = await _proxyService.GetMusicLibraryIdsForFilteringAsync(
             queryString.Value,
             Request.Headers);
-        if (string.IsNullOrWhiteSpace(musicLibraryId))
+        if (musicLibraryIds.Count == 0)
             return StatusCode(StatusCodes.Status503ServiceUnavailable,
                 new { error = "A Jellyfin music library could not be identified." });
 
-        var endpoint = $"Items/{Uri.EscapeDataString(musicLibraryId)}{queryString}";
+        var endpoint = musicLibraryIds.Count == 1
+            ? $"Items/{Uri.EscapeDataString(musicLibraryIds[0])}{queryString}"
+            : $"Items/Root{queryString}";
         var (body, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
         return HandleProxyResponse(body, statusCode);
     }

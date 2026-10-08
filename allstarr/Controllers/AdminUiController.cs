@@ -265,7 +265,7 @@ public class AdminUiController : ControllerBase
         var linkIds = await linksQuery.Select(item => item.Id).ToArrayAsync(cancellationToken);
         var projections = await services.GetRequiredService<DurablePlaylistProjectionReader>()
             .ReadByLinkIdsAsync(tenantId, session.IsAdministrator ? null : session.AllstarrUserId,
-                linkIds, cancellationToken);
+                linkIds, cancellationToken, session.AllstarrUserId);
         var activeJobs = await jobsQuery.CountAsync(item =>
             item.State != DurableJobState.Succeeded && item.State != DurableJobState.Failed &&
             item.State != DurableJobState.Cancelled, cancellationToken);

@@ -1,5 +1,6 @@
 using allstarr.Core.Intelligence;
 using allstarr.Core.Playback;
+using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
@@ -17,6 +18,7 @@ public class DownloadActivityController : ControllerBase
     private readonly IReadOnlyList<IPlaybackActivitySource> _playbackSources;
     private readonly IReadOnlyList<IPlaybackMetadataResolver> _metadataResolvers;
     private readonly IMediaAssetResolver _mediaAssets;
+    private readonly IBackendLibraryAccessResolver _libraryAccess;
     private readonly ILogger<DownloadActivityController> _logger;
     private readonly IPlaybackDeliveryActivitySource? _playbackDeliveries;
     private readonly IDbContextFactory<AllstarrDbContext>? _contextFactory;
@@ -26,6 +28,7 @@ public class DownloadActivityController : ControllerBase
         IEnumerable<IPlaybackMetadataResolver> metadataResolvers,
         IMediaAssetResolver mediaAssets,
         ILogger<DownloadActivityController> logger,
+        IBackendLibraryAccessResolver libraryAccess,
         IPlaybackDeliveryActivitySource? playbackDeliveries = null,
         IDbContextFactory<AllstarrDbContext>? contextFactory = null)
     {
@@ -33,6 +36,7 @@ public class DownloadActivityController : ControllerBase
         _metadataResolvers = metadataResolvers.ToList();
         _mediaAssets = mediaAssets;
         _logger = logger;
+        _libraryAccess = libraryAccess;
         _playbackDeliveries = playbackDeliveries;
         _contextFactory = contextFactory;
     }
@@ -56,10 +60,13 @@ public class DownloadActivityController : ControllerBase
         var items = new List<NowPlayingEntry>(states.Count);
         var deliveryState = await LoadDeliveryStateAsync(session, states, cancellationToken);
 
+        var viewer = session.AllstarrUserId is { } viewerId
+            ? (await _libraryAccess.ResolveUserAsync(viewerId, cancellationToken)).Context
+            : null;
         foreach (var state in states)
         {
             var itemId = NormalizeExternalItemId(state.ItemId);
-            var metadata = await TryResolvePlaybackMetadataAsync(itemId, cancellationToken);
+            var metadata = await TryResolvePlaybackMetadataAsync(itemId, viewer, cancellationToken);
             var duration = metadata?.DurationSeconds;
             var position = (int)Math.Max(0, state.PositionTicks / TimeSpan.TicksPerSecond);
             deliveryState.TryGetValue(DeliveryKey(state.UserId, itemId), out var delivery);
@@ -177,6 +184,20 @@ public class DownloadActivityController : ControllerBase
             AdminAuthSessionService.HttpContextSessionItemKey, out var value)
             ? value as AdminAuthSession
             : null;
+        if (ExternalPlaybackMetadataResolver.ParseTrackIdentity(normalizedItemId) == null)
+        {
+            if (session?.AllstarrUserId is not { } viewerId) return NotFound();
+            var access = await _libraryAccess.ResolveUserAsync(viewerId, cancellationToken);
+            if (access.Context == null || !access.Access.Succeeded || access.Access.LibraryIds.Length == 0) return NotFound();
+            foreach (var resolver in _metadataResolvers)
+            {
+                var artwork = await resolver.ResolveArtworkAsync(normalizedItemId, access.Context, cancellationToken);
+                if (artwork == null) continue;
+                Response.Headers.CacheControl = "private, no-store";
+                return File(artwork.Content, artwork.ContentType);
+            }
+            return NotFound();
+        }
         var asset = await _mediaAssets.ResolveAsync(
             new MediaAssetIdentity(
                 session?.TenantId,
@@ -206,13 +227,16 @@ public class DownloadActivityController : ControllerBase
 
     private async Task<PlaybackTrackMetadata?> TryResolvePlaybackMetadataAsync(
         string itemId,
+        ProtocolExecutionContext? viewer,
         CancellationToken cancellationToken)
     {
         foreach (var resolver in _metadataResolvers)
         {
             try
             {
-                var metadata = await resolver.ResolveAsync(itemId, cancellationToken);
+                var metadata = viewer == null
+                    ? await resolver.ResolveAsync(itemId, cancellationToken)
+                    : await resolver.ResolveAsync(itemId, viewer, cancellationToken);
                 if (metadata != null)
                 {
                     return metadata;

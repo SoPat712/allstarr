@@ -44,6 +44,7 @@ public sealed class PlaylistLinksController(
     IPlaylistTrackRetentionQueue retentionQueue,
     IConfiguration configuration,
     ApplicationCacheRequestCoalescer requestCoalescer,
+    IBackendLibraryAccessResolver libraryAccess,
     IEffectiveProviderPolicyResolver? effectivePolicies = null) : ControllerBase
 {
     [HttpGet("/api/admin/playlist-sources")]
@@ -355,15 +356,15 @@ public sealed class PlaylistLinksController(
                 .Where(item => item.TenantId == session.TenantId && item.UserId == session.AllstarrUserId)
                 .OrderByDescending(item => item.LastSeenAt)
                 .ToListAsync(cancellationToken);
-            var libraryScopes = await db.LibraryTracks.AsNoTracking()
-                .Where(item => item.TenantId == session.TenantId &&
-                               item.OwnerUserId == session.AllstarrUserId)
+            var access = await libraryAccess.ResolveUserAsync(session.AllstarrUserId!.Value, cancellationToken);
+            var libraryScopes = await LibraryTrackAccess.Query(db, access)
+                .Where(item => item.TenantId == session.TenantId)
                 .GroupBy(item => new { item.BackendInstanceId, item.Protocol })
                 .Select(group => new
                 {
                     group.Key.BackendInstanceId,
                     group.Key.Protocol,
-                    LibraryScopeId = group.OrderByDescending(item => item.IndexedAt)
+                    LibraryScopeId = group.OrderBy(item => item.LibraryScopeId)
                         .Select(item => item.LibraryScopeId)
                         .First()
                 })
@@ -522,7 +523,7 @@ public sealed class PlaylistLinksController(
                 session.TenantId!.Value,
                 session.IsAdministrator ? null : session.AllstarrUserId,
                 links.Select(item => item.Id).ToArray(),
-                cancellationToken);
+                cancellationToken, session.AllstarrUserId);
             return Ok(new
             {
                 playlistLinks = links.Select(link =>
@@ -544,7 +545,7 @@ public sealed class PlaylistLinksController(
                 session.TenantId!.Value,
                 session.IsAdministrator ? null : session.AllstarrUserId,
                 id,
-                cancellationToken);
+                cancellationToken, session.AllstarrUserId);
             if (projection == null) return NotFound();
             var selectedMode = link.ProjectionMode;
             if (!string.IsNullOrWhiteSpace(projectionMode) &&

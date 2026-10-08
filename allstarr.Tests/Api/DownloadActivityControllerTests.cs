@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -168,20 +169,36 @@ public sealed class DownloadActivityControllerTests
         var resolver = new StubMetadataResolver(
             metadata: null,
             artwork: new PlaybackArtwork([1, 2, 3], "image/jpeg"));
-        var controller = CreateController([], [resolver]);
+        var tenant = Guid.CreateVersion7();
+        var viewerId = Guid.CreateVersion7();
+        var viewer = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "admin",
+            new AllstarrPrincipal(tenant, viewerId, "jellyfin", "backend", "admin", "Admin", true),
+            "artwork", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var permissions = new Mock<IBackendLibraryAccessResolver>();
+        permissions.Setup(item => item.ResolveUserAsync(viewerId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BackendLibraryAccessContext(viewer, new(true, ["music"])));
+        var controller = CreateController([], [resolver], libraryAccess: permissions.Object);
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = AdministratorSession(tenant, viewerId);
 
         var result = await controller.GetPlaybackArtwork("local-item", CancellationToken.None);
 
         var file = Assert.IsType<FileContentResult>(result);
         Assert.Equal("image/jpeg", file.ContentType);
         Assert.Equal([1, 2, 3], file.FileContents);
+        Assert.Equal("private, no-store", controller.Response.Headers.CacheControl);
+        permissions.Setup(item => item.ResolveUserAsync(viewerId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BackendLibraryAccessContext(viewer, BackendLibraryAccess.Unavailable));
+        Assert.IsType<NotFoundResult>(await controller.GetPlaybackArtwork("local-item", default));
+        controller.HttpContext.Items.Remove(AdminAuthSessionService.HttpContextSessionItemKey);
+        Assert.IsType<NotFoundResult>(await controller.GetPlaybackArtwork("local-item", default));
     }
 
     private static DownloadActivityController CreateController(
         IEnumerable<IPlaybackActivitySource> playbackSources,
         IEnumerable<IPlaybackMetadataResolver> metadataResolvers,
         IPlaybackDeliveryActivitySource? playbackDeliveries = null,
-        IDbContextFactory<AllstarrDbContext>? contextFactory = null)
+        IDbContextFactory<AllstarrDbContext>? contextFactory = null,
+        IBackendLibraryAccessResolver? libraryAccess = null)
     {
         var controller = new DownloadActivityController(
             playbackSources,
@@ -190,6 +207,7 @@ public sealed class DownloadActivityControllerTests
                 new TestMemoryApplicationCache(),
                 NullLogger<MediaAssetResolver>.Instance),
             NullLogger<DownloadActivityController>.Instance,
+            libraryAccess ?? Mock.Of<IBackendLibraryAccessResolver>(),
             playbackDeliveries,
             contextFactory)
         {
@@ -201,13 +219,14 @@ public sealed class DownloadActivityControllerTests
         return controller;
     }
 
-    private static AdminAuthSession AdministratorSession(Guid tenantId) => new()
+    private static AdminAuthSession AdministratorSession(Guid tenantId, Guid? userId = null) => new()
     {
         SessionId = "session",
         UserId = "admin",
         UserName = "Admin",
         IsAdministrator = true,
         TenantId = tenantId,
+        AllstarrUserId = userId,
         JellyfinAccessToken = "token",
         ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
         LastSeenUtc = DateTime.UtcNow

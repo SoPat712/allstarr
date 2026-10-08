@@ -1,8 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
-using System.Collections.Concurrent;
 using allstarr.Models.Settings;
-using allstarr.Core.Operations;
+using allstarr.Core.Protocols;
 using allstarr.Services.Common;
 using Microsoft.Extensions.Options;
 
@@ -11,170 +10,116 @@ namespace allstarr.Services.Jellyfin;
 public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
 {
     private const int MaximumArtworkBytes = 5 * 1024 * 1024;
-    private static readonly TimeSpan MetadataCacheDuration = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan FailureCacheDuration = TimeSpan.FromSeconds(30);
-
     private readonly HttpClient _httpClient;
     private readonly JellyfinSettings _settings;
+    private readonly IBackendLibraryAccessResolver _libraryAccess;
+    private readonly IBackendLibraryPermissionSource _permissionSource;
     private readonly ILogger<JellyfinPlaybackMetadataResolver> _logger;
-    private readonly IApplicationCache _cache;
-    private readonly IPlatformClock _clock;
-    private readonly ConcurrentDictionary<string, Lazy<Task<PlaybackTrackMetadata?>>> _inflight =
-        new(StringComparer.Ordinal);
-    private readonly ApplicationCacheActivityMetrics _activity;
 
     public JellyfinPlaybackMetadataResolver(
         IHttpClientFactory httpClientFactory,
         IOptions<JellyfinSettings> settings,
-        IApplicationCache cache,
-        IPlatformClock clock,
-        ILogger<JellyfinPlaybackMetadataResolver> logger,
-        ApplicationCacheActivityMetrics? activityMetrics = null)
+        IBackendLibraryAccessResolver libraryAccess,
+        IBackendLibraryPermissionSource permissionSource,
+        ILogger<JellyfinPlaybackMetadataResolver> logger)
     {
         _httpClient = httpClientFactory.CreateClient(JellyfinProxyService.HttpClientName);
         _settings = settings.Value;
-        _cache = cache;
-        _clock = clock;
+        _libraryAccess = libraryAccess;
+        _permissionSource = permissionSource;
         _logger = logger;
-        _activity = activityMetrics ?? new ApplicationCacheActivityMetrics();
     }
+
+    public Task<PlaybackTrackMetadata?> ResolveAsync(string itemId, CancellationToken cancellationToken) =>
+        Task.FromResult<PlaybackTrackMetadata?>(null);
 
     public async Task<PlaybackTrackMetadata?> ResolveAsync(
-        string itemId,
-        CancellationToken cancellationToken)
+        string itemId, ProtocolExecutionContext context, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(itemId) ||
-            itemId.StartsWith("ext-", StringComparison.OrdinalIgnoreCase) ||
-            !CanQueryBackend())
-        {
-            return null;
-        }
-
-        var cacheKey = CacheKeyBuilder.BuildPlaybackMetadataKey("jellyfin", itemId);
-        var negativeKey = CacheKeyBuilder.BuildPlaybackMetadataNegativeKey("jellyfin", itemId);
-        var cached = await _cache.GetAsync<MetadataCacheEntry>(cacheKey);
-        if (cached != null)
-        {
-            if (cached.FreshUntil <= _clock.UtcNow)
-            {
-                _activity.RecordStaleServe();
-                _ = RefreshStaleAsync(itemId, cacheKey, negativeKey);
-            }
-
-            return cached.Metadata;
-        }
-        if (await _cache.ExistsAsync(negativeKey)) return null;
-
-        return await ResolveCoalescedAsync(
-            itemId, cacheKey, negativeKey, cancellationToken);
+        var item = await ResolveNativeItemAsync(itemId, context, cancellationToken);
+        return item.HasValue ? ParseMetadata(item.Value, itemId) : null;
     }
 
-    private async Task<PlaybackTrackMetadata?> ResolveCoalescedAsync(
-        string itemId,
-        string cacheKey,
-        string negativeKey,
-        CancellationToken cancellationToken)
-    {
-        var created = new Lazy<Task<PlaybackTrackMetadata?>>(
-            () => ResolveUncachedAsync(itemId, cacheKey, negativeKey, cancellationToken),
-            LazyThreadSafetyMode.ExecutionAndPublication);
-        var pending = _inflight.GetOrAdd(cacheKey, created);
-        if (!ReferenceEquals(pending, created))
-        {
-            _activity.RecordCoalesced();
-        }
-        try
-        {
-            return await pending.Value.WaitAsync(cancellationToken);
-        }
-        finally
-        {
-            _inflight.TryRemove(new(cacheKey, pending));
-        }
-    }
+    public Task<PlaybackArtwork?> ResolveArtworkAsync(string itemId, CancellationToken cancellationToken) =>
+        Task.FromResult<PlaybackArtwork?>(null);
 
-    private async Task<PlaybackTrackMetadata?> ResolveUncachedAsync(
-        string itemId,
-        string cacheKey,
-        string negativeKey,
-        CancellationToken cancellationToken)
+    public async Task<PlaybackArtwork?> ResolveArtworkAsync(
+        string itemId, ProtocolExecutionContext context, CancellationToken cancellationToken)
     {
-        PlaybackTrackMetadata? metadata = null;
+        var item = await ResolveNativeItemAsync(itemId, context, cancellationToken);
+        if (!item.HasValue) return null;
+        var artworkItemId = ResolveArtworkItemId(item.Value, itemId);
+        if (artworkItemId == null) return null;
         try
         {
-            using var request = CreateRequest(BuildItemUri(itemId), "application/json");
-            using var response = await _httpClient.SendAsync(request, cancellationToken);
-            if (response.IsSuccessStatusCode)
-            {
-                await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-                using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-                metadata = ParseMetadata(document.RootElement, itemId);
-            }
-            else
-            {
-                _logger.LogDebug(
-                    "Jellyfin playback metadata returned {StatusCode} for item {ItemId}",
-                    (int)response.StatusCode,
-                    itemId);
-            }
+            using var request = await _permissionSource.CreateRequestAsync(context, cancellationToken);
+            if (request == null) return null;
+            request.RequestUri = BuildBackendUri($"Items/{Uri.EscapeDataString(artworkItemId)}/Images/Primary?quality=90&width=96");
+            request.Method = HttpMethod.Get;
+            request.Headers.Accept.Clear();
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("image/*"));
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            var contentType = response.Content.Headers.ContentType?.MediaType;
+            if (!response.IsSuccessStatusCode ||
+                contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) != true ||
+                response.Content.Headers.ContentLength > MaximumArtworkBytes)
+                return null;
+            await response.Content.LoadIntoBufferAsync(MaximumArtworkBytes, cancellationToken);
+            return new PlaybackArtwork(await response.Content.ReadAsByteArrayAsync(cancellationToken), contentType);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            _logger.LogDebug(ex, "Unable to resolve Jellyfin playback metadata for item {ItemId}", itemId);
-        }
-
-        if (metadata == null)
-        {
-            await _cache.SetStringAsync(negativeKey, "1", FailureCacheDuration);
+            _logger.LogDebug("Unable to resolve viewer Jellyfin artwork ({ExceptionType})", exception.GetType().Name);
             return null;
         }
-        await _cache.SetAsync(
-            cacheKey,
-            new MetadataCacheEntry(metadata, _clock.UtcNow.Add(MetadataCacheDuration)),
-            MetadataCacheDuration +
-            ApplicationCachePolicyRegistry.Resolve(ApplicationCacheCategory.CanonicalMetadata).StaleFor);
-        return metadata;
     }
 
-    private async Task RefreshStaleAsync(
-        string itemId,
-        string cacheKey,
-        string negativeKey)
+    private async Task<JsonElement?> ResolveNativeItemAsync(
+        string itemId, ProtocolExecutionContext context, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(itemId) || itemId.StartsWith("ext-", StringComparison.OrdinalIgnoreCase) ||
+            context.Protocol != ProtocolKind.Jellyfin || context.Principal == null ||
+            !Uri.TryCreate(_settings.Url, UriKind.Absolute, out _))
+            return null;
         try
         {
-            await ResolveCoalescedAsync(itemId, cacheKey, negativeKey, CancellationToken.None);
+            var access = await _libraryAccess.ResolveAsync(context, cancellationToken);
+            if (!access.Succeeded || access.LibraryIds.Length == 0) return null;
+            using var request = await _permissionSource.CreateRequestAsync(context, cancellationToken);
+            if (request == null) return null;
+            request.RequestUri = BuildBackendUri(
+                $"Items?UserId={Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}&Ids={Uri.EscapeDataString(itemId)}" +
+                "&Recursive=true&IncludeItemTypes=Audio&Fields=Artists,AlbumArtist,Album,AlbumId,AlbumPrimaryImageTag,ImageTags,RunTimeTicks,IndexNumber,ProviderIds");
+            request.Method = HttpMethod.Get;
+            request.Headers.Accept.Clear();
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (!response.IsSuccessStatusCode) return null;
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+            if (!document.RootElement.TryGetProperty("Items", out var items) || items.ValueKind != JsonValueKind.Array)
+                return null;
+            foreach (var item in items.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.Object &&
+                    string.Equals(TryGetString(item, "Id"), itemId, StringComparison.OrdinalIgnoreCase))
+                    return item.Clone();
+            }
+            return null;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception exception)
         {
-            _logger.LogDebug(exception, "Stale Jellyfin metadata refresh failed for {ItemId}", itemId);
-        }
-    }
-
-    public async Task<PlaybackArtwork?> ResolveArtworkAsync(
-        string itemId,
-        CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(itemId) || !CanQueryBackend())
-        {
+            _logger.LogDebug("Unable to resolve viewer Jellyfin metadata ({ExceptionType})", exception.GetType().Name);
             return null;
         }
-
-        using var request = CreateRequest(BuildArtworkUri(itemId), "image/*");
-        using var response = await _httpClient.SendAsync(request, cancellationToken);
-        var contentType = response.Content.Headers.ContentType?.MediaType;
-        if (!response.IsSuccessStatusCode ||
-            contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) != true ||
-            response.Content.Headers.ContentLength > MaximumArtworkBytes)
-            return null;
-        await response.Content.LoadIntoBufferAsync(MaximumArtworkBytes, cancellationToken);
-        return new PlaybackArtwork(
-            await response.Content.ReadAsByteArrayAsync(cancellationToken),
-            contentType);
     }
 
     public static PlaybackTrackMetadata ParseMetadata(JsonElement root, string itemId)
@@ -185,15 +130,7 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
                      "Jellyfin";
         var albumArtist = TryGetString(root, "AlbumArtist");
         var album = TryGetString(root, "Album");
-        var hasPrimaryImage = root.TryGetProperty("ImageTags", out var imageTags) &&
-                              imageTags.ValueKind == JsonValueKind.Object &&
-                              imageTags.TryGetProperty("Primary", out var primaryTag) &&
-                              primaryTag.ValueKind == JsonValueKind.String &&
-                              !string.IsNullOrWhiteSpace(primaryTag.GetString());
-        var albumId = TryGetString(root, "AlbumId");
-        var hasAlbumImage = !string.IsNullOrWhiteSpace(albumId) &&
-                            TryGetString(root, "AlbumPrimaryImageTag") is { Length: > 0 };
-        var artworkItemId = hasPrimaryImage ? itemId : hasAlbumImage ? albumId : null;
+        var artworkItemId = ResolveArtworkItemId(root, itemId);
         var durationSeconds = root.TryGetProperty("RunTimeTicks", out var runTimeTicks) &&
                               runTimeTicks.TryGetInt64(out var ticks) && ticks > 0
             ? (int)Math.Ceiling(ticks / (double)TimeSpan.TicksPerSecond)
@@ -220,41 +157,21 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
             trackNumber);
     }
 
-    private bool CanQueryBackend() =>
-        Uri.TryCreate(_settings.Url, UriKind.Absolute, out _) &&
-        !string.IsNullOrWhiteSpace(_settings.ApiKey);
-
-    private Uri BuildItemUri(string itemId)
+    private static string? ResolveArtworkItemId(JsonElement root, string itemId)
     {
-        var relative = $"Items/{Uri.EscapeDataString(itemId)}";
-        if (!string.IsNullOrWhiteSpace(_settings.UserId))
-        {
-            relative += $"?userId={Uri.EscapeDataString(_settings.UserId)}";
-        }
-
-        return BuildBackendUri(relative);
+        var hasPrimaryImage = root.TryGetProperty("ImageTags", out var imageTags) &&
+                              imageTags.ValueKind == JsonValueKind.Object &&
+                              imageTags.TryGetProperty("Primary", out var primaryTag) &&
+                              primaryTag.ValueKind == JsonValueKind.String &&
+                              !string.IsNullOrWhiteSpace(primaryTag.GetString());
+        var albumId = TryGetString(root, "AlbumId");
+        var hasAlbumImage = !string.IsNullOrWhiteSpace(albumId) &&
+                            TryGetString(root, "AlbumPrimaryImageTag") is { Length: > 0 };
+        return hasPrimaryImage ? itemId : hasAlbumImage ? albumId : null;
     }
-
-    private Uri BuildArtworkUri(string itemId) =>
-        BuildBackendUri($"Items/{Uri.EscapeDataString(itemId)}/Images/Primary?quality=90&width=96");
 
     private Uri BuildBackendUri(string relative) =>
         new(new Uri(_settings.Url!.TrimEnd('/') + "/", UriKind.Absolute), relative);
-
-    private HttpRequestMessage CreateRequest(Uri uri, string accept)
-    {
-        var request = new HttpRequestMessage(HttpMethod.Get, uri);
-        request.Headers.TryAddWithoutValidation(
-            "Authorization",
-            AuthHeaderHelper.CreateAuthHeader(
-                _settings.ApiKey!,
-                _settings.ClientName,
-                _settings.DeviceName,
-                _settings.DeviceId,
-                _settings.ClientVersion));
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(accept));
-        return request;
-    }
 
     private static string? TryGetString(JsonElement root, string propertyName)
     {
@@ -275,9 +192,5 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
             .Select(item => item.ValueKind == JsonValueKind.String ? item.GetString() : null)
             .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
     }
-
-    private sealed record MetadataCacheEntry(
-        PlaybackTrackMetadata Metadata,
-        DateTimeOffset FreshUntil);
 
 }

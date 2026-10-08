@@ -2,13 +2,16 @@ using System.Text.Json;
 using allstarr.Services.Local;
 using allstarr.Core.Downloads;
 using allstarr.Core.Storage;
+using allstarr.Core.Protocols;
+using allstarr.Core.Matching;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Favorites;
 
 public sealed class FavoriteDownloadActionExecutor(
     ManagedTrackDownloadService managedDownloads,
-    IDbContextFactory<AllstarrDbContext> factory) : IFavoriteActionExecutor
+    IDbContextFactory<AllstarrDbContext> factory,
+    IBackendLibraryAccessResolver libraryAccess) : IFavoriteActionExecutor
 {
     public string ActionType => "download";
 
@@ -27,7 +30,7 @@ public sealed class FavoriteDownloadActionExecutor(
             return FavoriteActionExecutionResult.Failure(
                 "favorite_download_library_missing",
                 "The favorite event has no authorized library scope for download.");
-        if (await HasLocalMatchAsync(factory, favoriteEvent, cancellationToken))
+        if (await HasLocalMatchAsync(factory, libraryAccess, favoriteEvent, cancellationToken))
             return FavoriteActionExecutionResult.Success();
 
         var result = await managedDownloads.ExecuteAsync(
@@ -95,14 +98,14 @@ public sealed class FavoriteDownloadActionExecutor(
     }
 
     internal static async Task<bool> HasLocalMatchAsync(IDbContextFactory<AllstarrDbContext> factory,
-        FavoriteEventRecord favoriteEvent, CancellationToken cancellationToken)
+        IBackendLibraryAccessResolver libraryAccess, FavoriteEventRecord favoriteEvent, CancellationToken cancellationToken)
     {
         var external = ParseExternalTrack(favoriteEvent.ItemId);
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        var candidates = await db.LibraryTracks.AsNoTracking().Where(item =>
-            item.TenantId == favoriteEvent.TenantId && item.OwnerUserId == favoriteEvent.OwnerUserId &&
-            item.BackendInstanceId == favoriteEvent.BackendInstanceId &&
-            item.LibraryScopeId == favoriteEvent.LibraryScopeId).ToListAsync(cancellationToken);
+        var access = await libraryAccess.ResolveUserAsync(favoriteEvent.OwnerUserId, cancellationToken);
+        var candidates = await LibraryTrackAccess.Query(db, access).Where(item =>
+            item.TenantId == favoriteEvent.TenantId && item.Protocol == favoriteEvent.Protocol &&
+            item.BackendInstanceId == favoriteEvent.BackendInstanceId).ToListAsync(cancellationToken);
         return external == null
             ? candidates.Any(item => item.BackendItemId == favoriteEvent.ItemId)
             : candidates.Any(item => ProviderIdMatches(item.ProviderIdsJson, external.Value.Provider, external.Value.Id));

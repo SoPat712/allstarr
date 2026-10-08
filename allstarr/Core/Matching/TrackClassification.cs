@@ -49,7 +49,7 @@ public static class TrackRouteProjector
         TrackMatchRecord? decision,
         ManualTrackOverrideRecord? manual,
         ProviderTrackIdentityRecord? sourceIdentity,
-        IEnumerable<LibraryTrackRecord> libraryTracks,
+        IEnumerable<LibraryTrackRecord> accessibleLibraryTracks,
         IEnumerable<ProviderTrackIdentityRecord> providerIdentities,
         IReadOnlyCollection<string>? providerPriority = null)
     {
@@ -60,14 +60,12 @@ public static class TrackRouteProjector
                 .ToArray()
             : [];
         var providerOrder = (providerPriority ?? identities.Select(item => item.ProviderId).ToArray())
-            .Select(ExternalTrackPlaybackPolicy.Normalize)
+            .Select(providerId => providerId.Trim().ToLowerInvariant())
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        var scopedLibrary = libraryTracks
+        var scopedLibrary = accessibleLibraryTracks
             .Where(item =>
                 item.TenantId == snapshot.TenantId &&
-                item.OwnerUserId == snapshot.OwnerUserId &&
-                item.LibraryScopeId == snapshot.LibraryScopeId &&
                 item.BackendInstanceId == snapshot.BackendInstanceId)
             .ToArray();
         var libraryById = scopedLibrary.ToDictionary(item => item.Id);
@@ -86,8 +84,11 @@ public static class TrackRouteProjector
         {
             local = scopedLibrary
                 .Where(item => item.CanonicalRecordingId == canonicalId.Value)
-                .OrderBy(item => item.BackendItemId, StringComparer.Ordinal)
+                .OrderBy(item => item.LibraryScopeId, StringComparer.Ordinal)
+                .ThenBy(item => item.BackendItemId, StringComparer.Ordinal)
+                .ThenBy(item => item.Id)
                 .FirstOrDefault();
+            if (local != null) classification = classification with { LibraryTrackId = local.Id };
         }
         return new(classification, canonicalId, local, identities);
     }

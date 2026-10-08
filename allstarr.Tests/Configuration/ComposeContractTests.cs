@@ -76,6 +76,7 @@ public sealed class ComposeContractTests
             "ALLSTARR_IMAGE",
             "ALLSTARR_RELEASE_PROFILE",
             "APPLE_UPLOAD_PATH",
+            "BACKEND_MUSIC_LIBRARY_IDS",
             "BACKEND_TYPE",
             "CORS_ALLOWED_ORIGINS",
             "CORS_ALLOW_CREDENTIALS",

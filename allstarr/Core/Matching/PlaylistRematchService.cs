@@ -48,7 +48,8 @@ public sealed record PlaylistRematchPreview(
 public sealed class PlaylistRematchService(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     DurablePlaylistProjectionReader projections,
-    TrackMatchDecisionEngine decisionEngine)
+    TrackMatchDecisionEngine decisionEngine,
+    allstarr.Core.Protocols.IBackendLibraryAccessResolver libraryAccess)
 {
     private static readonly HashSet<string> GenericProviders =
         new(StringComparer.OrdinalIgnoreCase) { "ext", "external", "unknown", "legacy" };
@@ -99,14 +100,14 @@ public sealed class PlaylistRematchService(
             .ToDictionary(group => group.Key, group => group
                 .Select(item => item.PublishedTrackMatchId)
                 .ToHashSet());
-        var libraryTracks = await db.LibraryTracks.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && item.OwnerUserId == ownerUserId)
+        var access = await libraryAccess.ResolveUserAsync(ownerUserId, cancellationToken);
+        var libraryTracks = await LibraryTrackAccess.Query(db, access)
+            .Where(item => item.TenantId == tenantId)
             .ToListAsync(cancellationToken);
         var libraryRevisions = links.ToDictionary(
             item => item.Id,
             item => decisionEngine.PrepareCandidates(libraryTracks
-                .Where(track => track.LibraryScopeId == item.LibraryScopeId &&
-                                track.BackendInstanceId == item.TargetBackendInstanceId)
+                .Where(track => track.BackendInstanceId == item.TargetBackendInstanceId)
                 .Select(ToCandidate)).Revision);
 
         var contextConflicts = rows

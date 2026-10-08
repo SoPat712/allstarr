@@ -1009,6 +1009,16 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         Assert.Equal(visible.LibraryTrackId, pinned.SelectedLibraryTrackId);
         Assert.Throws<UnauthorizedAccessException>(() =>
             new TrackMatchDecisionEngine().Decide(scope, Source(), [visible], foreignPin));
+        Assert.Throws<UnauthorizedAccessException>(() =>
+            new TrackMatchDecisionEngine().Decide(scope, Source(), [visible],
+                pin with { LibraryScopeId = "other-source-library" }));
+
+        var inaccessibleTarget = new TrackMatchDecisionEngine().Decide(
+            scope, Source(), [visible with { LibraryScopeId = "denied-library" }], pin);
+
+        Assert.Equal(TrackMatchReviewState.Unresolved, inaccessibleTarget.State);
+        Assert.Null(inaccessibleTarget.SelectedLibraryTrackId);
+        Assert.Contains("manual_override_target_not_visible", inaccessibleTarget.Warnings);
     }
 
     [Fact]
@@ -1069,13 +1079,12 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void CandidateVisibility_ExcludesOtherUsersLibrariesBackendsAndTenants()
+    public void CandidateVisibility_ExcludesDeniedLibrariesBackendsAndTenants()
     {
         var scope = Scope();
         var candidates = new[]
         {
             Candidate(scope) with { TenantId = Guid.CreateVersion7() },
-            Candidate(scope) with { OwnerUserId = Guid.CreateVersion7() },
             Candidate(scope) with { LibraryScopeId = "other-library" },
             Candidate(scope) with { BackendInstanceId = "other-backend" }
         };
@@ -1085,6 +1094,96 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         Assert.Equal(TrackMatchReviewState.Unresolved, decision.State);
         Assert.Empty(decision.Candidates);
         Assert.Contains("no_indexed_candidate", decision.Warnings);
+    }
+
+    [Fact]
+    public void CandidateVisibility_AcceptsAccessibleLibraryIndexedByAnotherUser()
+    {
+        var scope = Scope() with
+        {
+            AccessibleLibraryIds = new HashSet<string>(StringComparer.Ordinal) { "shared-library" }
+        };
+        var candidate = Candidate(scope) with
+        {
+            OwnerUserId = Guid.CreateVersion7(),
+            LibraryScopeId = "shared-library"
+        };
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, Source(), [candidate]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(candidate.LibraryTrackId, decision.SelectedLibraryTrackId);
+    }
+
+    [Fact]
+    public void CandidateVisibility_ExcludesDeniedLibraryEvenWhenIndexedByCurrentUser()
+    {
+        var scope = Scope() with
+        {
+            AccessibleLibraryIds = new HashSet<string>(StringComparer.Ordinal) { "other-library" }
+        };
+        var candidate = Candidate(scope);
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, Source(), [candidate]);
+
+        Assert.Equal(scope.UserId, candidate.OwnerUserId);
+        Assert.Equal(TrackMatchReviewState.Unresolved, decision.State);
+        Assert.Null(decision.SelectedLibraryTrackId);
+        Assert.Empty(decision.Candidates);
+    }
+
+    [Fact]
+    public void CandidateVisibility_SelectsOnlyAccessibleCopyOfRecording()
+    {
+        var scope = Scope() with
+        {
+            AccessibleLibraryIds = new HashSet<string>(StringComparer.Ordinal) { "accessible-library" }
+        };
+        var denied = Candidate(scope);
+        var accessible = denied with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "accessible-copy",
+            LibraryScopeId = "accessible-library",
+            OwnerUserId = Guid.CreateVersion7()
+        };
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, Source(), [denied, accessible]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(accessible.LibraryTrackId, decision.SelectedLibraryTrackId);
+        Assert.Equal(accessible.LibraryTrackId, Assert.Single(decision.Candidates).LibraryTrackId);
+    }
+
+    [Fact]
+    public void CandidateVisibility_EmptyLibraryAccessExcludesLocalAndKeepsAuthorizedExternal()
+    {
+        var scope = Scope() with
+        {
+            AccessibleLibraryIds = new HashSet<string>(StringComparer.Ordinal)
+        };
+        var local = Candidate(scope);
+        var external = ProviderCandidate(scope, "deezer", 240_000);
+        var outsideSourceLibrary = external with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            LibraryScopeId = "other-library"
+        };
+        var otherUser = external with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            OwnerUserId = Guid.CreateVersion7()
+        };
+        var engine = new TrackMatchDecisionEngine();
+
+        var localDecision = engine.Decide(scope, Source(), [local]);
+        var externalDecision = engine.Decide(scope, Source(), [local, outsideSourceLibrary, otherUser, external]);
+
+        Assert.Equal(TrackMatchReviewState.Unresolved, localDecision.State);
+        Assert.Empty(localDecision.Candidates);
+        Assert.Equal(TrackMatchReviewState.Accepted, externalDecision.State);
+        Assert.Equal(external.LibraryTrackId, externalDecision.SelectedLibraryTrackId);
+        Assert.Equal(external.LibraryTrackId, Assert.Single(externalDecision.Candidates).LibraryTrackId);
     }
 
     [Fact]
@@ -1265,7 +1364,8 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         "music",
         Guid.CreateVersion7(),
         PolicyVersion: 3,
-        SourceSnapshotVersion: 1);
+        SourceSnapshotVersion: 1,
+        AccessibleLibraryIds: new HashSet<string>(StringComparer.Ordinal) { "music" });
 
     private static ExternalTrackMatchSnapshot Source() => new(
         "snapshot-1",

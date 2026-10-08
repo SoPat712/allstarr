@@ -144,7 +144,7 @@ public sealed class ConcurrentRematchDecisionTests
             factory,
             new TrackMatchDecisionEngine(),
             new ProviderAccountResolver(factory),
-            new Clock(now));
+            new Clock(now), new TestBackendLibraryAccess(factory, "music"));
 
     private sealed class DbFactory(DbContextOptions<AllstarrDbContext> options)
         : IDbContextFactory<AllstarrDbContext>

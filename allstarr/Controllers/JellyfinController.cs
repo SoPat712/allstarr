@@ -66,6 +66,7 @@ public partial class JellyfinController : ControllerBase
     private readonly IProtocolProviderGateway? _providerGateway;
     private readonly IAudioMuseRecommendationClient? _audioMuse;
     private readonly IProtocolLibraryScopeResolver? _libraryScopes;
+    private readonly IBackendLibraryAccessResolver? _libraryAccess;
     private readonly IIntelligencePolicyService? _intelligencePolicies;
     private readonly ManagedTrackCacheService? _managedTrackCache;
 
@@ -99,9 +100,11 @@ public partial class JellyfinController : ControllerBase
         IAudioMuseRecommendationClient? audioMuse = null,
         IProtocolLibraryScopeResolver? libraryScopes = null,
         IIntelligencePolicyService? intelligencePolicies = null,
-        ManagedTrackCacheService? managedTrackCache = null)
+        ManagedTrackCacheService? managedTrackCache = null,
+        IBackendLibraryAccessResolver? libraryAccess = null)
     {
         _settings = settings.Value;
+        _libraryAccess = libraryAccess;
         _spotifySettings = spotifySettings.Value;
         _scrobblingSettings = scrobblingSettings.Value;
         _metadataService = metadataService;

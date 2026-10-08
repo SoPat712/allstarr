@@ -75,17 +75,20 @@ public sealed class LibraryIndexService : ILibraryIndexService
     private readonly DurableStorageState _storageState;
     private readonly IPlatformClock _clock;
     private readonly ITrackIdentityService _identities;
+    private readonly IBackendLibraryAccessResolver _libraryAccess;
 
     public LibraryIndexService(
         IDbContextFactory<AllstarrDbContext> contextFactory,
         DurableStorageState storageState,
         IPlatformClock clock,
-        ITrackIdentityService identities)
+        ITrackIdentityService identities,
+        IBackendLibraryAccessResolver libraryAccess)
     {
         _contextFactory = contextFactory;
         _storageState = storageState;
         _clock = clock;
         _identities = identities;
+        _libraryAccess = libraryAccess;
     }
 
     public async Task<IndexedLibraryTrack> UpsertAsync(
@@ -218,10 +221,11 @@ public sealed class LibraryIndexService : ILibraryIndexService
         string libraryScopeId,
         CancellationToken cancellationToken = default)
     {
-        var principal = RequireScope(executionContext, libraryScopeId);
+        _ = RequireScope(executionContext, libraryScopeId);
         EnsureStorageReady();
+        var access = await _libraryAccess.ResolveAsync(executionContext, cancellationToken);
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        return (await ScopedQuery(db, principal, libraryScopeId)
+        return (await LibraryTrackAccess.Query(db, executionContext, access).Where(track => track.LibraryScopeId == libraryScopeId)
                 .OrderBy(track => track.Artist)
                 .ThenBy(track => track.Album)
                 .ThenBy(track => track.Title)
@@ -235,10 +239,11 @@ public sealed class LibraryIndexService : ILibraryIndexService
         string libraryScopeId,
         CancellationToken cancellationToken = default)
     {
-        var principal = RequireScope(executionContext, libraryScopeId);
+        _ = RequireScope(executionContext, libraryScopeId);
         EnsureStorageReady();
+        var access = await _libraryAccess.ResolveAsync(executionContext, cancellationToken);
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        var tracks = await ScopedQuery(db, principal, libraryScopeId)
+        var tracks = await LibraryTrackAccess.Query(db, executionContext, access).Where(track => track.LibraryScopeId == libraryScopeId)
             .OrderBy(track => track.Id)
             .ToListAsync(cancellationToken);
         return tracks.Select(track => new LocalTrackMatchCandidate(
@@ -259,15 +264,6 @@ public sealed class LibraryIndexService : ILibraryIndexService
             IsExplicit: null,
             ParseProviderIds(track.ProviderIdsJson))).ToList();
     }
-
-    private static IQueryable<LibraryTrackRecord> ScopedQuery(
-        AllstarrDbContext db,
-        Core.Identity.AllstarrPrincipal principal,
-        string libraryScopeId) => db.LibraryTracks.AsNoTracking().Where(track =>
-        track.TenantId == principal.TenantId &&
-        track.OwnerUserId == principal.UserId &&
-        track.LibraryScopeId == libraryScopeId &&
-        track.BackendInstanceId == principal.BackendInstanceId);
 
     private static Core.Identity.AllstarrPrincipal RequireScope(
         ProtocolExecutionContext executionContext,

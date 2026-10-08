@@ -268,6 +268,7 @@ public sealed class TrackMatchCommandService(
     TrackMatchDecisionEngine decisionEngine,
     ProviderAccountResolver accountResolver,
     IPlatformClock clock,
+    IBackendLibraryAccessResolver libraryAccess,
     PlaylistPlayableSearchService? playableSearch = null,
     IEffectiveProviderPolicyResolver? effectivePolicies = null) : ITrackMatchRepository
 {
@@ -277,6 +278,13 @@ public sealed class TrackMatchCommandService(
         Lazy<Task<TrackRematchCommandResult>>> _rematches = [];
 
     public bool SupportsExternalMatching => playableSearch != null;
+
+    private async Task<IQueryable<LibraryTrackRecord>> AccessibleTracksAsync(
+        AllstarrDbContext db, TrackMatchActor actor, CancellationToken cancellationToken)
+    {
+        var access = await libraryAccess.ResolveUserAsync(actor.UserId, cancellationToken);
+        return LibraryTrackAccess.Query(db, access).Where(track => track.TenantId == actor.TenantId);
+    }
 
     private async Task<TrackMatchDecisionEngine> DecisionEngineAsync(
         Guid tenantId,
@@ -410,17 +418,17 @@ public sealed class TrackMatchCommandService(
             .Select(item => item.LibraryTrackId!.Value)
             .Distinct()
             .ToArray();
-        var libraryTracks = await db.LibraryTracks.AsNoTracking()
-            .Where(item => item.TenantId == actor.TenantId && libraryTrackIds.Contains(item.Id))
+        var access = await libraryAccess.ResolveAsync(context, cancellationToken);
+        var libraryTracks = await LibraryTrackAccess.Query(db, context, access)
+            .Where(item => libraryTrackIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
         foreach (var input in requested.Where(item => item.LibraryTrackId.HasValue))
         {
             var snapshot = snapshots[input.ExternalSnapshotId];
             if (!libraryTracks.TryGetValue(input.LibraryTrackId!.Value, out var libraryTrack) ||
-                libraryTrack.OwnerUserId != snapshot.OwnerUserId ||
-                libraryTrack.LibraryScopeId != snapshot.LibraryScopeId)
+                libraryTrack.BackendInstanceId != snapshot.BackendInstanceId)
                 throw new UnauthorizedAccessException(
-                    "The selected library track is outside the snapshot scope.");
+                    "The selected library track is unavailable to this viewer.");
         }
 
         var versions = requested.Select(item => item.DecisionVersion).Distinct().ToArray();
@@ -509,15 +517,13 @@ public sealed class TrackMatchCommandService(
             ? input.LibraryTrackId
             : TrackMatchOverridePolicy.TopCandidateLibraryTrackId(
                   latestDecision?.CandidateResultsJson) ?? latestDecision?.LibraryTrackId;
+        var access = await libraryAccess.ResolveAsync(context, cancellationToken);
         if (overrideTrackId.HasValue &&
-            !await db.LibraryTracks.AnyAsync(item =>
-                    item.Id == overrideTrackId &&
-                    item.TenantId == actor.TenantId &&
-                    item.OwnerUserId == snapshot.OwnerUserId &&
-                    item.LibraryScopeId == input.LibraryScopeId,
+            !await LibraryTrackAccess.Query(db, context, access).AnyAsync(item =>
+                    item.Id == overrideTrackId && item.BackendInstanceId == snapshot.BackendInstanceId,
                 cancellationToken))
             throw new UnauthorizedAccessException(
-                "The pinned library track is outside the override scope.");
+                "The selected library track is unavailable to this viewer.");
 
         var active = await db.ManualTrackOverrides.SingleOrDefaultAsync(item =>
             item.TenantId == actor.TenantId &&
@@ -829,10 +835,7 @@ public sealed class TrackMatchCommandService(
                 .ThenBy(item => item.CreatedAt)
                 .ToListAsync(cancellationToken);
 
-        var localQuery = db.LibraryTracks.AsNoTracking()
-            .Where(item => item.TenantId == actor.TenantId);
-        if (!actor.IsAdministrator)
-            localQuery = localQuery.Where(item => item.OwnerUserId == actor.UserId);
+        var localQuery = await AccessibleTracksAsync(db, actor, cancellationToken);
         var localTracks = await localQuery
             .Where(item =>
                 item.CanonicalRecordingId.HasValue &&
@@ -960,13 +963,10 @@ public sealed class TrackMatchCommandService(
             .Concat(sourceIdentities.Select(item => item.CanonicalRecordingId))
             .Distinct()
             .ToArray();
-        var libraryQuery = db.LibraryTracks.AsNoTracking()
-            .Where(item => item.TenantId == actor.TenantId &&
-                           (libraryIds.Contains(item.Id) ||
-                            item.CanonicalRecordingId.HasValue &&
-                            canonicalIds.Contains(item.CanonicalRecordingId.Value)));
-        if (!actor.IsAdministrator)
-            libraryQuery = libraryQuery.Where(item => item.OwnerUserId == actor.UserId);
+        var libraryQuery = (await AccessibleTracksAsync(db, actor, cancellationToken))
+            .Where(item => libraryIds.Contains(item.Id) ||
+                           item.CanonicalRecordingId.HasValue &&
+                           canonicalIds.Contains(item.CanonicalRecordingId.Value));
         if (!string.IsNullOrWhiteSpace(libraryScopeId))
             libraryQuery = libraryQuery.Where(item => item.LibraryScopeId == libraryScopeId.Trim());
         var library = await libraryQuery.ToListAsync(cancellationToken);
@@ -993,10 +993,7 @@ public sealed class TrackMatchCommandService(
                 StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(term => $"%{term.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_")}%")
             .ToArray();
-        var tracks = db.LibraryTracks.AsNoTracking()
-            .Where(item => item.TenantId == actor.TenantId);
-        if (!actor.IsAdministrator)
-            tracks = tracks.Where(item => item.OwnerUserId == actor.UserId);
+        var tracks = await AccessibleTracksAsync(db, actor, cancellationToken);
         if (!string.IsNullOrWhiteSpace(libraryScopeId))
             tracks = tracks.Where(item => item.LibraryScopeId == libraryScopeId.Trim());
         IReadOnlyList<LibraryTrackRecord> indexed = source == null
@@ -1089,11 +1086,10 @@ public sealed class TrackMatchCommandService(
             .ToArray();
         var libraryTracks = libraryIds.Length == 0 && canonicalIds.Length == 0
             ? []
-            : await db.LibraryTracks.AsNoTracking()
-                .Where(item => item.TenantId == actor.TenantId &&
-                               (libraryIds.Contains(item.Id) ||
-                                item.CanonicalRecordingId.HasValue &&
-                                canonicalIds.Contains(item.CanonicalRecordingId.Value)))
+            : await (await AccessibleTracksAsync(db, actor, cancellationToken))
+                .Where(item => libraryIds.Contains(item.Id) ||
+                               item.CanonicalRecordingId.HasValue &&
+                               canonicalIds.Contains(item.CanonicalRecordingId.Value))
                 .ToListAsync(cancellationToken);
         return new(matches, snapshots, identities, libraryTracks);
     }
@@ -1408,42 +1404,28 @@ public sealed class TrackMatchCommandService(
                 snapshotIds.Contains(item.ExternalSnapshotId) &&
                 item.RevokedAt == null)
             .ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
-        var tenantIds = snapshots.Select(item => item.TenantId).Distinct().ToArray();
-        var ownerIds = snapshots.Select(item => item.OwnerUserId).Distinct().ToArray();
-        var libraryScopes = snapshots.Select(item => item.LibraryScopeId).Distinct().ToArray();
-        var libraryTracks = await db.LibraryTracks
-            .Where(item =>
-                tenantIds.Contains(item.TenantId) &&
-                ownerIds.Contains(item.OwnerUserId) &&
-                libraryScopes.Contains(item.LibraryScopeId))
-            .ToListAsync(cancellationToken);
+        var ownerLibraries = new Dictionary<Guid, LibraryTrackRecord[]>();
+        foreach (var owner in snapshots.Select(item => item.OwnerUserId).Distinct())
+        {
+            var access = await libraryAccess.ResolveUserAsync(owner, cancellationToken);
+            ownerLibraries[owner] = await LibraryTrackAccess.Query(db, access).ToArrayAsync(cancellationToken);
+        }
         var latestDecisions = await LatestDecisions(db.TrackMatches
                 .Where(item => snapshotIds.Contains(item.ExternalSnapshotId)))
             .ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
-        var scopedLibraries = libraryTracks
-            .GroupBy(item => new
+        var scopedLibraries = snapshots.Select(item => new { item.TenantId, item.OwnerUserId, item.BackendInstanceId })
+            .Distinct()
+            .ToDictionary(item => (item.TenantId, item.OwnerUserId, item.BackendInstanceId), item =>
             {
-                item.TenantId,
-                item.OwnerUserId,
-                item.LibraryScopeId,
-                item.BackendInstanceId
-            })
-            .ToDictionary(
-                group => group.Key,
-                group =>
-                {
-                    var tracks = group.ToArray();
-                    return (
-                        Tracks: tracks,
-                        ById: tracks.ToDictionary(item => item.Id),
-                        PlayableIds: tracks.Select(item => item.Id).ToHashSet(),
-                        Candidates: decisionEngine.PrepareCandidates(tracks.Select(ToLocalCandidate)));
-                });
-        var emptyLibrary = (
-            Tracks: Array.Empty<LibraryTrackRecord>(),
-            ById: new Dictionary<Guid, LibraryTrackRecord>(),
-            PlayableIds: new HashSet<Guid>(),
-            Candidates: decisionEngine.PrepareCandidates([]));
+                var local = ownerLibraries[item.OwnerUserId].Where(track =>
+                    track.TenantId == item.TenantId && track.BackendInstanceId == item.BackendInstanceId).ToArray();
+                return (
+                    Tracks: local,
+                    ById: local.ToDictionary(track => track.Id),
+                    PlayableIds: local.Select(track => track.Id).ToHashSet(),
+                    Libraries: local.Select(track => track.LibraryScopeId).ToHashSet(StringComparer.Ordinal),
+                    Candidates: decisionEngine.PrepareCandidates(local.Select(ToLocalCandidate)));
+            });
 
         var results = new List<AutomatedSourceMatchResult>(snapshots.Length);
         var now = DateTimeOffset.UtcNow;
@@ -1455,14 +1437,7 @@ public sealed class TrackMatchCommandService(
             var seed = tracks[SourceKey(identity.ProviderId, identity.ExternalId)];
             latestDecisions.TryGetValue(snapshot.Id, out var latest);
             activeOverrides.TryGetValue(snapshot.Id, out var manual);
-            if (!scopedLibraries.TryGetValue(new
-            {
-                snapshot.TenantId,
-                snapshot.OwnerUserId,
-                snapshot.LibraryScopeId,
-                snapshot.BackendInstanceId
-            }, out var library))
-                library = emptyLibrary;
+            var library = scopedLibraries[(snapshot.TenantId, snapshot.OwnerUserId, snapshot.BackendInstanceId)];
             if (manual?.Decision == ManualOverrideDecision.Pin ||
                 manual?.Decision == ManualOverrideDecision.Reject && !manual.LibraryTrackId.HasValue)
             {
@@ -1490,7 +1465,8 @@ public sealed class TrackMatchCommandService(
                 snapshot.LibraryScopeId,
                 snapshot.ProviderAccountId,
                 2,
-                snapshot.SnapshotVersion);
+                snapshot.SnapshotVersion,
+                library.Libraries);
             var source = new ExternalTrackMatchSnapshot(
                 snapshot.Id.ToString("N"),
                 identity.ProviderId,
@@ -1742,12 +1718,11 @@ public sealed class TrackMatchCommandService(
                 false,
                 TrackMatchCommandFailure.Conflict,
                 "A manual match became authoritative while the full rematch was running");
-        var candidates = await db.LibraryTracks.AsNoTracking()
-            .Where(item =>
-                item.TenantId == actor.TenantId &&
-                item.OwnerUserId == snapshot.OwnerUserId &&
-                item.LibraryScopeId == snapshot.LibraryScopeId &&
-                item.BackendInstanceId == snapshot.BackendInstanceId)
+        var candidateQuery = execution == null
+            ? await AccessibleTracksAsync(db, actor, cancellationToken)
+            : LibraryTrackAccess.Query(db, execution, await libraryAccess.ResolveAsync(execution, cancellationToken));
+        var candidates = await candidateQuery.Where(item =>
+                item.TenantId == actor.TenantId && item.BackendInstanceId == snapshot.BackendInstanceId)
             .ToListAsync(cancellationToken);
         var payload = ReadMetadata(snapshot.PayloadJson);
         var sourceTrack = new ExternalTrackMatchSnapshot(
@@ -1771,7 +1746,8 @@ public sealed class TrackMatchCommandService(
             snapshot.LibraryScopeId,
             snapshot.ProviderAccountId,
             2,
-            snapshot.SnapshotVersion);
+            snapshot.SnapshotVersion,
+            candidates.Select(item => item.LibraryScopeId).ToHashSet(StringComparer.Ordinal));
         var rejectedOverride =
             manual?.Decision == ManualOverrideDecision.Reject &&
             manual.LibraryTrackId.HasValue &&
@@ -2258,14 +2234,14 @@ public sealed class TrackMatchCommandService(
 
         if (targetType == "local")
         {
-            var localQuery = db.LibraryTracks.Where(item =>
-                item.TenantId == actor.TenantId && item.LibraryScopeId == snapshot.LibraryScopeId);
+            var localQuery = (await AccessibleTracksAsync(db, actor, cancellationToken)).AsTracking()
+                .Where(item => item.BackendInstanceId == snapshot.BackendInstanceId);
             LibraryTrackRecord? localTrack;
             if (command.LibraryTrackId.HasValue)
                 localTrack = await localQuery.SingleOrDefaultAsync(
                     item => item.Id == command.LibraryTrackId.Value, cancellationToken);
             else if (!string.IsNullOrWhiteSpace(command.BackendItemId))
-                localTrack = await localQuery.OrderByDescending(item => item.UpdatedAt)
+                localTrack = await localQuery.OrderBy(item => item.LibraryScopeId).ThenBy(item => item.Id)
                     .FirstOrDefaultAsync(item => item.BackendItemId == command.BackendItemId, cancellationToken);
             else
                 return TrackMatchCommandResult.Fail(
@@ -2274,8 +2250,6 @@ public sealed class TrackMatchCommandService(
 
             if (localTrack == null)
                 return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.NotFound, "Local track was not found");
-            if (!actor.IsAdministrator && localTrack.OwnerUserId != actor.UserId)
-                return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.Forbidden, "Local track is outside your account");
 
             db.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
             {

@@ -136,7 +136,7 @@ public sealed class FavoriteDownloadRoutingTests : IAsyncLifetime
             null!,
             _clock,
             loggerFactory.CreateLogger<ManagedTrackDownloadService>());
-        var executor = new FavoriteDownloadActionExecutor(managedDownloads, _factory);
+        var executor = new FavoriteDownloadActionExecutor(managedDownloads, _factory, new TestBackendLibraryAccess(_factory, "music"));
 
         var result = await executor.ExecuteAsync(favoriteEvent, action, default);
         action.AttemptCount = 2;

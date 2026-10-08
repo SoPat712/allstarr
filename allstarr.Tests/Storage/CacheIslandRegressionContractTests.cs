@@ -25,7 +25,7 @@ public sealed class CacheIslandRegressionContractTests
     }
 
     [Fact]
-    public void PlaybackMetadataAndArtwork_UseSharedBoundedCaches()
+    public void ExternalPlaybackCachesRemainBoundedWhileNativeReadsRequireFreshViewerAuthorization()
     {
         var external = File.ReadAllText(Path.Combine(
             _repositoryRoot,
@@ -48,9 +48,15 @@ public sealed class CacheIslandRegressionContractTests
         Assert.Contains("IApplicationCache cache", external, StringComparison.Ordinal);
         Assert.Contains("BuildPlaybackMetadataKey", external, StringComparison.Ordinal);
         Assert.Contains("_inflight.TryRemove", external, StringComparison.Ordinal);
-        Assert.Contains("IApplicationCache cache", jellyfin, StringComparison.Ordinal);
-        Assert.Contains("BuildPlaybackMetadataKey", jellyfin, StringComparison.Ordinal);
-        Assert.Contains("_inflight.TryRemove", jellyfin, StringComparison.Ordinal);
+        Assert.DoesNotContain("IApplicationCache", jellyfin, StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildPlaybackMetadataKey", jellyfin, StringComparison.Ordinal);
+        Assert.DoesNotContain("_inflight", jellyfin, StringComparison.Ordinal);
+        Assert.DoesNotContain("RefreshStaleAsync", jellyfin, StringComparison.Ordinal);
+        Assert.Contains("IBackendLibraryAccessResolver libraryAccess", jellyfin, StringComparison.Ordinal);
+        Assert.Contains("IBackendLibraryPermissionSource permissionSource", jellyfin, StringComparison.Ordinal);
+        Assert.Contains("_libraryAccess.ResolveAsync(context", jellyfin, StringComparison.Ordinal);
+        Assert.Contains("_permissionSource.CreateRequestAsync(context", jellyfin, StringComparison.Ordinal);
+        Assert.Contains("Items?UserId=", jellyfin, StringComparison.Ordinal);
         Assert.Contains("IMediaAssetResolver mediaAssets", downloads, StringComparison.Ordinal);
         Assert.Contains("MediaAssetIdentity", downloads, StringComparison.Ordinal);
     }

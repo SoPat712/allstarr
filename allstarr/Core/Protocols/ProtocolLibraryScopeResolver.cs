@@ -1,5 +1,6 @@
 using System.Text.Json;
 using allstarr.Core.Storage;
+using allstarr.Core.Matching;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Protocols;
@@ -14,7 +15,7 @@ public interface IProtocolLibraryScopeResolver
 
 public sealed class ProtocolLibraryScopeResolver(
     IDbContextFactory<AllstarrDbContext> factory,
-    IConfiguration? configuration = null)
+    IBackendLibraryAccessResolver libraryAccess)
     : IProtocolLibraryScopeResolver
 {
     public async Task<ProtocolExecutionContext> ResolveAsync(
@@ -23,36 +24,18 @@ public sealed class ProtocolLibraryScopeResolver(
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(context);
-        var actor = context.RequireActor();
-        var owner = actor.EffectiveUserId ?? throw new UnauthorizedAccessException();
-        if (!string.IsNullOrWhiteSpace(context.LibraryScopeId)) return context;
+        _ = context.RequireActor();
         if (string.IsNullOrWhiteSpace(itemId)) throw new ArgumentException("A library item is required.", nameof(itemId));
-
+        var access = await libraryAccess.ResolveAsync(context, cancellationToken);
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        var tracks = await db.LibraryTracks.AsNoTracking().Where(track =>
-            track.TenantId == actor.TenantId &&
-            track.OwnerUserId == owner &&
-            track.Protocol == context.Protocol.ToString().ToLowerInvariant() &&
-            track.BackendInstanceId == context.BackendInstanceId).ToListAsync(cancellationToken);
-        var matchingScopes = tracks.Where(track => Matches(track, itemId))
+        var tracks = await LibraryTrackAccess.Query(db, context, access).ToListAsync(cancellationToken);
+        var library = tracks.Where(track => Matches(track, itemId))
             .Select(track => track.LibraryScopeId)
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-        var scopes = matchingScopes.Length > 0
-            ? matchingScopes
-            : tracks.Select(track => track.LibraryScopeId).Distinct(StringComparer.Ordinal).ToArray();
-        if (scopes.Length == 0 && context.Protocol == ProtocolKind.Jellyfin &&
-            configuration?["Jellyfin:LibraryId"] is { Length: > 0 } configuredLibraryId)
-        {
-            return context.WithLibraryScope(configuredLibraryId);
-        }
-
-        return scopes.Length switch
-        {
-            1 => context.WithLibraryScope(scopes[0]),
-            0 => throw new InvalidOperationException("No indexed library scope is available for this user and backend."),
-            _ => throw new InvalidOperationException("The item belongs to more than one library scope; choose a library explicitly.")
-        };
+            .Order(StringComparer.Ordinal)
+            .FirstOrDefault() ?? (access.Succeeded ? access.LibraryIds.Order(StringComparer.Ordinal).FirstOrDefault() : null);
+        // Playback and favorite jobs also describe external tracks without a backend library.
+        // Their bookkeeping scope does not authorize access to indexed items.
+        return context.WithLibraryScope(library ?? "music");
     }
 
     internal static bool Matches(LibraryTrackRecord track, string itemId)

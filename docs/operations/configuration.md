@@ -84,3 +84,20 @@ See [deployment profiles](deployment-profiles.md), [Spotify lyrics](spotify-lyri
 ## Legacy import
 
 A legacy `.env` is imported explicitly after the new deployment is running. Startup never scans it automatically. See [the legacy import contract](legacy-env-import.md).
+
+## Music libraries
+
+Allstarr indexes every music library returned by the backend by default. Set
+`BACKEND_MUSIC_LIBRARY_IDS` to a comma-separated list of backend library identifiers
+before starting Allstarr to restrict indexing and local matching to a subset.
+An empty value selects all libraries. Existing `JELLYFIN_LIBRARY_ID` configuration
+remains a single-library selection when the new setting is absent.
+
+Indexed tracks retain their backend library identifier. Each listener's access is
+resolved from Jellyfin `UserViews` or Subsonic `getMusicFolders`, using their current
+credentials. Permission results are cached for at most 30 seconds per viewer and
+authentication context and invalidated on sign-in. A failed lookup makes indexed
+local copies unavailable; independently authorized provider routes can still play.
+When an inaccessible match has another accessible local copy of the same recording,
+Allstarr chooses it deterministically. Native backend requests continue to use the
+caller's credentials.

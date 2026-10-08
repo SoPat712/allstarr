@@ -380,18 +380,23 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
             ActionType = "download",
             IdempotencyKey = "download-key"
         };
-        var download = await new FavoriteDownloadActionExecutor(null!, _factory)
+        var access = new TestBackendLibraryAccess(_factory, "music");
+        access.Permissions[_otherUserId] = BackendLibraryAccess.Unavailable;
+        var download = await new FavoriteDownloadActionExecutor(null!, _factory, access)
             .ExecuteAsync(favoriteEvent, action, default);
         Assert.True(download.Succeeded);
 
         favoriteEvent.OwnerUserId = _otherUserId;
-        Assert.False(await FavoriteDownloadActionExecutor.HasLocalMatchAsync(_factory, favoriteEvent, default));
+        Assert.False(await FavoriteDownloadActionExecutor.HasLocalMatchAsync(_factory, access, favoriteEvent, default));
         favoriteEvent.OwnerUserId = _userId;
         favoriteEvent.LibraryScopeId = "other-library";
-        Assert.False(await FavoriteDownloadActionExecutor.HasLocalMatchAsync(_factory, favoriteEvent, default));
+        Assert.True(await FavoriteDownloadActionExecutor.HasLocalMatchAsync(_factory, access, favoriteEvent, default));
+        access.Permissions[_userId] = BackendLibraryAccess.Unavailable;
+        Assert.False(await FavoriteDownloadActionExecutor.HasLocalMatchAsync(_factory, access, favoriteEvent, default));
+        access.Permissions.Remove(_userId);
         favoriteEvent.LibraryScopeId = "music";
         favoriteEvent.BackendInstanceId = "other-backend";
-        Assert.False(await FavoriteDownloadActionExecutor.HasLocalMatchAsync(_factory, favoriteEvent, default));
+        Assert.False(await FavoriteDownloadActionExecutor.HasLocalMatchAsync(_factory, access, favoriteEvent, default));
     }
 
     [Fact]

@@ -329,7 +329,7 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
     public async Task DisposeAsync() => await _database.DisposeAsync();
 
     private PlaylistTrackRetentionQueue RetentionQueue() =>
-        new(_jobs, new DurablePlaylistProjectionReader(_factory), _factory);
+        new(_jobs, new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music")), _factory);
 
     private PlaylistLinkRecord Link(PlaylistTrackRetention retention) => new()
     {

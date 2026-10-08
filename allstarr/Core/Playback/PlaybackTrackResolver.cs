@@ -1,5 +1,6 @@
 using allstarr.Core.Storage;
 using allstarr.Core.Protocols;
+using allstarr.Core.Matching;
 using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
@@ -33,6 +34,7 @@ public interface IPlaybackTrackResolver
 
 public sealed class PlaybackTrackResolver(
     IDbContextFactory<AllstarrDbContext> factory,
+    IBackendLibraryAccessResolver libraryAccess,
     IEnumerable<IPlaybackMetadataResolver>? metadataResolvers = null)
     : IPlaybackTrackResolver
 {
@@ -44,14 +46,16 @@ public sealed class PlaybackTrackResolver(
         var itemId = payload.ItemId.StartsWith("backend:", StringComparison.Ordinal)
             ? payload.ItemId[8..]
             : payload.ItemId;
-        var tracks = await db.LibraryTracks.AsNoTracking().Where(track =>
+        var access = await libraryAccess.ResolveUserAsync(payload.Scope.OwnerUserId, cancellationToken);
+        var tracks = await LibraryTrackAccess.Query(db, access).Where(track =>
             track.TenantId == payload.Scope.TenantId &&
-            track.OwnerUserId == payload.Scope.OwnerUserId &&
             track.Protocol == payload.Scope.Protocol &&
-            track.BackendInstanceId == payload.Scope.BackendInstanceId &&
-            track.LibraryScopeId == payload.Scope.LibraryScopeId).ToListAsync(cancellationToken);
-        var track = tracks.SingleOrDefault(candidate =>
-            ProtocolLibraryScopeResolver.Matches(candidate, itemId));
+            track.BackendInstanceId == payload.Scope.BackendInstanceId).ToListAsync(cancellationToken);
+        var track = tracks.Where(candidate => ProtocolLibraryScopeResolver.Matches(candidate, itemId))
+            .OrderBy(candidate => candidate.LibraryScopeId, StringComparer.Ordinal)
+            .ThenBy(candidate => candidate.BackendItemId, StringComparer.Ordinal)
+            .ThenBy(candidate => candidate.Id)
+            .FirstOrDefault();
         if (track != null)
         {
             return new PlaybackTrackSnapshot(
@@ -67,9 +71,16 @@ public sealed class PlaybackTrackResolver(
                 Isrc: track.Isrc);
         }
 
+        var viewer = access.Context;
+        if (viewer != null && (viewer.Principal?.TenantId != payload.Scope.TenantId ||
+                              viewer.BackendInstanceId != payload.Scope.BackendInstanceId ||
+                              viewer.Protocol.ToString().ToLowerInvariant() != payload.Scope.Protocol))
+            return null;
         foreach (var resolver in metadataResolvers ?? [])
         {
-            var metadata = await resolver.ResolveAsync(itemId, cancellationToken);
+            var metadata = viewer == null
+                ? await resolver.ResolveAsync(itemId, cancellationToken)
+                : await resolver.ResolveAsync(itemId, viewer, cancellationToken);
             if (metadata != null)
             {
                 var external = ExternalPlaybackMetadataResolver.ParseTrackIdentity(itemId);

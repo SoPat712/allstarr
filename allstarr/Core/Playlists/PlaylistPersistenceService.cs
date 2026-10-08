@@ -126,14 +126,16 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
     private readonly IPlatformClock _clock;
     private readonly ITrackMatchRepository _trackMatches;
     private readonly PlaylistMaterializationPlanner _planner;
+    private readonly IBackendLibraryAccessResolver _libraryAccess;
     public PlaylistPersistenceService(
         IDbContextFactory<AllstarrDbContext> factory,
         ProviderAccountResolver accounts,
         IPlatformClock clock,
         ITrackMatchRepository trackMatches,
+        IBackendLibraryAccessResolver libraryAccess,
         PlaylistMaterializationPlanner? planner = null) =>
-        (_factory, _accounts, _clock, _trackMatches, _planner) =
-        (factory, accounts, clock, trackMatches, planner ?? new PlaylistMaterializationPlanner());
+        (_factory, _accounts, _clock, _trackMatches, _planner, _libraryAccess) =
+        (factory, accounts, clock, trackMatches, planner ?? new PlaylistMaterializationPlanner(), libraryAccess);
 
     public async Task<PlaylistLinkRecord> CreateLinkAsync(ProtocolExecutionContext context, PlaylistLinkInput input, CancellationToken cancellationToken = default)
     {
@@ -386,14 +388,11 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
             .ToDictionary(group => group.Key, group => group.ToArray());
         var manualOverrides = resolution.ActiveOverrides.ToDictionary(item => item.ExternalSnapshotId);
         var latestMatches = resolution.LatestDecisions.ToDictionary(item => item.ExternalSnapshotId);
-        var libraryTracks = await db.LibraryTracks.AsNoTracking()
-            .Where(item => item.TenantId == actor.TenantId &&
-                           item.OwnerUserId == link.OwnerUserId &&
-                           item.LibraryScopeId == link.LibraryScopeId &&
-                           item.BackendInstanceId == link.TargetBackendInstanceId &&
+        var access = await _libraryAccess.ResolveAsync(context, cancellationToken);
+        var libraryTracks = await LibraryTrackAccess.Query(db, context, access)
+            .Where(item => item.BackendInstanceId == link.TargetBackendInstanceId &&
                            targetProtocols.Contains(item.Protocol))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var playableIds = libraryTracks.Keys.ToHashSet();
         var providerPriority = new[] { link.SourceProviderId }
             .Concat(resolution.ProviderIdentities.Select(item => item.ProviderId))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -445,14 +444,10 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
                                   identitiesByCanonical.TryGetValue(canonicalId.Value, out var canonicalIdentities)
                 ? canonicalIdentities
                 : [];
-            var classification = TrackClassifier.Classify(
-                manual,
-                match,
-                sourceIdentity,
-                routeIdentities,
-                providerPriority,
-                playableIds);
-            libraryTracks.TryGetValue(classification.LibraryTrackId ?? Guid.Empty, out var library);
+            var projection = TrackRouteProjector.Project(external, match, manual, sourceIdentity,
+                libraryTracks.Values, routeIdentities, providerPriority);
+            var classification = projection.Classification;
+            var library = projection.LibraryTrack;
             var route = classification.RouteKind switch
             {
                 TrackRouteKind.Local => new PlaylistResolvedRoute(
@@ -467,10 +462,6 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
                     TrackRouteKind.External,
                     ProviderId: selected.ProviderId,
                     ExternalId: selected.ExternalId,
-                    CanonicalRecordingId: canonicalId),
-                _ when match?.LibraryTrackId is { } matchedId => new PlaylistResolvedRoute(
-                    TrackRouteKind.Local,
-                    LibraryTrackId: matchedId,
                     CanonicalRecordingId: canonicalId),
                 _ => new PlaylistResolvedRoute(TrackRouteKind.Unresolved, CanonicalRecordingId: canonicalId)
             };
@@ -600,7 +591,10 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         var sourceEntries = await db.PlaylistSourceEntries.AsNoTracking().Where(item => sourceEntryIds.Contains(item.Id) && item.TenantId == actor.TenantId && item.PlaylistSourceSnapshotId == input.SnapshotId).ToDictionaryAsync(item => item.Id, cancellationToken);
         if (sourceEntries.Count != sourceEntryIds.Length || results.Any(result => sourceEntries[result.SourceEntryId].SourcePosition != result.SourcePosition)) throw new UnauthorizedAccessException("A run result is outside the immutable source snapshot order.");
         var libraryIds = results.Where(result => result.LibraryTrackId.HasValue).Select(result => result.LibraryTrackId!.Value).Distinct().ToArray();
-        if (await db.LibraryTracks.CountAsync(item => libraryIds.Contains(item.Id) && item.TenantId == actor.TenantId && item.OwnerUserId == link.OwnerUserId && item.LibraryScopeId == link.LibraryScopeId, cancellationToken) != libraryIds.Length) throw new UnauthorizedAccessException("A run result selected a library track outside the link scope.");
+        var access = await _libraryAccess.ResolveAsync(context, cancellationToken);
+        if (await LibraryTrackAccess.Query(db, context, access).CountAsync(item =>
+                libraryIds.Contains(item.Id) && item.BackendInstanceId == link.TargetBackendInstanceId, cancellationToken) != libraryIds.Length)
+            throw new UnauthorizedAccessException("A run result selected a library track unavailable to this viewer.");
         var run = new PlaylistSyncRunRecord { Id = Guid.CreateVersion7(), TenantId = actor.TenantId, OwnerUserId = link.OwnerUserId, PlaylistLinkId = link.Id, PlaylistSourceSnapshotId = input.SnapshotId, ScheduleId = input.ScheduleId, JobId = input.JobId, Generation = input.Generation, IdempotencyKey = input.IdempotencyKey.Trim(), RuleVersion = input.RuleVersion.Trim(), MaterializationMode = input.MaterializationMode, State = input.State, TargetRevisionBefore = input.TargetRevisionBefore, StartedAt = _clock.UtcNow, CompletedAt = input.State is PlaylistSyncState.Pending or PlaylistSyncState.Running ? null : _clock.UtcNow };
         db.PlaylistSyncRuns.Add(run); await db.SaveChangesAsync(cancellationToken); db.PlaylistSyncEntryResults.AddRange(results.Select(result => new PlaylistSyncEntryResultRecord { Id = Guid.CreateVersion7(), TenantId = actor.TenantId, PlaylistSyncRunId = run.Id, PlaylistSourceEntryId = result.SourceEntryId, TrackMatchId = result.TrackMatchId, LibraryTrackId = result.LibraryTrackId, SourcePosition = result.SourcePosition, TargetPosition = result.TargetPosition, Outcome = result.Outcome, OutcomeCode = result.OutcomeCode, DetailsJson = result.DetailsJson })); await db.SaveChangesAsync(cancellationToken); return run;
     }

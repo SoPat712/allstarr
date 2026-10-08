@@ -77,7 +77,8 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
             if (!string.IsNullOrWhiteSpace(normalizedQuery) &&
                 !name.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase)) continue;
             if (skipped++ < offset) continue;
-            int? trackCount = playlist.GetPropertyOrDefault("songCount").TryGetInt32(out var count) ? count : null;
+            var songCount = playlist.GetPropertyOrDefault("songCount");
+            int? trackCount = songCount.ValueKind == JsonValueKind.Number && songCount.TryGetInt32(out var count) ? count : null;
             values.Add(new BackendPlaylistSummary(
                 id,
                 name,
@@ -309,7 +310,9 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
         IReadOnlyList<KeyValuePair<string, string>> operationParameters,
         CancellationToken cancellationToken)
     {
-        var authentication = await _authentication.ResolveAsync(context, cancellationToken);
+        var authentication = endpoint is "getPlaylists" or "getPlaylist" or "getSong" or "getCoverArt"
+            ? await _authentication.ResolveReadAsync(context, cancellationToken)
+            : await _authentication.ResolveAsync(context, cancellationToken);
         var parameters = authentication.FormParameters
             .Where(pair => !pair.Key.Equals("f", StringComparison.OrdinalIgnoreCase))
             .Concat([Pair("f", "json")])

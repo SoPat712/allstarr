@@ -81,6 +81,7 @@ public interface IPlaylistVirtualizationService
 public sealed class PlaylistVirtualizationService(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     DurablePlaylistProjectionReader projections,
+    IBackendLibraryAccessResolver libraryAccess,
     IBackendPlaylistTargetResolver? targets = null) : IPlaylistVirtualizationService
 {
     public const string IdPrefix = "allstarr-vpl-";
@@ -177,7 +178,7 @@ public sealed class PlaylistVirtualizationService(
             return null;
 
         var projection = await projections.ReadByLinkIdAsync(
-            actor.TenantId, link.OwnerUserId, link.Id, cancellationToken);
+            actor.TenantId, link.OwnerUserId, link.Id, cancellationToken, actor.EffectiveUserId);
         if (projection == null) return null;
         var selectedMode = projectionMode ?? link.ProjectionMode;
         var snapshot = await db.PlaylistSourceSnapshots.AsNoTracking()
@@ -202,13 +203,13 @@ public sealed class PlaylistVirtualizationService(
             .Select(item => item.BackendItemId!)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        var libraryTracks = await db.LibraryTracks.AsNoTracking()
-            .Where(item => item.TenantId == actor.TenantId &&
-                           item.OwnerUserId == link.OwnerUserId &&
-                           item.LibraryScopeId == link.LibraryScopeId &&
-                           item.BackendInstanceId == link.TargetBackendInstanceId &&
-                           backendIds.Contains(item.BackendItemId))
-            .ToDictionaryAsync(item => item.BackendItemId, StringComparer.Ordinal, cancellationToken);
+        var access = await libraryAccess.ResolveAsync(context, cancellationToken);
+        var localCopies = await LibraryTrackAccess.Query(db, context, access)
+            .Where(item => item.BackendInstanceId == link.TargetBackendInstanceId && backendIds.Contains(item.BackendItemId))
+            .OrderBy(item => item.LibraryScopeId).ThenBy(item => item.Id)
+            .ToListAsync(cancellationToken);
+        var libraryTracks = localCopies.DistinctBy(item => item.BackendItemId, StringComparer.Ordinal)
+            .ToDictionary(item => item.BackendItemId, StringComparer.Ordinal);
         IReadOnlyDictionary<string, BackendPlaylistMember>? nativeItems = null;
         if (selectedMode == PlaylistProjectionMode.Resolved &&
             context.Protocol == ProtocolKind.Subsonic &&

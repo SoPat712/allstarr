@@ -143,7 +143,7 @@ public sealed class ManualAuthorityIntegrationTests
             factory,
             new TrackMatchDecisionEngine(),
             new ProviderAccountResolver(factory),
-            new Clock(now.AddMinutes(1)));
+            new Clock(now.AddMinutes(1)), new TestBackendLibraryAccess(factory, "music"));
         var actor = new TrackMatchActor(tenantId, userId, true);
 
         var rejection = await service.ClearManualAuthorityAsync(

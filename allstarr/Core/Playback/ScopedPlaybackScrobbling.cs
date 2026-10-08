@@ -53,7 +53,7 @@ public interface IExactScopePlaybackScrobbleTarget
 public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbContext> factory,
     IEnumerable<IExactScopePlaybackScrobbleTarget> targets,
     IPlaybackDeliveryCheckpointStore checkpoints,
-    IPlaybackTrackResolver? trackResolver = null,
+    IPlaybackTrackResolver trackResolver,
     PlaybackDeliveryActivityStore? activity = null,
     ILogger<ScopedPlaybackScrobbleDelivery>? logger = null) : IScopedPlaybackScrobbleDelivery
 {
@@ -68,7 +68,7 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
             item.LibraryScopeId == payload.Scope.LibraryScopeId &&
             item.OccurrenceKey == occurrenceKey, cancellationToken);
         var item = occurrence == null || string.IsNullOrWhiteSpace(occurrence.Title) || string.IsNullOrWhiteSpace(occurrence.Artist)
-            ? await (trackResolver ?? new PlaybackTrackResolver(factory)).ResolveAsync(payload, cancellationToken)
+            ? await trackResolver.ResolveAsync(payload, cancellationToken)
             : null;
         var title = occurrence?.Title ?? item?.Title;
         var artist = occurrence?.Artist ?? item?.Artist;

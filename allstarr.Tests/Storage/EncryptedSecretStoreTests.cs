@@ -171,7 +171,8 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
             Encoding.UTF8.GetBytes("{\"username\":\"playlist-user\",\"password\":\"playlist-password\"}"));
         var resolver = new EncryptedSubsonicPlaylistAuthenticationResolver(
             store,
-            Options.Create(new SubsonicSettings()));
+            Options.Create(new SubsonicSettings()),
+            new Microsoft.AspNetCore.Http.HttpContextAccessor());
 
         var authentication = await resolver.ResolveAsync(
             new BackendPlaylistTargetContext(

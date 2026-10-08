@@ -38,6 +38,12 @@ public interface IPlaybackMetadataResolver
     Task<PlaybackTrackMetadata?> ResolveAsync(string itemId, CancellationToken cancellationToken);
 
     Task<PlaybackArtwork?> ResolveArtworkAsync(string itemId, CancellationToken cancellationToken);
+
+    Task<PlaybackTrackMetadata?> ResolveAsync(string itemId, ProtocolExecutionContext context, CancellationToken cancellationToken) =>
+        ResolveAsync(itemId, cancellationToken);
+
+    Task<PlaybackArtwork?> ResolveArtworkAsync(string itemId, ProtocolExecutionContext context, CancellationToken cancellationToken) =>
+        ResolveArtworkAsync(itemId, cancellationToken);
 }
 
 public interface IPlaybackDeliveryActivitySource
