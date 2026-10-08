@@ -17,8 +17,6 @@ public static class DurableStorageRegistration
         services.AddSingleton(options);
         services.AddSingleton<DurableStorageState>();
         services.AddSingleton<SqlitePragmaInterceptor>();
-        services.AddSingleton<IStorageProcessRunner, StorageProcessRunner>();
-        services.AddSingleton<IDurableRestoreTargetVerifier, DurableRestoreTargetVerifier>();
         services.AddSingleton<DurableBackupService>();
         services.AddDbContextFactory<AllstarrDbContext>((provider, builder) =>
             builder.UseSqlite(options.ConnectionString, sqlite =>

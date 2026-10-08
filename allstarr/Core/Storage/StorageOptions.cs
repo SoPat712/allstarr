@@ -4,8 +4,7 @@ namespace allstarr.Core.Storage;
 
 public enum DurableStorageProvider
 {
-    Sqlite,
-    Postgres
+    Sqlite
 }
 
 public sealed class StorageOptions
@@ -16,6 +15,7 @@ public sealed class StorageOptions
     public string DatabaseFileName { get; set; } = "allstarr.db";
     public bool AutoMigrate { get; set; } = true;
     public int CommandTimeoutSeconds { get; set; } = 30;
+    public int BackupRetentionCount { get; set; } = 10;
     public string DatabasePath => Path.Combine(Path.GetFullPath(DataDirectory), DatabaseFileName);
     public string BackupDirectory => Path.Combine(Path.GetFullPath(DataDirectory), "backups");
     public string ConnectionString => new SqliteConnectionStringBuilder
@@ -40,6 +40,8 @@ public sealed class StorageOptions
             DatabaseFileName.IndexOfAny(['/', '\\']) >= 0 || Path.IsPathRooted(DatabaseFileName) ||
             DatabaseFileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
             throw new InvalidOperationException("Storage:DatabaseFileName must be a file name inside the data directory.");
+        if (BackupRetentionCount is < 1 or > 1000)
+            throw new InvalidOperationException("Storage:BackupRetentionCount must be between 1 and 1000.");
         if (CommandTimeoutSeconds is < 1 or > 600)
             throw new InvalidOperationException("Storage:CommandTimeoutSeconds must be between 1 and 600.");
     }

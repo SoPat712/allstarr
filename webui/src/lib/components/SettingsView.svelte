@@ -81,6 +81,16 @@
   const cacheDiskCeiling = $derived(
     Number((config.cache as Record<string, unknown> | undefined)?.mediaMaximumMegabytes ?? 512),
   );
+  const storageReady = $derived(storage?.storage.readiness?.toLowerCase() === "ready");
+
+  function backupDate(value: string) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
+  }
+
+  function backupSize(bytes: number) {
+    return Number.isFinite(bytes) && bytes >= 0 ? `${(bytes / 1024 / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 })} MiB` : "Size unavailable";
+  }
 
   $effect(() => {
     const section = active;
@@ -302,7 +312,22 @@
           <article class="panel maintenance-card">
             <header><div><strong>SQLite</strong><small>Durable application state</small></div><Badge state={storage?.storage.readiness?.toLowerCase() === "ready" ? "healthy" : "degraded"}>{storage?.storage.readiness ?? "Unknown"}</Badge></header>
             <dl><div><dt>Provider</dt><dd>{storage?.storage.provider ?? "SQLite"}</dd></div><div><dt>Verified backups</dt><dd>{storage?.backups.filter((backup) => backup.verifiedAt).length ?? 0}</dd></div></dl>
-            <p>Backups are being rebuilt.</p>
+            <p>Database and encryption key ring. Keep downloaded backups private.</p>
+            {#if administrator}
+              <Button disabled={Boolean(action) || !storageReady} onclick={() => void run("backup", settings.backup, "Backup created.")}>{action === "backup" ? "Creating…" : "Create verified backup"}</Button>
+            {/if}
+            {#if (storage?.backups.length ?? 0) > 0}
+              <ul class="backup-list m-0 grid min-w-0 list-none gap-3 p-0" aria-label="Verified backups">
+                {#each storage?.backups ?? [] as backup (backup.id)}
+                  <li class="grid min-w-0 gap-2">
+                    <span class="min-w-0 [overflow-wrap:anywhere]"><strong>{backup.fileName}</strong><small>{backupDate(backup.createdAt)} · {backupSize(backup.bytes)} · Verified</small></span>
+                    <Button variant="secondary" class="justify-self-start" href={settings.backupDownloadUrl(backup.id)} download={backup.fileName}>Download</Button>
+                  </li>
+                {/each}
+              </ul>
+            {:else}
+              <p class="backup-empty">No backups yet.</p>
+            {/if}
           </article>
           <CacheDiagnosticsCard
             snapshot={cache}

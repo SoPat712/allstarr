@@ -616,27 +616,6 @@ public sealed class StorageIntegrationTests
             item.CorrelationId == claim!.CorrelationId));
     }
 
-    [Fact]
-    public async Task StorageBackup_ReturnsUnavailableWithoutCreatingAnArtifact()
-    {
-        await using var database = await SqliteTestDatabase.CreateAsync();
-        var factory = new TestDbContextFactory(database.Options);
-        var options = database.StorageOptions;
-        var state = new DurableStorageState(options);
-        state.Set(DurableStorageReadiness.Ready);
-        var service = new DurableBackupService(factory, options, state, new StorageProcessRunner());
-        var controller = new allstarr.Controllers.StorageController(state, service, factory);
-
-        var result = Assert.IsType<Microsoft.AspNetCore.Mvc.ObjectResult>(await controller.CreateBackup());
-
-        Assert.Equal(503, result.StatusCode);
-        Assert.Contains("backups_unavailable", System.Text.Json.JsonSerializer.Serialize(result.Value));
-        Assert.False(Directory.Exists(options.BackupDirectory));
-        await using var context = await factory.CreateDbContextAsync();
-        Assert.Empty(await context.Backups.ToListAsync());
-        Assert.Empty(await context.Jobs.ToListAsync());
-    }
-
     private sealed class FixedClock(DateTimeOffset now) : IPlatformClock
     {
         public DateTimeOffset UtcNow { get; } = now;

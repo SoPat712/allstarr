@@ -10,10 +10,13 @@ Startup enables WAL, applies the checked-in baseline, and runs an integrity chec
 | `Storage__DatabaseFileName` | `allstarr.db` | File name within the data directory |
 | `Storage__AutoMigrate` | `true` | Apply the baseline before readiness |
 | `Storage__CommandTimeoutSeconds` | `30` | Command execution timeout |
+| `Storage__BackupRetentionCount` | `10` | Number of recent backup archives to retain (1–1000) |
 
 Development installations use a fresh SQLite baseline; PostgreSQL data is not imported. Preserve existing PostgreSQL data separately before replacing an installation. Do not remove media roots or the encryption key ring.
 
-The Maintenance page reports SQLite readiness. Database backup and restore are temporarily unavailable; the page displays “Backups are being rebuilt,” and backup requests return `503 backups_unavailable`. The former command-line storage tools and portable state transfer are unavailable.
+Administrators can create and download verified backups from Settings → Maintenance. Each private ZIP in `{Storage:DataDirectory}/backups` contains a consistent SQLite snapshot, the configured encryption key ring, and a manifest with file checksums and schema information. Creation verifies database integrity and key availability; download verifies the archive checksums again. Keep downloaded archives private: together, the database and key ring can unlock saved credentials. Retention removes only recognized backup archives, leaving unrelated or damaged files untouched. Backups exclude media, caches, and extension packages.
+
+Restore is being rebuilt. The former command-line storage tools and portable state transfer are unavailable.
 
 The encryption key ring defaults to `{Storage:DataDirectory}/keyring.json`; `Secrets__KeyRingPath` overrides that location for existing secret mounts. On first startup, an empty database gets a randomly generated key ring with private file permissions. Existing files are never overwritten. If encrypted secrets exist but the key ring is missing, restore the original key ring: Allstarr leaves saved credentials unavailable and continues native proxy access. It does not generate a replacement key that would make those credentials unreadable.
 

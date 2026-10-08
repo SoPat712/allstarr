@@ -38,7 +38,6 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
     public DbSet<PlaylistTargetMembershipRecord> PlaylistTargetMemberships => Set<PlaylistTargetMembershipRecord>();
     public DbSet<AuditEventRecord> AuditEvents => Set<AuditEventRecord>();
     public DbSet<LegacyEnvImportRecord> LegacyEnvImports => Set<LegacyEnvImportRecord>();
-    public DbSet<BackupRecord> Backups => Set<BackupRecord>();
     public DbSet<ExtensionRegistryRecord> ExtensionRegistries => Set<ExtensionRegistryRecord>();
     public DbSet<ExtensionPackageRecord> ExtensionPackages => Set<ExtensionPackageRecord>();
     public DbSet<ExtensionPermissionReviewRecord> ExtensionPermissionReviews => Set<ExtensionPermissionReviewRecord>();
@@ -506,26 +505,11 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.HasOne<AuditEventRecord>().WithMany().HasForeignKey(item => item.AuditEventId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
-
-        modelBuilder.Entity<BackupRecord>(entity =>
-        {
-            entity.ToTable("backups");
-            entity.HasKey(item => item.Id);
-            entity.Property(item => item.Id).ValueGeneratedNever();
-            entity.Property(item => item.StorageProvider).HasMaxLength(32).IsRequired();
-            entity.Property(item => item.ArtifactPath).HasMaxLength(1000).IsRequired();
-            entity.Property(item => item.Sha256).HasMaxLength(64).IsRequired();
-            entity.Property(item => item.SchemaVersion).HasMaxLength(200).IsRequired();
-            entity.Property(item => item.ApplicationVersion).HasMaxLength(50).IsRequired();
-            entity.Property(item => item.Status).HasMaxLength(50).IsRequired();
-            entity.Property(item => item.RestoreStatus).HasMaxLength(50);
-            entity.HasIndex(item => item.CreatedAt);
-        });
     }
 
     private static void ConfigurePortableDateTimeOffsets(ModelBuilder modelBuilder)
     {
-        // UTC ticks keep lease/order semantics portable for PostgreSQL and offline state transfer.
+        // UTC ticks preserve lease comparisons and chronological ordering in SQLite.
         var required = new ValueConverter<DateTimeOffset, long>(
             value => value.UtcTicks,
             value => new DateTimeOffset(value, TimeSpan.Zero));

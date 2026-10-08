@@ -308,18 +308,3 @@ public sealed class LegacyEnvImportRecord
     public string ProvenanceJson { get; set; } = """{"settings":[],"providerAccounts":[]}""";
     public DateTimeOffset AppliedAt { get; set; }
 }
-
-public sealed class BackupRecord
-{
-    public Guid Id { get; set; }
-    public string StorageProvider { get; set; } = string.Empty;
-    public string ArtifactPath { get; set; } = string.Empty;
-    public string Sha256 { get; set; } = string.Empty;
-    public string SchemaVersion { get; set; } = string.Empty;
-    public string ApplicationVersion { get; set; } = string.Empty;
-    public string Status { get; set; } = string.Empty;
-    public DateTimeOffset CreatedAt { get; set; }
-    public DateTimeOffset? VerifiedAt { get; set; }
-    public string? RestoreStatus { get; set; }
-    public DateTimeOffset? RestoreVerifiedAt { get; set; }
-}

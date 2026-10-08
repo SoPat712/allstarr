@@ -1463,6 +1463,19 @@ export const sources = {
     }),
 };
 
+export type StorageBackup = {
+  id: string;
+  status: "verified";
+  createdAt: string;
+  verifiedAt: string;
+  fileName: string;
+  bytes: number;
+  sha256: string | null;
+  schemaVersion: string;
+  applicationVersion: string;
+  includesKeyRing: true;
+};
+
 export const settings = {
   config: () => json<Record<string, unknown>>("/api/admin/config"),
   save: (updates: Record<string, string>) =>
@@ -1473,9 +1486,11 @@ export const settings = {
     }),
   storage: () => json<{
     storage: { provider?: string; readiness?: string; checkedAt?: string };
-    backups: Array<{ id: string; status: string; createdAt: string; verifiedAt?: string | null }>;
+    backups: StorageBackup[];
   }>("/api/admin/storage"),
-  backup: () => json<{ id: string; status: string }>("/api/admin/storage/backups", { method: "POST" }),
+  backup: () => json<StorageBackup>("/api/admin/storage/backups", { method: "POST" }),
+  backupDownloadUrl: (id: string) =>
+    adminUrl(`/api/admin/storage/backups/${encodeURIComponent(id)}/download`),
   cache: () => json<CacheDiagnostics>("/api/admin/cache"),
   cachePreview: () => json<CacheMaintenancePreview>("/api/admin/cache/maintenance/preview"),
   cleanCache: () => json<{ deleted: number }>("/api/admin/cache/maintenance", { method: "POST" }),

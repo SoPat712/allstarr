@@ -149,6 +149,7 @@ public sealed class DurableStorageTests : IAsyncLifetime
     }
 
     [Theory]
+    [InlineData("backups")]
     [InlineData("application_cache_entries")]
     [InlineData("outbox_messages")]
     [InlineData("provider_route_decisions")]
