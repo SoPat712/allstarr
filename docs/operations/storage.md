@@ -21,7 +21,7 @@ The database stores application state such as users, backend identities, provide
 Recommendation candidates retain their canonical recording and scoped provider-account provenance
 when known, source revision, weighted evidence/score signals, exclusions, generated-set membership,
 and user feedback. Negative or dismissed feedback becomes an explainable exclusion on later runs in
-the same tenant, user, backend, and library scope. Full and selective state transfers preserve this
+the same tenant, user, backend, and library scope. Full state transfers preserve this
 lineage.
 
 
@@ -265,7 +265,7 @@ For an application rollback after a forward schema migration, restore the pre-up
 
 ## Controlled PostgreSQL state transfer
 
-Database-native dumps are the preferred PostgreSQL backup and restore format. The provider-neutral state-transfer format is reserved for controlled PostgreSQL-to-PostgreSQL moves where selective application state, rather than the whole database, must be transferred.
+Database-native dumps are the preferred PostgreSQL backup and restore format. The provider-neutral state-transfer format supports controlled moves of portable application state between PostgreSQL databases running the same application and schema version.
 
 The transfer has these hard rules:
 

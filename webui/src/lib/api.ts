@@ -325,28 +325,6 @@ export type EnvMigrationPreview = {
   warnings: string[];
 };
 
-export type SelectiveTransferOptions = {
-  settings: boolean;
-  accounts: boolean;
-  playlists: boolean;
-  intelligence: boolean;
-  extensions: boolean;
-};
-
-export type SelectiveTransferReport = {
-  includedCategories: string[];
-  excludedCategories: string[];
-  totalRows: number;
-  rowsByEntry: Record<string, number>;
-};
-
-export type SelectiveTransferPreview = {
-  canImport: boolean;
-  dependencies: string[];
-  conflicts: string[];
-  report: SelectiveTransferReport;
-};
-
 export type CacheTierUsage = {
   tier: string;
   entryCount: number;
@@ -1244,19 +1222,6 @@ export function normalizeResponse(value: unknown): unknown {
   ]));
 }
 
-function selectiveTransferForm(
-  file: File,
-  mode: "Conflict" | "Merge" | "Replace",
-  options: SelectiveTransferOptions,
-) {
-  const body = new FormData();
-  body.append("File", file);
-  body.append("Mode", mode);
-  for (const [category, included] of Object.entries(options))
-    body.append(`Import${category[0].toUpperCase()}${category.slice(1)}`, String(included));
-  return body;
-}
-
 export const auth = {
   session: () => json<Session>("/api/admin/auth/me"),
   login: (username: string, password: string, rememberMe: boolean) =>
@@ -1524,39 +1489,6 @@ export const settings = {
     ),
   mediaProbe: () => json<{ success: boolean; code: string; message: string }>("/api/admin/media-probe"),
   playlistProbe: () => json<{ success: boolean; code: string; message: string }>("/api/admin/playlist-readiness"),
-  exportState: async (options: SelectiveTransferOptions, signal?: AbortSignal) => {
-    const response = await request("/api/admin/export-selective-state", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(Object.fromEntries(Object.entries(options)
-        .map(([category, included]) => [`include${category[0].toUpperCase()}${category.slice(1)}`, included]))),
-      signal,
-    });
-    const filename = /filename="?([^";]+)"?/i.exec(response.headers.get("Content-Disposition") ?? "")?.[1] ??
-      "allstarr-selective-export.zip";
-    return { blob: await response.blob(), filename };
-  },
-  previewState: (
-    file: File,
-    mode: "Conflict" | "Merge" | "Replace",
-    options: SelectiveTransferOptions,
-    signal?: AbortSignal,
-  ) => json<SelectiveTransferPreview>("/api/admin/preview-selective-state", {
-    method: "POST",
-    body: selectiveTransferForm(file, mode, options),
-    signal,
-  }),
-  importState: (
-    file: File,
-    mode: "Conflict" | "Merge" | "Replace",
-    options: SelectiveTransferOptions,
-    signal?: AbortSignal,
-  ) => json<{ success: boolean; message: string; report: SelectiveTransferReport }>(
-    "/api/admin/import-selective-state", {
-      method: "POST",
-      body: selectiveTransferForm(file, mode, options),
-      signal,
-    }),
   migrationStatus: () => json<{
     available: boolean;
     completed: boolean;

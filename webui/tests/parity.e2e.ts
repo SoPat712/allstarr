@@ -370,27 +370,6 @@ const responses: Record<string, unknown> = {
   "/api/admin/config/migration/status": {
     available: true, completed: false, sourcePresent: false, firstRun: true,
   },
-  "/api/admin/preview-selective-state": {
-    canImport: true,
-    dependencies: ["Settings", "Accounts"],
-    conflicts: [],
-    report: {
-      includedCategories: ["Accounts", "Playlists"],
-      excludedCategories: [],
-      totalRows: 3,
-      rowsByEntry: { "provider-accounts": 1, "playlist-links": 2 },
-    },
-  },
-  "/api/admin/import-selective-state": {
-    success: true,
-    message: "Selective state imported.",
-    report: {
-      includedCategories: ["Accounts", "Playlists"],
-      excludedCategories: [],
-      totalRows: 3,
-      rowsByEntry: { "provider-accounts": 1, "playlist-links": 2 },
-    },
-  },
   "/api/admin/extensions/packages": [{
     id: "package", extensionId: "lumen-audio", displayName: "Lumen Audio", version: "1.0.0",
     lifecycle: "active", state: "active", active: true, installed: true,
@@ -1083,8 +1062,8 @@ for (const viewport of viewports) {
       await expect(page.getByRole("button", { name: "Verify package" })).toBeInViewport();
       await page.getByRole("button", { name: "Close installer" }).click();
       await page.goto("#/settings/maintenance");
-      await expect(page.getByText("Selective state transfer")).toBeVisible();
-      await expect(page.getByText("128 MiB max")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Create verified backup" })).toBeVisible();
+      await expect(page.locator(".transfer-card")).toHaveCount(0);
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.getByRole("button", { name: "Purge all cache" }).click();
@@ -3915,43 +3894,6 @@ test("Maintenance previews, retries, and applies a legacy import on mobile", asy
   await card.getByRole("checkbox").check();
   await card.getByRole("button", { name: "Import preview" }).click();
   await expect(card.getByText("Legacy settings imported.")).toBeVisible();
-});
-
-test("Maintenance validates before selective import and reports applied rows", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  const delayed = routeRelease();
-  await mockApi(page, { releasePath: "/api/admin/preview-selective-state", release: delayed.promise });
-  await page.goto("#/settings/maintenance");
-  const card = page.locator(".transfer-card");
-  const archive = {
-    name: "allstarr-state.zip",
-    mimeType: "application/zip",
-    buffer: Buffer.from("fixture"),
-  };
-
-  await expect(card.getByRole("button", { name: "Import validated archive" })).toHaveCount(0);
-  await card.locator('input[type="file"]').setInputFiles(archive);
-  await card.getByRole("button", { name: "Import behavior" }).click();
-  await page.getByRole("option", { name: "Merge compatible rows" }).click();
-  await card.getByRole("button", { name: "Validate archive" }).click();
-  await expect(card.getByLabel("preview in progress")).toBeVisible();
-  await card.getByRole("button", { name: "Cancel" }).click();
-  delayed.release();
-  await expect(card.getByText("State transfer cancelled.")).toBeVisible();
-  await card.getByRole("button", { name: "Validate archive" }).click();
-  await expect(card.getByRole("region", { name: "Selective transfer preview" })).toContainText("3 rows");
-  await expect(card.getByText("Dependencies: Settings, Accounts")).toBeVisible();
-  await card.getByRole("button", { name: "Import validated archive" }).click();
-  const dialog = page.getByRole("alertdialog", { name: "Import validated state?" });
-  await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "Import archive" }).click();
-  const result = card.getByRole("region", { name: "Selective transfer result" });
-  await expect(result).toContainText("Import complete");
-  await expect(result).toContainText("provider-accounts");
-  await expect(result).toContainText("playlist-links");
-  await expect(dialog).toBeHidden();
-  await expect.poll(() => page.evaluate(() =>
-    document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
 test("Maintenance reports cache budgets and confirms category purge", async ({ page }) => {
