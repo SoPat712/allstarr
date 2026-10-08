@@ -119,7 +119,7 @@ public class AdminNetworkAllowlistMiddlewareTests
         var context = new DefaultHttpContext();
         context.Connection.LocalPort = localPort;
         context.Connection.RemoteIpAddress = IPAddress.Parse(remoteIp);
-        context.Request.Path = "/api/admin/status";
+        context.Request.Path = "/api/admin/providers/status";
         context.Response.Body = new MemoryStream();
         return context;
     }

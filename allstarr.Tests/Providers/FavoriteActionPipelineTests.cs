@@ -7,10 +7,6 @@ using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
-using allstarr.Controllers;
-using allstarr.Services.Admin;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
 using allstarr.Core.Enrichment;
 
@@ -238,34 +234,6 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         Assert.NotEqual(first.EventId, second.EventId);
         Assert.False(repeated.Created);
         Assert.Equal(second.EventId, repeated.EventId);
-    }
-
-    [Fact]
-    public async Task StatusController_UsesCanonicalOwnerScopeAndDoesNotExposeIdempotencyMaterial()
-    {
-        var receipt = await _pipeline.RecordAsync(Request(FavoriteOperation.Favorite, "private-source-revision"));
-        var controller = new FavoriteEventsController(_factory, _pipeline)
-        {
-            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
-        };
-        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
-        {
-            SessionId = "favorite-session",
-            UserId = "backend-user",
-            UserName = "Favorite user",
-            IsAdministrator = false,
-            TenantId = _tenantId,
-            AllstarrUserId = _userId,
-            JellyfinAccessToken = "not-returned",
-            ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
-        };
-
-        var result = Assert.IsType<OkObjectResult>(await controller.Get(receipt.EventId));
-        var json = JsonSerializer.Serialize(result.Value);
-        Assert.DoesNotContain("private-source-revision", json, StringComparison.Ordinal);
-        Assert.DoesNotContain("EventKey", json, StringComparison.Ordinal);
-        Assert.DoesNotContain("IdempotencyKey", json, StringComparison.Ordinal);
-        Assert.Contains(receipt.EventId.ToString(), json, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -41,8 +41,6 @@ Non-secret product behavior belongs in tenant-scoped PostgreSQL settings and is 
 
 `DurableRuntimeSettingsService` owns validation, typing, revisions, and optimistic concurrency. Controllers must not add a second environment or JSON owner for these settings.
 
-Administrators can inspect the resolved, secret-free policy at `GET /api/admin/config/effective-provider-policy`. The response contains the tenant's capability orders, disabled providers, audio-quality target, local-preference window, account-scope counts, and selection rules. It deliberately omits account IDs, credentials, tokens, and provider payloads.
-
 ## Provider accounts
 
 Provider credentials are encrypted and persisted as provider accounts with explicit tenant, user/shared scope, capability, and access policy. Services and their configuration are managed under **Integrations > Services**. Credentials and audience policy live under **Integrations > Accounts**; capability priority lives under **Integrations > Routing**.

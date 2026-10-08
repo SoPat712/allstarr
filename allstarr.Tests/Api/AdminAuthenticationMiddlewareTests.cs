@@ -155,7 +155,7 @@ public class AdminAuthenticationMiddlewareTests
     [InlineData("/api/admin/ui/home-extra", "GET")]
     [InlineData("/api/admin/ui/now-playing", "GET")]
     [InlineData("/api/admin/config", "GET")]
-    [InlineData("/api/admin/status", "GET")]
+    [InlineData("/api/admin/providers/status", "GET")]
     [InlineData("/api/admin/library-index-spoof", "POST")]
     [InlineData("/api/admin/playlist-linkspoof", "GET")]
     [InlineData("/api/admin/provider-accounts", "PUT")]

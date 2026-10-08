@@ -2,11 +2,9 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.DependencyInjection;
@@ -100,58 +98,6 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task EffectiveProviderPolicy_WithoutAdminSession_ReturnsForbidden()
-    {
-        var controller = CreateController(CreateHttpContextWithSession(isAdmin: false));
-
-        AssertForbidden(await controller.GetEffectiveProviderPolicy());
-    }
-
-    [Fact]
-    public async Task EffectiveProviderPolicy_ReturnsTenantPolicyWithoutSecretsOrAccountIds()
-    {
-        var controller = CreateController(CreateHttpContextWithSession(isAdmin: true));
-
-        var result = Assert.IsType<OkObjectResult>(await controller.GetEffectiveProviderPolicy());
-        var json = JsonSerializer.Serialize(result.Value);
-
-        Assert.Contains("\"audioQuality\"", json, StringComparison.Ordinal);
-        Assert.Contains("\"providerOrders\"", json, StringComparison.Ordinal);
-        Assert.Contains("\"accountScopes\"", json, StringComparison.Ordinal);
-        Assert.Contains("\"routeSelection\"", json, StringComparison.Ordinal);
-        Assert.DoesNotContain(_providerAccountId.ToString(), json, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("Secrets", json, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task RestartContainer_WithoutAdminSession_ReturnsForbidden()
-    {
-        var controller = CreateController(CreateHttpContextWithSession(isAdmin: false));
-        var result = await controller.RestartContainer();
-
-        AssertForbidden(result);
-    }
-
-    [Fact]
-    public void ExportEnv_WithoutAdminSession_ReturnsForbidden()
-    {
-        var controller = CreateController(CreateHttpContextWithSession(isAdmin: false));
-        var result = controller.ExportEnv();
-
-        AssertForbidden(result);
-    }
-
-    [Fact]
-    public async Task ImportEnv_WithoutAdminSession_ReturnsForbidden()
-    {
-        var controller = CreateController(CreateHttpContextWithSession(isAdmin: false));
-        var file = new FormFile(Stream.Null, 0, 0, "file", "config.env");
-        var result = await controller.ImportEnv(file);
-
-        AssertForbidden(result);
-    }
-
-    [Fact]
     public async Task UpdateConfig_WithAdminSession_ContinuesToValidation()
     {
         var controller = CreateController(CreateHttpContextWithSession(isAdmin: true));
@@ -215,15 +161,6 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         Assert.Equal("HiResLossless",
             config.RootElement.GetProperty("audio").GetProperty("quality").GetString());
-    }
-
-    [Fact]
-    public async Task WholesaleImportEnv_IsRetiredForAdministrators()
-    {
-        var controller = CreateController(CreateHttpContextWithSession(isAdmin: true));
-        var result = Assert.IsType<ObjectResult>(await controller.ImportEnv(
-            new FormFile(Stream.Null, 0, 0, "file", "legacy.env")));
-        Assert.Equal(StatusCodes.Status410Gone, result.StatusCode);
     }
 
     [Fact]
@@ -337,16 +274,6 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         Assert.True(statusDocument.RootElement.GetProperty("completed").GetBoolean());
         Assert.False(statusDocument.RootElement.GetProperty("firstRun").GetBoolean());
         Assert.False(statusDocument.RootElement.GetProperty("sourcePresent").GetBoolean());
-    }
-
-    [Fact]
-    public void ExportEnv_WithAdminSession_WhenFeatureDisabled_ReturnsNotFound()
-    {
-        var controller = CreateController(CreateHttpContextWithSession(isAdmin: true));
-        var result = controller.ExportEnv();
-
-        var notFound = Assert.IsType<NotFoundObjectResult>(result);
-        Assert.Equal(StatusCodes.Status404NotFound, notFound.StatusCode);
     }
 
     [Fact]
@@ -517,11 +444,6 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             .AddInMemoryCollection(configValues)
             .Build();
 
-        var webHostEnvironment = new Mock<IWebHostEnvironment>();
-        webHostEnvironment.SetupGet(e => e.EnvironmentName).Returns(Environments.Development);
-        var contentRoot = Path.Combine(_root, "app");
-        Directory.CreateDirectory(contentRoot);
-        webHostEnvironment.SetupGet(e => e.ContentRootPath).Returns(contentRoot);
         applicationCache ??= new DisabledApplicationCache();
         var spotifySessionCookieService = new SpotifySessionCookieService(
             Options.Create(new SpotifyApiSettings()));
@@ -563,7 +485,6 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             Options.Create(new MusicBrainzSettings()),
             Options.Create(new SpotifyImportSettings()),
             Options.Create(new ScrobblingSettings()),
-            webHostEnvironment.Object,
             spotifySessionCookieService,
             applicationCache)
         {

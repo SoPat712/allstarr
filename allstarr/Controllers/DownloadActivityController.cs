@@ -1,8 +1,6 @@
-using allstarr.Models.Download;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Playback;
 using allstarr.Core.Storage;
-using allstarr.Services;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
@@ -16,7 +14,6 @@ namespace allstarr.Controllers;
 [ServiceFilter(typeof(AdminPortFilter))]
 public class DownloadActivityController : ControllerBase
 {
-    private readonly IEnumerable<IDownloadService> _downloadServices;
     private readonly IReadOnlyList<IPlaybackActivitySource> _playbackSources;
     private readonly IReadOnlyList<IPlaybackMetadataResolver> _metadataResolvers;
     private readonly IMediaAssetResolver _mediaAssets;
@@ -25,7 +22,6 @@ public class DownloadActivityController : ControllerBase
     private readonly IDbContextFactory<AllstarrDbContext>? _contextFactory;
 
     public DownloadActivityController(
-        IEnumerable<IDownloadService> downloadServices,
         IEnumerable<IPlaybackActivitySource> playbackSources,
         IEnumerable<IPlaybackMetadataResolver> metadataResolvers,
         IMediaAssetResolver mediaAssets,
@@ -33,23 +29,12 @@ public class DownloadActivityController : ControllerBase
         IPlaybackDeliveryActivitySource? playbackDeliveries = null,
         IDbContextFactory<AllstarrDbContext>? contextFactory = null)
     {
-        _downloadServices = downloadServices;
         _playbackSources = playbackSources.ToList();
         _metadataResolvers = metadataResolvers.ToList();
         _mediaAssets = mediaAssets;
         _logger = logger;
         _playbackDeliveries = playbackDeliveries;
         _contextFactory = contextFactory;
-    }
-
-    /// <summary>
-    /// Returns the current download queue as JSON.
-    /// </summary>
-    [HttpGet("queue")]
-    public async Task<IActionResult> GetDownloadQueue()
-    {
-        var allDownloads = await GetAllActivityEntriesAsync(HttpContext.RequestAborted);
-        return Ok(allDownloads);
     }
 
     [HttpGet("/api/admin/ui/now-playing")]
@@ -219,119 +204,6 @@ public class DownloadActivityController : ControllerBase
         return File(asset.Bytes, asset.ContentType);
     }
 
-    private async Task<List<DownloadActivityEntry>> GetAllActivityEntriesAsync(CancellationToken cancellationToken)
-    {
-        var allDownloads = new List<DownloadInfo>();
-        foreach (var service in _downloadServices)
-        {
-            allDownloads.AddRange(service.GetActiveDownloads());
-        }
-
-        var orderedDownloads = allDownloads
-            .OrderByDescending(d => d.Status == DownloadStatus.InProgress)
-            .ThenByDescending(d => d.StartedAt)
-            .ToList();
-
-        var playbackByItemId = _playbackSources
-            .SelectMany(source => source.GetActivePlaybackStates(TimeSpan.FromMinutes(5)))
-            .GroupBy(state => NormalizeExternalItemId(state.ItemId))
-            .ToDictionary(
-                group => group.Key,
-                group => group.OrderByDescending(state => state.LastActivity).First());
-
-        var entries = orderedDownloads
-            .Select(download =>
-            {
-                var normalizedSongId = NormalizeExternalItemId(download.SongId);
-                var hasPlayback = playbackByItemId.TryGetValue(normalizedSongId, out var playbackState);
-                var playbackProgress = hasPlayback && download.DurationSeconds.GetValueOrDefault() > 0
-                    ? Math.Clamp(
-                        playbackState!.PositionTicks / (double)TimeSpan.TicksPerSecond / download.DurationSeconds!.Value,
-                        0d,
-                        1d)
-                    : (double?)null;
-
-                return new DownloadActivityEntry
-                {
-                    SongId = download.SongId,
-                    ExternalId = download.ExternalId,
-                    ExternalProvider = download.ExternalProvider,
-                    Title = download.Title,
-                    Artist = download.Artist,
-                    Status = download.Status,
-                    Progress = download.Progress,
-                    RequestedForStreaming = download.RequestedForStreaming,
-                    CoverArtUrl = string.IsNullOrWhiteSpace(download.CoverArtUrl)
-                        ? null
-                        : ArtworkUrl(normalizedSongId),
-                    DurationSeconds = download.DurationSeconds,
-                    LocalPath = download.LocalPath,
-                    ErrorMessage = download.ErrorMessage,
-                    StartedAt = download.StartedAt,
-                    CompletedAt = download.CompletedAt,
-                    IsPlaying = hasPlayback,
-                    PlaybackLastActivity = hasPlayback ? playbackState!.LastActivity : null,
-                    PlaybackPositionSeconds = hasPlayback
-                        ? (int)Math.Max(0, playbackState!.PositionTicks / TimeSpan.TicksPerSecond)
-                        : null,
-                    PlaybackProgress = playbackProgress,
-                    Scrobbled = hasPlayback && _playbackDeliveries?.WasDelivered(
-                        normalizedSongId,
-                        playbackState!.DeviceId) == true
-                };
-            })
-            .ToList();
-
-        var knownIds = orderedDownloads
-            .Select(download => NormalizeExternalItemId(download.SongId))
-            .Where(id => !string.IsNullOrWhiteSpace(id))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var (itemId, playbackState) in playbackByItemId)
-        {
-            if (string.IsNullOrWhiteSpace(itemId) || knownIds.Contains(itemId))
-            {
-                continue;
-            }
-
-            var playbackMetadata = await TryResolvePlaybackMetadataAsync(itemId, cancellationToken);
-
-            entries.Add(new DownloadActivityEntry
-            {
-                SongId = itemId,
-                ExternalId = itemId,
-                ExternalProvider = ResolvePlaybackProvider(itemId),
-                Title = playbackMetadata?.Title ?? ResolvePlaybackTitle(itemId),
-                Artist = playbackMetadata?.Artist ?? "External provider",
-                Status = DownloadStatus.Completed,
-                Progress = 1,
-                RequestedForStreaming = false,
-                StartedAt = playbackState.LastActivity,
-                IsPlaying = true,
-                PlaybackLastActivity = playbackState.LastActivity,
-                CoverArtUrl = string.IsNullOrWhiteSpace(playbackMetadata?.CoverArtUrl)
-                    ? null
-                    : ArtworkUrl(itemId),
-                DurationSeconds = playbackMetadata?.DurationSeconds,
-                PlaybackPositionSeconds = (int)Math.Max(0, playbackState.PositionTicks / TimeSpan.TicksPerSecond),
-                PlaybackProgress = playbackMetadata?.DurationSeconds > 0
-                    ? Math.Clamp(
-                        playbackState.PositionTicks / (double)TimeSpan.TicksPerSecond /
-                        playbackMetadata.DurationSeconds.Value,
-                        0d,
-                        1d)
-                    : null,
-                Scrobbled = _playbackDeliveries?.WasDelivered(itemId, playbackState.DeviceId) == true
-            });
-        }
-
-        return entries
-            .OrderByDescending(entry => entry.IsPlaying)
-            .ThenByDescending(entry => entry.Status == DownloadStatus.InProgress)
-            .ThenByDescending(entry => entry.StartedAt)
-            .ToList();
-    }
-
     private async Task<PlaybackTrackMetadata?> TryResolvePlaybackMetadataAsync(
         string itemId,
         CancellationToken cancellationToken)
@@ -406,15 +278,6 @@ public class DownloadActivityController : ControllerBase
 
     private static string ArtworkUrl(string itemId) =>
         $"/api/admin/downloads/artwork/{Uri.EscapeDataString(itemId)}";
-
-    private sealed class DownloadActivityEntry : DownloadInfo
-    {
-        public bool IsPlaying { get; init; }
-        public DateTime? PlaybackLastActivity { get; init; }
-        public int? PlaybackPositionSeconds { get; init; }
-        public double? PlaybackProgress { get; init; }
-        public bool Scrobbled { get; init; }
-    }
 
     private sealed class NowPlayingEntry
     {

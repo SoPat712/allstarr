@@ -7,11 +7,6 @@ public sealed class CacheIslandRegressionContractTests
     [Fact]
     public void PlaylistSummary_UsesDurableProjectionWithoutCachedViewModel()
     {
-        var controller = File.ReadAllText(Path.Combine(
-            _repositoryRoot,
-            "allstarr",
-            "Controllers",
-            "PlaylistController.cs"));
         var orchestration = File.ReadAllText(Path.Combine(
             _repositoryRoot,
             "allstarr",
@@ -25,8 +20,6 @@ public sealed class CacheIslandRegressionContractTests
             "Common",
             "CacheKeyBuilder.cs"));
 
-        Assert.Contains("DurablePlaylistProjectionReader", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("BuildAdminPlaylistSummaryKey", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("BuildAdminPlaylistSummaryKey", orchestration, StringComparison.Ordinal);
         Assert.DoesNotContain("BuildAdminPlaylistSummaryKey", keys, StringComparison.Ordinal);
     }
