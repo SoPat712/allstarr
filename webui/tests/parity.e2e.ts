@@ -3681,7 +3681,7 @@ test("Integrations keep primary actions visible and report scoped degradation", 
   }));
   await listener.goto("#/integrations/accounts");
   await expect(listener.getByText("Source readiness may be stale.")).toBeVisible();
-  await expect(listener.getByText("Accounts are administrator-managed")).toBeVisible();
+  await expect(listener.getByRole("button", { name: "Connect Source" }).first()).toBeEnabled();
 });
 
 test("Settings loads only the active section owners", async ({ page }) => {
