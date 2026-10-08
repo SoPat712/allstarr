@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 
@@ -95,22 +94,14 @@ public sealed class DurableJobWorker : BackgroundService
 
     private async Task ExecuteClaimAsync(DurableJobClaim claim, CancellationToken stoppingToken)
     {
-        using var activity = PlatformDiagnostics.ActivitySource.StartActivity("durable-job.execute");
-        activity?.SetTag("job.id", claim.JobId);
-        activity?.SetTag("job.type", claim.Type);
-        activity?.SetTag("correlation.id", claim.CorrelationId);
-        activity?.SetTag("provider.capability", claim.ProviderCapability);
         using var logScope = _logger.BeginScope(new Dictionary<string, object>
         {
             ["CorrelationId"] = claim.CorrelationId,
-            ["TraceId"] = activity?.TraceId.ToString() ?? "unavailable",
             ["JobId"] = claim.JobId,
             ["JobType"] = claim.Type
         });
         if (!_handlers.TryGetValue(claim.Type, out var handler))
         {
-            activity?.SetStatus(ActivityStatusCode.Error);
-            activity?.SetTag("job.outcome", "handler_missing");
             await _queue.CompleteAsync(
                 claim,
                 DurableJobCompletion.Failure("handler_missing", "No handler is registered for this job type."),
@@ -126,12 +117,6 @@ public sealed class DurableJobWorker : BackgroundService
             var authorization = await _queue.ReauthorizeAsync(claim, leaseCancellation.Token);
             if (!authorization.Authorized)
             {
-                PlatformDiagnostics.JobContextDenied.Add(
-                    1,
-                    new KeyValuePair<string, object?>("job.type", claim.Type),
-                    new KeyValuePair<string, object?>(
-                        "error.code",
-                        authorization.ErrorCode ?? "job_context_unauthorized"));
                 completion = DurableJobCompletion.Failure(
                     authorization.ErrorCode ?? "job_context_unauthorized",
                     authorization.SafeMessage ?? "The saved durable job context is no longer authorized.");
@@ -175,24 +160,12 @@ public sealed class DurableJobWorker : BackgroundService
         }
 
         await IgnoreCancellation(renewal);
-        activity?.SetTag("job.outcome", completion.Kind.ToString().ToLowerInvariant());
-        if (completion.Kind is DurableJobCompletionKind.Failed or DurableJobCompletionKind.Retry)
-        {
-            activity?.SetStatus(ActivityStatusCode.Error);
-        }
-        else
-        {
-            activity?.SetStatus(ActivityStatusCode.Ok);
-        }
-
         try
         {
             await _queue.CompleteAsync(claim, completion, stoppingToken);
         }
         catch (InvalidOperationException)
         {
-            activity?.SetStatus(ActivityStatusCode.Error);
-            activity?.SetTag("job.outcome", "lease_lost");
             _logger.LogWarning("Durable job {JobId} completion was ignored after lease loss", claim.JobId);
         }
     }

@@ -130,17 +130,6 @@ public sealed class FavoriteActionJobHandler(
         favoriteEvent.CompletedAt = clock.UtcNow;
         favoriteEvent.UpdatedAt = clock.UtcNow;
         favoriteEvent.Revision++;
-        database.OutboxMessages.Add(new OutboxMessageRecord
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = favoriteEvent.TenantId,
-            Type = "favorite.completed",
-            PayloadJson = System.Text.Json.JsonSerializer.Serialize(new { eventId = favoriteEvent.Id }),
-            State = OutboxMessageState.Pending,
-            AvailableAt = clock.UtcNow,
-            CreatedAt = clock.UtcNow,
-            UpdatedAt = clock.UtcNow
-        });
         await database.SaveChangesAsync(cancellationToken);
         return DurableJobCompletion.Success();
     }

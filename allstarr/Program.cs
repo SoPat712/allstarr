@@ -107,7 +107,6 @@ builder.Services.AddPlatformOperations(builder.Configuration);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ProviderCtsTrackSelector>();
 builder.Services.AddSingleton<ProviderCtsDiagnosticRunner>();
-builder.Services.AddSingleton<EndpointUsageAudit>();
 builder.Services.AddHostedService<AuditEventRetentionService>();
 
 // Trust forwarded headers only from proxies or networks named in deployment config.
@@ -450,7 +449,6 @@ if (probeOptionalProvidersAtStartup)
 // Tests and local contract hosts must never call live providers during startup.
 if (!builder.Environment.IsEnvironment("Testing"))
 {
-    builder.Services.AddHostedService<ProviderCtsWarmupService>();
     builder.Services.AddHostedService<ManagedProviderAccountHealthWarmupService>();
     builder.Services.AddHostedService<StartupValidationOrchestrator>();
 }
@@ -627,20 +625,6 @@ static async Task<IResult> StorageReadinessResult(
 
 app.MapGet("/health/ready", StorageReadinessResult);
 app.MapGet("/health", StorageReadinessResult);
-app.MapGet("/metrics", async (
-    HttpContext context,
-    allstarr.Core.Operations.OperationalMetricsService metrics,
-    CancellationToken cancellationToken) =>
-{
-    if (context.Connection.LocalPort != 5275)
-    {
-        return Results.NotFound();
-    }
-
-    return Results.Text(
-        await metrics.RenderPrometheusAsync(cancellationToken),
-        "text/plain; version=0.0.4; charset=utf-8");
-});
 
 app.Run();
 

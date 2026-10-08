@@ -195,12 +195,6 @@ public sealed class FavoriteActionPipeline(
                 UpdatedAt = now
             });
         }
-        context.OutboxMessages.Add(jobs.CreateOutbox(actor.TenantId, "favorite.recorded", new
-        {
-            eventId,
-            jobId = job.JobId,
-            operation = request.Operation.ToString().ToLowerInvariant()
-        }, now));
         try
         {
             await context.SaveChangesAsync(cancellationToken);
@@ -303,7 +297,6 @@ public sealed class FavoriteActionPipeline(
             job.CompletedAt = now;
             job.UpdatedAt = now;
             job.Revision++;
-            context.OutboxMessages.Add(jobs.CreateOutbox(tenantId, "job.cancelled", new { jobId = job.Id, jobType = job.Type }, now));
         }
         var cancelledJobIds = pendingJobs.Select(item => item.Id).ToHashSet();
         foreach (var prior in priorEvents.Where(item => cancelledJobIds.Contains(item.JobId)))

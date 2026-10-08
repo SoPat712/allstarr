@@ -57,7 +57,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Enqueue_IsIdempotentAndWritesOutboxInSameTransaction()
+    public async Task Enqueue_IsIdempotent()
     {
         var request = new DurableJobEnqueueRequest<object>(
             "favorite.download",
@@ -74,13 +74,10 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         Assert.Equal(first.JobId, repeated.JobId);
         await using var context = await _factory.CreateDbContextAsync();
         Assert.Single(await context.Jobs.ToListAsync());
-        var message = Assert.Single(await context.OutboxMessages.ToListAsync());
-        Assert.Equal("job.enqueued", message.Type);
-        Assert.Contains(first.JobId.ToString(), message.PayloadJson, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task ConcurrentEnqueue_CreatesOneDurableJobAndOneOutboxMessage()
+    public async Task ConcurrentEnqueue_CreatesOneDurableJob()
     {
         var request = new DurableJobEnqueueRequest<object>(
             "favorite.download",
@@ -96,7 +93,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         Assert.Single(results.Select(result => result.JobId).Distinct());
         await using var context = await _factory.CreateDbContextAsync();
         Assert.Single(await context.Jobs.ToListAsync());
-        Assert.Single(await context.OutboxMessages.ToListAsync());
     }
 
     [Fact]
@@ -136,7 +132,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         Assert.Equal(2, jobs.Count);
         Assert.Equal(2, jobs.Select(item => item.ScopeKey).Distinct().Count());
         Assert.All(jobs, job => Assert.Contains(':', job.ScopeKey));
-        Assert.Equal(2, await context.OutboxMessages.CountAsync());
     }
 
     [Fact]
@@ -243,7 +238,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         await using var context = await _factory.CreateDbContextAsync();
         var job = Assert.Single(await context.Jobs.ToListAsync());
         Assert.Equal(64, job.RequestFingerprint.Length);
-        Assert.Single(await context.OutboxMessages.ToListAsync());
     }
 
     [Fact]
@@ -338,7 +332,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         }
         await using var context = await _factory.CreateDbContextAsync();
         Assert.Single(await context.Jobs.ToListAsync());
-        Assert.Single(await context.OutboxMessages.ToListAsync());
     }
 
     [Fact]
@@ -473,85 +466,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         await using var context = await _factory.CreateDbContextAsync();
         Assert.Equal(DurableJobState.Cancelled, (await context.Jobs.SingleAsync()).State);
         Assert.Empty(await context.JobAttempts.ToListAsync());
-        var outbox = await context.OutboxMessages.OrderBy(item => item.CreatedAt).ToListAsync();
-        Assert.Equal(2, outbox.Count);
-        Assert.Equal("job.enqueued", outbox[0].Type);
-        Assert.Equal("job.cancelled", outbox[1].Type);
-    }
-
-    [Fact]
-    public async Task OutboxFailure_IsRetryableAndRecoveredAfterLeaseOrBackoff()
-    {
-        await Enqueue("probe", "probe-1");
-        var outbox = new DurableOutbox(_factory, _options, _clock);
-        var first = (await outbox.ClaimNextAsync("dispatcher-a"))!;
-
-        await outbox.MarkFailedAsync(
-            first,
-            "sink_unavailable",
-            "sink https://events.invalid unavailable token=fixture");
-        Assert.Null(await outbox.ClaimNextAsync("dispatcher-b"));
-        _clock.Advance(TimeSpan.FromSeconds(2));
-        var retried = await outbox.ClaimNextAsync("dispatcher-b");
-
-        Assert.NotNull(retried);
-        Assert.Equal(first.MessageId, retried.MessageId);
-        await outbox.MarkDeliveredAsync(retried);
-        await using var context = await _factory.CreateDbContextAsync();
-        var delivered = await context.OutboxMessages.SingleAsync();
-        Assert.Equal(OutboxMessageState.Delivered, delivered.State);
-        Assert.Equal(2, delivered.AttemptCount);
-        Assert.DoesNotContain("fixture", delivered.LastErrorMessage ?? string.Empty, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task OutboxFailure_BecomesTerminalAtThePersistedAttemptLimit()
-    {
-        _options.MaxOutboxAttempts = 2;
-        await Enqueue("probe", "probe-terminal-outbox");
-        _options.MaxOutboxAttempts = 99;
-        var outbox = new DurableOutbox(_factory, _options, _clock);
-        var first = (await outbox.ClaimNextAsync("dispatcher-a"))!;
-        var firstFailure = await outbox.MarkFailedAsync(
-            first,
-            "sink_unavailable",
-            "The sink was unavailable.");
-        Assert.False(firstFailure.Terminal);
-        _clock.Advance(TimeSpan.FromSeconds(2));
-        var second = (await outbox.ClaimNextAsync("dispatcher-b"))!;
-
-        var secondFailure = await outbox.MarkFailedAsync(
-            second,
-            "sink_unavailable",
-            "The sink was unavailable.");
-
-        Assert.True(secondFailure.Terminal);
-        Assert.Equal(2, secondFailure.AttemptCount);
-        Assert.Equal(2, secondFailure.MaxAttempts);
-        Assert.Null(await outbox.ClaimNextAsync("dispatcher-c"));
-        await using var context = await _factory.CreateDbContextAsync();
-        var failed = await context.OutboxMessages.SingleAsync();
-        Assert.Equal(OutboxMessageState.Failed, failed.State);
-        Assert.Equal(2, failed.MaxAttempts);
-        Assert.NotNull(failed.FailedAt);
-    }
-
-    [Fact]
-    public async Task ExpiredOutboxLease_CannotExceedThePersistedAttemptLimit()
-    {
-        _options.MaxOutboxAttempts = 1;
-        await Enqueue("probe", "probe-abandoned-outbox");
-        var outbox = new DurableOutbox(_factory, _options, _clock);
-        Assert.NotNull(await outbox.ClaimNextAsync("dispatcher-a"));
-        _clock.Advance(TimeSpan.FromSeconds(11));
-
-        Assert.Null(await outbox.ClaimNextAsync("dispatcher-b"));
-
-        await using var context = await _factory.CreateDbContextAsync();
-        var failed = await context.OutboxMessages.SingleAsync();
-        Assert.Equal(OutboxMessageState.Failed, failed.State);
-        Assert.Equal("outbox_attempts_exhausted", failed.LastErrorCode);
-        Assert.NotNull(failed.FailedAt);
     }
 
     [Fact]
@@ -625,8 +539,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         var storageState = new DurableStorageState(storageOptions);
         storageState.Set(DurableStorageReadiness.Ready, "fixture");
         await using var services = new ServiceCollection().BuildServiceProvider();
-        using var traces = new PlatformTraceCollector();
-        await traces.StartAsync(CancellationToken.None);
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var firstWorker = new DurableJobWorker(
             _queue,
@@ -664,9 +576,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         var attempts = await context.JobAttempts.OrderBy(item => item.AttemptNumber).ToListAsync();
         Assert.Equal("lease_expired", attempts[0].Outcome);
         Assert.Equal("succeeded", attempts[1].Outcome);
-        Assert.Contains(
-            traces.GetSnapshot(),
-            span => span.Operation == "durable-job.execute" && !span.Failed);
     }
 
     [Fact]

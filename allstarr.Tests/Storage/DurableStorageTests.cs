@@ -38,15 +38,11 @@ public sealed class DurableStorageTests : IAsyncLifetime
     {
         var options = Options();
         var state = new DurableStorageState(options);
-        var runtime = new OperationalRuntimeState();
-        using var traces = new PlatformTraceCollector();
-        await traces.StartAsync(CancellationToken.None);
         var initializer = new DurableStorageInitializer(
             Factory(),
             options,
             state,
-            NullLogger<DurableStorageInitializer>.Instance,
-            runtimeState: runtime);
+            NullLogger<DurableStorageInitializer>.Instance);
 
         await initializer.StartAsync(CancellationToken.None);
 
@@ -58,10 +54,6 @@ public sealed class DurableStorageTests : IAsyncLifetime
         Assert.True(await TableExists(context, "canonical_recordings"));
         Assert.True(await TableExists(context, "provider_track_identities"));
         Assert.True(await TableExists(context, "tenant_runtime_settings"));
-        Assert.Equal(1, runtime.GetSnapshot().MigrationAttempts);
-        Assert.Equal(0, runtime.GetSnapshot().MigrationFailures);
-        Assert.Contains(traces.GetSnapshot(), span =>
-            span.Operation == "storage.migrate" && !span.Failed);
     }
 
     [Fact]
@@ -97,13 +89,11 @@ public sealed class DurableStorageTests : IAsyncLifetime
 
         var options = Options();
         var state = new DurableStorageState(options);
-        var runtime = new OperationalRuntimeState();
         var initializer = new DurableStorageInitializer(
             Factory(),
             options,
             state,
-            NullLogger<DurableStorageInitializer>.Instance,
-            runtimeState: runtime);
+            NullLogger<DurableStorageInitializer>.Instance);
 
         await initializer.StartAsync(CancellationToken.None);
 
@@ -111,7 +101,6 @@ public sealed class DurableStorageTests : IAsyncLifetime
         Assert.Equal(DurableStorageReadiness.SchemaIncompatible, snapshot.Readiness);
         Assert.Equal(DurableSchemaCompatibility.UnsupportedVersionErrorCode, snapshot.ErrorCode);
         Assert.Equal("99991231235959_FutureAllstarrSchema", snapshot.SchemaVersion);
-        Assert.Equal(1, runtime.GetSnapshot().MigrationFailures);
     }
 
     [Fact]

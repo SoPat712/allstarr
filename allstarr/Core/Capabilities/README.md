@@ -23,9 +23,9 @@ not routable.
 `ProviderRouter` lives in `Core/Routing`. It applies provider policy, account scope/revision, capability state,
 health/circuits, sidecar readiness, quality, deadline, and durable download rules before returning an ordered
 plan. Cross-provider track candidates require an exact verified translation from `TrackIdentityService` in
-`Core/Matching`. Missing or ambiguous identity links never trigger a guessed fallback. Durable consumers persist
-the redacted plan and every fallback, stop, or success outcome through `IProviderRouteDecisionStore`. That ledger
-is tenant-bound and idempotent; opaque provider track IDs and credentials are never stored in it or its outbox.
+`Core/Matching`. Missing or ambiguous identity links never trigger a guessed fallback. Managed downloads log
+the selected provider and fallback, stop, or success outcome through structured logging. Account identifiers,
+opaque provider track IDs, credentials, and signed media URLs are excluded from those route logs.
 
 Deezer public metadata was the first built-in capability adapter. Current built-ins and verified SDK v1 packages
 use the same typed IDs, outcomes, registry ownership, and routing boundary. Capability support remains

@@ -1,6 +1,4 @@
-using System.Diagnostics;
 using System.Data.Common;
-using allstarr.Core.Operations;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Storage;
@@ -11,7 +9,6 @@ public sealed class DurableStorageInitializer : IHostedService
     private readonly DurableStorageOptions _options;
     private readonly DurableStorageState _state;
     private readonly DurableMigrationLock _migrationLock;
-    private readonly OperationalRuntimeState? _runtimeState;
     private readonly ILogger<DurableStorageInitializer> _logger;
 
     public DurableStorageInitializer(
@@ -19,15 +16,13 @@ public sealed class DurableStorageInitializer : IHostedService
         DurableStorageOptions options,
         DurableStorageState state,
         ILogger<DurableStorageInitializer> logger,
-        DurableMigrationLock? migrationLock = null,
-        OperationalRuntimeState? runtimeState = null)
+        DurableMigrationLock? migrationLock = null)
     {
         _contextFactory = contextFactory;
         _options = options;
         _state = state;
         _logger = logger;
         _migrationLock = migrationLock ?? new DurableMigrationLock(options);
-        _runtimeState = runtimeState;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -128,45 +123,26 @@ public sealed class DurableStorageInitializer : IHostedService
         AllstarrDbContext context,
         CancellationToken cancellationToken)
     {
-        using var activity = PlatformDiagnostics.ActivitySource.StartActivity("storage.migrate");
-        var started = Stopwatch.GetTimestamp();
-        var succeeded = false;
-        try
+        await using var migrationLease = await _migrationLock.AcquireAsync(cancellationToken);
+        var compatibility = await DurableSchemaCompatibility.InspectAsync(
+            context,
+            cancellationToken);
+        if (compatibility.Status != DurableSchemaCompatibilityStatus.Current)
         {
-            await using var migrationLease = await _migrationLock.AcquireAsync(cancellationToken);
-            var compatibility = await DurableSchemaCompatibility.InspectAsync(
-                context,
-                cancellationToken);
-            if (compatibility.Status != DurableSchemaCompatibilityStatus.Current)
-            {
-                _logger.LogWarning(
-                    "Durable storage schema compatibility check: Status={Status}, Unknown=[{Unknown}], Missing=[{Missing}]",
-                    compatibility.Status,
-                    string.Join(", ", compatibility.UnknownMigrations),
-                    string.Join(", ", compatibility.MissingMigrations));
-            }
-            if (compatibility.Status == DurableSchemaCompatibilityStatus.UnsupportedVersion)
-            {
-                SetSchemaIncompatible(compatibility);
-                activity?.SetStatus(ActivityStatusCode.Error);
-                return false;
-            }
+            _logger.LogWarning(
+                "Durable storage schema compatibility check: Status={Status}, Unknown=[{Unknown}], Missing=[{Missing}]",
+                compatibility.Status,
+                string.Join(", ", compatibility.UnknownMigrations),
+                string.Join(", ", compatibility.MissingMigrations));
+        }
+        if (compatibility.Status == DurableSchemaCompatibilityStatus.UnsupportedVersion)
+        {
+            SetSchemaIncompatible(compatibility);
+            return false;
+        }
 
-            await context.Database.MigrateAsync(cancellationToken);
-            succeeded = true;
-            activity?.SetStatus(ActivityStatusCode.Ok);
-            return true;
-        }
-        catch
-        {
-            activity?.SetStatus(ActivityStatusCode.Error);
-            throw;
-        }
-        finally
-        {
-            activity?.SetTag("outcome", succeeded ? "success" : "error");
-            _runtimeState?.RecordMigration(Stopwatch.GetElapsedTime(started), succeeded);
-        }
+        await context.Database.MigrateAsync(cancellationToken);
+        return true;
     }
 
     private void SetSchemaIncompatible(DurableSchemaCompatibilitySnapshot compatibility)

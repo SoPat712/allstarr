@@ -14,7 +14,7 @@ public sealed class StorageOperationsRunbookTests
         Assert.Contains("Never run `pg_restore --clean` against the live database", runbook, StringComparison.Ordinal);
         Assert.Contains("schema_version_unsupported", runbook, StringComparison.Ordinal);
         Assert.Contains("PostgreSQL is mandatory at runtime", runbook, StringComparison.Ordinal);
-        Assert.Contains("mutations, durable jobs, and outbox delivery resume", runbook, StringComparison.Ordinal);
+        Assert.Contains("mutations and durable jobs resume", runbook, StringComparison.Ordinal);
         Assert.Contains("\"status\":\"verified\"", runbook, StringComparison.Ordinal);
         Assert.Contains("storage restore-postgres", runbook, StringComparison.Ordinal);
         Assert.Contains("storage export", runbook, StringComparison.Ordinal);

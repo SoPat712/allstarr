@@ -130,7 +130,7 @@ public sealed class JellyfinMusicEndpointPolicyMiddleware(
     }
 
     private static bool IsInfrastructureRoute(PathString path) =>
-        path.StartsWithSegments("/health") || path.StartsWithSegments("/metrics");
+        path.StartsWithSegments("/health");
 
     private static IHeaderDictionary? ClientAuthHeaders(HttpRequest request) =>
         AuthHeaderHelper.HasAuthentication(request.Headers)

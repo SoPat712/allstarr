@@ -106,7 +106,6 @@ public sealed class DurableJobQueue
         DurableJobEnqueueRequest<T> request,
         CancellationToken cancellationToken = default)
     {
-        using var activity = PlatformDiagnostics.ActivitySource.StartActivity("durable-job.enqueue");
         ValidateEnqueueRequest(
             request.Type,
             request.IdempotencyKey,
@@ -176,20 +175,10 @@ public sealed class DurableJobQueue
             UpdatedAt = now
         };
         context.Jobs.Add(job);
-        context.OutboxMessages.Add(CreateOutbox(
-            savedContext.TenantId,
-            "job.enqueued",
-            new { jobId = job.Id, jobType = job.Type },
-            now));
         try
         {
             await context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            PlatformDiagnostics.JobsEnqueued.Add(
-                1,
-                new KeyValuePair<string, object?>("job.type", job.Type));
-            activity?.SetTag("job.id", job.Id);
-            activity?.SetTag("job.type", job.Type);
             return new DurableJobEnqueueResult(job.Id, true);
         }
         catch (DbUpdateException)
@@ -257,7 +246,6 @@ public sealed class DurableJobQueue
             UpdatedAt = now
         };
         context.Jobs.Add(job);
-        context.OutboxMessages.Add(CreateOutbox(savedContext.TenantId, "job.enqueued", new { jobId = job.Id, jobType = job.Type }, now));
         return new DurableJobEnqueueResult(job.Id, true);
     }
 
@@ -324,11 +312,6 @@ public sealed class DurableJobQueue
             job.CompletedAt = now;
             job.UpdatedAt = now;
             job.Revision++;
-            context.OutboxMessages.Add(CreateOutbox(
-                job.TenantId,
-                "job.cancelled",
-                new { jobId = job.Id, jobType = job.Type },
-                now));
             await context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return null;
@@ -358,11 +341,6 @@ public sealed class DurableJobQueue
                 job.LastErrorMessage = "The job exhausted its recovery budget after worker lease loss.";
                 job.UpdatedAt = now;
                 job.Revision++;
-                context.OutboxMessages.Add(CreateOutbox(
-                    job.TenantId,
-                    "job.failed",
-                    new { jobId = job.Id, jobType = job.Type, errorCode = job.LastErrorCode },
-                    now));
                 await context.SaveChangesAsync(cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
                 return null;
@@ -387,9 +365,6 @@ public sealed class DurableJobQueue
         context.JobAttempts.Add(attempt);
         await context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        PlatformDiagnostics.JobsClaimed.Add(
-            1,
-            new KeyValuePair<string, object?>("job.type", job.Type));
         using var payload = JsonDocument.Parse(job.PayloadJson);
         using var policySnapshot = JsonDocument.Parse(job.PolicySnapshotJson);
         return new DurableJobClaim(
@@ -593,31 +568,8 @@ public sealed class DurableJobQueue
         job.LeaseExpiresAt = null;
         job.UpdatedAt = now;
         job.Revision++;
-        var eventType = job.State switch
-        {
-            DurableJobState.Succeeded => "job.succeeded",
-            DurableJobState.Failed => "job.failed",
-            DurableJobState.Cancelled => "job.cancelled",
-            DurableJobState.RetryScheduled when effectiveKind == DurableJobCompletionKind.Deferred => "job.deferred",
-            _ => "job.retry-scheduled"
-        };
-        context.OutboxMessages.Add(CreateOutbox(
-            job.TenantId,
-            eventType,
-            new
-            {
-                jobId = job.Id,
-                jobType = job.Type,
-                attempt = job.AttemptCount,
-                errorCode = job.LastErrorCode
-            },
-            now));
         await context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        PlatformDiagnostics.JobsCompleted.Add(
-            1,
-            new("job.type", job.Type),
-            new("job.state", job.State.ToString().ToLowerInvariant()));
     }
 
     public async Task<bool> RequestCancellationAsync(
@@ -662,11 +614,6 @@ public sealed class DurableJobQueue
         {
             job.State = DurableJobState.Cancelled;
             job.CompletedAt = now;
-            context.OutboxMessages.Add(CreateOutbox(
-                job.TenantId,
-                "job.cancelled",
-                new { jobId = job.Id, jobType = job.Type },
-                now));
         }
 
         job.UpdatedAt = now;
@@ -777,23 +724,6 @@ public sealed class DurableJobQueue
 
     private static string CreateUserScopeKey(Guid tenantId, Guid ownerUserId) =>
         $"{tenantId:N}:{ownerUserId:N}";
-
-    internal OutboxMessageRecord CreateOutbox(
-        Guid? tenantId,
-        string type,
-        object payload,
-        DateTimeOffset now) => new()
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = tenantId,
-            Type = type,
-            PayloadJson = JsonSerializer.Serialize(payload),
-            State = OutboxMessageState.Pending,
-            AvailableAt = now,
-            MaxAttempts = _options.MaxOutboxAttempts,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
 }
 
 internal static class PostgresConcurrency

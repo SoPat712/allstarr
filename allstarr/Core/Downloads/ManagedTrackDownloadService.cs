@@ -23,8 +23,7 @@ public sealed record ManagedTrackDownloadCommand(
     string CorrelationId,
     string IdempotencyKey,
     int Attempt,
-    string RoutePurpose,
-    string? OutcomeKeyPrefix = null);
+    string RoutePurpose);
 
 public sealed record ManagedTrackDownloadResult(
     bool Succeeded,
@@ -48,7 +47,7 @@ public sealed class ManagedTrackDownloadService(
     IProviderRegistry providers,
     ProviderDownloadArtifactResolver artifacts,
     IPlatformClock clock,
-    IProviderRouteDecisionStore routeDecisions,
+    ILogger<ManagedTrackDownloadService> logger,
     IEffectiveProviderPolicyResolver? effectivePolicies = null)
 {
     public async Task<ManagedTrackDownloadResult> ExecuteAsync(
@@ -140,24 +139,22 @@ public sealed class ManagedTrackDownloadService(
                 "No authorized managed download route is available.");
         }
 
-        var routeDecision = await routeDecisions.RecordPlanAsync(
-            plan.Request,
-            plan.Decision,
-            command.IdempotencyKey,
-            cancellationToken);
+        logger.LogInformation(
+            "Route {Capability} {ProviderId} {AccountScope} {Outcome}",
+            ProviderCapabilityKind.Download,
+            plan.Decision.SelectedProviderId ?? "none",
+            plan.Decision.SelectedProviderAccountId.HasValue ? "account-scoped" : "none",
+            "planned");
         if (plan.Candidates.Count == 0)
         {
-            await RecordOutcomeAsync(
-                routeDecision,
-                command,
+            LogOutcome(
                 sequence: 0,
                 stage: "planning",
                 providerId: null,
                 providerAccountId: null,
                 ProviderRouteOutcomeStatus.Stopped,
                 "no-authorized-candidate",
-                nextProviderId: null,
-                cancellationToken);
+                nextProviderId: null);
             return ManagedTrackDownloadResult.Failure(
                 "managed_download_route_unavailable",
                 "No authorized managed download route is available.");
@@ -173,17 +170,14 @@ public sealed class ManagedTrackDownloadService(
                 cancellationToken);
             if (prior != null)
             {
-                await RecordOutcomeAsync(
-                    routeDecision,
-                    command,
+                LogOutcome(
                     index,
                     "existing-artifact",
                     candidate.Provider.Id,
                     candidate.Context.Account?.AccountId,
                     ProviderRouteOutcomeStatus.Succeeded,
                     "verified-artifact-reused",
-                    nextProviderId: null,
-                    cancellationToken);
+                    nextProviderId: null);
                 return ManagedTrackDownloadResult.Success(prior);
             }
 
@@ -212,8 +206,7 @@ public sealed class ManagedTrackDownloadService(
                 {
                     var error = availability.Error ?? new ProviderError(ProviderErrorKind.IncompatibleMedia);
                     var fallback = router.EvaluateFallback(plan, index, error);
-                    await RecordFallbackAsync(routeDecision, command, index, "availability", candidate, fallback,
-                        cancellationToken);
+                    LogFallback(index, "availability", candidate, fallback);
                     if (fallback.NextCandidate != null)
                         continue;
                     return ManagedTrackDownloadResult.Failure(
@@ -242,8 +235,7 @@ public sealed class ManagedTrackDownloadService(
             if (!outcome.IsSuccess)
             {
                 var fallback = router.EvaluateFallback(plan, index, outcome.Error!);
-                await RecordFallbackAsync(routeDecision, command, index, "download", candidate, fallback,
-                    cancellationToken);
+                LogFallback(index, "download", candidate, fallback);
                 if (fallback.NextCandidate != null)
                     continue;
                 return outcome.Error!.Kind is ProviderErrorKind.TransientFailure or ProviderErrorKind.RateLimited
@@ -261,49 +253,40 @@ public sealed class ManagedTrackDownloadService(
                     workspace.Reference,
                     outcome.RequireValue(),
                     cancellationToken);
-                await RecordOutcomeAsync(
-                    routeDecision,
-                    command,
+                LogOutcome(
                     index,
                     "artifact-verification",
                     candidate.Provider.Id,
                     candidate.Context.Account?.AccountId,
                     ProviderRouteOutcomeStatus.Succeeded,
                     "download-verified",
-                    nextProviderId: null,
-                    cancellationToken);
+                    nextProviderId: null);
                 return ManagedTrackDownloadResult.Success(artifact);
             }
             catch (IOException)
             {
-                await RecordOutcomeAsync(
-                    routeDecision,
-                    command,
+                LogOutcome(
                     index,
                     "artifact-verification",
                     candidate.Provider.Id,
                     candidate.Context.Account?.AccountId,
                     ProviderRouteOutcomeStatus.Stopped,
                     "artifact-io-failed",
-                    nextProviderId: null,
-                    cancellationToken);
+                    nextProviderId: null);
                 return ManagedTrackDownloadResult.Retry(
                     "managed_download_artifact_io_failed",
                     "The downloaded artifact could not be verified.");
             }
             catch (InvalidOperationException)
             {
-                await RecordOutcomeAsync(
-                    routeDecision,
-                    command,
+                LogOutcome(
                     index,
                     "artifact-verification",
                     candidate.Provider.Id,
                     candidate.Context.Account?.AccountId,
                     ProviderRouteOutcomeStatus.Stopped,
                     "artifact-invalid",
-                    nextProviderId: null,
-                    cancellationToken);
+                    nextProviderId: null);
                 return ManagedTrackDownloadResult.Failure(
                     "managed_download_artifact_invalid",
                     "The downloaded artifact failed verification.");
@@ -333,17 +316,12 @@ public sealed class ManagedTrackDownloadService(
             throw new ArgumentException("A route purpose is required.", nameof(command));
     }
 
-    private async Task RecordFallbackAsync(
-        ProviderRouteDecisionHandle decision,
-        ManagedTrackDownloadCommand command,
+    private void LogFallback(
         int sequence,
         string stage,
         ProviderRouteCandidate<IProviderDownloadCapability> candidate,
-        ProviderFallbackDecision<IProviderDownloadCapability> fallback,
-        CancellationToken cancellationToken) =>
-        await RecordOutcomeAsync(
-            decision,
-            command,
+        ProviderFallbackDecision<IProviderDownloadCapability> fallback) =>
+        LogOutcome(
             sequence,
             stage,
             candidate.Provider.Id,
@@ -352,30 +330,24 @@ public sealed class ManagedTrackDownloadService(
                 ? ProviderRouteOutcomeStatus.FallbackAdvanced
                 : ProviderRouteOutcomeStatus.Stopped,
             fallback.ReasonCode,
-            fallback.NextCandidate?.Provider.Id,
-            cancellationToken);
+            fallback.NextCandidate?.Provider.Id);
 
-    private Task RecordOutcomeAsync(
-        ProviderRouteDecisionHandle decision,
-        ManagedTrackDownloadCommand command,
+    private void LogOutcome(
         int sequence,
         string stage,
         string? providerId,
         Guid? providerAccountId,
         ProviderRouteOutcomeStatus status,
         string reasonCode,
-        string? nextProviderId,
-        CancellationToken cancellationToken) =>
-        routeDecisions.RecordOutcomeAsync(
-            decision,
-            new ProviderRouteExecutionOutcome(
-                $"{command.OutcomeKeyPrefix ?? command.IdempotencyKey}|attempt:{command.Attempt}|{sequence}|{stage}",
-                sequence,
-                stage,
-                providerId,
-                providerAccountId,
-                status,
-                reasonCode,
-                nextProviderId),
-            cancellationToken);
+        string? nextProviderId) =>
+        logger.LogInformation(
+            "Route {Capability} {ProviderId} {AccountScope} {Outcome} at {Stage} candidate {Sequence}: {ReasonCode}; next {NextProviderId}",
+            ProviderCapabilityKind.Download,
+            providerId ?? "none",
+            providerAccountId.HasValue ? "account-scoped" : "none",
+            status,
+            stage,
+            sequence,
+            SafeOperationalText.Sanitize(reasonCode, 100),
+            nextProviderId ?? "none");
 }

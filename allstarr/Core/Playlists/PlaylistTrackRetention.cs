@@ -222,8 +222,7 @@ public sealed class PlaylistTrackRetentionJobHandler(
             context.Claim.CorrelationId,
             request.RetentionKey,
             context.Claim.AttemptNumber,
-            "playlist-retention",
-            request.RetentionKey), cancellationToken);
+            "playlist-retention"), cancellationToken);
         if (!download.Succeeded)
         {
             var code = download.ErrorCode?.Replace(

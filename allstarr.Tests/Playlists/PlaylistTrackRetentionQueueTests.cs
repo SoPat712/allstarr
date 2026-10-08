@@ -203,7 +203,7 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
         Assert.Equal(["First artist", "Second artist"], payload.Artists);
         Assert.Equal("Stable album", payload.Album);
         Assert.Equal(job.IdempotencyKey["playlist-retain:".Length..], payload.RetentionKey);
-        Assert.Single(await db.OutboxMessages.AsNoTracking().ToListAsync());
+        Assert.Empty(await db.OutboxMessages.AsNoTracking().ToListAsync());
     }
 
     [Fact]

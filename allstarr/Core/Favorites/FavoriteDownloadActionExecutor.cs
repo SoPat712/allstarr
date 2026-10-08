@@ -39,8 +39,7 @@ public sealed class FavoriteDownloadActionExecutor(
                 favoriteEvent.CorrelationId,
                 action.IdempotencyKey,
                 action.AttemptCount,
-                "favorite-download",
-                action.Id.ToString("N")),
+                "favorite-download"),
             cancellationToken);
         return MapResult(result);
     }
