@@ -100,7 +100,7 @@ public sealed class FreshInstallContractTests
                  {
                      "AdminAuthSession", "ProviderAccount", "TenantRuntimeSetting",
                      "PlaylistLink", "PlaylistSourceSnapshot", "PlaylistSyncRun",
-                     "TrackMatch", "ProviderRouteDecision", "DurableJob",
+                     "TrackMatch", "DurableJob",
                      "ProviderHealthSample", "AuditEvent", "ExtensionPackage"
                  })
         {

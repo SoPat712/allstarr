@@ -15,21 +15,10 @@ internal static class SqliteIntegrity
         AddLineage(migration, "metadata_enrichment_plans", "durable_jobs", "LineageJobId,TenantId,OwnerUserId", "Id,TenantId,OwnerUserId", "FK_enrichment_plan_job_lineage");
         AddLineage(migration, "metadata_enrichment_plans", "managed_files", "ManagedArtifactId,TenantId,OwnerUserId", "Id,TenantId,OwnerUserId", "FK_enrichment_plan_file_lineage");
         AddLineage(migration, "metadata_enrichment_applications", "durable_jobs", "LineageJobId,TenantId,OwnerUserId", "Id,TenantId,OwnerUserId", "FK_enrichment_application_job_lineage");
-        AddLineage(migration, "provider_route_decisions", "durable_jobs", "DurableJobId,TenantId", "Id,TenantId", "FK_provider_route_decision_job_tenant_lineage");
-        AddLineage(migration, "provider_route_decisions", "durable_jobs", "DurableJobId,TenantId,ActorUserId", "Id,TenantId,OwnerUserId", "FK_provider_route_decision_job_owner_lineage");
 
         ValidateBoth(migration, "durable_job_account_scope", "durable_jobs",
             $"NOT {AccountMatches("NEW.\"ProviderAccountId\"", "NEW.\"TenantId\"", "NEW.\"OwnerUserId\"", "NEW.\"LibraryScopeId\"")}",
             "ProviderAccountId,TenantId,OwnerUserId,LibraryScopeId", "CK_durable_job_account_scope");
-        if (HasTable(migration, "provider_route_decisions"))
-        {
-            ValidateBoth(migration, "provider_route_decision_account_scope", "provider_route_decisions",
-                $"NOT {AccountMatches("NEW.\"SelectedProviderAccountId\"", "NEW.\"TenantId\"", "NEW.\"ActorUserId\"", "NEW.\"LibraryScopeId\"")}",
-                "SelectedProviderAccountId,TenantId,ActorUserId,LibraryScopeId", "CK_provider_route_decision_account_scope");
-            ValidateBoth(migration, "provider_route_outcome_account_scope", "provider_route_outcomes",
-                $"NOT EXISTS (SELECT 1 FROM provider_route_decisions d WHERE d.\"Id\"=NEW.\"RouteDecisionId\" AND d.\"TenantId\"=NEW.\"TenantId\" AND {AccountMatches("NEW.\"ProviderAccountId\"", "d.\"TenantId\"", "d.\"ActorUserId\"", "d.\"LibraryScopeId\"")})",
-                "ProviderAccountId,TenantId,RouteDecisionId", "CK_provider_route_outcome_account_scope");
-        }
 
         ValidateBoth(migration, "managed_file_reference_lineage", "managed_file_references",
             "NOT EXISTS (SELECT 1 FROM managed_files f WHERE f.\"Id\"=NEW.\"ManagedFileId\" AND f.\"TenantId\"=NEW.\"TenantId\" AND f.\"OwnerUserId\" IS NEW.\"OwnerUserId\" AND f.\"ScopeKey\"=NEW.\"ScopeKey\")",
@@ -66,23 +55,14 @@ internal static class SqliteIntegrity
             "FK_download_artifact_saved_file_lineage");
 
         var savedAccountScope = $"EXISTS (SELECT 1 FROM durable_jobs j WHERE j.\"ProviderAccountId\"=OLD.\"Id\" AND NOT {ScopeMatches("NEW", "j.\"TenantId\"", "j.\"OwnerUserId\"", "j.\"LibraryScopeId\"")})";
-        if (HasTable(migration, "provider_route_decisions"))
-        {
-            savedAccountScope += $" OR EXISTS (SELECT 1 FROM provider_route_decisions d WHERE d.\"SelectedProviderAccountId\"=OLD.\"Id\" AND NOT {ScopeMatches("NEW", "d.\"TenantId\"", "d.\"ActorUserId\"", "d.\"LibraryScopeId\"")})";
-            savedAccountScope += $" OR EXISTS (SELECT 1 FROM provider_route_outcomes o JOIN provider_route_decisions d ON d.\"Id\"=o.\"RouteDecisionId\" AND d.\"TenantId\"=o.\"TenantId\" WHERE o.\"ProviderAccountId\"=OLD.\"Id\" AND NOT {ScopeMatches("NEW", "d.\"TenantId\"", "d.\"ActorUserId\"", "d.\"LibraryScopeId\"")})";
-        }
         Guard(migration, "provider_account_saved_lineage", "provider_accounts", "Scope,TenantId,OwnerUserId,LibraryScopeId",
             savedAccountScope, "CK_provider_account_saved_lineage");
     }
 
-    private static bool HasTable(MigrationBuilder migration, string name) =>
-        migration.Operations.OfType<CreateTableOperation>().Any(table => table.Name == name);
-
     private static void AddLineage(MigrationBuilder migration, string table, string principal,
         string columns, string principalColumns, string name)
     {
-        var operation = migration.Operations.OfType<CreateTableOperation>().SingleOrDefault(item => item.Name == table);
-        if (operation == null) return;
+        var operation = migration.Operations.OfType<CreateTableOperation>().Single(item => item.Name == table);
         operation.ForeignKeys.Add(new AddForeignKeyOperation
         {
             Name = name,

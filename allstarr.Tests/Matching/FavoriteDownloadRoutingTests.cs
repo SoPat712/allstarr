@@ -157,8 +157,8 @@ public sealed class FavoriteDownloadRoutingTests : IAsyncLifetime
         Assert.DoesNotContain(_userId.ToString(), log, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(_jobId.ToString(), log, StringComparison.OrdinalIgnoreCase);
         await using var context = await _factory.CreateDbContextAsync();
-        Assert.Empty(await context.ProviderRouteDecisions.ToListAsync());
-        Assert.Empty(await context.ProviderRouteOutcomes.ToListAsync());
+        Assert.Null(context.Model.FindEntityType("allstarr.Core.Routing.ProviderRouteDecisionEntity"));
+        Assert.Null(context.Model.FindEntityType("allstarr.Core.Routing.ProviderRouteOutcomeEntity"));
         router.VerifyAll();
         providers.VerifyAll();
     }

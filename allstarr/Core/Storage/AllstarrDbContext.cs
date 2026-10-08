@@ -5,7 +5,6 @@ using allstarr.Core.Favorites;
 using allstarr.Core.ManagedFiles;
 using allstarr.Core.Downloads;
 using allstarr.Core.Playback;
-using allstarr.Core.Routing;
 
 namespace allstarr.Core.Storage;
 
@@ -21,7 +20,6 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
     public DbSet<SecretVersionRecord> SecretVersions => Set<SecretVersionRecord>();
     public DbSet<DurableJobRecord> Jobs => Set<DurableJobRecord>();
     public DbSet<JobAttemptRecord> JobAttempts => Set<JobAttemptRecord>();
-    public DbSet<OutboxMessageRecord> OutboxMessages => Set<OutboxMessageRecord>();
     public DbSet<ProviderHealthSampleRecord> ProviderHealthSamples => Set<ProviderHealthSampleRecord>();
     public DbSet<ProviderHealthRollupRecord> ProviderHealthRollups => Set<ProviderHealthRollupRecord>();
     public DbSet<ProviderCircuitRecord> ProviderCircuits => Set<ProviderCircuitRecord>();
@@ -54,8 +52,6 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
     public DbSet<ProviderDownloadArtifactEntity> ProviderDownloadArtifacts => Set<ProviderDownloadArtifactEntity>();
     public DbSet<DownloadedSongMappingEntity> DownloadedSongMappings => Set<DownloadedSongMappingEntity>();
     public DbSet<PlaybackDeliveryCheckpointEntity> PlaybackDeliveryCheckpoints => Set<PlaybackDeliveryCheckpointEntity>();
-    public DbSet<ProviderRouteDecisionEntity> ProviderRouteDecisions => Set<ProviderRouteDecisionEntity>();
-    public DbSet<ProviderRouteOutcomeEntity> ProviderRouteOutcomes => Set<ProviderRouteOutcomeEntity>();
     public DbSet<ApplicationCacheEntryRecord> ApplicationCacheEntries => Set<ApplicationCacheEntryRecord>();
     public DbSet<ManualLyricsMappingRecord> ManualLyricsMappings => Set<ManualLyricsMappingRecord>();
 
@@ -92,17 +88,14 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         modelBuilder.ConfigureProviderDownloadArtifacts();
         modelBuilder.ConfigureDownloadedSongMappings();
         ConfigureMetadataEnrichment(modelBuilder);
-        ConfigureFavoriteActionPolicies(modelBuilder);
         IntelligenceModelConfiguration.Configure(modelBuilder);
         modelBuilder.ConfigurePlaybackDeliveryCheckpoints();
         ConfigureOperations(modelBuilder);
         ConfigureRuntimeSettings(modelBuilder);
-        modelBuilder.ConfigureProviderRouteDecisions();
         ConfigureApplicationCache(modelBuilder);
         modelBuilder.ConfigureManualLyricsMappings();
         ConfigurePortableDateTimeOffsets(modelBuilder);
-        // Keep the checked-in snapshot provider-neutral. Neither convention is
-        // required because Allstarr assigns durable identifiers explicitly.
+        // Durable identifiers are assigned explicitly; omit provider-specific identifier limits.
         modelBuilder.Model.RemoveAnnotation("Relational:MaxIdentifierLength");
     }
 
@@ -310,25 +303,6 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.HasIndex(item => new { item.JobId, item.AttemptNumber }).IsUnique();
             entity.HasOne<DurableJobRecord>().WithMany().HasForeignKey(item => item.JobId)
                 .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        modelBuilder.Entity<OutboxMessageRecord>(entity =>
-        {
-            entity.ToTable("outbox_messages");
-            entity.HasKey(item => item.Id);
-            entity.Property(item => item.Id).ValueGeneratedNever();
-            entity.Property(item => item.Type).HasMaxLength(200).IsRequired();
-            entity.Property(item => item.PayloadJson).IsRequired();
-            entity.Property(item => item.State).HasConversion<string>().HasMaxLength(32);
-            entity.Property(item => item.LeaseOwner).HasMaxLength(200);
-            entity.Property(item => item.LastErrorCode).HasMaxLength(100);
-            entity.Property(item => item.LastErrorMessage).HasMaxLength(1000);
-            entity.Property(item => item.Revision).IsConcurrencyToken();
-            entity.HasIndex(item => new { item.State, item.AvailableAt });
-            entity.HasIndex(item => new { item.TenantId, item.UpdatedAt, item.Id })
-                .HasDatabaseName("IX_outbox_updates");
-            entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)
-                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 

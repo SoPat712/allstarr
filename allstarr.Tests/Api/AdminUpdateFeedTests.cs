@@ -47,9 +47,6 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
             Audit(tenantId, otherUserId, "other-audit", "other", startedAt.AddSeconds(5)),
             Audit(tenantId, null, "job-audit", "own", startedAt.AddSeconds(6)),
             Audit(otherTenantId, null, "foreign-audit", "foreign", startedAt.AddSeconds(7)));
-        context.OutboxMessages.AddRange(
-            Outbox(tenantId, "tenant-message", startedAt.AddSeconds(8), """{"token":"never-stream"}"""),
-            Outbox(otherTenantId, "foreign-message", startedAt.AddSeconds(9), """{"token":"foreign"}"""));
         await context.SaveChangesAsync();
     }
 
@@ -240,24 +237,6 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
             CorrelationId = correlation,
             DetailsJson = details,
             CreatedAt = at
-        };
-
-    private static OutboxMessageRecord Outbox(
-        Guid tenant,
-        string type,
-        DateTimeOffset at,
-        string payload) => new()
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = tenant,
-            Type = type,
-            PayloadJson = payload,
-            State = OutboxMessageState.Pending,
-            AvailableAt = at,
-            MaxAttempts = 3,
-            CreatedAt = at,
-            UpdatedAt = at,
-            Revision = 1
         };
 
     private sealed class TestFactory(DbContextOptions<AllstarrDbContext> options)
