@@ -17,7 +17,7 @@ Allstarr is a music middleware service. It presents a Jellyfin or Subsonic-compa
 | Owner | Authoritative state | Allowed payloads and limits | Never owns |
 | --- | --- | --- | --- |
 | PostgreSQL | Accounts and encrypted secret references; tenant runtime settings; admin sessions; playlist links, snapshots, source entries, sync runs and memberships; canonical identities, matches, overrides and provider routes; jobs, schedules and attempts; health, circuits and audit events; extension registries, packages and permission state; playback, favorites, intelligence, managed-file and cache metadata | Durable business and lifecycle records with tenant/user scope, revisions, constraints and migrations | Audio/artwork bytes, extension package bytes, backup archives or encryption key material |
-| Filesystem | Managed audio and artwork; target playlist files; kept lyrics sidecars; installed extension package payloads; the encryption key ring; verified backup artifacts and bounded temporary transfer archives | Rebuildable media cache with bounded size/TTL; atomic staging files beside an allowed final payload | Accounts, sessions, settings, mappings, accepted decisions, playlist membership/order, sync timestamps, health, jobs or events |
+| Filesystem | Managed audio and artwork; target playlist files; kept lyrics sidecars; installed extension package payloads; the encryption key ring; verified backup artifacts | Rebuildable media cache with bounded size/TTL; atomic staging files beside an allowed final payload | Accounts, sessions, settings, mappings, accepted decisions, playlist membership/order, sync timestamps, health, jobs or events |
 | Environment / deployment secrets | Process-start bootstrap, security policy and deployment topology: database connection/password-file location, backend selection/endpoints, mounted paths, bind/trust policy, optional service profiles and initial defaults | Read once into startup configuration; secret values may come from mounted secret files | WebUI mutations, per-user credentials, live playlist configuration or any restart-reconciled business state |
 
 The database row is authoritative whenever a filesystem payload has lifecycle metadata. Deleting a cache payload may cause a rebuild; deleting a durable row may not be repaired from cache. Legacy `.env` input is accepted only through the explicit preview/apply migration boundary and is never reread as live application state.
@@ -125,7 +125,7 @@ The bounded `PlaybackDeliveryActivityStore` retains disposable, one-hour stream-
 
 State-changing background work uses the durable job queue, schedules, leases, retries, cancellation, and owner authorization under `Core/Jobs`. A process-local task is not an acceptable owner for matching, downloads, playlist synchronization, scrobbling, or extension lifecycle work.
 
-PostgreSQL readiness is a mutation boundary. Read-only protocol proxying may remain available during a database incident, but jobs and state changes pause rather than inventing fallback state.
+Startup verifies PostgreSQL connectivity and schema compatibility before marking storage ready. Durable workers wait for that state. Run one application process per deployment; restart it after recovering an unavailable database so startup can verify the connection and schema again.
 
 ## Cache and media
 

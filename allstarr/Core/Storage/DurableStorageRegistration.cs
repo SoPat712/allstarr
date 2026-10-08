@@ -23,12 +23,9 @@ public static class DurableStorageRegistration
         services.AddSingleton(Options.Create(options));
         services.AddSingleton(options);
         services.AddSingleton<DurableStorageState>();
-        services.AddSingleton<IDurableStorageRuntimeProbe, DurableStorageRuntimeProbe>();
-        services.AddSingleton<DurableMigrationLock>();
         services.AddSingleton<IStorageProcessRunner, StorageProcessRunner>();
         services.AddSingleton<IDurableRestoreTargetVerifier, DurableRestoreTargetVerifier>();
         services.AddSingleton<DurableBackupService>();
-        services.AddSingleton<DurableStateTransferService>();
         services.AddDbContextFactory<AllstarrDbContext>(builder =>
         {
             builder.UseNpgsql(options.ConnectionString, postgres =>
@@ -38,7 +35,6 @@ public static class DurableStorageRegistration
         });
         services.AddSingleton<DurableStorageInitializer>();
         services.AddHostedService(provider => provider.GetRequiredService<DurableStorageInitializer>());
-        services.AddHostedService<DurableStorageRuntimeMonitor>();
         return services;
     }
 }

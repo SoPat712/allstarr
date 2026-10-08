@@ -546,8 +546,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             storageState,
             services,
             [new BlockingHandler(started)],
-            NullLogger<DurableJobWorker>.Instance,
-            new ReadyStorageProbe(storageState));
+            NullLogger<DurableJobWorker>.Instance);
 
         await firstWorker.StartAsync(CancellationToken.None);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -561,8 +560,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             storageState,
             services,
             [new SuccessfulHandler(completed)],
-            NullLogger<DurableJobWorker>.Instance,
-            new ReadyStorageProbe(storageState));
+            NullLogger<DurableJobWorker>.Instance);
         await secondWorker.StartAsync(CancellationToken.None);
         await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await WaitForState(queued.JobId, DurableJobState.Succeeded);
@@ -595,8 +593,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             storageState,
             services,
             [handler],
-            NullLogger<DurableJobWorker>.Instance,
-            new ReadyStorageProbe(storageState));
+            NullLogger<DurableJobWorker>.Instance);
 
         await worker.StartAsync(CancellationToken.None);
         await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -647,8 +644,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             storageState,
             services,
             [handler],
-            NullLogger<DurableJobWorker>.Instance,
-            new ReadyStorageProbe(storageState));
+            NullLogger<DurableJobWorker>.Instance);
 
         await worker.StartAsync(CancellationToken.None);
         await WaitForState(queued.JobId, DurableJobState.Failed);
@@ -662,39 +658,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             Assert.NotEqual(alternativeAccount.Id, job.ProviderAccountId);
             Assert.Equal("job_provider_account_unauthorized", job.LastErrorCode);
         }
-    }
-
-    [Fact]
-    public async Task WorkerRefreshesRuntimeStorageAndDoesNotClaimWhileDatabaseIsUnavailable()
-    {
-        _options.PollIntervalMilliseconds = 25;
-        var queued = await Enqueue("provider.work", "runtime-storage-guard");
-        var storageOptions = StorageOptions();
-        var storageState = new DurableStorageState(storageOptions);
-        storageState.Set(DurableStorageReadiness.Ready, "startup-schema");
-        var checkedStorage = new TaskCompletionSource(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        var probe = new UnavailableStorageProbe(storageState, checkedStorage);
-        var handler = new CountingHandler();
-        await using var services = new ServiceCollection().BuildServiceProvider();
-        var worker = new DurableJobWorker(
-            _queue,
-            _options,
-            storageState,
-            services,
-            [handler],
-            NullLogger<DurableJobWorker>.Instance,
-            probe);
-
-        await worker.StartAsync(CancellationToken.None);
-        await checkedStorage.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await worker.StopAsync(CancellationToken.None);
-
-        Assert.Equal(0, handler.InvocationCount);
-        await using var context = await _factory.CreateDbContextAsync();
-        Assert.Equal(
-            DurableJobState.Pending,
-            (await context.Jobs.SingleAsync(item => item.Id == queued.JobId)).State);
     }
 
     private Task<DurableJobEnqueueResult> Enqueue(string type, string key) =>
@@ -831,29 +794,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
                 throw;
             }
         }
-    }
-
-    private sealed class UnavailableStorageProbe(
-        DurableStorageState state,
-        TaskCompletionSource checkedStorage) : IDurableStorageRuntimeProbe
-    {
-        public Task<DurableStorageSnapshot> CheckAsync(
-            CancellationToken cancellationToken = default)
-        {
-            state.Set(
-                DurableStorageReadiness.Unavailable,
-                errorCode: "database_unavailable");
-            checkedStorage.TrySetResult();
-            return Task.FromResult(state.GetSnapshot());
-        }
-    }
-
-    private sealed class ReadyStorageProbe(DurableStorageState state)
-        : IDurableStorageRuntimeProbe
-    {
-        public Task<DurableStorageSnapshot> CheckAsync(
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(state.GetSnapshot());
     }
 
     private sealed class TestDbContextFactory(DbContextOptions<AllstarrDbContext> options)

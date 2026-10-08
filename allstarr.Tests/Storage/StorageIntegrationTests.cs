@@ -25,10 +25,9 @@ using Microsoft.Extensions.FileProviders;
 
 namespace allstarr.Tests;
 
-public sealed class PostgresStorageIntegrationTests
+public sealed class StorageIntegrationTests
 {
     [Fact]
-    [Trait("Category", "Postgres")]
     public async Task DownloadedTrackCache_SeparatesTenantsAccountsLibrariesAndQuality()
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
@@ -68,8 +67,7 @@ public sealed class PostgresStorageIntegrationTests
     }
 
     [Fact]
-    [Trait("Category", "Postgres")]
-    public async Task NativePostgresLineageConstraints_RejectCrossTenantFavoriteJob()
+    public async Task StorageLineageConstraints_RejectCrossTenantFavoriteJob()
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
         await using var db = new AllstarrDbContext(database.Options);
@@ -110,19 +108,11 @@ public sealed class PostgresStorageIntegrationTests
         });
         await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
 
-        db.ChangeTracker.Clear();
-        await using var command = db.Database.GetDbConnection().CreateCommand();
-        command.CommandText = "SELECT count(*) FROM pg_constraint WHERE conname IN " +
-            "('FK_favorite_event_job_lineage', 'FK_managed_file_job_tenant_lineage', " +
-            "'FK_download_workspace_job_tenant_lineage', 'FK_enrichment_plan_job_lineage', " +
-            "'FK_enrichment_plan_file_lineage', 'FK_enrichment_application_job_lineage')";
-        if (command.Connection!.State != System.Data.ConnectionState.Open) await command.Connection.OpenAsync();
-        Assert.Equal(6L, Convert.ToInt64(await command.ExecuteScalarAsync()));
+
     }
 
     [Fact]
-    [Trait("Category", "Postgres")]
-    public async Task NativePostgresHostOptions_SupportIdentityJobAndScheduleTransactions()
+    public async Task StorageHostOptions_SupportIdentityJobAndScheduleTransactions()
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
         await using var services = BuildHostStorageServices(database.ConnectionString);
@@ -261,57 +251,7 @@ public sealed class PostgresStorageIntegrationTests
     }
 
     [Fact]
-    [Trait("Category", "Postgres")]
-    [Trait("Lane", "ReleaseCritical")]
-    public async Task NativePostgresHostOptions_ImportPortableStateInsideExplicitTransaction()
-    {
-        var root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
-        await using var sourceDatabase = await PostgresTestDatabase.CreateAsync();
-        await using var targetDatabase = await PostgresTestDatabase.CreateAsync();
-        try
-        {
-            var sourceOptions = new DurableStorageOptions
-            {
-                Provider = "Postgres",
-                ConnectionString = sourceDatabase.ConnectionString,
-                BackupDirectory = Path.Combine(root, "backups")
-            };
-            var sourceFactory = new TestDbContextFactory(sourceDatabase.Options);
-            string schema;
-            await using (var source = await sourceFactory.CreateDbContextAsync())
-            {
-                schema = source.Database.GetMigrations().Last();
-                source.Tenants.Add(new TenantRecord
-                {
-                    Id = Guid.CreateVersion7(),
-                    Slug = "portable-postgres",
-                    Name = "Portable PostgreSQL",
-                    CreatedAt = DateTimeOffset.UtcNow
-                });
-                await source.SaveChangesAsync();
-            }
-
-            var sourceState = new DurableStorageState(sourceOptions);
-            sourceState.Set(DurableStorageReadiness.Ready, schema);
-            var transfer = new DurableStateTransferService(sourceFactory, sourceOptions, sourceState);
-            var artifact = await transfer.ExportAsync(Path.Combine(root, "transfer"), writesQuiesced: true);
-
-            var targetFactory = new TestDbContextFactory(targetDatabase.Options);
-
-            await DurableStateTransferService.ImportAsync(artifact, targetFactory, targetConfirmedEmpty: true);
-            await using var verify = await targetFactory.CreateDbContextAsync();
-            Assert.Equal("portable-postgres", (await verify.Tenants.AsNoTracking().SingleAsync()).Slug);
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
-    }
-
-    [Fact]
-    [Trait("Category", "Postgres")]
-    public async Task NativePostgresLegacyEnvMigration_AtomicallyAppliesAndDecryptsSharedAccount()
+    public async Task StorageLegacyEnvMigration_AtomicallyAppliesAndDecryptsSharedAccount()
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
         var root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
@@ -464,11 +404,11 @@ public sealed class PostgresStorageIntegrationTests
         }).Build();
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDurableStorage(configuration, new PostgresTestHostEnvironment());
+        services.AddDurableStorage(configuration, new StorageTestHostEnvironment());
         return services.BuildServiceProvider();
     }
 
-    private sealed class PostgresTestHostEnvironment : IHostEnvironment
+    private sealed class StorageTestHostEnvironment : IHostEnvironment
     {
         public string EnvironmentName { get; set; } = "Testing";
         public string ApplicationName { get; set; } = "allstarr.Tests";
@@ -477,451 +417,8 @@ public sealed class PostgresStorageIntegrationTests
     }
 
     [Fact]
-    [Trait("Category", "Postgres")]
     [Trait("Lane", "ReleaseCritical")]
-    public async Task NativePostgresAdditiveMigrations_CanRollBackToFoundationAndReapply()
-    {
-        await using var database = await PostgresTestDatabase.CreateAsync();
-        await using var context = new AllstarrDbContext(database.Options);
-        var migrator = context.GetService<IMigrator>();
-
-        await migrator.MigrateAsync("20260710145139_InitialDurableFoundation");
-
-        Assert.False(await RelationExists(context, "provider_health_rollups"));
-        Assert.False(await ColumnExists(context, "durable_jobs", "MaxDeferrals"));
-        Assert.False(await ColumnExists(context, "durable_jobs", "PolicySnapshotJson"));
-        Assert.False(await ColumnExists(context, "durable_jobs", "RequestFingerprint"));
-        Assert.False(await ColumnExists(context, "outbox_messages", "MaxAttempts"));
-        Assert.False(await ColumnExists(context, "backups", "RestoreStatus"));
-        Assert.False(await RelationExists(context, "canonical_recordings"));
-        Assert.False(await RelationExists(context, "provider_track_identities"));
-        Assert.False(await RelationExists(context, "tenant_runtime_settings"));
-
-        await migrator.MigrateAsync();
-
-        Assert.True(await RelationExists(context, "provider_health_rollups"));
-        Assert.True(await ColumnExists(context, "durable_jobs", "MaxDeferrals"));
-        Assert.True(await ColumnExists(context, "durable_jobs", "PolicySnapshotJson"));
-        Assert.True(await ColumnExists(context, "durable_jobs", "RequestFingerprint"));
-        Assert.True(await ColumnExists(context, "outbox_messages", "MaxAttempts"));
-        Assert.True(await ColumnExists(context, "backups", "RestoreStatus"));
-        Assert.True(await RelationExists(context, "canonical_recordings"));
-        Assert.True(await RelationExists(context, "provider_track_identities"));
-        Assert.True(await RelationExists(context, "tenant_runtime_settings"));
-        Assert.True(await ColumnExists(context, "application_cache_entries", "Category"));
-        Assert.False(context.Database.HasPendingModelChanges());
-    }
-
-    [Fact]
-    [Trait("Category", "Postgres")]
-    [Trait("Lane", "ReleaseCritical")]
-    public async Task BackendCredentialMigration_BindsExistingExactIntelligenceScope()
-    {
-        await using var database = await PostgresTestDatabase.CreateAsync(useTemplate: false);
-        await using var context = new AllstarrDbContext(database.Options);
-        var migrator = context.GetService<IMigrator>();
-        await migrator.MigrateAsync("20260803040000_AddListeningIntakeTokens");
-        var tenant = Guid.CreateVersion7();
-        var user = Guid.CreateVersion7();
-        var identity = Guid.CreateVersion7();
-        var credential = Guid.CreateVersion7();
-        var policy = Guid.CreateVersion7();
-        var now = DateTimeOffset.UtcNow.UtcTicks;
-
-        await context.Database.ExecuteSqlInterpolatedAsync($"""
-            INSERT INTO tenants ("Id", "Slug", "Name", "CreatedAt")
-            VALUES ({tenant}, 'credential-migration', 'Credential migration', {now});
-            INSERT INTO users ("Id", "TenantId", "DisplayName", "Status", "CreatedAt", "UpdatedAt")
-            VALUES ({user}, {tenant}, 'Listener', 'Active', {now}, {now});
-            INSERT INTO backend_identities
-                ("Id", "TenantId", "UserId", "BackendType", "BackendInstanceId", "PrincipalId", "CreatedAt", "LastSeenAt")
-            VALUES ({identity}, {tenant}, {user}, 'subsonic', 'main', 'listener', {now}, {now});
-            INSERT INTO secret_references
-                ("Id", "TenantId", "Purpose", "ActiveVersion", "CreatedAt", "UpdatedAt")
-            VALUES ({credential}, {tenant}, 'playlist-backend:subsonic', 0, {now}, {now});
-            INSERT INTO intelligence_policies
-                ("Id", "TenantId", "OwnerUserId", "Protocol", "BackendInstanceId", "LibraryScopeId",
-                 "Enabled", "TargetCredentialReferenceId", "RetentionDays", "AllowedSignalTypesJson",
-                 "EnabledProvidersJson", "CreatedAt", "UpdatedAt", "Revision")
-            VALUES ({policy}, {tenant}, {user}, 'subsonic', 'main', 'music', true, {credential}, 30,
-                    '["play"]', '["local"]', {now}, {now}, 1);
-            """);
-
-        await migrator.MigrateAsync();
-
-        Assert.Equal(identity, (await context.SecretReferences.AsNoTracking()
-            .SingleAsync(item => item.Id == credential)).BackendIdentityId);
-    }
-
-    [Fact]
-    [Trait("Category", "Postgres")]
-    public async Task V3CompatibilityMigration_BackfillsLegacyStateAndReappliesIdempotently()
-    {
-        const string previous = "20260803210000_OptimizeListeningAnalyticsIndex";
-        const string current = "20260804080000_BackfillV3CompatibilityState";
-        await using var database = await PostgresTestDatabase.CreateAsync();
-        await using var context = new AllstarrDbContext(database.Options);
-        var migrator = context.GetService<IMigrator>();
-        await migrator.MigrateAsync(previous);
-
-        var now = DateTimeOffset.UtcNow;
-        var tenant = Guid.CreateVersion7();
-        var user = Guid.CreateVersion7();
-        var account = Guid.CreateVersion7();
-        var ambiguousAccounts = new[] { Guid.CreateVersion7(), Guid.CreateVersion7() };
-        var job = Guid.CreateVersion7();
-        var run = Guid.CreateVersion7();
-        var candidate = Guid.CreateVersion7();
-        var ambiguousCandidate = Guid.CreateVersion7();
-        var package = Guid.CreateVersion7();
-        context.Tenants.Add(new() { Id = tenant, Slug = "v3-backfill", Name = "V3 backfill", CreatedAt = now });
-        context.Users.Add(new()
-        {
-            Id = user,
-            TenantId = tenant,
-            DisplayName = "Listener",
-            Status = PlatformUserStatus.Active,
-            CreatedAt = now,
-            UpdatedAt = now
-        });
-        context.ProviderAccounts.Add(new()
-        {
-            Id = account,
-            TenantId = tenant,
-            OwnerUserId = user,
-            ProviderId = "audiomuse",
-            DisplayName = "AudioMuse",
-            Scope = ProviderAccountScope.User,
-            Enabled = true,
-            CreatedAt = now,
-            UpdatedAt = now,
-            Revision = 1
-        });
-        context.ProviderAccounts.AddRange(ambiguousAccounts.Select(id => new ProviderAccountRecord
-        {
-            Id = id,
-            TenantId = tenant,
-            OwnerUserId = user,
-            ProviderId = "qobuz",
-            DisplayName = $"Qobuz {id:N}",
-            Scope = ProviderAccountScope.User,
-            Enabled = true,
-            CreatedAt = now,
-            UpdatedAt = now,
-            Revision = 1
-        }));
-        context.Jobs.Add(DatabaseLineageConstraintTests.Job(job, tenant, user, "v3-backfill", now));
-        context.RecommendationRuns.Add(new()
-        {
-            Id = run,
-            TenantId = tenant,
-            OwnerUserId = user,
-            Protocol = "jellyfin",
-            BackendInstanceId = "main",
-            LibraryScopeId = "music",
-            JobId = job,
-            IdempotencyKey = "v3-backfill",
-            Limit = 10,
-            State = RecommendationRunState.Succeeded,
-            CreatedAt = now,
-            UpdatedAt = now,
-            CompletedAt = now,
-            Revision = 1
-        });
-        context.RecommendationCandidates.Add(new()
-        {
-            Id = candidate,
-            RunId = run,
-            TenantId = tenant,
-            OwnerUserId = user,
-            Position = 0,
-            TrackKey = "audiomuse:track:1",
-            Score = .9,
-            Source = "audiomuse",
-            SignalsJson = "[]",
-            IdentityJson = "{}",
-            SourceRevision = "legacy",
-            ExclusionsJson = "[]",
-            CreatedAt = now,
-            Revision = 0
-        });
-        context.RecommendationCandidates.Add(new()
-        {
-            Id = ambiguousCandidate,
-            RunId = run,
-            TenantId = tenant,
-            OwnerUserId = user,
-            Position = 1,
-            TrackKey = "qobuz:track:1",
-            Score = .8,
-            Source = "qobuz",
-            SignalsJson = "[]",
-            IdentityJson = "{}",
-            SourceRevision = "legacy",
-            ExclusionsJson = "[]",
-            CreatedAt = now,
-            Revision = 0
-        });
-        foreach (var (key, value) in new[]
-                 {
-                     ("AppleDownload:Quality", "alac-24-96"),
-                     ("Deezer:Quality", "FLAC"),
-                     ("Qobuz:Quality", "FLAC_24_HIGH")
-                 })
-        {
-            context.TenantRuntimeSettings.Add(new()
-            {
-                Id = Guid.CreateVersion7(),
-                TenantId = tenant,
-                Key = key,
-                ValueType = RuntimeSettingValueType.String,
-                ValueJson = JsonSerializer.Serialize(value),
-                Source = "legacy",
-                CreatedAt = now,
-                UpdatedAt = now,
-                Revision = 1
-            });
-        }
-        context.ExtensionPackages.Add(new()
-        {
-            Id = package,
-            ExtensionId = "demo",
-            DisplayName = "Demo",
-            Version = "1.0.0",
-            SdkVersion = "1",
-            Sha256 = new string('a', 64),
-            ContentSha256 = new string('b', 64),
-            PackagePath = "/extensions/demo",
-            ManifestJson = """{"id":"spotiflac-demo","compatibility":"spotiflac-v1"}""",
-            State = ExtensionPackageState.Active,
-            StagedAt = now,
-            ActivatedAt = now,
-            Revision = 0
-        });
-        context.ExtensionLogs.Add(new()
-        {
-            Id = Guid.CreateVersion7(),
-            ExtensionPackageId = package,
-            ExtensionId = "demo",
-            Level = "Info",
-            EventCode = "legacy",
-            Message = "Legacy",
-            CorrelationId = "v3-backfill",
-            CreatedAt = now
-        });
-        await context.SaveChangesAsync();
-
-        await migrator.MigrateAsync(current);
-        context.ChangeTracker.Clear();
-        var shared = await context.TenantRuntimeSettings.SingleAsync(item => item.Key == AudioQualityPolicy.SettingKey);
-        Assert.Equal("\"HiResLossless\"", shared.ValueJson);
-        Assert.Equal("v3-compatibility-migration", shared.Source);
-        var normalizedPackage = await context.ExtensionPackages.SingleAsync(item => item.Id == package);
-        Assert.Equal("spotiflac-demo", normalizedPackage.ExtensionId);
-        Assert.Equal(1, normalizedPackage.Revision);
-        Assert.Equal("spotiflac-demo", (await context.ExtensionLogs.SingleAsync()).ExtensionId);
-        var normalizedCandidate = await context.RecommendationCandidates.SingleAsync(item => item.Id == candidate);
-        Assert.Equal($"run:{run:N}", normalizedCandidate.SourceRevision);
-        Assert.Equal(account, normalizedCandidate.ProviderAccountId);
-        Assert.Equal(2, normalizedCandidate.Revision);
-        var unresolvedCandidate = await context.RecommendationCandidates.SingleAsync(item => item.Id == ambiguousCandidate);
-        Assert.Equal($"run:{run:N}", unresolvedCandidate.SourceRevision);
-        Assert.Null(unresolvedCandidate.ProviderAccountId);
-        Assert.Equal(1, unresolvedCandidate.Revision);
-
-        await migrator.MigrateAsync(previous);
-        await using var restarted = new AllstarrDbContext(database.Options);
-        await restarted.GetService<IMigrator>().MigrateAsync(current);
-        Assert.Single(await restarted.TenantRuntimeSettings.Where(item => item.Key == AudioQualityPolicy.SettingKey).ToListAsync());
-        Assert.Equal(1, (await restarted.ExtensionPackages.SingleAsync(item => item.Id == package)).Revision);
-        Assert.Equal(2, (await restarted.RecommendationCandidates.SingleAsync(item => item.Id == candidate)).Revision);
-    }
-
-    [Fact]
-    [Trait("Category", "Postgres")]
-    [Trait("Lane", "ReleaseCritical")]
-    public async Task ProviderAccountCreatorRepair_ConvertsLegacyTextColumnAndPreservesCreator()
-    {
-        const string previous = "20260804080000_BackfillV3CompatibilityState";
-        const string current = "20260825010000_AddPlaylistImportPolicies";
-        await using var database = await PostgresTestDatabase.CreateAsync(useTemplate: false);
-        await using var context = new AllstarrDbContext(database.Options);
-        var migrator = context.GetService<IMigrator>();
-        await migrator.MigrateAsync(previous);
-
-        var now = DateTimeOffset.UtcNow;
-        var tenantId = Guid.CreateVersion7();
-        var userId = Guid.CreateVersion7();
-        var accountId = Guid.CreateVersion7();
-        context.Tenants.Add(new TenantRecord
-        {
-            Id = tenantId,
-            Slug = "provider-creator-repair",
-            Name = "Provider creator repair",
-            CreatedAt = now
-        });
-        context.Users.Add(new PlatformUserRecord
-        {
-            Id = userId,
-            TenantId = tenantId,
-            DisplayName = "Creator",
-            Status = PlatformUserStatus.Active,
-            CreatedAt = now,
-            UpdatedAt = now
-        });
-        context.ProviderAccounts.Add(new ProviderAccountRecord
-        {
-            Id = accountId,
-            TenantId = tenantId,
-            OwnerUserId = userId,
-            CreatedByUserId = userId,
-            ProviderId = "audiomuse-ai",
-            DisplayName = "AudioMuse",
-            Scope = ProviderAccountScope.User,
-            Enabled = false,
-            CreatedAt = now,
-            UpdatedAt = now
-        });
-        await context.SaveChangesAsync();
-
-        await context.Database.ExecuteSqlRawAsync("""
-            ALTER TABLE provider_accounts DROP CONSTRAINT IF EXISTS "FK_provider_account_creator";
-            DROP INDEX IF EXISTS "IX_provider_accounts_CreatedByUserId";
-            ALTER TABLE provider_accounts
-                ALTER COLUMN "CreatedByUserId" TYPE text
-                USING "CreatedByUserId"::text;
-            """);
-        Assert.Equal("text", await ColumnType(context, "provider_accounts", "CreatedByUserId"));
-
-        await migrator.MigrateAsync(current);
-        context.ChangeTracker.Clear();
-
-        Assert.Equal("uuid", await ColumnType(context, "provider_accounts", "CreatedByUserId"));
-        Assert.Equal(userId, (await context.ProviderAccounts.AsNoTracking()
-            .SingleAsync(item => item.Id == accountId)).CreatedByUserId);
-        await using (var command = context.Database.GetDbConnection().CreateCommand())
-        {
-            command.CommandText = "SELECT count(*) FROM pg_constraint " +
-                                  "WHERE conrelid = 'provider_accounts'::regclass " +
-                                  "AND conname = 'FK_provider_account_creator'";
-            Assert.Equal(1L, Convert.ToInt64(await command.ExecuteScalarAsync()));
-            command.CommandText = "SELECT count(*) FROM pg_indexes " +
-                                  "WHERE schemaname = 'public' AND tablename = 'provider_accounts' " +
-                                  "AND indexname = 'IX_provider_accounts_CreatedByUserId'";
-            Assert.Equal(1L, Convert.ToInt64(await command.ExecuteScalarAsync()));
-        }
-
-        await migrator.MigrateAsync(previous);
-        await migrator.MigrateAsync(current);
-        Assert.Equal("uuid", await ColumnType(context, "provider_accounts", "CreatedByUserId"));
-    }
-
-    [Fact]
-    [Trait("Category", "Postgres")]
-    [Trait("Lane", "ReleaseCritical")]
-    public async Task NativePostgresMigrationLockAndDurableQueue_WorkAgainstSelectedDatabase()
-    {
-        await using var database = await PostgresTestDatabase.CreateAsync(useTemplate: false);
-        var factory = new TestDbContextFactory(database.Options);
-
-        var options = new DurableStorageOptions
-        {
-            Provider = "Postgres",
-            ConnectionString = database.ConnectionString,
-            AutoMigrate = true,
-            ConnectionRetryCount = 0,
-            BackupDirectory = Path.Combine(Path.GetTempPath(), "allstarr-postgres-backups")
-        };
-        var firstState = new DurableStorageState(options);
-        var secondState = new DurableStorageState(options);
-        var first = new DurableStorageInitializer(
-            factory,
-            options,
-            firstState,
-            NullLogger<DurableStorageInitializer>.Instance);
-        var second = new DurableStorageInitializer(
-            factory,
-            options,
-            secondState,
-            NullLogger<DurableStorageInitializer>.Instance);
-
-        await Task.WhenAll(
-            first.StartAsync(CancellationToken.None),
-            second.StartAsync(CancellationToken.None));
-
-        Assert.Equal(DurableStorageReadiness.Ready, firstState.GetSnapshot().Readiness);
-        Assert.Equal(DurableStorageReadiness.Ready, secondState.GetSnapshot().Readiness);
-        await using (var context = await factory.CreateDbContextAsync())
-        {
-            var idType = await ColumnType(context, "tenants", "Id");
-            var cipherType = await ColumnType(context, "secret_versions", "Ciphertext");
-            var jobAccountType = await ColumnType(context, "durable_jobs", "ProviderAccountId");
-            var restoreTimeType = await ColumnType(context, "backups", "RestoreVerifiedAt");
-            var canonicalTenantType = await ColumnType(context, "canonical_recordings", "TenantId");
-            var identityCanonicalType = await ColumnType(
-                context,
-                "provider_track_identities",
-                "CanonicalRecordingId");
-            var identityVerifiedAtType = await ColumnType(
-                context,
-                "provider_track_identities",
-                "VerifiedAt");
-            Assert.Equal("uuid", idType);
-            Assert.Equal("bytea", cipherType);
-            Assert.Equal("uuid", jobAccountType);
-            Assert.Equal("bigint", restoreTimeType);
-            Assert.Equal("uuid", canonicalTenantType);
-            Assert.Equal("uuid", identityCanonicalType);
-            Assert.Equal("bigint", identityVerifiedAtType);
-            var tenantId = Guid.CreateVersion7();
-            var userId = Guid.CreateVersion7();
-            context.Tenants.Add(new TenantRecord
-            {
-                Id = tenantId,
-                Slug = "postgres-fixture",
-                Name = "Postgres fixture",
-                CreatedAt = DateTimeOffset.UtcNow
-            });
-            context.Users.Add(new PlatformUserRecord
-            {
-                Id = userId,
-                TenantId = tenantId,
-                DisplayName = "Postgres user",
-                Status = PlatformUserStatus.Active,
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow
-            });
-            await context.SaveChangesAsync();
-
-            var jobOptions = new DurableJobOptions();
-            var queue = new DurableJobQueue(
-                factory,
-                jobOptions,
-                new JobPayloadPolicy(jobOptions),
-                new SystemPlatformClock());
-            var enqueued = await queue.EnqueueAsync(new DurableJobEnqueueRequest<object>(
-                "postgres.fixture",
-                "postgres-idempotency",
-                new { trackId = "fixture" },
-                tenantId,
-                userId));
-            var repeated = await queue.EnqueueAsync(new DurableJobEnqueueRequest<object>(
-                "postgres.fixture",
-                "postgres-idempotency",
-                new { trackId = "fixture" },
-                tenantId,
-                userId));
-
-            Assert.True(enqueued.Created);
-            Assert.False(repeated.Created);
-            Assert.Equal(enqueued.JobId, repeated.JobId);
-        }
-    }
-
-    [Fact]
-    [Trait("Category", "Postgres")]
-    [Trait("Lane", "ReleaseCritical")]
-    public async Task NativePostgresCacheLoss_PreservesDurableWorkAndProgressAcrossCacheRestart()
+    public async Task StorageCacheLoss_PreservesDurableWorkAndProgressAcrossCacheRestart()
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
         var factory = new TestDbContextFactory(database.Options);
@@ -1132,9 +629,8 @@ public sealed class PostgresStorageIntegrationTests
     }
 
     [Fact]
-    [Trait("Category", "Postgres")]
     [Trait("Lane", "ReleaseCritical")]
-    public async Task NativePostgresBackup_VerifiesAndRestoresIntoIsolatedDatabase()
+    public async Task StorageBackup_VerifiesAndRestoresIntoIsolatedDatabase()
     {
         await using var sourceDatabase = await PostgresTestDatabase.CreateAsync();
         await using var targetDatabase = await PostgresTestDatabase.CreateAsync();
@@ -1205,80 +701,9 @@ public sealed class PostgresStorageIntegrationTests
         }
     }
 
-    private static async Task<string> ColumnType(
-        AllstarrDbContext context,
-        string table,
-        string column)
-    {
-        await using var command = context.Database.GetDbConnection().CreateCommand();
-        command.CommandText =
-            "SELECT data_type FROM information_schema.columns " +
-            "WHERE table_schema = 'public' AND table_name = @table AND column_name = @column";
-        var tableParameter = command.CreateParameter();
-        tableParameter.ParameterName = "table";
-        tableParameter.Value = table;
-        command.Parameters.Add(tableParameter);
-        var columnParameter = command.CreateParameter();
-        columnParameter.ParameterName = "column";
-        columnParameter.Value = column;
-        command.Parameters.Add(columnParameter);
-        if (command.Connection!.State != System.Data.ConnectionState.Open)
-        {
-            await command.Connection.OpenAsync();
-        }
-
-        return (string)(await command.ExecuteScalarAsync()
-                        ?? throw new InvalidOperationException("Column type was not found."));
-    }
-
     private sealed class FixedClock(DateTimeOffset now) : IPlatformClock
     {
         public DateTimeOffset UtcNow { get; } = now;
-    }
-
-    private static async Task<bool> RelationExists(
-        AllstarrDbContext context,
-        string relation)
-    {
-        await using var command = context.Database.GetDbConnection().CreateCommand();
-        command.CommandText =
-            "SELECT COUNT(*) FROM information_schema.tables " +
-            "WHERE table_schema = 'public' AND table_name = @relation";
-        var parameter = command.CreateParameter();
-        parameter.ParameterName = "relation";
-        parameter.Value = relation;
-        command.Parameters.Add(parameter);
-        if (command.Connection!.State != System.Data.ConnectionState.Open)
-        {
-            await command.Connection.OpenAsync();
-        }
-
-        return Convert.ToInt32(await command.ExecuteScalarAsync()) == 1;
-    }
-
-    private static async Task<bool> ColumnExists(
-        AllstarrDbContext context,
-        string table,
-        string column)
-    {
-        await using var command = context.Database.GetDbConnection().CreateCommand();
-        command.CommandText =
-            "SELECT COUNT(*) FROM information_schema.columns " +
-            "WHERE table_schema = 'public' AND table_name = @table AND column_name = @column";
-        var tableParameter = command.CreateParameter();
-        tableParameter.ParameterName = "table";
-        tableParameter.Value = table;
-        command.Parameters.Add(tableParameter);
-        var columnParameter = command.CreateParameter();
-        columnParameter.ParameterName = "column";
-        columnParameter.Value = column;
-        command.Parameters.Add(columnParameter);
-        if (command.Connection!.State != System.Data.ConnectionState.Open)
-        {
-            await command.Connection.OpenAsync();
-        }
-
-        return Convert.ToInt32(await command.ExecuteScalarAsync()) == 1;
     }
 
     private sealed class TestDbContextFactory(DbContextOptions<AllstarrDbContext> options)

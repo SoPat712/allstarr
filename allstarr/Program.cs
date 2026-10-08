@@ -51,11 +51,6 @@ using System.Reflection;
 
 var builder = WebApplication.CreateBuilder(args);
 RuntimeEnvConfiguration.AddDotEnvOverrides(builder.Configuration, builder.Environment);
-var isStorageOperatorCommand = StorageOperatorCommand.IsStorageCommand(args);
-if (isStorageOperatorCommand)
-{
-    builder.Configuration["Logging:LogLevel:Default"] = "Warning";
-}
 builder.Logging.ClearProviders();
 builder.Logging.AddProvider(new RedactingConsoleLoggerProvider(builder.Configuration));
 builder.Services.AddDurableStorage(
@@ -65,16 +60,6 @@ builder.Services.AddDurableRuntimeSettings();
 builder.Services.AddEncryptedSecretStore(builder.Configuration);
 builder.Services.AddSingleton<allstarr.Core.Configuration.LegacyEnvMigrationService>();
 builder.Services.AddSingleton<allstarr.Core.Configuration.OnboardingStateService>();
-if (isStorageOperatorCommand)
-{
-    Environment.ExitCode = await StorageOperatorCommand.RunAsync(
-        builder.Services,
-        args,
-        Console.Out,
-        Console.Error);
-    return;
-}
-
 builder.Services.AddPlatformIdentity(builder.Configuration);
 var releaseComposition = ReleaseComposition.Resolve(builder.Configuration);
 builder.Services.AddSingleton(releaseComposition);
@@ -561,9 +546,6 @@ app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseExceptionHandler();
 
 app.UseMiddleware<CorrelationMiddleware>();
-
-// Never mutate against a fallback store when the selected durable database is unavailable.
-app.UseMiddleware<DurableMutationGuardMiddleware>();
 
 app.UseResponseCompression();
 

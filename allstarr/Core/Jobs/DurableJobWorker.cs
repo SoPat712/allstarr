@@ -28,7 +28,6 @@ public sealed class DurableJobWorker : BackgroundService
     private readonly IServiceProvider _services;
     private readonly IReadOnlyDictionary<string, IDurableJobHandler> _handlers;
     private readonly ILogger<DurableJobWorker> _logger;
-    private readonly IDurableStorageRuntimeProbe _storageProbe;
     private readonly string _workerId = $"{Environment.MachineName}:{Environment.ProcessId}:{Guid.NewGuid():N}";
 
     public DurableJobWorker(
@@ -37,15 +36,13 @@ public sealed class DurableJobWorker : BackgroundService
         DurableStorageState storageState,
         IServiceProvider services,
         IEnumerable<IDurableJobHandler> handlers,
-        ILogger<DurableJobWorker> logger,
-        IDurableStorageRuntimeProbe storageProbe)
+        ILogger<DurableJobWorker> logger)
     {
         _queue = queue;
         _options = options;
         _storageState = storageState;
         _services = services;
         _logger = logger;
-        _storageProbe = storageProbe;
         _handlers = handlers.ToDictionary(
             handler => handler.JobType.Trim().ToLowerInvariant(),
             StringComparer.OrdinalIgnoreCase);
@@ -57,8 +54,6 @@ public sealed class DurableJobWorker : BackgroundService
         {
             try
             {
-                await _storageProbe.CheckAsync(stoppingToken);
-
                 if (_handlers.Count == 0 ||
                     _storageState.GetSnapshot().Readiness != DurableStorageReadiness.Ready)
                 {
