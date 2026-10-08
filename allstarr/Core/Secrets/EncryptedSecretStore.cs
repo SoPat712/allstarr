@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Identity;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -8,6 +10,8 @@ using Microsoft.EntityFrameworkCore;
 namespace allstarr.Core.Secrets;
 
 public sealed record SecretAccessContext(Guid? TenantId, bool AllowGlobal = false);
+
+public sealed record BackendCredentialGrant(Guid ReferenceId, DateTimeOffset UpdatedAt);
 
 public sealed record SecretReferenceInfo(
     Guid Id,
@@ -222,6 +226,88 @@ public sealed class EncryptedSecretStore
             new SecretAccessContext(current.TenantId, AllowGlobal: current.OwnerUserId == null),
             cancellationToken);
     }
+
+    public async Task<BackendCredentialGrant?> GetSubsonicPlaylistGrantAsync(
+        AllstarrPrincipal principal, CancellationToken cancellationToken = default)
+    {
+        if (principal.BackendType != "subsonic") throw new UnauthorizedAccessException();
+        await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var identity = await RequireSubsonicIdentityAsync(db, principal.TenantId, principal.UserId,
+            principal.BackendInstanceId, principal.BackendPrincipalId, cancellationToken);
+        return await PlaylistGrants(db, identity).OrderByDescending(item => item.UpdatedAt)
+            .Select(item => new BackendCredentialGrant(item.Id, item.UpdatedAt)).FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task<BackendCredentialGrant> StoreSubsonicPlaylistGrantAsync(
+        AllstarrPrincipal principal, string password, CancellationToken cancellationToken = default)
+    {
+        if (principal.BackendType != "subsonic") throw new UnauthorizedAccessException();
+        if (string.IsNullOrWhiteSpace(password) || password.Length > 2000)
+            throw new ArgumentException("A backend password is required.", nameof(password));
+        await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var identity = await RequireSubsonicIdentityAsync(db, principal.TenantId, principal.UserId,
+            principal.BackendInstanceId, principal.BackendPrincipalId, cancellationToken);
+        var existing = await PlaylistGrants(db, identity).OrderByDescending(item => item.UpdatedAt)
+            .Select(item => (Guid?)item.Id).FirstOrDefaultAsync(cancellationToken);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(new { username = identity.PrincipalId, password });
+        try
+        {
+            var info = await StoreWithinTransactionAsync(db, identity.TenantId,
+                BackendCredentialScope.SubsonicPurpose, bytes, existing, cancellationToken);
+            db.SecretReferences.Local.Single(item => item.Id == info.Id).BackendIdentityId = identity.Id;
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return new(info.Id, info.UpdatedAt);
+        }
+        finally { CryptographicOperations.ZeroMemory(bytes); }
+    }
+
+    public async Task RevokeSubsonicPlaylistGrantAsync(
+        AllstarrPrincipal principal, CancellationToken cancellationToken = default)
+    {
+        if (principal.BackendType != "subsonic") throw new UnauthorizedAccessException();
+        await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var identity = await RequireSubsonicIdentityAsync(db, principal.TenantId, principal.UserId,
+            principal.BackendInstanceId, principal.BackendPrincipalId, cancellationToken);
+        var grants = await PlaylistGrants(db, identity).ToListAsync(cancellationToken);
+        foreach (var grant in grants)
+        {
+            grant.RevokedAt = _clock.UtcNow;
+            grant.UpdatedAt = _clock.UtcNow;
+        }
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<SecretLease> OpenSubsonicPlaylistCredentialAsync(
+        Guid tenantId, string backendInstanceId, string principalId, Guid? referenceId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var identity = await RequireSubsonicIdentityAsync(db, tenantId, null,
+            backendInstanceId, principalId, cancellationToken);
+        var grants = PlaylistGrants(db, identity);
+        if (referenceId.HasValue) grants = grants.Where(item => item.Id == referenceId.Value);
+        var reference = await grants.OrderByDescending(item => item.UpdatedAt)
+            .Select(item => (Guid?)item.Id).FirstOrDefaultAsync(cancellationToken)
+            ?? throw new UnauthorizedAccessException("Playlist management consent is required for this listener.");
+        return await OpenAsync(reference, new SecretAccessContext(tenantId), cancellationToken);
+    }
+
+    private static IQueryable<SecretReferenceRecord> PlaylistGrants(AllstarrDbContext db, BackendIdentityRecord identity) =>
+        db.SecretReferences.Where(item => item.TenantId == identity.TenantId &&
+            item.BackendIdentityId == identity.Id && item.Purpose == BackendCredentialScope.SubsonicPurpose &&
+            item.RevokedAt == null);
+
+    private static async Task<BackendIdentityRecord> RequireSubsonicIdentityAsync(
+        AllstarrDbContext db, Guid tenantId, Guid? userId, string backendInstanceId, string principalId,
+        CancellationToken cancellationToken) =>
+        await db.BackendIdentities.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.TenantId == tenantId && (!userId.HasValue || item.UserId == userId.Value) &&
+            item.BackendType == "subsonic" && item.BackendInstanceId == backendInstanceId &&
+            item.PrincipalId == principalId && db.Users.Any(user => user.Id == item.UserId &&
+                user.TenantId == tenantId && user.Status == PlatformUserStatus.Active), cancellationToken)
+        ?? throw new UnauthorizedAccessException("The listener's backend identity is unavailable.");
 
     public async Task<SecretLease> OpenAsync(
         Guid referenceId,

@@ -80,7 +80,8 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
                 name,
                 trackCount,
                 item.StringOrNull("Overview"),
-                string.IsNullOrWhiteSpace(imageTag) ? null : $"jellyfin:{id}:{imageTag}"));
+                string.IsNullOrWhiteSpace(imageTag) ? null : $"jellyfin:{id}:{imageTag}",
+                await CanWriteAsync(context, id, cancellationToken)));
         }
 
         return new(BackendPlaylistTargetStatus.Success, values, response.Status);
@@ -169,6 +170,16 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
             membersResponse.Status);
     }
 
+    public async Task<bool> CanWriteAsync(BackendPlaylistTargetContext context, string backendPlaylistId,
+        CancellationToken cancellationToken)
+    {
+        // An empty add checks the selected user's owner/share permissions without changing membership.
+        var result = await SendAsync(context, HttpMethod.Post,
+            $"Playlists/{Escape(backendPlaylistId)}/Items?UserId={Escape(context.VerifiedPrincipalId)}",
+            null, cancellationToken);
+        return result.Status == HttpStatusCode.NoContent;
+    }
+
     public async Task<BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>> WriteAsync(
         BackendPlaylistTargetContext context,
         BackendPlaylistWriteRequest request,
@@ -176,6 +187,9 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
     {
         try
         {
+            if (request.BackendPlaylistId != null &&
+                !await CanWriteAsync(context, request.BackendPlaylistId, cancellationToken))
+                return new(BackendPlaylistTargetStatus.Unauthorized, ErrorCode: "playlist-write-forbidden");
             if (request.Mode == BackendPlaylistWriteMode.Recreate)
             {
                 var created = request.RecoveryPlaylistId == null
@@ -430,7 +444,7 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
             var authorization = $"MediaBrowser Client=\"{settings.ClientName}\", Device=\"{settings.DeviceName}\", " +
                                 $"DeviceId=\"{settings.DeviceId}\", Version=\"{settings.ClientVersion}\", Token=\"{settings.ApiKey}\"";
             return ValueTask.FromResult(new BackendPlaylistAuthentication(
-                new Dictionary<string, string> { ["X-Emby-Authorization"] = authorization }, []));
+                new Dictionary<string, string> { ["Authorization"] = authorization }, []));
         }
     }
 }

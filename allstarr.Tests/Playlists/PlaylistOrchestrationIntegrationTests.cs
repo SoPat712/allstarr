@@ -1523,6 +1523,96 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.Equal("One", external.Title);
     }
 
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
+    public async Task Backend_shared_projection_uses_viewer_routes_and_keeps_source_management_private(ProtocolKind protocol)
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot("shared", Entry(0, "entry", "source-1", "One"));
+        await _service.RefreshAsync(Context(), _link);
+        var viewer = Guid.CreateVersion7();
+        var backendType = protocol.ToString().ToLowerInvariant();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.Users.Add(new PlatformUserRecord
+            {
+                Id = viewer,
+                TenantId = _tenant,
+                DisplayName = "Viewer",
+                Status = PlatformUserStatus.Active,
+                CreatedAt = _now,
+                UpdatedAt = _now
+            });
+            db.BackendIdentities.Add(new BackendIdentityRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = _tenant,
+                UserId = viewer,
+                BackendType = backendType,
+                BackendInstanceId = "backend",
+                PrincipalId = "viewer",
+                CreatedAt = _now,
+                LastSeenAt = _now
+            });
+            var link = await db.PlaylistLinks.SingleAsync();
+            link.TargetProtocol = backendType;
+            link.TargetPlaylistId = "shared-target";
+            link.Mode = PlaylistLinkMode.Hybrid;
+            await db.SaveChangesAsync();
+        }
+        var context = new ProtocolExecutionContext(protocol, "backend", "viewer",
+            new AllstarrPrincipal(_tenant, viewer, backendType, "backend", "viewer", "Viewer", false),
+            "shared-check", _now.AddMinutes(1), default);
+        var access = new TestBackendLibraryAccess(_factory, "music");
+        access.Permissions[viewer] = new BackendLibraryAccess(true, []);
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        IReadOnlyList<string> routes = ["fixture"];
+        gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderActorContext actor, CancellationToken _) =>
+            {
+                Assert.Equal(viewer, actor.EffectiveUserId);
+                return routes;
+            });
+        var projections = new DurablePlaylistProjectionReader(_factory, access, gateway.Object);
+        var virtualization = new PlaylistVirtualizationService(_factory, projections, access, new FakeTargetResolver(_target));
+        var id = PlaylistVirtualizationService.CreateProtocolId(_link);
+        _target.ReadStatus = BackendPlaylistTargetStatus.Unauthorized;
+        Assert.Null(await virtualization.ReadAsync(context, id));
+        Assert.Empty(await virtualization.ListAsync(context));
+        Assert.Null(await virtualization.ReadBySourceAsync(context, "fixture", "playlist"));
+        gateway.VerifyNoOtherCalls();
+
+        _target.ReadStatus = BackendPlaylistTargetStatus.Success;
+        var shared = await virtualization.ReadAsync(context, id);
+        Assert.Equal(TrackRouteKind.External, Assert.Single(shared!.Tracks).RouteKind);
+        Assert.Single(await virtualization.ListAsync(context));
+        Assert.Equal(id, (await virtualization.ReadBySourceAsync(context, "fixture", "playlist"))!.ProtocolId);
+        Assert.All(_target.Contexts, target =>
+        {
+            Assert.Equal("viewer", target.VerifiedPrincipalId);
+            Assert.Null(target.CredentialReference);
+        });
+        routes = [];
+        Assert.Equal(TrackRouteKind.Unresolved, Assert.Single((await virtualization.ReadAsync(context, id))!.Tracks).RouteKind);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => _service.RefreshAsync(context, _link));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var link = await db.PlaylistLinks.SingleAsync();
+            Assert.Equal(_account, link.ProviderAccountId);
+            Assert.Equal(_user, link.OwnerUserId);
+            link.TargetPlaylistId = " ";
+            await db.SaveChangesAsync();
+            Assert.Null(await virtualization.ReadAsync(context, id));
+            link.TargetPlaylistId = null;
+            link.Mode = PlaylistLinkMode.Virtual;
+            await db.SaveChangesAsync();
+        }
+        Assert.Null(await virtualization.ReadAsync(context, id));
+        Assert.Empty(await virtualization.ListAsync(context));
+        Assert.Null(await virtualization.ReadBySourceAsync(context, "fixture", "playlist"));
+    }
+
     [Fact]
     public async Task Virtualization_reads_are_scoped_and_source_alias_requires_unambiguous_account()
     {
@@ -1543,7 +1633,6 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
 
         foreach (var inaccessible in new[]
         {
-            Context("other-library"),
             ScopedContext(_tenant, Guid.CreateVersion7(), "backend"),
             ScopedContext(_tenant, _user, "other-backend"),
             ScopedContext(Guid.CreateVersion7(), Guid.CreateVersion7(), "backend")
@@ -1553,6 +1642,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             Assert.Null(await virtualization.ReadAsync(inaccessible, protocolId));
             Assert.Null(await virtualization.ReadBySourceAsync(inaccessible, "fixture", "playlist"));
         }
+
+        Assert.NotNull(await virtualization.ReadAsync(Context("other-library"), protocolId));
 
         var ambiguousAccount = Guid.CreateVersion7();
         await using (var db = await _factory.CreateDbContextAsync())

@@ -1,24 +1,19 @@
 using System.Text.Json;
 using allstarr.Core.Secrets;
-using allstarr.Models.Settings;
 using allstarr.Services.Subsonic;
-using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Playlists.Targets;
 
 public sealed class EncryptedSubsonicPlaylistAuthenticationResolver : IBackendPlaylistAuthenticationResolver
 {
     private readonly EncryptedSecretStore _secrets;
-    private readonly SubsonicSettings _settings;
     private readonly IHttpContextAccessor _httpContext;
 
     public EncryptedSubsonicPlaylistAuthenticationResolver(
         EncryptedSecretStore secrets,
-        IOptions<SubsonicSettings> settings,
         IHttpContextAccessor httpContext)
     {
         _secrets = secrets;
-        _settings = settings.Value;
         _httpContext = httpContext ?? throw new ArgumentNullException(nameof(httpContext));
     }
 
@@ -38,24 +33,19 @@ public sealed class EncryptedSubsonicPlaylistAuthenticationResolver : IBackendPl
         BackendPlaylistTargetContext context,
         CancellationToken cancellationToken)
     {
-        var referenceText = context.CredentialReference ?? _settings.PlaylistCredentialReference;
-        if (!Guid.TryParse(referenceText, out var referenceId) || referenceId == Guid.Empty)
-        {
-            throw new InvalidOperationException(
-                "Subsonic background playlist writes require a valid encrypted PlaylistCredentialReference.");
-        }
-
-        var usesLinkReference = context.CredentialReference != null;
-        using var lease = await _secrets.OpenAsync(
-            referenceId,
-            new SecretAccessContext(
-                TenantId: usesLinkReference ? context.TenantId : null,
-                AllowGlobal: !usesLinkReference),
-            cancellationToken);
+        if (!context.TenantId.HasValue || context.CredentialReference != null &&
+            (!Guid.TryParse(context.CredentialReference, out var parsed) || parsed == Guid.Empty))
+            throw new UnauthorizedAccessException("The playlist credential context is unavailable.");
+        Guid? referenceId = context.CredentialReference == null ? null : Guid.Parse(context.CredentialReference);
+        using var lease = await _secrets.OpenSubsonicPlaylistCredentialAsync(
+            context.TenantId.Value, context.BackendInstanceId, context.VerifiedPrincipalId,
+            referenceId, cancellationToken);
         using var document = JsonDocument.Parse(lease.Value);
         var root = document.RootElement;
         var username = Required(root, "username");
         var password = Required(root, "password");
+        if (!username.Equals(context.VerifiedPrincipalId, StringComparison.Ordinal))
+            throw new UnauthorizedAccessException("The playlist credential belongs to another listener.");
 
         return new BackendPlaylistAuthentication(
             new Dictionary<string, string>(),

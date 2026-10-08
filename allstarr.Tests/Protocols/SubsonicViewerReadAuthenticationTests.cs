@@ -170,7 +170,7 @@ public sealed class SubsonicViewerReadAuthenticationTests
     }
 
     private EncryptedSubsonicPlaylistAuthenticationResolver Resolver(HttpContext http) => new(
-        null!, Options.Create(new SubsonicSettings { PlaylistCredentialReference = Guid.CreateVersion7().ToString() }),
+        null!,
         new HttpContextAccessor { HttpContext = http });
 
     private BackendPlaylistTargetContext TargetContext() => new(

@@ -2,6 +2,9 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Playlists.Targets;
+using allstarr.Models.Settings;
+using Microsoft.Extensions.Options;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -107,6 +110,78 @@ public sealed class BackendPlaylistTargetTests
         Assert.True(retry.IsSuccess);
         Assert.False(retry.Value!.Changed);
         Assert.Equal(mutations, backend.MutationCount);
+    }
+
+    [Theory]
+    [InlineData(BackendPlaylistWriteMode.Reconcile, HttpStatusCode.Forbidden)]
+    [InlineData(BackendPlaylistWriteMode.Recreate, HttpStatusCode.Forbidden)]
+    [InlineData(BackendPlaylistWriteMode.Reconcile, HttpStatusCode.NotFound)]
+    [InlineData(BackendPlaylistWriteMode.Reconcile, HttpStatusCode.ServiceUnavailable)]
+    public async Task Jellyfin_service_token_never_writes_without_current_viewer_edit_permission(
+        BackendPlaylistWriteMode mode, HttpStatusCode deniedStatus)
+    {
+        var backend = new JellyfinFakeBackend("p1", "Shared", ["original"])
+        {
+            EditProbeStatus = deniedStatus
+        };
+        var target = new JellyfinPlaylistTarget(new HttpClient(backend), new Uri("https://jellyfin.test/"));
+        var listed = await target.ListAsync(Context(), null, 25, default);
+        Assert.False(Assert.Single(listed.Value!).Writable);
+        backend.Requests.Clear();
+
+        var denied = await target.WriteAsync(Context(), new BackendPlaylistWriteRequest(
+            mode, new BackendPlaylistMetadata("Changed"), ["replacement"], "sync", "p1"), default);
+
+        Assert.Equal(BackendPlaylistTargetStatus.Unauthorized, denied.Status);
+        Assert.Equal(0, backend.MutationCount);
+        Assert.Equal(["original"], backend.Playlists["p1"].Members);
+        var probe = Assert.Single(backend.Requests);
+        Assert.Equal("Playlists/p1/Items", probe.Path);
+        Assert.Equal("user-1", Assert.Single(probe.Parameters["UserId"]));
+        Assert.False(probe.Parameters.ContainsKey("Ids"));
+
+        backend.EditProbeStatus = HttpStatusCode.NoContent;
+        Assert.True(await target.CanWriteAsync(Context(), "p1", default));
+        backend.EditProbeStatus = deniedStatus;
+        Assert.False(await target.CanWriteAsync(Context(), "p1", default));
+    }
+
+    [Theory]
+    [InlineData("user-1", true)]
+    [InlineData("other-owner", false)]
+    [InlineData("", false)]
+    public async Task Subsonic_readable_playlist_is_writable_only_by_its_backend_owner(string owner, bool expected)
+    {
+        var backend = new SubsonicFakeBackend("p1", "Shared", []) { PlaylistOwner = owner };
+        var target = new SubsonicPlaylistTarget(new HttpClient(backend), new Uri("https://subsonic.test/"));
+        Assert.True((await target.ReadAsync(Context(), "p1", default)).IsSuccess);
+        Assert.Equal(expected, await target.CanWriteAsync(Context(), "p1", default));
+        Assert.Equal(0, backend.MutationCount);
+        backend.ProtocolFailureCode = 50;
+        Assert.False(await target.CanWriteAsync(Context(), "p1", default));
+    }
+
+    [Fact]
+    public async Task Jellyfin_configured_service_authentication_uses_the_standard_authorization_header()
+    {
+        var backend = new JellyfinFakeBackend("p1", "Mix", []);
+        var clients = new Mock<IHttpClientFactory>();
+        clients.Setup(item => item.CreateClient("JellyfinBackend")).Returns(new HttpClient(backend));
+        var target = new JellyfinPlaylistTarget(clients.Object, Options.Create(new JellyfinSettings
+        {
+            Url = "https://jellyfin.test/",
+            ApiKey = "fixture-service-token"
+        }));
+
+        var result = await target.ListAsync(Context(), null, 25, default);
+
+        Assert.True(Assert.Single(result.Value!).Writable);
+        Assert.Equal(2, backend.Requests.Count);
+        Assert.All(backend.Requests, request =>
+        {
+            Assert.StartsWith("MediaBrowser ", request.Authorization, StringComparison.Ordinal);
+            Assert.Contains("Token=\"fixture-service-token\"", request.Authorization, StringComparison.Ordinal);
+        });
     }
 
     [Fact]
@@ -348,7 +423,7 @@ public sealed class BackendPlaylistTargetTests
             ValueTask.FromResult(new BackendPlaylistAuthentication(headers ?? new Dictionary<string, string>(), form ?? []));
     }
 
-    private sealed record RequestRecord(string Path, string? AuthToken, IReadOnlyDictionary<string, string[]> Parameters);
+    private sealed record RequestRecord(string Path, string? AuthToken, IReadOnlyDictionary<string, string[]> Parameters, string? Authorization = null);
 
     private sealed class JellyfinFakeBackend : HttpMessageHandler
     {
@@ -362,6 +437,7 @@ public sealed class BackendPlaylistTargetTests
         public bool ArtworkWritten { get; private set; }
         public bool ListArtwork { get; set; }
         public bool FailNextMetadata { get; set; }
+        public HttpStatusCode EditProbeStatus { get; set; } = HttpStatusCode.NoContent;
         private int _nextId = 2;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -369,7 +445,7 @@ public sealed class BackendPlaylistTargetTests
             cancellationToken.ThrowIfCancellationRequested();
             var path = request.RequestUri!.AbsolutePath.Trim('/');
             var query = ParseQuery(request.RequestUri.Query);
-            Requests.Add(new(path, request.Headers.TryGetValues("X-Emby-Token", out var values) ? values.Single() : null, query));
+            Requests.Add(new(path, request.Headers.TryGetValues("X-Emby-Token", out var values) ? values.Single() : null, query, request.Headers.Authorization?.ToString()));
             if (ForcedStatus != null) return new(ForcedStatus.Value);
 
             if (request.Method == HttpMethod.Get && path.StartsWith("Users/user-1/Items", StringComparison.Ordinal))
@@ -422,6 +498,7 @@ public sealed class BackendPlaylistTargetTests
             }
             if (request.Method == HttpMethod.Post && path.EndsWith("/Items", StringComparison.Ordinal))
             {
+                if (!query.ContainsKey("Ids")) return new(EditProbeStatus);
                 MutationCount++;
                 Playlists[path.Split('/')[1]].Members.AddRange(SplitCsv(query, "Ids"));
                 return new(HttpStatusCode.NoContent);
@@ -477,6 +554,7 @@ public sealed class BackendPlaylistTargetTests
         public List<RequestRecord> Requests { get; } = [];
         public int MutationCount { get; private set; }
         public int? ProtocolFailureCode { get; set; }
+        public string PlaylistOwner { get; set; } = "user-1";
         public HttpStatusCode? ForcedStatus { get; set; }
         private int _nextId = 2;
         private int _revision = 1;
@@ -503,6 +581,7 @@ public sealed class BackendPlaylistTargetTests
                         id,
                         name = state.Name,
                         changed = $"r{state.Revision}",
+                        owner = PlaylistOwner,
                         songCount = state.Members.Count,
                         duration = state.Members.Count * 180,
                         entry = state.Members.Select(item => new

@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
+using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Storage;
 using allstarr.Core.Settings;
 using allstarr.Models.Domain;
@@ -26,7 +27,8 @@ public interface IJellyfinPlaylistMutationResolver
 }
 
 public sealed class JellyfinPlaylistMutationResolver(
-    IDbContextFactory<AllstarrDbContext> contextFactory) : IJellyfinPlaylistMutationResolver
+    IDbContextFactory<AllstarrDbContext> contextFactory,
+    IBackendPlaylistTargetResolver? targets = null) : IJellyfinPlaylistMutationResolver
 {
     public async Task<JellyfinPlaylistMutationRoute?> ResolveAsync(
         ProtocolExecutionContext context,
@@ -46,16 +48,26 @@ public sealed class JellyfinPlaylistMutationResolver(
         var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
             item.Id == linkId &&
             item.TenantId == actor.TenantId &&
-            item.OwnerUserId == userId &&
+            (item.OwnerUserId == userId || item.TargetPlaylistId != null) &&
             item.TargetBackendInstanceId == context.BackendInstanceId &&
             item.TargetProtocol == "jellyfin" &&
-            item.Enabled &&
-            (context.LibraryScopeId == null || item.LibraryScopeId == context.LibraryScopeId),
+            item.Enabled,
             cancellationToken);
         if (link == null) return null;
 
         var writable = link.Mode != PlaylistLinkMode.Virtual &&
                        !string.IsNullOrWhiteSpace(link.TargetPlaylistId);
+        if (!string.IsNullOrWhiteSpace(link.TargetPlaylistId))
+        {
+            if (targets == null) return null;
+            var target = targets.Resolve(link.TargetProtocol);
+            var targetContext = new BackendPlaylistTargetContext(context.BackendInstanceId,
+                context.VerifiedBackendPrincipalId, null, actor.TenantId);
+            var read = await target.ReadAsync(targetContext, link.TargetPlaylistId!, cancellationToken);
+            if (!read.IsSuccess || read.Value == null) return null;
+            writable = writable && await target.CanWriteAsync(targetContext, link.TargetPlaylistId!, cancellationToken);
+        }
+        else if (link.OwnerUserId != userId) return null;
         return new JellyfinPlaylistMutationRoute(
             writable,
             writable ? link.TargetPlaylistId!.Trim() : null);
@@ -176,11 +188,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                   PlaylistIdHelper.CreatePlaylistId(playlist.SourceProviderId, playlist.SourcePlaylistId);
         }
 
-        var source = await playlists.ResolvePublicArtworkSourceAsync(id, cancellationToken);
-        return source == null
-            ? null
-            : source.TargetPlaylistId ??
-              PlaylistIdHelper.CreatePlaylistId(source.ProviderId, source.PlaylistId);
+        return null;
     }
 
     internal Dictionary<string, object?> ToItem(

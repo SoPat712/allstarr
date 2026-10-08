@@ -41,11 +41,6 @@ public sealed record VirtualPlaylistReadModel(
     PlaylistProjectionMode ProjectionMode = PlaylistProjectionMode.Resolved,
     string? TargetPlaylistId = null);
 
-public sealed record VirtualPlaylistArtworkSource(
-    string ProviderId,
-    string PlaylistId,
-    string? TargetPlaylistId = null);
-
 public interface IPlaylistVirtualizationService
 {
     Task<IReadOnlyList<VirtualPlaylistReadModel>> ListAsync(
@@ -67,10 +62,6 @@ public interface IPlaylistVirtualizationService
         ProtocolExecutionContext context,
         string sourceProviderId,
         string sourcePlaylistId,
-        CancellationToken cancellationToken = default);
-
-    Task<VirtualPlaylistArtworkSource?> ResolvePublicArtworkSourceAsync(
-        string protocolId,
         CancellationToken cancellationToken = default);
 }
 
@@ -113,7 +104,7 @@ public sealed class PlaylistVirtualizationService(
             linkIds = await db.PlaylistLinks.AsNoTracking()
                 .Where(item =>
                     item.TenantId == actor.TenantId &&
-                    item.OwnerUserId == actor.EffectiveUserId &&
+                    (item.OwnerUserId == actor.EffectiveUserId || item.TargetPlaylistId != null) &&
                     item.TargetBackendInstanceId == context.BackendInstanceId &&
                     (context.Protocol == ProtocolKind.Jellyfin
                         ? item.TargetProtocol == "jellyfin"
@@ -121,9 +112,7 @@ public sealed class PlaylistVirtualizationService(
                           item.TargetProtocol == "opensubsonic" ||
                           item.TargetProtocol == "navidrome") &&
                     item.Enabled &&
-                    (item.Mode == PlaylistLinkMode.Virtual || item.Mode == PlaylistLinkMode.Hybrid) &&
-                    (string.IsNullOrEmpty(context.LibraryScopeId) ||
-                     item.LibraryScopeId == context.LibraryScopeId))
+                    (item.Mode == PlaylistLinkMode.Virtual || item.Mode == PlaylistLinkMode.Hybrid))
                 .OrderBy(item => item.CreatedAt)
                 .Select(item => item.Id)
                 .ToArrayAsync(cancellationToken);
@@ -166,16 +155,26 @@ public sealed class PlaylistVirtualizationService(
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
             item.Id == linkId && item.TenantId == actor.TenantId &&
-            item.OwnerUserId == actor.EffectiveUserId &&
+            (item.OwnerUserId == actor.EffectiveUserId || item.TargetPlaylistId != null) &&
             item.TargetBackendInstanceId == context.BackendInstanceId &&
             (context.Protocol == ProtocolKind.Jellyfin
                 ? item.TargetProtocol == "jellyfin"
                 : item.TargetProtocol == "subsonic" || item.TargetProtocol == "opensubsonic" || item.TargetProtocol == "navidrome") &&
             item.Enabled && (item.Mode == PlaylistLinkMode.Virtual || item.Mode == PlaylistLinkMode.Hybrid),
             cancellationToken);
-        if (link == null || context.LibraryScopeId is { Length: > 0 } requestedLibrary &&
-            !requestedLibrary.Equals(link.LibraryScopeId, StringComparison.Ordinal))
-            return null;
+        if (link == null) return null;
+        BackendPlaylistSnapshot? authorizedTarget = null;
+        if (!string.IsNullOrWhiteSpace(link.TargetPlaylistId))
+        {
+            if (targets == null) return null;
+            var read = await targets.Resolve(link.TargetProtocol).ReadAsync(
+                new BackendPlaylistTargetContext(link.TargetBackendInstanceId, context.VerifiedBackendPrincipalId,
+                    link.OwnerUserId == actor.EffectiveUserId ? link.TargetCredentialReferenceId?.ToString() : null,
+                    link.TenantId), link.TargetPlaylistId, cancellationToken);
+            if (!read.IsSuccess || read.Value == null) return null;
+            authorizedTarget = read.Value;
+        }
+        else if (link.OwnerUserId != actor.EffectiveUserId) return null;
 
         var projection = await projections.ReadByLinkIdAsync(
             actor.TenantId, link.OwnerUserId, link.Id, cancellationToken, actor.EffectiveUserId);
@@ -183,21 +182,8 @@ public sealed class PlaylistVirtualizationService(
         var selectedMode = projectionMode ?? link.ProjectionMode;
         var snapshot = await db.PlaylistSourceSnapshots.AsNoTracking()
             .SingleAsync(item => item.Id == projection.SnapshotId, cancellationToken);
-        BackendPlaylistSnapshot? targetSnapshot = null;
-        if (selectedMode == PlaylistProjectionMode.Target)
-        {
-            if (targets == null || string.IsNullOrWhiteSpace(link.TargetPlaylistId)) return null;
-            var targetResult = await targets.Resolve(link.TargetProtocol).ReadAsync(
-                new BackendPlaylistTargetContext(
-                    link.TargetBackendInstanceId,
-                    context.VerifiedBackendPrincipalId,
-                    link.TargetCredentialReferenceId?.ToString(),
-                    link.TenantId),
-                link.TargetPlaylistId,
-                cancellationToken);
-            if (!targetResult.IsSuccess || targetResult.Value == null) return null;
-            targetSnapshot = targetResult.Value;
-        }
+        var targetSnapshot = selectedMode == PlaylistProjectionMode.Target ? authorizedTarget : null;
+        if (selectedMode == PlaylistProjectionMode.Target && targetSnapshot == null) return null;
         var backendIds = projection.Entries
             .Where(item => item.RouteKind == "local" && item.BackendItemId != null)
             .Select(item => item.BackendItemId!)
@@ -222,7 +208,7 @@ public sealed class PlaylistVirtualizationService(
                 new BackendPlaylistTargetContext(
                     link.TargetBackendInstanceId,
                     context.VerifiedBackendPrincipalId,
-                    link.TargetCredentialReferenceId?.ToString(),
+                    link.OwnerUserId == actor.EffectiveUserId ? link.TargetCredentialReferenceId?.ToString() : null,
                     link.TenantId),
                 backendIds,
                 cancellationToken);
@@ -282,10 +268,10 @@ public sealed class PlaylistVirtualizationService(
         var providerId = sourceProviderId.Trim().ToLowerInvariant();
         var playlistId = sourcePlaylistId.Trim();
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var linkIds = await db.PlaylistLinks.AsNoTracking()
+        var candidates = await db.PlaylistLinks.AsNoTracking()
             .Where(item =>
                 item.TenantId == actor.TenantId &&
-                item.OwnerUserId == actor.EffectiveUserId &&
+                (item.OwnerUserId == actor.EffectiveUserId || item.TargetPlaylistId != null) &&
                 item.TargetBackendInstanceId == context.BackendInstanceId &&
                 item.SourceProviderId == providerId &&
                 item.SourcePlaylistId == playlistId &&
@@ -295,38 +281,22 @@ public sealed class PlaylistVirtualizationService(
                       item.TargetProtocol == "opensubsonic" ||
                       item.TargetProtocol == "navidrome") &&
                 item.Enabled &&
-                (item.Mode == PlaylistLinkMode.Virtual || item.Mode == PlaylistLinkMode.Hybrid) &&
-                (string.IsNullOrEmpty(context.LibraryScopeId) ||
-                 item.LibraryScopeId == context.LibraryScopeId))
-            .OrderBy(item => item.CreatedAt)
-            .Take(2)
-            .Select(item => item.Id)
-            .ToArrayAsync(cancellationToken);
-        return linkIds.Length != 1
-            ? null
-            : await ReadAsync(context, CreateProtocolId(linkIds[0]), cancellationToken);
-    }
-
-    public async Task<VirtualPlaylistArtworkSource?> ResolvePublicArtworkSourceAsync(
-        string protocolId,
-        CancellationToken cancellationToken = default)
-    {
-        if (!TryParseProtocolId(protocolId, out var linkId)) return null;
-
-        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        return await db.PlaylistLinks.AsNoTracking()
-            .Where(item =>
-                item.Id == linkId &&
-                item.TargetProtocol == "jellyfin" &&
-                item.Enabled &&
                 (item.Mode == PlaylistLinkMode.Virtual || item.Mode == PlaylistLinkMode.Hybrid))
-            .Select(item => new VirtualPlaylistArtworkSource(
-                item.SourceProviderId,
-                item.SourcePlaylistId,
-                item.ProjectionMode == PlaylistProjectionMode.Target
-                    ? item.TargetPlaylistId
-                    : null))
-            .SingleOrDefaultAsync(cancellationToken);
+            .OrderBy(item => item.CreatedAt)
+            .Select(item => new { item.Id, item.OwnerUserId })
+            .ToArrayAsync(cancellationToken);
+        var owned = candidates.Where(item => item.OwnerUserId == actor.EffectiveUserId).ToArray();
+        if (owned.Length > 1) return null;
+        var selected = owned.Length > 0 ? owned : candidates;
+        VirtualPlaylistReadModel? result = null;
+        foreach (var candidate in selected)
+        {
+            var visible = await ReadAsync(context, CreateProtocolId(candidate.Id), cancellationToken);
+            if (visible == null) continue;
+            if (result != null) return null;
+            result = visible;
+        }
+        return result;
     }
 
     internal static VirtualPlaylistTrack ToResolvedVirtualTrack(

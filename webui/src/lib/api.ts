@@ -14,6 +14,12 @@ export type Session = {
   };
 };
 
+export type PlaylistConsentStatus = {
+  supported: boolean;
+  granted: boolean;
+  updatedAt: string | null;
+};
+
 export type OnboardingState = {
   completed: boolean;
   setupOpen: boolean;
@@ -1246,12 +1252,22 @@ export function normalizeResponse(value: unknown): unknown {
 
 export const auth = {
   session: () => json<Session>("/api/admin/auth/me"),
-  login: (username: string, password: string, rememberMe: boolean) =>
+  login: (username: string, password: string, rememberMe: boolean, managePlaylists = false) =>
     json<Session>("/api/admin/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password, rememberMe }),
+      body: JSON.stringify({ username, password, rememberMe, managePlaylists }),
     }),
+  playlistConsent: () =>
+    json<PlaylistConsentStatus>("/api/admin/auth/playlist-consent"),
+  grantPlaylistConsent: (password: string) =>
+    json<PlaylistConsentStatus>("/api/admin/auth/playlist-consent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    }),
+  revokePlaylistConsent: () =>
+    json<PlaylistConsentStatus>("/api/admin/auth/playlist-consent", { method: "DELETE" }),
   logout: () => json<{ success: boolean }>("/api/admin/auth/logout", { method: "POST" }),
 };
 
@@ -1788,22 +1804,6 @@ export const playlistLinks = {
     );
   },
   targets: () => json<{ targets: MediaTarget[] }>("/api/admin/media-targets"),
-  saveBackendCredential: (target: MediaTarget, username: string, password: string) =>
-    json<{ referenceId: string; activeVersion: number; updatedAt: string }>(
-      target.credentialReferenceId
-        ? `/api/admin/playlist-links/backend-credentials/${encodeURIComponent(target.credentialReferenceId)}`
-        : "/api/admin/playlist-links/backend-credentials",
-      {
-        method: target.credentialReferenceId ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          targetProtocol: target.protocol,
-          backendInstanceId: target.backendInstanceId,
-          username,
-          password,
-        }),
-      },
-    ),
   enqueueLibraryIndex: (target: MediaTarget, credentialReferenceId: string) =>
     json<{ jobId: string; created: boolean; generation: number }>("/api/admin/library-index/enqueue", {
       method: "POST",

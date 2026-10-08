@@ -76,6 +76,7 @@ public sealed class AdminOidcLinksTests
             Assert.True(session.IsAdministrator);
             Assert.Equal(alice.UserId, session.AllstarrUserId);
             Assert.NotNull(await sessions.GetValidSessionAsync(session.SessionId));
+            if (backendName == "subsonic") Assert.Null(await secrets.GetSubsonicPlaylistGrantAsync(alice));
             handler.Admin = false;
             Assert.False((await links.SignInAsync(key, default))!.IsAdministrator);
             handler.Accept = false;

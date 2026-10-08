@@ -93,9 +93,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             "ext-apple-music-playlist-source-playlist",
             await adapter.GetImageSourceIdAsync(
                 Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
-        Assert.Equal(
-            "ext-apple-music-playlist-source-playlist",
-            await adapter.GetImageSourceIdAsync(null, ProtocolId, CancellationToken.None));
+        Assert.Null(await adapter.GetImageSourceIdAsync(null, ProtocolId, CancellationToken.None));
     }
 
     [Fact]
@@ -376,8 +374,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             new StubJellyfinMutationResolver(null));
         Assert.Equal("backend-target", await jellyfin.GetImageSourceIdAsync(
             Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
-        Assert.Equal("backend-target", await jellyfin.GetImageSourceIdAsync(
-            null, ProtocolId, CancellationToken.None));
+        Assert.Null(await jellyfin.GetImageSourceIdAsync(null, ProtocolId, CancellationToken.None));
 
         var jsonResult = Assert.IsType<JsonResult>(await adapter.ReadAsync(
             Context(ProtocolKind.Subsonic), ProtocolId, "json", CancellationToken.None));
@@ -570,13 +567,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             CancellationToken cancellationToken = default) =>
             Task.FromResult(model);
 
-        public Task<VirtualPlaylistArtworkSource?> ResolvePublicArtworkSourceAsync(
-            string protocolId,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(model == null
-                ? null
-                : new VirtualPlaylistArtworkSource(
-                    model.SourceProviderId, model.SourcePlaylistId, model.TargetPlaylistId));
+
     }
 
     private sealed class StubMutationResolver(SubsonicPlaylistMutationRoute? route)

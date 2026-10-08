@@ -2,12 +2,14 @@ using System.Security.Cryptography;
 using System.Text;
 using allstarr.Core.Identity;
 using allstarr.Core.Playlists;
+using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Protocols;
 using allstarr.Core.Protocols.Jellyfin;
 using allstarr.Core.Protocols.Subsonic;
 using allstarr.Core.Storage;
 using allstarr.Services.Subsonic;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -90,7 +92,7 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
     [Fact]
     public async Task Resolver_ReturnsOnlyExactScopedMaterializedOrHybridTarget()
     {
-        var resolver = new SubsonicPlaylistMutationResolver(_factory);
+        var resolver = new SubsonicPlaylistMutationResolver(_factory, TargetResolver());
         var materialized = await AddLinkAsync(PlaylistLinkMode.Materialized, "backend-playlist");
 
         var route = await resolver.ResolveAsync(Context(), ProtocolId(materialized));
@@ -100,7 +102,7 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
         Assert.Equal("backend-playlist", route.TargetPlaylistId);
         Assert.Null(await resolver.ResolveAsync(Context(userId: _otherUserId), ProtocolId(materialized)));
         Assert.Null(await resolver.ResolveAsync(Context(backend: "other-backend"), ProtocolId(materialized)));
-        Assert.Null(await resolver.ResolveAsync(Context(library: "other-library"), ProtocolId(materialized)));
+        Assert.True((await resolver.ResolveAsync(Context(library: "other-library"), ProtocolId(materialized)))!.Writable);
         Assert.Null(await resolver.ResolveAsync(
             Context(tenantId: Guid.CreateVersion7()), ProtocolId(materialized)));
     }
@@ -113,7 +115,7 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
         PlaylistLinkMode mode,
         string? targetPlaylistId)
     {
-        var resolver = new SubsonicPlaylistMutationResolver(_factory);
+        var resolver = new SubsonicPlaylistMutationResolver(_factory, TargetResolver());
         var linkId = await AddLinkAsync(mode, targetPlaylistId);
 
         var route = await resolver.ResolveAsync(Context(), ProtocolId(linkId));
@@ -126,7 +128,7 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
     [Fact]
     public async Task Resolver_RejectsNonSubsonicTargetProtocol()
     {
-        var resolver = new SubsonicPlaylistMutationResolver(_factory);
+        var resolver = new SubsonicPlaylistMutationResolver(_factory, TargetResolver());
         var linkId = await AddLinkAsync(
             PlaylistLinkMode.Materialized,
             "backend-playlist",
@@ -138,7 +140,7 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
     [Fact]
     public async Task Resolver_RejectsDisabledSubsonicLink()
     {
-        var resolver = new SubsonicPlaylistMutationResolver(_factory);
+        var resolver = new SubsonicPlaylistMutationResolver(_factory, TargetResolver());
         var linkId = await AddLinkAsync(
             PlaylistLinkMode.Hybrid,
             "backend-playlist",
@@ -150,7 +152,7 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
     [Fact]
     public async Task JellyfinResolver_ReturnsOnlyExactScopedEnabledWritableTarget()
     {
-        var resolver = new JellyfinPlaylistMutationResolver(_factory);
+        var resolver = new JellyfinPlaylistMutationResolver(_factory, TargetResolver());
         var linkId = await AddLinkAsync(
             PlaylistLinkMode.Hybrid,
             " backend-playlist ",
@@ -169,9 +171,9 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
         Assert.Null(await resolver.ResolveAsync(
             Context(protocol: ProtocolKind.Jellyfin, backend: "other-backend"),
             ProtocolId(linkId)));
-        Assert.Null(await resolver.ResolveAsync(
+        Assert.True((await resolver.ResolveAsync(
             Context(protocol: ProtocolKind.Jellyfin, library: "other-library"),
-            ProtocolId(linkId)));
+            ProtocolId(linkId)))!.Writable);
     }
 
     [Theory]
@@ -183,7 +185,7 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
         string? targetPlaylistId,
         bool enabled)
     {
-        var resolver = new JellyfinPlaylistMutationResolver(_factory);
+        var resolver = new JellyfinPlaylistMutationResolver(_factory, TargetResolver());
         var linkId = await AddLinkAsync(
             mode,
             targetPlaylistId,
@@ -203,6 +205,60 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
         Assert.NotNull(route);
         Assert.False(route.Writable);
         Assert.Null(route.TargetPlaylistId);
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin, false, false)]
+    [InlineData(ProtocolKind.Jellyfin, true, false)]
+    [InlineData(ProtocolKind.Jellyfin, true, true)]
+    [InlineData(ProtocolKind.Subsonic, false, false)]
+    [InlineData(ProtocolKind.Subsonic, true, false)]
+    [InlineData(ProtocolKind.Subsonic, true, true)]
+    public async Task Shared_target_uses_viewer_permissions_and_never_the_link_credential(
+        ProtocolKind protocol, bool readable, bool writable)
+    {
+        var resolver = TargetResolver(readable, writable);
+        var link = await AddLinkAsync(PlaylistLinkMode.Hybrid, "shared", protocol.ToString().ToLowerInvariant());
+        var context = Context(protocol: protocol, userId: _otherUserId);
+        bool? permitted;
+        string? target;
+        if (protocol == ProtocolKind.Jellyfin)
+        {
+            var route = await new JellyfinPlaylistMutationResolver(_factory, resolver).ResolveAsync(context, ProtocolId(link));
+            permitted = route?.Writable;
+            target = route?.TargetPlaylistId;
+        }
+        else
+        {
+            var route = await new SubsonicPlaylistMutationResolver(_factory, resolver).ResolveAsync(context, ProtocolId(link));
+            permitted = route?.Writable;
+            target = route?.TargetPlaylistId;
+        }
+        Assert.Equal(readable ? writable : (bool?)null, permitted);
+        Assert.Equal(readable && writable ? "shared" : null, target);
+    }
+
+    private static IBackendPlaylistTargetResolver TargetResolver(bool sharedRead = false, bool sharedWrite = false)
+    {
+        var target = new Mock<IBackendPlaylistTarget>(MockBehavior.Strict);
+        target.Setup(item => item.ReadAsync(It.IsAny<BackendPlaylistTargetContext>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((BackendPlaylistTargetContext context, string id, CancellationToken _) =>
+            {
+                Assert.Null(context.CredentialReference);
+                return context.VerifiedPrincipalId == "principal" || sharedRead
+                    ? new BackendPlaylistTargetResult<BackendPlaylistSnapshot>(BackendPlaylistTargetStatus.Success,
+                        new BackendPlaylistSnapshot(id, "Shared", [], "revision"))
+                    : new BackendPlaylistTargetResult<BackendPlaylistSnapshot>(BackendPlaylistTargetStatus.Unauthorized);
+            });
+        target.Setup(item => item.CanWriteAsync(It.IsAny<BackendPlaylistTargetContext>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((BackendPlaylistTargetContext context, string _, CancellationToken _) =>
+            {
+                Assert.Null(context.CredentialReference);
+                return context.VerifiedPrincipalId == "principal" || sharedWrite;
+            });
+        var resolver = new Mock<IBackendPlaylistTargetResolver>(MockBehavior.Strict);
+        resolver.Setup(item => item.Resolve(It.IsAny<string>())).Returns(target.Object);
+        return resolver.Object;
     }
 
     private async Task<Guid> AddLinkAsync(
@@ -251,16 +307,17 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
     {
         var tenant = tenantId ?? _tenantId;
         var user = userId ?? _ownerId;
+        var principal = user == _ownerId ? "principal" : "other-principal";
         return new ProtocolExecutionContext(
             protocol,
             backend,
-            "principal",
+            principal,
             new AllstarrPrincipal(
                 tenant,
                 user,
                 protocol.ToString().ToLowerInvariant(),
                 backend,
-                "principal",
+                principal,
                 "Fixture user",
                 false),
             "correlation",

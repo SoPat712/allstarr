@@ -52,6 +52,7 @@
   let username = $state("");
   let password = $state("");
   let rememberMe = $state(true);
+  let managePlaylists = $state(false);
   let authBusy = $state(false);
   let authError = $state("");
   let avatarFailed = $state(false);
@@ -290,11 +291,12 @@
     error = "";
     try {
       session = oidc.linkPending
-        ? await adminOidc.link(username, password, rememberMe, oidc.csrfToken ?? "")
-        : await auth.login(username, password, rememberMe);
+        ? await adminOidc.link(username, password, rememberMe, oidc.csrfToken ?? "", managePlaylists)
+        : await auth.login(username, password, rememberMe, managePlaylists);
       oidc = await adminOidc.status().catch(() => ({ enabled: false }));
       avatarFailed = false;
       password = "";
+      managePlaylists = false;
       await loadOnboarding(session);
       liveUpdates.connect();
     } catch (cause) {
@@ -420,6 +422,12 @@
           <input bind:checked={rememberMe} type="checkbox" class="size-4 accent-signal" disabled={authBusy} />
           Keep me signed in
         </label>
+        {#if session?.backend?.toLowerCase() === "subsonic"}
+          <label class="flex min-h-11 items-center gap-3 text-sm text-ink-muted">
+            <input bind:checked={managePlaylists} type="checkbox" class="size-4 accent-signal" disabled={authBusy} />
+            Let Allstarr manage my playlists
+          </label>
+        {/if}
         {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
         <button class="auth-submit w-full" type="submit" disabled={authBusy}>{authBusy ? "Signing in…" : oidc.linkPending ? "Link account and sign in" : "Sign in"}</button>
         {#if oidc.linkPending}
