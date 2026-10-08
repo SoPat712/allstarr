@@ -90,7 +90,7 @@ builder.Services.AddBackendLibraryIndexing();
 builder.Services.AddMetadataEnrichment();
 builder.Services.AddManagedFilePlacement();
 builder.Services.AddProviderDownloadArtifacts(builder.Configuration);
-builder.Services.AddFavoriteActions(builder.Configuration);
+builder.Services.AddFavoriteActions();
 builder.Services.AddSingleton<IScopedRecommendationAccountAccessor, ScopedRecommendationAccountAccessor>();
 if (releaseComposition.IntelligenceEnabled)
 {

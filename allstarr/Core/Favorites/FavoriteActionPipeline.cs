@@ -3,7 +3,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Jobs;
-using allstarr.Core.Intelligence;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
@@ -15,25 +14,9 @@ public sealed record FavoriteMutationRequest(
     ProtocolExecutionContext ExecutionContext,
     string ItemId,
     FavoriteOperation Operation,
-    string SourceRevision,
-    IReadOnlyCollection<string>? OptedInActions = null);
+    string SourceRevision);
 
 public sealed record FavoriteEventReceipt(Guid EventId, Guid JobId, bool Created, FavoriteEventState State);
-
-public sealed class FavoriteActionPolicyOptions
-{
-    public bool AddToVirtualLiked { get; set; } = true;
-    public bool MatchLocalLibrary { get; set; }
-    public bool AutoDownload { get; set; }
-    public bool EnrichMetadata { get; set; }
-    public bool PlaceManagedFile { get; set; }
-    public bool RefreshBackendLibrary { get; set; }
-}
-
-public sealed record EffectiveFavoriteActionPolicy(bool AddToVirtualLiked, bool MatchLocalLibrary,
-    bool AutoDownload, bool EnrichMetadata, bool PlaceManagedFile, bool RefreshBackendLibrary,
-    string Source, Guid? TargetCredentialReferenceId = null);
-
 
 public sealed record FavoriteActionStatus(
     string ActionType,
@@ -66,19 +49,10 @@ public sealed class FavoriteActionPipeline(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     DurableJobQueue jobs,
     IPlatformClock clock,
-    FavoriteActionPolicyOptions? policy = null,
-    IDurableFavoriteActionPolicyResolver? policyResolver = null,
-    IProtocolLibraryScopeResolver? libraryScopes = null,
-    IScopedRecommendationAccountAccessor? recommendationAccounts = null) : IFavoriteActionPipeline
+    IProtocolLibraryScopeResolver? libraryScopes = null) : IFavoriteActionPipeline
 {
     public const string JobType = "favorite.process";
     public const string VirtualLikedAction = "virtual-liked";
-    public const string LastFmAction = "lastfm";
-    private static readonly string[] OrderedActionTypes =
-        [VirtualLikedAction, "match", "download", "place", "enrich", "refresh", LastFmAction];
-    private readonly IDurableFavoriteActionPolicyResolver _policyResolver = policyResolver ??
-        new ConfiguredPolicyResolver(policy ?? new FavoriteActionPolicyOptions());
-
     public async Task<FavoriteEventReceipt> RecordAsync(
         FavoriteMutationRequest request,
         CancellationToken cancellationToken = default)
@@ -122,10 +96,6 @@ public sealed class FavoriteActionPipeline(
             return new FavoriteEventReceipt(existing.Id, existing.JobId, false, existing.State);
         }
 
-        var effectivePolicy = await _policyResolver.ResolveAsync(actor.TenantId, userId, protocol, backend,
-            execution.LibraryScopeId, cancellationToken);
-        var includeLastFm = await HasLastFmAccountAsync(actor.TenantId, userId, execution, cancellationToken);
-
         await using var transaction = await context.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         existing = await context.Set<FavoriteEventRecord>()
             .SingleOrDefaultAsync(item => item.EventKey == eventKey, cancellationToken);
@@ -141,7 +111,7 @@ public sealed class FavoriteActionPipeline(
             await CancelPendingFavoriteWorkAsync(context, actor.TenantId, userId, protocol, backend, itemId, now, cancellationToken);
         }
 
-        var actionTypes = BuildActions(request, effectivePolicy, includeLastFm);
+        var actionTypes = BuildActions(request.Operation, itemId);
         var job = await jobs.EnqueueInExistingTransactionAsync(
             context,
             new DurableJobEnqueueRequest<FavoriteJobPayload>(
@@ -169,10 +139,8 @@ public sealed class FavoriteActionPipeline(
             PolicySnapshotJson = JsonSerializer.Serialize(new
             {
                 actions = actionTypes,
-                policySource = effectivePolicy.Source,
-                targetCredentialReferenceId = effectivePolicy.TargetCredentialReferenceId
+                policySource = "download-only"
             }),
-            TargetCredentialReferenceId = effectivePolicy.TargetCredentialReferenceId,
             JobId = job.JobId,
             State = FavoriteEventState.Pending,
             CreatedAt = now,
@@ -233,49 +201,11 @@ public sealed class FavoriteActionPipeline(
             item.LastErrorCode, item.LastErrorMessage, actions);
     }
 
-    private async Task<bool> HasLastFmAccountAsync(Guid tenantId, Guid userId,
-        ProtocolExecutionContext execution, CancellationToken cancellationToken)
-    {
-        if (recommendationAccounts == null || string.IsNullOrWhiteSpace(execution.LibraryScopeId))
-            return false;
-        var scope = new IntelligenceScope(tenantId, userId,
-            execution.Protocol.ToString().ToLowerInvariant(), execution.BackendInstanceId,
-            execution.LibraryScopeId);
-        return await recommendationAccounts.HasAccountAsync(scope, "lastfm", cancellationToken);
-    }
-
-    private static IReadOnlyList<string> BuildActions(FavoriteMutationRequest request,
-        EffectiveFavoriteActionPolicy policy, bool includeLastFm)
-    {
-        if (policy.PlaceManagedFile && !policy.AutoDownload || policy.EnrichMetadata && !policy.PlaceManagedFile)
-            throw new InvalidOperationException("The effective favorite action policy has invalid download, placement, or enrichment dependencies.");
-        var actions = new HashSet<string>(StringComparer.Ordinal);
-        if (policy.AddToVirtualLiked) actions.Add(VirtualLikedAction);
-        var enabled = new HashSet<string>(StringComparer.Ordinal);
-        if (policy.MatchLocalLibrary) enabled.Add("match");
-        if (policy.AutoDownload) enabled.Add("download");
-        if (policy.EnrichMetadata) enabled.Add("enrich");
-        if (policy.PlaceManagedFile) enabled.Add("place");
-        if (policy.RefreshBackendLibrary) enabled.Add("refresh");
-        if (request.Operation == FavoriteOperation.Favorite && request.OptedInActions != null)
-        {
-            foreach (var value in request.OptedInActions)
-            {
-                var action = Required(value, nameof(request.OptedInActions), 100).ToLowerInvariant();
-                if (!OrderedActionTypes.Contains(action, StringComparer.Ordinal))
-                    throw new ArgumentException("The favorite action is unsupported.", nameof(request));
-                if (action != VirtualLikedAction && !enabled.Contains(action))
-                    throw new UnauthorizedAccessException("The requested favorite action is not enabled for this user and backend.");
-                actions.Add(action);
-            }
-        }
-        if (request.Operation == FavoriteOperation.Favorite)
-        {
-            actions.UnionWith(enabled);
-        }
-        if (includeLastFm) actions.Add(LastFmAction);
-        return OrderedActionTypes.Where(actions.Contains).ToArray();
-    }
+    private static IReadOnlyList<string> BuildActions(FavoriteOperation operation, string itemId) =>
+        operation == FavoriteOperation.Favorite &&
+        FavoriteDownloadActionExecutor.ParseExternalTrack(itemId) != null
+            ? [VirtualLikedAction, "download"]
+            : [VirtualLikedAction];
 
     private async Task CancelPendingFavoriteWorkAsync(AllstarrDbContext context, Guid tenantId, Guid userId,
         string protocol, string backend, string itemId, DateTimeOffset now, CancellationToken cancellationToken)
@@ -333,15 +263,6 @@ public sealed class FavoriteActionPipeline(
         return value;
     }
 
-    private sealed class ConfiguredPolicyResolver(FavoriteActionPolicyOptions options)
-        : IDurableFavoriteActionPolicyResolver
-    {
-        public Task<EffectiveFavoriteActionPolicy> ResolveAsync(Guid tenantId, Guid ownerUserId, string protocol,
-            string backendInstanceId, string? libraryScopeId, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new EffectiveFavoriteActionPolicy(options.AddToVirtualLiked,
-                options.MatchLocalLibrary, options.AutoDownload, options.EnrichMetadata,
-                options.PlaceManagedFile, options.RefreshBackendLibrary, "configured-default"));
-    }
 }
 
 public sealed record FavoriteJobPayload(Guid EventId);

@@ -134,6 +134,12 @@ Import behavior is fixed when a playlist is created so a later settings edit can
 
 If playback succeeded but Cached is empty, check the selected storage mode, provider route, durable job, and Activity outcome. A remote stream may not create a complete cache file until the provider download finishes and publishes atomically.
 
+## Favorites
+
+Hearting an external song records your favorite and queues a durable download using an authorized provider account. An existing match in your backend library avoids a redundant download. Native songs, albums, artists, and playlists do not trigger favorite downloads.
+
+Favorite actions do not tag files, place music in the backend library, trigger library rescans, or send Last.fm love requests. Removing a favorite cancels its pending work and clears its favorite state; it does not delete an existing downloaded file.
+
 ## Listening and scrobbling
 
 Automatic history is opt-in. Enable it under **Intelligence → Automation** for the selected library. Completed protocol plays then appear in **Overview** without a manual refresh. Listening apps can receive a private key there and may optionally forward completed listens to connected Last.fm or ListenBrainz accounts.
