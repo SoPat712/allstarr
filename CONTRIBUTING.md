@@ -24,19 +24,59 @@ dotnet test allstarr.sln
 
 ## Before You Change Code
 
-Read the repository [agent guide](AGENTS.md), the [architecture overview](docs/architecture/overview.md), and the owning operation or SDK document for the area you are changing. The agent guide is intentionally tool-neutral so a contributor can point any coding agent at one file.
+Read [README.md](README.md) for supported behavior, the [documentation map](docs/README.md), the [architecture overview](docs/architecture/overview.md), and the owning operation or module document. WebUI changes also follow [DESIGN.md](DESIGN.md). Running code, migrations, tests, and checked-in configuration are authoritative when documentation disagrees; fix drift in the same change.
 
-In particular:
+## Repository Map
 
-- one deployment serves one selected proxy protocol;
-- Postgres contains control-plane state, never audio bytes;
-- original library files are read-only inputs;
-- user-owned work needs a verified backend identity and exact tenant scope;
-- provider credentials are secret references resolved just in time;
-- optional work belongs in durable jobs, not detached controller tasks;
-- streaming and downloading are separate provider capabilities;
-- optional external services degrade their own capability instead of breaking startup;
-- third-party extension packages are untrusted until verified.
+| Path | Responsibility |
+| --- | --- |
+| `allstarr/Program.cs` | Application composition and middleware order |
+| `allstarr/Controllers/` | Admin APIs and Jellyfin/Subsonic protocol surfaces |
+| `allstarr/Providers/Contracts/` | Provider contracts, registration, and account selection |
+| `allstarr/Providers/` | Built-in provider adapters and source settings |
+| `allstarr/Core/Matching/` | Canonical identity, evidence, and match decisions |
+| `allstarr/Core/Playlists/` | Playlist ingestion, projection, and synchronization |
+| `allstarr/Core/Playback/` | Playback observations and client sessions |
+| `allstarr/Shelved/Intelligence/` | Listening history, recommendations, and AudioMuse integration |
+| `allstarr/Core/Jobs/` | Durable jobs, schedules, leases, and retries |
+| `allstarr/Core/Storage/` | PostgreSQL model, migrations, and state transfer |
+| `allstarr/Providers/Extensions/` | Extension package lifecycle and permissions |
+| `allstarr/Services/` | Shared services, backend adapters, and external gateways |
+| `webui/` | Svelte 5/SvelteKit administration interface |
+| `allstarr.Tests/` | .NET unit, integration, protocol, and migration coverage |
+| `webui/tests/` | Browser behavior and responsive coverage |
+| `tools/tests/` | Qualification, timing, and live smoke tools |
+| `sidecars/apple-gateway/` | Bounded Apple/GAMDL compatibility gateway |
+| `docs/` | User, operator, architecture, protocol, and extension documentation |
+
+Keep responsibilities modular. Extend the existing owner instead of creating a second matching, routing, playlist, credential, cache, or background-work system.
+
+## Product Invariants
+
+- One deployment exposes either Jellyfin or Subsonic/OpenSubsonic, never both catch-all protocol surfaces.
+- PostgreSQL is the only durable database. Audio, artwork, cache payloads, backups, and the encryption key ring remain files.
+- Original backend library files are read-only inputs. Only explicitly owned managed, cache, download, or kept paths may be written.
+- User-owned work requires a verified backend identity and exact tenant scope.
+- Provider credentials are encrypted and resolved just in time for the exact tenant, user, library, capability, and account scope.
+- Local backend objects pass through unchanged. A matched item uses the complete original backend object; a virtual item must be internally consistent and clearly external.
+- Provider capabilities are interchangeable typed contracts. Built-ins and extensions meet at the same registry without letting extensions replace reserved built-in IDs.
+- Stateful or retryable work uses the durable job system. Do not launch detached controller tasks for downloads, matching, playlist changes, scrobbling, imports, or extension lifecycle work.
+- Optional providers and sidecars degrade their own capability when unavailable; they must not prevent core startup or native proxy use.
+- Never expose secrets, tokens, cookies, signed media URLs, private identifiers, or raw provider payloads in logs, errors, fixtures, or documentation.
+- Streaming and downloading are separate provider capabilities.
+- Third-party extension packages are untrusted until verified.
+
+## Change Workflow
+
+1. Define the user-visible or protocol-visible acceptance condition.
+2. Trace the request through its existing controller, core owner, persistence boundary, adapter, and projection.
+3. Fix the shared cause in that owner; avoid route-specific or provider-specific copies.
+4. Add the smallest deterministic regression that would have caught the problem.
+5. Run focused checks while iterating and the affected lane at the integration boundary.
+6. Update the owning documentation when behavior, setup, architecture, permissions, or recovery changes.
+7. Review the final diff for unrelated edits, generated output, credentials, and weakened assertions.
+
+Preserve unrelated work in a dirty tree. Stage exact files only; never use `git add .`, destructive resets, or broad cleanup commands.
 
 ## Tests And Fixtures
 
@@ -45,6 +85,13 @@ Every behavior change, bug fix, contract change, and migration rule needs focuse
 ```bash
 dotnet test allstarr.sln -c Release --filter "Lane!=ReleaseCritical"
 dotnet test allstarr.sln -c Release --filter "Lane=ReleaseCritical"
+```
+
+Verify the Release build and formatting before submitting:
+
+```bash
+dotnet build allstarr.sln -c Release --no-restore -p:TreatWarningsAsErrors=true
+dotnet format allstarr.sln --no-restore --verify-no-changes --verbosity minimal
 ```
 
 Useful focused examples:
@@ -59,7 +106,25 @@ Provider and external-gateway tests use local fixtures, fake providers, or mocke
 or live provider calls to the automated suite. Apple gateway tests must not assume wrapper-v2 itself implements the
 Allstarr search/download contract.
 
-Migration work must be checked against an explicitly isolated disposable PostgreSQL database. WebUI changes must also pass `npm run check`, `npm test`, `npm run build`, `npm run check:budgets`, and the affected Playwright coverage from `webui/`.
+Migration, backup, restore, and destructive behavior require an isolated disposable PostgreSQL target and exact ownership checks. Validate affected Compose configuration with `docker compose ... config --quiet`. Do not weaken discovery, assertions, isolation, compatibility, accessibility, or security to make a check pass.
+
+## WebUI
+
+Follow [DESIGN.md](DESIGN.md). Reuse the existing Svelte, Bits UI, Tailwind, Lucide, and shared component system before adding a dependency or page-specific control. Keep the interface dense where comparison matters and explanatory where setup or empty state needs guidance.
+
+Integrations owns Services, Accounts, Extensions, and Routing. Intelligence owns listening history, imports, discovery, automation, and its built-in AudioMuse connection. Settings owns deployment and operator behavior. Do not scatter the same configuration across these areas.
+
+Run these checks from `webui/`:
+
+```bash
+npm run check
+npm test
+npm run build
+npm run check:budgets
+npm run test:e2e:existing-build
+```
+
+Run browser checks after the production build. Preserve keyboard, responsive, light/dark, reduced-motion, and no-overflow coverage for touched flows.
 
 ## Provider Extensions
 
@@ -71,7 +136,16 @@ Do not bundle provider packages or auto-enroll users in an external registry.
 
 Update the owner document when behavior changes. Keep README and the user guide useful to operators; keep detailed invariants in architecture, operation, protocol, extension, or module documents. Use the project's direct, normal voice. Prefer exact statements over promotional claims, and do not put planned behavior in user documentation.
 
-Do not commit agent prompts, session handoffs, local design-tool state, generated test reports, private deployment details, or duplicate planning documents. `AGENTS.md` is the only public instruction entry point for coding agents.
+Documentation ownership:
+
+- `README.md`: product behavior and installation.
+- `docs/user-guide.md`: dashboard and common workflows.
+- `docs/operations/`: deployment and recovery procedures.
+- `docs/architecture/`: durable boundaries and code ownership.
+- `docs/extensions/`: public extension contract.
+- Module README files: specialized code and tools beside their implementation.
+
+Do not commit local design-tool state, generated test reports, private deployment details, or duplicate working documents.
 
 Check local Markdown links after renaming or removing files. Never paste real secrets, signed URLs, account names, or private library paths into examples.
 

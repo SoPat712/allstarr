@@ -23,7 +23,6 @@ User and operator guides describe shipped behavior. Contributor assessments expl
 
 ## Contributor guides
 
-- [Repository agent guide](../AGENTS.md)
 - [Contributing](../CONTRIBUTING.md)
 - [WebUI design system](../DESIGN.md)
 - [Test and qualification tools](../tools/tests/README.md)

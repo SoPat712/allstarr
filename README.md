@@ -108,7 +108,6 @@ The Apple profile requires a legally obtained compatible APK/APKM supplied by th
 | Understand the system | [Architecture overview](docs/architecture/overview.md) |
 | Build an extension | [Extension SDK](docs/extensions/sdk-v1.md) |
 | Contribute code | [Contributing](CONTRIBUTING.md) |
-| Guide a coding agent | [Agent guide](AGENTS.md) |
 
 The complete index is in [docs/README.md](docs/README.md).
 
