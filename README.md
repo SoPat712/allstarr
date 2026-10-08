@@ -70,7 +70,7 @@ Later source updates use `./allstarr.sh update`; the command requires a clean tr
 - **Activity** explains completed and failed work with correlation details.
 - **Settings** owns deployment-level behavior, matching, playback, cache policy, maintenance, backup, and recovery.
 
-Intelligence is deferred from the first release and hidden from navigation. Its development workspace and existing deep links remain available for now; accounts, history, and opt-in background work are unchanged. See the [release scope and remaining gates](docs/release-readiness.md#first-release-scope-decision-2026-09-13).
+Intelligence is deferred from the first release and hidden from navigation. Its development workspace and existing deep links remain available for now; accounts, history, and opt-in background work are unchanged.
 
 ## Capabilities
 

@@ -43,7 +43,7 @@ Use Google Material 3 as the interaction and visual grammar, adapted to Allstarr
 
 - **Home:** current playback and listeners first; source route, scrobble delivery, health, and work follow.
 - **Library:** playlists, mappings, cached files, and kept files share one task vocabulary and aligned tables.
-- **Intelligence (deferred):** excluded from first-release navigation. Existing deep links remain usable during development; hiding navigation does not disable backend work or remove data. Its retained workspace owns Overview, History, Import, Discover, Playlists, and Automation. See the release boundary in [the release plan](docs/release-readiness.md).
+- **Intelligence (deferred):** excluded from first-release navigation. Existing deep links remain usable during development; hiding navigation does not disable backend work or remove data. Its retained workspace owns Overview, History, Import, Discover, Playlists, and Automation.
 - **Integrations:** Services owns provider configuration and diagnostics. Extensions owns package lifecycle. Accounts and Routing explain their scope in plain language.
 - **Activity:** outcome, actor, target, duration, and time are primary; technical payloads are progressive detail.
 - **Settings:** deployment and operator controls only. User-scoped controls stay near the data they affect.
