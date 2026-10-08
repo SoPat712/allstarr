@@ -61,7 +61,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             accountResolver,
             clock);
         _service = new(_factory, _source, new FakeTargetResolver(_target), new PlaylistMaterializationPlanner(),
-            new TrackMatchDecisionEngine(), _trackMatches, clock,
+            new TrackMatchDecisionEngine(), _trackMatches, clock, new KeyedAsyncLock(),
             new CollectingLogger<PlaylistOrchestrationService>(_logs));
         await using var db = await _factory.CreateDbContextAsync();
         _identity = Guid.CreateVersion7(); _canonical = Guid.CreateVersion7();
@@ -129,7 +129,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 new TrackMatchDecisionEngine(),
                 new ProviderAccountResolver(factory, new ProviderPolicyOptions()),
                 new Clock(_now)),
-            new Clock(_now));
+            new Clock(_now), new KeyedAsyncLock());
         var baselines = new List<(int Count, int Commands, long Allocated, long ElapsedTicks)>();
 
         foreach (var count in new[] { 100, 1_000, 10_000 })
@@ -873,7 +873,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             new PlaylistMaterializationPlanner(),
             matcher,
             trackMatches,
-            new Clock(_now));
+            new Clock(_now), new KeyedAsyncLock());
 
         await service.RefreshAsync(Context(), _link);
 
@@ -924,7 +924,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 Options.Create(new JellyfinSettings()), NullLogger<PlaylistPlayableSearchService>.Instance));
         var service = new PlaylistOrchestrationService(
             _factory, _source, new FakeTargetResolver(_target), new PlaylistMaterializationPlanner(), matcher,
-            matches, new Clock(_now));
+            matches, new Clock(_now), new KeyedAsyncLock());
 
         await service.RefreshAsync(Context(), _link);
 

@@ -2553,34 +2553,8 @@ public sealed class TrackMatchCommandService(
         record.ReasonsJson == input.ReasonsJson &&
         record.WarningsJson == input.WarningsJson;
 
-    private static bool IsConcurrentMatchWrite(Exception exception)
-    {
-        if (exception is DbUpdateConcurrencyException)
-            return true;
-        for (var current = exception; current != null; current = current.InnerException)
-        {
-            if (current is Npgsql.PostgresException
-                {
-                    SqlState: Npgsql.PostgresErrorCodes.DeadlockDetected
-                })
-                return true;
-            if (current is not Npgsql.PostgresException
-                {
-                    SqlState: Npgsql.PostgresErrorCodes.UniqueViolation
-                } postgres)
-                continue;
-            if (postgres.ConstraintName is
-                "IX_provider_track_identity_account_exact" or
-                "IX_provider_track_identity_catalog_exact" or
-                "IX_track_match_scoped_decision")
-                return true;
-            if (postgres.ConstraintName?.StartsWith(
-                    "IX_canonical_catalog_aliases_",
-                    StringComparison.Ordinal) == true)
-                return true;
-        }
-        return false;
-    }
+    private static bool IsConcurrentMatchWrite(Exception exception) =>
+        DbErrors.IsTransientConflict(exception) || DbErrors.IsUniqueViolation(exception);
 
     private static TrackMatchRecord ToRecord(
         MatchDecisionInput input,

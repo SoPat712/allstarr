@@ -241,12 +241,7 @@ public sealed class TrackIdentityService : ITrackIdentityService
     }
 
     private static bool IsConcurrentRecordingWrite(DbUpdateException error) =>
-        error is DbUpdateConcurrencyException || error.InnerException is Npgsql.PostgresException
-        {
-            SqlState: Npgsql.PostgresErrorCodes.UniqueViolation
-        } postgres && (postgres.ConstraintName is "IX_canonical_recordings_TenantId_Isrc" or
-            "IX_canonical_recordings_TenantId_MusicBrainzRecordingId" ||
-            postgres.ConstraintName?.StartsWith("IX_canonical_catalog_aliases_", StringComparison.Ordinal) == true);
+        error is DbUpdateConcurrencyException || DbErrors.IsUniqueViolation(error);
 
     private async Task<CanonicalRecordingCreationResult> CompleteCreationAsync(
         ProviderActorContext actor,

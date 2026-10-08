@@ -171,6 +171,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     private readonly TrackMatchDecisionEngine _matcher;
     private readonly ITrackMatchRepository _trackMatches;
     private readonly IPlatformClock _clock;
+    private readonly KeyedAsyncLock _locks;
     private readonly ILogger<PlaylistOrchestrationService>? _logger;
 
     public PlaylistOrchestrationService(
@@ -181,12 +182,14 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         TrackMatchDecisionEngine matcher,
         ITrackMatchRepository trackMatches,
         IPlatformClock clock,
+        KeyedAsyncLock locks,
         ILogger<PlaylistOrchestrationService>? logger = null,
         IEffectiveProviderPolicyResolver? effectivePolicies = null)
     {
         (_factory, _source, _targets, _planner, _matcher, _trackMatches, _clock, _logger) =
             (factory, source, targets, planner, matcher, trackMatches, clock, logger);
         _effectivePolicies = effectivePolicies;
+        _locks = locks;
     }
 
     private readonly IEffectiveProviderPolicyResolver? _effectivePolicies;
@@ -562,11 +565,10 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         ProtocolExecutionContext execution, PlaylistLinkRecord link, Guid? jobId, CancellationToken cancellationToken)
     {
         var collected = await _source.CollectAsync(execution, link, cancellationToken);
+        await using var accountLock = await _locks.AcquireAsync(
+            $"playlist-account:{link.ProviderAccountId:N}", cancellationToken);
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        await db.Database.ExecuteSqlInterpolatedAsync(
-            $"SELECT pg_advisory_xact_lock(hashtextextended(CAST({link.ProviderAccountId} AS text), 0))",
-            cancellationToken);
         var now = _clock.UtcNow;
         var payloads = collected.Entries.ToDictionary(
             entry => entry.SourceEntryIdHash,
@@ -1552,6 +1554,7 @@ public static class PlaylistOrchestrationRegistration
         services.AddSingleton<allstarr.Core.Protocols.Jellyfin.JellyfinVirtualPlaylistProtocolAdapter>();
         services.AddSingleton<allstarr.Core.Protocols.Subsonic.SubsonicVirtualPlaylistProtocolAdapter>();
         services.AddSingleton<IBackendPlaylistTargetResolver, BackendPlaylistTargetResolver>();
+        services.AddSingleton<KeyedAsyncLock>();
         services.AddSingleton<PlaylistOrchestrationService>();
         services.AddSingleton<ProviderPlaylistUpdateService>();
         services.AddSingleton<DurablePlaylistProjectionReader>();

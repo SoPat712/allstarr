@@ -268,7 +268,7 @@ public sealed class DurableJobQueue
             {
                 return await ClaimOnceAsync(workerId.Trim(), normalizedTypes, cancellationToken);
             }
-            catch (Exception exception) when (retry < 2 && PostgresConcurrency.IsRetryable(exception))
+            catch (Exception exception) when (retry < 2 && DbErrors.IsTransientConflict(exception))
             {
             }
         }
@@ -724,21 +724,4 @@ public sealed class DurableJobQueue
 
     private static string CreateUserScopeKey(Guid tenantId, Guid ownerUserId) =>
         $"{tenantId:N}:{ownerUserId:N}";
-}
-
-internal static class PostgresConcurrency
-{
-    public static bool IsRetryable(Exception exception)
-    {
-        for (var current = exception; current != null; current = current.InnerException)
-        {
-            if (current is DbUpdateConcurrencyException ||
-                current is Npgsql.PostgresException { SqlState: Npgsql.PostgresErrorCodes.SerializationFailure })
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
 }
