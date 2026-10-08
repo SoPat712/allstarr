@@ -56,7 +56,7 @@ The public protocol controllers preserve client compatibility. New application b
 | Provider accounts and encrypted secrets | `allstarr/Core/Identity`, `allstarr/Core/Secrets` |
 | Extension control plane and SDK | `allstarr/Core/Extensions` |
 | Playback and listening signals | `allstarr/Core/Playback` |
-| Intelligence and generated sets | `allstarr/Core/Intelligence` |
+| Intelligence and generated sets | `allstarr/Shelved/Intelligence` |
 | Managed media lifecycle | `allstarr/Core/ManagedFiles`, `allstarr/Core/Downloads` |
 | Admin and protocol HTTP surfaces | `allstarr/Controllers` |
 | WebUI source and static assets | `webui/`, `allstarr/wwwroot` |

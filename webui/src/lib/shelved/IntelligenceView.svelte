@@ -9,11 +9,11 @@
   import { Button } from "$lib/components/ui/button";
   import { Progress } from "$lib/components/ui/progress";
   import { Skeleton } from "$lib/components/ui/skeleton";
-  import AudioMuseDiscovery from "$lib/components/AudioMuseDiscovery.svelte";
+  import AudioMuseDiscovery from "$lib/shelved/AudioMuseDiscovery.svelte";
   import ConnectSourceDialog from "$lib/components/ConnectSourceDialog.svelte";
-  import IntelligenceHistory from "$lib/components/IntelligenceHistory.svelte";
-  import ListeningAppsCard from "$lib/components/ListeningAppsCard.svelte";
-  import IntelligenceSchedules from "$lib/components/IntelligenceSchedules.svelte";
+  import IntelligenceHistory from "$lib/shelved/IntelligenceHistory.svelte";
+  import ListeningAppsCard from "$lib/shelved/ListeningAppsCard.svelte";
+  import IntelligenceSchedules from "$lib/shelved/IntelligenceSchedules.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";

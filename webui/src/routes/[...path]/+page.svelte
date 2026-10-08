@@ -167,7 +167,7 @@
     }
     if (path === "/activity") return import("$lib/components/EventLogView.svelte");
     if (path === "/intelligence" && session?.features?.intelligence === true) {
-      return import("$lib/components/IntelligenceView.svelte");
+      return import("$lib/shelved/IntelligenceView.svelte");
     }
     if (path.startsWith("/integrations")) return import("$lib/components/IntegrationsView.svelte");
     if (path.startsWith("/settings")) return import("$lib/components/SettingsView.svelte");
