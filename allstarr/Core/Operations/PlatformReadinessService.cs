@@ -27,27 +27,24 @@ public sealed class PlatformReadinessService
     private readonly ReadinessOptions _options;
     private readonly FileSecretKeyRingProvider _keyRingProvider;
     private readonly SidecarStatusCatalog _sidecars;
-    private readonly IDurableStorageRuntimeProbe _storageProbe;
 
     public PlatformReadinessService(
         DurableStorageState storageState,
         ReadinessOptions options,
         FileSecretKeyRingProvider keyRingProvider,
-        SidecarStatusCatalog sidecars,
-        IDurableStorageRuntimeProbe storageProbe)
+        SidecarStatusCatalog sidecars)
     {
         _storageState = storageState;
         _options = options;
         _keyRingProvider = keyRingProvider;
         _sidecars = sidecars;
-        _storageProbe = storageProbe;
     }
 
     public async Task<PlatformReadinessSnapshot> CheckAsync(
         CancellationToken cancellationToken = default)
     {
         var components = new List<ReadinessComponent>();
-        await _storageProbe.CheckAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         var storage = _storageState.GetSnapshot();
         components.Add(new ReadinessComponent(
             $"storage:{storage.Provider.ToString().ToLowerInvariant()}",

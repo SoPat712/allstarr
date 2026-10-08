@@ -66,12 +66,12 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RuntimeStorageFailureIsReflectedByReadinessImmediately()
+    public async Task StorageFailureIsReflectedByReadinessImmediately()
     {
+        _storageState.Set(DurableStorageReadiness.Unavailable, errorCode: "database_unavailable");
         var readiness = Readiness(
             new SidecarStatusCatalog(new SidecarHealthOptions()),
-            new ReadinessOptions(),
-            new UnavailableStorageProbe(_storageState));
+            new ReadinessOptions());
 
         var snapshot = await readiness.CheckAsync();
 
@@ -335,7 +335,6 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
     private PlatformReadinessService Readiness(
         SidecarStatusCatalog catalog,
         ReadinessOptions options,
-        IDurableStorageRuntimeProbe? storageProbe = null,
         string? keyRingPath = null)
     {
         var secretOptions = new SecretStoreOptions
@@ -346,8 +345,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
             _storageState,
             options,
             new FileSecretKeyRingProvider(secretOptions),
-            catalog,
-            storageProbe ?? new ReadyStorageProbe(_storageState));
+            catalog);
     }
 
     private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK)
@@ -391,27 +389,6 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
     {
         public DateTimeOffset UtcNow { get; private set; } = now;
         public void Advance(TimeSpan duration) => UtcNow = UtcNow.Add(duration);
-    }
-
-    private sealed class ReadyStorageProbe(DurableStorageState state)
-        : IDurableStorageRuntimeProbe
-    {
-        public Task<DurableStorageSnapshot> CheckAsync(
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(state.GetSnapshot());
-    }
-
-    private sealed class UnavailableStorageProbe(DurableStorageState state)
-        : IDurableStorageRuntimeProbe
-    {
-        public Task<DurableStorageSnapshot> CheckAsync(
-            CancellationToken cancellationToken = default)
-        {
-            state.Set(
-                DurableStorageReadiness.Unavailable,
-                errorCode: "database_unavailable");
-            return Task.FromResult(state.GetSnapshot());
-        }
     }
 
 }

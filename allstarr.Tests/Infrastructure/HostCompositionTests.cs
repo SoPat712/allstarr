@@ -182,6 +182,9 @@ public sealed class HostCompositionTests
     {
         using var factory = new AllstarrFactory("Jellyfin");
         using var client = factory.CreateClient();
+        factory.Services.GetRequiredService<allstarr.Core.Storage.DurableStorageState>().Set(
+            allstarr.Core.Storage.DurableStorageReadiness.Unavailable,
+            errorCode: "database_unavailable");
 
         using var live = await client.GetAsync("/health/live");
         using var ready = await client.GetAsync("/health/ready");

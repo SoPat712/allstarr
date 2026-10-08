@@ -26,7 +26,6 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Core/ManagedFiles/PhysicalManagedFileOperations.cs"] = "managed audio and artwork",
             ["Core/Operations/PlatformReadinessService.cs"] = "temporary readiness probe",
             ["Core/Storage/DurableBackupService.cs"] = "backup archive",
-            ["Core/Storage/DurableStateTransferService.cs"] = "transfer archive",
             ["Providers/Apple/AppleMusicDownloadService.cs"] = "managed audio",
             ["Services/Common/BaseDownloadService.cs"] = "managed audio and artwork",
             ["Providers/Extensions/ExtensionManager.cs"] = "extension packages",
@@ -59,7 +58,7 @@ public sealed class RuntimeFileOwnershipContractTests
     }
 
     [Fact]
-    public void RuntimeJsonWriters_AreOnlyCachePackageOrTransferArtifacts()
+    public void RuntimeJsonWriters_AreOnlyCachePackageOrBackupArtifacts()
     {
         var productionRoot = Path.Combine(FindRepositoryRoot(), "allstarr");
         var jsonWriters = Directory.GetFiles(productionRoot, "*.cs", SearchOption.AllDirectories)
@@ -82,7 +81,6 @@ public sealed class RuntimeFileOwnershipContractTests
             "Core/Enrichment/TagLibManagedMetadataWriter.cs",
             "Core/ManagedFiles/FilePlacementService.cs",
             "Core/Storage/DurableBackupService.cs",
-            "Core/Storage/DurableStateTransferService.cs",
             "Providers/Extensions/ExtensionManager.cs",
             "Services/Common/FileMediaApplicationCache.cs"
         };
@@ -117,7 +115,6 @@ public sealed class RuntimeFileOwnershipContractTests
                      "Managed audio and artwork", "target playlist files",
                      "kept lyrics sidecars", "installed extension package payloads",
                      "encryption key ring", "verified backup artifacts",
-                     "bounded temporary transfer archives",
                      "Rebuildable media cache with bounded size/TTL",
                      "atomic staging files", "password-file location"
                  })

@@ -8,21 +8,18 @@ public sealed class DurableStorageInitializer : IHostedService
     private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
     private readonly DurableStorageOptions _options;
     private readonly DurableStorageState _state;
-    private readonly DurableMigrationLock _migrationLock;
     private readonly ILogger<DurableStorageInitializer> _logger;
 
     public DurableStorageInitializer(
         IDbContextFactory<AllstarrDbContext> contextFactory,
         DurableStorageOptions options,
         DurableStorageState state,
-        ILogger<DurableStorageInitializer> logger,
-        DurableMigrationLock? migrationLock = null)
+        ILogger<DurableStorageInitializer> logger)
     {
         _contextFactory = contextFactory;
         _options = options;
         _state = state;
         _logger = logger;
-        _migrationLock = migrationLock ?? new DurableMigrationLock(options);
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -45,15 +42,6 @@ public sealed class DurableStorageInitializer : IHostedService
                     attempt + 1,
                     ex.GetType().Name);
                 await Task.Delay(delay, cancellationToken);
-            }
-            catch (MigrationLockException ex)
-            {
-                _state.Set(DurableStorageReadiness.Unavailable, errorCode: "migration_lock_unavailable");
-                _logger.LogError(
-                    "Durable storage migration lock failed for {StorageProvider} ({ExceptionType})",
-                    _options.ParseProvider(),
-                    ex.GetType().Name);
-                return;
             }
             catch (Exception ex)
             {
@@ -123,7 +111,6 @@ public sealed class DurableStorageInitializer : IHostedService
         AllstarrDbContext context,
         CancellationToken cancellationToken)
     {
-        await using var migrationLease = await _migrationLock.AcquireAsync(cancellationToken);
         var compatibility = await DurableSchemaCompatibility.InspectAsync(
             context,
             cancellationToken);
