@@ -8,6 +8,12 @@ The first contract version covers metadata, streaming, download, playlist, lyric
 an explicit `ProviderExecutionContext`, so provider code never has to discover the actor, account, library,
 policy, deadline, cancellation token, or idempotency key from ambient HTTP state.
 
+Anonymous public artwork uses the identity-free `PublicRead` actor. Routing accepts it only for metadata
+declared `ProviderAccountRequirement.None`, without account or revision hints. It cannot resolve a provider
+account. Track, album, and artist artwork uses the existing metadata lookups; public playlist covers use the
+optional `GetPlaylistArtworkAsync` metadata hook, which returns `NotSupported` by default. Private playlist
+capabilities continue to require the authenticated viewer and an eligible account.
+
 External IDs keep the provider, resource kind, catalog, and opaque source value separate. They never contain
 account access. Cross-provider use needs a verified identity link supplied by the host.
 

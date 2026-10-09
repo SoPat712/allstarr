@@ -9,6 +9,52 @@ namespace allstarr.Tests;
 public sealed class ProviderRouterTests
 {
     [Fact]
+    public async Task PublicRead_AllowsOnlyAccountFreeMetadataWithoutAccountResolution()
+    {
+        var accounts = new FakeAccountResolver();
+        var router = Router([
+            Metadata("public"),
+            Metadata("optional", ProviderAccountRequirement.Optional, [ProviderAccountScope.Shared]),
+            Metadata("private", ProviderAccountRequirement.Required, [ProviderAccountScope.Personal]),
+            Streaming("stream")
+        ], accounts);
+        var actor = new ProviderActorContext(ProviderActorKind.PublicRead, null);
+
+        var metadata = await router.PlanAsync<IProviderMetadataCapability>(Request(
+            ProviderCapabilityKind.Metadata, ["public", "optional", "private"], actor: actor));
+        var candidate = Assert.Single(metadata.Candidates);
+        Assert.Equal("public", candidate.Provider.Id);
+        Assert.Null(candidate.Context.Account);
+        Assert.All(metadata.Decision.Candidates.Where(item => item.ProviderId != "public"),
+            item => Assert.Equal("public-read-not-allowed", item.ReasonCode));
+        var streaming = await router.PlanAsync<IProviderStreamingCapability>(Request(
+            ProviderCapabilityKind.Streaming, ["stream"], actor: actor));
+        Assert.Empty(streaming.Candidates);
+        Assert.Equal("public-read-not-allowed", Assert.Single(streaming.Decision.Candidates).ReasonCode);
+        Assert.Equal(0, accounts.CallCount);
+    }
+
+    [Fact]
+    public async Task PublicRead_RejectsRequestedAccountAndRevisionHints()
+    {
+        var accounts = new FakeAccountResolver();
+        var router = Router([Metadata("public")], accounts);
+        foreach (var state in new[]
+        {
+            new ProviderRouteProviderState("public", requestedAccountId: Guid.CreateVersion7()),
+            new ProviderRouteProviderState("public", expectedAccountRevision: 1)
+        })
+        {
+            var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(
+                ProviderCapabilityKind.Metadata, ["public"],
+                actor: new(ProviderActorKind.PublicRead, null), states: [state]));
+            Assert.Empty(plan.Candidates);
+            Assert.Equal("public-read-not-allowed", Assert.Single(plan.Decision.Candidates).ReasonCode);
+        }
+        Assert.Equal(0, accounts.CallCount);
+    }
+
+    [Fact]
     public async Task Plan_OrdersEligibleProvidersAndAllowedTypedFailureAdvancesToVerifiedIdentity()
     {
         var identity = new FakeIdentityService(ProviderIdentityVerification.Verified);

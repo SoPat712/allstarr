@@ -111,6 +111,44 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Theory]
+    [InlineData("Jellyfin", "/Audio/ext-deezer-song-42/stream?api_key=fixture-key", "user-1")]
+    [InlineData("Subsonic", "/rest/stream.view?u=fixture&p=secret&v=1.16.1&c=fixture&id=ext-deezer-song-42", "fixture")]
+    public async Task ExternalStream_WithoutProviderActorAndTypedSource_ReturnsUnavailable(
+        string backend,
+        string path,
+        string principalId)
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.OpenStreamAsync(
+                It.Is<ProtocolExecutionContext>(context => context.Protocol.ToString() == backend &&
+                    context.VerifiedBackendPrincipalId == principalId && context.Actor == null),
+                "deezer", "42", ProviderAudioQuality.Any, "bytes=4-7", false))
+            .ReturnsAsync((ProtocolProviderStream?)null);
+        using var factory = new ProtocolFactory(backend, request => request.RequestUri!.AbsolutePath switch
+        {
+            "/Users/Me" => Json(StatusCodes.Status200OK, """{"Id":"user-1"}"""),
+            "/rest/ping.view" => Json(StatusCodes.Status200OK,
+                """{"subsonic-response":{"status":"ok","version":"1.16.1"}}"""),
+            _ => throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}")
+        }, services =>
+        {
+            services.RemoveAll<IProtocolProviderGateway>();
+            services.AddSingleton(gateway.Object);
+        });
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, path);
+        request.Headers.TryAddWithoutValidation("Range", "bytes=4-7");
+
+        using var response = await client.SendAsync(request);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal("No verified playback source is available.", body.RootElement.GetProperty("error").GetString());
+        gateway.VerifyAll();
+        gateway.VerifyNoOtherCalls();
+    }
+
+    [Theory]
     [InlineData("u=fixture&t=hash&s=salt&v=1.16.1&c=fixture&f=json", "application/json")]
     [InlineData("u=fixture&p=secret&v=1.16.1&c=fixture&f=xml", "application/xml")]
     public async Task SubsonicPing_PostFormCredentialsReachBackend(
@@ -349,20 +387,104 @@ public sealed class ProtocolRouteFixtureTests
               "UnknownFutureField":{"Keep":[1,2,3]}
             }
             """;
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.SearchAsync(
+                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
+                    context.VerifiedBackendPrincipalId == "user-1"),
+                "Fixture Artist", 0, 0, 10, null))
+            .ReturnsAsync(new SearchResult
+            {
+                Artists = [new Artist
+                {
+                    Id = "ext-deezer-artist-42",
+                    ExternalProvider = "deezer",
+                    ExternalId = "42",
+                    Name = "External Artist"
+                }]
+            });
+        var observedRequests = new List<string>();
         using var factory = new ProtocolFactory("Jellyfin", request =>
-            request.RequestUri!.AbsolutePath == "/Users/Me"
+        {
+            observedRequests.Add(request.RequestUri!.PathAndQuery);
+            return request.RequestUri.AbsolutePath == "/Users/Me"
                 ? Json(StatusCodes.Status200OK, """{"Id":"user-1"}""")
-                : Json(StatusCodes.Status200OK, $$"""{"Items":[{{artist}}],"TotalRecordCount":1,"StartIndex":0}"""));
+                : Json(StatusCodes.Status200OK, $$"""{"Items":[{{artist}}],"TotalRecordCount":1,"StartIndex":3}""");
+        }, services =>
+        {
+            services.RemoveAll<IProtocolProviderGateway>();
+            services.AddSingleton(gateway.Object);
+        });
         using var client = factory.CreateClient();
 
         using var response = await client.GetAsync(
-            "/Artists?SearchTerm=Fixture%20Artist&Limit=10&api_key=fixture-key");
+            "/Artists?SearchTerm=Fixture%20Artist&Limit=10&StartIndex=3&Fields=ProviderIds&api_key=fixture-key");
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.True(JsonNode.DeepEquals(
             JsonNode.Parse(artist),
             JsonNode.Parse(body.RootElement.GetProperty("Items")[0].GetRawText())));
+        Assert.Equal(2, body.RootElement.GetProperty("Items").GetArrayLength());
+        Assert.Equal("ext-deezer-artist-42", body.RootElement.GetProperty("Items")[1].GetProperty("Id").GetString());
+        Assert.Equal(2, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Equal(3, body.RootElement.GetProperty("StartIndex").GetInt32());
+        var nativeQuery = QueryHelpers.ParseQuery(new Uri("http://fixture" + observedRequests[1]).Query);
+        Assert.Equal("Fixture Artist", nativeQuery["SearchTerm"]);
+        Assert.Equal("10", nativeQuery["Limit"]);
+        Assert.Equal("3", nativeQuery["StartIndex"]);
+        Assert.Equal("ProviderIds", nativeQuery["Fields"]);
+        gateway.VerifyAll();
+    }
+
+    [Fact]
+    public async Task JellyfinCuratorAlbums_UsesTypedPlaylistSearchAndPreservesCuratorFiltering()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.SearchPlaylistsAsync(
+                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
+                    context.VerifiedBackendPrincipalId == "user-1"),
+                "fixture", 50))
+            .ReturnsAsync([
+                new ExternalPlaylist
+                {
+                    Id = "ext-deezer-playlist-first", Provider = "deezer", ExternalId = "first",
+                    Name = "First", CuratorName = "fixture", TrackCount = 2
+                },
+                new ExternalPlaylist
+                {
+                    Id = "ext-spotify-playlist-second", Provider = "spotify", ExternalId = "second",
+                    Name = "Second", CuratorName = "FIXTURE", TrackCount = 3
+                },
+                new ExternalPlaylist
+                {
+                    Id = "ext-deezer-playlist-other", Provider = "deezer", ExternalId = "other",
+                    Name = "Other", CuratorName = "other"
+                }
+            ]);
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+            request.RequestUri!.AbsolutePath == "/Users/Me"
+                ? Json(StatusCodes.Status200OK, """{"Id":"user-1"}""")
+                : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
+            services =>
+            {
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/Items?ArtistIds=ext-deezer-curator-fixture&IncludeItemTypes=MusicAlbum&api_key=fixture-key");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var items = body.RootElement.GetProperty("Items").EnumerateArray().ToArray();
+        Assert.Equal(new[] { "ext-deezer-playlist-first", "ext-spotify-playlist-second" },
+            items.Select(item => item.GetProperty("Id").GetString()));
+        Assert.All(items, item => Assert.Equal("MusicAlbum", item.GetProperty("Type").GetString()));
+        Assert.Equal(new[] { 2, 3 }, items.Select(item => item.GetProperty("ChildCount").GetInt32()));
+        Assert.Equal(2, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Equal(0, body.RootElement.GetProperty("StartIndex").GetInt32());
+        gateway.VerifyAll();
     }
 
     [Fact]
@@ -395,7 +517,7 @@ public sealed class ProtocolRouteFixtureTests
     public async Task JellyfinApiKeyFallback_DoesNotBindDeclaredUserToProviderActor()
     {
         var interaction = new RecordingInteractionAdapter();
-        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         using var factory = new ProtocolFactory(
             "Jellyfin",
             request => request.RequestUri!.AbsolutePath switch
@@ -406,8 +528,8 @@ public sealed class ProtocolRouteFixtureTests
             },
             services =>
             {
-                services.RemoveAll<IMusicMetadataService>();
-                services.AddSingleton(metadata.Object);
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
                 services.RemoveAll<IJellyfinInteractionProtocolAdapter>();
                 services.AddSingleton<IJellyfinInteractionProtocolAdapter>(interaction);
             });
@@ -425,7 +547,7 @@ public sealed class ProtocolRouteFixtureTests
         Assert.NotNull(interaction.LastContext);
         Assert.Equal("user-1", interaction.LastContext!.VerifiedBackendPrincipalId);
         Assert.Null(interaction.LastContext.Actor);
-        metadata.VerifyNoOtherCalls();
+        gateway.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -463,9 +585,11 @@ public sealed class ProtocolRouteFixtureTests
     public async Task JellyfinSearchHints_AppliesOneGlobalLimitAfterMerging(string path, bool userScoped)
     {
         var observedRequests = new List<string>();
-        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
-        metadata.Setup(service => service.SearchAllAsync(
-                "fixture", 2, 2, 2, It.IsAny<CancellationToken>()))
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.SearchAsync(
+                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
+                    context.VerifiedBackendPrincipalId == "user-1"),
+                "fixture", 2, 2, 2, null))
             .ReturnsAsync(new SearchResult
             {
                 Songs = [new Song { Id = "external-song", Title = "Song", Artist = "Artist" }],
@@ -484,9 +608,8 @@ public sealed class ProtocolRouteFixtureTests
             },
             services =>
             {
-                services.RemoveAll<IMusicMetadataService>();
-                services.AddSingleton(metadata.Object);
                 services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
             });
         using var client = factory.CreateClient();
 
@@ -501,7 +624,7 @@ public sealed class ProtocolRouteFixtureTests
             (!userScoped || request.Contains("UserId=user-1", StringComparison.Ordinal)));
         Assert.DoesNotContain(observedRequests, request =>
             request.StartsWith("/Users/user-1/Search/Hints", StringComparison.Ordinal));
-        metadata.VerifyAll();
+        gateway.VerifyAll();
     }
 
     [Fact]
@@ -513,8 +636,7 @@ public sealed class ProtocolRouteFixtureTests
             var verification = fixture.GetProperty("verification");
             var expected = fixture.GetProperty("expected");
             var observedRequests = new List<string>();
-            var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
-            var downloads = new Mock<IDownloadService>(MockBehavior.Strict);
+            var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
 
             using var factory = new ProtocolFactory(
                 "Jellyfin",
@@ -527,10 +649,8 @@ public sealed class ProtocolRouteFixtureTests
                 },
                 services =>
                 {
-                    services.RemoveAll<IMusicMetadataService>();
-                    services.AddSingleton(metadata.Object);
-                    services.RemoveAll<IDownloadService>();
-                    services.AddSingleton(downloads.Object);
+                    services.RemoveAll<IProtocolProviderGateway>();
+                    services.AddSingleton(gateway.Object);
                 });
             using var client = factory.CreateClient();
             var requestFixture = fixture.GetProperty("request");
@@ -554,8 +674,7 @@ public sealed class ProtocolRouteFixtureTests
             Assert.Equal(
                 [ModernJellyfinPath(verification.GetProperty("pathAndQuery").GetString()!)],
                 observedRequests);
-            metadata.VerifyNoOtherCalls();
-            downloads.VerifyNoOtherCalls();
+            gateway.VerifyNoOtherCalls();
         }
     }
 
@@ -808,20 +927,22 @@ public sealed class ProtocolRouteFixtureTests
     public async Task JellyfinSearchAdapter_PreservesFixtureStatusBodyAndPaging()
     {
         using var fixture = ReadFixture("jellyfin-search-shaping.json");
-        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
-        metadata
-            .Setup(service => service.SearchAllAsync(
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway
+            .Setup(service => service.SearchAsync(
+                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
+                    context.VerifiedBackendPrincipalId == "user-1"),
                 "fixture",
                 20,
                 0,
-                0,
-                It.IsAny<CancellationToken>()))
+                0, null))
             .ReturnsAsync(new SearchResult());
-        metadata
+        gateway
             .Setup(service => service.SearchPlaylistsAsync(
+                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
+                    context.VerifiedBackendPrincipalId == "user-1"),
                 "fixture",
-                20,
-                It.IsAny<CancellationToken>()))
+                20))
             .ReturnsAsync([]);
 
         using var factory = new ProtocolFactory(
@@ -831,8 +952,8 @@ public sealed class ProtocolRouteFixtureTests
                 : Json(StatusCodes.Status200OK, fixture.RootElement.GetProperty("upstream").GetProperty("body").GetRawText()),
             services =>
             {
-                services.RemoveAll<IMusicMetadataService>();
-                services.AddSingleton(metadata.Object);
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
             });
         using var client = factory.CreateClient();
 
@@ -848,20 +969,21 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal(
             CanonicalJson(expected.GetProperty("body")),
             CanonicalJson(JsonDocument.Parse(body).RootElement));
-        metadata.Verify(service => service.SearchAllAsync(
-            "fixture",
-            20,
-            0,
-            0,
-            It.IsAny<CancellationToken>()), Times.Once);
+        gateway.Verify(service => service.SearchAsync(
+            It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
+                context.VerifiedBackendPrincipalId == "user-1"),
+            "fixture", 20, 0, 0, null), Times.Once);
     }
 
     [Fact]
     public async Task JellyfinItemAndImageAdapters_PreserveExternalShapingPlaceholderAndConditionalResponse()
     {
         using var fixture = ReadFixture("jellyfin-item-image-shaping.json");
-        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
-        metadata.Setup(service => service.GetSongAsync("deezer", "42", It.IsAny<CancellationToken>()))
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.GetSongAsync(
+                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
+                    context.VerifiedBackendPrincipalId == "user-1" && context.Actor != null),
+                "deezer", "42"))
             .ReturnsAsync(new Song
             {
                 Id = "ext-deezer-song-42",
@@ -873,7 +995,10 @@ public sealed class ProtocolRouteFixtureTests
                 Album = "Fixture Album",
                 Duration = 123
             });
-        metadata.Setup(service => service.GetSongAsync("deezer", "no-art", It.IsAny<CancellationToken>()))
+        gateway.Setup(service => service.GetSongAsync(
+                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
+                    context.VerifiedBackendPrincipalId == "user-1" && context.Actor != null),
+                "deezer", "no-art"))
             .ReturnsAsync(new Song
             {
                 Id = "ext-deezer-song-no-art",
@@ -890,8 +1015,9 @@ public sealed class ProtocolRouteFixtureTests
                 : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
             services =>
             {
-                services.RemoveAll<IMusicMetadataService>();
-                services.AddSingleton(metadata.Object);
+                AddArtworkPrincipal(services, "user-1");
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
             });
         using var client = factory.CreateClient();
 
@@ -937,6 +1063,7 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal(
             expectedImage.GetProperty("length").GetInt32(),
             (await pathImageResponse.Content.ReadAsByteArrayAsync()).Length);
+        gateway.VerifyAll();
     }
 
     [Fact]
@@ -946,7 +1073,8 @@ public sealed class ProtocolRouteFixtureTests
         var observedPaths = new List<string>();
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(service => service.GetAlbumAsync(
-                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin),
+                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
+                    context.VerifiedBackendPrincipalId == "verified-user" && context.Actor != null),
                 "apple-musickit",
                 "i.album"))
             .ReturnsAsync(new Album
@@ -980,6 +1108,7 @@ public sealed class ProtocolRouteFixtureTests
             },
             services =>
             {
+                AddArtworkPrincipal(services, "verified-user");
                 services.RemoveAll<IProtocolProviderGateway>();
                 services.AddSingleton(gateway.Object);
             });
@@ -1003,7 +1132,8 @@ public sealed class ProtocolRouteFixtureTests
         var artworkBytes = new byte[] { 0xFF, 0xD8, 0xFF, 0xD9 };
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(service => service.ResolvePlaylistArtworkAsync(
-                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin),
+                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
+                    context.VerifiedBackendPrincipalId == "verified-user" && context.Actor != null),
                 "spotify",
                 "playlist-1",
                 10 * 1024 * 1024))
@@ -1015,6 +1145,7 @@ public sealed class ProtocolRouteFixtureTests
                 : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
             services =>
             {
+                AddArtworkPrincipal(services, "verified-user");
                 services.RemoveAll<IProtocolProviderGateway>();
                 services.AddSingleton(gateway.Object);
             });
@@ -1038,9 +1169,11 @@ public sealed class ProtocolRouteFixtureTests
         using var sourceImage = SKImage.FromBitmap(bitmap);
         using var sourceData = sourceImage.Encode(SKEncodedImageFormat.Png, 100);
         var sourceBytes = sourceData.ToArray();
-        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
-        metadata.Setup(service => service.GetAlbumAsync(
-                "deezer", "42", It.IsAny<CancellationToken>()))
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.GetAlbumAsync(
+                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
+                    context.VerifiedBackendPrincipalId == "user-1" && context.Actor != null),
+                "deezer", "42"))
             .ReturnsAsync(new Album
             {
                 Id = "ext-deezer-album-42",
@@ -1065,9 +1198,9 @@ public sealed class ProtocolRouteFixtureTests
             },
             services =>
             {
-                services.RemoveAll<IMusicMetadataService>();
-                services.AddSingleton(metadata.Object);
+                AddArtworkPrincipal(services, "user-1");
                 services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
             });
         using var client = factory.CreateClient();
 
@@ -1081,30 +1214,27 @@ public sealed class ProtocolRouteFixtureTests
         Assert.NotNull(resultBitmap);
         Assert.Equal(2, resultBitmap.Width);
         Assert.Equal(1, resultBitmap.Height);
-        metadata.VerifyAll();
+        gateway.VerifyAll();
     }
 
-    [Fact]
-    public async Task JellyfinExternalSongImage_WithoutPlayerToken_UsesMetadataFallback()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task JellyfinExternalSongImage_WithoutProviderActor_UsesPublicTypedArtwork(bool hasPlayerToken)
     {
         var artworkBytes = new byte[] { 0xFF, 0xD8, 0x01, 0x02, 0xFF, 0xD9 };
-        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
-        metadata.Setup(service => service.GetSongAsync(
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.GetPublicArtworkUriAsync(
                 "applemusic",
+                ProviderResourceKind.Track,
                 "6768469976",
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new Song
-            {
-                Id = "ext-applemusic-song-6768469976",
-                ExternalProvider = "applemusic",
-                ExternalId = "6768469976",
-                Title = "Artwork Track",
-                CoverArtUrl = "https://is1-ssl.mzstatic.com/image/thumb/song/1024x1024bb.jpg",
-                IsLocal = false
-            });
+            .ReturnsAsync(new Uri("https://is1-ssl.mzstatic.com/image/thumb/song/1024x1024bb.jpg"));
         using var factory = new ProtocolFactory(
             "Jellyfin",
-            request => request.RequestUri!.Host == "is1-ssl.mzstatic.com"
+            request => request.RequestUri!.AbsolutePath == "/Users/Me"
+                ? Json(StatusCodes.Status200OK, """{"Id":"user-1"}""")
+                : request.RequestUri.Host == "is1-ssl.mzstatic.com"
                 ? new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new ByteArrayContent(artworkBytes)
@@ -1115,30 +1245,35 @@ public sealed class ProtocolRouteFixtureTests
                 : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
             services =>
             {
-                services.RemoveAll<IMusicMetadataService>();
-                services.AddSingleton(metadata.Object);
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
             });
         using var client = factory.CreateClient();
 
         using var response = await client.GetAsync(
-            "/Items/ext-applemusic-song-6768469976/Images/Primary?fillHeight=600&fillWidth=600");
+            "/Items/ext-applemusic-song-6768469976/Images/Primary?fillHeight=600&fillWidth=600" +
+            (hasPlayerToken ? "&api_key=fixture-key" : ""));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("image/jpeg", response.Content.Headers.ContentType?.MediaType);
         Assert.Equal(artworkBytes, await response.Content.ReadAsByteArrayAsync());
-        metadata.VerifyAll();
+        gateway.VerifyAll();
+        gateway.VerifyNoOtherCalls();
     }
 
     [Fact]
     public async Task JellyfinVirtualPlaylistImage_WithoutPlayerToken_DoesNotRevealPrivateSource()
     {
         const string virtualId = "allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0";
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         var virtualization = new Mock<IPlaylistVirtualizationService>(MockBehavior.Strict);
         using var factory = new ProtocolFactory(
             "Jellyfin",
             _ => throw new InvalidOperationException("Anonymous playlist artwork must not reach the backend."),
             services =>
             {
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
                 services.RemoveAll<IPlaylistVirtualizationService>();
                 services.AddSingleton(virtualization.Object);
             });
@@ -1148,16 +1283,18 @@ public sealed class ProtocolRouteFixtureTests
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         virtualization.VerifyNoOtherCalls();
+        gateway.VerifyNoOtherCalls();
     }
 
     [Fact]
     public async Task JellyfinApplePlaybackInfo_AdvertisesImmediateFlacStream()
     {
-        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
-        metadata.Setup(service => service.GetSongAsync(
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.GetSongAsync(
+                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
+                    context.VerifiedBackendPrincipalId == "verified-user"),
                 "applemusic",
-                "6768469976",
-                It.IsAny<CancellationToken>()))
+                "6768469976"))
             .ReturnsAsync(new Song
             {
                 Id = "ext-applemusic-song-6768469976",
@@ -1176,9 +1313,8 @@ public sealed class ProtocolRouteFixtureTests
                 : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
             services =>
             {
-                services.RemoveAll<IMusicMetadataService>();
                 services.RemoveAll<IProtocolProviderGateway>();
-                services.AddSingleton(metadata.Object);
+                services.AddSingleton(gateway.Object);
             });
         using var client = factory.CreateClient();
 
@@ -1194,7 +1330,7 @@ public sealed class ProtocolRouteFixtureTests
             "/Audio/ext-applemusic-song-6768469976/stream?static=true",
             source.GetProperty("DirectStreamUrl").GetString());
         Assert.False(source.GetProperty("RequiresOpening").GetBoolean());
-        metadata.VerifyAll();
+        gateway.VerifyAll();
     }
 
     [Fact]
@@ -1312,11 +1448,21 @@ public sealed class ProtocolRouteFixtureTests
         foreach (var fixture in fixtures.RootElement.EnumerateArray())
         {
             var observedPaths = new List<string>();
-            var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+            var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
             if (fixture.TryGetProperty("external", out var external) && external.GetBoolean())
             {
-                metadata.Setup(service => service.GetSongAsync("deezer", "missing", It.IsAny<CancellationToken>()))
+                gateway.Setup(service => service.GetSongAsync(
+                        It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
+                            context.VerifiedBackendPrincipalId == "user-1"),
+                        "deezer", "missing"))
                     .ReturnsAsync((Song?)null);
+            }
+
+            if (fixture.TryGetProperty("itemBody", out var item) &&
+                item.GetProperty("Type").GetString() == "Audio")
+            {
+                gateway.Setup(service => service.GetProviderOrder(ProviderCapabilityKind.Lyrics))
+                    .Returns(Array.Empty<string>());
             }
 
             using var factory = new ProtocolFactory(
@@ -1353,8 +1499,8 @@ public sealed class ProtocolRouteFixtureTests
                 },
                 services =>
                 {
-                    services.RemoveAll<IMusicMetadataService>();
-                    services.AddSingleton(metadata.Object);
+                    services.RemoveAll<IProtocolProviderGateway>();
+                    services.AddSingleton(gateway.Object);
                 });
             using var client = factory.CreateClient();
 
@@ -1379,7 +1525,7 @@ public sealed class ProtocolRouteFixtureTests
                     CanonicalJson(JsonDocument.Parse(body).RootElement));
             }
 
-            metadata.VerifyAll();
+            gateway.VerifyAll();
         }
     }
 
@@ -1388,7 +1534,7 @@ public sealed class ProtocolRouteFixtureTests
     {
         using var fixture = ReadFixture("jellyfin-favorite-playback.json");
         var observedPaths = new List<string>();
-        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         var interaction = new RecordingInteractionAdapter();
         var local = fixture.RootElement.GetProperty("favorite").GetProperty("local");
         var upstream = local.GetProperty("upstream");
@@ -1413,8 +1559,8 @@ public sealed class ProtocolRouteFixtureTests
             },
             services =>
             {
-                services.RemoveAll<IMusicMetadataService>();
-                services.AddSingleton(metadata.Object);
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
                 services.RemoveAll<IJellyfinInteractionProtocolAdapter>();
                 services.AddSingleton<IJellyfinInteractionProtocolAdapter>(interaction);
             });
@@ -1443,7 +1589,7 @@ public sealed class ProtocolRouteFixtureTests
         Assert.NotNull(interaction.LastContext);
         Assert.Equal("verified-user", interaction.LastContext!.VerifiedBackendPrincipalId);
         Assert.Null(interaction.LastContext.Actor);
-        metadata.VerifyNoOtherCalls();
+        gateway.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -1564,7 +1710,7 @@ public sealed class ProtocolRouteFixtureTests
             Assert.Equal(expectedPaths, observedPaths);
         }
 
-        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         using var unresolvedFactory = new ProtocolFactory(
             "Jellyfin",
             request => request.RequestUri!.AbsolutePath.StartsWith("/Users/", StringComparison.Ordinal)
@@ -1572,8 +1718,8 @@ public sealed class ProtocolRouteFixtureTests
                 : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
             services =>
             {
-                services.RemoveAll<IMusicMetadataService>();
-                services.AddSingleton(metadata.Object);
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
             });
         using var unresolvedClient = unresolvedFactory.CreateClient();
         using var unresolvedResponse = await unresolvedClient.GetAsync(
@@ -1582,7 +1728,7 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal(
             "{\"Items\":[],\"TotalRecordCount\":0,\"StartIndex\":0}",
             await unresolvedResponse.Content.ReadAsStringAsync());
-        metadata.VerifyNoOtherCalls();
+        gateway.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -1718,7 +1864,7 @@ public sealed class ProtocolRouteFixtureTests
         string path,
         string resourceType)
     {
-        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         var songs = new List<Song>
         {
             new() { Id = "mix-1", Title = "First", Artist = "Fixture Artist" },
@@ -1726,8 +1872,10 @@ public sealed class ProtocolRouteFixtureTests
         };
         if (resourceType == "album")
         {
-            metadata.Setup(service => service.GetAlbumAsync(
-                    "deezer", "42", It.IsAny<CancellationToken>()))
+            gateway.Setup(service => service.GetAlbumAsync(
+                    It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
+                        context.VerifiedBackendPrincipalId == "user-1"),
+                    "deezer", "42"))
                 .ReturnsAsync(new Album
                 {
                     Id = "ext-deezer-album-42",
@@ -1740,8 +1888,10 @@ public sealed class ProtocolRouteFixtureTests
         }
         else
         {
-            metadata.Setup(service => service.GetArtistAsync(
-                    "deezer", "42", It.IsAny<CancellationToken>()))
+            gateway.Setup(service => service.GetArtistAsync(
+                    It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
+                        context.VerifiedBackendPrincipalId == "user-1"),
+                    "deezer", "42"))
                 .ReturnsAsync(new Artist
                 {
                     Id = "ext-deezer-artist-42",
@@ -1749,8 +1899,10 @@ public sealed class ProtocolRouteFixtureTests
                     ExternalId = "42",
                     Name = "Fixture Artist"
                 });
-            metadata.Setup(service => service.GetArtistAlbumsAsync(
-                    "deezer", "42", It.IsAny<CancellationToken>()))
+            gateway.Setup(service => service.GetArtistAlbumsAsync(
+                    It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
+                        context.VerifiedBackendPrincipalId == "user-1"),
+                    "deezer", "42"))
                 .ReturnsAsync([
                     new Album
                     {
@@ -1761,8 +1913,10 @@ public sealed class ProtocolRouteFixtureTests
                         Artist = "Fixture Artist"
                     }
                 ]);
-            metadata.Setup(service => service.GetAlbumAsync(
-                    "deezer", "a1", It.IsAny<CancellationToken>()))
+            gateway.Setup(service => service.GetAlbumAsync(
+                    It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
+                        context.VerifiedBackendPrincipalId == "user-1"),
+                    "deezer", "a1"))
                 .ReturnsAsync(new Album
                 {
                     Id = "ext-deezer-album-a1",
@@ -1790,9 +1944,8 @@ public sealed class ProtocolRouteFixtureTests
                 : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
             services =>
             {
-                services.RemoveAll<IMusicMetadataService>();
-                services.AddSingleton(metadata.Object);
                 services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
                 services.RemoveAll<IJellyfinInteractionProtocolAdapter>();
                 services.AddSingleton(interaction.Object);
             });
@@ -1808,7 +1961,7 @@ public sealed class ProtocolRouteFixtureTests
             ["mix-1", "mix-2"],
             body.RootElement.GetProperty("Items").EnumerateArray()
                 .Select(item => item.GetProperty("Id").GetString()!).Order().ToArray());
-        metadata.VerifyAll();
+        gateway.VerifyAll();
         interaction.VerifyAll();
     }
 
@@ -2034,7 +2187,7 @@ public sealed class ProtocolRouteFixtureTests
     [InlineData("/MusicGenres/InstantMix?id=allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0&api_key=fixture-key")]
     public async Task JellyfinQueryInstantMix_RejectsMismatchedSynthesizedResourceTypes(string path)
     {
-        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         using var factory = new ProtocolFactory(
             "Jellyfin",
             request => request.RequestUri!.AbsolutePath == "/Users/Me"
@@ -2042,9 +2195,8 @@ public sealed class ProtocolRouteFixtureTests
                 : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
             services =>
             {
-                services.RemoveAll<IMusicMetadataService>();
-                services.AddSingleton(metadata.Object);
                 services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
             });
         using var client = factory.CreateClient();
 
@@ -2054,7 +2206,7 @@ public sealed class ProtocolRouteFixtureTests
         Assert.True(
             response.StatusCode == HttpStatusCode.Forbidden,
             $"Expected 403, got {(int)response.StatusCode}: {responseBody}");
-        metadata.VerifyNoOtherCalls();
+        gateway.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -2290,7 +2442,7 @@ public sealed class ProtocolRouteFixtureTests
             }
         });
         var observed = new List<ObservedRequest>();
-        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         using var factory = new ProtocolFactory(
             "Subsonic",
             request =>
@@ -2302,8 +2454,8 @@ public sealed class ProtocolRouteFixtureTests
             },
             services =>
             {
-                services.RemoveAll<IMusicMetadataService>();
-                services.AddSingleton(metadata.Object);
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
             });
         using var client = factory.CreateClient();
 
@@ -2316,7 +2468,7 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal(
             $"/rest/{endpoint}.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json&id={itemId}",
             observed[1].PathAndQuery);
-        metadata.VerifyNoOtherCalls();
+        gateway.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -2347,7 +2499,6 @@ public sealed class ProtocolRouteFixtureTests
                     IsLocal = false
                 }
             ]);
-        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
         using var factory = new ProtocolFactory(
             "Subsonic",
             request => request.RequestUri!.AbsolutePath == "/rest/ping.view"
@@ -2357,8 +2508,6 @@ public sealed class ProtocolRouteFixtureTests
             {
                 services.RemoveAll<IProtocolProviderGateway>();
                 services.AddSingleton(gateway.Object);
-                services.RemoveAll<IMusicMetadataService>();
-                services.AddSingleton(metadata.Object);
             });
         using var client = factory.CreateClient();
 
@@ -2371,7 +2520,6 @@ public sealed class ProtocolRouteFixtureTests
         Assert.Equal("ext-spotiflac-amazon-artist-artist-1", artist.GetProperty("id").GetString());
         Assert.Equal("ext-spotiflac-amazon-album-album-1", artist.GetProperty("album")[0].GetProperty("id").GetString());
         gateway.VerifyAll();
-        metadata.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -2424,8 +2572,8 @@ public sealed class ProtocolRouteFixtureTests
         foreach (var fixture in fixtures.RootElement.EnumerateArray())
         {
             var observedRequests = new List<ObservedRequest>();
-            var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
-            var downloads = new Mock<IDownloadService>(MockBehavior.Strict);
+            var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+
             var verification = fixture.GetProperty("verification");
 
             using var factory = new ProtocolFactory(
@@ -2438,10 +2586,8 @@ public sealed class ProtocolRouteFixtureTests
                 },
                 services =>
                 {
-                    services.RemoveAll<IMusicMetadataService>();
-                    services.AddSingleton(metadata.Object);
-                    services.RemoveAll<IDownloadService>();
-                    services.AddSingleton(downloads.Object);
+                    services.RemoveAll<IProtocolProviderGateway>();
+                    services.AddSingleton(gateway.Object);
                 });
             using var client = factory.CreateClient();
             using var request = CreateFixtureRequest(fixture.GetProperty("request"));
@@ -2483,8 +2629,7 @@ public sealed class ProtocolRouteFixtureTests
                     observed.Body);
             }
 
-            metadata.VerifyNoOtherCalls();
-            downloads.VerifyNoOtherCalls();
+            gateway.VerifyNoOtherCalls();
         }
     }
 
@@ -4202,6 +4347,34 @@ public sealed class ProtocolRouteFixtureTests
         };
     }
 
+    private static void AddArtworkPrincipal(IServiceCollection services, string backendPrincipalId)
+    {
+        var userId = Guid.Parse("018f1f6e-8e9c-77f5-9a79-3d8a494d60cd");
+        services.AddSingleton<IStartupFilter>(new ArtworkPrincipalStartupFilter(
+            new AllstarrPrincipal(userId, "jellyfin", "primary", backendPrincipalId, "Fixture User", false)));
+        var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        policies.Setup(service => service.ResolveForUserAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new EffectiveProviderPolicySnapshot(
+                ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, 0.07)
+            { UserId = userId });
+        services.RemoveAll<IEffectiveProviderPolicyResolver>();
+        services.AddSingleton(policies.Object);
+    }
+
+    private sealed class ArtworkPrincipalStartupFilter(AllstarrPrincipal principal) : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use(async (context, continuePipeline) =>
+            {
+                context.Items[BackendIdentityResolver.HttpContextPrincipalItemKey] = principal;
+                await continuePipeline();
+            });
+            next(app);
+        };
+    }
+
     private sealed class SonicPrincipalStartupFilter : IStartupFilter
     {
         public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
@@ -4318,12 +4491,6 @@ public sealed class ProtocolRouteFixtureTests
                 services.AddSingleton<IHttpClientFactory>(
                     new StubHttpClientFactory(new StubHttpMessageHandler(_responder)));
                 _configureServices?.Invoke(services);
-                if (!services.Any(service => service.ServiceType == typeof(IProtocolProviderGateway)))
-                {
-                    services.RemoveAll<IProtocolLyricsResolver>();
-                    services.AddSingleton(
-                        new Mock<IProtocolLyricsResolver>(MockBehavior.Strict).Object);
-                }
             });
         }
 

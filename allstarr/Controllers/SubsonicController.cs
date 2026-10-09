@@ -3,7 +3,6 @@ using System.Xml.Linq;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
-using allstarr.Models.Download;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
 using allstarr.Services;
@@ -30,9 +29,7 @@ public partial class SubsonicController : ControllerBase
     private const int MaximumArtworkBytes = 10 * 1024 * 1024;
 
     private readonly SubsonicSettings _subsonicSettings;
-    private readonly IMusicMetadataService _metadataService;
     private readonly ILocalLibraryService _localLibraryService;
-    private readonly IDownloadService _downloadService;
     private readonly SubsonicRequestParser _requestParser;
     private readonly SubsonicResponseBuilder _responseBuilder;
     private readonly SubsonicModelMapper _modelMapper;
@@ -47,17 +44,15 @@ public partial class SubsonicController : ControllerBase
     private readonly ILogger<SubsonicController> _logger;
     private readonly IFavoriteActionPipeline? _favoriteActions;
     private readonly IPlaybackSignalPipeline? _playbackSignals;
-    private readonly IProtocolProviderGateway? _providerGateway;
-    private readonly ProtocolStreamingResponseAdapter? _streamingResponseAdapter;
+    private readonly IProtocolProviderGateway _providerGateway;
+    private readonly ProtocolStreamingResponseAdapter _streamingResponseAdapter;
     private readonly IAudioMuseRecommendationClient? _audioMuse;
     private readonly IIntelligencePolicyService? _intelligencePolicies;
     private readonly ManagedTrackCacheService? _managedTrackCache;
 
     public SubsonicController(
         IOptions<SubsonicSettings> subsonicSettings,
-        IMusicMetadataService metadataService,
         ILocalLibraryService localLibraryService,
-        IDownloadService downloadService,
         SubsonicRequestParser requestParser,
         SubsonicResponseBuilder responseBuilder,
         SubsonicModelMapper modelMapper,
@@ -70,18 +65,16 @@ public partial class SubsonicController : ControllerBase
         IApplicationCache cache,
         IMediaAssetResolver mediaAssets,
         ILogger<SubsonicController> logger,
+        IProtocolProviderGateway providerGateway,
+        ProtocolStreamingResponseAdapter streamingResponseAdapter,
         IFavoriteActionPipeline? favoriteActions = null,
         IPlaybackSignalPipeline? playbackSignals = null,
-        IProtocolProviderGateway? providerGateway = null,
-        ProtocolStreamingResponseAdapter? streamingResponseAdapter = null,
         IAudioMuseRecommendationClient? audioMuse = null,
         IIntelligencePolicyService? intelligencePolicies = null,
         ManagedTrackCacheService? managedTrackCache = null)
     {
         _subsonicSettings = subsonicSettings.Value;
-        _metadataService = metadataService;
         _localLibraryService = localLibraryService;
-        _downloadService = downloadService;
         _requestParser = requestParser;
         _responseBuilder = responseBuilder;
         _modelMapper = modelMapper;
@@ -138,22 +131,17 @@ public partial class SubsonicController : ControllerBase
             ? context
             : throw new InvalidOperationException("Authenticated Subsonic action has no protocol context.");
 
-    private Task<Song?> GetProviderSongAsync(string provider, string externalId) => _providerGateway != null
-        ? _providerGateway.GetSongAsync(CurrentProtocolContext, provider, externalId)
-        : _metadataService.GetSongAsync(provider, externalId, HttpContext.RequestAborted);
+    private Task<Song?> GetProviderSongAsync(string provider, string externalId) =>
+        _providerGateway.GetSongAsync(CurrentProtocolContext, provider, externalId);
 
-    private Task<Album?> GetProviderAlbumAsync(string provider, string externalId) => _providerGateway != null
-        ? _providerGateway.GetAlbumAsync(CurrentProtocolContext, provider, externalId)
-        : _metadataService.GetAlbumAsync(provider, externalId, HttpContext.RequestAborted);
+    private Task<Album?> GetProviderAlbumAsync(string provider, string externalId) =>
+        _providerGateway.GetAlbumAsync(CurrentProtocolContext, provider, externalId);
 
-    private Task<Artist?> GetProviderArtistAsync(string provider, string externalId) => _providerGateway != null
-        ? _providerGateway.GetArtistAsync(CurrentProtocolContext, provider, externalId)
-        : _metadataService.GetArtistAsync(provider, externalId, HttpContext.RequestAborted);
+    private Task<Artist?> GetProviderArtistAsync(string provider, string externalId) =>
+        _providerGateway.GetArtistAsync(CurrentProtocolContext, provider, externalId);
 
     private Task<List<Album>> GetProviderArtistAlbumsAsync(string provider, string externalId) =>
-        _providerGateway != null
-            ? _providerGateway.GetArtistAlbumsAsync(CurrentProtocolContext, provider, externalId)
-            : _metadataService.GetArtistAlbumsAsync(provider, externalId, HttpContext.RequestAborted);
+        _providerGateway.GetArtistAlbumsAsync(CurrentProtocolContext, provider, externalId);
 
     [HttpGet, HttpPost]
     [Route("rest/search3")]
@@ -175,30 +163,18 @@ public partial class SubsonicController : ControllerBase
         }
 
         var subsonicTask = _proxyService.RelaySafeAsync("rest/search3", parameters);
-        var externalTask = _providerGateway != null
-            ? _providerGateway.SearchAsync(
-                CurrentProtocolContext,
-                cleanQuery,
-                window.SongFetchCount,
-                window.AlbumFetchCount,
-                window.ArtistFetchCount)
-            : _metadataService.SearchAllAsync(
-                cleanQuery,
-                window.SongFetchCount,
-                window.AlbumFetchCount,
-                window.ArtistFetchCount,
-                HttpContext.RequestAborted);
+        var externalTask = _providerGateway.SearchAsync(
+            CurrentProtocolContext,
+            cleanQuery,
+            window.SongFetchCount,
+            window.AlbumFetchCount,
+            window.ArtistFetchCount);
 
         Task<List<ExternalPlaylist>> playlistTask = _subsonicSettings.EnableExternalPlaylists
-            ? _providerGateway != null
-                ? _providerGateway.SearchPlaylistsAsync(
-                    CurrentProtocolContext,
-                    cleanQuery,
-                    window.AlbumFetchCount)
-                : _metadataService.SearchPlaylistsAsync(
-                    cleanQuery,
-                    window.AlbumFetchCount,
-                    HttpContext.RequestAborted)
+            ? _providerGateway.SearchPlaylistsAsync(
+                CurrentProtocolContext,
+                cleanQuery,
+                window.AlbumFetchCount)
             : Task.FromResult(new List<ExternalPlaylist>());
 
         await Task.WhenAll(subsonicTask, externalTask, playlistTask);
@@ -236,88 +212,53 @@ public partial class SubsonicController : ControllerBase
 
         var requestedQuality = StreamQualityHelper.FromSubsonicMaxBitRate(
             parameters.GetValueOrDefault("maxBitRate"));
-        if (_providerGateway != null && _streamingResponseAdapter != null)
-        {
-            try
-            {
-                var routed = await _providerGateway.OpenStreamAsync(
-                    CurrentProtocolContext,
-                    provider!,
-                    externalId!,
-                    requestedQuality,
-                    Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null,
-                    headOnly: HttpMethods.IsHead(Request.Method));
-                if (routed != null)
-                {
-                    if (!routed.Response.IsSuccessStatusCode)
-                    {
-                        var status = (int)routed.Response.StatusCode;
-                        routed.Response.Dispose();
-                        return StatusCode(status);
-                    }
-                    if (_managedTrackCache != null)
-                    {
-                        await _managedTrackCache.WrapAsync(
-                            routed,
-                            CurrentProtocolContext,
-                            routed.ServingProviderId,
-                            routed.ServingExternalId ?? externalId!,
-                            HttpMethods.IsHead(Request.Method),
-                            () => _providerGateway.GetSongAsync(CurrentProtocolContext, routed.ServingProviderId,
-                                routed.ServingExternalId ?? externalId!),
-                            HttpContext.RequestAborted);
-                    }
-                    return await _streamingResponseAdapter.CreateAsync(
-                        HttpContext,
-                        routed.Response,
-                        HttpContext.RequestAborted,
-                        enableRangeProcessing: routed.IsCached);
-                }
-                if (CurrentProtocolContext.Actor != null) return StatusCode(StatusCodes.Status503ServiceUnavailable,
-                    new { error = "No verified playback source is available." });
-            }
-            catch (Exception ex)
-            {
-                var error = SubsonicExceptionFilter.Map(
-                    ex,
-                    HttpContext.RequestAborted.IsCancellationRequested);
-                _logger.LogWarning(
-                    "Typed provider stream route failed safely for {Provider} ({ExceptionType})",
-                    provider,
-                    ex.GetType().Name);
-                return StatusCode(error.StatusCode, new { error = error.Message });
-            }
-        }
-
         try
         {
-            var downloadStream = await _downloadService.DownloadAndStreamAsync(
+            var routed = await _providerGateway.OpenStreamAsync(
+                CurrentProtocolContext,
                 provider!,
                 externalId!,
-                requestedQuality switch
-                {
-                    ProviderAudioQuality.DataSaver => StreamQuality.Low,
-                    ProviderAudioQuality.Lossy => StreamQuality.High,
-                    _ => null
-                },
-                HttpContext.RequestAborted);
-
-            var contentType = "audio/mpeg";
-            if (downloadStream is FileStream fs)
+                requestedQuality,
+                Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null,
+                headOnly: HttpMethods.IsHead(Request.Method));
+            if (routed != null)
             {
-                contentType = GetContentType(fs.Name);
+                if (!routed.Response.IsSuccessStatusCode)
+                {
+                    var status = (int)routed.Response.StatusCode;
+                    routed.Response.Dispose();
+                    return StatusCode(status);
+                }
+                if (_managedTrackCache != null)
+                {
+                    await _managedTrackCache.WrapAsync(
+                        routed,
+                        CurrentProtocolContext,
+                        routed.ServingProviderId,
+                        routed.ServingExternalId ?? externalId!,
+                        HttpMethods.IsHead(Request.Method),
+                        () =>
+        _providerGateway.GetSongAsync(CurrentProtocolContext, routed.ServingProviderId,
+                            routed.ServingExternalId ?? externalId!),
+                        HttpContext.RequestAborted);
+                }
+                return await _streamingResponseAdapter.CreateAsync(
+                    HttpContext,
+                    routed.Response,
+                    HttpContext.RequestAborted,
+                    enableRangeProcessing: routed.IsCached);
             }
-
-            return File(downloadStream, contentType, enableRangeProcessing: true);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new { error = "No verified playback source is available." });
         }
         catch (Exception ex)
         {
             var error = SubsonicExceptionFilter.Map(
                 ex,
                 HttpContext.RequestAborted.IsCancellationRequested);
-            _logger.LogError(
-                "Failed to stream external Subsonic item {Id} safely ({ExceptionType})",
-                id,
+            _logger.LogWarning(
+                "Typed provider stream route failed safely for {Provider} ({ExceptionType})",
+                provider,
                 ex.GetType().Name);
             return StatusCode(error.StatusCode, new { error = error.Message });
         }
@@ -435,17 +376,13 @@ public partial class SubsonicController : ControllerBase
         {
             var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(id);
 
-            var playlist = _providerGateway != null
-                ? await _providerGateway.GetPlaylistAsync(CurrentProtocolContext, provider, externalId)
-                : await _metadataService.GetPlaylistAsync(provider, externalId);
+            var playlist = await _providerGateway.GetPlaylistAsync(CurrentProtocolContext, provider, externalId);
             if (playlist == null)
             {
                 return _responseBuilder.CreateError(format, 70, "Playlist not found");
             }
 
-            var tracks = _providerGateway != null
-                ? await _providerGateway.GetPlaylistTracksAsync(CurrentProtocolContext, provider, externalId)
-                : await _metadataService.GetPlaylistTracksAsync(provider, externalId);
+            var tracks = await _providerGateway.GetPlaylistTracksAsync(CurrentProtocolContext, provider, externalId);
 
             // Subsonic clients consume external playlists through the album shape.
             return _responseBuilder.CreatePlaylistAsAlbumResponse(format, playlist, tracks);
@@ -536,9 +473,7 @@ public partial class SubsonicController : ControllerBase
             try
             {
                 var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(id);
-                var playlist = _providerGateway != null
-                    ? await _providerGateway.GetPlaylistAsync(CurrentProtocolContext, provider, externalId)
-                    : await _metadataService.GetPlaylistAsync(provider, externalId);
+                var playlist = await _providerGateway.GetPlaylistAsync(CurrentProtocolContext, provider, externalId);
 
                 var asset = await ResolveExternalImageAsync(
                     provider, "playlist", externalId, playlist?.CoverUrl);
@@ -648,7 +583,7 @@ public partial class SubsonicController : ControllerBase
                 resourceId),
             async token =>
             {
-                if (resourceKind == "playlist" && _providerGateway != null)
+                if (resourceKind == "playlist")
                 {
                     var artwork = await _providerGateway.ResolvePlaylistArtworkAsync(
                         CurrentProtocolContext, provider, resourceId, MaximumArtworkBytes);
@@ -746,21 +681,6 @@ public partial class SubsonicController : ControllerBase
 
             return Content(doc.ToString(), "application/xml");
         }
-    }
-
-    private string GetContentType(string filePath)
-    {
-        var extension = Path.GetExtension(filePath).ToLowerInvariant();
-        return extension switch
-        {
-            ".mp3" => "audio/mpeg",
-            ".flac" => "audio/flac",
-            ".ogg" => "audio/ogg",
-            ".m4a" => "audio/mp4",
-            ".wav" => "audio/wav",
-            ".aac" => "audio/aac",
-            _ => "audio/mpeg"
-        };
     }
 
     #endregion

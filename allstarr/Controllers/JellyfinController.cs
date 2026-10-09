@@ -20,6 +20,7 @@ using allstarr.Services.Admin;
 using allstarr.Filters;
 using allstarr.Core.Protocols.Jellyfin;
 using allstarr.Core.Protocols;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Favorites;
 using allstarr.Core.Playback;
 using allstarr.Core.Intelligence;
@@ -41,9 +42,7 @@ public partial class JellyfinController : ControllerBase
     private readonly JellyfinSettings _settings;
     private readonly SpotifyImportSettings _spotifySettings;
     private readonly ScrobblingSettings _scrobblingSettings;
-    private readonly IMusicMetadataService _metadataService;
     private readonly ILocalLibraryService _localLibraryService;
-    private readonly IDownloadService _downloadService;
     private readonly JellyfinResponseBuilder _responseBuilder;
     private readonly IJellyfinSearchProtocolAdapter _searchProtocolAdapter;
     private readonly IJellyfinItemProtocolAdapter _itemProtocolAdapter;
@@ -63,7 +62,7 @@ public partial class JellyfinController : ControllerBase
     private readonly ILogger<JellyfinController> _logger;
     private readonly IFavoriteActionPipeline? _favoriteActions;
     private readonly IPlaybackSignalPipeline? _playbackSignals;
-    private readonly IProtocolProviderGateway? _providerGateway;
+    private readonly IProtocolProviderGateway _providerGateway;
     private readonly IAudioMuseRecommendationClient? _audioMuse;
     private readonly IBackendLibraryAccessResolver? _libraryAccess;
     private readonly IIntelligencePolicyService? _intelligencePolicies;
@@ -73,9 +72,7 @@ public partial class JellyfinController : ControllerBase
         IOptions<JellyfinSettings> settings,
         IOptions<SpotifyImportSettings> spotifySettings,
         IOptions<ScrobblingSettings> scrobblingSettings,
-        IMusicMetadataService metadataService,
         ILocalLibraryService localLibraryService,
-        IDownloadService downloadService,
         JellyfinResponseBuilder responseBuilder,
         IJellyfinSearchProtocolAdapter searchProtocolAdapter,
         IJellyfinItemProtocolAdapter itemProtocolAdapter,
@@ -92,10 +89,10 @@ public partial class JellyfinController : ControllerBase
         IProtocolLyricsResolver protocolLyricsResolver,
         IConfiguration configuration,
         ILogger<JellyfinController> logger,
+        IProtocolProviderGateway providerGateway,
         ScrobblingHelper? scrobblingHelper = null,
         IFavoriteActionPipeline? favoriteActions = null,
         IPlaybackSignalPipeline? playbackSignals = null,
-        IProtocolProviderGateway? providerGateway = null,
         IAudioMuseRecommendationClient? audioMuse = null,
         IIntelligencePolicyService? intelligencePolicies = null,
         ManagedTrackCacheService? managedTrackCache = null,
@@ -105,9 +102,7 @@ public partial class JellyfinController : ControllerBase
         _libraryAccess = libraryAccess;
         _spotifySettings = spotifySettings.Value;
         _scrobblingSettings = scrobblingSettings.Value;
-        _metadataService = metadataService;
         _localLibraryService = localLibraryService;
-        _downloadService = downloadService;
         _responseBuilder = responseBuilder;
         _searchProtocolAdapter = searchProtocolAdapter;
         _itemProtocolAdapter = itemProtocolAdapter;
@@ -141,93 +136,72 @@ public partial class JellyfinController : ControllerBase
     private Task<Song?> GetProviderSongAsync(
         string provider,
         string externalId,
-        CancellationToken cancellationToken = default) => _providerGateway != null
-        ? _providerGateway.GetSongAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId)
-        : _metadataService.GetSongAsync(provider, externalId, cancellationToken);
+        CancellationToken cancellationToken = default) =>
+        _providerGateway.GetSongAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId);
 
     private Task<Album?> GetProviderAlbumAsync(
         string provider,
         string externalId,
-        CancellationToken cancellationToken = default) => _providerGateway != null
-        ? _providerGateway.GetAlbumAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId)
-        : _metadataService.GetAlbumAsync(provider, externalId, cancellationToken);
+        CancellationToken cancellationToken = default) =>
+        _providerGateway.GetAlbumAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId);
 
     private Task<Artist?> GetProviderArtistAsync(
         string provider,
         string externalId,
-        CancellationToken cancellationToken = default) => _providerGateway != null
-        ? _providerGateway.GetArtistAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId)
-        : _metadataService.GetArtistAsync(provider, externalId, cancellationToken);
+        CancellationToken cancellationToken = default) =>
+        _providerGateway.GetArtistAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId);
 
     private Task<List<Album>> GetProviderArtistAlbumsAsync(
         string provider,
         string externalId,
-        CancellationToken cancellationToken = default) => _providerGateway != null
-        ? _providerGateway.GetArtistAlbumsAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId)
-        : _metadataService.GetArtistAlbumsAsync(provider, externalId, cancellationToken);
+        CancellationToken cancellationToken = default) =>
+        _providerGateway.GetArtistAlbumsAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId);
 
     private Task<List<Song>> GetProviderArtistTracksAsync(
         string provider,
         string externalId,
-        CancellationToken cancellationToken = default) => _providerGateway != null
-        ? _providerGateway.GetArtistTracksAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId)
-        : _metadataService.GetArtistTracksAsync(provider, externalId, cancellationToken);
+        CancellationToken cancellationToken = default) =>
+        _providerGateway.GetArtistTracksAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId);
 
     private async Task<IReadOnlyList<Song>> SearchProviderSongsAsync(
         string provider,
         string query,
         int limit,
-        CancellationToken cancellationToken = default) => _providerGateway != null
-        ? (await _providerGateway.SearchAsync(
-            HttpContext.RequireProtocolExecutionContext(), query, limit, 0, 0, provider)).Songs
-        : (await _metadataService.SearchSongsAsync(query, limit, cancellationToken))
-            .Where(song => string.Equals(
-                song.ExternalProvider, provider, StringComparison.OrdinalIgnoreCase))
-            .Take(limit)
-            .ToArray();
+        CancellationToken cancellationToken = default) =>
+        (await _providerGateway.SearchAsync(
+            HttpContext.RequireProtocolExecutionContext(), query, limit, 0, 0, provider)).Songs;
 
-    private Task<Song?> GetProviderSongForImageAsync(
+    private async Task<string?> GetProviderImageUrlAsync(
         string provider,
+        string resourceKind,
         string externalId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken)
     {
         var protocol = HttpContext.GetProtocolExecutionContext();
-        return _providerGateway != null && protocol != null
-            ? _providerGateway.GetSongAsync(protocol, provider, externalId)
-            : _metadataService.GetSongAsync(provider, externalId, cancellationToken);
-    }
+        if (protocol?.Actor == null)
+        {
+            var kind = resourceKind switch
+            {
+                "song" => ProviderResourceKind.Track,
+                "album" => ProviderResourceKind.Album,
+                "artist" => ProviderResourceKind.Artist,
+                "playlist" => ProviderResourceKind.Playlist,
+                _ => (ProviderResourceKind?)null
+            };
+            return kind.HasValue
+                ? (await _providerGateway.GetPublicArtworkUriAsync(
+                    provider, kind.Value, externalId, cancellationToken))?.AbsoluteUri
+                : null;
+        }
 
-    private Task<Album?> GetProviderAlbumForImageAsync(
-        string provider,
-        string externalId,
-        CancellationToken cancellationToken = default)
-    {
-        var protocol = HttpContext.GetProtocolExecutionContext();
-        return _providerGateway != null && protocol != null
-            ? _providerGateway.GetAlbumAsync(protocol, provider, externalId)
-            : _metadataService.GetAlbumAsync(provider, externalId, cancellationToken);
-    }
-
-    private Task<Artist?> GetProviderArtistForImageAsync(
-        string provider,
-        string externalId,
-        CancellationToken cancellationToken = default)
-    {
-        var protocol = HttpContext.GetProtocolExecutionContext();
-        return _providerGateway != null && protocol != null
-            ? _providerGateway.GetArtistAsync(protocol, provider, externalId)
-            : _metadataService.GetArtistAsync(provider, externalId, cancellationToken);
-    }
-
-    private Task<ExternalPlaylist?> GetProviderPlaylistForImageAsync(
-        string provider,
-        string externalId,
-        CancellationToken cancellationToken = default)
-    {
-        var protocol = HttpContext.GetProtocolExecutionContext();
-        return _providerGateway != null && protocol != null
-            ? _providerGateway.GetPlaylistAsync(protocol, provider, externalId)
-            : _metadataService.GetPlaylistAsync(provider, externalId, cancellationToken);
+        return resourceKind switch
+        {
+            "song" => (await _providerGateway.GetSongAsync(protocol, provider, externalId))?.CoverArtUrl,
+            "album" => (await _providerGateway.GetAlbumAsync(protocol, provider, externalId))?.CoverArtUrl,
+            "artist" => (await _providerGateway.GetArtistAsync(protocol, provider, externalId))?.ImageUrl,
+            "playlist" => (await _providerGateway.GetPlaylistAsync(protocol, provider, externalId))?.CoverUrl,
+            _ => null
+        };
     }
 
     #region Items
@@ -583,7 +557,8 @@ public partial class JellyfinController : ControllerBase
         // Curator IDs encode the name; provider APIs require search-then-filter.
         var curatorName = externalId.Replace("curator-", "", StringComparison.OrdinalIgnoreCase);
 
-        var playlists = await _metadataService.SearchPlaylistsAsync(curatorName, 50, cancellationToken);
+        var playlists = await _providerGateway.SearchPlaylistsAsync(
+            HttpContext.RequireProtocolExecutionContext(), curatorName, 50);
 
         var curatorPlaylists = playlists
             .Where(p => !string.IsNullOrEmpty(p.CuratorName) &&
@@ -628,15 +603,13 @@ public partial class JellyfinController : ControllerBase
 
             var jellyfinTask = GetLocalArtistsResultForCurrentRequest(cleanQuery);
 
-            var externalTask = _metadataService.SearchArtistsAsync(
-                cleanQuery,
-                limit,
-                HttpContext.RequestAborted);
+            var externalTask = _providerGateway.SearchAsync(
+                HttpContext.RequireProtocolExecutionContext(), cleanQuery, 0, 0, limit);
 
             await Task.WhenAll(jellyfinTask, externalTask);
 
             var (jellyfinResult, _) = await jellyfinTask;
-            var externalArtists = await externalTask;
+            var externalArtists = (await externalTask).Artists;
 
             _logger.LogDebug("Artist search results: Jellyfin={JellyfinCount}, External={ExternalCount}",
                 jellyfinResult != null ? "found" : "null", externalArtists.Count);
@@ -826,8 +799,7 @@ public partial class JellyfinController : ControllerBase
                 async Task<MediaAssetSource?> Fetch()
                 {
                     if (resourceKind == "playlist" &&
-                        _providerGateway != null &&
-                        HttpContext.GetProtocolExecutionContext() is { } protocol)
+                        HttpContext.GetProtocolExecutionContext() is { Actor: not null } protocol)
                     {
                         var artwork = await _providerGateway.ResolvePlaylistArtworkAsync(
                             protocol, provider, resourceId, MaximumArtworkBytes);
@@ -835,18 +807,8 @@ public partial class JellyfinController : ControllerBase
                             return new MediaAssetSource(artwork.Bytes, artwork.ContentType);
                     }
 
-                    var coverUrl = resourceKind switch
-                    {
-                        "artist" => (await GetProviderArtistForImageAsync(
-                            provider, resourceId, token))?.ImageUrl,
-                        "album" => (await GetProviderAlbumForImageAsync(
-                            provider, resourceId, token))?.CoverArtUrl,
-                        "song" => (await GetProviderSongForImageAsync(
-                            provider, resourceId, token))?.CoverArtUrl,
-                        "playlist" => (await GetProviderPlaylistForImageAsync(
-                            provider, resourceId, token))?.CoverUrl,
-                        _ => null
-                    };
+                    var coverUrl = await GetProviderImageUrlAsync(
+                        provider, resourceKind, resourceId, token);
                     if (!OutboundRequestGuard.TryCreateSafeHttpUri(
                             coverUrl, out var coverUri, out var validationReason) ||
                         coverUri == null)

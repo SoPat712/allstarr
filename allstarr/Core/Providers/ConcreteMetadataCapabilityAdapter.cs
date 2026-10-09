@@ -15,6 +15,32 @@ public abstract class ConcreteMetadataCapabilityAdapter(
     public string ProviderId { get; } = ProviderContractValidation.ProviderId(providerId, nameof(providerId));
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Metadata;
 
+    public async Task<ProviderOutcome<ProviderArtworkReference>> GetPlaylistArtworkAsync(
+        ProviderExecutionContext context,
+        ProviderExternalResourceId playlistId)
+    {
+        var failure = ValidateContext(context);
+        if (failure != null) return ProviderOutcome<ProviderArtworkReference>.Failure(failure);
+        playlistId.RequireOwner(ProviderId, ProviderResourceKind.Playlist);
+        try
+        {
+            var playlist = await legacy.GetPlaylistAsync(ProviderId, playlistId.Value, context.CancellationToken);
+            context.CancellationToken.ThrowIfCancellationRequested();
+            var artwork = PublicArtwork(playlist?.CoverUrl);
+            return artwork == null
+                ? ProviderOutcome<ProviderArtworkReference>.Failure(new(ProviderErrorKind.NotFound))
+                : ProviderOutcome<ProviderArtworkReference>.Success(artwork);
+        }
+        catch (OperationCanceledException)
+        {
+            return ProviderOutcome<ProviderArtworkReference>.Failure(new(ProviderErrorKind.Canceled));
+        }
+        catch
+        {
+            return ProviderOutcome<ProviderArtworkReference>.Failure(new(ProviderErrorKind.TransientFailure));
+        }
+    }
+
     public Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>> SearchTracksAsync(
         ProviderExecutionContext context,
         ProviderMetadataSearchRequest request) => ExecutePageAsync(

@@ -311,27 +311,17 @@ public partial class JellyfinController
 
         var externalTask = favoritesOnlyRequest
             ? Task.FromResult(new SearchResult())
-            : _providerGateway != null
-                ? _providerGateway.SearchAsync(
-                    HttpContext.RequireProtocolExecutionContext(),
-                    cleanQuery,
-                    externalSearchLimits.SongLimit,
-                    externalSearchLimits.AlbumLimit,
-                    externalSearchLimits.ArtistLimit)
-                : _metadataService.SearchAllAsync(
-                    cleanQuery,
-                    externalSearchLimits.SongLimit,
-                    externalSearchLimits.AlbumLimit,
-                    externalSearchLimits.ArtistLimit,
-                    HttpContext.RequestAborted);
+            : _providerGateway.SearchAsync(
+                HttpContext.RequireProtocolExecutionContext(),
+                cleanQuery,
+                externalSearchLimits.SongLimit,
+                externalSearchLimits.AlbumLimit,
+                externalSearchLimits.ArtistLimit);
 
         var playlistTask = favoritesOnlyRequest || !_settings.EnableExternalPlaylists
             ? Task.FromResult(new List<ExternalPlaylist>())
-            : _providerGateway != null
-                ? _providerGateway.SearchPlaylistsAsync(
-                    HttpContext.RequireProtocolExecutionContext(), cleanQuery, integratedFetchLimit)
-                : _metadataService.SearchPlaylistsAsync(
-                    cleanQuery, integratedFetchLimit, HttpContext.RequestAborted);
+            : _providerGateway.SearchPlaylistsAsync(
+                HttpContext.RequireProtocolExecutionContext(), cleanQuery, integratedFetchLimit);
 
         _logger.LogDebug("Playlist search enabled: {Enabled}, searching for: '{Query}'",
             _settings.EnableExternalPlaylists, cleanQuery);
@@ -573,19 +563,12 @@ public partial class JellyfinController
             externalSearchLimits.AlbumLimit,
             externalSearchLimits.ArtistLimit);
 
-        var externalTask = _providerGateway != null
-            ? _providerGateway.SearchAsync(
-                HttpContext.RequireProtocolExecutionContext(),
-                cleanQuery,
-                externalSearchLimits.SongLimit,
-                externalSearchLimits.AlbumLimit,
-                externalSearchLimits.ArtistLimit)
-            : _metadataService.SearchAllAsync(
-                cleanQuery,
-                externalSearchLimits.SongLimit,
-                externalSearchLimits.AlbumLimit,
-                externalSearchLimits.ArtistLimit,
-                HttpContext.RequestAborted);
+        var externalTask = _providerGateway.SearchAsync(
+            HttpContext.RequireProtocolExecutionContext(),
+            cleanQuery,
+            externalSearchLimits.SongLimit,
+            externalSearchLimits.AlbumLimit,
+            externalSearchLimits.ArtistLimit);
 
         var jellyfinTask = GetLocalSearchHintsResultForCurrentRequest(cleanQuery, userId);
 

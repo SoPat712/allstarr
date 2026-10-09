@@ -89,6 +89,15 @@ public sealed class ProviderRouter(
                 continue;
             }
 
+            if (request.Actor.Kind == ProviderActorKind.PublicRead &&
+                (request.Capability != ProviderCapabilityKind.Metadata ||
+                 descriptor.AccountRequirement != ProviderAccountRequirement.None ||
+                 state.RequestedAccountId.HasValue || state.ExpectedAccountRevision.HasValue))
+            {
+                Reject("public-read-not-allowed");
+                continue;
+            }
+
             if (!state.CapabilityEnabled)
             {
                 Reject("capability-disabled");
