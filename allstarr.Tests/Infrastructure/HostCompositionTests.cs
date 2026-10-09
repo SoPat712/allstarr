@@ -38,10 +38,6 @@ public sealed class HostCompositionTests
 
         Assert.DoesNotContain(factory.Services.GetRequiredService<IProviderRegistry>().Providers,
             provider => provider.Id == "squidwtf");
-        Assert.DoesNotContain(factory.Services.GetServices<IConcreteMetadataService>(),
-            service => service.GetType().Name.Contains("SquidWTF", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(factory.Services.GetServices<IConcreteDownloadService>(),
-            service => service.GetType().Name.Contains("SquidWTF", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

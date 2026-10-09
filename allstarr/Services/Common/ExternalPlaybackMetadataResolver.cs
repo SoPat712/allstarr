@@ -1,10 +1,11 @@
 using System.Collections.Concurrent;
 using allstarr.Core.Operations;
+using allstarr.Core.Protocols;
 
 namespace allstarr.Services.Common;
 
 public sealed class ExternalPlaybackMetadataResolver(
-    IMusicMetadataService metadataService,
+    IProtocolProviderGateway providerGateway,
     IApplicationCache cache,
     IHttpClientFactory httpClientFactory,
     IPlatformClock clock,
@@ -76,7 +77,7 @@ public sealed class ExternalPlaybackMetadataResolver(
         PlaybackTrackMetadata? metadata = null;
         try
         {
-            var song = await metadataService.GetSongAsync(
+            var song = await providerGateway.GetPublicSongAsync(
                 identity.Provider, identity.ExternalId, cancellationToken);
             if (song != null)
             {
@@ -89,13 +90,9 @@ public sealed class ExternalPlaybackMetadataResolver(
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            logger.LogDebug(
-                ex,
-                "Unable to resolve {Provider} playback metadata for {ExternalId}",
-                identity.Provider,
-                identity.ExternalId);
+            logger.LogDebug("Unable to resolve public playback metadata.");
         }
 
         if (metadata == null)
@@ -120,9 +117,9 @@ public sealed class ExternalPlaybackMetadataResolver(
         {
             await ResolveCoalescedAsync(identity, cacheKey, negativeKey, CancellationToken.None);
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            logger.LogDebug(exception, "Stale playback metadata refresh failed for {CacheKey}", cacheKey);
+            logger.LogDebug("Stale public playback metadata refresh failed.");
         }
     }
 
@@ -134,7 +131,7 @@ public sealed class ExternalPlaybackMetadataResolver(
         if (identity == null) return null;
         try
         {
-            var song = await metadataService.GetSongAsync(
+            var song = await providerGateway.GetPublicSongAsync(
                 identity.Value.Provider, identity.Value.ExternalId, cancellationToken);
             var artworkUrl = song?.CoverArtUrlLarge ?? song?.CoverArtUrl;
             if (!OutboundRequestGuard.TryCreateSafeHttpUri(
@@ -156,9 +153,9 @@ public sealed class ExternalPlaybackMetadataResolver(
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            logger.LogDebug(ex, "Unable to resolve external playback artwork for {ItemId}", itemId);
+            logger.LogDebug("Unable to resolve public playback artwork.");
             return null;
         }
     }

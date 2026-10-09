@@ -9,8 +9,8 @@ namespace allstarr.Core.Providers.Spotify;
 
 /// <summary>
 /// Account-bound Spotify playlist transport backed by the web player's persisted
-/// Pathfinder queries. Authentication is deliberately supplied by the caller so this
-/// transport can be shared by provider-core and compatibility callers.
+/// Pathfinder queries. The typed playlist capability supplies authentication for
+/// the selected account on each operation.
 /// </summary>
 public sealed class SpotifyPathfinderPlaylistClient
 {

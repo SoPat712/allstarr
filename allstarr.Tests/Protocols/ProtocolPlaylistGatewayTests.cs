@@ -40,8 +40,7 @@ public sealed class ProtocolPlaylistGatewayTests
                 new ProviderAccountContext(
                     accountId, "spotify", ProviderAccountScope.Personal, 1,
                     ownerUserId: user)));
-        var legacy = new Mock<IMusicMetadataService>(MockBehavior.Strict);
-        var gateway = Gateway(router.Object, Registry(descriptor, capability.Object), legacy.Object);
+        var gateway = Gateway(router.Object, Registry(descriptor, capability.Object));
 
         var result = await gateway.SearchPlaylistsAsync(context, "road", 10);
 
@@ -49,7 +48,6 @@ public sealed class ProtocolPlaylistGatewayTests
         Assert.Equal("Playlist", playlist.Name);
         Assert.Equal(420, playlist.Duration);
         Assert.Equal(new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc), playlist.CreatedDate);
-        legacy.VerifyNoOtherCalls();
         capability.VerifyAll();
     }
 
@@ -80,13 +78,11 @@ public sealed class ProtocolPlaylistGatewayTests
                 new ProviderAccountContext(
                     accountId, "spotify", ProviderAccountScope.Personal, 1,
                     ownerUserId: user)));
-        var legacy = new Mock<IMusicMetadataService>(MockBehavior.Strict);
-        var gateway = Gateway(router.Object, Registry(descriptor, capability.Object), legacy.Object);
+        var gateway = Gateway(router.Object, Registry(descriptor, capability.Object));
 
         var playlists = await gateway.SearchPlaylistsAsync(context, "road", 10);
 
         Assert.Empty(playlists);
-        legacy.VerifyNoOtherCalls();
         capability.VerifyAll();
     }
 
@@ -118,8 +114,7 @@ public sealed class ProtocolPlaylistGatewayTests
                 new ProviderAccountContext(
                     accountId, "spotify", ProviderAccountScope.Personal, 1,
                     ownerUserId: user)));
-        var legacy = new Mock<IMusicMetadataService>(MockBehavior.Strict);
-        var gateway = Gateway(router.Object, Registry(descriptor, capability.Object), legacy.Object);
+        var gateway = Gateway(router.Object, Registry(descriptor, capability.Object));
 
         var result = await gateway.GetPlaylistTracksAsync(context, "spotify", "playlist-1");
 
@@ -133,7 +128,6 @@ public sealed class ProtocolPlaylistGatewayTests
         Assert.Equal(7, track.Track);
         Assert.Equal(2024, track.Year);
         Assert.Equal("Electronic", track.Genre);
-        legacy.VerifyNoOtherCalls();
         capability.VerifyAll();
     }
 
@@ -172,8 +166,7 @@ public sealed class ProtocolPlaylistGatewayTests
                 new ProviderAccountContext(
                     accountId, "spotify", ProviderAccountScope.Personal, 1,
                     ownerUserId: user)));
-        var legacy = new Mock<IMusicMetadataService>(MockBehavior.Strict);
-        var gateway = Gateway(router.Object, Registry(descriptor, capability.Object), legacy.Object);
+        var gateway = Gateway(router.Object, Registry(descriptor, capability.Object));
 
         var result = await gateway.ResolvePlaylistArtworkAsync(
             context, "spotify", "playlist-1", maximumBytes: 64);
@@ -181,7 +174,6 @@ public sealed class ProtocolPlaylistGatewayTests
         Assert.NotNull(result);
         Assert.Equal(artworkBytes, result.Bytes);
         Assert.Equal("image/jpeg", result.ContentType);
-        legacy.VerifyNoOtherCalls();
         capability.VerifyAll();
     }
 
@@ -207,13 +199,11 @@ public sealed class ProtocolPlaylistGatewayTests
                     null,
                     null,
                     [new("spotify", null, ProviderRouteDecisionStatus.Rejected, "account-not-authorized", 0)])));
-        var legacy = new Mock<IMusicMetadataService>(MockBehavior.Strict);
-        var gateway = Gateway(router.Object, Registry(descriptor, registeredCapability.Object), legacy.Object);
+        var gateway = Gateway(router.Object, Registry(descriptor, registeredCapability.Object));
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             gateway.GetPlaylistAsync(context, "spotify", "playlist-1"));
 
-        legacy.VerifyNoOtherCalls();
     }
 
     [Theory]
@@ -231,12 +221,11 @@ public sealed class ProtocolPlaylistGatewayTests
             DateTimeOffset.UtcNow.AddMinutes(1),
             CancellationToken.None);
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
-        var legacy = new Mock<IMusicMetadataService>(MockBehavior.Strict);
         var capability = new Mock<IProviderPlaylistCapability>(MockBehavior.Strict);
         capability.SetupGet(item => item.ProviderId).Returns("spotify");
         capability.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Playlist);
         var gateway = Gateway(router.Object,
-            Registry(Descriptor(hasImplementation: true), capability.Object), legacy.Object);
+            Registry(Descriptor(hasImplementation: true), capability.Object));
 
         Assert.Empty(await gateway.SearchPlaylistsAsync(context, "private", 10));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
@@ -244,18 +233,14 @@ public sealed class ProtocolPlaylistGatewayTests
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             gateway.GetPlaylistTracksAsync(context, "spotify", "playlist-1"));
 
-        legacy.VerifyNoOtherCalls();
         router.VerifyNoOtherCalls();
     }
 
     private static ProtocolProviderGateway Gateway(
         IProviderRouter router,
-        IProviderRegistry registry,
-        IMusicMetadataService legacy) => new(
+        IProviderRegistry registry) => new(
         router,
         registry,
-        new Mock<IProviderRouteAccountResolver>(MockBehavior.Strict).Object,
-        legacy,
         new Mock<IHttpClientFactory>(MockBehavior.Strict).Object);
 
     private static ProtocolExecutionContext Context(

@@ -185,13 +185,18 @@ public class DeezerProviderTests
     }
 
     [Fact]
-    public async Task SearchAllAsync_ReturnsAllTypes()
+    public async Task SearchBuckets_ReturnAllTypes()
     {
         // This test would need multiple HTTP calls mocked, simplified for now
         var emptyResponse = JsonSerializer.Serialize(new { data = Array.Empty<object>() });
         SetupHttpResponse(emptyResponse);
 
-        var result = await _service.SearchAllAsync("test");
+        var result = new allstarr.Models.Search.SearchResult
+        {
+            Songs = await _service.SearchSongsAsync("test"),
+            Albums = await _service.SearchAlbumsAsync("test"),
+            Artists = await _service.SearchArtistsAsync("test")
+        };
 
         Assert.NotNull(result);
         Assert.NotNull(result.Songs);
@@ -209,7 +214,7 @@ public class DeezerProviderTests
         };
 
     [Fact]
-    public async Task SearchAllAsync_AmpersandQuery_UsesVariantsForEachRequestedBucket()
+    public async Task SearchBuckets_AmpersandQuery_UseVariantsForEachRequestedBucket()
     {
         var requests = new List<string>();
         SetupHttpResponse(request =>
@@ -222,7 +227,10 @@ public class DeezerProviderTests
             return CreateJsonResponse(JsonSerializer.Serialize(new { data = Array.Empty<object>() }));
         });
 
-        await _service.SearchAllAsync("love & hyperbole", songLimit: 1, albumLimit: 1, artistLimit: 1);
+        await Task.WhenAll(
+            _service.SearchSongsAsync("love & hyperbole", 1),
+            _service.SearchAlbumsAsync("love & hyperbole", 1),
+            _service.SearchArtistsAsync("love & hyperbole", 1));
 
         Assert.Contains(requests, request =>
             request.Contains("/search/track?q=love%20%26%20hyperbole&limit=1", StringComparison.Ordinal));

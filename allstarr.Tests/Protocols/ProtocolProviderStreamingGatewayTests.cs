@@ -19,8 +19,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             Mock.Of<IProviderRouter>(MockBehavior.Strict),
             new ProviderRegistry([]),
-            Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
-            Mock.Of<IMusicMetadataService>(MockBehavior.Strict),
             new HttpClientFactory());
         var context = new ProtocolExecutionContext(
             ProtocolKind.Jellyfin,
@@ -69,7 +67,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(
                 It.IsAny<ProviderRouteRequest>()))
             .ReturnsAsync((ProviderRouteRequest request) =>
-                EmptyPlan<IProviderStreamingCapability>(request));
+                Plan(request, registry, registry.GetRequiredCapability<IProviderStreamingCapability>("apple-musickit", ProviderCapabilityKind.Streaming),
+                    registry.GetRequiredCapability<IProviderStreamingCapability>("deezer", ProviderCapabilityKind.Streaming)));
         router.Setup(item => item.PlanAsync<IProviderDownloadCapability>(
                 It.IsAny<ProviderRouteRequest>()))
             .ReturnsAsync((ProviderRouteRequest request) =>
@@ -80,15 +79,9 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                     request.ProviderPriority.SequenceEqual(new[] { "apple-musickit", "deezer" }))))
             .ReturnsAsync((ProviderRouteRequest request) =>
                 MetadataPlan(request, registry, failing.Object, healthy.Object));
-        var legacy = new Mock<IMusicMetadataService>();
-        legacy.Setup(item => item.SearchPlayableSongsAsync(
-                "Track Artist", 10, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
-            Mock.Of<IProviderRouteAccountResolver>(),
-            legacy.Object,
             new HttpClientFactory());
 
         var songs = await gateway.SearchPlayableSongsAsync(Context(), "Track Artist", 10);
@@ -138,8 +131,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             Mock.Of<IProviderRouter>(MockBehavior.Strict),
             registry,
-            Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
-            Mock.Of<IMusicMetadataService>(MockBehavior.Strict),
             new HttpClientFactory());
 
         Assert.Empty(await gateway.SearchPlayableSongsAsync(
@@ -169,8 +160,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
-            Mock.Of<IProviderRouteAccountResolver>(),
-            Mock.Of<IMusicMetadataService>(),
             new HttpClientFactory());
 
         var result = await gateway.SearchAsync(
@@ -180,8 +169,10 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         router.VerifyAll();
     }
 
-    [Fact]
-    public async Task MetadataSearch_DoesNotPublishSongsWithoutAPlayableRoute()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MetadataSearch_DoesNotPublishSongsWithoutAPlayableRoute(bool unlinkedPrincipal)
     {
         var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
         metadata.SetupGet(item => item.ProviderId).Returns("metadata-only");
@@ -219,7 +210,9 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                         ProviderCapabilitySupportState.Supported,
                         ProviderAccountRequirement.None,
                         "1",
-                        ["searchTracks", "getTrack"])],
+                        ["searchTracks", "getTrack"]),
+                        ..(unlinkedPrincipal ? new[] { new ProviderCapabilityDescriptor(ProviderCapabilityKind.Streaming,
+                            ProviderCapabilitySupportState.ConfiguredOnly, ProviderAccountRequirement.None, "1") } : [])],
                     new ProviderPermissionDescriptor()),
                 [metadata.Object])
         ]);
@@ -231,11 +224,13 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
-            Mock.Of<IProviderRouteAccountResolver>(),
-            Mock.Of<IMusicMetadataService>(),
             new HttpClientFactory());
 
-        var result = await gateway.SearchAsync(Context(), "Track", 10, 0, 0);
+        var context = unlinkedPrincipal
+            ? new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "unlinked", null,
+                "metadata-search", DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None)
+            : Context();
+        var result = await gateway.SearchAsync(context, "Track", 10, 0, 0);
 
         Assert.Empty(result.Songs);
         metadata.VerifyAll();
@@ -295,8 +290,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             .ReturnsAsync((ProviderRouteRequest request) =>
                 MetadataPlan(request, registry, failed.Object, healthy.Object));
         var gateway = new ProtocolProviderGateway(
-            router.Object, registry, Mock.Of<IProviderRouteAccountResolver>(),
-            Mock.Of<IMusicMetadataService>(), new HttpClientFactory());
+            router.Object, registry, new HttpClientFactory());
 
         var song = Assert.Single((await gateway.SearchAsync(Context(), "Track", 10, 10, 10)).Songs);
 
@@ -371,8 +365,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["Providers:StreamingOrder"] = streamingOrder }).Build();
         var gateway = new ProtocolProviderGateway(
-            router.Object, registry, Mock.Of<IProviderRouteAccountResolver>(),
-            Mock.Of<IMusicMetadataService>(), new HttpClientFactory(), configuration,
+            router.Object, registry, new HttpClientFactory(), configuration,
             identities: identities.Object);
 
         var context = Context();
@@ -465,8 +458,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
-            Mock.Of<IProviderRouteAccountResolver>(),
-            Mock.Of<IMusicMetadataService>(),
             new HttpClientFactory());
 
         var searchSong = Assert.Single((await gateway.SearchAsync(Context(), "Track", 10, 10, 10)).Songs);
@@ -513,9 +504,9 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                             ["searchTracks", "getTrack"]),
                         new ProviderCapabilityDescriptor(
                             ProviderCapabilityKind.Streaming,
-                            ProviderCapabilitySupportState.ConfiguredOnly,
+                            ProviderCapabilitySupportState.Supported,
                             ProviderAccountRequirement.Required,
-                            "1",
+                            "1", ["getStreamLease"],
                             allowedAccountScopes: requiredScopes),
                         new ProviderCapabilityDescriptor(
                             ProviderCapabilityKind.Download,
@@ -525,28 +516,21 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                             allowedAccountScopes: requiredScopes)
                     ],
                     new ProviderPermissionDescriptor()),
-                [metadata.Object])
+                [metadata.Object, Mock.Of<IProviderStreamingCapability>(item => item.ProviderId == "qobuz" && item.Capability == ProviderCapabilityKind.Streaming)])
         ]);
-        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
-        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(
-                It.IsAny<ProviderRouteRequest>()))
-            .ReturnsAsync((ProviderRouteRequest request) =>
-                EmptyPlan<IProviderStreamingCapability>(request));
-        router.Setup(item => item.PlanAsync<IProviderDownloadCapability>(
-                It.IsAny<ProviderRouteRequest>()))
-            .ReturnsAsync((ProviderRouteRequest request) =>
-                EmptyPlan<IProviderDownloadCapability>(request));
         var accounts = new Mock<IProviderRouteAccountResolver>();
         accounts.Setup(item => item.ResolveAsync(
                 It.IsAny<ProviderRouteAccountRequest>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderRouteAccountResolution?)null);
-        var legacy = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        var health = new Mock<IProviderRouteHealthSource>();
+        health.Setup(item => item.Get("qobuz", It.IsAny<Guid?>(), ProviderCapabilityKind.Streaming))
+            .Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Unknown, false));
+        var router = new ProviderRouter(registry, accounts.Object, health.Object,
+            Mock.Of<IProviderRouteSidecarSource>(), Mock.Of<ITrackIdentityService>());
         var gateway = new ProtocolProviderGateway(
-            router.Object,
+            router,
             registry,
-            accounts.Object,
-            legacy.Object,
             new HttpClientFactory());
 
         var songs = await gateway.SearchPlayableSongsAsync(
@@ -603,8 +587,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
-            Mock.Of<IProviderRouteAccountResolver>(),
-            Mock.Of<IMusicMetadataService>(),
             new HttpClientFactory());
 
         var stream = await gateway.OpenStreamAsync(
@@ -643,8 +625,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
-            Mock.Of<IProviderRouteAccountResolver>(),
-            Mock.Of<IMusicMetadataService>(),
             new HttpClientFactory(),
             applicationCache: new TestMemoryApplicationCache());
         var context = Context();
@@ -681,8 +661,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
-            Mock.Of<IProviderRouteAccountResolver>(),
-            Mock.Of<IMusicMetadataService>(),
             new HttpClientFactory(),
             applicationCache: new TestMemoryApplicationCache());
         var context = Context();
@@ -735,8 +713,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
-            Mock.Of<IProviderRouteAccountResolver>(),
-            Mock.Of<IMusicMetadataService>(),
             new HttpClientFactory());
 
         var stream = await gateway.OpenStreamAsync(
@@ -777,8 +753,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
-            Mock.Of<IProviderRouteAccountResolver>(),
-            Mock.Of<IMusicMetadataService>(),
             new HttpClientFactory());
 
         var stream = await gateway.OpenStreamAsync(
@@ -832,8 +806,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
-            Mock.Of<IProviderRouteAccountResolver>(),
-            Mock.Of<IMusicMetadataService>(),
             new HttpClientFactory());
 
         var stream = await gateway.OpenStreamAsync(
@@ -901,12 +873,12 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                         ["searchTracks", "getTrack"]),
                     new ProviderCapabilityDescriptor(
                         ProviderCapabilityKind.Streaming,
-                        ProviderCapabilitySupportState.ConfiguredOnly,
+                        ProviderCapabilitySupportState.Supported,
                         ProviderAccountRequirement.None,
-                        "1.0")
+                        "1.0", ["getStreamLease"])
                 ],
                 new ProviderPermissionDescriptor()),
-            [capability])));
+            [capability, Mock.Of<IProviderStreamingCapability>(item => item.ProviderId == capability.ProviderId && item.Capability == ProviderCapabilityKind.Streaming)])));
 
     private static ProviderRoutePlan<IProviderStreamingCapability> Plan(
         ProviderRouteRequest request,

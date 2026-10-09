@@ -28,12 +28,10 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Core/Storage/DurableBackupService.cs"] = "backup archive",
             ["Core/Storage/DurableBackupService.Restore.cs"] = "staged restore and previous database/key ring",
             ["Core/Secrets/FileSecretKeyRingProvider.cs"] = "private encryption key ring",
-            ["Services/Common/BaseDownloadService.cs"] = "managed audio and artwork",
             ["Providers/Extensions/ExtensionManager.cs"] = "extension packages",
             ["Services/Common/FileMediaApplicationCache.cs"] = "bounded media cache",
             ["Services/Common/ManagedTrackCacheService.cs"] = "managed audio cache",
             ["Services/Lyrics/KeptLyricsSidecarService.cs"] = "lyrics sidecar",
-            ["Services/Subsonic/PlaylistSyncService.cs"] = "M3U target artifact"
         };
 
     [Fact]

@@ -3,6 +3,11 @@ using System.Text;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
+using allstarr.Core.Routing;
+using allstarr.Core.Matching;
+using allstarr.Core.Operations;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -173,6 +178,41 @@ public sealed class ProviderDownloadArtifactResolverTests : IDisposable
             }), cancellation.Token));
 
         Assert.Empty(Directory.EnumerateFiles(Path.Combine(root, workspace.Reference.WorkspaceId)));
+    }
+
+    [Fact]
+    public async Task ManagedDownload_ConvertsRawProviderFailureToSafeRetryWithoutPublishingAnArtifact()
+    {
+        var download = new Mock<IProviderDownloadCapability>(MockBehavior.Strict);
+        download.SetupGet(item => item.ProviderId).Returns("qobuz");
+        download.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Download);
+        download.Setup(item => item.CheckAvailabilityAsync(It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderDownloadAvailabilityRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderDownloadAvailability>.Success(new(ProviderDownloadAvailabilityState.Available)));
+        download.Setup(item => item.DownloadAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderDownloadRequest>()))
+            .ThrowsAsync(new HttpRequestException("https://provider.invalid/audio?signed-token=secret"));
+        var registry = new ProviderRegistry([new ProviderRegistration(new("qobuz", "Qobuz", "Fixture", ProviderOrigin.BuiltIn,
+            "1", "1", [new(ProviderCapabilityKind.Download, ProviderCapabilitySupportState.Supported,
+                ProviderAccountRequirement.None, "1", ["checkAvailability", "download"])], new()), [download.Object])]);
+        var health = new Mock<IProviderRouteHealthSource>();
+        health.Setup(item => item.Get("qobuz", null, ProviderCapabilityKind.Download))
+            .Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Unknown, false));
+        var router = new ProviderRouter(registry, Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict), health.Object,
+            Mock.Of<IProviderRouteSidecarSource>(MockBehavior.Strict), Mock.Of<ITrackIdentityService>(MockBehavior.Strict));
+        var store = new MemoryStore();
+        var service = new ManagedTrackDownloadService(router, registry, Resolver(store), new SystemPlatformClock(),
+            NullLogger<ManagedTrackDownloadService>.Instance);
+
+        var result = await service.ExecuteAsync(new(Guid.CreateVersion7(), Guid.CreateVersion7(), "qobuz", "track",
+            "download-test", "download-test", 1, "managed-download"));
+
+        Assert.False(result.Succeeded);
+        Assert.True(result.Retryable);
+        Assert.Equal("managed_download_temporary_failure", result.ErrorCode);
+        Assert.Equal("The managed download temporarily failed.", result.SafeMessage);
+        Assert.DoesNotContain("signed-token", JsonSerializer.Serialize(result), StringComparison.Ordinal);
+        Assert.Empty(store.Artifacts);
+        download.VerifyAll();
     }
 
     private ProviderDownloadArtifactResolver Resolver(MemoryStore store) => new(store, new() { RootPath = root });

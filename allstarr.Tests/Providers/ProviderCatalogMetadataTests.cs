@@ -17,7 +17,7 @@ public sealed class ProviderCatalogMetadataTests
     [Fact]
     public async Task SearchTracks_MapsLegacyResultsToTypedProviderIds()
     {
-        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        var legacy = new Mock<ProviderCatalogMetadata>(MockBehavior.Strict, "fixture");
         legacy.Setup(item => item.SearchSongsAsync(
                 "daft punk",
                 2,
@@ -63,7 +63,7 @@ public sealed class ProviderCatalogMetadataTests
     [Fact]
     public async Task SearchTracks_StripsTypedCompatibilityPrefixFromAlbumId()
     {
-        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        var legacy = new Mock<ProviderCatalogMetadata>(MockBehavior.Strict, "fixture");
         legacy.Setup(item => item.SearchSongsAsync("track", 1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(
             [
@@ -93,7 +93,7 @@ public sealed class ProviderCatalogMetadataTests
     [Fact]
     public async Task CollectionMapping_SkipsInvalidProviderRecordsInsteadOfFailingThePage()
     {
-        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        var legacy = new Mock<ProviderCatalogMetadata>(MockBehavior.Strict, "fixture");
         legacy.Setup(item => item.GetArtistAlbumsAsync("deezer", "27", It.IsAny<CancellationToken>()))
             .ReturnsAsync([
                 new Album { Id = "1", ExternalId = "1", Title = "Valid", Artist = "Artist" },
@@ -113,7 +113,7 @@ public sealed class ProviderCatalogMetadataTests
     [Fact]
     public async Task CursorThatLegacyProviderCannotHonor_ReturnsTypedNotSupported()
     {
-        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        var legacy = new Mock<ProviderCatalogMetadata>(MockBehavior.Strict, "fixture");
         var adapter = new FixtureCatalog(legacy.Object);
 
         var outcome = await adapter.SearchTracksAsync(
@@ -130,7 +130,7 @@ public sealed class ProviderCatalogMetadataTests
     [Fact]
     public async Task MissingLookup_ReturnsTypedNotFound()
     {
-        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        var legacy = new Mock<ProviderCatalogMetadata>(MockBehavior.Strict, "fixture");
         legacy.Setup(item => item.GetSongAsync(
                 "deezer",
                 "missing",
@@ -152,7 +152,7 @@ public sealed class ProviderCatalogMetadataTests
     [Fact]
     public async Task ProviderException_CannotEscapeThroughOutcomeText()
     {
-        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        var legacy = new Mock<ProviderCatalogMetadata>(MockBehavior.Strict, "fixture");
         legacy.Setup(item => item.FindSongByIsrcAsync(
                 "GBDUW0000059",
                 It.IsAny<CancellationToken>()))
@@ -174,7 +174,7 @@ public sealed class ProviderCatalogMetadataTests
     public async Task CancellationSwallowedByConcreteServiceStillReturnsCanceled()
     {
         using var cancellation = new CancellationTokenSource();
-        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        var legacy = new Mock<ProviderCatalogMetadata>(MockBehavior.Strict, "fixture");
         legacy.Setup(item => item.SearchSongsAsync("query", 1, cancellation.Token))
             .ReturnsAsync(() =>
             {
@@ -194,7 +194,7 @@ public sealed class ProviderCatalogMetadataTests
     public void BuiltInRegistration_IsAtomicAndResolvesTypedImplementation()
     {
         var adapter = new FixtureCatalog(
-            new Mock<IConcreteMetadataService>(MockBehavior.Strict).Object);
+            new Mock<ProviderCatalogMetadata>(MockBehavior.Strict, "fixture").Object);
         var registry = new ProviderRegistry(
             [DeezerProvider.CreateRegistration(adapter, Playlist(), Download(), Streaming())]);
 
@@ -211,7 +211,7 @@ public sealed class ProviderCatalogMetadataTests
     [Fact]
     public async Task ProviderRouter_RoutesAndExecutesCatalogMetadata()
     {
-        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        var legacy = new Mock<ProviderCatalogMetadata>(MockBehavior.Strict, "fixture");
         legacy.Setup(item => item.SearchSongsAsync(
                 "route me",
                 1,
@@ -271,7 +271,7 @@ public sealed class ProviderCatalogMetadataTests
     [Fact]
     public async Task ArtistAlbumsAndTracksUseTypedPagedResults()
     {
-        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        var legacy = new Mock<ProviderCatalogMetadata>(MockBehavior.Strict, "fixture");
         legacy.Setup(item => item.GetArtistAlbumsAsync("deezer", "artist-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync([
                 new Album { ExternalId = "album-1", Title = "First", Artist = "Artist" },
@@ -306,7 +306,7 @@ public sealed class ProviderCatalogMetadataTests
     [Fact]
     public async Task AlbumLookup_PreservesProtocolVisibleAlbumAndTrackFacts()
     {
-        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        var legacy = new Mock<ProviderCatalogMetadata>(MockBehavior.Strict, "fixture");
         legacy.Setup(item => item.GetAlbumAsync("deezer", "album-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Album
             {
@@ -386,7 +386,7 @@ public sealed class ProviderCatalogMetadataTests
             CoverUrl = "https://images.example.test/playlist.webp",
             CreatedDate = created
         };
-        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        var legacy = new Mock<ProviderCatalogMetadata>(MockBehavior.Strict, "fixture");
         legacy.Setup(item => item.SearchPlaylistsAsync("road", 5, It.IsAny<CancellationToken>()))
             .ReturnsAsync([playlist]);
         legacy.Setup(item => item.GetPlaylistAsync(providerId, "playlist-1", It.IsAny<CancellationToken>()))
@@ -435,7 +435,7 @@ public sealed class ProviderCatalogMetadataTests
     [InlineData(null, false)]
     public async Task PublicPlaylistArtwork_ReturnsOnlyHttpsArtworkWithoutReadingTracks(string? coverUrl, bool expected)
     {
-        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        var legacy = new Mock<ProviderCatalogMetadata>(MockBehavior.Strict, "fixture");
         legacy.Setup(item => item.GetPlaylistAsync("deezer", "playlist-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ExternalPlaylist { ExternalId = "playlist-1", Name = "Public", CoverUrl = coverUrl });
         var adapter = new FixtureCatalog(legacy.Object);
@@ -455,7 +455,7 @@ public sealed class ProviderCatalogMetadataTests
     [Fact]
     public async Task PublicPlaylistArtwork_RejectsForeignIdsAndCanceledRequestsBeforeLookup()
     {
-        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        var legacy = new Mock<ProviderCatalogMetadata>(MockBehavior.Strict, "fixture");
         var adapter = new FixtureCatalog(legacy.Object);
         await Assert.ThrowsAsync<ArgumentException>(() => adapter.GetPlaylistArtworkAsync(
             Context(), new("other", ProviderResourceKind.Playlist, "playlist-1")));
@@ -521,7 +521,7 @@ public sealed class ProviderCatalogMetadataTests
     }
 
     private static (IProviderMetadataCapability Metadata, IProviderPlaylistCapability Playlist)
-        PublicPlaylistAdapter(string providerId, IConcreteMetadataService legacy) => providerId switch
+        PublicPlaylistAdapter(string providerId, ProviderCatalogMetadata legacy) => providerId switch
         {
             "deezer" => CreateDeezer(legacy),
             "qobuz" => CreateQobuz(legacy),
@@ -529,14 +529,14 @@ public sealed class ProviderCatalogMetadataTests
         };
 
     private static (IProviderMetadataCapability, IProviderPlaylistCapability) CreateDeezer(
-        IConcreteMetadataService legacy)
+        ProviderCatalogMetadata legacy)
     {
         var metadata = new FixtureCatalog(legacy);
         return (metadata, new CatalogPlaylistCapability("deezer", metadata));
     }
 
     private static (IProviderMetadataCapability, IProviderPlaylistCapability) CreateQobuz(
-        IConcreteMetadataService legacy)
+        ProviderCatalogMetadata legacy)
     {
         var metadata = new FixtureCatalog(legacy, "qobuz");
         return (metadata, new CatalogPlaylistCapability("qobuz", metadata));
@@ -554,7 +554,7 @@ public sealed class ProviderCatalogMetadataTests
         Mock.Of<IProviderStreamingCapability>(item =>
             item.ProviderId == "deezer" && item.Capability == ProviderCapabilityKind.Streaming);
 
-    private sealed class FixtureCatalog(IConcreteMetadataService legacy, string providerId = "deezer")
+    private sealed class FixtureCatalog(ProviderCatalogMetadata legacy, string providerId = "deezer")
         : ProviderCatalogMetadata(providerId)
     {
         public override Task<List<Song>> SearchSongsAsync(

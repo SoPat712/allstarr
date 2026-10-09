@@ -45,6 +45,8 @@ public interface IProtocolProviderGateway
 
     Task<Song?> GetSongAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
 
+    Task<Song?> GetPublicSongAsync(string providerId, string externalId, CancellationToken cancellationToken = default);
+
     Task<Album?> GetAlbumAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
 
     Task<Artist?> GetArtistAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
@@ -118,8 +120,6 @@ public sealed record ProtocolProviderStream(
 public sealed class ProtocolProviderGateway(
     IProviderRouter router,
     IProviderRegistry registry,
-    IProviderRouteAccountResolver accounts,
-    IMusicMetadataService legacyMetadata,
     IHttpClientFactory httpClientFactory,
     IConfiguration? configuration = null,
     IApplicationCache? applicationCache = null,
@@ -148,15 +148,7 @@ public sealed class ProtocolProviderGateway(
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
-        var policy = new ProviderExecutionPolicy(
-            new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, false),
-            ProviderExplicitContentPolicy.Allow, allowFallback: false, allowSharedAccount: false,
-            allowManagedDownloads: false, allowedProviderIds: [providerId]);
-        var plan = await router.PlanAsync<IProviderMetadataCapability>(new(
-            ProviderCapabilityKind.Metadata, new(ProviderActorKind.PublicRead, null), policy,
-            "public-artwork", "public-artwork", DateTimeOffset.UtcNow.AddSeconds(30), [providerId],
-            cancellationToken: timeout.Token));
-        var candidate = plan.Candidates.SingleOrDefault();
+        var candidate = await PlanPublicMetadataAsync(providerId, "public-artwork", timeout.Token);
         if (candidate == null) return null;
         var id = new ProviderExternalResourceId(providerId, resourceKind, externalId);
         ProviderArtworkReference? artwork = null;
@@ -181,6 +173,36 @@ public sealed class ProtocolProviderGateway(
         }
         cancellationToken.ThrowIfCancellationRequested();
         return artwork?.PublicUri;
+    }
+
+    public async Task<Song?> GetPublicSongAsync(string providerId, string externalId,
+        CancellationToken cancellationToken = default)
+    {
+        providerId = NormalizeProvider(providerId);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        var candidate = await PlanPublicMetadataAsync(providerId, "public-playback-metadata", timeout.Token);
+        if (candidate == null) return null;
+        var outcome = await candidate.Implementation.GetTrackAsync(candidate.Context,
+            new(new(providerId, ProviderResourceKind.Track, externalId)));
+        cancellationToken.ThrowIfCancellationRequested();
+        if (outcome.IsSuccess) return Map(outcome.RequireValue());
+        if (outcome.Error!.Kind is ProviderErrorKind.NotFound or ProviderErrorKind.NotSupported or
+            ProviderErrorKind.CapabilityUnavailable) return null;
+        ThrowRouteFailure(outcome.Error);
+        return null;
+    }
+
+    private async Task<ProviderRouteCandidate<IProviderMetadataCapability>?> PlanPublicMetadataAsync(
+        string providerId, string operation, CancellationToken cancellationToken)
+    {
+        if (!IsPublicMetadataProvider(providerId) ||
+            !ResolveProviderOrder(ProviderCapabilityKind.Metadata).Contains(providerId)) return null;
+        var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(
+            new(ProviderActorKind.PublicRead, null), ProviderCapabilityKind.Metadata,
+            operation, [providerId], null, deadline: DateTimeOffset.UtcNow.AddSeconds(30),
+            cancellationToken: cancellationToken));
+        return plan.Candidates.SingleOrDefault();
     }
 
     public IReadOnlyList<string> GetProviderOrder(ProviderCapabilityKind capability) =>
@@ -234,27 +256,7 @@ public sealed class ProtocolProviderGateway(
         var requestedProviderId = string.IsNullOrWhiteSpace(providerId)
             ? null
             : NormalizeProvider(providerId);
-        if (protocol.Actor is null)
-        {
-            var publicLegacy = await legacyMetadata.SearchAllAsync(
-                query, songLimit, albumLimit, artistLimit, protocol.CancellationToken);
-            return new SearchResult
-            {
-                Songs = publicLegacy.Songs
-                    .Where(item => IsRequestedPublicProvider(item.ExternalProvider) &&
-                                   IsPublicStreamingProvider(item.ExternalProvider))
-                    .Take(songLimit)
-                    .ToList(),
-                Albums = publicLegacy.Albums.Where(item => IsRequestedPublicProvider(item.ExternalProvider)).Take(albumLimit).ToList(),
-                Artists = publicLegacy.Artists.Where(item => IsRequestedPublicProvider(item.ExternalProvider)).Take(artistLimit).ToList()
-            };
-
-            bool IsRequestedPublicProvider(string? itemProvider) =>
-                IsPublicMetadataProvider(itemProvider) &&
-                (requestedProviderId == null ||
-                 NormalizeProvider(itemProvider) == requestedProviderId);
-        }
-        var actor = protocol.RequireActor();
+        var actor = protocol.Actor ?? new ProviderActorContext(ProviderActorKind.PublicRead, null);
         var effectivePolicy = await ResolveEffectivePolicyAsync(protocol);
         var playableOrder = songLimit > 0
             ? await ResolvePlayableProviderOrderAsync(
@@ -345,9 +347,9 @@ public sealed class ProtocolProviderGateway(
             playableOrder, protocol.CancellationToken);
         return new SearchResult
         {
-            Songs = Merge(songs, [], songLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider, playableOrder),
-            Albums = Merge(routed.Albums, [], albumLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider),
-            Artists = Merge(routed.Artists, [], artistLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider)
+            Songs = Merge(songs, songLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider, playableOrder),
+            Albums = Merge(routed.Albums, albumLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider),
+            Artists = Merge(routed.Artists, artistLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider)
         };
     }
 
@@ -438,19 +440,7 @@ public sealed class ProtocolProviderGateway(
             .ToArray();
         if (configuredProviderOrder.Length == 0) return [];
 
-        if (protocol.Actor is null)
-        {
-            var publicLegacy = await legacyMetadata.SearchPlayableSongsAsync(
-                query, limit, protocol.CancellationToken);
-            return publicLegacy
-                .Where(item => IsPublicMetadataProvider(item.ExternalProvider))
-                .Where(item => configuredProviderOrder.Contains(
-                    NormalizeProvider(item.ExternalProvider), StringComparer.Ordinal))
-                .Take(limit)
-                .ToArray();
-        }
-
-        var actor = protocol.RequireActor();
+        var actor = protocol.Actor ?? new ProviderActorContext(ProviderActorKind.PublicRead, null);
         var effectivePolicy = await ResolveEffectivePolicyAsync(protocol);
         if (effectivePolicy != null)
         {
@@ -497,7 +487,6 @@ public sealed class ProtocolProviderGateway(
                 NormalizeProvider(item.ExternalProvider), StringComparer.Ordinal));
         return Merge(
             routed,
-            [],
             limit,
             item => Key(item.ExternalProvider, item.ExternalId, item.Id),
             item => item.ExternalProvider,
@@ -523,6 +512,8 @@ public sealed class ProtocolProviderGateway(
         CancellationToken cancellationToken)
     {
         if (configuredProviderOrder.Count == 0) return [];
+        if (actor.Kind == ProviderActorKind.PublicRead)
+            return configuredProviderOrder.Where(IsPublicStreamingProvider).ToArray();
         var streaming = await router.PlanAsync<IProviderStreamingCapability>(Request(
             actor,
             ProviderCapabilityKind.Streaming,
@@ -535,13 +526,6 @@ public sealed class ProtocolProviderGateway(
         var allowed = streaming.Candidates.Select(item => item.Provider.Id)
             .Select(NormalizeProvider)
             .ToHashSet(StringComparer.Ordinal);
-        var typed = registry.FindByCapability(ProviderCapabilityKind.Streaming)
-            .Select(item => NormalizeProvider(item.Id))
-            .ToHashSet(StringComparer.Ordinal);
-        var compatibility = (await ResolveAllowedCompatibilityProvidersAsync(
-                actor, ProviderCapabilityKind.Streaming, cancellationToken))
-            .Where(providerId => !typed.Contains(providerId));
-        allowed.UnionWith(compatibility);
         return configuredProviderOrder.Where(allowed.Contains).ToArray();
     }
 
@@ -550,8 +534,6 @@ public sealed class ProtocolProviderGateway(
         string providerId,
         string externalId)
     {
-        if (protocol.Actor is null && IsPublicMetadataProvider(providerId))
-            return await legacyMetadata.GetSongAsync(providerId, externalId, protocol.CancellationToken);
         var routedProviderId = NormalizeProvider(providerId);
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
             protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-track");
@@ -569,7 +551,7 @@ public sealed class ProtocolProviderGateway(
             if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
             ThrowRouteFailure(outcome.Error);
         }
-        await RequireCompatibilityProviderAsync(protocol, routedProviderId);
+
         return null;
     }
 
@@ -578,8 +560,6 @@ public sealed class ProtocolProviderGateway(
         string providerId,
         string externalId)
     {
-        if (protocol.Actor is null && IsPublicMetadataProvider(providerId))
-            return await legacyMetadata.GetAlbumAsync(providerId, externalId, protocol.CancellationToken);
         var routedProviderId = NormalizeProvider(providerId);
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
             protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-album");
@@ -599,7 +579,7 @@ public sealed class ProtocolProviderGateway(
             if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
             ThrowRouteFailure(outcome.Error);
         }
-        await RequireCompatibilityProviderAsync(protocol, routedProviderId);
+
         return null;
     }
 
@@ -608,8 +588,6 @@ public sealed class ProtocolProviderGateway(
         string providerId,
         string externalId)
     {
-        if (protocol.Actor is null && IsPublicMetadataProvider(providerId))
-            return await legacyMetadata.GetArtistAsync(providerId, externalId, protocol.CancellationToken);
         var routedProviderId = NormalizeProvider(providerId);
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
             protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-artist");
@@ -623,7 +601,7 @@ public sealed class ProtocolProviderGateway(
             if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
             ThrowRouteFailure(outcome.Error);
         }
-        await RequireCompatibilityProviderAsync(protocol, routedProviderId);
+
         return null;
     }
 
@@ -633,8 +611,6 @@ public sealed class ProtocolProviderGateway(
         string externalId)
     {
         ArgumentNullException.ThrowIfNull(protocol);
-        if (protocol.Actor is null && IsPublicMetadataProvider(providerId))
-            return await legacyMetadata.GetArtistAlbumsAsync(providerId, externalId, protocol.CancellationToken);
         var routedProviderId = NormalizeProvider(providerId);
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
             protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-artist-albums");
@@ -664,7 +640,7 @@ public sealed class ProtocolProviderGateway(
             } while (cursor != null);
             return albums;
         }
-        await RequireCompatibilityProviderAsync(protocol, routedProviderId);
+
         return [];
     }
 
@@ -674,8 +650,6 @@ public sealed class ProtocolProviderGateway(
         string externalId)
     {
         ArgumentNullException.ThrowIfNull(protocol);
-        if (protocol.Actor is null && IsPublicMetadataProvider(providerId))
-            return await legacyMetadata.GetArtistTracksAsync(providerId, externalId, protocol.CancellationToken);
         var routedProviderId = NormalizeProvider(providerId);
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
             protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-artist-tracks");
@@ -706,7 +680,7 @@ public sealed class ProtocolProviderGateway(
             var policy = await ResolveEffectivePolicyAsync(protocol);
             return tracks.Where(song => policy?.Includes(song) != false).ToList();
         }
-        await RequireCompatibilityProviderAsync(protocol, routedProviderId);
+
         return [];
     }
 
@@ -824,7 +798,6 @@ public sealed class ProtocolProviderGateway(
             return tracks.Where(song => policy?.Includes(song) != false).ToList();
         }
 
-        await RequireCompatibilityProviderAsync(protocol, providerId, ProviderCapabilityKind.Playlist);
         return [];
     }
 
@@ -843,7 +816,7 @@ public sealed class ProtocolProviderGateway(
             protocol, providerId, ProviderCapabilityKind.Playlist, operationId);
         if (routed.Candidate == null)
         {
-            await RequireCompatibilityProviderAsync(protocol, providerId, ProviderCapabilityKind.Playlist);
+
             return (null, null);
         }
 
@@ -1172,7 +1145,10 @@ public sealed class ProtocolProviderGateway(
         ArgumentNullException.ThrowIfNull(protocol);
         var plan = await router.PlanAsync<TCapability>(Request(
             protocol,
-            protocol.RequireActor(),
+            protocol.Actor ?? (capability == ProviderCapabilityKind.Metadata && IsPublicMetadataProvider(providerId) &&
+                ResolveProviderOrder(capability).Contains(providerId)
+                ? new ProviderActorContext(ProviderActorKind.PublicRead, null)
+                : protocol.RequireActor()),
             capability,
             operationId,
             [providerId],
@@ -1188,76 +1164,6 @@ public sealed class ProtocolProviderGateway(
         return (candidate, plan);
     }
 
-    private async Task<HashSet<string>> ResolveAllowedCompatibilityProvidersAsync(
-        ProtocolExecutionContext protocol,
-        ProviderActorContext actor,
-        ProviderCapabilityKind capabilityKind = ProviderCapabilityKind.Metadata) =>
-        await ResolveAllowedCompatibilityProvidersAsync(
-            actor,
-            capabilityKind,
-            protocol.CancellationToken);
-
-    private async Task<HashSet<string>> ResolveAllowedCompatibilityProvidersAsync(
-        ProviderActorContext actor,
-        ProviderCapabilityKind capabilityKind,
-        CancellationToken cancellationToken)
-    {
-        var allowed = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var descriptor in registry.FindByCapability(
-                     capabilityKind,
-                     includeNonOperational: true))
-        {
-            var capability = descriptor.Capabilities.Single(item =>
-                item.Capability == capabilityKind);
-            if (capability.HasUsableImplementation) continue;
-            if (capability.AccountRequirement == ProviderAccountRequirement.None)
-            {
-                allowed.Add(descriptor.Id);
-                continue;
-            }
-
-            ProviderRouteAccountResolution? resolution;
-            try
-            {
-                resolution = await accounts.ResolveAsync(
-                    new ProviderRouteAccountRequest(
-                        actor,
-                        descriptor.Id,
-                        capabilityKind,
-                        RequestedAccountId: null),
-                    cancellationToken);
-            }
-            catch (UnauthorizedAccessException)
-            {
-                continue;
-            }
-            if (resolution?.Account is { Enabled: true } account &&
-                resolution.CurrentRevision == account.Revision &&
-                capability.AllowedAccountScopes.Contains(account.Scope))
-            {
-                allowed.Add(descriptor.Id);
-            }
-            else if (capability.AccountRequirement == ProviderAccountRequirement.Optional)
-            {
-                allowed.Add(descriptor.Id);
-            }
-        }
-        return allowed;
-    }
-
-    private async Task RequireCompatibilityProviderAsync(
-        ProtocolExecutionContext protocol,
-        string providerId,
-        ProviderCapabilityKind capabilityKind = ProviderCapabilityKind.Metadata)
-    {
-        var allowed = await ResolveAllowedCompatibilityProvidersAsync(
-            protocol, protocol.RequireActor(), capabilityKind);
-        if (!allowed.Contains(providerId))
-        {
-            throw new UnauthorizedAccessException("The provider route is not available to this user.");
-        }
-    }
-
     private bool IsPublicMetadataProvider(string? providerId)
     {
         if (string.IsNullOrWhiteSpace(providerId)) return false;
@@ -1270,8 +1176,8 @@ public sealed class ProtocolProviderGateway(
     private bool IsPublicStreamingProvider(string? providerId)
     {
         if (string.IsNullOrWhiteSpace(providerId)) return false;
-        return registry.FindByCapability(ProviderCapabilityKind.Streaming, includeNonOperational: true)
-            .Any(descriptor => descriptor.Id.Equals(providerId, StringComparison.Ordinal) &&
+        return registry.FindByCapability(ProviderCapabilityKind.Streaming)
+            .Any(descriptor => descriptor.Id.Equals(NormalizeProvider(providerId), StringComparison.Ordinal) &&
                                descriptor.Capabilities.Single(item => item.Capability == ProviderCapabilityKind.Streaming)
                                    .AccountRequirement == ProviderAccountRequirement.None);
     }
@@ -1358,7 +1264,7 @@ public sealed class ProtocolProviderGateway(
                 : quality, allowTranscode: true),
             ProviderExplicitContentPolicy.Allow,
             allowFallback,
-            allowSharedAccount: true,
+            allowSharedAccount: actor.Kind != ProviderActorKind.PublicRead,
             allowManagedDownloads,
             providerIds),
         operationId,
@@ -1608,13 +1514,12 @@ public sealed class ProtocolProviderGateway(
 
     private List<T> Merge<T>(
         IEnumerable<T> routed,
-        IEnumerable<T> legacy,
         int limit,
         Func<T, string> key,
         Func<T, string?> provider,
         IReadOnlyList<string>? preferredOrder = null)
     {
-        var items = routed.Concat(legacy)
+        var items = routed
             .DistinctBy(key, StringComparer.Ordinal)
             .ToList();
         var preferred = preferredOrder?

@@ -21,16 +21,13 @@ public interface ISubsonicLyricsLookup
 
 public sealed partial class SubsonicLyricsLookup : ISubsonicLyricsLookup
 {
-    private readonly IMusicMetadataService _metadataService;
     private readonly IProtocolProviderGateway _providerGateway;
     private readonly IProtocolLyricsResolver _lyrics;
 
     public SubsonicLyricsLookup(
-        IMusicMetadataService metadataService,
         IProtocolProviderGateway providerGateway,
         IProtocolLyricsResolver lyrics)
     {
-        _metadataService = metadataService;
         _providerGateway = providerGateway;
         _lyrics = lyrics;
     }
@@ -41,8 +38,8 @@ public sealed partial class SubsonicLyricsLookup : ISubsonicLyricsLookup
         string externalId,
         CancellationToken cancellationToken)
     {
-        var song = await _providerGateway.GetSongAsync(protocol, provider, externalId) ??
-                   await _metadataService.GetSongAsync(provider, externalId, cancellationToken);
+        var song = await _providerGateway.GetSongAsync(protocol, provider, externalId);
+        cancellationToken.ThrowIfCancellationRequested();
         if (song == null)
         {
             return null;

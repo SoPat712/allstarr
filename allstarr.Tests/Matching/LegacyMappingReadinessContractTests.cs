@@ -30,10 +30,10 @@ public sealed class LegacyMappingReadinessContractTests
     public void AutomaticPlaylistMatching_QueriesOnlyPlaybackCapableProviders()
     {
         var providers = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Services", "Common", "MultiProviderMetadataService.cs"));
+            "allstarr", "Core", "Protocols", "ProtocolProviderGateway.cs"));
 
-        Assert.Contains("GetEnabledPlaybackProviders()", providers, StringComparison.Ordinal);
-        Assert.Contains("requirePlayableExtensions: true", providers, StringComparison.Ordinal);
+        Assert.Contains("ResolvePlayableProviderOrderAsync", providers, StringComparison.Ordinal);
+        Assert.Contains("PlanAsync<IProviderStreamingCapability>", providers, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -94,13 +94,13 @@ public sealed class LegacyMappingReadinessContractTests
     public void SearchResults_AreInterleavedWithinTheRequestedLimitAndPlayableExtensionsAreEligible()
     {
         var search = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Services", "Common", "MultiProviderMetadataService.cs"));
+            "allstarr", "Core", "Protocols", "ProtocolProviderGateway.cs"));
 
-        Assert.Contains("InterleaveLists(allResultsList).Take(Math.Max(0, limit))", search, StringComparison.Ordinal);
-        Assert.Contains("requirePlayableExtensions: true", search, StringComparison.Ordinal);
-        Assert.Contains("extension.Types.Any(IsPlaybackCapability)", search, StringComparison.Ordinal);
-        Assert.Contains("ConfiguredSearchOrder(requirePlayableExtensions)", search, StringComparison.Ordinal);
-        Assert.Contains("ProviderSearchTimeout", search, StringComparison.Ordinal);
+        Assert.Contains("Merge(routed", search, StringComparison.Ordinal);
+        Assert.Contains("merged.Count < Math.Max(0, limit)", search, StringComparison.Ordinal);
+        Assert.Contains("PlanAsync<IProviderStreamingCapability>", search, StringComparison.Ordinal);
+        Assert.Contains("ProviderSearchConcurrency", search, StringComparison.Ordinal);
+        Assert.Contains("protocol.Deadline", search, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryFile(params string[] segments)
