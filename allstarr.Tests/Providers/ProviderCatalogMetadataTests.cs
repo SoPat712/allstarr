@@ -1,5 +1,6 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Deezer;
+using allstarr.Core.Providers;
 using allstarr.Core.Providers.Qobuz;
 using allstarr.Core.Matching;
 using allstarr.Core.Routing;
@@ -11,7 +12,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class DeezerMetadataCapabilityAdapterTests
+public sealed class ProviderCatalogMetadataTests
 {
     [Fact]
     public async Task SearchTracks_MapsLegacyResultsToTypedProviderIds()
@@ -39,7 +40,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
                     CoverArtUrlLarge = "https://cdn.example.invalid/cover.jpg"
                 }
             ]);
-        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+        var adapter = new FixtureCatalog(legacy.Object);
 
         var outcome = await adapter.SearchTracksAsync(
             Context(),
@@ -80,7 +81,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
                     Duration = 180
                 }
             ]);
-        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+        var adapter = new FixtureCatalog(legacy.Object);
 
         var outcome = await adapter.SearchTracksAsync(
             Context(),
@@ -98,7 +99,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
                 new Album { Id = "1", ExternalId = "1", Title = "Valid", Artist = "Artist" },
                 new Album { Id = "2", ExternalId = "2", Title = "Invalid", Artist = new string('x', 301) }
             ]);
-        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+        var adapter = new FixtureCatalog(legacy.Object);
 
         var outcome = await adapter.GetArtistAlbumsAsync(
             Context(),
@@ -113,7 +114,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
     public async Task CursorThatLegacyProviderCannotHonor_ReturnsTypedNotSupported()
     {
         var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
-        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+        var adapter = new FixtureCatalog(legacy.Object);
 
         var outcome = await adapter.SearchTracksAsync(
             Context(),
@@ -135,7 +136,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
                 "missing",
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync((Song?)null);
-        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+        var adapter = new FixtureCatalog(legacy.Object);
 
         var outcome = await adapter.GetTrackAsync(
             Context(),
@@ -157,7 +158,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
                 It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException(
                 "Authorization: Bearer secret-token https://signed.example.invalid/media"));
-        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+        var adapter = new FixtureCatalog(legacy.Object);
 
         var outcome = await adapter.LookupByIsrcAsync(
             Context(),
@@ -180,7 +181,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
                 cancellation.Cancel();
                 return [];
             });
-        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+        var adapter = new FixtureCatalog(legacy.Object);
 
         var outcome = await adapter.SearchTracksAsync(
             Context(cancellation.Token),
@@ -192,10 +193,10 @@ public sealed class DeezerMetadataCapabilityAdapterTests
     [Fact]
     public void BuiltInRegistration_IsAtomicAndResolvesTypedImplementation()
     {
-        var adapter = new DeezerMetadataCapabilityAdapter(
+        var adapter = new FixtureCatalog(
             new Mock<IConcreteMetadataService>(MockBehavior.Strict).Object);
         var registry = new ProviderRegistry(
-            [DeezerMetadataCapabilityAdapter.CreateRegistration(adapter, Playlist(), Download(), Streaming())]);
+            [DeezerProvider.CreateRegistration(adapter, Playlist(), Download(), Streaming())]);
 
         var descriptor = registry.GetRequired("deezer");
         var resolved = registry.GetRequiredCapability<IProviderMetadataCapability>(
@@ -208,7 +209,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
     }
 
     [Fact]
-    public async Task ProviderRouter_RoutesAndExecutesTheRealBuiltInAdapter()
+    public async Task ProviderRouter_RoutesAndExecutesCatalogMetadata()
     {
         var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
         legacy.Setup(item => item.SearchSongsAsync(
@@ -232,9 +233,9 @@ public sealed class DeezerMetadataCapabilityAdapterTests
                     Isrc = "USRC17607839"
                 }
             ]);
-        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+        var adapter = new FixtureCatalog(legacy.Object);
         var registry = new ProviderRegistry(
-            [DeezerMetadataCapabilityAdapter.CreateRegistration(adapter, Playlist(), Download(), Streaming())]);
+            [DeezerProvider.CreateRegistration(adapter, Playlist(), Download(), Streaming())]);
         var health = new Mock<IProviderRouteHealthSource>(MockBehavior.Strict);
         health.Setup(item => item.Get("deezer", null, ProviderCapabilityKind.Metadata))
             .Returns(new ProviderRouteHealthSnapshot(
@@ -282,7 +283,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
                 new Song { ExternalId = "track-1", Title = "First", Artist = "Artist", Artists = ["Artist"], ArtistId = "artist-1" },
                 new Song { ExternalId = "track-2", Title = "Second", Artist = "Artist", Artists = ["Artist"] }
             ]);
-        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+        var adapter = new FixtureCatalog(legacy.Object);
         var artist = new ProviderExternalResourceId("deezer", ProviderResourceKind.Artist, "artist-1");
 
         var albums = (await adapter.GetArtistAlbumsAsync(
@@ -343,7 +344,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
                     }
                 ]
             });
-        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+        var adapter = new FixtureCatalog(legacy.Object);
 
         var outcome = await adapter.GetAlbumAsync(
             Context(),
@@ -437,7 +438,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
         var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
         legacy.Setup(item => item.GetPlaylistAsync("deezer", "playlist-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ExternalPlaylist { ExternalId = "playlist-1", Name = "Public", CoverUrl = coverUrl });
-        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+        var adapter = new FixtureCatalog(legacy.Object);
         var settings = Context();
         var context = new ProviderExecutionContext(new(ProviderActorKind.PublicRead, null), "deezer", null,
             settings.Policy, settings.OperationId, settings.CorrelationId, settings.Deadline, settings.CancellationToken);
@@ -455,7 +456,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
     public async Task PublicPlaylistArtwork_RejectsForeignIdsAndCanceledRequestsBeforeLookup()
     {
         var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
-        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+        var adapter = new FixtureCatalog(legacy.Object);
         await Assert.ThrowsAsync<ArgumentException>(() => adapter.GetPlaylistArtworkAsync(
             Context(), new("other", ProviderResourceKind.Playlist, "playlist-1")));
         using var cancellation = new CancellationTokenSource();
@@ -530,8 +531,8 @@ public sealed class DeezerMetadataCapabilityAdapterTests
     private static (IProviderMetadataCapability, IProviderPlaylistCapability) CreateDeezer(
         IConcreteMetadataService legacy)
     {
-        var metadata = new DeezerMetadataCapabilityAdapter(legacy);
-        return (metadata, new DeezerPlaylistCapabilityAdapter(legacy, metadata));
+        var metadata = new FixtureCatalog(legacy);
+        return (metadata, new CatalogPlaylistCapability("deezer", metadata));
     }
 
     private static (IProviderMetadataCapability, IProviderPlaylistCapability) CreateQobuz(
@@ -552,4 +553,57 @@ public sealed class DeezerMetadataCapabilityAdapterTests
     private static IProviderStreamingCapability Streaming() =>
         Mock.Of<IProviderStreamingCapability>(item =>
             item.ProviderId == "deezer" && item.Capability == ProviderCapabilityKind.Streaming);
+
+    private sealed class FixtureCatalog(IConcreteMetadataService legacy)
+        : ProviderCatalogMetadata("deezer")
+    {
+        public override Task<List<Song>> SearchSongsAsync(
+            string query, int limit = 20, CancellationToken cancellationToken = default) =>
+            legacy.SearchSongsAsync(query, limit, cancellationToken);
+
+        public override Task<List<Album>> SearchAlbumsAsync(
+            string query, int limit = 20, CancellationToken cancellationToken = default) =>
+            legacy.SearchAlbumsAsync(query, limit, cancellationToken);
+
+        public override Task<List<Artist>> SearchArtistsAsync(
+            string query, int limit = 20, CancellationToken cancellationToken = default) =>
+            legacy.SearchArtistsAsync(query, limit, cancellationToken);
+
+        public override Task<Song?> GetSongAsync(
+            string externalProvider, string externalId, CancellationToken cancellationToken = default) =>
+            legacy.GetSongAsync(externalProvider, externalId, cancellationToken);
+
+        public override Task<Song?> FindSongByIsrcAsync(
+            string isrc, CancellationToken cancellationToken = default) =>
+            legacy.FindSongByIsrcAsync(isrc, cancellationToken);
+
+        public override Task<Album?> GetAlbumAsync(
+            string externalProvider, string externalId, CancellationToken cancellationToken = default) =>
+            legacy.GetAlbumAsync(externalProvider, externalId, cancellationToken);
+
+        public override Task<Artist?> GetArtistAsync(
+            string externalProvider, string externalId, CancellationToken cancellationToken = default) =>
+            legacy.GetArtistAsync(externalProvider, externalId, cancellationToken);
+
+        public override Task<List<Album>> GetArtistAlbumsAsync(
+            string externalProvider, string externalId, CancellationToken cancellationToken = default) =>
+            legacy.GetArtistAlbumsAsync(externalProvider, externalId, cancellationToken);
+
+        public override Task<List<Song>> GetArtistTracksAsync(
+            string externalProvider, string externalId, CancellationToken cancellationToken = default) =>
+            legacy.GetArtistTracksAsync(externalProvider, externalId, cancellationToken);
+
+        public override Task<List<ExternalPlaylist>> SearchPlaylistsAsync(
+            string query, int limit = 20, CancellationToken cancellationToken = default) =>
+            legacy.SearchPlaylistsAsync(query, limit, cancellationToken);
+
+        public override Task<ExternalPlaylist?> GetPlaylistAsync(
+            string externalProvider, string externalId, CancellationToken cancellationToken = default) =>
+            legacy.GetPlaylistAsync(externalProvider, externalId, cancellationToken);
+
+        public override Task<List<Song>> GetPlaylistTracksAsync(
+            string externalProvider, string externalId, CancellationToken cancellationToken = default) =>
+            legacy.GetPlaylistTracksAsync(externalProvider, externalId, cancellationToken);
+
+    }
 }

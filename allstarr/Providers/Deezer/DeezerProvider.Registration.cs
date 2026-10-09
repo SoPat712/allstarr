@@ -1,29 +1,22 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
-using allstarr.Services;
 
 namespace allstarr.Core.Providers.Deezer;
 
-/// <summary>
-/// Exposes the existing Deezer HTTP implementation through the typed capability core.
-/// </summary>
-public sealed class DeezerMetadataCapabilityAdapter(IConcreteMetadataService legacy)
-    : ConcreteMetadataCapabilityAdapter(StableProviderId, legacy)
+public sealed partial class DeezerProvider
 {
-    public const string StableProviderId = "deezer";
-
     public static ProviderRegistration CreateRegistration(
-        DeezerMetadataCapabilityAdapter adapter,
+        IProviderMetadataCapability provider,
         IProviderPlaylistCapability playlists,
         IProviderDownloadCapability download,
         IProviderStreamingCapability streaming) => new(
         new ProviderDescriptor(
             StableProviderId,
             "Deezer",
-            "Public Deezer metadata through the existing Allstarr provider implementation.",
+            "Deezer catalog, playlists, streaming, and managed downloads.",
             ProviderOrigin.BuiltIn,
             sdkVersion: "1",
-            compatibilityVersion: "legacy-metadata-v1",
+            compatibilityVersion: "1",
             capabilities:
             [
                 new ProviderCapabilityDescriptor(
@@ -85,10 +78,5 @@ public sealed class DeezerMetadataCapabilityAdapter(IConcreteMetadataService leg
                     new Uri("https://www.deezer.com/")
                 ],
                 cache: true)),
-        [adapter, playlists, download, streaming]);
+        [provider, playlists, download, streaming]);
 }
-
-public sealed class DeezerPlaylistCapabilityAdapter(
-    IConcreteMetadataService legacy,
-    DeezerMetadataCapabilityAdapter metadata)
-    : ConcretePlaylistCapabilityAdapter(DeezerMetadataCapabilityAdapter.StableProviderId, legacy, metadata);

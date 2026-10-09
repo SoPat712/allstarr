@@ -1,4 +1,5 @@
-using allstarr.Services.Deezer;
+using allstarr.Core.Providers.Deezer;
+using allstarr.Core.Capabilities;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
 using allstarr.Models.Download;
@@ -12,13 +13,13 @@ using System.Text.Json;
 
 namespace allstarr.Tests;
 
-public class DeezerMetadataServiceTests
+public class DeezerProviderTests
 {
     private readonly Mock<IHttpClientFactory> _httpClientFactoryMock;
     private readonly Mock<HttpMessageHandler> _httpMessageHandlerMock;
-    private DeezerMetadataService _service;
+    private DeezerProvider _service;
 
-    public DeezerMetadataServiceTests()
+    public DeezerProviderTests()
     {
         _httpMessageHandlerMock = new Mock<HttpMessageHandler>();
         var httpClient = new HttpClient(_httpMessageHandlerMock.Object);
@@ -29,10 +30,9 @@ public class DeezerMetadataServiceTests
         _service = CreateService();
     }
 
-    private DeezerMetadataService CreateService()
+    private DeezerProvider CreateService()
     {
-        var deezerOptions = Options.Create(new DeezerSettings { MinRequestIntervalMs = 0 });
-        return new DeezerMetadataService(_httpClientFactoryMock.Object, deezerSettings: deezerOptions);
+        return new DeezerProvider(new DeezerHttpClient(_httpClientFactoryMock.Object.CreateClient(), 0, delay: (_, _) => Task.CompletedTask));
     }
 
     [Fact]
@@ -314,15 +314,48 @@ public class DeezerMetadataServiceTests
     }
 
     [Fact]
-    public async Task SearchSongsAsync_WithHttpError_ReturnsEmptyList()
+    public async Task SearchTracks_WithExhaustedHttpRetries_ReturnsTypedTransientFailure()
     {
         SetupHttpResponse("Error", HttpStatusCode.InternalServerError);
 
-        var result = await _service.SearchSongsAsync("test", 20);
+        var result = await _service.SearchTracksAsync(PublicContext(), new("test", new(20)));
 
-        Assert.NotNull(result);
-        Assert.Empty(result);
+        Assert.Equal(ProviderErrorKind.TransientFailure, result.Error!.Kind);
+        _httpMessageHandlerMock.Protected().Verify("SendAsync", Times.Exactly(4),
+            ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>());
     }
+
+    [Fact]
+    public async Task SearchTracks_WithExhaustedApiQuota_ReturnsTypedRateLimit()
+    {
+        SetupHttpResponse("""{"error":{"code":4,"message":"safe fixture"}}""");
+
+        var result = await _service.SearchTracksAsync(PublicContext(), new("test", new(20)));
+
+        Assert.Equal(ProviderErrorKind.RateLimited, result.Error!.Kind);
+        _httpMessageHandlerMock.Protected().Verify("SendAsync", Times.Exactly(4),
+            ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TypedMetadata_UsesTheSameCatalogParserWithoutAnAccount()
+    {
+        SetupHttpResponse(JsonSerializer.Serialize(new { data = new[] { CreateTrackSearchResult(42, "Track") } }));
+
+        var result = await _service.SearchTracksAsync(PublicContext(), new("track", new(1)));
+
+        var track = Assert.Single(result.RequireValue().Items);
+        Assert.Equal("deezer", track.Id.ProviderId);
+        Assert.Equal("42", track.Id.Value);
+        Assert.Equal("Track", track.Title);
+    }
+
+    private static ProviderExecutionContext PublicContext() => new(
+        new(ProviderActorKind.PublicRead, null), "deezer", null,
+        new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, false),
+            ProviderExplicitContentPolicy.Allow, false, false, false, ["deezer"]),
+        "catalog-test", "catalog-fixture", DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
+
 
     [Fact]
     public async Task GetAlbumAsync_WithDeezerProvider_ReturnsAlbumWithTracks()
@@ -509,7 +542,7 @@ public class DeezerMetadataServiceTests
                 "SendAsync",
                 ItExpr.IsAny<HttpRequestMessage>(),
                 ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
+            .ReturnsAsync(() => new HttpResponseMessage
             {
                 StatusCode = statusCode,
                 Content = new StringContent(content)

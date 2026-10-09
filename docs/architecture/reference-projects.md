@@ -1,7 +1,7 @@
 # Music ecosystem reference ledger
 
-Status: contributor research, not shipped behavior.
-Last audited: 2026-09-14.
+Status: upstream references and reuse notices.
+Last audited: 2026-10-08.
 
 This ledger records which upstream projects informed Allstarr, the exact revisions inspected, and the boundary between a useful idea and a dependency. It exists to prevent repeated archaeology, accidental code copying, and architecture-by-name-dropping. Re-audit a project before relying on a changed contract.
 
@@ -59,3 +59,25 @@ Before implementing or upgrading a dependency informed by this ledger:
 4. Compare the upstream contract with Allstarr's existing owner before adding a new abstraction.
 5. Record what changed in this ledger and the relevant architecture or operation document.
 6. Keep temporary clones and generated audit output outside the repository.
+
+## Deezer implementation notice
+
+Allstarr's Deezer alternative-track resolution and throttle handling adapt the
+[Octo-Fiesta implementation at 6841a2ea9c227b212157d81acc4aafa5965419b2](https://github.com/V1ck3s/octo-fiesta/tree/6841a2ea9c227b212157d81acc4aafa5965419b2),
+licensed under [GPL-3.0](https://github.com/V1ck3s/octo-fiesta/blob/6841a2ea9c227b212157d81acc4aafa5965419b2/LICENSE).
+The upstream files are `octo-fiesta/Services/Deezer/DeezerDownloadService.cs`,
+`DeezerMetadataService.cs`, and `DeezerDecryptedStream.cs`. The original download
+implementation records its origin as a C# port of DeezerDownloader JavaScript.
+
+Modified for Allstarr on 2026-10-08 in `Providers/Deezer/DeezerMediaClient.cs` and
+`DeezerHttpClient.cs`: credentials remain scoped to the current operation;
+alternatives require a provider link or an exact ISRC and a readable, consistent
+returned ID; the selected ID reaches both download and streaming decryption.
+Retries are bounded, honor cancellation and Retry-After, and classify exhausted
+quota responses without exposing credentials. Title-based guesses are excluded.
+The shared catalog and media client retain Allstarr's existing parser, quality,
+artifact ownership, and account authorization boundaries.
+
+These adaptations are distributed under Allstarr's [GPL-3.0 license](../../LICENSE),
+with their corresponding source in this repository. Optional provider services
+and their media remain separately operated upstream resources.

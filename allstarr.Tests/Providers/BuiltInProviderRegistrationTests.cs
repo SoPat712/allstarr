@@ -61,9 +61,8 @@ public sealed class BuiltInProviderRegistrationTests
     [Fact]
     public void Catalog_SeparatesAppleMusicKitAndNeverRoutesLegacyOnlyLanes()
     {
-        var deezerLegacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict).Object;
-        var deezer = new DeezerMetadataCapabilityAdapter(deezerLegacy);
-        var deezerPlaylists = new DeezerPlaylistCapabilityAdapter(deezerLegacy, deezer);
+        var deezer = new DeezerProvider(new DeezerHttpClient(new HttpClient(new Mock<HttpMessageHandler>().Object), 0));
+        var deezerPlaylists = new CatalogPlaylistCapability("deezer", deezer);
         var deezerDownload = Download("deezer");
         var deezerStreaming = Streaming("deezer");
         var qobuzDownload = Download("qobuz");
@@ -96,7 +95,7 @@ public sealed class BuiltInProviderRegistrationTests
             new Mock<IConcreteMetadataService>(MockBehavior.Strict).Object);
         var registry = new ProviderRegistry(
         [
-            DeezerMetadataCapabilityAdapter.CreateRegistration(
+            DeezerProvider.CreateRegistration(
                 deezer, deezerPlaylists, deezerDownload, deezerStreaming),
             QobuzDownloadCapabilityAdapter.CreateRegistration(
                 qobuzDownload, qobuzStreaming, qobuzMetadata, qobuzPlaylists),

@@ -73,6 +73,13 @@ One deployment serves one household. The `users` table has a stable internal ID 
 
 Built-in and extension capabilities meet at `ProviderRegistry`. Extension IDs may not replace reserved built-in provider IDs.
 
+Deezer's catalog implements the typed metadata contract directly. Catalog, streaming,
+and managed-download capabilities share bounded Deezer HTTP handling; streaming and
+downloads share media preparation and decryption. An unreadable track can use a
+verified provider alternative while retaining its requested public identity. The
+alternative's own ID determines its token and decryption key. No default credential
+or shared cookie state participates in an account-scoped request.
+
 Account ownership is authoritative: a non-null `OwnerUserId` means Personal; null means Shared. The public scope is derived rather than stored independently. Creator identity is audit provenance and never grants access. Administrators manage account records; routing still selects only the requesting user’s Personal account or a Shared account. Eligible Personal accounts precede Shared accounts, with deterministic ordering within each audience. Library IDs do not scope accounts.
 
 Audience changes rebind the encrypted secret in the same database transaction and invalidate account discovery caches. Credential leases verify the current account owner, provider, revision, enabled state, secret reference and purpose before decrypting. The household connection toggle controls listener account creation without disabling existing owner management or use.

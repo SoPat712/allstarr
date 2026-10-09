@@ -1,6 +1,5 @@
 using allstarr.Models.Settings;
 using allstarr.Services;
-using allstarr.Services.Deezer;
 using allstarr.Services.Qobuz;
 using allstarr.Core.Providers.Qobuz;
 using allstarr.Services.AppleMusic;
@@ -381,9 +380,8 @@ else
 
 builder.Services.AddSingleton<QobuzBundleService>();
 
-builder.Services.AddSingleton<DeezerMetadataService>();
 builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
-    provider.GetRequiredService<DeezerMetadataService>());
+    provider.GetRequiredService<DeezerProvider>());
 builder.Services.AddSingleton<QobuzMetadataService>();
 builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
     provider.GetRequiredService<QobuzMetadataService>());
@@ -391,15 +389,13 @@ builder.Services.AddSingleton<AppleMusicMetadataService>();
 builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
     provider.GetRequiredService<AppleMusicMetadataService>());
 builder.Services.AddSingleton<IAppleDownloadEndpointDiscovery, AppleDownloadEndpointDiscovery>();
-builder.Services.AddDeezerMetadataCapability();
+builder.Services.AddDeezerProvider();
 builder.Services.AddQobuzDownloadCapability();
 builder.Services.AddSpotifyPlaylistCapability();
 builder.Services.AddAppleMusicKitPlaylistCapability();
 builder.Services.AddAppleDownloadCapability();
 builder.Services.AddBuiltInLyricsCapabilities();
 
-builder.Services.AddSingleton<IConcreteDownloadService>(provider =>
-    provider.GetRequiredService<DeezerDownloadService>());
 builder.Services.AddSingleton<IConcreteDownloadService>(provider =>
     provider.GetRequiredService<QobuzDownloadService>());
 builder.Services.AddSingleton<IConcreteDownloadService, AppleMusicDownloadService>();

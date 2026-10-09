@@ -114,14 +114,12 @@ public sealed class CacheIslandRegressionContractTests
     [Fact]
     public void TemporaryAudio_UsesConfiguredRootPolicyTtlAndQualityIdentity()
     {
-        var services = new[] { "Qobuz", "Deezer" }
-            .Select(provider => File.ReadAllText(Path.Combine(
-                _repositoryRoot,
-                "allstarr",
-                "Providers",
-                provider,
-                $"{provider}DownloadService.cs")))
-            .ToArray();
+        var legacyDownload = File.ReadAllText(Path.Combine(
+            _repositoryRoot, "allstarr", "Providers", "Qobuz", "QobuzDownloadService.cs"));
+        var deezerMedia = File.ReadAllText(Path.Combine(
+            _repositoryRoot, "allstarr", "Providers", "Deezer", "DeezerMediaClient.cs"));
+        var deezerDownload = File.ReadAllText(Path.Combine(
+            _repositoryRoot, "allstarr", "Providers", "Deezer", "DeezerDownloadCapabilityAdapter.cs"));
         var cleanup = File.ReadAllText(Path.Combine(
             _repositoryRoot,
             "allstarr",
@@ -129,13 +127,14 @@ public sealed class CacheIslandRegressionContractTests
             "Common",
             "CacheCleanupService.cs"));
 
-        Assert.All(services, source =>
-        {
-            Assert.Contains("Path.Combine(DownloadPath, \"transcoded\")", source, StringComparison.Ordinal);
-            Assert.DoesNotContain("Path.Combine(\"downloads\", \"transcoded\")", source, StringComparison.Ordinal);
-        });
-        Assert.Contains("quality.ToString().ToLowerInvariant()", services[0], StringComparison.Ordinal);
-        Assert.Contains("quality.ToString().ToLowerInvariant()", services[1], StringComparison.Ordinal);
+        Assert.Contains("Path.Combine(DownloadPath, \"transcoded\")", legacyDownload, StringComparison.Ordinal);
+        Assert.DoesNotContain("Path.Combine(\"downloads\", \"transcoded\")", legacyDownload, StringComparison.Ordinal);
+        Assert.Contains("quality.ToString().ToLowerInvariant()", legacyDownload, StringComparison.Ordinal);
+        Assert.DoesNotContain("DownloadPath", deezerMedia, StringComparison.Ordinal);
+        Assert.DoesNotContain("FileStream", deezerMedia, StringComparison.Ordinal);
+        Assert.Contains("artifacts.WriteProducedAsync", deezerDownload, StringComparison.Ordinal);
+        Assert.Contains("request.Workspace", deezerDownload, StringComparison.Ordinal);
+        Assert.Contains("Quality(request.RequestedQuality, configuredQuality)", deezerDownload, StringComparison.Ordinal);
         Assert.Contains("CacheExtensions.TranscodeCacheTTL", cleanup, StringComparison.Ordinal);
         Assert.Contains("_subsonicSettings.StorageMode == StorageMode.Cache", cleanup, StringComparison.Ordinal);
         Assert.DoesNotContain("CacheCleanupService disabled", cleanup, StringComparison.Ordinal);
