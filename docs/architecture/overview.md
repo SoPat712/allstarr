@@ -39,7 +39,7 @@ Jellyfin or Subsonic protocol controller
              +--> filesystem --> cache, downloads, kept files
 ```
 
-The public protocol controllers preserve client compatibility. New application behavior belongs in the typed core, not in protocol-specific controller branches.
+The public protocol controllers preserve client compatibility. Provider metadata and streams pass through the required `IProtocolProviderGateway`; controllers do not select legacy provider services. New application behavior belongs in the typed core, not in protocol-specific controller branches.
 
 ## Code ownership
 
@@ -66,6 +66,8 @@ The public protocol controllers preserve client compatibility. New application b
 The product term **Source** covers anything that can supply music data or an action. A source can expose one or more typed capabilities: metadata, playlist discovery, streaming, download, lyrics, health, or scrobbling.
 
 A **provider account** is an encrypted credential and access policy for a source. It can be Personal or Shared. A source can exist without an account when its capability is public. Routing considers the initiating user, capability, account ownership, permission, readiness, and configured priority. Backend library permissions govern local copies separately.
+
+Public external artwork uses an identity-free `PublicRead` context limited to metadata capabilities that require no account. It cannot resolve credentials or carry user, account, or job identity. Authenticated artwork uses the viewer's normal provider context; private and virtual playlist artwork remains subject to authorization.
 
 One deployment serves one household. The `users` table has a stable internal ID and a unique backend type/instance/principal tuple. Successful authentication creates the user; verified backend role and name updates refresh that same row. A protocol observation without role information preserves the last verified role. Disabled users cannot start new requests or execute queued work. WebUI sessions recheck the enabled user and exact backend identity and role; a role change invalidates an older session.
 

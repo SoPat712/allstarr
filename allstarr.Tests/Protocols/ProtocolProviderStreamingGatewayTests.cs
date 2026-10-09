@@ -14,7 +14,7 @@ namespace allstarr.Tests;
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
     [Fact]
-    public async Task OpenStream_ActorlessContextDefersToCompatibilityFallback()
+    public async Task OpenStream_ActorlessContextCannotOpenProviderStream()
     {
         var gateway = new ProtocolProviderGateway(
             Mock.Of<IProviderRouter>(MockBehavior.Strict),

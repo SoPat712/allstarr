@@ -17,6 +17,8 @@ public sealed class DurableProviderRouteAccountResolver(
         ProviderRouteAccountRequest request,
         CancellationToken cancellationToken = default)
     {
+        if (request.Actor.Kind == ProviderActorKind.PublicRead)
+            throw new UnauthorizedAccessException("Public reads cannot resolve provider accounts.");
         var userId = request.Actor.EffectiveUserId;
         if (!userId.HasValue)
         {

@@ -34,10 +34,8 @@ public partial class JellyfinController
         if (PlaylistIdHelper.IsExternalPlaylist(playlistId))
         {
             var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
-            var tracks = _providerGateway != null
-                ? await _providerGateway.GetPlaylistTracksAsync(
-                    HttpContext.RequireProtocolExecutionContext(), provider, externalId)
-                : await _metadataService.GetPlaylistTracksAsync(provider, externalId);
+            var tracks = await _providerGateway.GetPlaylistTracksAsync(
+                HttpContext.RequireProtocolExecutionContext(), provider, externalId);
             return new JsonResult(new
             {
                 OpenAccess = false,
@@ -58,17 +56,13 @@ public partial class JellyfinController
             var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
 
             var protocol = HttpContext.RequireProtocolExecutionContext();
-            var playlist = _providerGateway != null
-                ? await _providerGateway.GetPlaylistAsync(protocol, provider, externalId)
-                : await _metadataService.GetPlaylistAsync(provider, externalId);
+            var playlist = await _providerGateway.GetPlaylistAsync(protocol, provider, externalId);
             if (playlist == null)
             {
                 return _responseBuilder.CreateError(404, "Playlist not found");
             }
 
-            var tracks = _providerGateway != null
-                ? await _providerGateway.GetPlaylistTracksAsync(protocol, provider, externalId)
-                : await _metadataService.GetPlaylistTracksAsync(provider, externalId);
+            var tracks = await _providerGateway.GetPlaylistTracksAsync(protocol, provider, externalId);
 
             return _responseBuilder.CreatePlaylistAsAlbumResponse(playlist, tracks);
         }
@@ -116,10 +110,8 @@ public partial class JellyfinController
             if (PlaylistIdHelper.IsExternalPlaylist(playlistId))
             {
                 var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
-                var tracks = _providerGateway != null
-                    ? await _providerGateway.GetPlaylistTracksAsync(
-                        HttpContext.RequireProtocolExecutionContext(), provider, externalId)
-                    : await _metadataService.GetPlaylistTracksAsync(provider, externalId);
+                var tracks = await _providerGateway.GetPlaylistTracksAsync(
+                    HttpContext.RequireProtocolExecutionContext(), provider, externalId);
 
                 // Jellyfin must see every playlist track under one synthetic album parent.
                 var items = tracks.Select(track =>

@@ -38,7 +38,7 @@ public partial class JellyfinController
             return await ProxyJellyfinStream(fullPath, itemId);
         }
 
-        return await StreamExternalContent(provider!, externalId!, asDownload: true);
+        return await StreamExternalContent(provider!, externalId!);
     }
 
     [HttpGet("Audio/{itemId}/stream")]
@@ -118,96 +118,58 @@ public partial class JellyfinController
     private async Task<IActionResult> StreamExternalContent(
         string provider,
         string externalId,
-        StreamQuality quality = StreamQuality.Original,
-        bool asDownload = false)
+        StreamQuality quality = StreamQuality.Original)
     {
-        if (_providerGateway != null)
-        {
-            try
-            {
-                var protocol = HttpContext.RequireProtocolExecutionContext();
-                var requestedQuality = quality switch
-                {
-                    StreamQuality.Low => ProviderAudioQuality.DataSaver,
-                    StreamQuality.High => ProviderAudioQuality.Lossy,
-                    _ => ProviderAudioQuality.Any
-                };
-                var routed = await _providerGateway.OpenStreamAsync(
-                    protocol,
-                    provider,
-                    externalId,
-                    requestedQuality,
-                    Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null,
-                    headOnly: HttpMethods.IsHead(Request.Method));
-                if (routed != null)
-                {
-                    if (!routed.Response.IsSuccessStatusCode)
-                    {
-                        var status = (int)routed.Response.StatusCode;
-                        routed.Response.Dispose();
-                        return StatusCode(status);
-                    }
-                    if (_managedTrackCache != null)
-                    {
-                        await _managedTrackCache.WrapAsync(
-                            routed,
-                            protocol,
-                            routed.ServingProviderId,
-                            routed.ServingExternalId ?? externalId,
-                            HttpMethods.IsHead(Request.Method),
-                            () => _providerGateway.GetSongAsync(protocol, routed.ServingProviderId,
-                                routed.ServingExternalId ?? externalId),
-                            HttpContext.RequestAborted);
-                    }
-                    return await _streamingResponseAdapter.CreateAsync(
-                        HttpContext,
-                        routed.Response,
-                        HttpContext.RequestAborted,
-                        enableRangeProcessing: routed.IsCached);
-                }
-                if (protocol.Actor != null) return StatusCode(StatusCodes.Status503ServiceUnavailable,
-                    new { error = "No verified playback source is available." });
-            }
-            catch (Exception ex)
-            {
-                return HandleExternalStreamFailure(provider, externalId, ex);
-            }
-        }
-
         try
         {
-            var downloadStream = await _downloadService.DownloadAndStreamAsync(
+            var protocol = HttpContext.RequireProtocolExecutionContext();
+            var requestedQuality = quality switch
+            {
+                StreamQuality.Low => ProviderAudioQuality.DataSaver,
+                StreamQuality.High => ProviderAudioQuality.Lossy,
+                _ => ProviderAudioQuality.Any
+            };
+            var routed = await _providerGateway.OpenStreamAsync(
+                protocol,
                 provider,
                 externalId,
-                quality != StreamQuality.Original ? quality : null,
-                HttpContext.RequestAborted);
-
-            var contentType = downloadStream is ProgressiveCachingStream typed
-                ? typed.ContentType
-                : "audio/mpeg";
-            if (downloadStream is FileStream fs)
+                requestedQuality,
+                Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null,
+                headOnly: HttpMethods.IsHead(Request.Method));
+            if (routed != null)
             {
-                contentType = GetContentType(fs.Name);
+                if (!routed.Response.IsSuccessStatusCode)
+                {
+                    var status = (int)routed.Response.StatusCode;
+                    routed.Response.Dispose();
+                    return StatusCode(status);
+                }
+                if (_managedTrackCache != null)
+                {
+                    await _managedTrackCache.WrapAsync(
+                        routed,
+                        protocol,
+                        routed.ServingProviderId,
+                        routed.ServingExternalId ?? externalId,
+                        HttpMethods.IsHead(Request.Method),
+                        () => _providerGateway.GetSongAsync(protocol, routed.ServingProviderId,
+                            routed.ServingExternalId ?? externalId),
+                        HttpContext.RequestAborted);
+                }
+                return await _streamingResponseAdapter.CreateAsync(
+                    HttpContext,
+                    routed.Response,
+                    HttpContext.RequestAborted,
+                    enableRangeProcessing: routed.IsCached);
             }
-
-            return asDownload
-                ? File(downloadStream, contentType, $"track{MediaFileExtension(contentType)}",
-                    enableRangeProcessing: downloadStream.CanSeek)
-                : File(downloadStream, contentType, enableRangeProcessing: downloadStream.CanSeek);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new { error = "No verified playback source is available." });
         }
         catch (Exception ex)
         {
             return HandleExternalStreamFailure(provider, externalId, ex);
         }
     }
-
-    private static string MediaFileExtension(string contentType) => contentType.ToLowerInvariant() switch
-    {
-        "audio/flac" or "audio/x-flac" => ".flac",
-        "audio/mp4" or "audio/x-m4a" or "audio/m4a" => ".m4a",
-        "audio/aac" => ".aac",
-        _ => ".mp3"
-    };
 
     private IActionResult HandleExternalStreamFailure(string provider, string externalId, Exception ex)
     {

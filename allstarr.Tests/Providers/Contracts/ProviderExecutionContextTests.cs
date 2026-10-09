@@ -8,6 +8,28 @@ public sealed class ProviderExecutionContextTests
     private readonly Guid _userId = Guid.CreateVersion7();
 
     [Fact]
+    public void PublicRead_HasNoIdentityAndCannotUseAnyAccount()
+    {
+        var actor = new ProviderActorContext(ProviderActorKind.PublicRead, null);
+        Assert.Null(actor.EffectiveUserId);
+        Assert.Null(actor.BackendPrincipal);
+        Assert.Null(actor.DurableJobId);
+        Assert.Throws<ArgumentException>(() => new ProviderActorContext(ProviderActorKind.PublicRead, _userId));
+        Assert.Throws<ArgumentException>(() => new ProviderActorContext(ProviderActorKind.PublicRead, null,
+            new ProviderBackendPrincipal("jellyfin", "primary", "listener")));
+        Assert.Throws<ArgumentException>(() => new ProviderActorContext(ProviderActorKind.PublicRead, null,
+            durableJobId: Guid.CreateVersion7()));
+        Assert.Throws<ArgumentException>(() => new ProviderActorContext(ProviderActorKind.PublicRead, null,
+            actingForUserId: _userId));
+        foreach (var scope in new[] { ProviderAccountScope.Personal, ProviderAccountScope.Shared })
+        {
+            var account = new ProviderAccountContext(Guid.CreateVersion7(), "deezer", scope, 1,
+                ownerUserId: scope == ProviderAccountScope.Personal ? _userId : null);
+            Assert.Throws<UnauthorizedAccessException>(() => Context(actor, account, Policy("deezer", true)));
+        }
+    }
+
+    [Fact]
     public void ExternalResourceId_IsTypedImmutableAndPreservesOpaqueValue()
     {
         var id = new ProviderExternalResourceId(

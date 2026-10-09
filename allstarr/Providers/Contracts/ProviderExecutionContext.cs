@@ -6,7 +6,8 @@ public enum ProviderActorKind
 {
     User,
     Administrator,
-    SystemJob
+    SystemJob,
+    PublicRead
 }
 
 public sealed record ProviderBackendPrincipal
@@ -54,6 +55,12 @@ public sealed record ProviderActorContext
             (!durableJobId.HasValue || durableJobId == Guid.Empty))
         {
             throw new ArgumentException("System actors require a durable job ID.", nameof(durableJobId));
+        }
+
+        if (kind == ProviderActorKind.PublicRead &&
+            (userId.HasValue || backendPrincipal != null || durableJobId.HasValue || actingForUserId.HasValue))
+        {
+            throw new ArgumentException("Public reads cannot carry user or job identity.", nameof(userId));
         }
 
         if (actingForUserId == Guid.Empty ||
@@ -272,6 +279,9 @@ public sealed record ProviderExecutionContext
 
         if (account != null)
         {
+            if (actor.Kind == ProviderActorKind.PublicRead)
+                throw new UnauthorizedAccessException("Public reads cannot use provider accounts.");
+
             if (!account.Enabled)
             {
                 throw new UnauthorizedAccessException("The selected provider account is disabled.");

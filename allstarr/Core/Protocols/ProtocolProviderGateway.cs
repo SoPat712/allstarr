@@ -49,6 +49,12 @@ public interface IProtocolProviderGateway
 
     Task<Artist?> GetArtistAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
 
+    Task<Uri?> GetPublicArtworkUriAsync(
+        string providerId,
+        ProviderResourceKind resourceKind,
+        string externalId,
+        CancellationToken cancellationToken = default);
+
     Task<List<Album>> GetArtistAlbumsAsync(
         ProtocolExecutionContext protocol,
         string providerId,
@@ -127,6 +133,55 @@ public sealed class ProtocolProviderGateway(
     private const int ProviderSearchConcurrency = 4;
     private const int RelationshipSearchLimit = 10;
     private static readonly TimeSpan ExactRouteMissTtl = TimeSpan.FromMinutes(2);
+
+    public async Task<Uri?> GetPublicArtworkUriAsync(
+        string providerId,
+        ProviderResourceKind resourceKind,
+        string externalId,
+        CancellationToken cancellationToken = default)
+    {
+        providerId = NormalizeProvider(providerId);
+        if (!IsPublicMetadataProvider(providerId) ||
+            !ResolveProviderOrder(ProviderCapabilityKind.Metadata).Contains(providerId)) return null;
+        if (resourceKind is not (ProviderResourceKind.Track or ProviderResourceKind.Album or
+            ProviderResourceKind.Artist or ProviderResourceKind.Playlist)) return null;
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        var policy = new ProviderExecutionPolicy(
+            new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, false),
+            ProviderExplicitContentPolicy.Allow, allowFallback: false, allowSharedAccount: false,
+            allowManagedDownloads: false, allowedProviderIds: [providerId]);
+        var plan = await router.PlanAsync<IProviderMetadataCapability>(new(
+            ProviderCapabilityKind.Metadata, new(ProviderActorKind.PublicRead, null), policy,
+            "public-artwork", "public-artwork", DateTimeOffset.UtcNow.AddSeconds(30), [providerId],
+            cancellationToken: timeout.Token));
+        var candidate = plan.Candidates.SingleOrDefault();
+        if (candidate == null) return null;
+        var id = new ProviderExternalResourceId(providerId, resourceKind, externalId);
+        ProviderArtworkReference? artwork = null;
+        switch (resourceKind)
+        {
+            case ProviderResourceKind.Track:
+                var track = await candidate.Implementation.GetTrackAsync(candidate.Context, new(id));
+                if (track.IsSuccess) artwork = track.RequireValue().Artwork;
+                break;
+            case ProviderResourceKind.Album:
+                var album = await candidate.Implementation.GetAlbumAsync(candidate.Context, new(id));
+                if (album.IsSuccess) artwork = album.RequireValue().Artwork;
+                break;
+            case ProviderResourceKind.Artist:
+                var artist = await candidate.Implementation.GetArtistAsync(candidate.Context, new(id));
+                if (artist.IsSuccess) artwork = artist.RequireValue().Artwork;
+                break;
+            case ProviderResourceKind.Playlist:
+                var playlist = await candidate.Implementation.GetPlaylistArtworkAsync(candidate.Context, id);
+                if (playlist.IsSuccess) artwork = playlist.RequireValue();
+                break;
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        return artwork?.PublicUri;
+    }
 
     public IReadOnlyList<string> GetProviderOrder(ProviderCapabilityKind capability) =>
         ResolveProviderOrder(capability);

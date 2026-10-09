@@ -428,6 +428,46 @@ public sealed class DeezerMetadataCapabilityAdapterTests
         legacy.VerifyAll();
     }
 
+    [Theory]
+    [InlineData("https://images.example.invalid/playlist.jpg", true)]
+    [InlineData("http://images.example.invalid/playlist.jpg", false)]
+    [InlineData(null, false)]
+    public async Task PublicPlaylistArtwork_ReturnsOnlyHttpsArtworkWithoutReadingTracks(string? coverUrl, bool expected)
+    {
+        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        legacy.Setup(item => item.GetPlaylistAsync("deezer", "playlist-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExternalPlaylist { ExternalId = "playlist-1", Name = "Public", CoverUrl = coverUrl });
+        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+        var settings = Context();
+        var context = new ProviderExecutionContext(new(ProviderActorKind.PublicRead, null), "deezer", null,
+            settings.Policy, settings.OperationId, settings.CorrelationId, settings.Deadline, settings.CancellationToken);
+
+        var result = await adapter.GetPlaylistArtworkAsync(context, new("deezer", ProviderResourceKind.Playlist, "playlist-1"));
+
+        Assert.Equal(expected, result.IsSuccess);
+        if (expected) Assert.Equal(coverUrl, result.RequireValue().PublicUri!.AbsoluteUri);
+        else Assert.Equal(ProviderErrorKind.NotFound, result.Error!.Kind);
+        legacy.Verify(item => item.GetPlaylistAsync("deezer", "playlist-1", It.IsAny<CancellationToken>()), Times.Once);
+        legacy.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task PublicPlaylistArtwork_RejectsForeignIdsAndCanceledRequestsBeforeLookup()
+    {
+        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+        await Assert.ThrowsAsync<ArgumentException>(() => adapter.GetPlaylistArtworkAsync(
+            Context(), new("other", ProviderResourceKind.Playlist, "playlist-1")));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        var result = await adapter.GetPlaylistArtworkAsync(Context(cancellation.Token),
+            new("deezer", ProviderResourceKind.Playlist, "playlist-1"));
+
+        Assert.Equal(ProviderErrorKind.Canceled, result.Error!.Kind);
+        legacy.VerifyNoOtherCalls();
+    }
+
     private static ProviderExecutionContext Context(CancellationToken cancellationToken = default)
     {
         var actor = new ProviderActorContext(

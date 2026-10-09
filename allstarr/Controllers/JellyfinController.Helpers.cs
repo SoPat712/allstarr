@@ -221,21 +221,6 @@ public partial class JellyfinController
             : boundSearchTerm;
     }
 
-    private static string GetContentType(string filePath)
-    {
-        var extension = Path.GetExtension(filePath).ToLowerInvariant();
-        return extension switch
-        {
-            ".mp3" => "audio/mpeg",
-            ".flac" => "audio/flac",
-            ".ogg" => "audio/ogg",
-            ".m4a" => "audio/mp4",
-            ".wav" => "audio/wav",
-            ".aac" => "audio/aac",
-            _ => "audio/mpeg"
-        };
-    }
-
     private static List<(T Item, int Score)> ScoreSearchResults<T>(
         string query,
         List<T> items,

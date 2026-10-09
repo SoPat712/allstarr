@@ -378,6 +378,11 @@ public sealed record ProviderIsrcLookupRequest
 
 public interface IProviderMetadataCapability : IProviderCapability
 {
+    Task<ProviderOutcome<ProviderArtworkReference>> GetPlaylistArtworkAsync(
+        ProviderExecutionContext context,
+        ProviderExternalResourceId playlistId) => Task.FromResult(
+            ProviderOutcome<ProviderArtworkReference>.Failure(new ProviderError(ProviderErrorKind.NotSupported)));
+
     Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>> SearchTracksAsync(
         ProviderExecutionContext context,
         ProviderMetadataSearchRequest request);
