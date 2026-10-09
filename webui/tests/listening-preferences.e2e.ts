@@ -74,6 +74,7 @@ test("listener saves and resets preferences with the latest returned revision", 
     writes.push({ method, body });
     if (method === "PUT") {
       expect(body.expectedRevision).toBe("revision-1");
+      expect(body.explicitFilter).toBe("ExplicitOnly");
       state = {
         explicitFilter: String(body.explicitFilter),
         showExternalLabel: Boolean(body.showExternalLabel),
@@ -103,7 +104,7 @@ test("listener saves and resets preferences with the latest returned revision", 
   await expect(page.getByText("affect only your listener account", { exact: false })).toBeVisible();
   await expect(page.getByText("Native library titles remain untouched", { exact: false })).toBeVisible();
 
-  await page.getByRole("radio", { name: "Clean only" }).check();
+  await page.getByRole("radio", { name: "Hide clean/edited versions" }).check();
   await page.getByRole("checkbox", { name: "Show [A] for external tracks", exact: true }).click();
   await page.getByRole("checkbox", { name: "Show [E] for explicit tracks", exact: true }).click();
   await page.getByRole("button", { name: "Save preferences" }).click();

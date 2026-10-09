@@ -84,7 +84,7 @@ Activity groups operational events by outcome and shows target, source, and corr
 
 ### Listening preferences
 
-Open your name in the desktop sidebar, or **More → Listening preferences** on a small screen. These choices belong to your signed-in backend user and apply in both Jellyfin and Subsonic clients. **All** shows every external track; **Explicit only** hides known clean tracks; **Clean only** hides known explicit tracks. Unknown explicit status remains visible in every mode. Native library items are unchanged.
+Open your name in the desktop sidebar, or **More → Listening preferences** on a small screen. These choices belong to your signed-in backend user and apply in both Jellyfin and Subsonic clients. **All** shows every external track; **Hide clean/edited versions** hides edited versions while keeping naturally clean and explicit songs; **Clean only** hides known explicit tracks. Unknown explicit status remains visible in every mode. Native library items are unchanged.
 
 The **[A]** external and **[E]** explicit title markers can be toggled independently; both default to on. Personal choices override household defaults. **Reset to household defaults** removes your choices and follows the latest defaults again. Reload client search results, playlists or queues to see updated presentation.
 

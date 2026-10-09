@@ -29,8 +29,8 @@ public static class ExplicitContentFilter
             // All: No filtering, include everything
             ExplicitFilter.All => true,
 
-            // Unknown and unrated songs remain visible in every mode.
-            ExplicitFilter.ExplicitOnly => explicitContent is not (0 or 3),
+            // Hide edited versions; naturally clean and unrated songs remain visible.
+            ExplicitFilter.ExplicitOnly => explicitContent != 3,
 
             // CleanOnly: Only show clean content
             // Include: 0 (naturally clean), 3 (clean/edited version)
